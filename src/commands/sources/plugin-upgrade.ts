@@ -120,6 +120,7 @@ function planEntry(
   ref: string | undefined,
   channel: UpgradeChannel | undefined,
   allowDowngrade: boolean,
+  planned?: MarketplacePlan,
 ): { entry: PluginUpgradeEntry; keep?: Kept } {
   const from = installed[0];
   const followed = channel ?? refChannel(ref);
@@ -133,9 +134,9 @@ function planEntry(
       message: `the ${followed} build could not be read (${reason}); \`akm upgrade\` refreshes it`,
     },
   });
-  let plan: ReturnType<typeof marketplacePlan>;
+  let plan: MarketplacePlan;
   try {
-    plan = marketplacePlan(harness, source(), installed, followed, allowDowngrade);
+    plan = planned ?? marketplacePlan(harness, source(), installed, followed, allowDowngrade);
   } catch (error) {
     return unknown(error instanceof Error ? error.message : String(error));
   }
@@ -172,7 +173,7 @@ function claudePlugins(): { installations: ClaudeInstallation[] } | { error: Com
   return { installations };
 }
 
-function detectClaudeCode(strict = false): Detected {
+function detectClaudeCode(): Detected {
   const marketplaces = runCommand("claude", ["plugin", "marketplace", "list", "--json"], READ_TIMEOUT_MS);
   if (!marketplaces.ok) {
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
@@ -181,21 +182,16 @@ function detectClaudeCode(strict = false): Detected {
     const configured = fs.existsSync(path.join(pluginsRoot, "known_marketplaces.json"));
     return {
       entry:
-        strict && (!marketplaces.missing || configured)
+        !marketplaces.missing || configured
           ? { ...failed("claude-code", marketplaces.error), channel: "unknown" }
-          : skipped("claude-code", marketplaces.missing ? "claude is not on PATH" : marketplaces.error),
+          : skipped("claude-code", "claude is not on PATH"),
     };
   }
   const list = parseJson(marketplaces.stdout);
   const marketplace = Array.isArray(list) ? list.find((m) => m?.name === MARKETPLACE) : undefined;
   if (!marketplace) return { entry: skipped("claude-code", `the ${MARKETPLACE} marketplace is not configured`) };
   const plugin = claudePlugins();
-  if ("error" in plugin)
-    return {
-      entry: strict
-        ? { ...failed("claude-code", plugin.error.error), channel: "unknown" }
-        : skipped("claude-code", plugin.error.error),
-    };
+  if ("error" in plugin) return { entry: { ...failed("claude-code", plugin.error.error), channel: "unknown" } };
   if (!plugin.installations.length) return { entry: skipped("claude-code", "the akm plugin is not installed") };
   return {
     version: plugin.installations[0]?.version,
@@ -233,10 +229,10 @@ function upgradeClaudeCode(
   dryRun: boolean,
   next: boolean,
   channel?: UpgradeChannel,
-  keep?: Kept,
+  plan?: MarketplacePlan,
   allowDowngrade = false,
 ): PluginUpgradeEntry {
-  const detected = detectClaudeCode(channel !== undefined);
+  const detected = detectClaudeCode();
   if ("entry" in detected) return detected.entry;
   const before = refChannel(detected.ref);
   const planned = dryRun
@@ -247,9 +243,10 @@ function upgradeClaudeCode(
         detected.ref,
         channel,
         allowDowngrade,
+        plan,
       )
     : undefined;
-  keep ??= planned?.keep;
+  const keep = plan?.keep ?? planned?.keep;
   if (channel && keep !== undefined) return stays("claude-code", keep.installed, channel, before, keep.reason);
   let backups: string[] = [];
   if (channel && !dryRun) {
@@ -306,12 +303,14 @@ export function codexConfigFile(): string {
   return path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "config.toml");
 }
 
-export function codexMarketplaceRef(): string | undefined {
+/** The akm-plugins entry of Codex's config; `{ error }` when the file exists and cannot be read or parsed. */
+export function codexMarketplaceEntry(): { entry: Record<string, unknown> | undefined } | { error: string } {
+  const file = codexConfigFile();
   try {
-    const ref = codexMarketplace(codexConfigFile())?.ref;
-    return typeof ref === "string" ? ref : undefined;
-  } catch {
-    return undefined;
+    return { entry: codexMarketplace(file) };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { entry: undefined };
+    return { error: `could not read ${file}: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
 
@@ -319,29 +318,33 @@ function upgradeCodex(
   dryRun: boolean,
   next: boolean,
   channel?: UpgradeChannel,
-  keep?: Kept,
+  plan?: MarketplacePlan,
   allowDowngrade = false,
 ): PluginUpgradeEntry {
   const before = codexPluginVersion();
   if ("error" in before)
-    return channel && (!before.error.missing || fs.existsSync(codexConfigFile()))
+    return !before.error.missing || fs.existsSync(codexConfigFile())
       ? { ...failed("codex", before.error.error), channel: "unknown" }
-      : skipped("codex", before.error.missing ? "codex is not on PATH" : before.error.error);
+      : skipped("codex", "codex is not on PATH");
   if (before.version === undefined) {
     return skipped("codex", `the akm plugin is not installed from the ${MARKETPLACE} marketplace`);
   }
-  const previous = refChannel(codexMarketplaceRef());
+  const registered = codexMarketplaceEntry();
+  if ("error" in registered) return { ...failed("codex", registered.error), channel: "unknown" };
+  const ref = typeof registered.entry?.ref === "string" ? registered.entry.ref : undefined;
+  const previous = refChannel(ref);
   const planned = dryRun
     ? planEntry(
         "codex",
         [before.version],
         () => codexMarketplaceRegistration().source,
-        codexMarketplaceRef(),
+        ref,
         channel,
         allowDowngrade,
+        plan,
       )
     : undefined;
-  keep ??= planned?.keep;
+  const keep = plan?.keep ?? planned?.keep;
   if (channel && keep !== undefined) return stays("codex", keep.installed, channel, previous, keep.reason);
   const backups: string[] = [];
   if (channel && previous !== channel && !dryRun) {
@@ -352,13 +355,7 @@ function upgradeCodex(
     }
   }
   const entry = planned?.entry ?? refreshCodex(before.version);
-  return channelResult(
-    next && !channel ? withChannelNote(entry, codexMarketplaceRef()) : entry,
-    previous,
-    channel,
-    dryRun,
-    backups,
-  );
+  return channelResult(next && !channel ? withChannelNote(entry, ref) : entry, previous, channel, dryRun, backups);
 }
 
 function refreshCodex(from: string | undefined): PluginUpgradeEntry {
@@ -388,17 +385,23 @@ function entrySpec(entry: unknown): string | undefined {
 
 const namesPackage = (spec: string, pkg: string) => spec === pkg || spec.startsWith(`${pkg}@`);
 
+export interface OpenCodeConfigSpec {
+  spec: string;
+  key: string;
+  file: string;
+  jsonPath: (string | number)[];
+}
+
 /**
  * The plugin spec the user's global OpenCode config names for this flavor's
  * package (bare, `@latest`, `@next`, an exact version, ...), with the config key
- * it sits under, or undefined when none does. OpenCode caches each spec in its
+ * it sits under, or undefined when none does. A config file that exists and cannot
+ * be read or parsed is `{ error }`, not an absent spec. OpenCode caches each spec in its
  * own folder, so this says which cache it loads. The config is only read, never
  * written; project configs are not looked at (akm does not know which project
  * OpenCode runs in).
  */
-export function openCodeConfigSpec(
-  flavor: OpenCodeFlavor,
-): { spec: string; key: string; file: string; jsonPath: (string | number)[] } | undefined {
+export function openCodeConfigSpec(flavor: OpenCodeFlavor): OpenCodeConfigSpec | { error: string } | undefined {
   const configDir = opencodeConfigDir();
   const explicit = flavor.globalConfigOnly ? undefined : process.env.OPENCODE_CONFIG?.trim();
   const files = [
@@ -409,25 +412,36 @@ export function openCodeConfigSpec(
   ];
   for (const file of files) {
     if (!file) continue;
+    let text: string;
     try {
-      const config = parseJsonc(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
-      let setsList = false;
-      for (const key of flavor.configKeys) {
-        const entries = config[key];
-        if (!Array.isArray(entries)) continue;
-        setsList = true;
-        for (const [index, entry] of entries.entries()) {
-          const spec = entrySpec(entry);
-          if (spec !== undefined && namesPackage(spec, flavor.pkg))
-            return { spec, key, file, jsonPath: [key, index, ...(Array.isArray(entry) ? [0] : [])] };
-        }
-      }
-      // OpenCode 1: a global file's plugin list replaces the earlier one, so a list that omits the package means it
-      // is not loaded. OpenCode 2's handling of `plugin`/`plugins` across files is not measured, so it keeps looking.
-      if (setsList && file !== explicit && flavor.major === 1) return undefined;
-    } catch {
-      // Missing or unparseable: this file names no spec.
+      text = fs.readFileSync(file, "utf8");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") continue;
+      return { error: `could not read ${file}: ${error instanceof Error ? error.message : String(error)}` };
     }
+    let config: Record<string, unknown>;
+    try {
+      const parsed = parseJsonc(text);
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not a JSON object");
+      config = parsed as Record<string, unknown>;
+    } catch (error) {
+      return { error: `could not parse ${file}: ${error instanceof Error ? error.message : String(error)}` };
+    }
+    let setsList = false;
+    for (const key of flavor.configKeys) {
+      const entries = config[key];
+      if (!Array.isArray(entries)) continue;
+      setsList = true;
+      for (const [index, entry] of entries.entries()) {
+        const spec = entrySpec(entry);
+        if (spec !== undefined && namesPackage(spec, flavor.pkg))
+          return { spec, key, file, jsonPath: [key, index, ...(Array.isArray(entry) ? [0] : [])] };
+      }
+    }
+    // OpenCode 1: a global file's plugin list replaces the earlier one, so a list that omits the package means it
+    // is not loaded. OpenCode 2's handling of `plugin`/`plugins` across files is not measured, so it keeps looking.
+    if (setsList && file !== explicit && flavor.major === 1) return undefined;
   }
   return undefined;
 }
@@ -529,6 +543,7 @@ function otherSpecNote(flavor: OpenCodeFlavor, spec: string): string {
 function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgradeEntry {
   const { flavor, cache, latest, tag, skip } = target;
   const harness = flavor.harness;
+  if (target.unreadable) return failed(harness, target.unreadable);
   // Refreshing a cache OpenCode does not load would trash one it never re-creates (#1115, #1117).
   if (skip) return skipped(harness, skip);
   if (!cache || !latest) return skipped(harness, `no cached ${flavor.pkg}@${tag} plugin`);
@@ -580,6 +595,7 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
   let backups: string[] = [];
   if (target.switchChannel) {
     const configured = openCodeConfigSpec(flavor);
+    if (configured && "error" in configured) return failed(harness, configured.error);
     if (!configured) return failed(harness, "the configured plugin entry disappeared before switching its channel");
     try {
       backups = writeChannelEdits([editChannelJson(configured.file, configured.jsonPath, target.spec)]);
@@ -677,6 +693,8 @@ export interface OpenCodeTarget {
   notFollowingNext: boolean;
   /** Why this run leaves the plugin alone (the config names a spec it does not refresh, or does not name it), when it does. */
   skip?: string;
+  /** The OpenCode config exists and could not be read, so no spec, cache or channel is known. */
+  unreadable?: string;
   currentChannel?: NonNullable<PluginUpgradeEntry["channel"]>;
   switchChannel?: UpgradeChannel;
   /** A channel switch whose newest plugin build is older than the installed one: the installed build stays. */
@@ -690,12 +708,12 @@ export function upgradePlugins(opts: {
   channel?: UpgradeChannel;
   currentChannel?: UpgradeChannel;
   /** Marketplace harnesses a channel switch leaves alone, with the installed version each stays at. */
-  keep?: { claude?: Kept; codex?: Kept };
+  plans?: { claude?: MarketplacePlan; codex?: MarketplacePlan };
   allowDowngrade?: boolean;
 }): PluginUpgradeEntry[] {
   return [
-    upgradeClaudeCode(opts.dryRun, opts.next, opts.channel, opts.keep?.claude, opts.allowDowngrade),
-    upgradeCodex(opts.dryRun, opts.next, opts.channel, opts.keep?.codex, opts.allowDowngrade),
+    upgradeClaudeCode(opts.dryRun, opts.next, opts.channel, opts.plans?.claude, opts.allowDowngrade),
+    upgradeCodex(opts.dryRun, opts.next, opts.channel, opts.plans?.codex, opts.allowDowngrade),
     ...opts.openCode.map((target) => {
       const entry = upgradeOpenCode(opts.dryRun, target);
       if (target.keepInstalled)
@@ -715,7 +733,9 @@ export function upgradePlugins(opts: {
     }),
   ].map((entry) => ({
     ...entry,
-    ...(entry.channel && opts.currentChannel ? { channelMismatch: entry.channel !== opts.currentChannel } : {}),
+    ...(entry.channel && entry.channel !== "unknown" && opts.currentChannel
+      ? { channelMismatch: entry.channel !== opts.currentChannel }
+      : {}),
   }));
 }
 
@@ -836,15 +856,32 @@ function resolveOpenCodeTarget(
   };
 }
 
+/** A target for a flavor whose config could not be read: nothing about its spec, cache or channel is known. */
+function unreadableTarget(flavor: OpenCodeFlavor, error: string, next: boolean): OpenCodeTarget {
+  return {
+    flavor,
+    cache: undefined,
+    latest: undefined,
+    tag: next ? "next" : "latest",
+    spec: flavor.pkg,
+    notFollowingNext: false,
+    unreadable: error,
+  };
+}
+
 /**
  * The OpenCode plugins this host has: OpenCode 1's always, OpenCode 2's only when the global config
  * names `akm-opencode-v2` or OpenCode 2 has cached it, so a host with just OpenCode 1 sees the same
  * output as before.
  */
 function resolveOpenCodeTargets(next: boolean, channel?: UpgradeChannel): OpenCodeTarget[] {
-  const targets = [resolveOpenCodeTarget(next, OPENCODE_V1, openCodeConfigSpec(OPENCODE_V1), channel)];
+  const resolve = (flavor: OpenCodeFlavor, configured: OpenCodeConfigSpec | { error: string } | undefined) =>
+    configured && "error" in configured
+      ? unreadableTarget(flavor, configured.error, next)
+      : resolveOpenCodeTarget(next, flavor, configured, channel);
+  const targets = [resolve(OPENCODE_V1, openCodeConfigSpec(OPENCODE_V1))];
   const v2 = openCodeConfigSpec(OPENCODE_V2);
-  if (v2 || openCodeV2Cached()) targets.push(resolveOpenCodeTarget(next, OPENCODE_V2, v2, channel));
+  if ((v2 && !("error" in v2)) || openCodeV2Cached()) targets.push(resolve(OPENCODE_V2, v2));
   return targets;
 }
 
@@ -946,10 +983,19 @@ export function claudeMarketplace(
 
 /** The Git source and ref Codex has registered for the akm-plugins marketplace. */
 export function codexMarketplaceRegistration(): { source: string; ref: string | undefined } {
-  const source = codexMarketplace(codexConfigFile())?.source;
+  const registered = codexMarketplaceEntry();
+  if ("error" in registered)
+    throw new UsageError(`Could not read Codex's config: ${registered.error}; no channel was changed`);
+  const source = registered.entry?.source;
   if (typeof source !== "string")
     throw new UsageError("Could not determine the Codex marketplace Git source; no channel was changed");
-  return { source, ref: codexMarketplaceRef() };
+  const ref = registered.entry?.ref;
+  return { source, ref: typeof ref === "string" ? ref : undefined };
+}
+
+interface MarketplacePlan {
+  target: string | Error;
+  keep?: Kept;
 }
 
 /**
@@ -964,7 +1010,7 @@ function marketplacePlan(
   installed: (string | undefined)[],
   channel: UpgradeChannel,
   allowDowngrade: boolean,
-): { target: string | Error; keep?: Kept } {
+): MarketplacePlan {
   let target: string | Error;
   try {
     target = marketplaceTargetVersion(source, channel, harness === "codex" ? "codex" : "claude");
@@ -984,15 +1030,15 @@ function marketplacePlan(
 }
 
 /**
- * Checks the marketplace channel switch can be made and returns the harnesses to leave alone: those whose
- * installed build is as new as, or newer than, the channel's.
+ * Checks the marketplace channel switch can be made and returns each harness's plan: the channel's build and, when
+ * the installed build is as new as or newer than it, the plugin to leave alone. The check and the run both use it.
  */
 function preflightMarketplaceChannels(
   channel: UpgradeChannel,
   allowDowngrade: boolean,
-): { claude?: Kept; codex?: Kept } {
-  const keep: { claude?: Kept; codex?: Kept } = {};
-  const claude = detectClaudeCode(true);
+): { claude?: MarketplacePlan; codex?: MarketplacePlan } {
+  const plans: { claude?: MarketplacePlan; codex?: MarketplacePlan } = {};
+  const claude = detectClaudeCode();
   if ("entry" in claude && claude.entry.outcome === "failed")
     throw new UsageError(`Could not inventory Claude before switching channels: ${claude.entry.message}`);
   if (!("entry" in claude)) {
@@ -1010,12 +1056,15 @@ function preflightMarketplaceChannels(
       channel,
       allowDowngrade,
     );
-    if (plan.keep) keep.claude = plan.keep;
+    plans.claude = plan;
   }
   const codex = codexPluginVersion();
   if ("error" in codex && (!codex.error.missing || fs.existsSync(codexConfigFile())))
     throw new UsageError(`Could not inventory Codex before switching channels: ${codex.error.error}`);
   if (!("error" in codex) && codex.version !== undefined) {
+    const registered = codexMarketplaceEntry();
+    if ("error" in registered)
+      throw new UsageError(`Could not inventory Codex before switching channels: ${registered.error}`);
     codexChannelEdit(codexConfigFile(), channel);
     const plan = marketplacePlan(
       "codex",
@@ -1024,9 +1073,9 @@ function preflightMarketplaceChannels(
       channel,
       allowDowngrade,
     );
-    if (plan.keep) keep.codex = plan.keep;
+    plans.codex = plan;
   }
-  return keep;
+  return plans;
 }
 
 /** `akm upgrade`: the CLI step, then the plugins. */
@@ -1059,25 +1108,6 @@ export async function runUpgrade(
     currentChannel,
     ...(switchChannel ? { targetChannel: switchChannel } : {}),
   };
-  if (args.check) {
-    return {
-      mode: "check",
-      result: {
-        ...check,
-        plugins: withEngineSkew(
-          upgradePlugins({
-            dryRun: true,
-            next,
-            openCode,
-            channel: switchChannel,
-            currentChannel,
-            allowDowngrade: args.allowDowngrade,
-          }),
-          currentVersion,
-        ),
-      },
-    };
-  }
   let stayMessage: string | undefined;
   // A channel whose newest akm is older than the installed one leaves akm where it is; an explicit switch still switches.
   if (!args.allowDowngrade && semverOrder(check.latestVersion, currentVersion) < 0) {
@@ -1096,8 +1126,28 @@ export async function runUpgrade(
         target.keepInstalled = true;
     }
   }
-  const keep = switchChannel ? preflightMarketplaceChannels(switchChannel, args.allowDowngrade === true) : {};
   if (switchChannel && args.allowDowngrade && check.latestVersion !== currentVersion) check.updateAvailable = true;
+  const plans = switchChannel ? preflightMarketplaceChannels(switchChannel, args.allowDowngrade === true) : {};
+  if (args.check) {
+    return {
+      mode: "check",
+      result: {
+        ...check,
+        plugins: withEngineSkew(
+          upgradePlugins({
+            dryRun: true,
+            next,
+            openCode,
+            channel: switchChannel,
+            plans,
+            currentChannel,
+            allowDowngrade: args.allowDowngrade,
+          }),
+          currentVersion,
+        ),
+      },
+    };
+  }
   const upgraded = await deps.performUpgrade(check, {
     force: args.force,
     skipPostUpgrade: args.skipPostUpgrade,
@@ -1126,7 +1176,7 @@ export async function runUpgrade(
       next,
       openCode,
       channel: switchChannel,
-      keep,
+      plans,
       currentChannel: upgraded.upgraded ? installedChannel(upgraded.newVersion) : currentChannel,
     }),
     upgraded.upgraded ? upgraded.newVersion : currentVersion,

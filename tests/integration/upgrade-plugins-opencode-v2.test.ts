@@ -391,8 +391,8 @@ esac`,
       v1: openCodeConfigSpec(OPENCODE_V1),
       v2: openCodeConfigSpec(OPENCODE_V2),
     }));
-    expect(found.v1?.file).toBe(configFile("opencode.jsonc"));
-    expect(found.v2?.file).toBe(configFile("opencode.json"));
+    expect(found.v1).toMatchObject({ file: configFile("opencode.jsonc") });
+    expect(found.v2).toMatchObject({ file: configFile("opencode.json") });
   });
 
   test("OPENCODE_CONFIG is not read for OpenCode 2: `plugin update` acts on the global config", async () => {

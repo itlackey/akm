@@ -84,6 +84,8 @@ export interface ImproveLoopEnv {
   /** `distill.requirePlannedRefs` with no reflect-eligible ref in the loop: distill-only refs skip. */
   skipDistillDueToRequirePlannedRefs: boolean;
   remainingBudgetMs: () => number;
+  /** The run token every distill proposal of this stage pass carries. */
+  distillSourceRun: string;
 }
 
 export function prepareImproveLoopEnv(args: ImproveLoopState): ImproveLoopEnv {
@@ -104,6 +106,7 @@ export function prepareImproveLoopEnv(args: ImproveLoopState): ImproveLoopEnv {
     budgetSignal: args.budgetSignal,
     skipDistillDueToRequirePlannedRefs: requirePlannedRefs && args.loopRefs.every((r) => distillOnlyRefSet.has(r.ref)),
     remainingBudgetMs: () => Math.max(0, args.budgetMs - (Date.now() - args.startMs)),
+    distillSourceRun: `distill-${Date.now()}`,
   };
 }
 
@@ -319,6 +322,7 @@ async function runLoopDistillPass(
       config: options.config,
       llmRunner: resolvedPlan.processes.distill.runner,
       ...(resolvedPlan.run ? { run: resolvedPlan.run } : {}),
+      sourceRun: env.distillSourceRun,
       signal: env.budgetSignal,
       eventsCtx: env.eventsCtx,
       ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),

@@ -5,10 +5,9 @@
 import { concurrentMap } from "../core/concurrent";
 import type { DeadUrl, DeadUrlCoverage } from "../core/improve-types";
 import { systemErrorCode } from "../core/system-error";
+import { urlsInText } from "../core/urls";
 
 export type { DeadUrl, DeadUrlCoverage };
-
-const URL_RE = /https?:\/\/[^\s"'<>)\]]+/g;
 
 /**
  * URLs are checked `URL_CHECK_CONCURRENCY` at a time via {@link concurrentMap}
@@ -80,9 +79,7 @@ export async function checkDeadUrls(
   _stashDir: string,
   entries: Array<{ ref: string; body: string }>,
 ): Promise<DeadUrlCheckResult> {
-  const urlsToCheck = entries.flatMap((entry) =>
-    (entry.body.match(URL_RE) ?? []).map((url) => ({ ref: entry.ref, url })),
-  );
+  const urlsToCheck = entries.flatMap((entry) => urlsInText(entry.body).map((url) => ({ ref: entry.ref, url })));
 
   const outcomes = await concurrentMap(
     urlsToCheck,

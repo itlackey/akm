@@ -733,7 +733,21 @@ async function chatCompletionAttemptOnce(
     }
     const content = (json.choices?.[0]?.message?.content ?? "").trim();
     const reasoning = (json.choices?.[0]?.message?.reasoning_content ?? "").trim();
-    const result = redactSensitiveText(content || reasoning, resolvedKey ? [resolvedKey] : []);
+    // A reply cut at the output limit, or with no content, is not an answer; the model's reasoning is never one.
+    const from = `from ${terminalFields.model} at ${shownEndpoint}`;
+    if (terminalFields.finishReason === "length")
+      throw new LlmCallError(
+        `reply cut at the output limit (finish_reason "length") ${from}`,
+        "parse_error",
+        response.status,
+      );
+    if (!content)
+      throw new LlmCallError(
+        `reply had no content${reasoning ? " (the model returned reasoning_content only)" : ""} ${from}`,
+        "parse_error",
+        response.status,
+      );
+    const result = redactSensitiveText(content, resolvedKey ? [resolvedKey] : []);
     emitLlmUsage({
       ...terminalFields,
       outcome: "success",

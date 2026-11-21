@@ -290,7 +290,7 @@ describe("loadConfig", () => {
     const warnings = captureWarnings(() => {
       expect(() => loadConfig()).not.toThrow();
     });
-    expect(warnings.some((w) => w.includes("stashes") && w.includes("retired"))).toBe(true);
+    expect(warnings.some((w) => w.includes("stashes") && w.includes("remove it from"))).toBe(true);
   });
 
   // Older than the 0.9.15 floor: 0.10 does not convert these, it refuses them
@@ -1129,7 +1129,7 @@ describe("0.9 config shape parsing", () => {
     const warnings = captureWarnings(() => {
       expect(() => loadConfig()).not.toThrow();
     });
-    expect(warnings.some((w) => w.includes("features") && w.includes("retired"))).toBe(true);
+    expect(warnings.some((w) => w.includes("features") && w.includes("remove it from"))).toBe(true);
   });
 });
 

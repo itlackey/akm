@@ -100,6 +100,7 @@ function makeEnv(overrides: Partial<ImproveLoopEnv> & { stashDir: string }): Imp
     } as unknown as ImproveLoopEnv["resolvedPlan"],
     skipDistillDueToRequirePlannedRefs: false,
     remainingBudgetMs: () => 60_000,
+    distillSourceRun: "distill-1",
     ...overrides,
   };
 }
@@ -387,6 +388,23 @@ describe("processImproveLoopRef — distill half", () => {
     expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
     expect(tally.actions[0]!.result).toMatchObject({ outcome: "skipped", skipReason: "lesson_exists" });
     expect(ledgerRow(stashDir, memoryRef, "distill")).toMatchObject({ outcome: "unchanged", detail: "lesson_exists" });
+  });
+
+  test("every distill call of the stage pass carries the stage's run token (B10-31)", async () => {
+    const { stashDir } = freshSandbox();
+    const tokens: Array<string | undefined> = [];
+    const env = distillOnlyEnv({
+      stashDir,
+      distillSourceRun: "distill-1700000000000",
+      distillFn: (args) => {
+        tokens.push(args.sourceRun);
+        return Promise.resolve(distillQueued(memoryRef, "lesson"));
+      },
+    });
+
+    await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(tokens).toEqual(["distill-1700000000000"]);
   });
 
   test("requirePlannedRefs guard skips distill-only refs", async () => {

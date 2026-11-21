@@ -46,6 +46,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isProcessAlive } from "../../../../src/core/common";
 import { saveConfig } from "../../../../src/core/config/config";
+import { getRunLogDir } from "../../../../src/core/paths";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
@@ -244,6 +245,14 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
       // field's multi-minute hang.
       expect(elapsedMs).toBeLessThan(20_000);
       expect(stderr).toContain("Still waiting for the first model response");
+      // The heartbeat is progress: the run log files it as info, not as a warning.
+      const logDir = getRunLogDir("improve");
+      const log = fs
+        .readdirSync(logDir)
+        .map((name) => fs.readFileSync(path.join(logDir, name), "utf8"))
+        .join("\n");
+      expect(log).toContain("[INFO] [improve] Still waiting for the first model response");
+      expect(log).not.toContain("[WARN] [improve] Still waiting for the first model response");
     } finally {
       child?.kill("SIGKILL");
       server.stop(true);

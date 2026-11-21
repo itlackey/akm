@@ -14,7 +14,7 @@ interface MigrationPlanResult {
   status: string;
   blockers?: string[];
   configFile?: { credentials?: string[]; notes?: string[] };
-  taskFiles?: { changed: number; skipped: number; blocked: number };
+  taskFiles?: { changed: number; skipped: number; blocked: number; files?: { filePath: string; status: string }[] };
   assetEngineKeys?: { changed: number; skipped: number; notes?: string[] };
   assetContentRefs?: {
     changed: number;
@@ -55,6 +55,7 @@ export function formatMigratePlain(result: unknown): string | null {
   if (plan.taskFiles) {
     const tasks = plan.taskFiles;
     lines.push(`    task files: ${tasks.changed} change, ${tasks.skipped} current, ${tasks.blocked} blocked`);
+    for (const file of tasks.files ?? []) if (file.status === "changed") lines.push(`      ${file.filePath}`);
   }
   if (plan.assetEngineKeys) {
     lines.push(

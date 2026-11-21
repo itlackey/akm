@@ -272,6 +272,45 @@ describe("task files: every version through one planner", () => {
 });
 
 describe("the migrator step over configured bundles", () => {
+  test("a file edited after it was planned is a conflict, not a changed file", () => {
+    const storage = withIsolatedAkmStorage();
+    resetConfigCache();
+    try {
+      const tasksDir = path.join(storage.stashDir, "tasks");
+      fs.mkdirSync(tasksDir, { recursive: true });
+      fs.writeFileSync(path.join(tasksDir, "two.yml"), V2);
+      fs.writeFileSync(path.join(tasksDir, "three.yml"), V3);
+      writeSandboxConfig({
+        defaultBundle: "primary",
+        bundles: {
+          primary: { path: storage.stashDir, writable: true, components: { main: { root: ".", adapter: "akm" } } },
+        },
+      });
+      const edited = "version: 2\nschedule: '@hourly'\ncommand: /bin/echo edited late\n";
+      const twoPath = path.join(tasksDir, "two.yml");
+      const read = fs.readFileSync.bind(fs);
+      let edits = 0;
+      // The user writes right after the apply step's first check of the file.
+      spyOn(fs, "readFileSync").mockImplementation(((target: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+        const bytes = (read as (...args: unknown[]) => unknown)(target, ...rest);
+        if (target === twoPath && new Error().stack?.includes("holds") && edits++ === 0)
+          fs.writeFileSync(twoPath, edited);
+        return bytes;
+      }) as typeof fs.readFileSync);
+      const applied = applyTaskFilesMigration();
+      mock.restore();
+
+      expect(applied.conflicts).toEqual([twoPath]);
+      expect(applied.taskFiles.changed).toBe(1);
+      expect(applied.taskFiles.files.filter((file) => file.status === "changed").map((file) => file.filePath)).toEqual([
+        path.join(tasksDir, "three.yml"),
+      ]);
+      expect(fs.readFileSync(twoPath, "utf8")).toBe(edited);
+    } finally {
+      storage.cleanup();
+    }
+  });
+
   test("status is read-only; apply rewrites every bundle's files under one backup dir and is then a no-op", () => {
     const storage = withIsolatedAkmStorage();
     resetConfigCache();
@@ -300,7 +339,7 @@ describe("the migrator step over configured bundles", () => {
       expect(applied).toMatchObject({
         status: "current",
         applied: 2,
-        taskFiles: { changed: 0, skipped: 2, blocked: 0 },
+        taskFiles: { changed: 2, skipped: 0, blocked: 0 },
       });
       const backupsRoot = path.join(getDataDir(), "backups", "tasks");
       expect(path.dirname(applied.backupPath as string)).toBe(backupsRoot);
