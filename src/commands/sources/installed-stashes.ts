@@ -34,6 +34,7 @@ import {
 } from "../../indexer/index-build";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import type { IndexOptions, IndexResponse } from "../../indexer/indexer";
+import { readSemanticSearchState, type SemanticSearchState } from "../../indexer/walk/index-context";
 import type { LockfileEntry } from "../../integrations/lockfile";
 import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
@@ -304,7 +305,11 @@ function managedCheckoutDir(managed: ManagedInstall): string | undefined {
   return repoDir && isWithin(repoDir, getRegistryCacheDir()) ? repoDir : undefined;
 }
 
-export async function akmRemove(input: { target: string; stashDir?: string; force?: boolean }): Promise<RemoveResponse> {
+export async function akmRemove(input: {
+  target: string;
+  stashDir?: string;
+  force?: boolean;
+}): Promise<RemoveResponse> {
   const target = input.target.trim();
   if (!target)
     throw new UsageError(
@@ -425,6 +430,16 @@ function readCurrentIndexSummary(): UpdateIndexSummary {
   }
 }
 
+/** A pass that ran reports its own verified status; otherwise the index's recorded state is the answer. */
+function semanticFields(
+  verification: IndexResponse["verification"] | undefined,
+  config: AkmConfig,
+): { semanticStatus: SemanticSearchState["status"]; semanticReason?: string } {
+  if (verification) return { semanticStatus: verification.semanticStatus };
+  const recorded = readSemanticSearchState(getDbPath(), config.semanticSearchMode);
+  return { semanticStatus: recorded.status, ...(recorded.reason ? { semanticReason: recorded.reason } : {}) };
+}
+
 /** Build a standard UpdateResponse summary block from a committed or unchanged index generation. */
 function buildUpdateResponse(
   stashDir: string,
@@ -458,13 +473,7 @@ function buildUpdateResponse(
           directoriesScanned: index.directoriesScanned,
           directoriesSkipped: index.directoriesSkipped,
           ...(index.scanComplete !== undefined ? { scanComplete: index.scanComplete } : {}),
-          // A real embedding pass (`akmIndex`/`runEmbeddingPass`) reports its own
-          // verified `semanticStatus`. When no pass ran this update (the
-          // no-op/nothing-configured fallback) the only two facts known without
-          // fabricating a verification are whether semantic search is off at all
-          // or, if not, that its state is simply unverified this run.
-          semanticStatus:
-            index.verification?.semanticStatus ?? (finalConfig.semanticSearchMode === "off" ? "disabled" : "pending"),
+          ...semanticFields(index.verification, finalConfig),
         },
   };
 }

@@ -13,13 +13,7 @@ import { getRegistryIndexCacheDir } from "../../core/paths";
 import { validateGitUrl } from "../../registry/resolve";
 import { withFreshnessCache } from "../freshness";
 import type { SyncOptions as ProviderSyncOptions, SourceProvider } from "../provider";
-import {
-  assertNoIgnoredPathOverwrite,
-  assertNoLocalWork,
-  cloneRepo,
-  inspectGitUpstream,
-  runGit,
-} from "./git-install";
+import { assertNoIgnoredPathOverwrite, assertNoLocalWork, cloneRepo, inspectGitUpstream, runGit } from "./git-install";
 import type { SourceLockData, SyncOptions } from "./install-types";
 import { sanitizeString } from "./provider-utils";
 

@@ -9,8 +9,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../../../src/core/config/config";
-import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import { readLockfile } from "../../../src/integrations/lockfile";
+import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import { runCliCapture } from "../../_helpers/cli";
 import { type GitDaemon, startGitDaemon } from "../../_helpers/git-daemon";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, withTTY } from "../../_helpers/sandbox";
@@ -75,7 +75,10 @@ function makeReadOnly(): void {
   );
   saveConfig({
     ...config,
-    bundles: { ...config.bundles, [BUNDLE]: { ...entry, writable: false, ...(entry.components ? { components } : {}) } },
+    bundles: {
+      ...config.bundles,
+      [BUNDLE]: { ...entry, writable: false, ...(entry.components ? { components } : {}) },
+    },
   });
 }
 

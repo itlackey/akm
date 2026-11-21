@@ -37,7 +37,18 @@ afterAll(() => {
 function commit(dir: string, name: string): void {
   fs.writeFileSync(path.join(dir, name), "x\n");
   spawnSync("git", ["-C", dir, "add", "."]);
-  spawnSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", `add ${name}`]);
+  spawnSync("git", [
+    "-C",
+    dir,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@example.com",
+    "commit",
+    "-q",
+    "-m",
+    `add ${name}`,
+  ]);
 }
 
 describe("assertNoLocalWork", () => {
@@ -68,7 +79,9 @@ describe("assertNoLocalWork", () => {
   test("names a modified tracked file", () => {
     const dir = makeRepo();
     fs.writeFileSync(path.join(dir, "tracked.md"), "b\n");
-    expect(message(dir)).toContain("Subject holds local work that would be lost; it has uncommitted changes: tracked.md.");
+    expect(message(dir)).toContain(
+      "Subject holds local work that would be lost; it has uncommitted changes: tracked.md.",
+    );
   });
 
   test("names an untracked file and caps the list", () => {
