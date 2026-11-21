@@ -73,7 +73,7 @@ describe("collectVersionDriftAdvisory (#950)", () => {
     expect(result.evidence?.error).toBe("TypeError");
   });
 
-  // The remedy requests the same channel health checked.
+  // A plain `akm upgrade` follows the channel the installed akm is on, so it is the remedy on both channels.
   test("a prerelease install checks the next channel; a stable install checks latest", async () => {
     const channels: Array<string | undefined> = [];
     const check: typeof import("../../../src/commands/sources/self-update").checkForUpdate = async (
@@ -87,7 +87,8 @@ describe("collectVersionDriftAdvisory (#950)", () => {
     const beta = await collectVersionDriftAdvisory(true, { cliVersion: "0.10.261117-beta.1", checkForUpdate: check });
     expect(beta.status).toBe("warn");
     expect(beta.message).toContain("0.10.261117-beta.2");
-    expect(beta.message).toContain("run 'akm upgrade --channel next'");
+    expect(beta.message).toContain("run 'akm upgrade'");
+    expect(beta.message).not.toContain("--channel");
     const stable = await collectVersionDriftAdvisory(true, { cliVersion: "0.10.261116", checkForUpdate: check });
     expect(stable.message).toContain("run 'akm upgrade'");
     expect(channels).toEqual(["next", "latest"]);

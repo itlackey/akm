@@ -713,6 +713,17 @@ esac`,
       });
       expect(text).toContain("run 'akm upgrade --channel next' to install");
     });
+
+    test("--check on a prerelease install says to run plain `akm upgrade`, which stays on next", () => {
+      const text = formatUpgradePlain({
+        currentVersion: "0.10.261130-beta.6",
+        latestVersion: "0.10.261130-beta.7",
+        updateAvailable: true,
+        channel: "next",
+        currentChannel: "next",
+      });
+      expect(text).toContain("run 'akm upgrade' to install");
+    });
   });
 
   describe("--check", () => {
