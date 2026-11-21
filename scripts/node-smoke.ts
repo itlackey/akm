@@ -125,6 +125,9 @@ const env: Record<string, string> = {
   CI: "1",
 };
 
+// Absolute: a step may replace PATH.
+const nodeExe = spawnSync(nodeBin, ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim();
+
 let stepNo = 0;
 let failures = 0;
 
@@ -140,13 +143,17 @@ interface StepOptions {
   allowExitCodes?: number[];
   /** Per-step timeout (ms). */
   timeoutMs?: number;
+  /** The script to run instead of the CLI entry. */
+  entry?: string;
+  /** The environment to run in instead of `env`. */
+  env?: Record<string, string>;
 }
 
 function step(label: string, args: string[], opts: StepOptions = {}): string {
   stepNo++;
   const tag = `[${stepNo}] ${label}`;
-  const res = spawnSync(nodeBin, [cliEntry, ...args], {
-    env,
+  const res = spawnSync(nodeExe, [opts.entry ?? cliEntry, ...args], {
+    env: opts.env ?? env,
     input: opts.stdin,
     encoding: "utf8",
     timeout: opts.timeoutMs ?? 120_000,
@@ -211,26 +218,13 @@ try {
   // getDirname / package.json resolution via the boundary + text-import hook.
   step("version", ["--version"], { expect: "." });
   // The installed launcher (`dist/akm`) with no Bun on PATH runs the CLI on Node, in its own process.
-  {
-    stepNo++;
-    const version = (JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as { version: string })
-      .version;
-    const noBunPath = path.join(root, "no-bun-path");
-    mkdirSync(noBunPath, { recursive: true });
-    const node = spawnSync(nodeBin, ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim();
-    const res = spawnSync(node, [path.join(repoRoot, "dist", "akm"), "--version"], {
-      env: { ...env, PATH: noBunPath },
-      encoding: "utf8",
-      timeout: 120_000,
-    });
-    const tag = `[${stepNo}] launcher --version, no Bun on PATH`;
-    if (res.status === 0 && (res.stdout ?? "").includes(version)) console.log(`  PASS ${tag}`);
-    else {
-      failures++;
-      console.error(`  FAIL ${tag}: exit ${res.status}, expected 0 and ${version}`);
-      console.error(`       stdout: ${(res.stdout ?? "").trim()}\n       stderr: ${(res.stderr ?? "").trim()}`);
-    }
-  }
+  const noBunPath = path.join(root, "no-bun-path");
+  mkdirSync(noBunPath, { recursive: true });
+  step("launcher --version, no Bun on PATH", ["--version"], {
+    entry: path.join(repoRoot, "dist", "akm"),
+    env: { ...env, PATH: noBunPath },
+    expect: (JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as { version: string }).version,
+  });
   // better-sqlite3 open + config write.
   step("init", ["bundle", "create", "--dir", stash], { expect: '"created": true' });
   // SQLite write path (was broken by the better-sqlite3 `readonly:undefined` bug).
