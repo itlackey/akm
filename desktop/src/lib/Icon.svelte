@@ -22,8 +22,6 @@
       | "more"
       | "refresh"
       | "plus"
-      | "minus"
-      | "panel-right"
       | "close"
       | "check"
       | "external"
@@ -47,8 +45,6 @@
     more: "M5 12h.01M12 12h.01M19 12h.01",
     refresh: "M20 8a8 8 0 1 0 0 8M20 3v5h-5",
     plus: "M12 5v14M5 12h14",
-    minus: "M5 12h14",
-    "panel-right": "M3 5h18v14H3ZM15 5v14",
     alert: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M12 8v5M12 16h.01",
     warning: "m10.3 4-8 14a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3l-8-14a2 2 0 0 0-3.4 0M12 9v4M12 17h.01",
     close: "m6 6 12 12M6 18 18 6",

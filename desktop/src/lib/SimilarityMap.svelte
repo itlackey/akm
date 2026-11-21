@@ -4,11 +4,6 @@
   file, You can obtain one at https://mozilla.org/MPL/2.0/.
 -->
 
-<script module lang="ts">
-  /** Whether the maps' keys are open: closed on one map, closed on the next, until the app closes. */
-  const key = $state({ open: true });
-</script>
-
 <script lang="ts">
   // Every asset in scope as a point in 3D (three.js), placed by akm with groups alike in meaning near each other,
   // each group named over its middle by a label that stays the same size on screen. Drag turns it, right-drag or
@@ -19,7 +14,6 @@
   // other keys turn and zoom the view. `place` is where each asset is drawn: when it changes (2D to 3D or back) every mark
   // moves there over 0.6 seconds, or at once under reduced motion. `flat` draws the points in one plane, which cannot
   // be turned.
-  import Icon from "./Icon.svelte";
   import { LEVEL_STYLES } from "./link-levels";
   import { untrack, type Snippet } from "svelte";
   import { prefersReducedMotion } from "svelte/motion";
@@ -92,11 +86,6 @@
   const LEAST_REACH = 10;
   /** The drawn size of a point, in world units: the lit ones are larger. */
   const SIZE = { faded: 8, lit: 12 };
-  /** How long, in seconds, a point new to the map takes to grow in. */
-  const ARRIVE = 0.45;
-  /** The renderer's clock, in seconds, which the points' shader reads; and when each asset arrived on the map. */
-  const clock = { value: 0 };
-  const arrived = new Map<number, number>();
   /** How far one key press turns the view, in radians, and how much closer or farther it zooms. */
   const TURN = Math.PI / 12;
   const ZOOM = 0.8;
@@ -141,9 +130,7 @@
       const { camera, controls } = world;
       const reach = Math.tan((camera.fov * Math.PI) / 360);
       const away =
-        // In the plane nothing is behind anything, so the frame leaves room for the tools over the map's edges.
-        (flat ? 1.25 : 1.12) *
-          Math.max((high[1]! - low[1]!) / 2 / reach, (high[0]! - low[0]!) / 2 / (reach * camera.aspect)) +
+        1.12 * Math.max((high[1]! - low[1]!) / 2 / reach, (high[0]! - low[0]!) / 2 / (reach * camera.aspect)) +
         (high[2]! - low[2]!) / 2;
       controls.target.set((low[0]! + high[0]!) / 2, (low[1]! + high[1]!) / 2, (low[2]! + high[2]!) / 2);
       camera.position.copy(controls.target).add(new THREE.Vector3(0, flat ? 0 : away * 0.18, away));
@@ -344,13 +331,13 @@
         host.prepend(renderer.domElement);
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(...rgb("--bg"));
-        const camera = new THREE.PerspectiveCamera(50, host.clientWidth / host.clientHeight, 1, 20000);
+        const camera = new THREE.PerspectiveCamera(50, host.clientWidth / host.clientHeight, 1, 5000);
         camera.position.set(...HOME.position);
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.zoomToCursor = true;
         controls.minDistance = 15;
-        controls.maxDistance = 8000;
+        controls.maxDistance = 1500;
         // A round dot for each point, and a ring for the marks drawn over it.
         const sprite = (draw: (ctx: CanvasRenderingContext2D) => void) => {
           const canvas = document.createElement("canvas");
@@ -381,14 +368,8 @@
         // Each point's size is multiplied by its own `grow`, which the stock points shader has no place for.
         // biome-ignore lint/suspicious/noExplicitAny: see above.
         const sized = (material: any) => {
-          material.onBeforeCompile = (shader: { vertexShader: string; uniforms: Record<string, unknown> }) => {
-            // A point new to the map grows in over `ARRIVE` seconds, a little past its size and back: `born` is when it
-            // arrived, on the clock `clock` holds.
-            shader.uniforms.clock = clock;
-            shader.vertexShader = `attribute float grow;\nattribute float born;\nuniform float clock;\n${shader.vertexShader.replace(
-              "gl_PointSize = size;",
-              `float age = clamp((clock - born) / ${ARRIVE.toFixed(2)}, 0.0, 1.0) - 1.0;\ngl_PointSize = size * grow * (1.0 + 2.70158 * age * age * age + 1.70158 * age * age);`,
-            )}`;
+          material.onBeforeCompile = (shader: { vertexShader: string }) => {
+            shader.vertexShader = `attribute float grow;\n${shader.vertexShader.replace("gl_PointSize = size;", "gl_PointSize = size * grow;")}`;
           };
           return material;
         };
@@ -548,15 +529,6 @@
           }
           return best < 0 ? null : { k: best, i: world.order[best] as number };
         };
-        // A group's name lets the pointer through to the map, so a drag can start on it; a click that lands on a name
-        // and on no point chooses its group.
-        const nameAt = (clientX: number, clientY: number) =>
-          groups.find((g) => {
-            const el = nameEls[g.key];
-            if (!el || el.style.visibility === "hidden") return false;
-            const box = el.getBoundingClientRect();
-            return clientX >= box.left && clientX <= box.right && clientY >= box.top && clientY <= box.bottom;
-          })?.key;
         let down = { x: 0, y: 0 };
         renderer.domElement.addEventListener(
           "pointerdown",
@@ -566,10 +538,6 @@
           if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return; // a drag, not a click
           const h = hit(e.clientX, e.clientY);
           if (h) onPick?.(h.i);
-          else if (onGroup) {
-            const key = nameAt(e.clientX, e.clientY);
-            if (key) onGroup(key);
-          }
         });
         // Hover is worked out once a frame at most: a library of thousands of points is searched on each look.
         let moved: PointerEvent | null = null;
@@ -581,7 +549,7 @@
           const h = hit(e.clientX, e.clientY);
           const box = host!.getBoundingClientRect();
           tip = h ? { x: e.clientX - box.left, y: e.clientY - box.top + 12, i: h.i } : null;
-          renderer.domElement.style.cursor = h || (onGroup && nameAt(e.clientX, e.clientY)) ? "pointer" : "grab";
+          renderer.domElement.style.cursor = h ? "pointer" : "grab";
           for (const mark of [under, world.underHalo]) {
             mark.geometry.dispose();
             mark.geometry = placesOf(h ? [h.i] : []);
@@ -611,7 +579,6 @@
         const at = new THREE.Vector3();
         const loop = () => {
           controls.update();
-          clock.value = performance.now() / 1000;
           renderer.render(scene, camera);
           // Each group's name stays the same size on screen, over its middle. The chosen group and those joined to it
           // are placed first, then the largest; a name that would overlap one already placed, or is behind the
@@ -647,11 +614,8 @@
             const el = nameEls[g.key];
             if (!el) continue;
             at.set(...(centres.get(g.key) ?? [0, 0, 0])).project(camera);
-            const middle = ((at.x + 1) / 2) * w;
+            const x = ((at.x + 1) / 2) * w;
             const y = ((1 - at.y) / 2) * h;
-            // A name whose group is in view is kept whole inside the map's edges.
-            const half = el.offsetWidth / 2 + 8;
-            const x = middle >= 0 && middle <= w ? Math.min(Math.max(middle, half), Math.max(half, w - half)) : middle;
             // A name that would lie over one already placed is tried just above and below its group's middle before
             // it is hidden, so a group goes unnamed only where there is no room at all.
             const height = el.offsetHeight + 4;
@@ -714,21 +678,8 @@
       for (let d = 0; d < 3; d++) colour[k * 3 + d] = c[d]! * (1 - f) + bg[d]! * f;
     });
     const grow = (list: number[]) => new THREE.BufferAttribute(Float32Array.from(list, growOf), 1);
-    // An asset added to a map that is already drawn (a replay reaching its first use) arrives now; the map's first
-    // points, and every point with reduced motion, are simply there.
-    const moment = performance.now() / 1000;
-    const shown = new Set(order);
-    for (const i of arrived.keys()) if (!shown.has(i)) arrived.delete(i);
-    for (const i of order)
-      if (!arrived.has(i)) arrived.set(i, world.order.length && !prefersReducedMotion.current ? moment : -1e6);
-    const born = (list: number[]) =>
-      new THREE.BufferAttribute(
-        Float32Array.from(list, (i) => arrived.get(i)!),
-        1,
-      );
     const glow = placesOf(shining);
     glow.setAttribute("grow", grow(shining));
-    glow.setAttribute("born", born(shining));
     glow.setAttribute(
       "color",
       new THREE.BufferAttribute(Float32Array.from(shining.flatMap((i) => rgb(colourOf(i)))), 3),
@@ -744,7 +695,6 @@
         1,
       ),
     );
-    geometry.setAttribute("born", born(order));
     geometry.setAttribute("color", new THREE.BufferAttribute(colour, 3));
     world.points.geometry.dispose();
     world.points.geometry = geometry;
@@ -875,33 +825,31 @@
         class="group-name"
         class:chosen={selected === g.key}
         bind:this={nameEls[g.key]}
+        style={`font-size:${13 + 4 * Math.sqrt(g.members.length / largest)}px`}
         onclick={() => onGroup(g.key)}>{@render name(g)}</button
-      >{:else}<span class="group-name" bind:this={nameEls[g.key]}>{@render name(g)}</span>{/if}
+      >{:else}<span
+        class="group-name"
+        bind:this={nameEls[g.key]}
+        style={`font-size:${13 + 4 * Math.sqrt(g.members.length / largest)}px`}>{@render name(g)}</span
+      >{/if}
   {/each}
-  {#if sizeSteps.length || legend}<details class="stage-legend" bind:open={key.open}>
-      <summary>Key</summary>
-      <div class="key-body">
-        {#if sizeSteps.length}<div class="scale size-key">
-            <span class="cap">Size: {size!.label}</span>
-            <ol>
-              {#each sizeSteps as step}<li>
-                  <i
-                    style={`inline-size:${7 * grown(step / size!.largest)}px;block-size:${7 * grown(step / size!.largest)}px`}
-                  ></i>{step.toLocaleString()}
-                </li>{/each}
-            </ol>
-          </div>{/if}
-        {@render legend?.()}
-      </div>
-    </details>{/if}
+  {#if sizeSteps.length || legend}<div class="stage-legend">
+      {#if sizeSteps.length}<div class="scale size-key">
+          <span class="cap">Size: {size!.label}</span>
+          <ol>
+            {#each sizeSteps as step}<li>
+                <i
+                  style={`inline-size:${7 * grown(step / size!.largest)}px;block-size:${7 * grown(step / size!.largest)}px`}
+                ></i>{step.toLocaleString()}
+              </li>{/each}
+          </ol>
+        </div>{/if}
+      {@render legend?.()}
+    </div>{/if}
   <div class="view-buttons">
-    <button title="Zoom out (−)" aria-label="Zoom out" onclick={() => world && orbit(0, 0, 1 / ZOOM)}
-      ><Icon name="minus" size={14} /></button
-    >
-    <button title="Zoom in (+)" aria-label="Zoom in" onclick={() => world && orbit(0, 0, ZOOM)}
-      ><Icon name="plus" size={14} /></button
-    >
-    <button class="reset" title="The view back to where the map opens" onclick={reset}>Reset view</button>
+    <button title="Zoom in (+)" aria-label="Zoom in" onclick={() => world && orbit(0, 0, ZOOM)}>+</button>
+    <button title="Zoom out (−)" aria-label="Zoom out" onclick={() => world && orbit(0, 0, 1 / ZOOM)}>−</button>
+    <button title="The view back to where the map opens" onclick={reset}>Reset view</button>
   </div>
   {#snippet named(i: number)}<span class="ref">{o.ref[i]}</span>{#if describe?.(i)}<span class="value"
         >{` · ${describe(i)}`}</span
@@ -935,53 +883,29 @@
     inset-block-end: 8px;
     inset-inline-start: 8px;
     z-index: 2;
-    max-inline-size: min(360px, calc(100% - 168px));
+    max-inline-size: min(34rem, calc(100% - 16px));
     pointer-events: none;
-    font-size: var(--text-xs);
-    line-height: 18px;
     background: color-mix(in srgb, var(--surface) 94%, transparent);
     border: 1px solid var(--border);
     border-radius: 6px;
+    empty-cells: hide;
   }
-  .stage-legend[open] {
-    inline-size: max-content;
-  }
-  /* The key folds to its name, to give its corner back to the map. */
-  .stage-legend summary {
+  .scale {
     display: flex;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: 2px 12px;
     align-items: center;
-    block-size: 28px;
-    min-block-size: 0;
-    margin: 0;
-    padding: 0 10px;
-    font-weight: 600;
-    cursor: pointer;
-    pointer-events: auto;
-  }
-  .stage-legend[open] > summary {
-    border-block-end: 0;
-  }
-  .key-body {
-    display: grid;
-    gap: 6px;
-    margin: 0;
-    padding: 0 10px 8px;
-    line-height: 20px;
-  }
-  .stage-legend summary::before {
-    flex: none;
+    padding: 6px 10px;
+    font-size: var(--text-xs);
   }
   .scale .cap {
-    display: block;
-    block-size: 20px;
     font-weight: 600;
   }
   .scale ol {
     display: flex;
+    flex-wrap: wrap;
     gap: 2px 12px;
     align-items: center;
-    block-size: 20px;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -996,48 +920,28 @@
     border-radius: 50%;
     background: var(--muted);
   }
-  /* Zoom and reset are one joined group in the map's other bottom corner. */
   .view-buttons {
     position: absolute;
     inset-block-end: 8px;
     inset-inline-end: 8px;
     z-index: 2;
     display: flex;
+    gap: 4px;
   }
   .view-buttons button {
-    display: grid;
-    place-items: center;
-    inline-size: 28px;
-    block-size: 28px;
-    min-block-size: 28px;
-    padding: 0;
+    min-inline-size: 32px;
+    block-size: 32px;
+    padding: 0 8px;
     font: inherit;
-    font-size: var(--text-s);
+    font-size: var(--text-xs);
     color: var(--text);
     background: var(--surface);
     border: 1px solid var(--border-strong);
-    border-radius: 0;
+    border-radius: 6px;
     cursor: pointer;
-  }
-  .view-buttons button + button {
-    margin-inline-start: -1px;
-  }
-  .view-buttons button:first-child {
-    border-start-start-radius: 4px;
-    border-end-start-radius: 4px;
-  }
-  .view-buttons .reset {
-    inline-size: auto;
-    padding: 0 10px;
-    border-start-end-radius: 4px;
-    border-end-end-radius: 4px;
   }
   .view-buttons button:hover {
     background: var(--surface-2);
-  }
-  .view-buttons button:focus-visible {
-    z-index: 1;
-    box-shadow: var(--focus-halo);
   }
   .pick-label {
     position: absolute;
@@ -1062,45 +966,28 @@
     font-weight: 400;
     color: var(--muted);
   }
-  /* A group's name is plain text over its points, haloed in the background colour so it reads without a box that
-     would hide them. The pointer passes through it to the map; the keyboard still reaches it. */
   .group-name {
     position: absolute;
     inset-block-start: 0;
     inset-inline-start: 0;
     display: flex;
-    gap: 5px;
+    gap: 6px;
     align-items: baseline;
-    padding: 0 2px;
-    font: inherit;
-    font-size: 12px;
+    padding: 2px 8px;
     font-weight: 600;
     line-height: 1.3;
     white-space: nowrap;
     color: var(--text);
-    background: none;
-    border: 0;
-    border-radius: 3px;
-    -webkit-text-stroke: 3px var(--bg);
-    paint-order: stroke fill;
-    font-variant-numeric: tabular-nums;
-    pointer-events: none;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
     will-change: transform;
     transition: opacity 0.2s;
   }
-  /* A name fades in when its group first has something to show. */
-  @media (prefers-reduced-motion: no-preference) {
-    .group-name > :global(*) {
-      animation: name-in 0.45s ease-out;
-    }
-  }
-  @keyframes name-in {
-    from {
-      opacity: 0;
-    }
-  }
   .group-name span {
     font-weight: 400;
+    font-size: 0.85em;
     color: var(--muted);
   }
   .group-name .note {
@@ -1110,15 +997,16 @@
     content: "· ";
     color: var(--muted);
   }
-  .group-name.chosen {
-    text-decoration: underline;
-    text-decoration-color: var(--map-highlight);
-    text-decoration-thickness: 2px;
-    text-underline-offset: 3px;
+  span.group-name {
+    cursor: default;
   }
-  .group-name:focus-visible {
-    outline: 2px solid var(--map-highlight);
-    outline-offset: 1px;
+  button.group-name:hover,
+  .group-name.chosen {
+    border-color: var(--map-highlight);
+    background: var(--surface);
+  }
+  .group-name.chosen {
+    box-shadow: 0 0 0 1px var(--map-highlight);
   }
   .tip {
     position: absolute;

@@ -372,14 +372,6 @@ export async function projectsAndConnections(fixture) {
  * Open the app the way the launcher does (the one-time session URL sets the cookie), then optionally go to a route.
  * `go` navigates inside the running app, so drafts and in-memory state survive, as a click on a link would.
  */
-/** Tick or untick one of the library map's "Show" filters, opening its menu for the click. */
-export async function pick(page, name) {
-  const menu = page.locator("details.show");
-  await menu.evaluate((el) => (el.open = true));
-  await menu.locator("label", { hasText: name }).locator("input").click();
-  await menu.evaluate((el) => (el.open = false));
-}
-
 export async function open(page, server, route) {
   await page.goto(server.url);
   if (route && route !== "/") await page.goto(server.origin + route);

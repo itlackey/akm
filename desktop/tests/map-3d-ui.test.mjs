@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect } from "@playwright/test";
-import { go, launchFixture, open, pick } from "./support.mjs";
+import { go, launchFixture, open } from "./support.mjs";
 
 // The 3D library map: choosing a point, and what a choice shows.
 // Ten assets in two groups by meaning, joined in a line (0-1-2-3-4-5-6-7) with 8 and 9 apart: three levels from 0.
@@ -202,7 +202,7 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
       modifiedAt: new Array(N).fill(days(10)),
     },
   };
-  const filters = (page) => page.locator(".show-menu");
+  const filters = (page) => page.getByRole("group", { name: "Show on the map" });
   const side = (page) => page.getByRole("complementary", { name: "Figures" });
   const drawing = (page, name) =>
     page.getByRole("group", { name: "Drawing" }).getByRole("button", { name, exact: true });
@@ -232,14 +232,14 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
     const { page, errors } = await fresh(used);
     await ready(page);
     // Contents opens with no filter: the groups, and a filter per asset type and for what nothing links to.
-    assert.deepEqual(await filters(page).locator("label").allTextContents(), [
+    assert.deepEqual(await filters(page).getByRole("button").allTextContents(), [
       "Knowledge10",
       "Not linked to anything2",
     ]);
-    await expect(filters(page).locator("label:has(input:checked)")).toHaveCount(0);
+    await expect(filters(page).getByRole("button", { pressed: true })).toHaveCount(0);
     await expect(side(page).getByRole("heading", { level: 3 })).toHaveText("Groups by meaning");
     await expect(side(page).locator(".rows li")).toHaveCount(2);
-    await pick(page, "Not linked to anything");
+    await filters(page).getByRole("button", { name: "Not linked to anything" }).click();
     await expect(side(page).locator(".read-row")).toHaveText([
       "knowledge/chain/n83 reads",
       "knowledge/chain/n93 reads",
@@ -251,18 +251,18 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
     await expect(where.locator("li")).toHaveText([/2 of 5$/]);
     // Problems opens on the outdated assets agents are still given; a filter akm has no figures for is not offered.
     await page.getByRole("tab", { name: "Problems" }).click();
-    assert.deepEqual(await filters(page).locator("label").allTextContents(), [
+    assert.deepEqual(await filters(page).getByRole("button").allTextContents(), [
       "Outdated, still read1",
       "Disliked0",
       "Outdated, unread0",
     ]);
-    await expect(filters(page).locator("label:has(input:checked)")).toHaveText("Outdated, still read1");
+    await expect(filters(page).getByRole("button", { pressed: true })).toHaveText("Outdated, still read1");
     await expect(side(page).locator(".read-row")).toHaveText(["knowledge/chain/n0superseded · 3 reads"]);
     await axe(page);
     // Use opens on what there is to act on: nothing is unread here, so the most read.
     await page.getByRole("tab", { name: "Use" }).click();
-    await expect(filters(page).locator("label:has(input:checked)")).toHaveText("Most read10");
-    await expect(filters(page).locator("label", { hasText: /^Not read, untouched/ }).locator("input")).toBeDisabled();
+    await expect(filters(page).getByRole("button", { pressed: true })).toHaveText("Most read10");
+    await expect(filters(page).getByRole("button", { name: /^Not read, untouched/ })).toBeDisabled();
     assert.deepEqual(errors, []);
     await page.close();
   });
@@ -276,9 +276,9 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
     });
     await ready(page);
     await page.getByRole("tab", { name: "Use" }).click();
-    await expect(filters(page).locator("label")).toHaveCount(0);
+    await expect(filters(page).getByRole("button")).toHaveCount(0);
     await page.getByRole("tab", { name: "Problems" }).click();
-    assert.deepEqual(await filters(page).locator("label").allTextContents(), ["Outdated1"]);
+    assert.deepEqual(await filters(page).getByRole("button").allTextContents(), ["Outdated1"]);
     assert.deepEqual(errors, []);
     await page.close();
   });
@@ -291,12 +291,12 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
       await side(page).getByRole("button").first().click();
       await expect(side(page).getByRole("heading", { level: 2 })).toBeVisible();
       await expect(side(page)).toContainText("Group by meaning · 5 assets");
-      const scope = page.getByRole("button", { name: /^In / });
+      const scope = filters(page).getByRole("button", { name: /^In / });
       await expect(scope).toBeVisible();
-      await expect(filters(page).locator("label", { hasText: "Knowledge" })).toHaveText("Knowledge5");
+      await expect(filters(page).getByRole("button", { name: "Knowledge" })).toHaveText("Knowledge5");
       await scope.click();
       await expect(scope).toHaveCount(0);
-      await expect(filters(page).locator("label", { hasText: "Knowledge" })).toHaveText("Knowledge10");
+      await expect(filters(page).getByRole("button", { name: "Knowledge" })).toHaveText("Knowledge10");
       // An asset: choosing it leaves the filters' scope alone and replaces the list with the asset.
       await page.getByRole("tab", { name: "Problems" }).click();
       await page.locator(".stage-3d").focus();
@@ -413,14 +413,14 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
     await ready(page);
     await page.getByRole("tab", { name: "Use" }).click();
     await drawing(page, "3D").click();
-    await expect(filters(page).locator("label:has(input:checked)")).toHaveText("Most read10");
+    await expect(filters(page).getByRole("button", { pressed: true })).toHaveText("Most read10");
     await side(page).locator(".read-row a").first().click();
     await expect(page).toHaveURL(/\/library\/search\?ref=/);
     await page.goBack();
     await expect(page.locator(".stage-3d canvas")).toBeVisible();
     await expect(page.getByRole("tab", { name: "Use" })).toHaveAttribute("aria-selected", "true");
     await expect(drawing(page, "3D")).toHaveAttribute("aria-pressed", "true");
-    await expect(filters(page).locator("label:has(input:checked)")).toHaveText("Most read10");
+    await expect(filters(page).getByRole("button", { pressed: true })).toHaveText("Most read10");
     assert.deepEqual(errors, []);
     await page.close();
   });
@@ -498,7 +498,7 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
       await expect(replay.locator(".stage-3d .group-name")).toHaveCount(0);
       await seek(1);
       // Choosing the group lists its events so far, each a link to its asset; closing brings the lists back.
-      await replay.locator(".stage-3d .group-name").press("Enter");
+      await replay.locator(".stage-3d .group-name").click();
       const chosen = replay.locator(".replay-side");
       await expect(chosen.getByRole("heading", { level: 2 })).toBeVisible();
       await expect(chosen).toContainText("Group by meaning · 5 assets · 2 events so far");
@@ -509,7 +509,7 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
       await drawing.getByRole("button", { name: "3D" }).click();
       // The key names every mark, and what has no place is counted, not dropped.
       const key = replay.getByRole("list", { name: "Key to the 3D map" });
-      for (const name of ["Used, by type", "Not used yet", "Ring = current event", "Read", "Search result"])
+      for (const name of ["Used so far", "Not used yet", "Read, just now", "Returned by a search, just now"])
         await expect(key).toContainText(name);
       await expect(replay).toContainText("1 event so far touched assets with no place on this map");
       await expect(replay).toContainText("1 event so far touched assets the index no longer lists");
