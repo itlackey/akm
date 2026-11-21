@@ -9,6 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -18,6 +19,7 @@ import { collectWorkflowFilesAdvisory } from "../../../src/commands/health/workf
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git-provider";
 import { checkTaskV5 } from "../../../src/tasks/v5/check";
+import { harnessCalls, promptOf, writeFakeHarness } from "../../_helpers/engine-stubs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -169,6 +171,57 @@ describe("a prose workflow", () => {
     expect(task.steps[1].prompt).toBe(
       `Write the report from the numbers.\n\n${inputs}\n\n## Declared inputs\n### steps.collect.output\n\${collect}`,
     );
+  });
+
+  test("the converted task runs: a command and an agent step read a file in the bundle, and the agent gets the command's output", async () => {
+    const bin = writeFakeHarness(storage.root, "fake-codex", ["the report"]);
+    writeSandboxConfig({ harnesses: { fake: { platform: "codex", bin } } });
+    resetConfigCache();
+    put("notes/in.txt", "numbers from the bundle");
+    const file = workflow(
+      "reader",
+      [
+        "---",
+        "defaults: { harness: fake }",
+        "steps:",
+        "  - id: read",
+        "    unit:",
+        "      exec: { command: [cat, notes/in.txt] }",
+        "  - id: ask",
+        "    inputs: [steps.read.output]",
+        "---",
+        "",
+        "## read",
+        "",
+        "Read the numbers.",
+        "",
+        "## ask",
+        "",
+        "Write the report from the numbers.",
+        "",
+      ].join("\n"),
+    );
+    expect((await convert(file)).file.status).toBe("converted");
+
+    const run = spawnSync(
+      "bun",
+      [path.resolve(import.meta.dir, "../../../src/cli.ts"), "run", "tasks/reader", "--format", "json"],
+      {
+        encoding: "utf8",
+        env: { ...process.env, BUN_TEST: undefined },
+        timeout: 60_000,
+      },
+    );
+    expect(run.status, run.stderr).toBe(0);
+    const result = JSON.parse(run.stdout).result;
+    expect(String(result.result).trim()).toBe("the report");
+    expect(result.steps.map((step: { name: string; status: string }) => [step.name, step.status])).toEqual([
+      ["read", "completed"],
+      ["ask", "completed"],
+    ]);
+    const call = harnessCalls(bin)[0];
+    expect(promptOf(call)).toContain("numbers from the bundle");
+    expect(fs.realpathSync(call?.cwd ?? "")).toBe(fs.realpathSync(storage.stashDir));
   });
 
   test("a preview converts the same file an apply does and writes nothing", async () => {
@@ -346,6 +399,7 @@ describe("a workflow that cannot convert", () => {
     expect(file).toMatchObject({ status: "blocked", reason: "version-5-check-failed" });
     expect(file.detail).toContain("--env");
     expect(file.detail).not.toContain("akm-migrate-v5-");
+    expect(file.detail).toContain(taskFile("bad-input"));
     expect(file.guidance).toContain("akm doctor explain tasks/bad-input");
     expect(fs.existsSync(taskFile("bad-input"))).toBe(false);
   });
