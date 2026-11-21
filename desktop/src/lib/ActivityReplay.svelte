@@ -17,7 +17,18 @@
   import { onDestroy } from "svelte";
   import { api } from "./client";
   import { FAMILIES } from "./graph-model";
-  import { buildOverview, groupsOf, mindMap, type Overview, type OverviewPayload } from "./library-overview";
+  import DepthControls from "./DepthControls.svelte";
+  import {
+    buildOverview,
+    depthText,
+    groupsOf,
+    type Lens,
+    lensFor,
+    mindMap,
+    type Overview,
+    type OverviewPayload,
+    placeBy,
+  } from "./library-overview";
   import { searchHref } from "./library-model";
   import MindMap from "./MindMap.svelte";
   import SimilarityMap from "./SimilarityMap.svelte";
@@ -129,6 +140,13 @@
   // ---- The 3D map: every asset with a group by meaning is a point; used so far in full colour, the rest faint ----
   const everyAsset = $derived(o ? o.ref.map((_, i) => i) : []);
   const groups = $derived(o ? groupsOf(o, everyAsset) : []);
+  /** What depth shows: akm's own place until a lens is chosen, as on the library map. */
+  let cloud = $state<ReturnType<typeof SimilarityMap>>();
+  let chosenLens = $state<Lens["id"] | null>(null);
+  let flip = $state(false);
+  let flat = $state(false);
+  const lens = $derived(o ? lensFor(o, chosenLens, "meaning") : null);
+  const place = $derived(o && lens ? placeBy(o, lens, flip, flat) : new Float32Array(0));
   /** The type colour of an asset: one of the map's eight families. */
   const colourOf = (i: number) => `--map-${o!.family[i]! + 1}`;
   /** The assets used so far, the same set while no new asset is used, so the points are redrawn only when one is. */
@@ -273,7 +291,7 @@
     <div class="drawing">
       <span class="muted">Map</span>
       <div class="seg" role="group" aria-label="Map drawing">
-        {#each [["2d", "2D"], ["3d", "3D"]] as const as [id, name]}<button
+        {#each [["2d", "Tags"], ["3d", "Points"]] as const as [id, name]}<button
             class="btn-quiet"
             aria-pressed={depth === id}
             onclick={() => setDepth(id)}>{name}</button
@@ -361,14 +379,32 @@
     <div class="replay-body">
       <div class="replay-map">
         {#if depth === "3d"}<h3>Where the events landed, by meaning</h3>
-          {#if groups.length}<SimilarityMap
+          {#if groups.length && lens}<DepthControls
               {o}
+              {lens}
+              flip={flip && lens.bands.length > 0}
+              {flat}
+              onLens={(id) => {
+                chosenLens = id;
+                flip = false;
+              }}
+              onFlip={() => (flip = !flip)}
+              onFlat={() => (flat = !flat)}
+              onFront={() => cloud?.faceFront()}
+            />
+            <SimilarityMap
+              bind:this={cloud}
+              {o}
+              {place}
+              {flat}
+              depthNote={depthText(lens, flip, flat)}
+              describe={(i) => `${FAMILIES[o!.family[i]!]!.label}${lit.has(i) ? ", used so far" : ""}`}
               scope={everyAsset}
               {groups}
               {colourOf}
               {lit}
               emphasis={pulses}
-              label="The library's assets as points in 3D, alike assets close together in groups by meaning. An asset used so far is in its type's colour, the rest are faint, and an asset an event has just touched is ringed. The log beside it lists the same events."
+              label={`The library's assets as points in 3D, in groups by meaning, groups alike in meaning near each other. An asset used so far is in its type's colour, the rest are faint, and an asset an event has just touched is ringed. ${depthText(lens, flip, flat)} The log beside it lists the same events.`}
             >
               {#snippet legend()}
                 <ul class="key" aria-label="Key to the 3D map">
@@ -384,8 +420,11 @@
               {/snippet}
             </SimilarityMap>
             <p class="muted small">
-              Each point is an asset, coloured by its type; alike assets sit close. An asset is ringed for a moment when
-              an event reads it, a search returns it or it is given feedback.
+              Each point is an asset, coloured by its type. Groups alike in meaning sit near each other; position inside
+              a group is approximate. An asset is ringed for a moment when an event reads it, a search returns it or it
+              is given feedback. {flat ? "Drag to move (turning is off while flattened)" : "Drag to turn"}, scroll to
+              zoom; with the map focused, {flat ? "" : "the arrow keys turn the view, "}+ and − zoom and 0 faces the
+              front.
             </p>
             {#if unplaced && (unplaced.notOnMap || unplaced.notListed)}<p class="muted small" role="status">
                 {#if unplaced.notOnMap}{unplaced.notOnMap.toLocaleString()}
@@ -396,7 +435,7 @@
               </p>{/if}{:else}<p class="notice">
               No stored embeddings, so assets cannot be placed by meaning and the 3D map cannot be drawn: {steps
                 .filter((s) => s.t <= clock && s.kind !== "hit" && s.ref)
-                .length.toLocaleString()} events so far touched assets. Build the index with embeddings, or use 2D.
+                .length.toLocaleString()} events so far touched assets. Build the index with embeddings, or use Tags.
             </p>{/if}
         {:else}
           <h3>Where the events landed, by type and tag</h3>

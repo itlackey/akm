@@ -66,6 +66,10 @@ export interface Overview {
   bundles: string[];
   bundle: number[];
   shows: number[];
+  /** When each asset was last read in the window (ISO), or null. */
+  lastShown: Array<string | null>;
+  /** When the overview was built: ages are measured from it. */
+  at: number;
   /** When each asset's file was last changed (ISO), or null. */
   modified: Array<string | null>;
   /** Positive and negative feedback each asset has had in the window. */
@@ -78,7 +82,7 @@ export interface Overview {
   problems: Array<Problem[]>;
   /** Each declared link: from asset, to asset, and its kind's name. */
   links: Array<{ from: number; to: number; kind: string }>;
-  /** Each asset's group by meaning (-1: no embedding) and its place in 3D, three numbers per asset. */
+  /** Each asset's group by meaning (-1: no embedding) and the place akm gave it in 3D, three numbers per asset. */
   group: Int32Array;
   place: Float32Array;
   groupCount: number;
@@ -103,44 +107,120 @@ export function useClass(lastShownAt: string | null, modifiedAt: string | null, 
   return now - Date.parse(modifiedAt) <= OLD_DAYS * DAY ? "new" : "unread";
 }
 
-/** How far forward (+1) or back (-1) in its group an asset sits: recent use in front, never read and outdated behind. */
-const DEPTH: Record<UseClass, number> = { recent: 1, earlier: 0.4, new: -0.7, unread: -0.7 };
+/** A rule for depth inside a group: what sits at the front, in the middle and at the back. */
+export interface Lens {
+  id: "meaning" | "recency" | "frequency" | "feedback" | "lifecycle";
+  label: string;
+  /** What is at the front, in the middle and at the back, as the legend says it. Empty: depth is akm's own. */
+  bands: string[];
+  /** Why the lens cannot be chosen for this library, or "". */
+  unavailable: (o: Overview) => string;
+  /** How far forward (+1) or back (-1) in its group each asset sits; null is the middle. */
+  depths: (o: Overview) => Array<number | null>;
+}
+
+const NO_USE = "No usage history is available";
+const USE_DEPTH: Record<UseClass, number> = { recent: 1, earlier: 0.4, new: -0.7, unread: -0.7 };
+
+/** Among the most read third of its group's read assets: +1; read less than those: 0; never read: -1. */
+function depthByReads(o: Overview): number[] {
+  const reads = new Map<number, number[]>();
+  for (let i = 0; i < o.count; i++)
+    if (o.shows[i]! > 0) reads.set(o.group[i]!, [...(reads.get(o.group[i]!) ?? []), o.shows[i]!]);
+  const most = new Map<number, number>();
+  for (const [group, list] of reads) most.set(group, list.sort((a, b) => b - a)[Math.ceil(list.length / 3) - 1]!);
+  return o.shows.map((n, i) => (n > 0 ? (n >= most.get(o.group[i]!)! ? 1 : 0) : -1));
+}
+
+/** The depth rules, the default first. Each reads one recorded variable; none is continuous. */
+export const LENSES: Lens[] = [
+  { id: "meaning", label: "Meaning", bands: [], unavailable: () => "", depths: (o) => o.ref.map(() => null) },
+  {
+    id: "recency",
+    label: "Last read",
+    bands: [`read in the last ${RECENT_DAYS} days`, "read earlier", "never read"],
+    unavailable: (o) => (o.useKnown ? "" : NO_USE),
+    depths: (o) => o.use.map((u) => (u ? USE_DEPTH[u] : null)),
+  },
+  {
+    id: "frequency",
+    label: "How often read",
+    bands: ["read most often", "read less often", "never read"],
+    unavailable: (o) => (o.useKnown ? "" : NO_USE),
+    depths: depthByReads,
+  },
+  {
+    id: "feedback",
+    label: "Feedback",
+    bands: ["more positive feedback than negative", "none or balanced (most assets)", "more negative than positive"],
+    unavailable: (o) => (o.feedbackKnown ? "" : "Feedback counts are unavailable"),
+    depths: (o) => o.positive.map((p, i) => Math.sign(p - o.negative[i]!)),
+  },
+  {
+    id: "lifecycle",
+    label: "Lifecycle",
+    bands: [`edited in the last ${OLD_DAYS} days`, "edited longer ago", "superseded, contradicted or deprecated"],
+    unavailable: () => "",
+    depths: (o) =>
+      o.modified.map((at, i) =>
+        o.problems[i]!.includes("outdated") ? -1 : at ? (o.at - Date.parse(at) <= OLD_DAYS * DAY ? 1 : -0.4) : null,
+      ),
+  },
+];
+
+/** The lens to draw: the one chosen, or the page's own when none is chosen or the choice cannot be drawn. */
+export function lensFor(o: Overview, chosen: Lens["id"] | null, fallback: Lens["id"]): Lens {
+  const usable = (id: Lens["id"] | null) => LENSES.find((l) => l.id === id && !l.unavailable(o));
+  return usable(chosen) ?? usable(fallback) ?? LENSES[0]!;
+}
+
+/** What the map's key says depth means under a lens: its bands from front to back, or back to front when flipped. */
+export function depthText(lens: Lens, flip = false, flat = false): string {
+  if (flat) return "Flattened: every asset keeps its place left to right and up and down, and depth is off.";
+  if (!lens.bands.length) return "Depth is likeness in meaning, as left to right and up and down are.";
+  const [front, middle, back] = flip ? [...lens.bands].reverse() : lens.bands;
+  return `Depth inside each group: ${front} at the front, ${middle} in the middle, ${back} at the back.`;
+}
 
 /**
- * Each asset's place in 3D, three numbers per asset: akm's place by meaning, with the depth inside its group (z) set by
- * use and state, so what is read lately sits at the front of a group and what was never read in the window, or is
- * superseded, contradicted or deprecated, at the back. A fifth of the depth keeps akm's own z, so a group does not flatten into layers.
+ * Each asset's drawn place, three numbers per asset. Under Meaning it is akm's place. Under any other lens the depth
+ * inside its group (z) is set by the lens, `flip` turning front to back; a fifth of the depth keeps akm's own z, so a
+ * band is a cloud and not a sheet. `flat` puts every asset at z 0, whatever the lens.
  */
-function placeByUse(payload: OverviewPayload, use: Array<UseClass | null>, outdated: Uint8Array): Float32Array {
-  const g = payload.groups;
-  const n = payload.nodes.ref.length;
-  const place = new Float32Array(n * 3);
-  if (!g) return place;
+export function placeBy(o: Overview, lens: Lens, flip = false, flat = false): Float32Array {
+  const place = Float32Array.from(o.place);
+  const n = o.count;
+  if (flat) {
+    for (let i = 0; i < n; i++) place[i * 3 + 2] = 0;
+    return place;
+  }
+  if (!lens.bands.length) return place;
+  const depths = lens.depths(o);
+  const z = (i: number) => o.place[i * 3 + 2]!;
   const sum = new Map<number, { n: number; z: number; r: number[] }>();
   for (let i = 0; i < n; i++) {
-    place.set([g.x[i]!, g.y[i]!, g.z[i]!], i * 3);
-    if (g.group[i]! < 0) continue;
-    const s = sum.get(g.group[i]!) ?? { n: 0, z: 0, r: [0, 0, 0] };
+    if (o.group[i]! < 0) continue;
+    const s = sum.get(o.group[i]!) ?? { n: 0, z: 0, r: [0, 0] };
     s.n++;
-    s.z += g.z[i]!;
-    s.r[0]! += g.x[i]!;
-    s.r[1]! += g.y[i]!;
-    sum.set(g.group[i]!, s);
+    s.z += z(i);
+    s.r[0]! += o.place[i * 3]!;
+    s.r[1]! += o.place[i * 3 + 1]!;
+    sum.set(o.group[i]!, s);
   }
   const spread = new Map<number, number>();
   for (let i = 0; i < n; i++) {
-    const s = sum.get(g.group[i]!);
+    const s = sum.get(o.group[i]!);
     if (!s) continue;
-    const d = Math.hypot(g.x[i]! - s.r[0]! / s.n, g.y[i]! - s.r[1]! / s.n, g.z[i]! - s.z / s.n);
-    spread.set(g.group[i]!, (spread.get(g.group[i]!) ?? 0) + (d * d) / s.n);
+    const d = Math.hypot(o.place[i * 3]! - s.r[0]! / s.n, o.place[i * 3 + 1]! - s.r[1]! / s.n, z(i) - s.z / s.n);
+    spread.set(o.group[i]!, (spread.get(o.group[i]!) ?? 0) + (d * d) / s.n);
   }
   for (let i = 0; i < n; i++) {
-    const s = sum.get(g.group[i]!);
+    const s = sum.get(o.group[i]!);
     if (!s) continue;
     const centre = s.z / s.n;
-    const radius = Math.sqrt(spread.get(g.group[i]!)!) || 1;
-    const depth = outdated[i] ? -1 : use[i] ? DEPTH[use[i]!] : 0;
-    place[i * 3 + 2] = centre + radius * (0.8 * depth) + 0.2 * (g.z[i]! - centre);
+    const radius = Math.sqrt(spread.get(o.group[i]!)!) || 1;
+    const depth = (depths[i] ?? 0) * (flip ? -1 : 1);
+    place[i * 3 + 2] = centre + radius * (0.8 * depth) + 0.2 * (z(i) - centre);
   }
   return place;
 }
@@ -188,6 +268,8 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
     bundles: payload.bundles,
     bundle: payload.nodes.bundle,
     shows: payload.nodes.shows,
+    lastShown: payload.nodes.lastShownAt ?? payload.nodes.ref.map(() => null),
+    at: now,
     modified: payload.nodes.modifiedAt ?? payload.nodes.ref.map(() => null),
     positive: payload.nodes.positive ?? payload.nodes.ref.map(() => 0),
     negative: payload.nodes.negative ?? payload.nodes.ref.map(() => 0),
@@ -201,7 +283,10 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
       kind: payload.kinds[payload.links.kind[e]!] ?? "",
     })),
     group: payload.groups ? Int32Array.from(payload.groups.group) : new Int32Array(n).fill(-1),
-    place: placeByUse(payload, use, outdated),
+    place: Float32Array.from({ length: n * 3 }, (_, k) => {
+      const g = payload.groups;
+      return (g ? [g.x, g.y, g.z][k % 3]![Math.floor(k / 3)] : 0) ?? 0;
+    }),
     groupCount: payload.groups?.count ?? 0,
     duplicates,
     duplicatesTruncated: payload.duplicates?.truncated ?? false,
@@ -445,8 +530,6 @@ export interface Group {
   /** Its two most particular tags, or its largest asset type when its assets carry none. */
   label: string;
   members: number[];
-  /** The middle of its assets in 3D. */
-  centre: [number, number, number];
 }
 
 /** How many of `scope` have no group by meaning, so are not points on the 3D map. */
@@ -475,9 +558,7 @@ export function groupsOf(o: Overview, scope: readonly number[]): Group[] {
         .map((x) => o.tagNames[x.t]!);
       const types = tally(list, (i) => o.types[o.type[i]!]!, o.types);
       const largest = o.types.slice().sort((x, y) => types[y]! - types[x]!)[0] ?? "";
-      const centre: [number, number, number] = [0, 0, 0];
-      for (const i of list) for (let d = 0; d < 3; d++) centre[d]! += o.place[i * 3 + d]! / list.length;
-      return { key: `g:${id}`, id, named, label: `${largest}, untagged`, members: list, centre };
+      return { key: `g:${id}`, id, named, label: `${largest}, untagged`, members: list };
     })
     .filter((g) => g.members.length)
     .sort((x, y) => y.members.length - x.members.length || x.id - y.id);

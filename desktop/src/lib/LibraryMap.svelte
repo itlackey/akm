@@ -12,16 +12,21 @@
   import { api, apiState } from "./client";
   import {
     buildOverview,
+    DAY,
+    depthText,
     firstProblem,
     groupFacts,
     groupJoins,
     groupsOf,
+    type Lens,
+    lensFor,
     mindMap,
     OUTDATED_LINKS,
     type Overview,
     type OverviewPayload,
     type Pair,
     PROBLEMS,
+    placeBy,
     RECENT_DAYS,
     relations,
     tally,
@@ -33,6 +38,7 @@
   import { joinsOf, LEVEL_CAP, LEVEL_STYLES, reach } from "./link-levels";
   import { filesHref } from "./library-files-model";
   import { libraryRead, searchHref } from "./library-model";
+  import DepthControls from "./DepthControls.svelte";
   import MindMap, { type Segment } from "./MindMap.svelte";
   import SimilarityMap from "./SimilarityMap.svelte";
   import { workspace } from "./state/workspace.svelte";
@@ -57,10 +63,25 @@
   let cloud = $state<ReturnType<typeof SimilarityMap>>();
   /** The `?select=` asset already opened, so choosing anything else, or resetting, is not undone by it. */
   let opened = "";
-  /** The map drawn flat (types and tags, SVG) or in 3D (every asset by meaning, three.js); unchosen, 3D when the index
-   * has assets grouped by meaning. */
+  /** The map drawn as tags (types and tags, SVG) or as points in 3D (every asset by meaning, three.js); unchosen,
+   * points when the index has assets grouped by meaning. */
   let chosenDepth = $state<"2d" | "3d" | null>(null);
   const depth = $derived(chosenDepth ?? (o?.groupCount ? "3d" : "2d"));
+  /** What depth shows on the points: each view opens on its own lens, and Problems with its lens flipped, so what the
+   * view is about is in front. A choice lasts until the view changes. */
+  const VIEW_LENS: Record<View, Lens["id"]> = { contents: "meaning", use: "recency", problems: "lifecycle" };
+  let chosenLens = $state<Lens["id"] | null>(null);
+  let chosenFlip = $state<boolean | null>(null);
+  /** The points drawn in one plane. */
+  let flat = $state(false);
+  const lens = $derived(o ? lensFor(o, chosenLens, VIEW_LENS[view]) : null);
+  const flip = $derived(!!lens?.bands.length && (chosenFlip ?? (view === "problems" && lens.id === "lifecycle")));
+  const place = $derived(o && lens ? placeBy(o, lens, flip, flat) : new Float32Array(0));
+  function show(next: View) {
+    view = next;
+    chosenLens = null;
+    chosenFlip = null;
+  }
   /** In 3D, the asset chosen on the map, or -1. */
   let picked = $state(-1);
   /** The asset whose closest content is open, and what was found. */
@@ -203,7 +224,8 @@
   }
   /** Everything the map can be changed by, and the camera, back to how it opens. */
   function reset() {
-    view = "contents";
+    show("contents");
+    flat = false;
     bundle = -1;
     filter = "";
     chosenDepth = null;
@@ -331,23 +353,50 @@
   );
   const lines = $derived.by(() => {
     if (!o) return [];
-    const at = (i: number) => o!.place.subarray(i * 3, i * 3 + 3);
     if (picked >= 0)
       return (reached?.links ?? [])
         .filter((l) => drawn(l.a) && drawn(l.b))
-        .map((l) => ({ from: at(l.a), to: at(l.b), weight: 1, level: l.level }));
+        .map((l) => ({ from: l.a, to: l.b, weight: 1, level: l.level }));
     if (!part?.group) return [];
-    const centre = new Map(groups.map((g) => [g.key, g.centre]));
     const strongest = Math.max(1, ...joined.map((r) => r.links + r.duplicates));
     return joined
       .slice(0, 12)
-      .filter((r) => centre.has(r.key))
-      .map((r) => ({
-        from: centre.get(selected)!,
-        to: centre.get(r.key)!,
-        weight: (r.links + r.duplicates) / strongest,
-      }));
+      .filter((r) => groups.some((g) => g.key === r.key))
+      .map((r) => ({ from: selected, to: r.key, weight: (r.links + r.duplicates) / strongest }));
   });
+  /** What an asset's colour and depth stand for, in akm's recorded figures: said after its name on the map. */
+  const ago = (iso: string) => {
+    const days = Math.floor((o!.at - Date.parse(iso)) / DAY);
+    return days < 1 ? "today" : `${plural(days, "day")} ago`;
+  };
+  const reads = (i: number) =>
+    !o!.useKnown
+      ? "reads unknown"
+      : o!.shows[i]
+        ? `read ${plural(o!.shows[i]!, "time")}${o!.lastShown[i] ? `, last ${ago(o!.lastShown[i]!)}` : ""}`
+        : "not read in the window";
+  const problem = (i: number) => PROBLEMS.find((p) => p.id === firstProblem(o!, i))?.label.toLowerCase();
+  function describe(i: number): string {
+    const colour =
+      view === "use"
+        ? reads(i)
+        : view === "problems"
+          ? (problem(i) ?? "no problem recorded")
+          : (parts.get(`g:${o!.group[i]}`)?.name ?? "");
+    const byLens: Record<Lens["id"], () => string[]> = {
+      meaning: () => [],
+      recency: () => [reads(i)],
+      frequency: () => [reads(i)],
+      feedback: () => [
+        o!.feedbackKnown ? `${o!.positive[i]} positive, ${o!.negative[i]} negative feedback` : "feedback unknown",
+      ],
+      lifecycle: () => [
+        ...(o!.problems[i]!.includes("outdated") ? [PROBLEMS[0]!.label.toLowerCase()] : []),
+        edited(i) || "edit time unknown",
+      ],
+    };
+    return [...new Set([colour, ...(flat ? [] : byLens[lens!.id]())])].filter(Boolean).join(" · ");
+  }
 
   const filesLink = $derived(
     filesHref({
@@ -458,11 +507,11 @@
           aria-selected={view === v.id}
           class="btn-quiet"
           title={v.question}
-          onclick={() => (view = v.id)}>{v.label}</button
+          onclick={() => show(v.id)}>{v.label}</button
         >{/each}
     </div>
     <div class="views" role="group" aria-label="Drawing">
-      {#each [["2d", "Flat"], ["3d", "3D"]] as const as [id, name]}<button
+      {#each [["2d", "Tags"], ["3d", "Points"]] as const as [id, name]}<button
           class="btn-quiet"
           aria-pressed={depth === id}
           onclick={() => (chosenDepth = id)}>{name}</button
@@ -508,8 +557,7 @@
                 : ""}
             </p>{/if}
           {#if depth === "3d" && view === "contents"}<p class="muted small">
-              Each point is an asset, coloured by its group by meaning. Inside a group, assets read lately sit at the
-              front, and never-read, superseded, contradicted or deprecated ones at the back.
+              Each point is an asset, coloured by its group by meaning.
             </p>
           {:else if view === "contents"}<p class="muted small">
               Each branch is an asset type; at its end are the tags its assets carry most. Choose a type or tag to draw
@@ -543,9 +591,26 @@
               </p>{/if}{/if}
         </div>
         <div class="map-stage">
-          {#if depth === "3d"}{#if groups.length}<SimilarityMap
+          {#if depth === "3d"}{#if groups.length && lens}<DepthControls
+                {o}
+                {lens}
+                {flip}
+                {flat}
+                onLens={(id) => {
+                  chosenLens = id;
+                  chosenFlip = null;
+                }}
+                onFlip={() => (chosenFlip = !flip)}
+                onFlat={() => (flat = !flat)}
+                onFront={() => cloud?.faceFront()}
+              />
+              <SimilarityMap
                 bind:this={cloud}
                 {o}
+                {place}
+                {flat}
+                depthNote={depthText(lens, flip, flat)}
+                {describe}
                 scope={bundleScope}
                 {groups}
                 {colourOf}
@@ -560,7 +625,7 @@
                 onPick={pick}
                 onGroup={choose}
                 onStep={step}
-                label={`${question} The ${plural(bundleScope.length - offMap, "asset")} of ${scopeName} that have a group by meaning, as points, alike assets close together, in ${plural(groups.length, "group")} named by their tags.${offMap ? ` ${plural(offMap, "asset")} not shown.` : ""}`}
+                label={`${question} The ${plural(bundleScope.length - offMap, "asset")} of ${scopeName} that have a group by meaning, as points, in ${plural(groups.length, "group")} named by their tags, groups alike in meaning near each other. ${depthText(lens, flip, flat)}${offMap ? ` ${plural(offMap, "asset")} not shown.` : ""}`}
               >
                 {#snippet legend()}{#if picked >= 0 && levelFigures}<div class="levels">
                       <p class="small">
@@ -604,17 +669,21 @@
                     </div>{/if}{/snippet}
               </SimilarityMap>
               <p class="muted small">
-                Each point is an asset; alike assets sit close, and each group by meaning is named by the tags its
-                assets carry most. Drag to turn, right-drag to move, scroll to zoom, hover a point for its name. Choose
-                a group's name to draw what joins it to other groups, or a point to draw its links and near-duplicates.
+                Each point is an asset. Groups alike in meaning sit near each other and are named by the tags their
+                assets carry most; position inside a group is approximate, so use Closest for measured similarity.
+                {flat ? "Drag to move (turning is off while flattened)" : "Drag to turn, right-drag to move"}, scroll to
+                zoom, hover a point for its name and figures. Choose a group's name to draw what joins it to other
+                groups, or a point to draw its links and near-duplicates. With the map focused: left and right step
+                through a group's assets{flat ? "" : ", up, down and Shift with left or right turn the view"}, + and −
+                zoom, 0 faces the front.
               </p>
               {#if offMap}<p class="muted small" role="status">
                   {plural(offMap, "asset")}
                   {offMap === 1 ? "has" : "have"} no group by meaning, so {offMap === 1 ? "is" : "are"} not shown (not embedded,
                   or added since the last index build).
                 </p>{/if}{:else}<p class="notice">
-                No stored embeddings, so assets cannot be placed by meaning. Build the index with embeddings, or use the
-                flat map.
+                No stored embeddings, so assets cannot be placed by meaning. Build the index with embeddings, or use
+                Tags.
               </p>{/if}
           {:else}<MindMap
               {branches}

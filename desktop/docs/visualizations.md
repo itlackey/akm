@@ -90,16 +90,41 @@ map. Choosing a type or tag (on the map or by keyboard) draws lines from it to e
 joined to, fades the rest, and opens its answers in the column beside the map; Escape closes them.
 `/library/map?select=<ref>` opens with that asset's tag chosen.
 
-When the index holds groups by meaning (`assets.graph` `groups`, stored by `akm index`), the map opens in 3D (Flat
-switches back to the mind map): every embedded asset is a point, coloured by its group, at the place `akm index` gave
-it, with groups alike in meaning near each other and each named by the tags its assets carry far more than the rest of
-the library. The column lists the groups when nothing is chosen. Choosing a group or a point flies to it, draws its
+When the index holds groups by meaning (`assets.graph` `groups`, stored by `akm index`), the map opens as Points, in
+3D (Tags switches back to the mind map): every embedded asset is a point, coloured by its group, at the place
+`akm index` gave it, with groups alike in meaning near each other and each named by the tags its assets carry far more
+than the rest of the library. Position inside a group is approximate, and the page says so. The column lists the groups when nothing is chosen. Choosing a group or a point flies to it, draws its
 links and near-duplicates, and opens the group's answers in the column; a chosen point also lists the assets it is
 joined to. A point is chosen from anywhere over its drawn disc and a few pixels beyond it (the one in front when
 several overlap), and the point under the pointer is ringed and named. The chosen point is ringed with a halo and named
-by a label that stays over every other mark, and the rest fades. With the map focused (Tab), the left and right arrow
-keys step to the previous and next asset of the chosen point's group in name order, and the page announces the new
-choice; Escape clears it.
+by a label that stays over every other mark, and the rest fades. Both names are followed by the recorded figures the
+point's colour and depth stand for ("read 12 times, last 3 days ago"); a figure akm did not report reads "unknown".
+With the map focused (Tab), the left and right arrow keys step to the previous and next asset of the chosen point's
+group in name order, and the page announces the new choice; Escape clears it.
+
+Depth inside a group is a lens, chosen above the map and apart from the view, which sets colour. Each lens reads one
+recorded variable in three bands, never a continuous scale, because depth is read as order and not as amount:
+
+| Lens | Front | Middle | Back | Needs |
+| --- | --- | --- | --- | --- |
+| Meaning | akm's own place: depth is likeness in meaning, as the other two directions are | | | |
+| Last read | read in the last 30 days | read earlier in the window | never read in the window | usage history |
+| How often read | the most read third of the group's read assets | read less often | never read | usage history |
+| Feedback | more positive feedback than negative | none, or balanced (most assets) | more negative than positive | feedback counts |
+| Lifecycle | edited in the last 180 days | edited longer ago | superseded, contradicted or deprecated | |
+
+Contents opens on Meaning, Use on Last read and Problems on Lifecycle; a chosen lens lasts until the view changes or
+Reset. A lens akm has no figures for is disabled and says why. Under every lens but Meaning a fifth of the depth stays
+akm's own, so a band is a cloud and not a sheet; an asset with no value sits in the middle. Flip turns front to back, and
+Problems opens flipped, so the outdated assets it is about are in front of the rest. A line in the map's corner says what
+is at the front, the middle and the back now. A marker in the other corner turns with the view and names the front and
+the back, the end toward the viewer drawn larger, and Face front (or 0) turns the view back to the front without changing
+the zoom or the choice. Flatten draws the same points in one plane: every asset keeps its place left to right and up and
+down, depth, Flip and turning are off, and a drag moves the view.
+
+When the lens, Flip or Flatten changes, every mark moves to its new place over 0.6 seconds, and a pick or Face front
+moves the view over 0.7; with reduced motion both happen at once and the view does not glide after a drag. With the map
+focused, the up and down arrow keys and Shift with left and right turn the view, + and − zoom, and 0 faces the front.
 
 A chosen point also draws what it is joined to three steps out, each level in its own width and colour, with its assets
 ringed to match, and a key in the map's corner names the three levels with the assets at each:
@@ -115,8 +140,7 @@ contradiction links and near-duplicates), either way round. Each join is drawn o
 a join between two assets of one level belongs to the next. A level shows at most 300 assets, the most joined first, and
 the next level is walked from those; the key says how many a level left out, and how many it reached that are not on this
 map (no group by meaning, or in another bundle). The walk is `reach` in `src/lib/link-levels.ts`; each level's colour
-is held at 3:1 against the background in both themes by `tests/map-palette.test.mjs`. Depth inside a group follows use: assets read lately sit at the front, those read earlier just ahead of the
-middle, and never-read, superseded, contradicted or deprecated ones at the back. The 3D view needs WebGL (three.js,
+is held at 3:1 against the background in both themes by `tests/map-palette.test.mjs`. The 3D view needs WebGL (three.js,
 `src/lib/SimilarityMap.svelte`).
 
 | View | Question | Tags drawn, ranked by | Lines from the chosen group | Beside the map |
@@ -134,7 +158,8 @@ them: scheduled tasks and Improve are not counted. When no usage history is avai
 calling every asset unread.
 
 It reads `assets.graph`, `assets.searchMisses` and, on Closest, `assets.related`. The view model is
-`src/lib/library-overview.ts`; the flat drawing is SVG (`src/lib/MindMap.svelte`), and the page is `src/lib/LibraryMap.svelte`.
+`src/lib/library-overview.ts` (the lenses are `LENSES` and `placeBy` there); the Tags drawing is SVG
+(`src/lib/MindMap.svelte`), the depth controls are `src/lib/DepthControls.svelte`, and the page is `src/lib/LibraryMap.svelte`.
 
 | Limit | Why |
 | --- | --- |
@@ -142,6 +167,9 @@ It reads `assets.graph`, `assets.searchMisses` and, on Closest, `assets.related`
 | A level shows at most 300 assets | Three steps from a well-joined asset can reach most of the library; the key says what a level left out. |
 | Near-duplicates are pairs at a cosine of 0.96 or more, at most 2,000, and need stored embeddings | `assets.graph` compares only assets alike in meaning, to avoid comparing every pair; the threshold is set for akm's local embedding model. The page says when the list was cut. |
 | Closest needs stored embeddings | Without them `assets.related` says so, and the page shows its note. |
+| Depth bands are set inside each group | One group's back can be nearer the viewer than another group's front: depth compares assets of one group, not groups. |
+| Position inside a group is approximate | akm places a group's assets around its middle; Closest gives the measured similarity. |
+| Flatten is not a second layout | It is the 3D place without its depth, so two assets far apart in depth can lie on top of each other. |
 | Old is the file's modification time | akm records no edit date; in a Git checkout the time is when the file was last written there. |
 | Use covers the retention window only | Usage events older than the window are deleted, so an asset last read before it reads as not read. |
 
@@ -152,8 +180,8 @@ opens at the end of the period with every figure full, so the result is readable
 Play starts again from the beginning and plays any period in about a minute (faster speeds are 4
 and 16 times that). With reduced motion nothing flies or eases, and it stays paused at the end.
 
-The map is drawn in 2D, the default: the library mind map, with the number of events on each type and tag so far, or in 3D
-(the 2D / 3D switch under Play; the choice is kept until the app closes). Everything else on the page is the same in both:
+The map is drawn as Tags, the default: the library mind map, with the number of events on each type and tag so far, or as
+Points in 3D (the Tags / Points switch under Play; the choice is kept until the app closes). Everything else on the page is the same in both:
 the controls, the figures, the lists beside the map and the timeline.
 
 In 3D the replay plays on the same 3D map as Library, Map (`src/lib/SimilarityMap.svelte`, one renderer): every asset
@@ -162,7 +190,9 @@ An asset is ringed, for the next 0.75 seconds of playing at the speed chosen, wh
 (a hit, which does not count as use) or gives it feedback, each in its own colour (the `--pulse-*` tokens, held apart from
 each other and from the type colours by `tests/map-palette.test.mjs`); an asset the latest of several events touched in
 that moment takes the colour of the latest. A curate's results and other kinds of event light the asset as used without a
-ring. A key on the map names every mark. An asset with no group by meaning has no place on the 3D map; its events still
+ring. A key on the map names every mark. Depth is the library map's: the same lenses, Flip, Flatten, Face front, marker,
+keys and reduced-motion behaviour, opening on Meaning, with the line in the map's corner saying what depth shows. Hovering
+a point names its asset, its type and whether it has been used so far. An asset with no group by meaning has no place on the 3D map; its events still
 count in the figures, and the page says how many events so far touched assets with no place, and how many touched assets
 the index no longer lists. Without stored embeddings the 3D map cannot be drawn, and the page says so.
 

@@ -368,7 +368,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
     await page.close();
   });
 
-  await t.test("Library map: an index with groups draws them in 3D, names them, and Flat draws the tags", async () => {
+  await t.test("Library map: an index with groups draws them in 3D, names them, and Tags draws the tags", async () => {
     const { page, errors } = await fresh((page) =>
       withGraph(page, {
         ...mapPayload,
@@ -384,14 +384,14 @@ test("visualizations survive late responses, a changed library and a narrow wind
     consoleErrors(page, errors);
     await open(page, server, "/library/map");
     const drawing = page.getByRole("group", { name: "Drawing" });
-    await expect(drawing.getByRole("button", { name: "3D" })).toHaveAttribute("aria-pressed", "true");
+    await expect(drawing.getByRole("button", { name: "Points" })).toHaveAttribute("aria-pressed", "true");
     const named = figures(page).locator("section", { hasText: "Groups by meaning" });
     await expect(named.getByRole("button")).toHaveText(["deploy · rollout", "auth"]);
     await named.getByRole("button", { name: "auth" }).click();
     await expect(sideHeading(page)).toHaveText("auth");
     await expect(figures(page)).toContainText("Group by meaning");
     await figures(page).getByRole("button", { name: "Close", exact: true }).click();
-    await drawing.getByRole("button", { name: "Flat" }).click();
+    await drawing.getByRole("button", { name: "Tags" }).click();
     await expect(mapButton(page, "Knowledge: 3")).toBeVisible();
     await expect(named).toHaveCount(0);
     assert.deepEqual(errors, []);
@@ -429,7 +429,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
     const { page } = await fresh((page) => withGraph(page));
     await open(page, server, "/library/map");
     await tab(page, "Use").click();
-    await page.getByRole("group", { name: "Drawing" }).getByRole("button", { name: "Flat" }).click();
+    await page.getByRole("group", { name: "Drawing" }).getByRole("button", { name: "Tags" }).click();
     const filter = page.getByRole("searchbox", { name: "Filter" });
     await filter.fill("auth");
     await expect(page.getByText("3 of 7 assets")).toBeVisible();

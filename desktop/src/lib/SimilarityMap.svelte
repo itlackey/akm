@@ -5,18 +5,25 @@
 -->
 
 <script lang="ts">
-  // Every asset in scope as a point in 3D (three.js), placed by akm so alike assets sit close, in groups by meaning,
+  // Every asset in scope as a point in 3D (three.js), placed by akm with groups alike in meaning near each other,
   // each group named over its middle by a label that stays the same size on screen. Drag turns it, right-drag or
   // Shift-drag moves it, the wheel zooms toward the pointer (the page never scrolls over the map), and the point nearest
   // the pointer, within a fixed reach on screen, names its asset on hover. Choosing a point or a group's name picks it:
   // the pick is ringed and haloed, named by a label that stays over everything, what it is joined to is ringed and lined,
-  // and the rest fades. With the map focused, the left and right arrow keys step to the previous and next asset.
+  // and the rest fades. With the map focused, the left and right arrow keys step to the previous and next asset, and the
+  // other keys turn and zoom the view. `place` is where each asset is drawn: when it changes (another depth lens, a
+  // flip, flattening) every mark moves there over 0.6 seconds, or at once under reduced motion. A marker in the corner
+  // turns with the view and names the front and the back, and `flat` draws the points in one plane, which cannot be turned.
   import { LEVEL_STYLES } from "./link-levels";
   import { untrack, type Snippet } from "svelte";
+  import { prefersReducedMotion } from "svelte/motion";
   import type { Group, Overview } from "./library-overview";
 
   let {
     o,
+    place,
+    flat = false,
+    depthNote,
     scope,
     groups,
     colourOf,
@@ -30,18 +37,25 @@
     onPick,
     onGroup,
     onStep,
+    describe,
     label,
     legend,
   }: {
     o: Overview;
+    /** Where each asset is drawn, three numbers per asset: akm's place, with the depth the page's lens gives it. */
+    place: Float32Array;
+    /** Every point is in one plane: the view faces it and cannot be turned. */
+    flat?: boolean;
+    /** What depth means now, said first in the map's corner. */
+    depthNote: string;
     scope: readonly number[];
     groups: Group[];
     /** The colour token of an asset in the view. */
     colourOf: (i: number) => string;
     /** The assets drawn in full; the rest fade. Null: all in full. */
     lit: Set<number> | null;
-    /** Lines from point to point, each a pair of places and a weight from 0 to 1. */
-    lines?: Array<{ from: ArrayLike<number>; to: ArrayLike<number>; weight: number; level?: 1 | 2 | 3 }>;
+    /** Lines, each between two assets (by index) or two groups (by key), with a weight from 0 to 1. */
+    lines?: Array<{ from: number | string; to: number | string; weight: number; level?: 1 | 2 | 3 }>;
     /** The assets one, two and three joins from the pick, each ringed to match its lines. */
     levels?: [number[], number[], number[]];
     /** Assets ringed in a colour of their own, for a moment: what an event just touched. */
@@ -55,6 +69,8 @@
     onGroup?: (key: string) => void;
     /** The arrow keys on the focused map: -1 for the previous asset, 1 for the next. */
     onStep?: (direction: -1 | 1) => void;
+    /** What an asset's colour and depth stand for, said after its name on hover and on the pick. */
+    describe?: (i: number) => string;
     label: string;
     /** What the map's corner says: the key to what is drawn. */
     legend?: Snippet;
@@ -67,11 +83,16 @@
   const LEAST_REACH = 10;
   /** The drawn size of a point, in world units: the lit ones are larger. */
   const SIZE = { faded: 8, lit: 12 };
+  /** How far one key press turns the view, in radians, and how much closer or farther it zooms. */
+  const TURN = Math.PI / 12;
+  const ZOOM = 0.8;
 
   let host = $state<HTMLDivElement>();
-  let tip = $state<{ x: number; y: number; text: string } | null>(null);
+  let tip = $state<{ x: number; y: number; i: number } | null>(null);
   /** The label over the pick, which stays whatever is in front of it. */
   let pickEl = $state<HTMLDivElement>();
+  /** The front and back marker in the corner. */
+  let markerEl = $state<HTMLDivElement>();
   let failed = $state("");
   /** Set once three.js has loaded and the scene is up; the effects below draw into it. */
   let ready = $state(false);
@@ -92,18 +113,140 @@
     world.controls.update();
   }
 
+  /** The camera in front of what it looks at, as far away as it is: the selection and the zoom stay. */
+  export function faceFront() {
+    if (!world) return;
+    const { camera, controls } = world;
+    fly(controls.target.clone(), new THREE.Vector3(0, 0, camera.position.distanceTo(controls.target)));
+  }
+
   // biome-ignore lint/suspicious/noExplicitAny: three.js is loaded on demand, so its namespace is held untyped here.
   let THREE: any;
-  /** A geometry holding the places of these assets. */
-  function placesOf(list: readonly number[]) {
-    const place = new Float32Array(list.length * 3);
-    list.forEach((i, k) => place.set(o.place.subarray(i * 3, i * 3 + 3), k * 3));
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(place, 3));
-    return geometry;
-  }
   // biome-ignore lint/suspicious/noExplicitAny: see above.
   let world: any = null;
+
+  /** Where each asset is drawn at this moment: `place`, or on the way to it. */
+  let now = new Float32Array(0);
+  /** Counts each change of `now`, for what is worked out from it. */
+  let moved = $state(0);
+  /** The middle of each group's assets as drawn, by group key. */
+  const centres = $derived.by(() => {
+    void moved;
+    const found = new Map<string, [number, number, number]>();
+    for (const g of groups) {
+      const centre: [number, number, number] = [0, 0, 0];
+      for (const i of g.members) for (let d = 0; d < 3; d++) centre[d]! += now[i * 3 + d]! / g.members.length;
+      found.set(g.key, centre);
+    }
+    return found;
+  });
+
+  /** A geometry holding the places of these assets; it keeps the list, so a move can rewrite it in place. */
+  function placesOf(list: readonly number[]) {
+    const at = new Float32Array(list.length * 3);
+    list.forEach((i, k) => at.set(now.subarray(i * 3, i * 3 + 3), k * 3));
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(at, 3));
+    geometry.userData.list = list;
+    return geometry;
+  }
+  /** Every point, ring and halo put where `now` has its asset, in the geometry it already has. */
+  function redraw() {
+    if (!world) return;
+    for (const marks of [
+      world.points,
+      world.bright,
+      world.focus,
+      world.focusHalo,
+      ...world.rings,
+      world.under,
+      world.underHalo,
+      world.pulses,
+    ]) {
+      const list: readonly number[] | undefined = marks.geometry.userData.list;
+      if (!list?.length) continue;
+      const position = marks.geometry.getAttribute("position");
+      list.forEach((i, k) => position.array.set(now.subarray(i * 3, i * 3 + 3), k * 3));
+      position.needsUpdate = true;
+      marks.geometry.computeBoundingSphere();
+    }
+  }
+
+  // The marks move to `place` when it changes, each from where it is, so a change made during a move starts there.
+  $effect(() => {
+    const to = place;
+    if (prefersReducedMotion.current || now.length !== to.length) {
+      now = Float32Array.from(to);
+      moved = untrack(() => moved) + 1;
+      redraw();
+      return;
+    }
+    const from = Float32Array.from(now);
+    const start = performance.now();
+    let frame = requestAnimationFrame(function step(time: number) {
+      const t = Math.min(1, (time - start) / 600);
+      const ease = t * (2 - t);
+      for (let k = 0; k < to.length; k++) now[k] = from[k]! + (to[k]! - from[k]!) * ease;
+      moved++;
+      redraw();
+      if (t < 1) frame = requestAnimationFrame(step);
+    });
+    return () => cancelAnimationFrame(frame);
+  });
+
+  /**
+   * The camera moved to look at `target` from `away` beside it, over 0.7 seconds: the direction swings and the distance
+   * eases. Under reduced motion it is there at once.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: see above.
+  function fly(target: any, away: any) {
+    const { camera, controls } = world;
+    const from = controls.target.clone();
+    const began = camera.position.clone().sub(from);
+    const swing = new THREE.Quaternion().setFromUnitVectors(began.clone().normalize(), away.clone().normalize());
+    const start = performance.now();
+    const flight = {};
+    world.flight = flight;
+    const step = (time: number) => {
+      if (world?.flight !== flight) return;
+      const t = prefersReducedMotion.current ? 1 : Math.min(1, (time - start) / 700);
+      const ease = t * (2 - t);
+      controls.target.lerpVectors(from, target, ease);
+      camera.position
+        .copy(began)
+        .applyQuaternion(new THREE.Quaternion().slerp(swing, ease))
+        .setLength(began.length() + (away.length() - began.length()) * ease)
+        .add(controls.target);
+      if (t < 1) requestAnimationFrame(step);
+    };
+    if (prefersReducedMotion.current) step(start);
+    else requestAnimationFrame(step);
+  }
+
+  /** The view turned about what it looks at, and moved closer or farther, by the keyboard. */
+  function orbit(left: number, up: number, scale: number) {
+    const { camera, controls } = world;
+    world.flight = null;
+    const s = new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target));
+    s.theta -= left * TURN;
+    s.phi = Math.min(Math.PI - 0.01, Math.max(0.01, s.phi - up * TURN));
+    s.radius = Math.min(controls.maxDistance, Math.max(controls.minDistance, s.radius * scale));
+    camera.position.setFromSpherical(s).add(controls.target);
+  }
+  function onKey(event: KeyboardEvent) {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const { key, shiftKey } = event;
+    const sideways = key === "ArrowLeft" ? -1 : key === "ArrowRight" ? 1 : 0;
+    const upward = key === "ArrowUp" ? 1 : key === "ArrowDown" ? -1 : 0;
+    const zoom = key === "+" || key === "=" ? ZOOM : key === "-" ? 1 / ZOOM : 0;
+    if (sideways && !shiftKey && onStep) onStep(sideways);
+    else if (!world) return;
+    else if (key === "0") faceFront();
+    else if (zoom) orbit(0, 0, zoom);
+    else if (!flat && (upward || (sideways && shiftKey))) orbit(shiftKey ? sideways : 0, upward, 1);
+    else return;
+    event.preventDefault();
+  }
 
   /** A CSS colour token resolved to [r, g, b] from 0 to 1 (three.js cannot read light-dark()). */
   const resolved = new Map<string, [number, number, number]>();
@@ -367,7 +510,7 @@
           if (!world || !e || e.buttons) return;
           const h = hit(e.clientX, e.clientY);
           const box = host!.getBoundingClientRect();
-          tip = h ? { x: e.clientX - box.left, y: e.clientY - box.top + 12, text: o.ref[h.i]! } : null;
+          tip = h ? { x: e.clientX - box.left, y: e.clientY - box.top + 12, i: h.i } : null;
           renderer.domElement.style.cursor = h ? "pointer" : "grab";
           for (const mark of [under, world.underHalo]) {
             mark.geometry.dispose();
@@ -410,7 +553,7 @@
           if (pickEl) {
             if (picked < 0) pickEl.style.visibility = "hidden";
             else {
-              at.set(o.place[picked * 3]!, o.place[picked * 3 + 1]!, o.place[picked * 3 + 2]!).project(camera);
+              at.set(now[picked * 3]!, now[picked * 3 + 1]!, now[picked * 3 + 2]!).project(camera);
               const x = Math.min(
                 w - pickEl.offsetWidth / 2 - 4,
                 Math.max(pickEl.offsetWidth / 2 + 4, ((at.x + 1) / 2) * w),
@@ -432,7 +575,7 @@
           for (const g of [...groups].sort((a, b) => first(a) - first(b))) {
             const el = nameEls[g.key];
             if (!el) continue;
-            at.set(g.centre[0], g.centre[1], g.centre[2]).project(camera);
+            at.set(...(centres.get(g.key) ?? [0, 0, 0])).project(camera);
             const x = ((at.x + 1) / 2) * w;
             const y = ((1 - at.y) / 2) * h;
             const box: [number, number, number, number] = [
@@ -449,6 +592,38 @@
             el.style.opacity = dimmed.has(g.key) ? "0.3" : selected && first(g) === 2 ? "0.45" : "1";
             el.style.transform = `translate(${box[0]}px, ${box[1]}px)`;
             if (!hidden) placed.push(box);
+          }
+          // The marker: the scene's front-to-back axis as the camera sees it, the end nearer the viewer drawn larger.
+          if (markerEl) {
+            at.set(0, 0, 1).transformDirection(camera.matrixWorldInverse);
+            const line = markerEl.querySelector("line");
+            const front = markerEl.querySelector("circle.front");
+            const back = markerEl.querySelector("circle:not(.front)");
+            const [frontName, backName] = markerEl.querySelectorAll("span");
+            const facing = Math.abs(at.z) > 0.9;
+            const x = at.x * 22;
+            const y = -at.y * 22;
+            for (const [end, sign, name] of [
+              [front!, 1, frontName!],
+              [back!, -1, backName!],
+            ] as const) {
+              end.setAttribute("cx", String(sign * x));
+              end.setAttribute("cy", String(sign * y));
+              end.setAttribute("r", String(4.5 + sign * 2 * at.z));
+              const near = sign * at.z > 0;
+              // A name sits beyond its end of the line; when an end faces the viewer, only it is named, under it.
+              const reach = facing ? 0 : 1 + 26 / Math.hypot(x, y);
+              name.style.transform = `translate(-50%, -50%) translate(${sign * x * reach}px, ${facing ? 20 : sign * y * reach}px)`;
+              name.style.visibility = facing && !near ? "hidden" : "visible";
+              name.textContent = `${sign > 0 ? "Front" : "Back"}${facing ? ", facing you" : ""}`;
+            }
+            if (at.z > 0) front!.parentNode!.appendChild(front!);
+            else back!.parentNode!.appendChild(back!);
+            line!.setAttribute("x1", String(-x));
+            line!.setAttribute("y1", String(-y));
+            line!.setAttribute("x2", String(x));
+            line!.setAttribute("y2", String(y));
+            markerEl.dataset.toward = at.z.toFixed(2);
           }
           frame = requestAnimationFrame(loop);
         };
@@ -478,11 +653,9 @@
     if (!ready || !world) return;
     const order = scope.filter((i) => o.group[i]! >= 0);
     const bg = rgb("--bg");
-    const place = new Float32Array(order.length * 3);
     const colour = new Float32Array(order.length * 3);
     const shining: number[] = [];
     order.forEach((i, k) => {
-      place.set(o.place.subarray(i * 3, i * 3 + 3), k * 3);
       const c = rgb(colourOf(i));
       const faded = lit && !lit.has(i);
       if (lit && !faded) shining.push(i);
@@ -496,8 +669,7 @@
     );
     world.bright.geometry.dispose();
     world.bright.geometry = glow;
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(place, 3));
+    const geometry = placesOf(order);
     geometry.setAttribute("color", new THREE.BufferAttribute(colour, 3));
     world.points.geometry.dispose();
     world.points.geometry = geometry;
@@ -505,9 +677,11 @@
   });
 
   // The lines between groups, in the highlight colour, fainter for lighter weights; and, from a pick, the lines of
-  // each level, each in its own width and colour.
+  // each level, each in its own width and colour. They are redrawn as the marks move.
   $effect(() => {
     if (!ready || !world) return;
+    void moved;
+    const end = (at: number | string) => (typeof at === "number" ? now.subarray(at * 3, at * 3 + 3) : centres.get(at));
     const highlight = rgb("--map-highlight");
     const bg = rgb("--bg");
     const draw = (
@@ -520,9 +694,14 @@
       const place: number[] = [];
       const colour: number[] = [];
       for (const l of list) {
-        place.push(l.from[0]!, l.from[1]!, l.from[2]!, l.to[0]!, l.to[1]!, l.to[2]!);
-        for (let end = 0; end < 2; end++) colour.push(...Array.from(colourOf(l)));
+        const from = end(l.from);
+        const to = end(l.to);
+        if (!from || !to) continue;
+        place.push(from[0]!, from[1]!, from[2]!, to[0]!, to[1]!, to[2]!);
+        for (let k = 0; k < 2; k++) colour.push(...Array.from(colourOf(l)));
       }
+      object.visible = place.length > 0;
+      if (!place.length) return;
       object.geometry.setPositions(place);
       object.geometry.setColors(colour);
       object.computeLineDistances();
@@ -568,46 +747,33 @@
     });
   });
 
-  // A pick turns the view to it: an asset close up, a group so it fills the view.
+  // Flattened, the view faces the plane and a drag moves it, as it cannot be turned; and nothing glides under reduced
+  // motion.
+  $effect(() => {
+    if (!ready || !world) return;
+    world.controls.enableRotate = !flat;
+    world.controls.mouseButtons.LEFT = flat ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+    world.controls.enableDamping = !prefersReducedMotion.current;
+    if (flat) untrack(faceFront);
+  });
+
+  // A pick turns the view to it: an asset close up, a group so it fills the view. A change of depth follows it.
   $effect(() => {
     if (!ready || !world) return;
     const group = groups.find((g) => g.key === selected);
     if (picked < 0 && !group) return;
-    const target =
-      picked >= 0
-        ? new THREE.Vector3(...o.place.subarray(picked * 3, picked * 3 + 3))
-        : new THREE.Vector3(...group!.centre);
-    const { camera, controls } = world;
-    const from = controls.target.clone();
+    const at = (i: number) => new THREE.Vector3(...place.subarray(i * 3, i * 3 + 3));
+    const target = picked >= 0 ? at(picked) : new THREE.Vector3();
+    if (picked < 0) for (const i of group!.members) target.addScaledVector(at(i), 1 / group!.members.length);
     // A pick is framed from 90 units away, or farther when its first two levels reach beyond that.
     const reachOut = untrack(() =>
-      Math.max(
-        0,
-        ...levels
-          .slice(0, 2)
-          .flatMap((list) =>
-            list.map((i) => target.distanceTo(new THREE.Vector3(...o.place.subarray(i * 3, i * 3 + 3)))),
-          ),
-      ),
+      Math.max(0, ...levels.slice(0, 2).flatMap((list) => list.map((i) => target.distanceTo(at(i))))),
     );
-    const away = camera.position
-      .clone()
-      .sub(controls.target)
-      .setLength(
-        picked >= 0 ? Math.min(400, Math.max(90, 1.4 * reachOut)) : 60 + 12 * Math.cbrt(group!.members.length),
-      );
-    const start = performance.now();
-    const flight = {};
-    world.flight = flight;
-    const step = (now: number) => {
-      if (world?.flight !== flight) return;
-      const t = Math.min(1, (now - start) / 700);
-      const ease = t * (2 - t);
-      controls.target.lerpVectors(from, target, ease);
-      camera.position.copy(controls.target).add(away);
-      if (t < 1) requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
+    const { camera, controls } = world;
+    const away = (flat ? new THREE.Vector3(0, 0, 1) : camera.position.clone().sub(controls.target)).setLength(
+      picked >= 0 ? Math.min(400, Math.max(90, 1.4 * reachOut)) : 60 + 12 * Math.cbrt(group!.members.length),
+    );
+    untrack(() => fly(target, away));
   });
 </script>
 
@@ -616,13 +782,9 @@
   class="stage-3d"
   bind:this={host}
   role="group"
-  aria-label={onStep ? `${label} Arrow keys step to the previous or next asset.` : label}
-  tabindex={onStep ? 0 : undefined}
-  onkeydown={(event) => {
-    if (!onStep || (event.key !== "ArrowRight" && event.key !== "ArrowLeft")) return;
-    event.preventDefault();
-    onStep(event.key === "ArrowRight" ? 1 : -1);
-  }}
+  aria-label={`${label}${onStep ? " The left and right arrow keys step to the previous or next asset." : ""}${flat ? "" : " The up and down arrow keys, and Shift with left and right, turn the view."} Plus and minus zoom, and 0 faces the front.`}
+  tabindex="0"
+  onkeydown={onKey}
 >
   {#if failed}<p class="notice notice-warn">{failed}</p>{/if}
   {#snippet name(g: Group)}{g.label}<span>{g.members.length.toLocaleString()}</span>{/snippet}
@@ -639,13 +801,23 @@
         style={`font-size:${13 + 4 * Math.sqrt(g.members.length / largest)}px`}>{@render name(g)}</span
       >{/if}
   {/each}
-  {#if legend}<div class="stage-legend">{@render legend()}</div>{/if}
-  {#if picked >= 0}<div class="pick-label" bind:this={pickEl}>{o.ref[picked]}</div>{/if}
+  <div class="stage-legend">
+    <p class="depth-note">{depthNote}</p>
+    {@render legend?.()}
+  </div>
+  {#snippet named(i: number)}<span class="ref">{o.ref[i]}</span>{#if describe?.(i)}<span class="value"
+        >{` · ${describe(i)}`}</span
+      >{/if}{/snippet}
+  {#if !flat}<div class="depth-marker" aria-hidden="true" bind:this={markerEl}>
+      <svg viewBox="-34 -34 68 68" width="68" height="68"><line /><circle /><circle class="front" /></svg>
+      <span></span><span></span>
+    </div>{/if}
+  {#if picked >= 0}<div class="pick-label" bind:this={pickEl}>{@render named(picked)}</div>{/if}
   {#if tip}<div
       class="tip"
       style={`${tip.y > host!.clientHeight - 40 ? `bottom:${host!.clientHeight - tip.y + 24}px` : `top:${tip.y}px`};${tip.x < host!.clientWidth / 2 ? `left:${tip.x + 12}px` : `right:${host!.clientWidth - tip.x + 12}px`}`}
     >
-      {tip.text}
+      {@render named(tip.i)}
     </div>{/if}
 </div>
 
@@ -676,8 +848,10 @@
     border-radius: 6px;
     empty-cells: hide;
   }
-  .stage-legend:empty {
-    display: none;
+  .depth-note {
+    margin: 0;
+    padding: 6px 10px;
+    font-size: var(--text-xs);
   }
   .pick-label {
     position: absolute;
@@ -697,6 +871,43 @@
     text-overflow: ellipsis;
     pointer-events: none;
     will-change: transform;
+  }
+  .value {
+    font-weight: 400;
+    color: var(--muted);
+  }
+  .depth-marker {
+    position: absolute;
+    inset-block-end: 26px;
+    inset-inline-end: 44px;
+    z-index: 2;
+    inline-size: 68px;
+    block-size: 68px;
+    pointer-events: none;
+    font-size: var(--text-xs);
+    color: var(--text);
+  }
+  .depth-marker span {
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-start: 50%;
+    padding: 0 4px;
+    white-space: nowrap;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    border-radius: 4px;
+  }
+  .depth-marker line {
+    stroke: var(--muted);
+    stroke-width: 2;
+  }
+  .depth-marker circle {
+    fill: var(--surface);
+    stroke: var(--muted);
+    stroke-width: 2;
+  }
+  .depth-marker circle.front {
+    fill: var(--text);
+    stroke: var(--text);
   }
   .group-name {
     position: absolute;
