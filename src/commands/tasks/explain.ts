@@ -78,7 +78,6 @@ import {
   applyInputDefaults,
   type InputContract,
   type InputDeclaration,
-  type InputFlag,
   materializeInputFlags,
 } from "../../execution/input-contract";
 import { createInlineResolvedCommand } from "../../execution/resolved-request";

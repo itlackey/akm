@@ -48,7 +48,6 @@ import {
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
-import type { InputFlag } from "../../execution/input-contract";
 import { deriveInstallations } from "../../indexer/installations";
 import { retiredEngineSelection } from "../../integrations/agent/resolution";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
@@ -93,7 +92,6 @@ import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
 import { parseTaskSourceV4 } from "../../tasks/source/task-source-v4";
 import type { TaskV3SourceDocument } from "../../tasks/source-v3";
 import { normaliseTaskConceptId, normaliseTaskId } from "../../tasks/task-id";
-import type { TaskV5Start } from "../../tasks/v5/flags";
 import { applyAutonomyGate, configuredDirectAutonomyLanes, describeGatedLanes } from "../improve/autonomy-gate";
 import { resolveImproveStrategy } from "../improve/improve-strategies";
 
