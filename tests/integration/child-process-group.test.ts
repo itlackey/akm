@@ -388,11 +388,16 @@ describe.skipIf(!posix || !hasPython)("the installed launcher", () => {
       }, 30_000);
 
       test("off a terminal, kill -QUIT runs the ladder and leaves no orphan", async () => {
-        const child = spawn(runtime(), [LAUNCHER, "run", "scripts/slp.sh"], {
-          env,
-          detached: true,
-          stdio: ["ignore", "ignore", "ignore"],
-        });
+        // akm ends by SIGQUIT, which dumps core: core dumps off, so its exit does not wait on the host's core handler.
+        const child = spawn(
+          "/bin/sh",
+          ["-c", 'ulimit -c 0 && exec "$@"', "sh", runtime(), LAUNCHER, "run", "scripts/slp.sh"],
+          {
+            env,
+            detached: true,
+            stdio: ["ignore", "ignore", "ignore"],
+          },
+        );
         started.push(child);
         const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
         expect(await until(() => readPid("bg") !== undefined, 15_000)).toBe(true);
