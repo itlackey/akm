@@ -260,8 +260,10 @@
   /** Outdated assets still being read, the most read first; and the rest of the outdated. */
   const outdatedRead = $derived(o && facts ? top(facts.outdated, (i) => o!.shows[i]!) : []);
   const outdatedUnread = $derived(o && facts ? facts.outdated.filter((i) => !o!.shows[i]) : []);
-  /** No declared link either way. */
-  const unlinked = $derived(o ? members.filter((i) => !o!.degree[i]) : []);
+  /** No declared link either way, the most read first: an asset agents use that nothing leads to. */
+  const unlinked = $derived(
+    o ? members.filter((i) => !o!.degree[i]).sort((a, b) => o!.shows[b]! - o!.shows[a]! || a - b) : [],
+  );
   /** Near-duplicate pairs whose two assets are in different bundles. */
   const acrossBundles = $derived(
     o && facts
@@ -272,7 +274,7 @@
   function groupNote(g: { members: number[] }): string {
     if (view === "use")
       return o!.useKnown
-        ? `${pct(g.members.filter((i) => o!.use[i] === "unread").length, g.members.length)} dead weight`
+        ? `${pct(g.members.filter((i) => o!.use[i] === "unread" || o!.use[i] === "new").length, g.members.length)} never read`
         : "";
     if (view === "problems") {
       const n = problemsOf(g.members);
@@ -390,12 +392,22 @@
     const days = Math.floor((o!.at - Date.parse(iso)) / DAY);
     return days < 1 ? "today" : `${plural(days, "day")} ago`;
   };
+  /** The usage window in words: "the last 90 days". */
+  const windowText = $derived(
+    o?.useSince ? `the last ${Math.round((o.at - Date.parse(o.useSince)) / DAY)} days` : "the usage window",
+  );
   const reads = (i: number) =>
     !o!.useKnown
       ? "reads unknown"
       : o!.shows[i]
         ? `read ${plural(o!.shows[i]!, "time")}${o!.lastShown[i] ? `, last ${ago(o!.lastShown[i]!)}` : ""}`
-        : "not read in the window";
+        : `not read in ${windowText}`;
+  /** How long since an asset's file was changed, in words: "untouched 19 months". */
+  const untouched = (i: number) => {
+    if (!o!.modified[i]) return "";
+    const days = Math.floor((o!.at - Date.parse(o!.modified[i]!)) / DAY);
+    return `untouched ${days < 60 ? plural(days, "day") : days < 730 ? plural(Math.floor(days / 30), "month") : plural(Math.floor(days / 365), "year")}`;
+  };
   const problem = (i: number) => PROBLEMS.find((p) => p.id === firstProblem(o!, i))?.label.toLowerCase();
   /** Why an outdated asset is outdated, and how much it is still read. */
   const outdatedNote = (i: number) =>
@@ -446,22 +458,22 @@
       >{:else}<p class="more">and {(list.length - limit).toLocaleString()} more</p>{/if}{/if}
 {/snippet}
 
-{#snippet colourKey()}
-  {#if view === "problems"}<ul class="colour-key">
-      {#each PROBLEMS as p}<li><span class="swatch" style={`background:var(${p.token})`}></span>{p.label}</li>{/each}
-      <li><span class="swatch" style="background:var(--border)"></span>No problem recorded</li>
-    </ul>{/if}
+{#snippet stat(n: number | string, text: string, token = "")}
+  <li>
+    <span class="swatch" style={token ? `background:var(${token})` : ""}></span><strong
+      >{typeof n === "number" ? n.toLocaleString() : n}</strong
+    ><span>{text}</span>
+  </li>
 {/snippet}
 
 {#snippet pairList(list: Pair[], limit = 8)}
   <ul class="pairs">
     {#each list.slice(0, limit) as d}<li>
         <a href={open(o!.ref[d.a]!)} title={o!.ref[d.a]}>{short(o!.ref[d.a]!)}</a>
-        <a href={open(o!.ref[d.b]!)} title={o!.ref[d.b]}>{short(o!.ref[d.b]!)}</a>
         <span class="pair-foot"
-          ><span class="muted">cosine {d.cosine.toFixed(3)}</span><a href={compare(o!.ref[d.a]!, o!.ref[d.b]!)}
-            >Compare</a
-          ></span
+          ><a href={open(o!.ref[d.b]!)} title={o!.ref[d.b]}>{short(o!.ref[d.b]!)}</a><span class="muted"
+            >{Math.round(d.cosine * 100)}% alike</span
+          ><a href={compare(o!.ref[d.a]!, o!.ref[d.b]!)}>Compare</a></span
         >
       </li>{/each}
   </ul>
@@ -504,37 +516,35 @@
 {/snippet}
 
 <svelte:window onkeydown={onKey} />
-<nav class="library-views" aria-label="Library views" data-sveltekit-reset="false">
-  <a href="/library/search">Search</a>
-  <a href={filesLink}>Files</a>
-  <a href="/library/map" aria-current="page">Map</a>
-</nav>
-<div class="map-page">
-  <div class="map-toolbar">
-    <h1>Library map</h1>
-    <div class="views" role="tablist" aria-label="Question">
-      {#each VIEWS as v}<button
-          role="tab"
-          aria-selected={view === v.id}
-          class="btn-quiet"
-          title={v.question}
-          onclick={() => (view = v.id)}>{v.label}</button
-        >{/each}
-    </div>
-    <p class="question">{question}</p>
-    {#if o}<label class="bundle-pick"
-        >Bundle <select
-          bind:value={bundle}
-          onchange={() => {
-            selected = "";
-            near = null;
-          }}
-          ><option value={-1}>All bundles</option>{#each o.bundles as name, b}<option value={b}>{name}</option
-            >{/each}</select
-        ></label
-      >
-    {/if}
+<div class="map-head">
+  <nav class="library-views" aria-label="Library views" data-sveltekit-reset="false">
+    <a href="/library/search">Search</a>
+    <a href={filesLink}>Files</a>
+    <a href="/library/map" aria-current="page">Map</a>
+  </nav>
+  <h1 class="sr-only">Library map</h1>
+  <div class="views" role="tablist" aria-label="Question">
+    {#each VIEWS as v}<button
+        role="tab"
+        aria-selected={view === v.id}
+        class="btn-quiet"
+        title={v.question}
+        onclick={() => (view = v.id)}>{v.label}</button
+      >{/each}
   </div>
+  {#if o}<label class="bundle-pick"
+      >Bundle <select
+        bind:value={bundle}
+        onchange={() => {
+          selected = "";
+          near = null;
+        }}
+        ><option value={-1}>All bundles</option>{#each o.bundles as name, b}<option value={b}>{name}</option
+          >{/each}</select
+      ></label
+    >{/if}
+</div>
+<div class="map-page">
   {#if error}<div class="notice notice-warn" role="alert">
       {error}<button class="btn-secondary" onclick={load}>Retry</button>
     </div>{/if}
@@ -634,16 +644,14 @@
                     </ul>
                   </div>{/if}{/snippet}
             </SimilarityMap>
-            {@render colourKey()}
-            <p class="muted small map-note">
-              Choose a point or a group's name for its details. Position inside a group is approximate.
-              {#if offMap}{plural(offMap, "asset")}
+            {#if offMap}<p class="muted small map-note" role="status">
+                {plural(offMap, "asset")}
                 {offMap === 1 ? "has" : "have"} no group by meaning, so {offMap === 1 ? "is" : "are"} not shown (not embedded,
-                or added since the last index build).{/if}
-            </p>{:else}<p class="notice">
+                or added since the last index build).
+              </p>{/if}{:else}<p class="notice">
               No stored embeddings, so assets cannot be placed by meaning. Build the index with embeddings, or use Tags.
             </p>{/if}
-        {:else}{@render colourKey()}<MindMap
+        {:else}<MindMap
             {branches}
             rootLabel={scopeName}
             rootFigure={view === "contents" ? scope.length.toLocaleString() : figure(scope)}
@@ -684,14 +692,14 @@
                   </li>{/if}
                 {#if o.problems[i]!.includes("negative")}<li>
                     <strong>Disliked:</strong>
-                    {o.negative[i]} negative and {o.positive[i]} positive feedback. Open it to fix what readers found wrong.
+                    {o.negative[i]} down, {o.positive[i]} up. Open it to fix what readers found wrong.
                   </li>{/if}
                 {#each pairsOf(i) as d}{@const other = d.a === i ? d.b : d.a}
                   <li>
                     <strong>Nearly the same as</strong>
                     <button class="link" onclick={() => pick(other)} title={o.ref[other]}>{short(o.ref[other]!)}</button
                     >
-                    (cosine {d.cosine.toFixed(3)}).
+                    ({Math.round(d.cosine * 100)}% alike).
                     <a href={compare(o.ref[i]!, o.ref[other]!)}>Compare</a> and keep one.
                   </li>{/each}
               </ul>{/if}
@@ -743,42 +751,33 @@
           </header>
 
           {#if view === "contents"}
-            <p class="answer">
-              <strong>{pct(facts.linked, facts.count)}</strong> of these assets are linked to another;
-              <strong>{unlinked.length.toLocaleString()}</strong>
-              {unlinked.length === 1 ? "stands" : "stand"} alone.
-            </p>
-            <p class="makeup muted small">
-              {madeOf.types
-                .map(([name, n]) => `${n.toLocaleString()} ${name}`)
-                .join(" · ")}{#if madeOf.bundles.length > 1}<br />{madeOf.bundles
-                  .map(([name, n]) => `${n.toLocaleString()} in ${name}`)
-                  .join(" · ")}{/if}
-            </p>
+            <ul class="stats">
+              {@render stat(facts.count, madeOf.types.map(([name, n]) => `${n.toLocaleString()} ${name}`).join(", "))}
+              {#if madeOf.bundles.length > 1}{@render stat(
+                  madeOf.bundles.length,
+                  `bundles: ${madeOf.bundles.map(([name, n]) => `${name} ${n.toLocaleString()}`).join(", ")}`,
+                )}{/if}
+              {@render stat(unlinked.length, "not linked to or from anything")}
+              {#if madeOf.bundles.length > 1 && o.duplicatesKnown}{@render stat(
+                  acrossBundles.length,
+                  "near-identical pairs in two different bundles",
+                )}{/if}
+            </ul>
             <section>
-              <h3>No links<span class="count">{unlinked.length.toLocaleString()}</span></h3>
-              {#if unlinked.length}<p class="muted small">
-                  Nothing points to these and they point to nothing. Open one to link it.
-                </p>
-                {@render assetList(unlinked, edited, 3, "unlinked")}{:else}<p class="muted small">
-                  Every asset here has a link.
-                </p>{/if}
+              <h3>Not linked to anything, most read first</h3>
+              {#if unlinked.length}{@render assetList(
+                  unlinked,
+                  (i) => (o!.useKnown ? plural(o!.shows[i]!, "read") : ""),
+                  5,
+                  "unlinked",
+                )}{:else}<p class="muted small">Every asset here has a link.</p>{/if}
             </section>
+            {#if acrossBundles.length}<section>
+                <h3>The same content in two bundles</h3>
+                {@render pairList(acrossBundles, 3)}
+              </section>{/if}
             <section>
-              <h3>
-                Repeated across bundles<span class="count"
-                  >{o.duplicatesKnown ? acrossBundles.length.toLocaleString() : "unavailable"}</span
-                >
-              </h3>
-              {#if acrossBundles.length}<p class="muted small">
-                  Nearly the same content in two bundles: compare and keep one.
-                </p>
-                {@render pairList(acrossBundles, 3)}{:else if !o.duplicatesKnown}<p class="muted small">
-                  {o.note}
-                </p>{/if}
-            </section>
-            <section>
-              <h3>Most connected</h3>
+              <h3>Most linked</h3>
               {#if mostLinked.length}{@render assetList(
                   mostLinked,
                   (i) => plural(o!.degree[i]!, "link"),
@@ -788,139 +787,101 @@
             </section>
             {#if selected}{@render connects("Joined by links and near-duplicates")}{/if}
           {:else if view === "use"}{#if o.useKnown}
-              <p class="answer">
-                <strong>{deadWeight.length.toLocaleString()}</strong> of {plural(facts.count, "asset")}
-                {deadWeight.length === 1 ? "is" : "are"} dead weight: never read since
-                {o.useSince ? new Date(o.useSince).toLocaleDateString() : "the window began"} and not edited in {OLD_DAYS}
-                days.
-              </p>
-              <div class="use-bar" role="img" aria-label="How the assets are used">
-                {#each USE_CLASSES as u}{#if facts.use[u.id]}<span
-                      style={`flex:${facts.use[u.id]};background:var(${u.token})`}
-                      title={`${u.label}: ${facts.use[u.id].toLocaleString()}`}
-                    ></span>{/if}{/each}
-              </div>
-              <ul class="use-key">
-                {#each USE_CLASSES as u}<li>
-                    <span class="swatch" style={`background:var(${u.token})`}></span>{u.label}<span class="count"
-                      >{facts.use[u.id].toLocaleString()}</span
-                    >
-                  </li>{/each}
+              <ul class="stats">
+                {@render stat(facts.use.recent, `read in the last ${RECENT_DAYS} days`, "--use-4")}
+                {@render stat(facts.use.earlier, `read earlier, not in the last ${RECENT_DAYS} days`, "--use-2")}
+                {@render stat(facts.use.new, "never read, edited in the last 6 months (may be new)", "--use-0")}
+                {@render stat(facts.use.unread, "never read, untouched 6+ months: retire candidates", "--warn")}
+                {#if o.feedbackKnown}{@render stat(dislikedRead.length, "read but disliked")}{/if}
               </ul>
+              <p class="muted small scope-note">Reads counted over {windowText}.</p>
               <section>
-                <h3>Dead weight<span class="count">{deadWeight.length.toLocaleString()}</span></h3>
-                {#if deadWeight.length}<p class="muted small">Longest unchanged first. Open one to retire it.</p>
-                  {@render assetList(deadWeight, edited, 4, "dead")}{:else}<p class="muted small">
+                <h3>Retire candidates, longest untouched first</h3>
+                {#if deadWeight.length}{@render assetList(deadWeight, untouched, 5, "dead")}{:else}<p
+                    class="muted small"
+                  >
                     Nothing here is both unread and old.
                   </p>{/if}
               </section>
-              <section>
-                <h3>Disliked but still read<span class="count">{dislikedRead.length.toLocaleString()}</span></h3>
-                {#if !o.feedbackKnown}<p class="muted small">Feedback is unavailable: {o.note}</p>
-                {:else if dislikedRead.length}<p class="muted small">Open one to fix what readers found wrong.</p>
+              {#if o.feedbackKnown && dislikedRead.length}<section>
+                  <h3>Read but disliked, most read first</h3>
                   {@render assetList(
                     dislikedRead,
-                    (i) => `${plural(o!.shows[i]!, "read")} · ${o!.negative[i]} negative, ${o!.positive[i]} positive`,
+                    (i) => `${plural(o!.shows[i]!, "read")} · ${o!.negative[i]} down, ${o!.positive[i]} up`,
                     3,
                     "dislikedRead",
-                  )}{:else}<p class="muted small">Nothing read here has more negative feedback than positive.</p>{/if}
-              </section>
+                  )}
+                </section>{/if}
               <section>
                 <h3>Most read</h3>
                 {#if mostRead.length}{@render assetList(
                     mostRead,
                     (i) => plural(o!.shows[i]!, "read"),
-                    4,
+                    5,
                     "mostRead",
                   )}{:else}<p class="muted small">Nothing here has been read.</p>{/if}
                 {#if facts.useUnclassed}<p class="muted small">
-                    {plural(facts.useUnclassed, "asset")} not read in the window and with no edit time akm could read, so
-                    they are not classed.
+                    {plural(facts.useUnclassed, "asset")} not read and with no edit time akm could read, so not counted above.
                   </p>{/if}
               </section>{:else}<section><p class="muted small">{o.note}</p></section>{/if}
             <section>
-              <h3>Searched for, not found</h3>
+              <h3>Searched for in the last 90 days, nothing found</h3>
               {#if gaps.length}<ul class="rows">
                   {#each gaps as m}<li>
                       <a href={`/library/search?${new URLSearchParams([["q", m.query]])}`}>{m.query}</a><span
                         class="count">×{m.count}</span
                       >
                     </li>{/each}
-                </ul>{:else if missesNote}<p class="muted small">
-                  Searches that found nothing are unavailable. {missesNote}
-                </p>{:else}<p class="muted small">
-                  No search {part?.tag ? `mentioning “${part.tag}” ` : ""}came back empty in the last 90 days.
+                </ul>{:else if missesNote}<p class="muted small">Unavailable. {missesNote}</p>{:else}<p
+                  class="muted small"
+                >
+                  None{part?.tag ? ` mentioning “${part.tag}”` : ""}.
                 </p>{/if}
             </section>
           {:else}
-            <p class="answer">
-              To fix: <strong>{outdatedRead.length.toLocaleString()}</strong> outdated and still read ·
-              <strong>{outdatedUnread.length.toLocaleString()}</strong> outdated, not read ·
-              <strong
-                >{o.duplicatesKnown
-                  ? (facts.duplicatesInside.length + facts.duplicatesOutside.length).toLocaleString()
-                  : "?"}</strong
-              >
-              near-duplicate pairs · <strong>{o.feedbackKnown ? facts.disliked.length.toLocaleString() : "?"}</strong>
-              disliked.
-            </p>
-            <section>
-              <h3>1. Outdated and still read<span class="count">{outdatedRead.length.toLocaleString()}</span></h3>
-              {#if outdatedRead.length}<p class="muted small">
-                  Agents are still given these, most read first. Open one to retire it or fix the link.
-                </p>
-                {@render assetList(outdatedRead, outdatedNote, 5, "outdatedRead")}{:else}<p class="muted small">
-                  No outdated asset is being read.
-                </p>{/if}
-            </section>
-            <section>
-              <h3>
-                2. Near-duplicate pairs<span class="count"
-                  >{o.duplicatesKnown
-                    ? (facts.duplicatesInside.length + facts.duplicatesOutside.length).toLocaleString()
-                    : "unavailable"}</span
-                >
-              </h3>
-              {#if facts.duplicatesInside.length + facts.duplicatesOutside.length}<p class="muted small">
-                  Compare each pair and keep one.
-                </p>
-                {@render pairList(
-                  [...facts.duplicatesInside, ...facts.duplicatesOutside],
-                  3,
-                )}{:else if o.duplicatesKnown}<p class="muted small">No near-duplicates here.</p>{:else}<p
-                  class="muted small"
-                >
-                  Near-duplicates cannot be shown. {o.note}
-                </p>{/if}
-              {#if o.duplicatesTruncated}<p class="muted small">
-                  Near-duplicates count the {o.duplicates.length.toLocaleString()} most alike pairs in the library (cosine
-                  {o.duplicateThreshold} or more); there are more.
-                </p>{/if}
-            </section>
-            <section>
-              <h3>
-                3. Disliked<span class="count"
-                  >{o.feedbackKnown ? facts.disliked.length.toLocaleString() : "unavailable"}</span
-                >
-              </h3>
-              {#if !o.feedbackKnown}<p class="muted small">Disliked assets cannot be shown. {o.note}</p>
-              {:else if facts.disliked.length}<p class="muted small">
-                  More negative feedback than positive. Open one to fix what readers found wrong.
-                </p>
+            <ul class="stats">
+              {@render stat(outdatedRead.length, "outdated and still read by agents: fix first", "--map-highlight")}
+              {@render stat(outdatedUnread.length, "outdated, nobody reads them", "--map-highlight")}
+              {@render stat(
+                o.duplicatesKnown ? facts.duplicatesInside.length + facts.duplicatesOutside.length : "?",
+                "pairs of near-identical assets",
+                "--warn",
+              )}
+              {@render stat(
+                o.feedbackKnown ? facts.disliked.length : "?",
+                "with more negative feedback than positive",
+                "--fail",
+              )}
+            </ul>
+            {#if !o.feedbackKnown || !o.duplicatesKnown}<p class="muted small scope-note">
+                {o.feedbackKnown ? "" : "Feedback is unavailable. "}{o.duplicatesKnown
+                  ? ""
+                  : "Near-identical pairs are unavailable. "}{o.note}
+              </p>{/if}
+            {#if outdatedRead.length}<section>
+                <h3>Outdated and still read, most read first</h3>
+                {@render assetList(outdatedRead, outdatedNote, 4, "outdatedRead")}
+              </section>{/if}
+            {#if facts.duplicatesInside.length + facts.duplicatesOutside.length}<section>
+                <h3>Near-identical pairs: compare and keep one</h3>
+                {@render pairList([...facts.duplicatesInside, ...facts.duplicatesOutside], 3)}
+                {#if o.duplicatesTruncated}<p class="muted small">
+                    Only the {o.duplicates.length.toLocaleString()} most alike pairs in the library are counted.
+                  </p>{/if}
+              </section>{/if}
+            {#if o.feedbackKnown && facts.disliked.length}<section>
+                <h3>More negative feedback than positive</h3>
                 {@render assetList(
                   facts.disliked,
-                  (i) => `${o!.negative[i]} negative, ${o!.positive[i]} positive`,
-                  4,
+                  (i) => `${o!.negative[i]} down, ${o!.positive[i]} up`,
+                  3,
                   "disliked",
-                )}{:else}<p class="muted small">Nothing here is disliked.</p>{/if}
-            </section>
-            <section>
-              <h3>4. Outdated, not read<span class="count">{outdatedUnread.length.toLocaleString()}</span></h3>
-              {#if outdatedUnread.length}<p class="muted small">Nobody is given these; retire them when convenient.</p>
-                {@render assetList(outdatedUnread, outdatedNote, 4, "outdatedUnread")}{:else}<p class="muted small">
-                  None.
-                </p>{/if}
-            </section>
+                )}
+              </section>{/if}
+            {#if outdatedUnread.length}<section>
+                <h3>Outdated, nobody reads them</h3>
+                {@render assetList(outdatedUnread, outdatedNote, 3, "outdatedUnread")}
+              </section>{/if}
             {@render overlap()}
           {/if}
 
@@ -941,11 +902,18 @@
 </div>
 
 <style>
+  /* One row: where in the Library this is, which question the map answers, and whose assets. */
+  .map-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 24px;
+    align-items: center;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--border);
+  }
   .library-views {
     display: flex;
     gap: 24px;
-    padding: 0 24px;
-    border-bottom: 1px solid var(--border);
     min-height: 44px;
   }
   .library-views a {
@@ -962,17 +930,7 @@
     font-weight: 600;
   }
   .map-page {
-    padding: 12px 24px 16px;
-  }
-  .map-toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px 16px;
-    align-items: center;
-  }
-  .map-toolbar h1 {
-    margin: 0;
-    font-size: 1.125rem;
+    padding: 8px 12px;
   }
   .views {
     display: flex;
@@ -1001,30 +959,23 @@
     font-size: 13px;
     color: var(--muted);
   }
-  .question {
-    flex: 1;
-    min-inline-size: 0;
-    margin: 0;
-    color: var(--muted);
-  }
   .map-filter input {
     inline-size: 12rem;
   }
   .map-body {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 26rem;
-    gap: 16px;
+    grid-template-columns: minmax(0, 1fr) 21rem;
+    gap: 8px;
     align-items: start;
-    margin-block-start: 10px;
   }
   .map-stage {
     position: relative;
     border: 1px solid var(--border);
     background: var(--surface);
-    padding: 8px;
+    padding: 0;
     min-inline-size: 0;
-    /* The map takes what the window has left under the toolbar. */
-    --stage-size: max(420px, calc(100vh - 300px));
+    /* The map takes all the window has left under the app's header and the row above. */
+    --stage-size: max(360px, calc(100vh - 152px));
   }
   /* The drawing and the finder sit on the map; over the tags, which have no spare corner, they sit above it. */
   .stage-tools {
@@ -1036,49 +987,59 @@
   }
   .map-stage:has(:global(.stage-3d)) .stage-tools {
     position: absolute;
-    inset-block-start: 16px;
-    inset-inline-start: 16px;
+    inset-block-start: 8px;
+    inset-inline-start: 8px;
     z-index: 3;
     margin: 0;
-    padding: 4px;
+    padding: 2px;
     background: color-mix(in srgb, var(--surface) 94%, transparent);
     border: 1px solid var(--border);
     border-radius: 6px;
   }
   .map-note {
-    margin: 6px 0 0;
-  }
-  .colour-key {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px 12px;
     margin: 0;
-    padding: 6px 10px;
-    list-style: none;
-    font-size: var(--text-xs);
+    padding: 4px 8px;
   }
-  .colour-key li {
-    display: flex;
+  .stage-tools :global(button) {
+    min-block-size: 28px;
+    padding: 2px 10px;
+    font-size: 13px;
+  }
+  .stage-tools input {
+    block-size: 28px;
+    font-size: 13px;
+  }
+  /* What the view found, one fact a line; a line with a colour is also the key to that colour on the map. */
+  .stats {
+    display: grid;
+    gap: 3px;
+    margin: 0;
+    padding: 0 12px 8px;
+    list-style: none;
+    font-size: 13px;
+  }
+  .stats li {
+    display: grid;
+    grid-template-columns: 10px 2.75rem 1fr;
     gap: 6px;
-    align-items: center;
+    align-items: baseline;
+  }
+  .stats .swatch {
+    align-self: center;
+  }
+  .stats strong {
+    text-align: end;
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+  }
+  .scope-note {
+    padding: 0 12px 6px;
   }
   .swatch {
     flex: none;
     inline-size: 10px;
     block-size: 10px;
     border-radius: 2px;
-  }
-  .answer {
-    margin: 0;
-    padding: 0 16px 12px;
-    font-size: 14px;
-  }
-  .answer strong {
-    font-size: 1.25rem;
-    font-variant-numeric: tabular-nums;
-  }
-  .map-side > .use-bar {
-    margin-inline: 16px;
   }
   .actions {
     display: flex;
@@ -1129,11 +1090,11 @@
   }
   .map-side section {
     margin: 0;
-    padding: 12px 16px;
+    padding: 8px 12px;
     border-top: 1px solid var(--border);
   }
   .map-side section > h3 {
-    margin: 0 0 8px;
+    margin: 0 0 4px;
   }
   .map-side p {
     margin: 0 0 4px;
@@ -1142,14 +1103,14 @@
     display: flex;
     gap: 8px;
     align-items: start;
-    padding: 12px 16px;
+    padding: 8px 12px;
   }
   .side-head div {
     flex: 1;
     min-inline-size: 0;
   }
   .side-head h2 {
-    font-size: 16px;
+    font-size: 15px;
     margin: 0 0 2px;
     overflow-wrap: anywhere;
   }
@@ -1162,14 +1123,6 @@
     letter-spacing: 0.06em;
     color: var(--muted);
     margin: 0 0 8px;
-  }
-  .use-bar {
-    display: flex;
-    block-size: 8px;
-    border-radius: 4px;
-    overflow: hidden;
-    background: var(--surface-2);
-    margin-block-end: 8px;
   }
   .figures {
     display: grid;
@@ -1222,8 +1175,13 @@
   }
   .pair-foot {
     display: flex;
-    justify-content: space-between;
+    gap: 8px;
+    align-items: baseline;
     font-size: 12px;
+  }
+  .pair-foot a:first-child {
+    flex: 1;
+    font-size: 13px;
   }
   .more {
     margin: 4px 0 0;
@@ -1271,23 +1229,6 @@
     background: var(--warn-bg);
     border-radius: 6px;
   }
-  .use-key {
-    display: grid;
-    gap: 2px;
-    margin: 0 16px 8px;
-    padding: 0;
-    list-style: none;
-    font-size: 12px;
-  }
-  .use-key li {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-  }
-  .makeup {
-    margin: 0;
-    padding: 0 16px 12px;
-  }
   .near {
     margin: 4px 0 6px 12px;
     padding-inline-start: 8px;
@@ -1322,7 +1263,7 @@
   /* Beside the map the figures scroll on their own, so the map stays in view while they are read. */
   @media (min-width: 1401px) {
     .map-side {
-      max-block-size: calc(max(420px, 100vh - 300px) + 44px);
+      max-block-size: calc(max(360px, 100vh - 152px) + 2px);
       overflow-y: auto;
     }
   }

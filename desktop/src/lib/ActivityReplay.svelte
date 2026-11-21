@@ -560,7 +560,7 @@
     flex-wrap: wrap;
     gap: 12px 16px;
     align-items: end;
-    margin-bottom: 16px;
+    margin-bottom: 8px;
   }
   .replay-toolbar label {
     display: grid;
@@ -672,7 +672,7 @@
   .timeline svg {
     display: block;
     inline-size: 100%;
-    block-size: 64px;
+    block-size: 48px;
     cursor: ew-resize;
     touch-action: none;
   }
@@ -735,7 +735,7 @@
     padding: 8px;
     min-inline-size: 0;
     /* The timeline and the map fit one window together. */
-    --stage-size: max(260px, calc(100vh - 575px));
+    --stage-size: max(280px, calc(100vh - 520px));
   }
   /* The drawing switch sits on the map; over the tags, which have no spare corner, it sits above them. */
   .stage-tools {
@@ -765,18 +765,22 @@
   .replay-side {
     display: grid;
     align-content: start;
-    gap: 16px;
+    gap: 10px;
     min-inline-size: 0;
+  }
+  .replay-side section {
+    margin: 0;
+    padding: 0;
   }
   /* The tags are drawn in the frame the points have, so the timeline stays under them. */
   .tags-frame {
-    max-block-size: calc(max(260px, 100vh - 575px) + 40px);
+    max-block-size: calc(max(280px, 100vh - 520px) + 40px);
     overflow: auto;
   }
   /* Beside the map the lists scroll on their own, so the page, the map and the timeline stay put. */
   @media (min-width: 1401px) {
     .replay-side {
-      max-block-size: calc(max(260px, 100vh - 575px) + 110px);
+      max-block-size: calc(max(280px, 100vh - 520px) + 110px);
       overflow-y: auto;
     }
   }

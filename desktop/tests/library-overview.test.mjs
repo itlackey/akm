@@ -7,16 +7,13 @@ import test from "node:test";
 import {
   buildOverview,
   DAY,
-  depthText,
+  flatPlace,
   groupFacts,
   groupJoins,
   groupsOf,
-  LENSES,
-  lensFor,
   mindMap,
   OLD_DAYS,
   OUTDATED_LINKS,
-  placeBy,
   RECENT_DAYS,
   relations,
   tally,
@@ -323,97 +320,20 @@ test("group joins: links and near-duplicates across groups, or only the given li
   assert.deepEqual(groupJoins(o, 1, OUTDATED_LINKS), []);
 });
 
-const lens = (id) => LENSES.find((l) => l.id === id);
-/** The depth (z) of each asset under a lens. */
-const depthsUnder = (o, id, flip = false) => {
-  const place = placeBy(o, lens(id), flip);
-  return (i) => place[i * 3 + 2];
-};
-
-test("depth by meaning: every asset is at the place akm gave it", () => {
+test("the overview keeps akm's place for each asset, and the same places in one plane", () => {
   const o = buildOverview(placed, now);
   assert.deepEqual([...o.place.subarray(9, 12)], [50, 0, 10]);
-  assert.deepEqual(placeBy(o, lens("meaning")), o.place);
-  // Meaning has no front or back, so flipping it changes nothing.
-  assert.deepEqual(placeBy(o, lens("meaning"), true), o.place);
-});
-
-test("depth by last read: read lately in front, read earlier ahead of the middle, never read behind", () => {
-  const o = buildOverview(placed, now);
-  const z = depthsUnder(o, "recency");
-  // a read lately, c read earlier, b never read; being superseded does not move b under this lens.
-  assert.ok(z(0) > z(2) && z(2) > 0 && 0 > z(1));
-  // f read lately; d and e never read, the contradicted e no farther back than d.
-  assert.ok(z(5) > 10 && z(3) < 10);
-  assert.equal(z(3), z(4));
-  // x and y stay akm's.
-  const place = placeBy(o, lens("recency"));
-  assert.deepEqual([place[3 * 3], place[3 * 3 + 1]], [50, 0]);
-});
-
-test("depth by how often read: the most read third in front, other read assets in the middle, unread behind", () => {
-  const z = depthsUnder(buildOverview(placed, now), "frequency");
-  // a has 9 reads, c has 2, b none.
-  assert.ok(z(0) > 0 && z(1) < 0);
-  assert.equal(z(2), 0);
-});
-
-test("depth by feedback: more positive in front, more negative behind, none or balanced in the middle", () => {
-  const z = depthsUnder(buildOverview(placed, now), "feedback");
-  assert.ok(z(0) > 0 && z(3) < 10);
-  assert.deepEqual([z(1), z(2), z(4)], [0, 0, 10]);
-});
-
-test("depth by lifecycle: edited lately in front, edited long ago behind the middle, outdated at the back", () => {
-  const aged = (modifiedAt) => buildOverview({ ...placed, nodes: { ...placed.nodes, modifiedAt } }, now);
-  const edits = placed.nodes.modifiedAt;
-  // a edited 5 days ago, c over 180 days ago, b superseded.
-  const z = depthsUnder(aged(edits.with(2, ago(OLD_DAYS + 1))), "lifecycle");
-  assert.ok(z(0) > 0 && 0 > z(2) && z(2) > z(1));
-  // No edit time akm could report: the middle, not the back.
-  assert.equal(depthsUnder(aged(edits.with(2, null)), "lifecycle")(2), 0);
-});
-
-test("flip mirrors depth about each group's middle; flatten puts every asset at depth 0 and keeps x and y", () => {
-  const o = buildOverview(placed, now);
-  for (const id of ["recency", "frequency", "feedback", "lifecycle"]) {
-    const z = depthsUnder(o, id);
-    const flipped = depthsUnder(o, id, true);
-    for (const i of [0, 1, 2]) assert.equal(flipped(i), -z(i) || 0);
-    for (const i of [3, 4, 5]) assert.ok(Math.abs(flipped(i) - 10 + (z(i) - 10)) < 1e-5);
-  }
-  const flat = placeBy(o, lens("recency"), false, true);
+  const flat = flatPlace(o);
   for (let i = 0; i < o.count; i++)
     assert.deepEqual([...flat.subarray(i * 3, i * 3 + 3)], [o.place[i * 3], o.place[i * 3 + 1], 0]);
 });
 
-test("a lens that needs figures akm did not report cannot be chosen, and says why", () => {
-  const o = buildOverview(placed, now);
-  assert.deepEqual(
-    LENSES.map((l) => l.unavailable(o)),
-    ["", "", "", "", ""],
-  );
-  assert.equal(lensFor(o, "feedback", "meaning").id, "feedback");
-  assert.equal(lensFor(o, null, "lifecycle").id, "lifecycle");
-  const bare = buildOverview({ ...placed, use: null, feedback: null }, now);
-  assert.deepEqual(
-    LENSES.filter((l) => l.unavailable(bare)).map((l) => l.id),
-    ["recency", "frequency", "feedback"],
-  );
-  // The choice, then the page's own lens, then Meaning.
-  assert.equal(lensFor(bare, "feedback", "lifecycle").id, "lifecycle");
-  assert.equal(lensFor(bare, null, "recency").id, "meaning");
-});
-
-test("the key says what is at the front, the middle and the back, the other way round when flipped", () => {
-  assert.equal(
-    depthText(lens("recency")),
-    "Depth inside each group: read in the last 30 days at the front, read earlier in the middle, never read at the back.",
-  );
-  assert.equal(
-    depthText(lens("recency"), true),
-    "Depth inside each group: never read at the front, read earlier in the middle, read in the last 30 days at the back.",
-  );
-  assert.match(depthText(lens("meaning"), true), /^Depth is likeness in meaning/);
-  assert.match(depthText(lens("lifecycle"), true, true), /^Flattened/);
+test("an outdated asset says why, and names what replaced or contradicts it; every asset has its link count", () => {
+  const o = buildOverview(payload, now);
+  // b is recorded as superseded; e declares that f contradicts it.
+  assert.deepEqual(o.outdatedWhy[1], ["superseded"]);
+  assert.deepEqual(o.outdatedWhy[4], ["contradicted by memories/auth/f"]);
+  assert.deepEqual(o.outdatedWhy[0], []);
+  // a→b, b→c, c→d, e→f; g has none.
+  assert.deepEqual(o.degree, [1, 2, 2, 1, 1, 1, 0]);
 });

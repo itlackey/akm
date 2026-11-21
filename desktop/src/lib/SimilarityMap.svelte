@@ -110,12 +110,31 @@
   );
   const largest = $derived(Math.max(1, ...groups.map((g) => g.members.length)));
 
-  /** The camera back where it started, whatever is chosen. */
+  /** The camera where every point drawn fits the frame with a margin, whatever is chosen. */
   export function reset() {
     if (!world) return;
     world.flight = null;
-    world.camera.position.set(...HOME.position);
-    world.controls.target.set(...HOME.target);
+    const low = [Infinity, Infinity, Infinity];
+    const high = [-Infinity, -Infinity, -Infinity];
+    // Every asset with a place counts, drawn yet or not, so the frame holds as a replay adds points.
+    for (let i = 0; i < o.count; i++)
+      if (o.group[i]! >= 0)
+        for (let d = 0; d < 3; d++) {
+          low[d] = Math.min(low[d]!, place[i * 3 + d]!);
+          high[d] = Math.max(high[d]!, place[i * 3 + d]!);
+        }
+    if (low[0] === Infinity) {
+      world.camera.position.set(...HOME.position);
+      world.controls.target.set(...HOME.target);
+    } else {
+      const { camera, controls } = world;
+      const reach = Math.tan((camera.fov * Math.PI) / 360);
+      const away =
+        1.12 * Math.max((high[1]! - low[1]!) / 2 / reach, (high[0]! - low[0]!) / 2 / (reach * camera.aspect)) +
+        (high[2]! - low[2]!) / 2;
+      controls.target.set((low[0]! + high[0]!) / 2, (low[1]! + high[1]!) / 2, (low[2]! + high[2]!) / 2);
+      camera.position.copy(controls.target).add(new THREE.Vector3(0, flat ? 0 : away * 0.18, away));
+    }
     world.controls.update();
   }
 
@@ -680,6 +699,11 @@
     world.points.geometry.dispose();
     world.points.geometry = geometry;
     world.order = order;
+    // The map opens with its points filling the frame.
+    if (!world.framed) {
+      world.framed = true;
+      untrack(reset);
+    }
   });
 
   // The lines between groups, in the highlight colour, fainter for lighter weights; and, from a pick, the lines of
