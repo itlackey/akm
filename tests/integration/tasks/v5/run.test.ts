@@ -1518,3 +1518,97 @@ describe("the history of a run", () => {
     expect(bad.result).toBeUndefined();
   });
 });
+
+describe("how a step fails", () => {
+  test("a command killed by a signal has failed: the run stops there and says so", async () => {
+    const w = world({
+      tasks: {
+        "tasks/t": {
+          steps: [
+            { name: "killed", exec: "kill -9 $$" },
+            { name: "after", exec: count("after") },
+          ],
+        },
+      },
+    });
+    expect(await rule(w.start("tasks/t"))).toBe(RUN_FAILED);
+    expect(await message(w.start("tasks/t"))).toMatch(/^step killed: /);
+    expect(w.history()[0]?.steps.map((step) => step.status)).toEqual(["failed", "pending"]);
+    expect(ran("after")).toBe(0);
+  });
+
+  test("a command that exits 0 while a process it left behind still holds its output has failed, not succeeded", async () => {
+    const holder = at("holder.pid");
+    const w = world({
+      tasks: {
+        "tasks/t": {
+          steps: [
+            {
+              name: "leaves-one",
+              exec: `printf partial; setsid sh -c 'echo $$ > "${holder}"; exec sleep 30' & exit 0`,
+            },
+            { name: "after", exec: count("after") },
+          ],
+        },
+      },
+    });
+    try {
+      expect(await message(w.start("tasks/t"))).toMatch(/^step leaves-one: .*drain timed out/);
+      expect(ran("after")).toBe(0);
+    } finally {
+      if (fs.existsSync(holder)) {
+        try {
+          process.kill(Number(fs.readFileSync(holder, "utf8").trim()), "SIGKILL");
+        } catch {
+          // the holder is already gone
+        }
+      }
+    }
+  }, 30_000);
+
+  /** Tells the run akm is stopping, as a SIGTERM to akm does, once a step has written `started`. */
+  async function stopRunOnceStarted(): Promise<void> {
+    for (let tries = 0; tries < 200 && !fs.existsSync(at("started")); tries++) await Bun.sleep(25);
+    expect(fs.existsSync(at("started"))).toBe(true);
+    // The test runner's own SIGTERM listener would end this process, so only the run's listener, the last one, is called.
+    const ours = process.listeners("SIGTERM").at(-1) as (() => void) | undefined;
+    if (!ours) throw new Error("the run did not listen for SIGTERM");
+    ours();
+  }
+
+  test("a run that is stopped does not start a step's retries", async () => {
+    const w = world({
+      tasks: {
+        "tasks/t": {
+          steps: [{ name: "slow", exec: `touch "${at("started")}"; ${count("attempts")}; sleep 30`, "max-retries": 3 }],
+        },
+      },
+    });
+    const finished = message(w.start("tasks/t"));
+    await stopRunOnceStarted();
+    expect(await finished).toMatch(/^step slow: /);
+    await Bun.sleep(300);
+    expect(ran("attempts")).toBe(1);
+    const { readTaskHistory } = await import("../../../../src/tasks/run/task-history");
+    expect(readTaskHistory({ id: "t", limit: 1 })[0]?.steps?.map((step) => step.attempts)).toEqual([1]);
+  });
+
+  test("a step that runs a task the run was stopped in has failed, and nothing after it runs", async () => {
+    const w = world({
+      tasks: {
+        "tasks/slow": { exec: `touch "${at("started")}"; sleep 30` },
+        "tasks/t": {
+          steps: [
+            { name: "call", run: "tasks/slow" },
+            { name: "after", exec: count("after") },
+          ],
+        },
+      },
+    });
+    const finished = rule(w.start("tasks/t"));
+    await stopRunOnceStarted();
+    expect(await finished).toBe(RUN_FAILED);
+    await Bun.sleep(300);
+    expect(ran("after")).toBe(0);
+  });
+});
