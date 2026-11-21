@@ -16,6 +16,7 @@ import { UsageError } from "../../core/errors";
 import { isBunStandaloneMain } from "../resolve-akm-bin";
 import type { TaskV3ScriptInterpreter } from "./prepared-execution";
 
+/** The interpreter a script's extension selects when its first line does not say how to run it. */
 const SCRIPT_INTERPRETERS: Readonly<Record<string, TaskV3ScriptInterpreter>> = Object.freeze({
   ".sh": "sh",
   ".ts": "bun",
@@ -36,28 +37,41 @@ const SCRIPT_INTERPRETERS: Readonly<Record<string, TaskV3ScriptInterpreter>> = O
   ".kts": "kotlin",
 });
 
-const SHEBANG_INTERPRETERS: ReadonlyArray<readonly [RegExp, TaskV3ScriptInterpreter]> = [
-  [/^(bash|sh|zsh|dash|ksh)$/, "sh"],
-  [/^python[0-9.]*$/, "python"],
-  [/^ruby$/, "ruby"],
-  [/^perl$/, "perl"],
-  [/^php$/, "php"],
-  [/^lua$/, "lua"],
-  [/^node$/, "node"],
-];
+/** What a script's `#!` first line says to run: a program and, when the line goes on, the rest of it as one argument. */
+export interface ScriptFirstLine {
+  readonly program: string;
+  readonly argument?: string;
+}
 
-function interpreterFromShebang(bytes: Uint8Array | undefined): TaskV3ScriptInterpreter | undefined {
-  if (!bytes || bytes.length < 2 || bytes[0] !== 0x23 || bytes[1] !== 0x21) return undefined;
+/**
+ * A script's first line when it starts with `#!`, read as the kernel reads it: the program is the first word, and
+ * everything after it is ONE argument (`#!/usr/bin/env -S bash -eu` gives `env` the single argument `-S bash -eu`).
+ * A carriage return that ends the line is not part of it.
+ */
+export function scriptFirstLine(bytes: Uint8Array | undefined): ScriptFirstLine | undefined {
+  if (!bytes || bytes.length < 3 || bytes[0] !== 0x23 || bytes[1] !== 0x21) return undefined;
   const newline = bytes.indexOf(0x0a);
-  const lineBytes = newline === -1 ? bytes.subarray(2) : bytes.subarray(2, newline);
-  const tokens = Buffer.from(lineBytes).toString("utf8").trim().split(/\s+/).filter(Boolean);
-  const [first, second] = tokens;
-  const named = first?.split("/").pop() === "env" ? second : first?.split("/").pop();
-  if (!named) return undefined;
-  for (const [pattern, interpreter] of SHEBANG_INTERPRETERS) {
-    if (pattern.test(named)) return interpreter;
-  }
-  return undefined;
+  const line = Buffer.from(newline === -1 ? bytes.subarray(2) : bytes.subarray(2, newline))
+    .toString("utf8")
+    .replace(/\r$/, "")
+    .trim();
+  const [, program, argument] = /^(\S+)(?:[ \t]+(.*))?$/.exec(line) ?? [];
+  if (!program) return undefined;
+  return argument ? { program, argument } : { program };
+}
+
+/**
+ * The words after `bun` on a first line that names it (`#!/usr/bin/env bun`, `#!/usr/local/bin/bun --smol`,
+ * `#!/usr/bin/env -S bun run`), or undefined when the line names another program. Such a script runs on the Bun akm
+ * itself runs on, so it needs no `bun` on `PATH`.
+ */
+export function bunArguments(first: ScriptFirstLine | undefined): string[] | undefined {
+  if (!first) return undefined;
+  const words = first.argument?.split(/\s+/).filter(Boolean) ?? [];
+  if (path.basename(first.program) === "bun") return words;
+  if (path.basename(first.program) !== "env") return undefined;
+  const named = words[0] === "-S" ? words.slice(1) : words;
+  return named[0] === "bun" ? named.slice(1) : undefined;
 }
 
 function nodeStripsTypeScript(): boolean {
@@ -65,11 +79,25 @@ function nodeStripsTypeScript(): boolean {
   return Boolean(features?.typescript);
 }
 
-export function scriptInterpreter(extension: string, ref: string, bytes?: Uint8Array): TaskV3ScriptInterpreter {
-  const interpreter = SCRIPT_INTERPRETERS[extension] ?? (extension === "" ? interpreterFromShebang(bytes) : undefined);
+/**
+ * How a script is started. Its first line decides, as it does when the file is run directly: a `#!` line that names
+ * a program runs that program with that line's argument (`shebang`), so `#!/usr/bin/env bash`, `#!/bin/bash -e` and
+ * `#!/usr/bin/env python3` each mean what they say. A first line that names `bun`, and a script with no such line,
+ * run under the interpreter the extension selects. Windows has no `#!` lines, so there the extension always decides.
+ */
+export function scriptInterpreter(
+  extension: string,
+  ref: string,
+  bytes?: Uint8Array,
+  platform: NodeJS.Platform = process.platform,
+): TaskV3ScriptInterpreter {
+  const first = platform === "win32" ? undefined : scriptFirstLine(bytes);
+  const forBun = bunArguments(first) !== undefined;
+  if (first && !forBun) return "shebang";
+  const interpreter = SCRIPT_INTERPRETERS[extension] ?? (forBun ? "bun" : undefined);
   if (!interpreter) {
     throw new UsageError(
-      `Task v3 script target ${JSON.stringify(ref)} has no closed runtime interpreter for extension ${JSON.stringify(extension)}.`,
+      `Script ${JSON.stringify(ref)} cannot be run: it has no \`#!\` first line naming its program, and akm has no interpreter for the extension ${JSON.stringify(extension)}.`,
       "TASK_TARGET_UNSUPPORTED",
     );
   }
@@ -81,7 +109,7 @@ export function scriptInterpreter(extension: string, ref: string, bytes?: Uint8A
     return "node";
   }
   throw new UsageError(
-    `Task v3 script target ${JSON.stringify(ref)} requires Bun for ${extension} execution, but this runtime cannot provide it.`,
+    `Script ${JSON.stringify(ref)} requires Bun for ${extension} execution, but this runtime cannot provide it.`,
     "TASK_TARGET_UNSUPPORTED",
   );
 }

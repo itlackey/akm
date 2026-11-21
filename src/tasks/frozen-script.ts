@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { assertNever } from "../core/assert";
 import type { TaskV3ScriptInterpreter } from "./prepare/prepared-execution";
-import { scriptInterpreter } from "./prepare/script-capture";
+import { bunArguments, scriptFirstLine, scriptInterpreter } from "./prepare/script-capture";
 import { STANDALONE_FROZEN_SCRIPT_ARG } from "./standalone-script-entry";
 
 export interface FrozenScriptSnapshot {
@@ -37,52 +37,66 @@ export function materializeFrozenScript(script: FrozenScriptSnapshot): Materiali
   return Object.freeze({ directory, file });
 }
 
-/** The program and arguments that run the script at `materializedPath`, with `args` after it. */
+/** The program and arguments that run the frozen script at `materializedPath`, with `args` after it. */
 export function frozenScriptCommand(
-  script: Pick<FrozenScriptSnapshot, "interpreter" | "extension">,
+  script: Pick<FrozenScriptSnapshot, "interpreter" | "extension" | "bytesBase64">,
   materializedPath: string,
   args: readonly string[] = [],
 ): string[] {
-  return [...interpreterCommand(script, materializedPath), ...args];
+  return scriptCommand(script, Buffer.from(script.bytesBase64, "base64"), materializedPath, args);
 }
 
 /** The program and arguments that run the script asset `ref`, found at `file`, with `args` after it: what `akm run <ref>` runs. */
 export function scriptProgram(ref: string, file: string, args: readonly string[]): string[] {
-  const extension = path.extname(file);
-  const interpreter = scriptInterpreter(extension, ref, extension === "" ? fs.readFileSync(file) : undefined);
-  return frozenScriptCommand({ interpreter, extension }, file, args);
+  const extension = path.extname(file).toLowerCase();
+  const bytes = fs.readFileSync(file);
+  return scriptCommand({ interpreter: scriptInterpreter(extension, ref, bytes), extension }, bytes, file, args);
 }
 
-function interpreterCommand(
+/**
+ * The one place a script becomes a command line. A `shebang` script is started the way the kernel starts it: the
+ * program its first line names, that line's argument, then the file. A script for Bun runs on this process's own
+ * runtime, with the words its first line put after `bun`.
+ */
+function scriptCommand(
   script: Pick<FrozenScriptSnapshot, "interpreter" | "extension">,
-  materializedPath: string,
+  bytes: Uint8Array,
+  file: string,
+  args: readonly string[],
 ): string[] {
+  const first = scriptFirstLine(bytes);
   switch (script.interpreter) {
+    case "shebang": {
+      if (!first) throw new Error(`Script ${file} was to run by its first line, and has none.`);
+      return [first.program, ...(first.argument ? [first.argument] : []), file, ...args];
+    }
     case "bun":
-      return [process.execPath, materializedPath];
+      return [process.execPath, ...(bunArguments(first) ?? []), file, ...args];
     case "bun-standalone":
-      return [process.execPath, STANDALONE_FROZEN_SCRIPT_ARG, materializedPath];
+      return [process.execPath, STANDALONE_FROZEN_SCRIPT_ARG, file, ...args];
     case "node":
-      return ["node", materializedPath];
+      return ["node", file, ...args];
     case "powershell":
-      return ["powershell", "-NoProfile", "-NonInteractive", "-File", materializedPath];
+      return ["powershell", "-NoProfile", "-NonInteractive", "-File", file, ...args];
     case "cmd":
-      return ["cmd", "/d", "/s", "/c", materializedPath];
+      return ["cmd", "/d", "/s", "/c", file, ...args];
     case "go":
-      return ["go", "run", materializedPath];
+      return ["go", "run", file, ...args];
     case "kotlin":
-      return script.extension === ".kts" ? ["kotlinc", "-script", materializedPath] : ["kotlin", materializedPath];
-    case "sh":
+      return [...(script.extension === ".kts" ? ["kotlinc", "-script"] : ["kotlin"]), file, ...args];
     case "python":
+      // PEP 394: `python3` is the name a POSIX system has; Windows installs `python`.
+      return [process.platform === "win32" ? "python" : "python3", file, ...args];
+    case "sh":
     case "ruby":
     case "perl":
     case "php":
     case "lua":
     case "rscript":
     case "swift":
-      return [script.interpreter, materializedPath];
+      return [script.interpreter, file, ...args];
     default:
-      return assertNever(script.interpreter, "frozenScriptCommand");
+      return assertNever(script.interpreter, "scriptCommand");
   }
 }
 

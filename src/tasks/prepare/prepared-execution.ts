@@ -28,6 +28,8 @@ import type { TaskV3HostShell, TaskV3SourceDocument } from "../source-v3";
 export type PreparableTaskDocument = TaskV3SourceDocument;
 
 export type TaskV3ScriptInterpreter =
+  /** The program the script's own `#!` first line names, with that line's argument. */
+  | "shebang"
   | "sh"
   | "bun"
   | "bun-standalone"
