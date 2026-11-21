@@ -1,45 +1,28 @@
 // quality:coverage — line and function coverage of src/ from one `bun test --coverage` run of the whole suite.
 import fs from "node:fs";
 import path from "node:path";
-import { die, finish, repoRoot, round, run, target, walk } from "./lib";
+import { die, finish, round, run, target, walk } from "./lib";
 
-// `--reuse-lcov` re-reads the lcov and test output of the previous run instead of running the suite again.
-const reuse = process.argv.includes("--reuse-lcov");
-const previous = path.join(repoRoot, "reports", "quality", "coverage");
-const kept = reuse
-  ? {
-      lcov: fs.readFileSync(path.join(previous, "lcov.info"), "utf8"),
-      output: fs.readFileSync(path.join(previous, "test-output.txt"), "utf8"),
-    }
-  : undefined;
 const { dir, out } = target("coverage", process.argv.slice(2));
 const lcovPath = path.join(out, "lcov.info");
 const files = walk(dir, (p) => p.startsWith("tests/") && p.endsWith(".test.ts") && !p.startsWith("tests/fixtures/"))
   .map((p) => p.replace(/^\//, ""))
   .sort();
+const home = path.join(out, "runtime-home");
+fs.mkdirSync(home, { recursive: true });
 
-let output: string;
-let wall = 0;
-if (kept) {
-  fs.writeFileSync(lcovPath, kept.lcov);
-  output = kept.output;
-  fs.writeFileSync(path.join(out, "test-output.txt"), output);
-} else {
-  const home = path.join(out, "runtime-home");
-  fs.mkdirSync(home, { recursive: true });
-  // One process, so the lcov file is complete without merging. HOME is a scratch dir, as in scripts/test-unit.sh.
-  const started = Date.now();
-  const r = run(
-    ["bun", "test", "--timeout=120000", "--coverage", "--coverage-reporter=lcov", `--coverage-dir=${out}`, ...files],
-    dir,
-    { HOME: home },
-  );
-  wall = Math.round((Date.now() - started) / 1000);
-  output = `${r.out}\n${r.err}`;
-  fs.writeFileSync(path.join(out, "test-output.txt"), output);
-  fs.rmSync(home, { recursive: true, force: true });
-  if (!fs.existsSync(lcovPath)) die(r);
-}
+// One process, so the lcov file is complete without merging. HOME is a scratch dir, as in scripts/test-unit.sh.
+const started = Date.now();
+const r = run(
+  ["bun", "test", "--timeout=120000", "--coverage", "--coverage-reporter=lcov", `--coverage-dir=${out}`, ...files],
+  dir,
+  { HOME: home },
+);
+const wall = Math.round((Date.now() - started) / 1000);
+const output = `${r.out}\n${r.err}`;
+fs.writeFileSync(path.join(out, "test-output.txt"), output);
+fs.rmSync(home, { recursive: true, force: true });
+if (!fs.existsSync(lcovPath)) die(r);
 // The last match, as scripts/test-unit.sh takes it: an earlier one can be a test title.
 const last = (re: RegExp) => Number([...output.matchAll(re)].at(-1)?.[1] ?? 0);
 const failed = last(/(\d+) fail/g);
@@ -98,7 +81,7 @@ fs.writeFileSync(
 
 const summary = [
   `coverage (bun test --coverage, src/): lines ${pct(lh, lf)}% (${lh}/${lf}), functions ${pct(fnh, fnf)}% (${fnh}/${fnf})`,
-  `${passed} pass / ${failed} fail across ${files.length} test files${wall ? ` in ${wall}s` : ""}; ${perFile.size - loaded} src files with runtime code that no test loads counted at 0%`,
+  `${passed} pass / ${failed} fail across ${files.length} test files in ${wall}s; ${perFile.size - loaded} src files with runtime code that no test loads counted at 0%`,
   "Means: a LOWER BOUND on how much of src/ the tests run. Only code run inside the test process is counted; code reached only by tests that spawn the CLI is not.",
   "Does not mean: tested behaviour. A hit line is not an asserted line; bun marks a one-line function as hit when it is only declared, there is no branch data, and the unloaded files use an estimated line count and no function count.",
 ].join("\n");
