@@ -14,6 +14,7 @@ import { createParsedInvocation } from "../../cli/invocation";
 import { parseNonNegativeIntFlag } from "../../cli/parse-args";
 import { withoutFlags } from "../../commands/env/injection";
 import type { InputFlag } from "../../execution/input-contract";
+import { TASK_RUN_VALUE_FLAGS } from "../task-run-reserved-flags";
 import type { TaskV5StartFlags } from "./check";
 
 const VALUE_FLAGS = ["--env", "--secret", "--cwd", "--timeout", "--max-retries", "--inherit"];
@@ -63,13 +64,17 @@ export function parseStartFlags(rawArgs: readonly string[]): {
   };
 }
 
-/** The task id in a start's tokens: the first positional once the start flags and the values of `valueFlags` are set aside. */
-export function taskIdInStart(rawArgs: readonly string[], valueFlags: readonly string[]): string | undefined {
+/**
+ * The task a command's tokens name: the first positional once the start flags and the values of the task run's value
+ * flags are set aside. A start flag before it takes its value from the next token, which citty, not knowing the flag,
+ * reads as the task.
+ */
+export function taskIdInStart(rawArgs: readonly string[]): string | undefined {
   const { rest } = parseStartFlags(rawArgs);
   for (let index = 0; index < rest.length; index += 1) {
     const token = rest[index] as string;
     if (!token.startsWith("-")) return token;
-    if (!token.includes("=") && valueFlags.includes(token.slice(2))) index += 1;
+    if (!token.includes("=") && TASK_RUN_VALUE_FLAGS.includes(token.slice(2))) index += 1;
   }
   return undefined;
 }
