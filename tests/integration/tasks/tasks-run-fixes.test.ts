@@ -14,6 +14,7 @@ import { type SpawnSyncReturns, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { harnessCalls, writeFakeHarness } from "../../_helpers/engine-stubs";
+import { makeLauncherDist } from "../../_helpers/launcher-dist";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -144,10 +145,18 @@ describe.skipIf(!posix)("what a version 5 agent step is given", () => {
       "tasks/env.yml",
       v5("steps:\n  - name: ask\n    prompt: Hi.\n  - name: look\n    exec: 'printf %s \"[$MY_PROVIDER_KEY]\"'\n"),
     );
-    const run = akmJson(["run", "tasks/env"], {
-      MY_PROVIDER_KEY: "from-akm-env",
-      CLAUDE_CONFIG_DIR: "/somewhere/else",
-    });
+    // Started through the real launcher, which sets AKM_LAUNCHER_PATH and AKM_LAUNCHER_NODE for akm.
+    const dist = makeLauncherDist();
+    let run: SpawnSyncReturns<string>;
+    try {
+      run = spawnSync(process.execPath, [dist.launcher, "run", "tasks/env", "--format", "json"], {
+        encoding: "utf8",
+        timeout: 120_000,
+        env: { ...environment(), MY_PROVIDER_KEY: "from-akm-env", CLAUDE_CONFIG_DIR: "/somewhere/else" },
+      });
+    } finally {
+      dist.cleanup();
+    }
     expect(run.status, run.stderr).toBe(0);
     const [call] = harnessCalls(bin);
     expect(call?.env.MY_PROVIDER_KEY).toBe("from-akm-env");
