@@ -7,7 +7,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { akm, launchFixture, open } from "./support.mjs";
+import { akm, launchFixture, open, pick } from "./support.mjs";
 
 // The replay and the library mind map: responses in the wrong order, the three views of the map, choosing a tag, a
 // library that is missing or empty, and a page that scrolls in one place only.
@@ -171,18 +171,8 @@ test("visualizations survive late responses, a changed library and a narrow wind
       .poll(async () => Number(await slider(page).getAttribute("max")) - Number(await slider(page).inputValue()))
       .toBeLessThan(60_000);
     const replay = page.getByRole("region", { name: "Activity replay", exact: true });
-    for (const figure of [
-      "events",
-      "reads",
-      "searches",
-      "curates",
-      "found nothing",
-      "negative feedback",
-      "assets used",
-    ])
-      await expect(replay.getByText(figure, { exact: true })).toBeVisible();
-    for (const list of ["Searched for, not found", "Most used so far", "Feedback given so far", "Latest events"])
-      await expect(replay.getByRole("heading", { name: list })).toBeVisible();
+    for (const list of ["Searches that found nothing", "Feedback", "Most used", "Latest events"])
+      await expect(replay.getByRole("heading", { name: new RegExp(`^${list}`) })).toBeVisible();
     await expect(replay.getByRole("button", { name: /^Play/ })).toHaveAttribute(
       "title",
       /Plays the whole period in about 1 minute/,
@@ -257,7 +247,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
   const withGraph = (page, payload = mapPayload) =>
     page.route("**/api/graph", (route) => route.fulfill({ json: { ok: true, data: payload } }));
   const tab = (page, name) => page.getByRole("tab", { name, exact: true });
-  const figures = (page) => page.getByRole("complementary", { name: "Figures" });
+  const figures = (page) => page.getByRole("complementary", { name: "Details" });
   const mapButton = (page, name) => page.locator(".mind-map").getByRole("button", { name, exact: true });
   const consoleErrors = (page, errors) =>
     page.on("console", (message) => message.type() === "error" && errors.push(message.text()));
@@ -280,8 +270,8 @@ test("visualizations survive late responses, a changed library and a narrow wind
     async () => {
       const { page, errors } = await fresh((page) => withGraph(page));
       await open(page, server, "/library/map");
-      const filters = page.getByRole("group", { name: "Show on the map" });
-      const offered = () => filters.getByRole("button").allTextContents();
+      const filters = page.locator(".show-menu");
+      const offered = () => filters.locator("label").allTextContents();
       // Contents: the largest tags; a filter per asset type, the unlinked, and what two bundles repeat. None is on.
       await expect(tab(page, "Contents")).toHaveAttribute("aria-selected", "true");
       await expect(tab(page, "Contents")).toHaveAttribute("title", "What is in the library?");
@@ -299,11 +289,12 @@ test("visualizations survive late responses, a changed library and a narrow wind
         "Not linked to anything3",
         "Repeated across bundles1",
       ]);
-      await expect(filters.getByRole("button", { pressed: true })).toHaveCount(0);
+      await expect(filters.locator("label:has(input:checked)")).toHaveCount(0);
       await expect(figures(page)).toHaveCount(0);
       // A filter lists exactly what it finds, most read first, each asset a link to its page.
-      await filters.getByRole("button", { name: "Not linked to anything" }).click();
-      await expect(figures(page).getByRole("heading", { level: 3 })).toHaveText("Not linked to anything3");
+      await pick(page, "Not linked to anything");
+      await expect(sideHeading(page)).toHaveText("Not linked to anything");
+      await expect(figures(page)).toContainText("3 assets");
       await expect(figures(page).locator(".read-row")).toHaveText([
         "memories/auth/f1 read",
         "memories/auth/e0 reads",
@@ -317,15 +308,15 @@ test("visualizations survive late responses, a changed library and a narrow wind
       // Knowledge's auth asset was never read, so the tag is not among the most read.
       await expect(page.locator(".mind-map").getByRole("button", { name: /^auth \(Knowledge\)/ })).toHaveCount(0);
       assert.deepEqual(await offered(), ["Not read, untouched 6+ months3", "Read but disliked0", "Most read3"]);
-      await expect(filters.getByRole("button", { pressed: true })).toHaveText("Not read, untouched 6+ months3");
+      await expect(filters.locator("label:has(input:checked)")).toHaveText("Not read, untouched 6+ months3");
       // The one disliked asset is never read, so that filter finds nothing and cannot be chosen.
-      await expect(filters.getByRole("button", { name: "Read but disliked" })).toBeDisabled();
+      await expect(filters.locator("label", { hasText: "Read but disliked" }).locator("input")).toBeDisabled();
       await expect(figures(page).locator(".read-row")).toHaveText([
-        "memories/misc/guntouched 2 years",
-        "memories/auth/euntouched 16 months",
-        "knowledge/deploy/buntouched 13 months",
+        "memories/misc/g2 years",
+        "memories/auth/e16 months",
+        "knowledge/deploy/b13 months",
       ]);
-      await filters.getByRole("button", { name: "Most read" }).click();
+      await pick(page, "Most read");
       await expect(figures(page).locator(".read-row").first()).toHaveText("knowledge/deploy/a9 reads");
       // Problems: the tags with problem assets; it opens on the first kind of problem there is.
       await tab(page, "Problems").click();
@@ -340,13 +331,16 @@ test("visualizations survive late responses, a changed library and a narrow wind
         "Disliked1",
         "Outdated, unread1",
       ]);
-      await expect(filters.getByRole("button", { pressed: true })).toHaveText("Near-identical pairs1");
+      await expect(filters.locator("label:has(input:checked)")).toHaveText("Near-identical pairs1");
       await expect(figures(page).locator(".pairs li")).toContainText("98% alike");
       await expect(figures(page).getByRole("link", { name: "Compare" })).toHaveAttribute("href", /compare=.*compare=/);
-      await filters.getByRole("button", { name: "Outdated, unread" }).click();
+      // A second filter adds what it finds to the first; unticking the first leaves the second alone.
+      await pick(page, "Outdated, unread");
+      await expect(sideHeading(page)).toHaveText("Near-identical pairs or Outdated, unread");
+      await pick(page, "Near-identical pairs");
       await expect(figures(page).locator(".read-row")).toHaveText(["knowledge/deploy/bsuperseded"]);
-      // Choosing the filter that is on turns it off, and the column goes with it.
-      await filters.getByRole("button", { name: "Outdated, unread" }).click();
+      // Unticking the last filter shows every asset again, and the column goes with it.
+      await pick(page, "Outdated, unread");
       await expect(figures(page)).toHaveCount(0);
       assert.deepEqual(errors, []);
       await page.close();
@@ -358,18 +352,18 @@ test("visualizations survive late responses, a changed library and a narrow wind
     async () => {
       const { page, errors } = await fresh((page) => withGraph(page));
       await open(page, server, "/library/map");
-      const filters = page.getByRole("group", { name: "Show on the map" });
+      const filters = page.locator(".show-menu");
       await mapButton(page, "auth (Knowledge): 1").click();
       await expect(mapButton(page, "auth (Knowledge): 1")).toHaveAttribute("aria-pressed", "true");
       await expect(sideHeading(page)).toHaveText("auth");
       await expect(figures(page)).toContainText("Tag in Knowledge · 1 asset");
       // The filters count the tag's assets only, and say so beside them.
-      await expect(filters.getByRole("button", { name: "In auth" })).toBeVisible();
-      await expect(filters.getByRole("button", { name: "Knowledge" })).toHaveText("Knowledge1");
+      await expect(page.getByRole("button", { name: "Leave auth" })).toBeVisible();
+      await expect(filters.locator("label", { hasText: "Knowledge" })).toHaveText("Knowledge1");
       await expect(figures(page).locator(".read-row")).toHaveText(["knowledge/auth/d1 link"]);
       // c links to d, and d nearly duplicates f: two groups, two lines.
       await expect(page.locator(".mind-map .relations path")).toHaveCount(2);
-      const joined = figures(page).locator("section", { hasText: "Linked to these types and tags" });
+      const joined = figures(page).locator("section", { hasText: "Linked types and tags" });
       await expect(joined).toContainText("auth · Memories and facts 1 near-identical pair");
       await expect(joined).toContainText("deploy · Memories and facts 1 link");
       // A joined group in the column is chosen in turn.
@@ -377,7 +371,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
       await expect(sideHeading(page)).toHaveText("auth");
       await expect(figures(page)).toContainText("Tag in Memories and facts");
       // The scope is cleared from beside the filters, or with Escape.
-      await filters.getByRole("button", { name: "In auth" }).click();
+      await page.getByRole("button", { name: "Leave auth" }).click();
       await expect(sideHeading(page)).toHaveCount(0);
       await mapButton(page, "auth (Knowledge): 1").click();
       await page.keyboard.press("Escape");
@@ -386,8 +380,8 @@ test("visualizations survive late responses, a changed library and a narrow wind
       // One bundle: the map and the filters follow it.
       await page.getByRole("combobox", { name: /^Bundle/ }).selectOption({ label: "notes" });
       await expect(page.locator(".mind-map").getByRole("button", { name: /^Knowledge/ })).toHaveCount(0);
-      await expect(filters.getByRole("button", { name: "Memories and facts" })).toHaveText("Memories and facts4");
-      await expect(filters.getByRole("button", { name: "Knowledge" })).toHaveCount(0);
+      await expect(filters.locator("label", { hasText: "Memories and facts" })).toHaveText("Memories and facts4");
+      await expect(filters.locator("label", { hasText: "Knowledge" })).toHaveCount(0);
       assert.deepEqual(errors, []);
       await page.close();
     },
@@ -441,9 +435,18 @@ test("visualizations survive late responses, a changed library and a narrow wind
       }),
     );
     await open(page, server, "/library/map");
-    // A name clear of the tools drawn over the map's top edge, which are not the map.
-    const name = page.locator(".group-name").last();
-    await expect(name).toBeVisible();
+    // A name clear of the tools and the key drawn over the map's corners, which are not the map: one whose middle
+    // has the map's canvas under it.
+    await expect(page.locator(".group-name").first()).toBeVisible();
+    await page.waitForTimeout(800);
+    const clear = await page.locator(".group-name").evaluateAll((names) =>
+      names.findIndex((el) => {
+        const box = el.getBoundingClientRect();
+        return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.tagName === "CANVAS";
+      }),
+    );
+    assert.ok(clear >= 0, "a group's name stands over the map");
+    const name = page.locator(".group-name").nth(clear);
     // The map fills the window, so the page is made taller than it: a wheel that leaked would then scroll it.
     await page.addStyleTag({ content: "body { min-block-size: 200vh; }" });
     const before = await page.evaluate(() => scrollY);
@@ -462,9 +465,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
     await tab(page, "Use").click();
     await page.getByRole("group", { name: "Drawing" }).getByRole("button", { name: "Tags" }).click();
     const filter = page.getByRole("searchbox", { name: "Filter" });
-    const retire = page
-      .getByRole("group", { name: "Show on the map" })
-      .getByRole("button", { name: /^Not read, untouched/ });
+    const retire = page.locator(".show-menu label", { hasText: /^Not read, untouched/ });
     await expect(retire).toHaveText("Not read, untouched 6+ months3");
     await filter.fill("auth");
     await expect(page.getByText("3 of 7 assets")).toBeVisible();
@@ -686,7 +687,6 @@ test("visualizations survive late responses, a changed library and a narrow wind
     await expect(mapButton(page, "auth (Memories and facts): 2 events")).toBeVisible();
     await expect(mapButton(page, "deploy (Knowledge): 1 event")).toBeVisible();
     await expect(replay.locator(".root")).toContainText("3 events");
-    await expect(replay.getByText("Where the events landed, by type and tag")).toBeVisible();
     await expect(replay).toContainText("read notes//memories/auth/e");
     await mapButton(page, "auth (Memories and facts): 2 events").click();
     await expect(mapButton(page, "auth (Memories and facts): 2 events")).toHaveAttribute("aria-pressed", "true");

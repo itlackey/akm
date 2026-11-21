@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildOverview,
+  clusterPlace,
   DAY,
   flatPlace,
   groupFacts,
@@ -326,6 +327,30 @@ test("the overview keeps akm's place for each asset, and the same places in one 
   const flat = flatPlace(o);
   for (let i = 0; i < o.count; i++)
     assert.deepEqual([...flat.subarray(i * 3, i * 3 + 3)], [o.place[i * 3], o.place[i * 3 + 1], 0]);
+});
+
+test("gathered by its groups, each group is a cluster of its assets that overlaps no other, in the plane and in space", () => {
+  const o = buildOverview(placed, now);
+  for (const dims of [2, 3]) {
+    const put = clusterPlace(o, dims);
+    const at = (i) => [put[i * 3], put[i * 3 + 1], put[i * 3 + 2]];
+    const far = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    const groups = new Map();
+    for (let i = 0; i < o.count; i++) {
+      if (dims === 2) assert.equal(put[i * 3 + 2], 0);
+      if (o.group[i] >= 0) groups.set(o.group[i], [...(groups.get(o.group[i]) ?? []), i]);
+    }
+    // No two assets share a spot, and an asset is nearer every asset of its own group than any asset of another.
+    for (let a = 0; a < o.count; a++)
+      for (let b = a + 1; b < o.count; b++) if (o.group[a] >= 0 && o.group[b] >= 0) assert.ok(far(at(a), at(b)) > 1);
+    for (const [g, list] of groups) {
+      const reach = Math.max(...list.flatMap((a) => list.map((b) => far(at(a), at(b)))));
+      for (const [other, others] of groups)
+        if (other !== g) for (const a of list) for (const b of others) assert.ok(far(at(a), at(b)) > reach);
+    }
+    // The layout is the same every time.
+    assert.deepEqual([...clusterPlace(o, dims)], [...put]);
+  }
 });
 
 test("an outdated asset says why, and names what replaced or contradicts it; every asset has its link count", () => {

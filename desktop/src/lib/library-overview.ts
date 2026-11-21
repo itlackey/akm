@@ -112,6 +112,135 @@ export function useClass(lastShownAt: string | null, modifiedAt: string | null, 
   return now - Date.parse(modifiedAt) <= OLD_DAYS * DAY ? "new" : "unread";
 }
 
+/** What the map can gather assets by: akm's groups by meaning, or one group for each value of a property. */
+export const GROUPINGS = [
+  { id: "meaning", label: "Meaning" },
+  { id: "type", label: "Type" },
+  { id: "bundle", label: "Bundle" },
+  { id: "edited", label: "Last edited" },
+  { id: "use", label: "Use" },
+  { id: "problem", label: "Problem" },
+] as const;
+export type Grouping = (typeof GROUPINGS)[number]["id"];
+
+/** The ages an asset's last edit is sorted into, the newest first. */
+const EDITED = [
+  { under: 30, label: "Edited in the last 30 days" },
+  { under: 182, label: "1 to 6 months ago" },
+  { under: 365, label: "6 to 12 months ago" },
+  { under: 730, label: "1 to 2 years ago" },
+  { under: Infinity, label: "Over 2 years ago" },
+];
+
+/**
+ * The overview with its assets grouped by a property instead of by meaning, and the name of each group; by meaning
+ * it is the overview as it is, its groups named by `groupsOf`. Everything that reads an overview's groups then works
+ * on whichever grouping is chosen.
+ */
+export function regroup(o: Overview, by: Grouping): { o: Overview; names: string[] | null } {
+  if (by === "meaning") return { o, names: null };
+  const [of, names]: [(i: number) => number, string[]] =
+    by === "type"
+      ? [(i) => o.family[i]!, FAMILIES.map((f) => f.label)]
+      : by === "bundle"
+        ? [(i) => o.bundle[i]!, o.bundles]
+        : by === "edited"
+          ? [
+              (i) => {
+                const days = o.modified[i] ? (o.at - Date.parse(o.modified[i]!)) / DAY : Number.NaN;
+                const k = EDITED.findIndex((e) => days < e.under);
+                return Number.isNaN(days) ? EDITED.length : k;
+              },
+              [...EDITED.map((e) => e.label), "Edit time not known"],
+            ]
+          : by === "use"
+            ? [
+                (i) => (o.use[i] ? USE_CLASSES.findIndex((u) => u.id === o.use[i]) : USE_CLASSES.length),
+                [...USE_CLASSES.map((u) => u.label), "Use not known"],
+              ]
+            : [
+                (i) => {
+                  const first = firstProblem(o, i);
+                  return first ? PROBLEMS.findIndex((p) => p.id === first) : PROBLEMS.length;
+                },
+                [...PROBLEMS.map((p) => p.label), "No problem recorded"],
+              ];
+  return { o: { ...o, group: Int32Array.from({ length: o.count }, (_, i) => of(i)), groupCount: names.length }, names };
+}
+
+/** How far apart, in the map's units, neighbouring assets of a group stand: in the plane about a point's drawn
+ * width, in space farther, since there one point stands in front of another. */
+export const FLAT_STEP = 5;
+const SPACE_STEP = 16;
+
+/**
+ * The assets laid out by their groups, in the plane (`dims` 2) or in space (3): each group is a disc, or a ball, of
+ * its assets. The clusters do not overlap, stay as near where their assets stand in akm's layout as room allows, and
+ * hold their assets a step apart, the ones nearest the group's middle at the cluster's middle. Dropping the depth of
+ * akm's places instead would lay the groups that stand behind one another on top of each other. An asset with no
+ * group keeps akm's place (flattened, in the plane).
+ */
+export function clusterPlace(o: Overview, dims: 2 | 3): Float32Array {
+  const place = Float32Array.from(o.place);
+  if (dims === 2) for (let i = 0; i < o.count; i++) place[i * 3 + 2] = 0;
+  const lists = Array.from({ length: o.groupCount }, () => [] as number[]);
+  for (let i = 0; i < o.count; i++) if (o.group[i]! >= 0) lists[o.group[i]!]!.push(i);
+  const step = dims === 2 ? FLAT_STEP : SPACE_STEP;
+  /** A cluster's radius per root of its assets: its points then stand about a step apart. */
+  const spread = 0.6 * step;
+  const root = (n: number) => (dims === 2 ? Math.sqrt(n) : Math.cbrt(n));
+  const far = (a: readonly number[], b: readonly number[]) => Math.hypot(a[0]! - b[0]!, a[1]! - b[1]!, a[2]! - b[2]!);
+  const clusters = lists
+    .filter((list) => list.length)
+    .map((list) => {
+      const at = [0, 0, 0];
+      for (const i of list) for (let d = 0; d < dims; d++) at[d]! += o.place[i * 3 + d]! / list.length;
+      return { at, middle: [...at], r: spread * root(list.length) + step, list };
+    });
+  // Start the clusters where their groups are, spread out to about the room they need, then push apart any that touch.
+  const extent = Math.max(1, ...clusters.map((c) => far(c.at, [0, 0, 0])));
+  const room = root(clusters.reduce((sum, c) => sum + c.r ** dims, 0) / 0.6);
+  for (const c of clusters) for (let d = 0; d < dims; d++) c.at[d]! *= room / extent;
+  for (let pass = 0; pass < 300; pass++) {
+    let touching = false;
+    for (let a = 0; a < clusters.length; a++)
+      for (let b = a + 1; b < clusters.length; b++) {
+        const A = clusters[a]!;
+        const B = clusters[b]!;
+        const gap = far(A.at, B.at);
+        if (gap >= A.r + B.r) continue;
+        touching = true;
+        // Two clusters in the same spot part along a direction of their own, so the layout is the same every time.
+        const away = gap
+          ? [0, 1, 2].map((d) => (B.at[d]! - A.at[d]!) / gap)
+          : [Math.cos(a * 2.4 + b), Math.sin(a * 2.4 + b), 0];
+        const push = (A.r + B.r - gap) / 2 + 0.01;
+        for (let d = 0; d < dims; d++) {
+          A.at[d]! -= away[d]! * push;
+          B.at[d]! += away[d]! * push;
+        }
+      }
+    if (!touching) break;
+  }
+  for (const c of clusters) {
+    const out = (i: number) =>
+      far([o.place[i * 3]!, o.place[i * 3 + 1]!, dims === 2 ? 0 : o.place[i * 3 + 2]!], c.middle);
+    [...c.list]
+      .sort((p, q) => out(p) - out(q) || p - q)
+      .forEach((i, k) => {
+        // Each next asset a little farther out, so the disc or the ball fills evenly: round the disc by the golden
+        // angle; over the ball by two steps that never fall into step with each other.
+        const r = spread * root(k + 0.5);
+        const turn = dims === 2 ? k * 2.399963 : 2 * Math.PI * ((k * 0.7548776662) % 1);
+        const up = dims === 2 ? 0 : 1 - 2 * ((k * 0.569840291) % 1);
+        const across = Math.sqrt(1 - up * up);
+        place[i * 3] = c.at[0]! + r * across * Math.cos(turn);
+        place[i * 3 + 1] = c.at[1]! + r * across * Math.sin(turn);
+        place[i * 3 + 2] = c.at[2]! + r * up;
+      });
+  }
+  return place;
+}
 /** Each asset's place with its depth removed, three numbers per asset: the same points in one plane. */
 export function flatPlace(o: Overview): Float32Array {
   const place = Float32Array.from(o.place);

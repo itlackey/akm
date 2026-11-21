@@ -153,6 +153,7 @@
 <svg
   class="mind-map"
   class:focused={selected !== ""}
+  class:arrives={!!appeared}
   viewBox={`${-layout.left} 0 ${layout.width} ${layout.height}`}
   style={`max-inline-size:${Math.round(layout.width)}px`}
   role="group"
@@ -371,8 +372,34 @@
       transform: scale(1);
     }
   }
+  /* In a replay a type or tag arrives when it first has an event: it and its line grow in rather than appear. */
+  .arrives .branch,
+  .arrives .leaf {
+    animation: arrive 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  .arrives .branch-line,
+  .arrives .leaf-line {
+    animation: line-in 0.45s ease-out;
+  }
+  @keyframes arrive {
+    from {
+      opacity: 0;
+      transform: scale(0.4);
+    }
+  }
+  @keyframes line-in {
+    from {
+      opacity: 0;
+    }
+  }
   @media (prefers-reduced-motion: reduce) {
-    .flash {
+    .flash,
+    .arrives .branch,
+    .arrives .leaf,
+    .arrives .branch-line,
+    .arrives .leaf-line {
       animation: none;
     }
   }
