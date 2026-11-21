@@ -12,8 +12,8 @@
   // the pick is ringed and haloed, named by a label that stays over everything, what it is joined to is ringed and lined,
   // and the rest fades. With the map focused, the left and right arrow keys step to the previous and next asset, and the
   // other keys turn and zoom the view. `place` is where each asset is drawn: when it changes (2D to 3D or back) every mark
-  // moves there over 0.6 seconds, or at once under reduced motion. A marker in the corner turns with the view and names
-  // the front and the back, and `flat` draws the points in one plane, which cannot be turned.
+  // moves there over 0.6 seconds, or at once under reduced motion. `flat` draws the points in one plane, which cannot
+  // be turned.
   import { LEVEL_STYLES } from "./link-levels";
   import { untrack, type Snippet } from "svelte";
   import { prefersReducedMotion } from "svelte/motion";
@@ -99,8 +99,6 @@
   let tip = $state<{ x: number; y: number; i: number } | null>(null);
   /** The label over the pick, which stays whatever is in front of it. */
   let pickEl = $state<HTMLDivElement>();
-  /** The front and back marker in the corner. */
-  let markerEl = $state<HTMLDivElement>();
   let failed = $state("");
   /** Set once three.js has loaded and the scene is up; the effects below draw into it. */
   let ready = $state(false);
@@ -614,38 +612,6 @@
             el.style.transform = `translate(${box[0]}px, ${box[1]}px)`;
             if (!hidden) placed.push(box);
           }
-          // The marker: the scene's front-to-back axis as the camera sees it, the end nearer the viewer drawn larger.
-          if (markerEl) {
-            at.set(0, 0, 1).transformDirection(camera.matrixWorldInverse);
-            const line = markerEl.querySelector("line");
-            const front = markerEl.querySelector("circle.front");
-            const back = markerEl.querySelector("circle:not(.front)");
-            const [frontName, backName] = markerEl.querySelectorAll("span");
-            const facing = Math.abs(at.z) > 0.9;
-            const x = at.x * 22;
-            const y = -at.y * 22;
-            for (const [end, sign, name] of [
-              [front!, 1, frontName!],
-              [back!, -1, backName!],
-            ] as const) {
-              end.setAttribute("cx", String(sign * x));
-              end.setAttribute("cy", String(sign * y));
-              end.setAttribute("r", String(4.5 + sign * 2 * at.z));
-              const near = sign * at.z > 0;
-              // A name sits beyond its end of the line; when an end faces the viewer, only it is named, under it.
-              const reach = facing ? 0 : 1 + 26 / Math.hypot(x, y);
-              name.style.transform = `translate(-50%, -50%) translate(${sign * x * reach}px, ${facing ? 20 : sign * y * reach}px)`;
-              name.style.visibility = facing && !near ? "hidden" : "visible";
-              name.textContent = `${sign > 0 ? "Front" : "Back"}${facing ? ", facing you" : ""}`;
-            }
-            if (at.z > 0) front!.parentNode!.appendChild(front!);
-            else back!.parentNode!.appendChild(back!);
-            line!.setAttribute("x1", String(-x));
-            line!.setAttribute("y1", String(-y));
-            line!.setAttribute("x2", String(x));
-            line!.setAttribute("y2", String(y));
-            markerEl.dataset.toward = at.z.toFixed(2);
-          }
           frame = requestAnimationFrame(loop);
         };
         loop();
@@ -796,13 +762,13 @@
     const at = (i: number) => new THREE.Vector3(...place.subarray(i * 3, i * 3 + 3));
     const target = picked >= 0 ? at(picked) : new THREE.Vector3();
     if (picked < 0) for (const i of group!.members) target.addScaledVector(at(i), 1 / group!.members.length);
-    // A pick is framed from 90 units away, or farther when its first two levels reach beyond that.
+    // A pick is framed from 170 units away, so its neighbours stay in view, or farther when its first two levels reach beyond that.
     const reachOut = untrack(() =>
       Math.max(0, ...levels.slice(0, 2).flatMap((list) => list.map((i) => target.distanceTo(at(i))))),
     );
     const { camera, controls } = world;
     const away = (flat ? new THREE.Vector3(0, 0, 1) : camera.position.clone().sub(controls.target)).setLength(
-      picked >= 0 ? Math.min(400, Math.max(90, 1.4 * reachOut)) : 60 + 12 * Math.cbrt(group!.members.length),
+      picked >= 0 ? Math.min(400, Math.max(170, 1.4 * reachOut)) : 60 + 12 * Math.cbrt(group!.members.length),
     );
     untrack(() => fly(target, away));
   });
@@ -850,18 +816,11 @@
   <div class="view-buttons">
     <button title="Zoom in (+)" aria-label="Zoom in" onclick={() => world && orbit(0, 0, ZOOM)}>+</button>
     <button title="Zoom out (−)" aria-label="Zoom out" onclick={() => world && orbit(0, 0, 1 / ZOOM)}>−</button>
-    {#if !flat}<button title="Turn the view to face the front; the zoom and the selection stay (0)" onclick={faceFront}
-        >Front view</button
-      >{/if}
     <button title="The view back to where the map opens" onclick={reset}>Reset view</button>
   </div>
   {#snippet named(i: number)}<span class="ref">{o.ref[i]}</span>{#if describe?.(i)}<span class="value"
         >{` · ${describe(i)}`}</span
       >{/if}{/snippet}
-  {#if !flat}<div class="depth-marker" aria-hidden="true" bind:this={markerEl}>
-      <svg viewBox="-34 -34 68 68" width="68" height="68"><line /><circle /><circle class="front" /></svg>
-      <span></span><span></span>
-    </div>{/if}
   {#if picked >= 0}<div class="pick-label" bind:this={pickEl}>{@render named(picked)}</div>{/if}
   {#if tip}<div
       class="tip"
@@ -876,7 +835,7 @@
     position: relative;
     inline-size: 100%;
     block-size: var(--stage-size, min(74vh, 800px));
-    min-block-size: 420px;
+    min-block-size: min(420px, var(--stage-size, 420px));
     border-radius: 8px;
     overflow: hidden;
     background: var(--bg);
@@ -973,39 +932,6 @@
   .value {
     font-weight: 400;
     color: var(--muted);
-  }
-  .depth-marker {
-    position: absolute;
-    inset-block-end: 66px;
-    inset-inline-end: 50px;
-    z-index: 2;
-    inline-size: 68px;
-    block-size: 68px;
-    pointer-events: none;
-    font-size: var(--text-xs);
-    color: var(--text);
-  }
-  .depth-marker span {
-    position: absolute;
-    inset-block-start: 50%;
-    inset-inline-start: 50%;
-    padding: 0 4px;
-    white-space: nowrap;
-    background: color-mix(in srgb, var(--surface) 94%, transparent);
-    border-radius: 4px;
-  }
-  .depth-marker line {
-    stroke: var(--muted);
-    stroke-width: 2;
-  }
-  .depth-marker circle {
-    fill: var(--surface);
-    stroke: var(--muted);
-    stroke-width: 2;
-  }
-  .depth-marker circle.front {
-    fill: var(--text);
-    stroke: var(--text);
   }
   .group-name {
     position: absolute;

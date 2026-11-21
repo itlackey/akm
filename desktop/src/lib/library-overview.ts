@@ -82,6 +82,8 @@ export interface Overview {
   tags: number[][];
   use: Array<UseClass | null>;
   problems: Array<Problem[]>;
+  /** For an outdated asset, why: "superseded", "deprecated", "superseded by <asset>", "contradicted by <asset>". */
+  outdatedWhy: string[][];
   /** Each declared link: from asset, to asset, and its kind's name. */
   links: Array<{ from: number; to: number; kind: string }>;
   /** Each asset's group by meaning (-1: no embedding) and the place akm gave it in 3D, three numbers per asset. */
@@ -131,10 +133,20 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
 
   const problems: Problem[][] = Array.from({ length: n }, () => []);
   const outdated = new Uint8Array(n);
-  for (let i = 0; i < n; i++)
-    if (OUTDATED_BELIEFS.includes(payload.beliefs[payload.nodes.belief[i] ?? -1] ?? "")) outdated[i] = 1;
-  for (let e = 0; e < payload.links.from.length; e++)
-    if (OUTDATED_LINKS.includes(payload.kinds[payload.links.kind[e]!] ?? "")) outdated[payload.links.from[e]!] = 1;
+  /** Why each outdated asset is outdated: its recorded state, and what it says replaced or contradicts it. */
+  const outdatedWhy: string[][] = Array.from({ length: n }, () => []);
+  for (let i = 0; i < n; i++) {
+    const belief = payload.beliefs[payload.nodes.belief[i] ?? -1] ?? "";
+    if (!OUTDATED_BELIEFS.includes(belief)) continue;
+    outdated[i] = 1;
+    outdatedWhy[i]!.push(belief);
+  }
+  for (let e = 0; e < payload.links.from.length; e++) {
+    const kind = payload.kinds[payload.links.kind[e]!] ?? "";
+    if (!OUTDATED_LINKS.includes(kind)) continue;
+    outdated[payload.links.from[e]!] = 1;
+    outdatedWhy[payload.links.from[e]!]!.push(`${kind.replace("_", " ")} ${path(payload.links.to[e]!)}`);
+  }
   const duplicates = (payload.duplicates?.a ?? []).map((a, k) => ({
     a,
     b: payload.duplicates!.b[k]!,
@@ -171,6 +183,7 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
     tags: payload.nodes.tags ?? payload.nodes.ref.map(() => []),
     use,
     problems,
+    outdatedWhy,
     links: payload.links.from.map((from, e) => ({
       from,
       to: payload.links.to[e]!,
