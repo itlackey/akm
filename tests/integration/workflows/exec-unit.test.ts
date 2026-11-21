@@ -930,6 +930,15 @@ describe("exec unit — retained output is BOUNDED, but a passing command is nev
   }, 30_000);
 });
 
+/** Stops the session-leading holder whose pid the leader recorded in `pidFile`, so no holder outlives its test. */
+function killHolder(pidFile: string): void {
+  try {
+    process.kill(Number(fs.readFileSync(pidFile, "utf8")), "SIGKILL");
+  } catch {
+    // never started, or already gone
+  }
+}
+
 describe("exec unit — an INCOMPLETE capture is never a success (finding 2)", () => {
   /**
    * A command whose LEADER writes a prefix of its output and exits 0
@@ -940,28 +949,35 @@ describe("exec unit — an INCOMPLETE capture is never a success (finding 2)", (
    * promoting it would hand every downstream reference a silently truncated
    * artifact. `log`, when given, records one line per REAL execution.
    */
-  function fdHolderArgv(log?: string): string[] {
+  function fdHolderArgv(pidFile: string, log?: string): string[] {
     const holder = "setTimeout(() => {}, 30000)";
     return bunArgv(
       (log ? `require('node:fs').appendFileSync(${JSON.stringify(log)}, 'x'); ` : "") +
         `const cp=require('node:child_process'); ` +
         `const child=cp.spawn(${JSON.stringify(BUN)}, ['-e', ${JSON.stringify(holder)}], ` +
         `{ detached: true, stdio: ['ignore', 'inherit', 'ignore'] }); child.unref(); ` +
+        `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); ` +
         `process.stdout.write('partial-artifact');`,
     );
   }
 
   test("leader exits 0 while a descendant holds stdout open → `exec_capture_incomplete`, not a partial artifact", async () => {
     seedRun(["work"]);
+    const holderPid = path.join(tmpDir, "holder.pid");
     const plan = execPlan([
       "    unit:",
       "      exec:",
-      `        command: ${JSON.stringify(fdHolderArgv())}`,
+      `        command: ${JSON.stringify(fdHolderArgv(holderPid))}`,
       '      timeout: "2s"',
     ]);
     storePlan(plan);
 
-    const result = await run(plan);
+    let result: Awaited<ReturnType<typeof run>>;
+    try {
+      result = await run(plan);
+    } finally {
+      killHolder(holderPid);
+    }
 
     expect(result.ok).toBe(false);
     // NOT `spawn_failed`: the child started and finished. What failed is akm's
@@ -999,7 +1015,7 @@ describe("exec unit — an INCOMPLETE capture is never a success (finding 2)", (
       expect(result.ok).toBe(true);
       expect(result.units[0]!.failureReason).toBeUndefined();
       expect(String(result.evidence.output)).toBe("leader-output");
-      expect(Date.now() - started).toBeLessThan(15_000);
+      expect(Date.now() - started).toBeLessThan(5_000);
       const end = Date.now() + 5_000;
       const alive = () => {
         try {
@@ -1026,16 +1042,22 @@ describe("exec unit — an INCOMPLETE capture is never a success (finding 2)", (
     // plausible retry policy for a start-up failure must not re-dispatch
     // byte-identical argv for a command that ALREADY ran its side effects.
     const log = path.join(tmpDir, "executions.log");
+    const holderPid = path.join(tmpDir, "holder.pid");
     const plan = execPlan([
       "    unit:",
       "      exec:",
-      `        command: ${JSON.stringify(fdHolderArgv(log))}`,
+      `        command: ${JSON.stringify(fdHolderArgv(holderPid, log))}`,
       '      timeout: "2s"',
       "      retry: { max: 2, on: [spawn_failed] }",
     ]);
     storePlan(plan);
 
-    const result = await run(plan);
+    let result: Awaited<ReturnType<typeof run>>;
+    try {
+      result = await run(plan);
+    } finally {
+      killHolder(holderPid);
+    }
 
     expect(result.ok).toBe(false);
     expect(result.units[0]!.failureReason).toBe("exec_capture_incomplete");
@@ -1081,12 +1103,13 @@ describe("exec unit — a STDERR-only drain failure never discards a valid artif
    * fd open. stdout drained completely, the command exited 0 — the only thing
    * stuck is the diagnostic channel, which never contributes to the artifact.
    */
-  function stderrHolderArgv(): string[] {
+  function stderrHolderArgv(pidFile: string): string[] {
     const holder = "setTimeout(() => {}, 30000)";
     return bunArgv(
       `const cp=require('node:child_process'); ` +
         `const child=cp.spawn(${JSON.stringify(BUN)}, ['-e', ${JSON.stringify(holder)}], ` +
         `{ detached: true, stdio: ['ignore', 'ignore', 'inherit'] }); child.unref(); ` +
+        `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); ` +
         `process.stdout.write('complete-artifact');`,
     );
   }
@@ -1098,6 +1121,7 @@ describe("exec unit — a STDERR-only drain failure never discards a valid artif
     // for the whole 120 s, and the test would fail on its own timeout rather
     // than pass slowly.
     const BUDGET_MS = 120_000;
+    const holderPid = path.join(tmpDir, "holder.pid");
     const warnings: string[] = [];
     _setWarnSinkForTests((level, args) => {
       if (level === "warn") warnings.push(args.map(String).join(" "));
@@ -1107,12 +1131,13 @@ describe("exec unit — a STDERR-only drain failure never discards a valid artif
     try {
       result = await runExecUnit({
         unitId: "work:solo",
-        exec: { command: stderrHolderArgv() as [string, ...string[]], timeoutMs: BUDGET_MS },
+        exec: { command: stderrHolderArgv(holderPid) as [string, ...string[]], timeoutMs: BUDGET_MS },
         baseDir: workDir,
         timeoutMs: BUDGET_MS,
       });
     } finally {
       _setWarnSinkForTests(undefined);
+      killHolder(holderPid);
     }
 
     // A completed command with a complete stdout is a SUCCESS. Failing it

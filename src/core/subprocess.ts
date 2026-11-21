@@ -699,7 +699,10 @@ export async function runManagedSubprocess(
   // What the leader left behind in its own process group is stopped once the drain has had its grace (see
   // below), so a daemon that holds the pipe cannot keep the run waiting. One that wants to outlive the run
   // starts its own session.
-  let bothDrained: Promise<unknown> = Promise.resolve();
+  let drainStarted!: (drained: Promise<unknown>) => void;
+  const bothDrained = new Promise<unknown>((resolve) => {
+    drainStarted = resolve;
+  });
   const leftoversStopped = childSettled?.then(async () => {
     if (group !== "own") return;
     let graceTimer: ReturnType<typeof setTimeoutImpl> | undefined;
@@ -724,7 +727,7 @@ export async function runManagedSubprocess(
   };
   const stdoutPromise = capture ? readStream(proc.stdout ?? null, readOpts) : Promise.resolve(EMPTY_READ);
   const stderrPromise = capture ? readStream(proc.stderr ?? null, readOpts) : Promise.resolve(EMPTY_READ);
-  bothDrained = Promise.all([stdoutPromise, stderrPromise]);
+  drainStarted(Promise.all([stdoutPromise, stderrPromise]));
 
   // Optional stdin payload (captured mode only). Race the write/close against
   // proc.exited so a child that never drains stdin cannot pin us past the
