@@ -5,7 +5,7 @@
 import { getParsedInvocation } from "../cli/invocation";
 import { getStringArg, parsePositiveIntFlag, parseTimeoutValue } from "../cli/parse-args";
 import { SELECTION_ARGS, selectionFromArgs } from "../cli/selection";
-import { defineJsonCommand } from "../cli/shared";
+import { defineJsonCommand, reportChildExit } from "../cli/shared";
 import { loadConfig } from "../core/config/config";
 import { EXEC_CONFIG_KEY, isExecEnabled } from "../core/config/experimental";
 import { ConfigError, UsageError } from "../core/errors";
@@ -137,10 +137,10 @@ export const execCommand = defineJsonCommand({
     });
     if (result.timedOut) {
       console.error(`akm exec: timed out after ${args.timeout}`);
-      process.exitCode ??= 1;
+      reportChildExit(1);
       return;
     }
     // Not `process.exit`: the CLI's own cleanup still runs before the process ends with the child's status.
-    process.exitCode ??= result.exitCode ?? 1;
+    reportChildExit(result.exitCode ?? 1);
   },
 });

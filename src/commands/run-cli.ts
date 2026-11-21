@@ -7,7 +7,7 @@ import { type ArgsDef, type CommandDef, parseArgs, runCommand } from "citty";
 import { warnWorkflowUse } from "../cli/deprecations";
 import { createParsedInvocation, findCittyTopLevelCommandIndex, getParsedInvocation } from "../cli/invocation";
 import { parsePositiveIntFlag, parseTimeoutValue } from "../cli/parse-args";
-import { defineJsonCommand, GLOBAL_OUTPUT_ARGS } from "../cli/shared";
+import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, reportChildExit } from "../cli/shared";
 import { assertKnownFlags, type FlagScanCommand } from "../cli/unknown-flags";
 import { setResolvedUsageAssetType } from "../cli/usage";
 import { adapterForId } from "../core/adapter/registry";
@@ -257,7 +257,8 @@ export const runAssetCommand = defineJsonCommand({
     await withRetries(
       maxRetries,
       async () => {
-        process.exitCode = undefined;
+        // Bun ignores `process.exitCode = undefined`; 0 is the reset it honours.
+        process.exitCode = 0;
         await runCommand(executor.command as CommandDef, { rawArgs: forwarded });
         return process.exitCode;
       },
@@ -288,5 +289,5 @@ async function runScript(
     ...(flags.timeout !== undefined ? { timeoutMs: parseTimeoutValue(flags.timeout) } : {}),
   });
   if (result.timedOut) console.error(`akm run: timed out after ${flags.timeout}`);
-  process.exitCode ??= result.timedOut ? 1 : (result.exitCode ?? 1);
+  reportChildExit(result.timedOut ? 1 : (result.exitCode ?? 1));
 }

@@ -22,16 +22,6 @@ function write(ref: string, content: string, root = storage.stashDir): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, content);
 }
-// A real process: akm reports a child's status only while no exit code is set, and `bun test` cannot unset one.
-async function runCliProcess(args: string[]): Promise<{ code: number; stderr: string }> {
-  const child = Bun.spawn(["bun", path.resolve(import.meta.dir, "../../../src/cli.ts"), ...args], {
-    env: process.env,
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
-  return { code, stderr };
-}
 function stable(stdout: string) {
   const result = JSON.parse(stdout);
   delete result.durationMs;
@@ -64,13 +54,26 @@ beforeEach(async () => {
   // Codex takes its prompt on stdin: the stand-in prints its arguments, then what it was given.
   const fakeCodex = path.join(storage.root, "fake-codex");
   fs.writeFileSync(fakeCodex, '#!/bin/sh\nprintf "%s\\n" "$*"\ncat\n', { mode: 0o755 });
+  // Fails its first call and answers the second, counting calls in `flaky-calls`.
+  const flakyCodex = path.join(storage.root, "flaky-codex");
+  const calls = path.join(storage.root, "flaky-calls");
+  fs.writeFileSync(
+    flakyCodex,
+    `#!/bin/sh\necho x >> "${calls}"\ncat > /dev/null\n[ "$(wc -l < "${calls}")" -ge 2 ] || exit 1\necho answered\n`,
+    { mode: 0o755 },
+  );
   writeSandboxConfig({
     semanticSearchMode: "off",
     defaultBundle: "fixture",
     bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
-    harnesses: { reviewer: { platform: "codex", bin: fakeCodex, args: [] } },
+    harnesses: {
+      reviewer: { platform: "codex", bin: fakeCodex, args: [] },
+      flaky: { platform: "codex", bin: flakyCodex, args: [] },
+    },
   });
   write("commands/review.md", "---\ntype: command\nharness: reviewer\n---\nReview: [$ARGUMENTS]\n");
+  write("commands/flaky.md", "---\ntype: command\nharness: flaky\n---\nTry: [$ARGUMENTS]\n");
+  write("env/e.env", "A=1\n");
   write("agents/reviewer.md", "---\ntype: agent\n---\nCareful reviewer.\n");
   write("knowledge/note.md", "---\ntype: knowledge\n---\nA note.\n");
   write(
@@ -480,13 +483,13 @@ describe("akm run scripts/<file>", () => {
 
   test("the script's exit status is akm's", async () => {
     write("scripts/seven.sh", "exit 7\n");
-    expect((await runCliProcess(["run", "scripts/seven.sh"])).code).toBe(7);
+    expect((await runCliCapture(["run", "scripts/seven.sh"])).code).toBe(7);
   });
 
   test("--timeout stops the script at the limit and the status says so", async () => {
     write("scripts/slow.sh", "exec sleep 30\n");
     const started = Date.now();
-    const result = await runCliProcess(["run", "--timeout", "500ms", "scripts/slow.sh"]);
+    const result = await runCliCapture(["run", "--timeout", "500ms", "scripts/slow.sh"]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("timed out after 500ms");
     expect(Date.now() - started).toBeLessThan(15_000);
@@ -494,12 +497,12 @@ describe("akm run scripts/<file>", () => {
 
   test("--max-retries runs a failing script exactly N more times and stops on success", async () => {
     write("scripts/fail.sh", 'echo x >> "$B5_OUT"; exit 3\n');
-    const failing = await runCliProcess(["run", "--max-retries", "2", "scripts/fail.sh"]);
+    const failing = await runCliCapture(["run", "--max-retries", "2", "scripts/fail.sh"]);
     expect(failing.code).toBe(3);
     expect(lines()).toHaveLength(3);
     fs.rmSync(out);
     write("scripts/flaky.sh", 'echo x >> "$B5_OUT"; [ "$(wc -l < "$B5_OUT")" -ge 2 ]\n');
-    const flaky = await runCliProcess(["run", "--max-retries", "5", "scripts/flaky.sh"]);
+    const flaky = await runCliCapture(["run", "--max-retries", "5", "scripts/flaky.sh"]);
     expect(flaky.code, flaky.stderr).toBe(0);
     expect(lines()).toHaveLength(2);
   });
@@ -509,6 +512,18 @@ describe("akm run scripts/<file>", () => {
     const result = await runCliCapture(["run", "commands/review", "--cwd", cwd, "--max-retries", "1"]);
     expect(result.code, result.stderr).toBe(0);
     expect(fs.statSync(cwd).isDirectory()).toBe(true);
+  });
+
+  test("--max-retries on a command stops at the first successful attempt", async () => {
+    const result = await runCliCapture(["run", "commands/flaky", "--max-retries", "3"]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(storage.root, "flaky-calls"), "utf8").trim().split("\n")).toHaveLength(2);
+  });
+
+  test("a child's failure is akm's exit status even when the host had set 0", async () => {
+    process.exitCode = 0;
+    const result = await runCliCapture(["env", "run", "env/e", "--", "sh", "-c", "exit 5"]);
+    expect(result.code, result.stderr).toBe(5);
   });
 
   test("a task's flags after the ref are akm's: --format text still renders text", async () => {

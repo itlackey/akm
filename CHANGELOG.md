@@ -117,7 +117,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A program run by akm, and a command that follows akm in the same pipe or socket, get all of their output when the reader is slow. akm no longer makes an inherited pipe non-blocking at startup, in the npm build and in the standalone binary (built with code splitting, so the prompt library is not loaded at startup). Commands that print through stdout can still leave Bun's after-exit residue on the pipe.
 - On the Node build, a command's output over 1 MB no longer fails with ENOBUFS.
 - The standalone binary passes arguments to a Bun script (`akm run scripts/t.ts a1`) and runs `.mjs` scripts; it failed with "Invalid internal frozen-script invocation."
-- A host that owns a termination signal keeps the exit code its handler sets: `akm run`, `exec`, `env run` and `secret run` report the child's status only when no exit code is set.
+- `akm run`, `exec`, `env run` and `secret run` keep an exit code that a signal owner's handler set to a failure: a later child status never replaces a recorded failure.
+- `akm run <agent|command> --max-retries` stops at the first successful attempt; on Bun a failed first attempt made every later attempt count as failed.
 
 ## [0.10.261129] - 2026-11-16
 

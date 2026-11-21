@@ -27,7 +27,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
-import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
+import { defineGroupCommand, defineJsonCommand, output, reportChildExit } from "../../cli/shared";
 import { refForFile } from "../../core/asset/asset-placement";
 import { loadConfig } from "../../core/config/config";
 import {
@@ -212,7 +212,7 @@ const secretRunCommand = defineJsonCommand({
     // Setting `process.exitCode` and returning still exits with the child's
     // exact status once the event loop drains, but lets cleanup run first —
     // same pattern `emitJsonError` (src/cli/shared.ts) already established.
-    process.exitCode ??= result.exitCode ?? 0;
+    reportChildExit(result.exitCode ?? 0);
     return;
   },
 });

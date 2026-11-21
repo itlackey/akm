@@ -6,7 +6,7 @@
  * Shared CLI utilities extracted from `src/cli.ts` so that individual
  * command modules can import them without a circular dependency.
  *
- * Exported: output, runWithJsonErrors, parseAllFlagValues, emitJsonError
+ * Exported: output, runWithJsonErrors, parseAllFlagValues, emitJsonError, reportChildExit
  */
 
 import { type ArgsDef, type CommandContext, type CommandDef, defineCommand } from "citty";
@@ -121,6 +121,14 @@ export function emitJsonError(error: unknown): void {
   const code = error instanceof AkmError ? error.code : undefined;
   console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
   process.exitCode = exitCode;
+}
+
+/**
+ * Make a child's status akm's exit code. A failure already recorded (a signal owner's handler, an earlier error)
+ * is kept: a later result never turns a failure into success. 0 counts as no failure, as an unset code does.
+ */
+export function reportChildExit(code: number): void {
+  if (!process.exitCode) process.exitCode = code;
 }
 
 /**
