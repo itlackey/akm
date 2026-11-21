@@ -8,11 +8,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { usageReportEnabled } from "../src/cli/usage-report";
-import { akmConfigDiff, listConfig } from "../src/commands/config-cli";
-import { loadConfig, normalizeConfigFile, resetConfigCache } from "../src/core/config/config";
-import { getConfigPath } from "../src/core/paths";
-import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
+import { usageReportEnabled } from "../../src/cli/usage-report";
+import { akmConfigDiff, listConfig } from "../../src/commands/config-cli";
+import { loadConfig, normalizeConfigFile, resetConfigCache } from "../../src/core/config/config";
+import { getConfigPath } from "../../src/core/paths";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 
 beforeEach(() => resetConfigCache());
 afterEach(() => resetConfigCache());
