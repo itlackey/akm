@@ -187,6 +187,28 @@ describe("additive akm run", () => {
     expect(invalid.stderr).toContain("missing");
   });
 
+  test("a task found in another bundle runs from that bundle, not from a same-named task in the default one", async () => {
+    const other = path.join(storage.root, "other");
+    write("tasks/only-there.yml", "version: 4\nrun: printf from-other\nshell: sh\n", other);
+    write("tasks/both.yml", "version: 4\nrun: printf from-other\nshell: sh\n", other);
+    write("tasks/both.yml", "version: 4\nrun: printf from-fixture\nshell: sh\n");
+    writeSandboxConfig({
+      bundles: {
+        fixture: { path: storage.stashDir },
+        other: { path: other, components: { main: { root: ".", adapter: "akm" } } },
+      },
+    });
+    const only = await runCliCapture(["run", "tasks/only-there"]);
+    expect(only.code, only.stderr).toBe(0);
+    expect(fs.readFileSync(JSON.parse(only.stdout).result.log, "utf8")).toContain("from-other");
+    const both = await runCliCapture(["run", "tasks/both"]);
+    expect(both.code, both.stderr).toBe(0);
+    expect(fs.readFileSync(JSON.parse(both.stdout).result.log, "utf8")).toContain("from-fixture");
+    const named = await runCliCapture(["run", "other//tasks/both"]);
+    expect(named.code, named.stderr).toBe(0);
+    expect(fs.readFileSync(JSON.parse(named.stdout).result.log, "utf8")).toContain("from-other");
+  });
+
   test("workflow parameters, limits, frozen ID continuation and existing lifecycle operations remain available", async () => {
     const run = await runCliCapture([
       "run",
@@ -297,6 +319,9 @@ describe("additive akm run", () => {
     ["agents/reviewer", "--arguments", "ignored"],
     ["commands/review", "extra"],
     ["commands/review", "--", "--child-flag"],
+    ["commands/review", "--arguments", "x", "--"],
+    ["agents/reviewer", "--prompt", "x", "--harness", "reviewer", "--"],
+    ["agents/reviewer", "--prompt", "x", "--harness", "reviewer", "--", "extra"],
     ["agents/reviewer", "--prompt", "x", "--prompt-stdin"],
     ["workflows/check", "--new"],
     ["workflows/check", "--", "extra"],
