@@ -6,6 +6,8 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { GLOBAL_OUTPUT_ARGS } from "../../../src/cli/shared";
+import { runAssetCommand } from "../../../src/commands/run-cli";
 import { readEvents } from "../../../src/core/events";
 import { _resetWarnOnceForTests } from "../../../src/core/warn";
 import { akmIndex } from "../../../src/indexer/indexer";
@@ -389,6 +391,27 @@ describe("akm run scripts/<file>", () => {
     const result = await runCliCapture(["run", "scripts/args.sh", ...tail]);
     expect(result.code, result.stderr).toBe(0);
     expect(lines()).toEqual(tail);
+  });
+
+  test("every flag akm knows reaches the script as given when it comes after the ref", async () => {
+    type Definition = { type: string; alias?: string };
+    const known: Record<string, Definition> = {
+      ...(runAssetCommand.args as Record<string, Definition>),
+      ...GLOBAL_OUTPUT_ARGS,
+    };
+    const tails: string[][] = [["--help"], ["-h"], ["--version"], ["--unknown-flag", "v"]];
+    for (const [name, definition] of Object.entries(known)) {
+      if (definition.type === "positional") continue;
+      const value = definition.type === "boolean" ? [] : ["v"];
+      tails.push([`--${name}`, ...value], [`--${name}=v`]);
+      if (definition.alias) tails.push([`-${definition.alias}`, ...value]);
+    }
+    expect(tails.length).toBeGreaterThan(30);
+    for (const tail of tails) {
+      const result = await runCliCapture(["run", "scripts/args.sh", ...tail]);
+      expect(result.code, `${tail.join(" ")}: ${result.stderr}`).toBe(0);
+      expect(lines(), tail.join(" ")).toEqual(tail);
+    }
   });
 
   test("a script's tail changes nothing akm itself prints: -q after the ref does not hide a warning", async () => {
