@@ -138,6 +138,17 @@ function decodeImproveResultRow(
   }
 }
 
+/** An `improve_runs` row with its envelope decoded; `result` is undefined when the envelope does not decode. */
+export interface DecodedImproveRow {
+  row: ImproveRunSummaryRow;
+  result: Record<string, unknown> | undefined;
+}
+
+/** The window's `improve_runs` rows, each decoded once (one warning per bad row) for every reader of the window. */
+export function readImproveRows(db: Database, since: string, until?: string): DecodedImproveRow[] {
+  return queryImproveRuns(db, since, until).map((row) => ({ row, result: decodeImproveResultRow(row) }));
+}
+
 /** A zeroed accumulator — also what health reports when it could not read state.db at all (#791). */
 export function emptyImproveMetrics(): ImproveHealthMetrics {
   return {
@@ -402,13 +413,12 @@ export interface ImproveRunOutcomes {
  * row in the window; rows whose envelope does not decode are counted under
  * `resultRows.skipped.invalid` and excluded from the result-derived metrics.
  */
-export function summarizeImproveRuns(
-  db: Database,
-  since: string,
-  until?: string,
-): { metrics: ImproveHealthMetrics; runCount: number; outcomes: ImproveRunOutcomes } {
+export function summarizeImproveRuns(rows: readonly DecodedImproveRow[]): {
+  metrics: ImproveHealthMetrics;
+  runCount: number;
+  outcomes: ImproveRunOutcomes;
+} {
   const accum = emptyImproveMetrics();
-  const rows = queryImproveRuns(db, since, until);
   const resultRows = { total: rows.length, included: 0, skipped: { invalid: 0 } };
   const outcomes: ImproveRunOutcomes = { failedRunIds: [], interruptedRunIds: [] };
 
@@ -416,8 +426,7 @@ export function summarizeImproveRuns(
   // newest complete run's snapshot (current state) — not a sum across runs.
   let latest: { row: ImproveRunSummaryRow; memorySummary: ImproveHealthMetrics["memorySummary"] } | undefined;
 
-  for (const row of rows) {
-    const result = decodeImproveResultRow(row);
+  for (const { row, result } of rows) {
     if (!result) {
       resultRows.skipped.invalid += 1;
       if (!row.ok) outcomes.failedRunIds.push(row.id);
@@ -460,11 +469,10 @@ export function summarizeImproveRuns(
 
 /** Project an improve_runs row + wall time + task attribution into one {@link ImproveRunSummary}. */
 export function projectImproveRunSummary(
-  row: ImproveRunSummaryRow,
+  { row, result: decoded }: DecodedImproveRow,
   wallTimeMs: number,
   taskId: string,
 ): ImproveRunSummary {
-  const decoded = decodeImproveResultRow(row);
   const result: Record<string, unknown> = decoded ?? {};
   const resultStatus: NonNullable<ImproveRunSummary["resultStatus"]> = decoded ? "valid" : "invalid";
   if (!decoded) {

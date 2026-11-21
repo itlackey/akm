@@ -16,9 +16,11 @@ import { collectOpencodeMajorAdvisory } from "../../../src/commands/health/openc
 import type { HealthCheckResult } from "../../../src/commands/health/types";
 import { recordImproveRunResult } from "../../../src/commands/improve/improve-result-file";
 import { createProposal } from "../../../src/commands/proposal/repository";
+import type { ImproveResultEnvelope } from "../../../src/core/improve-result";
 import type { AkmImproveResult } from "../../../src/core/improve-types";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { _setOpencodeVersionProbeForTests } from "../../../src/integrations/harnesses/opencode/version";
+import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import { runCliCapture } from "../../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
@@ -170,6 +172,41 @@ describe("a corrupt history row (B10-36)", () => {
       console.warn = original;
     }
     expect(warnings.filter((line) => line.includes("task_id=broken"))).toHaveLength(1);
+  });
+});
+
+describe("a corrupt improve run (B10-36)", () => {
+  test("warns once per row in per-run mode, and still shows the row", async () => {
+    const startedAt = new Date(Date.now() - 60_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      recordImproveRun(db, {
+        id: "bad-run",
+        startedAt,
+        completedAt: startedAt,
+        stashDir: storage.stashDir,
+        dryRun: false,
+        strategy: "default",
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: { schemaVersion: 99, ok: true } as unknown as ImproveResultEnvelope,
+      });
+    } finally {
+      db.close();
+    }
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+    try {
+      const result = await akmHealth({ since: "1h", groupBy: "run" });
+      expect(result.runs?.map((run) => run.id)).toEqual(["bad-run"]);
+      expect(result.improve.resultRows?.skipped.invalid).toBe(1);
+    } finally {
+      console.warn = original;
+    }
+    expect(warnings.filter((line) => line.includes("id=bad-run"))).toHaveLength(1);
   });
 });
 

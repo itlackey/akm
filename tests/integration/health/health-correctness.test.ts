@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmHealth } from "../../../src/commands/health";
+import { readImproveRows } from "../../../src/commands/health/improve-metrics";
 import { buildPerRunSummaries } from "../../../src/commands/health/task-runs";
 import { recordImproveRunResult, recordTerminatedImproveRun } from "../../../src/commands/improve/improve-result-file";
 import { processIdentity } from "../../../src/core/file-lock";
@@ -158,7 +159,9 @@ describe("health reporting correctness", () => {
     improve("scheduled", start);
     const db = openStateDatabase();
     try {
-      expect(buildPerRunSummaries(db, at(now - DAY), at(now))[0]?.taskId).toBe(taskId);
+      expect(
+        buildPerRunSummaries(db, readImproveRows(db, at(now - DAY), at(now)), at(now - DAY), at(now))[0]?.taskId,
+      ).toBe(taskId);
     } finally {
       db.close();
     }
@@ -170,7 +173,9 @@ describe("health reporting correctness", () => {
     improve("manual", start);
     const db = openStateDatabase();
     try {
-      expect(buildPerRunSummaries(db, at(now - DAY), at(now))[0]?.taskId).toBe("manual");
+      expect(
+        buildPerRunSummaries(db, readImproveRows(db, at(now - DAY), at(now)), at(now - DAY), at(now))[0]?.taskId,
+      ).toBe("manual");
     } finally {
       db.close();
     }

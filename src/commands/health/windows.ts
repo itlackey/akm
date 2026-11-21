@@ -22,6 +22,7 @@ import {
   countTaskRuns,
   decodeTaskRows,
   type ImproveRunOutcomes,
+  readImproveRows,
   roundRate,
   summarizeImproveRuns,
   type TaskRunCounts,
@@ -228,7 +229,8 @@ export function buildImproveWindowSummary(
     readEvents({ since, type }, { dbPath: stateDbPath, readOnly }).events.filter(
       (event) => new Date(event.ts ?? since).getTime() < untilMs,
     );
-  const { metrics: improve, runCount, outcomes } = summarizeImproveRuns(db, since, until);
+  const improveRows = readImproveRows(db, since, until);
+  const { metrics: improve, runCount, outcomes } = summarizeImproveRuns(improveRows);
   improve.invoked = eventsBeforeUntil("improve_invoked").length;
   improve.completed = eventsBeforeUntil(IMPROVE_COMPLETED_EVENT).length;
   const skipSummary = buildImproveSkipSummary(eventsBeforeUntil("improve_skipped"));
@@ -236,7 +238,7 @@ export function buildImproveWindowSummary(
   improve.skipReasons = skipSummary.skipReasons;
   // Wall times come from the same improve-runs window as the per-run
   // reporting so counts and percentiles stay aligned with it.
-  const perRunSummaries = buildPerRunSummaries(db, since, until);
+  const perRunSummaries = buildPerRunSummaries(db, improveRows, since, until);
   improve.wallTime = computeWallTimeStats(
     perRunSummaries.map((run) => run.wallTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0),
   );
