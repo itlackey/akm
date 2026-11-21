@@ -996,17 +996,26 @@ posixOnly("plugin state akm could not read is unknown or failed, with the reason
     expect(entry(run, "opencode").message).not.toContain("no cached");
   });
 
-  test("an unreadable opencode.json on a channel switch fails the entry with the read error, check and run", async () => {
-    writeCachedOpenCode("0.10.261130-beta", "next");
-    writeOpenCodeConfig("{ not json");
-    for (const args of [CHECK, UPGRADE]) {
-      const run = await withEnv(world.env, () =>
-        runUpgrade({ ...args, channel: "latest" }, "0.9.28", fakeDeps("0.9.28", "0.9.28")),
-      );
-      expect(entry(run, "opencode").outcome).toBe("failed");
-      expect(entry(run, "opencode").message).toContain("could not parse");
-      expect(entry(run, "opencode").message).not.toContain("disappeared");
-    }
+  test("an opencode.json that becomes unreadable while the CLI upgrades fails the switch with the read error", async () => {
+    const dir = path.join(world.root, "xdg-config", "opencode");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "opencode.json"), JSON.stringify({ plugin: ["akm-opencode@next"] }));
+    writeCachedOpenCode("0.9.20", "next");
+    stub("npm", `printf '{"version":"0.9.30"}\\n'`);
+    stub("opencode", 'case "$*" in "--version") echo 1.0.0;; *) exit 2;; esac');
+    stub("pgrep", "exit 1");
+    stub("trash-put", `/bin/mkdir -p "$STUB_STATE/trash" && /bin/mv "$1" "$STUB_STATE/trash/"`);
+    const deps = fakeDeps("0.9.28", "0.9.28");
+    const performUpgrade = deps.performUpgrade;
+    deps.performUpgrade = async (check, opts) => {
+      // The CLI step can take minutes; the config is read again after it.
+      fs.writeFileSync(path.join(dir, "opencode.json"), "{ not json");
+      return performUpgrade(check, opts);
+    };
+    const run = await withEnv(world.env, () => runUpgrade({ ...UPGRADE, channel: "latest" }, "0.9.28", deps));
+    expect(entry(run, "opencode").outcome).toBe("failed");
+    expect(entry(run, "opencode").message).toContain("could not parse");
+    expect(entry(run, "opencode").message).not.toContain("disappeared");
   });
 
   test("an unparseable codex config.toml: doctor row is unknown; upgrade --check fails the entry with no invented channel", async () => {

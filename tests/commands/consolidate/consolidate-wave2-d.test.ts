@@ -13,7 +13,6 @@ import { describe, expect, test } from "bun:test";
 import { setConfigValue } from "../../../src/commands/config-cli";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../../src/core/errors";
-import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 
 // #13's "error class exit-code classification" describe block was DELETED
 // here (D2, Phase 2 triage): all 4 tests asserted only `err.name` and

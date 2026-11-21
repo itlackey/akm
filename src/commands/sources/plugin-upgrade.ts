@@ -993,17 +993,17 @@ export function codexMarketplaceRegistration(): { source: string; ref: string | 
   return { source, ref: typeof ref === "string" ? ref : undefined };
 }
 
+interface MarketplacePlan {
+  target: string | Error;
+  keep?: Kept;
+}
+
 /**
  * What moving one marketplace plugin to `channel` does, read without changing anything: the build the channel's branch
  * of the registered `source` offers (or why it could not be read), and, unless a downgrade is allowed, the installed
  * version that switch leaves alone because the channel has nothing newer. The real switch and `--check` both decide
  * from this.
  */
-interface MarketplacePlan {
-  target: string | Error;
-  keep?: Kept;
-}
-
 function marketplacePlan(
   harness: "claude-code" | "codex",
   source: string,
