@@ -11,10 +11,11 @@
  * the subject.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { makeLauncherDist } from "../_helpers/launcher-dist";
 import { realNodeExecutable } from "../_helpers/node-runtime";
 import { type Cleanup, makeSandboxDir, sandboxStashDir, writeSandboxConfig } from "../_helpers/sandbox";
 
@@ -104,6 +105,12 @@ beforeEach(() => {
     ].join("\n"),
     { mode: 0o755 },
   );
+  fs.writeFileSync(path.join(stash.dir, "scripts", "sig.sh"), '#!/bin/sh\nkill -"$1" $$\nsleep 5\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(stash.dir, "scripts", "envdump.sh"), "#!/bin/sh\nenv\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(work, "fake-harness"), '#!/bin/sh\ncat > /dev/null\nenv > "$HARNESS_ENV"\necho reply\n', {
+    mode: 0o755,
+  });
+  fs.writeFileSync(path.join(stash.dir, "scripts", "sl6.sh"), "#!/bin/sh\nsleep 6\n", { mode: 0o755 });
   fs.writeFileSync(
     path.join(stash.dir, "scripts", "tick.sh"),
     ["#!/bin/bash", 'echo $$ > "$BG"', "while true; do sleep 0.2; done", ""].join("\n"),
@@ -301,9 +308,11 @@ await Promise.all([own, shared]);
   }, 30_000);
 });
 
-// The installed launcher (`dist/akm` from `bun run build`), started by real Node and by Bun. On Linux and macOS it
+// The installed launcher (the real script beside a `cli.js` that runs this checkout), started by real Node and by Bun. On Linux and macOS it
 // replaces itself with akm, so the terminal, the process group and every signal are akm's own.
-const LAUNCHER = path.resolve(import.meta.dir, "../../dist/akm");
+const launcherDist = makeLauncherDist();
+const LAUNCHER = launcherDist.launcher;
+afterAll(() => launcherDist.cleanup());
 const runtimes: Array<[string, () => string]> = [
   ["node", realNodeExecutable],
   ["bun", () => "bun"],
@@ -329,23 +338,34 @@ describe.skipIf(!posix || !hasPython)("the installed launcher", () => {
         await exited;
       }, 30_000);
 
-      test("akm exec keeps an interactive shell alive through Ctrl-C", async () => {
+      test("akm exec gives an interactive shell the terminal (job control) and keeps it alive through Ctrl-C", async () => {
         const marker = path.join(work, "shell-alive");
         const { child, exited } = onTerminal(viaLauncher(["exec", "--", "bash", "--norc", "-i"]));
         await new Promise((r) => setTimeout(r, 2_000));
         child.stdin?.write("\x03");
         await new Promise((r) => setTimeout(r, 500));
-        child.stdin?.write(`echo alive > ${marker}\nexit\n`);
+        // `m` is in $- only when the shell has job control, which needs a controlling terminal.
+        child.stdin?.write(`case $- in *m*) echo jobcontrol;; *) echo nojobcontrol;; esac > ${marker}\nexit\n`);
         await exited;
-        expect(fs.existsSync(marker)).toBe(true);
+        expect(fs.readFileSync(marker, "utf8").trim()).toBe("jobcontrol");
       }, 30_000);
 
-      test("Ctrl-Z stops the script and the shell's prompt returns", async () => {
+      test("Ctrl-Z stops the script itself and the shell's prompt returns", async () => {
         const { child, exited } = onTerminal(["bash", "--norc", "-i"]);
         child.stdin?.write(`${viaLauncher(["run", "scripts/tick.sh"]).join(" ")}\n`);
         expect(await until(() => readPid("bg") !== undefined, 15_000)).toBe(true);
+        const script = readPid("bg") as number;
+        const state = (): string => {
+          try {
+            return fs.readFileSync(`/proc/${script}/stat`, "utf8").replace(/^.*\) /, "")[0] ?? "";
+          } catch {
+            return "";
+          }
+        };
         child.stdin?.write("\x1a");
-        await new Promise((r) => setTimeout(r, 1_000));
+        // /proc/<pid>/stat state T: the script, not only the launcher, is stopped.
+        const stopped = process.platform !== "linux" || (await until(() => state() === "T", 5_000));
+        expect(stopped).toBe(true);
         child.stdin?.write(`jobs > "$JOBS"\n`);
         expect(
           await until(
@@ -393,6 +413,50 @@ describe.skipIf(!posix || !hasPython)("the installed launcher", () => {
         child.stdin?.write("\x03");
         await exited;
         expect(await until(() => !alive(bg), 5_000)).toBe(true);
+      }, 30_000);
+
+      test("programs akm starts do not inherit the launcher's AKM_LAUNCHER_* variables", () => {
+        const harnessEnv = path.join(work, "harness-env");
+        writeSandboxConfig({
+          experimental: { exec: true },
+          harnesses: { fake: { platform: "claude", bin: path.join(work, "fake-harness") } },
+        });
+        const run = (args: string[]) =>
+          spawnSync(runtime(), [LAUNCHER, ...args], { env: { ...env, HARNESS_ENV: harnessEnv }, encoding: "utf8" });
+        const script = run(["run", "scripts/envdump.sh"]);
+        const exec = run(["exec", "--", "env"]);
+        const harness = run(["exec", "--harness", "fake", "--prompt", "p"]);
+        expect(harness.stdout).toContain("reply");
+        for (const [name, text] of [
+          ["run", script.stdout],
+          ["exec", exec.stdout],
+          ["harness", fs.readFileSync(harnessEnv, "utf8")],
+        ]) {
+          expect(text, name).toContain("PATH=");
+          expect(text, name).not.toContain("AKM_LAUNCHER_");
+        }
+      }, 30_000);
+
+      test("akm ends by the signal its script died of", () => {
+        for (const name of ["TERM", "INT", "KILL"]) {
+          const result = spawnSync(runtime(), [LAUNCHER, "run", "scripts/sig.sh", name], { env, encoding: "utf8" });
+          expect(result.signal).toBe(`SIG${name}` as NodeJS.Signals);
+        }
+      }, 30_000);
+
+      test("a shell loop around akm run stops at one Ctrl-C", async () => {
+        const loop = path.join(work, "loop");
+        const started = Date.now();
+        const { child, exited } = onTerminal([
+          "bash",
+          "-c",
+          `for i in 1 2 3; do ${viaLauncher(["run", "scripts/sl6.sh"]).join(" ")}; echo next $i >> ${loop}; done`,
+        ]);
+        await new Promise((r) => setTimeout(r, 2_500));
+        child.stdin?.write("\x03");
+        await exited;
+        expect(Date.now() - started).toBeLessThan(8_000);
+        expect(fs.existsSync(loop)).toBe(false);
       }, 30_000);
     });
   }

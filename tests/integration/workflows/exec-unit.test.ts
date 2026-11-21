@@ -933,7 +933,8 @@ describe("exec unit — retained output is BOUNDED, but a passing command is nev
 describe("exec unit — an INCOMPLETE capture is never a success (finding 2)", () => {
   /**
    * A command whose LEADER writes a prefix of its output and exits 0
-   * immediately, leaving a detached descendant holding the stdout fd open far
+   * immediately, leaving a descendant in a SESSION OF ITS OWN (akm stops what is left in the leader's group, so only
+   * a descendant that started its own session can outlive the run) holding the stdout fd open far
    * past the stream-drain deadline (the leader's exit plus the post-exit
    * grace). `exitCode` is 0 and `stdout` holds only the leader's prefix —
    * promoting it would hand every downstream reference a silently truncated
@@ -945,7 +946,7 @@ describe("exec unit — an INCOMPLETE capture is never a success (finding 2)", (
       (log ? `require('node:fs').appendFileSync(${JSON.stringify(log)}, 'x'); ` : "") +
         `const cp=require('node:child_process'); ` +
         `const child=cp.spawn(${JSON.stringify(BUN)}, ['-e', ${JSON.stringify(holder)}], ` +
-        `{ stdio: ['ignore', 'inherit', 'ignore'] }); child.unref(); ` +
+        `{ detached: true, stdio: ['ignore', 'inherit', 'ignore'] }); child.unref(); ` +
         `process.stdout.write('partial-artifact');`,
     );
   }
@@ -978,6 +979,46 @@ describe("exec unit — an INCOMPLETE capture is never a success (finding 2)", (
     expect(rows[0]!.status).toBe("failed");
     expect(rows[0]!.failure_reason).toBe("exec_capture_incomplete");
   }, 90_000);
+
+  test("a descendant left in the leader's own group and holding stdout is stopped; the unit succeeds with the leader's output", async () => {
+    seedRun(["work"]);
+    const pidFile = path.join(tmpDir, "leftover.pid");
+    const holder = "setTimeout(() => {}, 30000)";
+    const code =
+      `const cp=require('node:child_process'); ` +
+      `const child=cp.spawn(${JSON.stringify(BUN)}, ['-e', ${JSON.stringify(holder)}], { stdio: ['ignore', 'inherit', 'ignore'] }); ` +
+      `child.unref(); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); ` +
+      `process.stdout.write('leader-output');`;
+    const plan = execPlan(["    unit:", "      exec:", `        command: ${JSON.stringify(bunArgv(code))}`]);
+    storePlan(plan);
+
+    const started = Date.now();
+    const result = await run(plan);
+    const pid = Number(fs.readFileSync(pidFile, "utf8"));
+    try {
+      expect(result.ok).toBe(true);
+      expect(result.units[0]!.failureReason).toBeUndefined();
+      expect(String(result.evidence.output)).toBe("leader-output");
+      expect(Date.now() - started).toBeLessThan(15_000);
+      const end = Date.now() + 5_000;
+      const alive = () => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      while (alive() && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+      expect(alive()).toBe(false);
+    } finally {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }
+  }, 60_000);
 
   test("`retry: { on: [spawn_failed] }` does NOT re-run a command that already completed", async () => {
     seedRun(["work"]);
@@ -1045,7 +1086,7 @@ describe("exec unit — a STDERR-only drain failure never discards a valid artif
     return bunArgv(
       `const cp=require('node:child_process'); ` +
         `const child=cp.spawn(${JSON.stringify(BUN)}, ['-e', ${JSON.stringify(holder)}], ` +
-        `{ stdio: ['ignore', 'ignore', 'inherit'] }); child.unref(); ` +
+        `{ detached: true, stdio: ['ignore', 'ignore', 'inherit'] }); child.unref(); ` +
         `process.stdout.write('complete-artifact');`,
     );
   }

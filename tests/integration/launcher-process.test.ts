@@ -15,6 +15,7 @@ import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { realNodeExecutable } from "../_helpers/node-runtime";
 import { makeSandboxDir } from "../_helpers/sandbox";
 
 function launcherFixture(root: string): { launcher: string; readyFile: string; signalFile: string } {
@@ -58,103 +59,135 @@ function exited(proc: ReturnType<typeof spawn>) {
   );
 }
 
-describe.skipIf(!posix)("the launcher replaces itself with akm", () => {
-  test("the child is the launcher's own process: same pid, no AKM_LAUNCHER_PID, SIGTERM reaches it once", async () => {
-    const sandbox = makeSandboxDir("akm-launcher-execve-");
-    try {
-      const fixture = launcherFixture(sandbox.dir);
-      const launcherProc = spawn(process.execPath, [fixture.launcher, "sentinel"], {
-        stdio: ["ignore", "ignore", "ignore"],
-        env: process.env,
-      });
-      await waitFor(() => fs.existsSync(fixture.readyFile));
-      expect(fs.readFileSync(fixture.readyFile, "utf8")).toBe(String(launcherProc.pid));
-      launcherProc.kill("SIGTERM");
-      expect(await exited(launcherProc)).toEqual({ code: 0, signal: null });
-      const received = JSON.parse(fs.readFileSync(fixture.signalFile, "utf8")) as {
-        signal: string;
-        launcherPid: string | undefined;
-      };
-      expect(received.signal).toBe("SIGTERM");
-      expect(received.launcherPid).toBeUndefined();
-    } finally {
-      sandbox.cleanup();
-    }
-  }, 15000);
+// Real Node starts Bun (execve); Bun runs the CLI in its own process.
+const runtimes: Array<[string, () => string]> = [
+  ["node", realNodeExecutable],
+  ["bun", () => process.execPath],
+];
 
-  test("SIGINT to the whole process group reaches the child once, so its graceful shutdown completes", async () => {
-    const sandbox = makeSandboxDir("akm-launcher-signal-group-");
-    try {
-      const dist = path.join(sandbox.dir, "package", "dist");
-      const launcher = path.join(dist, "akm");
-      const readyFile = path.join(sandbox.dir, "ready.txt");
-      const doneFile = path.join(sandbox.dir, "done.txt");
-      fs.mkdirSync(dist, { recursive: true });
-      fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
-      fs.writeFileSync(
-        path.join(dist, "cli.js"),
-        [
-          'import fs from "node:fs";',
-          'process.once("SIGINT", () => {',
-          `  setTimeout(() => { fs.writeFileSync(${JSON.stringify(doneFile)}, "1"); process.exit(0); }, 300);`,
-          "});",
-          `fs.writeFileSync(${JSON.stringify(readyFile)}, String(process.pid));`,
-          "await new Promise(() => {});",
-        ].join("\n"),
-      );
-      const launcherProc = spawn(process.execPath, [launcher, "sentinel"], {
-        stdio: ["ignore", "ignore", "ignore"],
-        env: process.env,
-        detached: true,
-      });
-      await waitFor(() => fs.existsSync(readyFile));
-      process.kill(-(launcherProc.pid as number), "SIGINT");
-      expect(await exited(launcherProc)).toEqual({ code: 0, signal: null });
-      expect(fs.existsSync(doneFile)).toBe(true);
-    } finally {
-      sandbox.cleanup();
-    }
-  }, 15000);
+for (const [runtimeName, runtime] of runtimes)
+  describe.skipIf(!posix)(`the launcher under ${runtimeName} is one process with akm`, () => {
+    test("the child is the launcher's own process: same pid, no AKM_LAUNCHER_PID, SIGTERM reaches it once", async () => {
+      const sandbox = makeSandboxDir("akm-launcher-execve-");
+      try {
+        const fixture = launcherFixture(sandbox.dir);
+        const launcherProc = spawn(runtime(), [fixture.launcher, "sentinel"], {
+          stdio: ["ignore", "ignore", "ignore"],
+          env: process.env,
+        });
+        await waitFor(() => fs.existsSync(fixture.readyFile));
+        expect(fs.readFileSync(fixture.readyFile, "utf8")).toBe(String(launcherProc.pid));
+        launcherProc.kill("SIGTERM");
+        expect(await exited(launcherProc)).toEqual({ code: 0, signal: null });
+        const received = JSON.parse(fs.readFileSync(fixture.signalFile, "utf8")) as {
+          signal: string;
+          launcherPid: string | undefined;
+        };
+        expect(received.signal).toBe("SIGTERM");
+        expect(received.launcherPid).toBeUndefined();
+      } finally {
+        sandbox.cleanup();
+      }
+    }, 15000);
 
-  test("a child with no handler dies of the signal itself", async () => {
-    const sandbox = makeSandboxDir("akm-launcher-signal-nohandler-");
-    try {
-      const dist = path.join(sandbox.dir, "package", "dist");
-      const launcher = path.join(dist, "akm");
-      const readyFile = path.join(sandbox.dir, "ready.txt");
-      fs.mkdirSync(dist, { recursive: true });
-      fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
-      fs.writeFileSync(
-        path.join(dist, "cli.js"),
-        [
-          'import fs from "node:fs";',
-          `fs.writeFileSync(${JSON.stringify(readyFile)}, String(process.pid));`,
-          "await new Promise(() => {});",
-        ].join("\n"),
-      );
-      const launcherProc = spawn(process.execPath, [launcher, "sentinel"], { stdio: ["ignore", "ignore", "ignore"] });
-      await waitFor(() => fs.existsSync(readyFile));
-      launcherProc.kill("SIGTERM");
-      expect((await exited(launcherProc)).signal).toBe("SIGTERM");
-    } finally {
-      sandbox.cleanup();
-    }
-  }, 15000);
+    test("SIGINT to the whole process group reaches the child once, so its graceful shutdown completes", async () => {
+      const sandbox = makeSandboxDir("akm-launcher-signal-group-");
+      try {
+        const dist = path.join(sandbox.dir, "package", "dist");
+        const launcher = path.join(dist, "akm");
+        const readyFile = path.join(sandbox.dir, "ready.txt");
+        const doneFile = path.join(sandbox.dir, "done.txt");
+        fs.mkdirSync(dist, { recursive: true });
+        fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
+        fs.writeFileSync(
+          path.join(dist, "cli.js"),
+          [
+            'import fs from "node:fs";',
+            'process.once("SIGINT", () => {',
+            `  setTimeout(() => { fs.writeFileSync(${JSON.stringify(doneFile)}, "1"); process.exit(0); }, 300);`,
+            "});",
+            `fs.writeFileSync(${JSON.stringify(readyFile)}, String(process.pid));`,
+            "await new Promise(() => {});",
+          ].join("\n"),
+        );
+        const launcherProc = spawn(runtime(), [launcher, "sentinel"], {
+          stdio: ["ignore", "ignore", "ignore"],
+          env: process.env,
+          detached: true,
+        });
+        await waitFor(() => fs.existsSync(readyFile));
+        process.kill(-(launcherProc.pid as number), "SIGINT");
+        expect(await exited(launcherProc)).toEqual({ code: 0, signal: null });
+        expect(fs.existsSync(doneFile)).toBe(true);
+      } finally {
+        sandbox.cleanup();
+      }
+    }, 15000);
 
-  test("a child's exit status is the launcher's", async () => {
-    const sandbox = makeSandboxDir("akm-launcher-status-");
-    try {
-      const dist = path.join(sandbox.dir, "package", "dist");
-      fs.mkdirSync(dist, { recursive: true });
-      fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), path.join(dist, "akm"));
-      fs.writeFileSync(path.join(dist, "cli.js"), "process.exit(3);\n");
-      const launcherProc = spawn(process.execPath, [path.join(dist, "akm")], { stdio: "ignore" });
-      expect(await exited(launcherProc)).toEqual({ code: 3, signal: null });
-    } finally {
-      sandbox.cleanup();
-    }
-  }, 15000);
-});
+    test("a child with no handler dies of the signal itself", async () => {
+      const sandbox = makeSandboxDir("akm-launcher-signal-nohandler-");
+      try {
+        const dist = path.join(sandbox.dir, "package", "dist");
+        const launcher = path.join(dist, "akm");
+        const readyFile = path.join(sandbox.dir, "ready.txt");
+        fs.mkdirSync(dist, { recursive: true });
+        fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
+        fs.writeFileSync(
+          path.join(dist, "cli.js"),
+          [
+            'import fs from "node:fs";',
+            `fs.writeFileSync(${JSON.stringify(readyFile)}, String(process.pid));`,
+            "await new Promise(() => {});",
+          ].join("\n"),
+        );
+        const launcherProc = spawn(runtime(), [launcher, "sentinel"], { stdio: ["ignore", "ignore", "ignore"] });
+        await waitFor(() => fs.existsSync(readyFile));
+        launcherProc.kill("SIGTERM");
+        expect((await exited(launcherProc)).signal).toBe("SIGTERM");
+      } finally {
+        sandbox.cleanup();
+      }
+    }, 15000);
+
+    test("a child's exit status is the launcher's", async () => {
+      const sandbox = makeSandboxDir("akm-launcher-status-");
+      try {
+        const dist = path.join(sandbox.dir, "package", "dist");
+        fs.mkdirSync(dist, { recursive: true });
+        fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), path.join(dist, "akm"));
+        fs.writeFileSync(path.join(dist, "cli.js"), "process.exit(3);\n");
+        const launcherProc = spawn(runtime(), [path.join(dist, "akm")], { stdio: "ignore" });
+        expect(await exited(launcherProc)).toEqual({ code: 3, signal: null });
+      } finally {
+        sandbox.cleanup();
+      }
+    }, 15000);
+
+    test("an inherited AKM_LAUNCHER_PID is dropped, and the launcher's own path and runtime are set", async () => {
+      const sandbox = makeSandboxDir("akm-launcher-env-");
+      try {
+        const dist = path.join(sandbox.dir, "package", "dist");
+        fs.mkdirSync(dist, { recursive: true });
+        fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), path.join(dist, "akm"));
+        const out = path.join(sandbox.dir, "env.json");
+        fs.writeFileSync(
+          path.join(dist, "cli.js"),
+          `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(out)}, JSON.stringify({ pid: process.env.AKM_LAUNCHER_PID ?? null, path: process.env.AKM_LAUNCHER_PATH, node: process.env.AKM_LAUNCHER_NODE }));\n`,
+        );
+        const proc = spawn(runtime(), [path.join(dist, "akm")], {
+          stdio: "ignore",
+          env: { ...process.env, AKM_LAUNCHER_PID: "999999" },
+        });
+        expect(await exited(proc)).toEqual({ code: 0, signal: null });
+        const seen = JSON.parse(fs.readFileSync(out, "utf8")) as { pid: string | null; path: string; node: string };
+        expect(seen.pid).toBeNull();
+        expect(seen.path).toBe(path.join(dist, "akm"));
+        expect(seen.node).toBe(runtime());
+      } finally {
+        sandbox.cleanup();
+      }
+    }, 15000);
+  });
 
 describe("on Windows the launcher runs akm as a child and mirrors its end", () => {
   test("it names itself in AKM_LAUNCHER_PID and passes the exit status through", async () => {

@@ -51,35 +51,43 @@ function bunOnPath() {
   return "bun";
 }
 
-if (!useBun && !process.versions.bun) {
-  // No Bun: the CLI runs in this process, on Node.
-  await import("./cli-node.mjs");
+const runtime = useBun ? "Bun" : "Node.js";
+const cannotStart = (error) => {
+  console.error(`akm launcher could not start ${runtime}: ${error.message}`);
+  process.exitCode = 127;
+};
+const bunEntry = fileURLToPath(new URL("./cli.js", import.meta.url));
+
+if (process.platform === "win32") {
+  // No process groups or controlling terminal of this kind here: run akm as a child and mirror its end.
+  process.env.AKM_LAUNCHER_PID = String(process.pid);
+  const command = useBun ? (process.versions.bun ? process.execPath : "bun") : process.execPath;
+  const entry = useBun ? bunEntry : fileURLToPath(new URL("./cli-node.mjs", import.meta.url));
+  const child = spawn(command, [entry, ...process.argv.slice(2)], { stdio: "inherit", env: process.env });
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.once(signal, () => child.kill(signal));
+  child.once("error", cannotStart);
+  child.once("exit", (code, signal) => {
+    if (signal) process.kill(process.pid, signal);
+    else process.exitCode = code ?? 1;
+  });
 } else {
-  const command = useBun ? (process.versions.bun ? process.execPath : process.platform === "win32" ? "bun" : bunOnPath()) : process.execPath;
-  const entry = useBun
-    ? fileURLToPath(new URL("./cli.js", import.meta.url))
-    : fileURLToPath(new URL("./cli-node.mjs", import.meta.url));
-  const argv = [command, entry, ...process.argv.slice(2)];
-  try {
-    if (process.platform === "win32") {
-      // No process groups or controlling terminal of this kind here: run akm as a child and mirror its end.
-      process.env.AKM_LAUNCHER_PID = String(process.pid);
-      const child = spawn(command, argv.slice(1), { stdio: "inherit", env: process.env });
-      for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.once(signal, () => child.kill(signal));
-      child.once("error", (error) => {
-        console.error(`akm launcher could not start ${useBun ? "Bun" : "Node.js"}: ${error.message}`);
-        process.exitCode = 127;
-      });
-      child.once("exit", (code, signal) => {
-        if (signal) process.kill(process.pid, signal);
-        else process.exitCode = code ?? 1;
-      });
-    } else {
-      // Replace this process with akm: the terminal, process group, signals and exit status are then akm's own.
-      process.execve(command, argv, process.env);
+  // There is no launcher process to watch on Linux and macOS, so an inherited pid is not this akm's launcher.
+  delete process.env.AKM_LAUNCHER_PID;
+  if (process.versions.bun) {
+    // Already on Bun: the CLI runs in this process (cli.js gates its startup block on this variable).
+    process.env.AKM_NODE_ENTRY = "1";
+    await import("./cli.js");
+  } else if (useBun) {
+    // Node starting Bun: replace this process with akm, so the terminal, process group, signals and exit status
+    // are akm's own.
+    const bunPath = bunOnPath();
+    try {
+      process.execve(bunPath, [bunPath, bunEntry, ...process.argv.slice(2)], process.env);
+    } catch (error) {
+      cannotStart(error);
     }
-  } catch (error) {
-    console.error(`akm launcher could not start ${useBun ? "Bun" : "Node.js"}: ${error.message}`);
-    process.exitCode = 127;
+  } else {
+    // No Bun: the CLI runs in this process, on Node.
+    await import("./cli-node.mjs");
   }
 }

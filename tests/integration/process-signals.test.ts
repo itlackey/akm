@@ -9,7 +9,7 @@
  */
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { setSecret } from "../../src/commands/env/secret";
@@ -154,7 +154,7 @@ describe.skipIf(!posix)("a descendant left holding the output pipe", () => {
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toBe("reply\n");
         expect(result.stdoutRead.timedOut).toBe(false);
-        expect(Date.now() - started).toBeLessThan(6_000);
+        expect(Date.now() - started).toBeLessThan(4_000);
         const end = Date.now() + 3_000;
         while (alive(pid) && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
         expect(alive(pid)).toBe(false);
@@ -165,39 +165,62 @@ describe.skipIf(!posix)("a descendant left holding the output pipe", () => {
   }
 });
 
-describe.skipIf(!posix)("one signal, two owners", () => {
-  test("the child's kill ladder runs once when the host aborts the run and the guard stops it too", async () => {
-    const dir = makeStash();
-    const hits = path.join(dir, "hits");
-    const entry = path.join(dir, "host.ts");
+describe.skipIf(!posix)("a captured task step that dies of a signal", () => {
+  test("is a failed step: akm exits 1 and does not die of the signal", () => {
+    const stashDir = makeStash();
+    fs.mkdirSync(path.join(stashDir, "tasks"), { recursive: true });
     fs.writeFileSync(
-      entry,
-      [
-        `import { runManagedSubprocess } from ${JSON.stringify(path.join(repoRoot, "src/core/subprocess.ts"))};`,
-        "const abort = new AbortController();",
-        'process.once("SIGTERM", () => abort.abort());',
-        // The child traps INT and TERM, records INT, and leaves on TERM, so a second ladder would record a second INT.
-        `const script = ${JSON.stringify(`trap 'echo INT >> ${hits}' INT; trap 'exit 0' TERM; echo READY; while true; do sleep 0.1; done`)};`,
-        'const result = await runManagedSubprocess(["bash", "-c", script], { capture: true, timeoutMs: null, signal: abort.signal, graceMs: 300 });',
-        "console.log(JSON.stringify({ aborted: result.aborted }));",
-      ].join("\n"),
+      path.join(stashDir, "tasks", "dies.yml"),
+      "version: 5-beta.1\nsteps:\n  - name: a\n    exec: kill -TERM $$\n",
     );
-    const host = spawn("bun", [entry], { stdio: ["ignore", "pipe", "inherit"] });
-    let out = "";
-    host.stdout.on("data", (d) => {
-      out += String(d);
+    const result = akm(stashDir, ["run", "tasks/dies"]);
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(1);
+  });
+});
+
+describe.skipIf(!posix)("a .ps1 script with no first line, with pwsh absent", () => {
+  test("the error names pwsh", () => {
+    const stashDir = makeStash();
+    fs.writeFileSync(path.join(stashDir, "scripts", "x.ps1"), "Write-Host hi\n");
+    const empty = path.join(stashDir, "empty-path");
+    fs.mkdirSync(empty);
+    const result = spawnSync(process.execPath, [cliPath, "run", "scripts/x.ps1"], {
+      encoding: "utf8",
+      timeout: 30_000,
+      cwd: repoRoot,
+      env: { ...process.env, AKM_BUNDLE_DIR: stashDir, PATH: empty },
     });
-    try {
-      const end = Date.now() + 10_000;
-      // The host prints only once the run is over; give the child time to install its traps.
-      await new Promise((r) => setTimeout(r, 1_500));
-      host.kill("SIGTERM");
-      await new Promise<void>((resolve) => host.once("exit", () => resolve()));
-      expect(Date.now()).toBeLessThan(end + 10_000);
-      expect(JSON.parse(out.trim().split("\n").pop() as string)).toEqual({ aborted: true });
-      expect(fs.readFileSync(hits, "utf8")).toBe("INT\n");
-    } finally {
-      host.kill("SIGKILL");
-    }
-  }, 30_000);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("pwsh");
+    expect(result.stderr).not.toContain("powershell");
+  });
+});
+
+describe.skipIf(!posix)("a harness that leaves a descendant holding its stdout, run through akm", () => {
+  for (const timeout of [undefined, "20s"]) {
+    test(`the reply is kept and the descendant is stopped (${timeout ? "with --timeout" : "no timeout"})`, async () => {
+      const stashDir = makeStash();
+      const bin = path.join(stashDir, "fake-claude");
+      const pidFile = path.join(stashDir, "leftover.pid");
+      fs.writeFileSync(bin, `#!/bin/sh\ncat >/dev/null\n(sleep 30 & echo $! > ${pidFile})\necho FAKE-REPLY-bgpipe\n`, {
+        mode: 0o755,
+      });
+      writeSandboxConfig({ experimental: { exec: true }, harnesses: { fake: { platform: "claude", bin } } });
+      const started = Date.now();
+      const args = ["exec", "--harness", "fake", "--prompt", "p", ...(timeout ? ["--timeout", timeout] : [])];
+      const result = akm(stashDir, args);
+      const pid = Number(fs.readFileSync(pidFile, "utf8"));
+      try {
+        expect(result.status).toBe(0);
+        expect(result.stdout).toContain("FAKE-REPLY-bgpipe");
+        expect(Date.now() - started).toBeLessThan(6_000);
+        const end = Date.now() + 3_000;
+        while (alive(pid) && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+        expect(alive(pid)).toBe(false);
+      } finally {
+        if (alive(pid)) process.kill(pid, "SIGKILL");
+      }
+    }, 30_000);
+  }
 });

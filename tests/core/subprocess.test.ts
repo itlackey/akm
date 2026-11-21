@@ -534,3 +534,30 @@ describe("runManagedSubprocess — termination-signal guard", () => {
     },
   );
 });
+
+describe("runManagedSubprocess — one signal, two owners", () => {
+  test("the kill ladder starts once when the host aborts the run and the signal guard stops it on the same SIGQUIT (the test runner itself handles SIGTERM, SIGINT and SIGHUP)", async () => {
+    const { timers, setTimeoutFn, clearTimeoutFn } = fakeTimers();
+    // pid-less fake: killGroup falls back to proc.kill. It swallows SIGINT so the child outlives the first step.
+    const { spawn, signals } = killTrackingSpawn({ ignore: ["SIGINT"] });
+    const abort = new AbortController();
+    process.once("SIGQUIT", () => abort.abort());
+
+    const promise = runManagedSubprocess(["job"], {
+      capture: true,
+      timeoutMs: null,
+      signal: abort.signal,
+      spawnFn: spawn,
+      setTimeoutFn,
+      clearTimeoutFn,
+    });
+    process.emit("SIGQUIT");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(signals).toEqual(["SIGINT"]);
+
+    for (const timer of timers) timer.cb();
+    const result = await promise;
+    expect(result.aborted).toBe(true);
+    expect(signals.filter((signal) => signal === "SIGINT")).toHaveLength(1);
+  });
+});
