@@ -81,26 +81,22 @@ export function countTaskRuns(rows: readonly DecodedTaskRow[]): TaskRunCounts {
   return counts;
 }
 
-/** One agent dispatch recorded in task history; `reason` is set when it failed. */
-export interface AgentDispatch {
-  reason?: string;
-}
-
 /**
  * The agent dispatches `akm health` counts for `agentFailureRate`: every version 4 `command` row (the dispatch is the
  * row; it failed when `detail.reason` is set) and every version 5 step that recorded an `agent` fact (it failed when
  * `agent.reason` is set). A row written before the fact was recorded holds no dispatch: it is unknown, not a success.
+ * One entry per dispatch: its failure reason, or `undefined` when it succeeded.
  */
-export function agentDispatches(rows: readonly DecodedTaskRow[]): AgentDispatch[] {
-  const dispatches: AgentDispatch[] = [];
+export function agentDispatches(rows: readonly DecodedTaskRow[]): (string | undefined)[] {
+  const dispatches: (string | undefined)[] = [];
   for (const { row, metadata } of rows) {
     if (!metadata) continue;
     if (row.target_kind === "command") {
       const reason = metadata.detail?.reason;
-      dispatches.push(typeof reason === "string" && reason.length > 0 ? { reason } : {});
+      dispatches.push(typeof reason === "string" && reason.length > 0 ? reason : undefined);
     }
     for (const step of metadata.steps ?? []) {
-      if (step.agent) dispatches.push(step.agent.reason ? { reason: step.agent.reason } : {});
+      if (step.agent) dispatches.push(step.agent.reason || undefined);
     }
   }
   return dispatches;
@@ -111,9 +107,9 @@ export function agentDispatches(rows: readonly DecodedTaskRow[]): AgentDispatch[
  * `parse_error` etc., so `akm health`'s `task-fail-rate` advisory can say "timeout-dominant" from data rather than log
  * grep. The total equals the number of failed dispatches the rate counts.
  */
-export function countAgentFailureReasons(dispatches: readonly AgentDispatch[]): Record<string, number> {
+export function countAgentFailureReasons(dispatches: readonly (string | undefined)[]): Record<string, number> {
   const counts: Record<string, number> = {};
-  for (const { reason } of dispatches) {
+  for (const reason of dispatches) {
     if (reason === undefined) continue;
     counts[reason] = (counts[reason] ?? 0) + 1;
   }

@@ -199,7 +199,7 @@ export function computeTaskWindowRates(
   const unverifiedActiveRows = liveness.filter(({ state }) => state === "indeterminate").map(({ row }) => row);
   const decoded = decodeTaskRows(taskRows);
   const dispatches = agentDispatches(decoded);
-  const failedDispatches = dispatches.filter((dispatch) => dispatch.reason !== undefined);
+  const failedDispatches = dispatches.filter((reason) => reason !== undefined);
   return {
     taskRuns: countTaskRuns(decoded),
     taskFailRate: taskRows.length === 0 ? null : failedTaskRows.length / taskRows.length,
