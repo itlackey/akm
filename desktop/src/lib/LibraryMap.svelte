@@ -1096,10 +1096,6 @@
     cursor: pointer;
     list-style: none;
   }
-  .show summary::after {
-    content: "▾";
-    color: var(--muted);
-  }
   .shown {
     max-inline-size: 22rem;
     overflow: hidden;
