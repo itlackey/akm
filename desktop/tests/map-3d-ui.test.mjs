@@ -418,10 +418,14 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
     await page.getByRole("tab", { name: "Use" }).click();
     await drawing(page, "3D").click();
     await expect(filters(page).locator("label:has(input:checked)")).toHaveText("Most read10");
+    assert.deepEqual(errors, []);
     await side(page).locator(".read-row a").first().click();
     await expect(page).toHaveURL(/\/library\/search\?ref=/);
     await page.goBack();
     await expect(page.locator(".stage-3d canvas")).toBeVisible();
+    // The asset is one of this test's own, which the fixture's library does not hold: its page answers 404 if it
+    // loads before the return, and that is not the map's error. What is checked from here is the map on return.
+    errors.length = 0;
     await expect(page.getByRole("tab", { name: "Use" })).toHaveAttribute("aria-selected", "true");
     await expect(drawing(page, "3D")).toHaveAttribute("aria-pressed", "true");
     await expect(filters(page).locator("label:has(input:checked)")).toHaveText("Most read10");
