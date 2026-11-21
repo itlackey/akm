@@ -13,7 +13,14 @@ import { getRegistryIndexCacheDir } from "../../core/paths";
 import { validateGitUrl } from "../../registry/resolve";
 import { withFreshnessCache } from "../freshness";
 import type { SyncOptions as ProviderSyncOptions, SourceProvider } from "../provider";
-import { assertNoIgnoredPathOverwrite, assertNoLocalWork, cloneRepo, inspectGitUpstream, runGit } from "./git-install";
+import {
+  assertCheckoutHasNoLocalWork,
+  assertNoIgnoredPathOverwrite,
+  assertNoLocalWork,
+  cloneRepo,
+  inspectGitUpstream,
+  runGit,
+} from "./git-install";
 import type { SourceLockData, SyncOptions } from "./install-types";
 import { sanitizeString } from "./provider-utils";
 
@@ -116,12 +123,10 @@ export async function ensureGitMirror(
         pullRepo(cachePaths.repoDir, options?.credential, options?.displayRepoDir);
       } else {
         // A checkout is replaced by the clone: only one without local work may be.
-        if (fs.existsSync(path.join(cachePaths.repoDir, ".git"))) {
-          assertNoLocalWork(
-            cachePaths.repoDir,
-            `Git source checkout at ${options?.displayRepoDir ?? cachePaths.repoDir}`,
-          );
-        }
+        assertCheckoutHasNoLocalWork(
+          cachePaths.repoDir,
+          `Git source checkout at ${options?.displayRepoDir ?? cachePaths.repoDir}`,
+        );
         cloneRepo(repo.cloneUrl, repo.ref, cachePaths.repoDir, writable, options?.credential);
       }
       // Touch index file to track freshness
