@@ -270,6 +270,13 @@ command line is not converted; 0.11 converts every v4 task file. The
 [migration guide](../migration/v0.10-to-v0.11.md#task-source-v5) has the
 conversion table and lists what does not convert.
 
+`akm migrate apply workflows/<name>.md` makes `tasks/<name>.yml` from a named
+workflow file, which stays in place, after the same check; each prose step becomes
+a `prompt:` step and each plain exec step an `exec:` step. A workflow it cannot
+convert is reported `blocked` with `guidance`, and `akm doctor` lists the
+workflow files that remain. See
+[Converting a workflow](../migration/v0.10-to-v0.11.md#converting-a-workflow).
+
 ## Task source v4
 
 **Task source v4 (`version: 4`) is the task source grammar akm reads for every file that is not `version: 5-beta.1`.**

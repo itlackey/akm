@@ -17,6 +17,7 @@ import type { TaskToV4MigrationPlan } from "./migrate/task-to-v4";
 import {
   applyTaskFilesPlan,
   checkConvertedTaskFiles,
+  createFiles,
   inspectTaskFiles,
   planTaskFilesMigration,
   replaceFilesWithBackups,
@@ -24,6 +25,13 @@ import {
 } from "./migrate/task-files";
 import type { TaskToV4FileInput } from "./migrate/task-to-v4";
 import { planTaskToV5File, type TaskToV5Converted, type TaskToV5Outcome } from "./migrate/task-to-v5";
+import {
+  checkFailureGuidance,
+  planWorkflowToV5File,
+  type WorkflowToV5Converted,
+  type WorkflowToV5Outcome,
+  workflowBlocked,
+} from "./migrate/workflow-to-v5";
 
 export interface TaskFileSummary {
   filePath: string;
@@ -147,14 +155,18 @@ export function applyTaskFilesMigration(): TaskFilesMigrationStatus {
   });
 }
 
-/** One task file named for conversion to version 5, and what became of it. */
+/** One task or workflow file named for conversion to version 5, and what became of it. */
 export interface TaskFileV5Summary {
   filePath: string;
   status: "converted" | "skipped" | "blocked";
   reason: string;
   detail?: string;
-  /** What version 4 did that version 5 does not, to change by hand. */
+  /** What version 4 or the workflow did that version 5 does not, to change by hand. */
   notes?: readonly string[];
+  /** The task file a converted workflow was written to. */
+  taskFile?: string;
+  /** What to change, and how, for a workflow that is blocked. */
+  guidance?: string;
 }
 
 export interface TaskFilesV5MigrationStatus {
@@ -180,25 +192,70 @@ function blockedV5(filePath: string, reason: string, detail: string): TaskToV5Ou
   return { status: "blocked", filePath, before: Buffer.alloc(0), beforeHash: "", mode: 0, reason, detail };
 }
 
+/** The root whose workflows folder holds `file`, with the workflow's name (`<name>` of `workflows/<name>.md`). */
+function workflowOf(roots: readonly TaskFileRoot[], file: string): { root: TaskFileRoot; name: string } | undefined {
+  if (!file.endsWith(".md")) return undefined;
+  for (const root of roots) {
+    if (root.layout === "akm-task") continue;
+    const relative = path.relative(realPath(path.join(root.root, "workflows")), file);
+    if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) continue;
+    return { root, name: relative.split(path.sep).join("/").replace(/\.md$/, "") };
+  }
+  return undefined;
+}
+
+function planWorkflow(
+  root: TaskFileRoot,
+  name: string,
+  file: string,
+  taskFiles: readonly TaskToV4FileInput[],
+): WorkflowToV5Outcome {
+  const stat = fs.lstatSync(file);
+  const taskPath = path.join(root.root, "tasks", `${name}.yml`);
+  const named = new RegExp(`workflows/${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_/-])`);
+  return planWorkflowToV5File({
+    filePath: file,
+    bytes: fs.readFileSync(file),
+    mode: stat.mode & 0o777,
+    writable: root.writable,
+    name,
+    taskPath,
+    taskExists: fs.existsSync(taskPath),
+    namedBy: taskFiles.filter((task) => named.test(task.bytes.toString("utf8"))).map((task) => task.filePath),
+  });
+}
+
 /**
  * Plan version 5 for the named files, and check each conversion as a start checks it. A file the version 4 step
  * rewrites is converted from the bytes that step writes (`apply` has written them by now; a preview has not), so a
- * preview and an apply convert the same file.
+ * preview and an apply convert the same file. A named workflow file becomes a task file that does not exist yet.
  */
-async function planNamed(
-  named: readonly string[],
-): Promise<{ outcomes: TaskToV5Outcome[]; converted: TaskToV5Converted[] }> {
+async function planNamed(named: readonly string[]): Promise<{
+  outcomes: (TaskToV5Outcome | WorkflowToV5Outcome)[];
+  converted: TaskToV5Converted[];
+  created: WorkflowToV5Converted[];
+}> {
   resetConfigCache();
   const roots = taskRoots(loadConfig());
   const inputs: TaskToV4FileInput[] = inspectTaskFiles(roots);
   const v4 = planTaskFilesMigration(inputs);
-  const outcomes: TaskToV5Outcome[] = [];
+  const outcomes: (TaskToV5Outcome | WorkflowToV5Outcome)[] = [];
   const planned = new Map<string, TaskToV5Outcome>();
+  const workflows = new Map<string, WorkflowToV5Outcome>();
   for (const name of new Set(named.map(realPath))) {
     const input = inputs.find((candidate) => realPath(candidate.filePath) === name);
+    const workflow = input ? undefined : workflowOf(roots, name);
+    if (workflow && fs.statSync(name, { throwIfNoEntry: false })?.isFile()) {
+      workflows.set(name, planWorkflow(workflow.root, workflow.name, name, inputs));
+      continue;
+    }
     if (!input) {
       outcomes.push(
-        blockedV5(name, "not-a-task-file", "it is not a .yml file under the tasks folder of an enabled bundle"),
+        blockedV5(
+          name,
+          "not-a-task-file",
+          "it is not a .yml file under the tasks folder, or a .md file under the workflows folder, of an enabled bundle",
+        ),
       );
       continue;
     }
@@ -218,22 +275,41 @@ async function planNamed(
   const converted = [...planned.values()].filter(
     (outcome): outcome is TaskToV5Converted => outcome.status === "converted",
   );
-  const failures = await checkConvertedTaskFiles(roots, converted);
+  const convertedWorkflows = [...workflows.values()].filter(
+    (outcome): outcome is WorkflowToV5Converted => outcome.status === "converted",
+  );
+  const failures = await checkConvertedTaskFiles(roots, [
+    ...converted,
+    ...convertedWorkflows.map((outcome) => ({ filePath: outcome.taskPath, after: outcome.after })),
+  ]);
   for (const [filePath, outcome] of planned) {
     const failure = failures.get(filePath);
     outcomes.push(failure === undefined ? outcome : blockedV5(filePath, "version-5-check-failed", failure));
   }
-  return { outcomes, converted: converted.filter((file) => !failures.has(file.filePath)) };
+  for (const outcome of workflows.values()) {
+    const failure = outcome.status === "converted" ? failures.get(outcome.taskPath) : undefined;
+    outcomes.push(
+      outcome.status === "converted" && failure !== undefined
+        ? workflowBlocked(outcome.filePath, "version-5-check-failed", failure, checkFailureGuidance(outcome.name))
+        : outcome,
+    );
+  }
+  return {
+    outcomes,
+    converted: converted.filter((file) => !failures.has(file.filePath)),
+    created: convertedWorkflows.filter((file) => !failures.has(file.taskPath)),
+  };
 }
 
 function v5Status(
-  outcomes: readonly TaskToV5Outcome[],
+  outcomes: readonly (TaskToV5Outcome | WorkflowToV5Outcome)[],
   pending: boolean,
   conflicts: readonly string[] = [],
 ): TaskFilesV5MigrationStatus {
   const files = outcomes
     .map((outcome): TaskFileV5Summary => {
-      if (outcome.status === "converted" && conflicts.includes(outcome.filePath)) {
+      const written = outcome.status === "converted" && "taskPath" in outcome ? outcome.taskPath : outcome.filePath;
+      if (outcome.status === "converted" && conflicts.includes(written)) {
         return {
           filePath: outcome.filePath,
           status: "blocked",
@@ -247,6 +323,8 @@ function v5Status(
         reason: outcome.reason,
         ...(outcome.detail ? { detail: outcome.detail } : {}),
         ...(outcome.status === "converted" && outcome.notes.length > 0 ? { notes: outcome.notes } : {}),
+        ...(outcome.status === "converted" && "taskPath" in outcome ? { taskFile: outcome.taskPath } : {}),
+        ...(outcome.status === "blocked" && "guidance" in outcome ? { guidance: outcome.guidance } : {}),
       };
     })
     .sort((left, right) => (left.filePath < right.filePath ? -1 : left.filePath > right.filePath ? 1 : 0));
@@ -258,24 +336,32 @@ function v5Status(
 
 /** Read-only: what `apply` would convert of the named files to version 5, and what it cannot. */
 export async function inspectTaskFilesV5Migration(named: readonly string[]): Promise<TaskFilesV5MigrationStatus> {
-  const { outcomes, converted } = await planNamed(named);
-  return v5Status(outcomes, converted.length > 0);
+  const { outcomes, converted, created } = await planNamed(named);
+  return v5Status(outcomes, converted.length + created.length > 0);
 }
 
 /**
- * Convert the named task files to task source v5 under one backup directory for the run. A file that is not
- * converted is left as it is and reported with why. Run after {@link applyTaskFilesMigration}, whose result a named
- * version 2 or 3 file is converted from.
+ * Convert the named task files to task source v5 under one backup directory for the run, and make a task file of
+ * each named workflow file, which stays where it is. A file that is not converted is left as it is and reported
+ * with why. Run after {@link applyTaskFilesMigration}, whose result a named version 2 or 3 file is converted from.
  */
 export async function applyTaskFilesV5Migration(named: readonly string[]): Promise<TaskFilesV5MigrationStatus> {
-  const { outcomes, converted } = await planNamed(named);
-  if (converted.length === 0) return v5Status(outcomes, false);
+  const { outcomes, converted, created } = await planNamed(named);
+  if (converted.length + created.length === 0) return v5Status(outcomes, false);
   const backupPath = path.join(getDataDir(), "backups", "tasks", `${Date.now()}-${randomUUID()}`);
-  const { replaced, conflicts } = withConfigLock(() => replaceFilesWithBackups(converted, backupPath));
+  const { replaced, made, conflicts } = withConfigLock(() => {
+    const replacing = replaceFilesWithBackups(converted, backupPath);
+    const making = createFiles(created.map((file) => ({ filePath: file.taskPath, after: file.after, mode: file.mode })));
+    return {
+      replaced: replacing.replaced,
+      made: making.created,
+      conflicts: [...replacing.conflicts, ...making.conflicts],
+    };
+  });
   return {
     ...v5Status(outcomes, false, conflicts),
-    backupPath,
-    applied: replaced.length,
-    ...(conflicts.length > 0 ? { conflicts: [...conflicts] } : {}),
+    ...(converted.length > 0 ? { backupPath } : {}),
+    applied: replaced.length + made.length,
+    ...(conflicts.length > 0 ? { conflicts } : {}),
   };
 }

@@ -346,7 +346,7 @@ const MUTATIONS: readonly Mutation[] = [
   skip(
     "an unknown ${name} in a prompt is accepted",
     SOURCE,
-    "if (!known(body as string)) fail(at, `\\${${body}} is not an input or an earlier step.`);",
+    "if (unknown !== undefined) fail(at, `\\${${unknown}} is not an input or an earlier step.`);",
   ),
   m("an unknown ${name} in args: is accepted", SOURCE, "if (!known(whole)) fail(", "if (false) fail("),
   m(
