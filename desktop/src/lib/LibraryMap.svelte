@@ -289,7 +289,8 @@
           assets: pool
             .filter((i) => o!.use[i] === "unread")
             .sort((a, b) => (o!.modified[a] ?? "").localeCompare(o!.modified[b] ?? "") || a - b),
-          note: untouched,
+          // The list is headed "longest untouched first", so a row says only how long.
+          note: (i: number) => untouched(i).replace("untouched ", ""),
         },
         ...(o.feedbackKnown
           ? [
@@ -484,7 +485,7 @@
   const colourOf = (i: number) => {
     if (view === "use" && o!.useKnown) return USE_CLASSES.find((u) => u.id === o!.use[i])?.token ?? "--border";
     if (view === "problems") return PROBLEMS.find((p) => p.id === firstProblem(o!, i))?.token ?? "--border";
-    return `hsl(${Math.round((o!.group[i]! * 137.508) % 360)} 62% 56%)`;
+    return `--map-${o!.family[i]! + 1}`;
   };
   /** Every join akm reports for this view: declared links (Problems: replacement and contradiction only) and
    * near-duplicates. */
@@ -766,6 +767,12 @@
               label={`${question} The ${plural(bundleScope.length - offMap, "asset")} of ${scopeName} that have a group by meaning, as points, in ${plural(groups.length, "group")} named by their tags, groups alike in meaning near each other.${offMap ? ` ${plural(offMap, "asset")} not shown.` : ""}`}
             >
               {#snippet legend()}
+                {#if view === "contents"}<ul class="colour-key types">
+                    {#each FAMILIES.map( (family, k) => ({ ...family, k }), ).filter( (f) => bundleScope.some((i) => o!.family[i] === f.k), ) as family}<li
+                      >
+                        <span class="swatch round" style={`background:var(--map-${family.k + 1})`}></span>{family.label}
+                      </li>{/each}
+                  </ul>{/if}
                 {@render colourKey("--border")}
                 {#if picked >= 0 && levelFigures?.some((l) => l.shown.length)}<div class="levels">
                     <p class="small">
@@ -1176,6 +1183,8 @@
   /* What the view's question finds, each with how many: any number can be ticked, and the row stays one line. */
   .show {
     position: relative;
+    border: 0;
+    background: none;
     flex: 0 1 auto;
     min-inline-size: 104px;
     max-inline-size: 240px;
@@ -1211,6 +1220,7 @@
     inset-inline-start: 0;
     z-index: 5;
     display: grid;
+    margin: 0;
     min-inline-size: 15rem;
     padding: 4px;
     border: 1px solid var(--border-strong);
@@ -1271,6 +1281,13 @@
     margin: 0;
     padding: 0;
     list-style: none;
+  }
+  .colour-key.types {
+    grid-template-columns: max-content max-content;
+    gap: 0 20px;
+  }
+  .swatch.round {
+    border-radius: 50%;
   }
   .colour-key li {
     display: flex;

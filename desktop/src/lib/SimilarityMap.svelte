@@ -933,9 +933,13 @@
     cursor: pointer;
     pointer-events: auto;
   }
+  .stage-legend[open] > summary {
+    border-block-end: 0;
+  }
   .key-body {
     display: grid;
     gap: 6px;
+    margin: 0;
     padding: 0 10px 8px;
     line-height: 20px;
   }
