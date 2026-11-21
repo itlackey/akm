@@ -31,9 +31,12 @@ export interface StructuredFailure {
  * One dispatch's end: the reply text, or a failure. A model call fails as a
  * {@link StructuredFailure} (what `callStructured` returns); a caller whose
  * dispatch fails otherwise (a workflow unit has its own failure reasons) names
- * its own shape, and the loop passes it through.
+ * its own shape, and the loop passes it through. `S` is what a successful dispatch carries besides its reply, which
+ * the loop hands back with the last dispatch's outcome.
  */
-export type Dispatched<F extends object = StructuredFailure> = { ok: true; raw: string } | ({ ok: false } & F);
+export type Dispatched<F extends object = StructuredFailure, S extends object = object> =
+  | ({ ok: true; raw: string } & S)
+  | ({ ok: false } & F);
 
 /** The parser's refusal of a reply, as the next dispatch receives it. */
 export interface Correction {
@@ -45,9 +48,9 @@ export interface Correction {
 
 type Refusal = Extract<Parsed<unknown>, { ok: false }>;
 
-export interface StructuredLoopOptions<T, F extends object = StructuredFailure> {
+export interface StructuredLoopOptions<T, F extends object = StructuredFailure, S extends object = object> {
   /** One dispatch: the first gets no correction, a later one the refusal of the reply before it. */
-  dispatch: (correction?: Correction) => Promise<Dispatched<F>>;
+  dispatch: (correction?: Correction) => Promise<Dispatched<F, S>>;
   parse: (raw: string) => Parsed<T>;
   /** Attempts in all (default 2: one corrective retry). */
   attempts?: number;
@@ -55,22 +58,22 @@ export interface StructuredLoopOptions<T, F extends object = StructuredFailure> 
   correct?: (refusal: Refusal) => string;
 }
 
-export type StructuredLoopResult<T, F extends object = StructuredFailure> =
-  | { ok: true; value: T; raw: string; attempts: number }
-  | {
+export type StructuredLoopResult<T, F extends object = StructuredFailure, S extends object = object> =
+  | ({ ok: true; value: T; raw: string; attempts: number } & S)
+  | ({
       ok: false;
       reason: "parse_error" | "validation_error";
       errors: string[];
       /** The last reply, which the parser refused. */
       raw: string;
       attempts: number;
-    }
+    } & S)
   | ({ ok: false; attempts: number } & F);
 
 /** The reply was refused by the parser, as against the dispatch failing. */
-export function isRefused<T, F extends object>(
-  result: StructuredLoopResult<T, F>,
-): result is Extract<StructuredLoopResult<T, F>, { errors: string[] }> {
+export function isRefused<R extends StructuredLoopResult<unknown, object, object>>(
+  result: R,
+): result is Extract<R, { errors: string[] }> {
   return !result.ok && "errors" in result;
 }
 
@@ -82,9 +85,9 @@ export function correctionText(refusal: Refusal): string {
   return `Your previous JSON response failed validation:\n- ${refusal.errors.join("\n- ")}\nRespond again with ONLY a corrected JSON value.`;
 }
 
-export async function structuredLoop<T, F extends object = StructuredFailure>(
-  options: StructuredLoopOptions<T, F>,
-): Promise<StructuredLoopResult<T, F>> {
+export async function structuredLoop<T, F extends object = StructuredFailure, S extends object = object>(
+  options: StructuredLoopOptions<T, F, S>,
+): Promise<StructuredLoopResult<T, F, S>> {
   const attempts = Math.max(1, options.attempts ?? 2);
   const correct = options.correct ?? correctionText;
   let correction: Correction | undefined;
@@ -93,9 +96,16 @@ export async function structuredLoop<T, F extends object = StructuredFailure>(
     if (!dispatched.ok) return { ...dispatched, attempts: attempt };
     const raw = dispatched.raw;
     const parsed = options.parse(raw);
-    if (parsed.ok) return { ok: true, value: parsed.value, raw, attempts: attempt };
+    if (parsed.ok) return { ...dispatched, value: parsed.value, raw, attempts: attempt };
     if (attempt >= attempts) {
-      return { ok: false, reason: parsed.reason ?? "parse_error", errors: parsed.errors, raw, attempts: attempt };
+      return {
+        ...dispatched,
+        ok: false,
+        reason: parsed.reason ?? "parse_error",
+        errors: parsed.errors,
+        raw,
+        attempts: attempt,
+      };
     }
     correction = { text: correct(parsed), reply: raw };
   }

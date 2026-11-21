@@ -1248,6 +1248,18 @@ describe("timeout: and max-retries:, as the flags", () => {
     expect(ran("limited")).toBe(2);
   });
 
+  test("an expect: step records the agent fact of its last dispatch: the corrective dispatch that fails, not the refused reply before it", async () => {
+    const replies = ["no object here"];
+    const w = world({
+      tasks: { "tasks/t": { steps: [{ name: "write", prompt: "write", expect: ["title"], timeout: "300ms" }] } },
+      agent: () => (replies.length > 0 ? (replies.shift() as string) : new Promise<string>(() => {})),
+    });
+    expect(await message(w.start("tasks/t"))).toBe("step write: timeout: agent timed out");
+    const { readTaskHistory } = await import("../../../../src/tasks/run/task-history");
+    const [row] = readTaskHistory({ id: "t", limit: 1 });
+    expect(row?.steps?.[0]?.agent).toMatchObject({ reason: "timeout" });
+  });
+
   test("a step with no timeout: has a limit of 30 minutes; the top of its task or the step sets another", async () => {
     const limits: Record<string, number | null | undefined> = {};
     let which = "";
