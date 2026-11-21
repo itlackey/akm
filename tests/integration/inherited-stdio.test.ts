@@ -20,8 +20,8 @@ import { type Cleanup, makeSandboxDir, sandboxStashDir, writeSandboxConfig } fro
 
 const CLI = path.resolve(import.meta.dir, "../../src/cli.ts");
 const LINES = 3_000_000;
-const O_NONBLOCK = 0o4000;
-const hasPython = process.platform === "linux" && spawnSync("python3", ["--version"]).status === 0;
+const { O_NONBLOCK } = fs.constants;
+const hasPython = process.platform !== "win32" && spawnSync("python3", ["--version"]).status === 0;
 
 // Runs `sh -c <command>` with stdout a pipe or a socketpair, reads nothing for 2 s, then counts what arrives.
 const READ_LATE = `
@@ -65,7 +65,7 @@ beforeEach(() => {
   fs.mkdirSync(path.join(stashDir, "scripts"), { recursive: true });
   fs.writeFileSync(
     path.join(stashDir, "scripts", "big.sh"),
-    `#!/bin/sh\nawk '/flags/ {print $2}' /proc/$$/fdinfo/1 > "${flagsFile}"\nseq 1 ${LINES}\n`,
+    `#!/bin/sh\npython3 -c 'import fcntl, sys; open(sys.argv[1], "w").write(str(fcntl.fcntl(1, fcntl.F_GETFL)))' "${flagsFile}"\nseq 1 ${LINES}\n`,
     { mode: 0o755 },
   );
   fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
@@ -89,11 +89,12 @@ function lineCount(kind: "pipe" | "socket", command: string): number {
 
 const akm = (args: string): string => `bun ${CLI} ${args}`;
 
+// Skipped only where python3 is missing: it reads the descriptor flags and drives the slow reader.
 describe.skipIf(!hasPython)("a slow reader of akm's stdout", () => {
   for (const kind of ["pipe", "socket"] as const) {
     test(`gets every line a script writes, and the script sees a blocking fd 1 (${kind})`, () => {
       expect(lineCount(kind, akm("run scripts/big.sh"))).toBe(LINES);
-      const flags = Number.parseInt(fs.readFileSync(flagsFile, "utf8").trim(), 8);
+      const flags = Number.parseInt(fs.readFileSync(flagsFile, "utf8").trim(), 10);
       expect(flags & O_NONBLOCK).toBe(0);
     });
 

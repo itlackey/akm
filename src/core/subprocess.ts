@@ -209,9 +209,9 @@ export function scheduleKillLadder(
   proc.exited.then(terminate, terminate);
 }
 
-type GuardSignal = "SIGINT" | "SIGTERM" | "SIGHUP";
+type GuardSignal = "SIGINT" | "SIGQUIT" | "SIGTERM" | "SIGHUP";
 
-/** One child that a termination signal to THIS process must reach. */
+/** One child that a signal to THIS process must reach. */
 interface LiveChild {
   proc: SpawnedSubprocess;
   group: ChildGroup;
@@ -228,24 +228,19 @@ function removeSignalGuard(): void {
 }
 
 /**
- * The signals the guard takes. An own-group child is out of reach of the terminal's Ctrl-C and of a
- * `kill <akm-pid>`, so all three. A child that shares akm's group already gets the terminal's SIGINT
- * from the terminal, so only the two signals that reach akm alone.
- */
-function guardedSignals(group: ChildGroup): readonly GuardSignal[] {
-  return group === "own" ? ["SIGINT", "SIGTERM", "SIGHUP"] : ["SIGTERM", "SIGHUP"];
-}
-
-/**
- * A child in its own process group no longer sees the terminal's Ctrl-C or a `kill <akm-pid>`: without this,
- * SIGTERM/SIGINT to akm ended akm and left the harness CLI (and everything it started) running. Each live
- * child is registered here and, on the first such signal, an own-group child takes the same ladder as a
- * timeout; a child that shares akm's group is sent SIGTERM or SIGHUP itself, and SIGINT is left to the
- * terminal, which already delivered it. Once every child is gone the signal is re-raised so akm still ends
- * by the signal itself.
+ * Every signal the guard takes, for every child; what each child gets is decided per child when one arrives.
+ * A child in its own process group is out of reach of the terminal's Ctrl-C and of a `kill <akm-pid>`:
+ * without the guard, a signal to akm ended akm and left the harness CLI (and everything it started)
+ * running. It takes the same ladder as a timeout, and once every child is gone the signal is re-raised so
+ * akm ends by the signal itself.
  *
- * The listeners are installed only while a child is live and only when nothing else handles the signal. A
- * command that handles it itself (`workflow run`, `improve`, task runs) unwinds through its own cleanup,
+ * A child that shares akm's group got the terminal's SIGINT and SIGQUIT already. akm ignores them while the
+ * child lives and ends with the child's status, as `system(3)` does: a child that handles Ctrl-C and goes on
+ * (a shell at its prompt) keeps akm waiting. SIGTERM and SIGHUP reach akm alone, so they are forwarded to
+ * the child and re-raised once it has exited.
+ *
+ * The listeners are installed only while a child is live and only when nothing else handles the signals. A
+ * command that handles them itself (`workflow run`, `improve`, task runs) unwinds through its own cleanup,
  * which already aborts its children, and must not have its handling pre-empted by a re-raise.
  *
  * They go in BEFORE the spawn ({@link installSignalGuard}): a signal that lands between the spawn and the
@@ -260,23 +255,32 @@ function registerLiveChild(child: LiveChild): () => void {
   };
 }
 
-function installSignalGuard(group: ChildGroup): void {
-  const signals = guardedSignals(group);
-  if (signalGuardHandlers || signals.some((signal) => hasSignalOwner(signal))) return;
+function installSignalGuard(): void {
+  if (signalGuardHandlers || (["SIGINT", "SIGTERM", "SIGHUP"] as const).some((signal) => hasSignalOwner(signal)))
+    return;
+  let reraise: GuardSignal | undefined;
   const handlers: Array<[GuardSignal, () => void]> = [];
-  for (const signal of signals) {
+  for (const signal of ["SIGINT", "SIGQUIT", "SIGTERM", "SIGHUP"] as const) {
     const handler = (): void => {
+      if (reraise) return;
       const children = [...liveChildren];
+      const reachesAkmAlone = signal === "SIGTERM" || signal === "SIGHUP";
+      let stoppedOwn = false;
       for (const live of children) {
-        if (live.group === "own") live.terminate();
-        else if (signal !== "SIGINT") live.proc.kill(signal);
+        if (live.group === "own") {
+          live.terminate();
+          stoppedOwn = true;
+        } else if (reachesAkmAlone) live.proc.kill(signal);
       }
-      removeSignalGuard();
+      // Only the terminal's signals to shared children remain: they have it, akm just waits.
+      if (!reachesAkmAlone && !stoppedOwn) return;
+      reraise = signal;
       void Promise.allSettled(children.map((live) => live.proc.exited)).then(() => {
+        removeSignalGuard();
         process.kill(process.pid, signal);
       });
     };
-    process.once(signal, handler);
+    process.on(signal, handler);
     handlers.push([signal, handler]);
   }
   signalGuardHandlers = handlers;
@@ -614,7 +618,7 @@ export async function runManagedSubprocess(
   // A termination signal to this process reaches the child too (see installSignalGuard).
   const group = childGroup(capture, process.platform, !capture && hasControllingTerminal());
   const guardsChild = process.platform !== "win32";
-  if (guardsChild) installSignalGuard(group);
+  if (guardsChild) installSignalGuard();
   let proc: SpawnedSubprocess;
   try {
     proc = spawnFn(cmd, buildSpawnOptions(opts, group));
