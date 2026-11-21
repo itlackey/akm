@@ -4,6 +4,11 @@
   file, You can obtain one at https://mozilla.org/MPL/2.0/.
 -->
 
+<script module lang="ts">
+  /** Whether the maps' keys are open: closed on one map, closed on the next, until the app closes. */
+  const key = $state({ open: true });
+</script>
+
 <script lang="ts">
   // Every asset in scope as a point in 3D (three.js), placed by akm with groups alike in meaning near each other,
   // each group named over its middle by a label that stays the same size on screen. Drag turns it, right-drag or
@@ -841,7 +846,8 @@
         onclick={() => onGroup(g.key)}>{@render name(g)}</button
       >{:else}<span class="group-name" bind:this={nameEls[g.key]}>{@render name(g)}</span>{/if}
   {/each}
-  {#if sizeSteps.length || legend}<div class="stage-legend">
+  {#if sizeSteps.length || legend}<details class="stage-legend" bind:open={key.open}>
+      <summary>Key</summary>
       {#if sizeSteps.length}<div class="scale size-key">
           <span class="cap">Size: {size!.label}</span>
           <ol>
@@ -853,7 +859,7 @@
           </ol>
         </div>{/if}
       {@render legend?.()}
-    </div>{/if}
+    </details>{/if}
   <div class="view-buttons">
     <button title="Zoom in (+)" aria-label="Zoom in" onclick={() => world && orbit(0, 0, ZOOM)}>+</button>
     <button title="Zoom out (−)" aria-label="Zoom out" onclick={() => world && orbit(0, 0, 1 / ZOOM)}>−</button>
@@ -897,6 +903,14 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     empty-cells: hide;
+  }
+  /* The key folds to its name, to give its corner back to the map. */
+  .stage-legend summary {
+    padding: 2px 10px;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    cursor: pointer;
+    pointer-events: auto;
   }
   .scale {
     display: flex;

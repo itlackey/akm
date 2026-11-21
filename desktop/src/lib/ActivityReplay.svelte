@@ -7,6 +7,8 @@
 <script module lang="ts">
   /** The drawing chosen this session: the replay opens in it again, and as tags until points are chosen. */
   let remembered: "tags" | "2d" | "3d" = "tags";
+  /** Whether the panel beside the map is open, kept the same way. */
+  let sideRemembered = true;
 </script>
 
 <script lang="ts">
@@ -65,6 +67,8 @@
   /** The map drawn as the mind map of types and tags, or as points by meaning in one plane or in 3D; the choice is
    * kept for the session. */
   let drawing = $state(remembered);
+  /** The panel beside the map folds away, to give the map the whole window. */
+  let sideOpen = $state(sideRemembered);
   const draw = (choice: typeof remembered) => {
     drawing = remembered = choice;
   };
@@ -296,7 +300,7 @@
   {#if loading}<p class="muted" role="status">Loading activity…</p>{/if}
   {#if unavailable && !loading}<div class="notice" role="status">{unavailable}</div>{/if}
   {#if o && range && !unavailable}
-    <div class="replay-body">
+    <div class="replay-body" class:alone={!sideOpen}>
       <div class="replay-map">
         <div class="stage-tools">
           <div class="seg" role="group" aria-label="Map drawing">
@@ -316,6 +320,11 @@
               ><option value={false}>You</option><option value={true}>Everyone: you, agents and automation</option
               ></select
             ></label
+          >
+          <button
+            class="btn-quiet panel-toggle"
+            aria-expanded={sideOpen}
+            onclick={() => (sideOpen = sideRemembered = !sideOpen)}>{sideOpen ? "Hide panel ›" : "‹ Show panel"}</button
           >
         </div>
         {#if points}
@@ -386,109 +395,110 @@
             </p>{/if}
         {/if}
       </div>
-      <aside class="replay-side">
-        {#if picked >= 0 || chosen}
-          {@const count = eventsText(chosenEvents.filter((s) => s.kind !== "hit").length) || "no events"}
-          <header class="chosen-head">
-            <div>
-              <h2>{picked >= 0 ? o.path(picked) : chosen!.name}</h2>
-              <p class="muted small">
-                {picked >= 0
-                  ? `${FAMILIES[o.family[picked]!]!.label} · ${count} so far`
-                  : `${chosen!.kind} · ${chosen!.members.length.toLocaleString()} assets · ${count} so far`}
-              </p>
-            </div>
-            <button
-              class="btn-quiet"
-              aria-label="Close"
-              onclick={() => {
-                picked = -1;
-                selected = "";
-              }}>✕</button
-            >
-          </header>
-          {#if picked >= 0}<a class="btn btn-secondary" href={searchHref(new URLSearchParams(), o.ref[picked]!)}>Open</a
-            >{/if}
-          <section>
-            <h3>Its events so far</h3>
-            <ol class="log">
-              {#each chosenEvents.slice(0, 20) as step}<li>
-                  <span class="when muted small">{stampText(step.t, span)}</span>
-                  <span class="what"
-                    >{step.kind === "hit"
-                      ? "returned by a search"
-                      : step.kind === "show"
-                        ? "read"
-                        : step.kind === "feedback"
-                          ? `${step.signal ?? ""} feedback`
-                          : step.eventType}{#if picked < 0 && step.node >= 0}{" · "}<a
-                        href={searchHref(new URLSearchParams(), o.ref[step.node]!)}>{o.path(step.node)}</a
-                      >{/if}</span
-                  >
-                </li>{:else}<li class="muted">Nothing yet</li>{/each}
-            </ol>
-          </section>
-        {:else}
-          <div class="figures">
-            <div><strong>{totals.events.toLocaleString()}</strong><span>events</span></div>
-            <div><strong>{totals.shows.toLocaleString()}</strong><span>reads</span></div>
-            <div><strong>{totals.searches.toLocaleString()}</strong><span>searches</span></div>
-            <div><strong>{totals.curates.toLocaleString()}</strong><span>curates</span></div>
-            <div class:bad={totals.foundNothing > 0}>
-              <strong>{totals.foundNothing.toLocaleString()}</strong><span>found nothing</span>
-            </div>
-            <div>
-              <strong>{totals.positive}</strong><span>positive,</span><strong>{totals.negative}</strong><span
-                >negative feedback</span
+      {#if sideOpen}<aside class="replay-side">
+          {#if picked >= 0 || chosen}
+            {@const count = eventsText(chosenEvents.filter((s) => s.kind !== "hit").length) || "no events"}
+            <header class="chosen-head">
+              <div>
+                <h2>{picked >= 0 ? o.path(picked) : chosen!.name}</h2>
+                <p class="muted small">
+                  {picked >= 0
+                    ? `${FAMILIES[o.family[picked]!]!.label} · ${count} so far`
+                    : `${chosen!.kind} · ${chosen!.members.length.toLocaleString()} assets · ${count} so far`}
+                </p>
+              </div>
+              <button
+                class="btn-quiet"
+                aria-label="Close"
+                onclick={() => {
+                  picked = -1;
+                  selected = "";
+                }}>✕</button
               >
+            </header>
+            {#if picked >= 0}<a class="btn btn-secondary" href={searchHref(new URLSearchParams(), o.ref[picked]!)}
+                >Open</a
+              >{/if}
+            <section>
+              <h3>Its events so far</h3>
+              <ol class="log">
+                {#each chosenEvents.slice(0, 20) as step}<li>
+                    <span class="when muted small">{stampText(step.t, span)}</span>
+                    <span class="what"
+                      >{step.kind === "hit"
+                        ? "returned by a search"
+                        : step.kind === "show"
+                          ? "read"
+                          : step.kind === "feedback"
+                            ? `${step.signal ?? ""} feedback`
+                            : step.eventType}{#if picked < 0 && step.node >= 0}{" · "}<a
+                          href={searchHref(new URLSearchParams(), o.ref[step.node]!)}>{o.path(step.node)}</a
+                        >{/if}</span
+                    >
+                  </li>{:else}<li class="muted">Nothing yet</li>{/each}
+              </ol>
+            </section>
+          {:else}
+            <div class="figures">
+              <div><strong>{totals.events.toLocaleString()}</strong><span>events</span></div>
+              <div><strong>{totals.shows.toLocaleString()}</strong><span>reads</span></div>
+              <div><strong>{totals.searches.toLocaleString()}</strong><span>searches</span></div>
+              <div><strong>{totals.curates.toLocaleString()}</strong><span>curates</span></div>
+              <div class:bad={totals.foundNothing > 0}>
+                <strong>{totals.foundNothing.toLocaleString()}</strong><span>found nothing</span>
+              </div>
+              <div>
+                <strong>{totals.positive}</strong><span>positive,</span><strong>{totals.negative}</strong><span
+                  >negative feedback</span
+                >
+              </div>
+              <div><strong>{totals.used.size.toLocaleString()}</strong><span>assets used</span></div>
             </div>
-            <div><strong>{totals.used.size.toLocaleString()}</strong><span>assets used</span></div>
-          </div>
-          <section>
-            <h3>Searched for, not found</h3>
-            <ul class="log">
-              {#each totals.misses.slice(0, 6) as [query, count]}<li>
-                  <span class="what">{query}</span><span class="muted small count">×{count}</span>
-                  <a class="small" href={`/library/search?${new URLSearchParams([["q", query]])}`}>Search again</a>
-                  <a class="small" href="/library/files">Create</a>
-                </li>{:else}<li class="muted">None so far</li>{/each}
-            </ul>
-          </section>
-          <section>
-            <h3>Most used so far</h3>
-            <ol class="log">
-              {#each mostUsed as row}<li>
-                  <a href={searchHref(new URLSearchParams(), row.ref)}>{o.path(row.node)}</a>
-                  <span class="muted small">×{row.count}</span>
-                </li>{:else}<li class="muted">Nothing yet</li>{/each}
-            </ol>
-          </section>
-          <section>
-            <h3>Feedback given so far</h3>
-            <ol class="log">
-              {#each feedbackSoFar.slice(0, 12) as step}<li>
-                  <span class="sign" data-signal={step.signal}>{step.signal === "negative" ? "−" : "+"}</span>
-                  {#if step.ref}<a href={searchHref(new URLSearchParams(), step.ref)}
-                      >{step.node >= 0 ? o.path(step.node) : step.ref}</a
-                    >{:else}<span>an asset</span>{/if}
-                  <span class="muted small">{stampText(step.t, span)}</span>
-                </li>{:else}<li class="muted">None so far</li>{/each}
-            </ol>
-          </section>
-          <section>
-            <h3>Latest events</h3>
-            <ol class="log">
-              {#each recent as step}<li>
-                  <span class="when muted small">{stampText(step.t, span)}</span>
-                  <span class="kind" data-kind={step.kind === "search" && step.results === 0 ? "miss" : step.kind}
-                  ></span>
-                  <span class="what" title={describe(step)}>{describe(step)}</span>
-                </li>{:else}<li class="muted">Nothing yet</li>{/each}
-            </ol>
-          </section>
-        {/if}
-        {#if cutNote}<p class="muted small">{cutNote}</p>{/if}
-      </aside>
+            <section>
+              <h3>Searched for, not found</h3>
+              <ul class="log">
+                {#each totals.misses.slice(0, 6) as [query, count]}<li>
+                    <span class="what">{query}</span><span class="muted small count">×{count}</span>
+                    <a class="small" href={`/library/search?${new URLSearchParams([["q", query]])}`}>Search again</a>
+                    <a class="small" href="/library/files">Create</a>
+                  </li>{:else}<li class="muted">None so far</li>{/each}
+              </ul>
+            </section>
+            <section>
+              <h3>Most used so far</h3>
+              <ol class="log">
+                {#each mostUsed as row}<li>
+                    <a href={searchHref(new URLSearchParams(), row.ref)}>{o.path(row.node)}</a>
+                    <span class="muted small">×{row.count}</span>
+                  </li>{:else}<li class="muted">Nothing yet</li>{/each}
+              </ol>
+            </section>
+            <section>
+              <h3>Feedback given so far</h3>
+              <ol class="log">
+                {#each feedbackSoFar.slice(0, 12) as step}<li>
+                    <span class="sign" data-signal={step.signal}>{step.signal === "negative" ? "−" : "+"}</span>
+                    {#if step.ref}<a href={searchHref(new URLSearchParams(), step.ref)}
+                        >{step.node >= 0 ? o.path(step.node) : step.ref}</a
+                      >{:else}<span>an asset</span>{/if}
+                    <span class="muted small">{stampText(step.t, span)}</span>
+                  </li>{:else}<li class="muted">None so far</li>{/each}
+              </ol>
+            </section>
+            <section>
+              <h3>Latest events</h3>
+              <ol class="log">
+                {#each recent as step}<li>
+                    <span class="when muted small">{stampText(step.t, span)}</span>
+                    <span class="kind" data-kind={step.kind === "search" && step.results === 0 ? "miss" : step.kind}
+                    ></span>
+                    <span class="what" title={describe(step)}>{describe(step)}</span>
+                  </li>{:else}<li class="muted">Nothing yet</li>{/each}
+              </ol>
+            </section>
+          {/if}
+          {#if cutNote}<p class="muted small">{cutNote}</p>{/if}
+        </aside>{/if}
     </div>
     {#if !steps.length}<p>No searches, reads or feedback recorded in this period.</p>{/if}
   {/if}
@@ -745,6 +755,9 @@
     grid-template-columns: minmax(0, 1fr) 22rem;
     gap: 24px;
     align-items: start;
+  }
+  .replay-body.alone {
+    grid-template-columns: minmax(0, 1fr);
   }
   .replay-map {
     position: relative;

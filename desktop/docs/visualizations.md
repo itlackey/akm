@@ -113,7 +113,9 @@ zoom, and 0 faces the front.
 | Use: what is used, and what is dead weight? | when it was last read | reads | Not read, untouched 6+ months; Read but disliked; Most read |
 | Problems: what is wrong or duplicated? | its worst problem | reads | Outdated, still read; Near-identical pairs; Disliked; Outdated, unread |
 
-A key on the map names the colours and the sizes. Only what the chosen filter finds is drawn to size; the rest is
+A key on the map names the colours and the sizes; choosing its name, Key, folds it to that word and opens it again,
+on every map until the app closes. Hide panel, in the map's row of tools, folds the panel beside the map away so the
+map takes the window's width, and Show panel brings it back; the page remembers which. Only what the chosen filter finds is drawn to size; the rest is
 faint and at one size.
 
 ### Filters
@@ -214,7 +216,8 @@ type colours by `tests/map-palette.test.mjs`); an asset the latest of several ev
 colour of the latest. A curate's results and other kinds of event light the asset as used without a ring. A point's
 size is the number of events on its asset over the whole period, so it does not change as the replay plays. A key
 in the map's corner names every mark: the colour of each type of used asset, the faint dot of one not used yet, and
-the rings, one colour per kind of event, which mark the asset of the event the playhead is on. An asset with no group by meaning has no place on the points; its events still count
+the rings, one colour per kind of event, which mark the asset of the event the playhead is on. The key folds to its
+name, and Hide panel on the map folds the lists beside it away, as on Library, Map. An asset with no group by meaning has no place on the points; its events still count
 in the figures, and the page says how many events so far touched assets with no place, and how many touched assets
 the index no longer lists. Without stored embeddings the points cannot be drawn, and the page says so.
 

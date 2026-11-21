@@ -15,7 +15,8 @@
     chosenFinding: Partial<Record<View, string[]>>;
     drawing: "tags" | "2d" | "3d" | null;
     selected: string;
-  } = { view: "contents", bundle: -1, chosenFinding: {}, drawing: null, selected: "" };
+    sideOpen: boolean;
+  } = { view: "contents", bundle: -1, chosenFinding: {}, drawing: null, selected: "", sideOpen: true };
 </script>
 
 <script lang="ts">
@@ -73,8 +74,10 @@
    * or in 3D; unchosen, the plane when the index has assets grouped by meaning: it is read faster than 3D, which is
    * one choice away. */
   let chosenDrawing = $state<"tags" | "2d" | "3d" | null>(remembered.drawing);
+  /** The panel beside the map folds away, to give the map the whole window. */
+  let sideOpen = $state(remembered.sideOpen);
   $effect(() => {
-    Object.assign(remembered, { view, bundle, chosenFinding, drawing: chosenDrawing, selected });
+    Object.assign(remembered, { view, bundle, chosenFinding, drawing: chosenDrawing, selected, sideOpen });
   });
   const drawing = $derived(chosenDrawing ?? (o?.groupCount ? "2d" : "tags"));
   const points = $derived(drawing !== "tags");
@@ -677,7 +680,7 @@
           : ""}
       </p>{/if}
     {#if !bundleScope.length}<p class="notice" role="status">No assets in {scopeName}.</p>{/if}
-    <div class="map-body" class:alone={!(picked >= 0 || part || finding || (points && groups.length))}>
+    <div class="map-body" class:alone={!sideOpen || !(picked >= 0 || part || finding || (points && groups.length))}>
       <div class="map-stage">
         <div class="stage-tools">
           <div class="views" role="group" aria-label="Drawing">
@@ -728,6 +731,11 @@
               class="scope"
               title="Counts are for this group only. Choose to go back to the whole bundle."
               onclick={() => choose(selected)}>In {part.name} ✕</button
+            >{/if}
+          {#if picked >= 0 || part || finding || (points && groups.length)}<button
+              class="btn-quiet panel-toggle"
+              aria-expanded={sideOpen}
+              onclick={() => (sideOpen = !sideOpen)}>{sideOpen ? "Hide panel ›" : "‹ Show panel"}</button
             >{/if}
         </div>
         {#if points}{#if groups.length}<SimilarityMap
@@ -818,7 +826,7 @@
           {@render colourKey("--use-0")}{/if}
       </div>
 
-      {#if picked >= 0 || part || finding || (points && groups.length)}<aside
+      {#if sideOpen && (picked >= 0 || part || finding || (points && groups.length))}<aside
           class="map-side"
           aria-label="Figures"
           aria-live="polite"
