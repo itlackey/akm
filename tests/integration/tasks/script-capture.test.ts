@@ -181,3 +181,17 @@ describe("captureScriptTarget refuses a script scriptCommand cannot start", () =
     }
   });
 });
+
+describe("a .ps1 script with no first line runs PowerShell where it exists", () => {
+  const script = { ref: "scripts/x.ps1", bytes: bytesOf("Write-Host hi\n"), extension: ".ps1" };
+  const flags = ["-NoProfile", "-NonInteractive", "-File", "/f.ps1", "a"];
+
+  test("powershell on Windows", () => {
+    expect(scriptCommand(script, "/f.ps1", ["a"], "win32")).toEqual(["powershell", ...flags]);
+  });
+
+  test("pwsh on Linux and macOS, where PowerShell 7 installs only pwsh", () => {
+    expect(scriptCommand(script, "/f.ps1", ["a"], "linux")).toEqual(["pwsh", ...flags]);
+    expect(scriptCommand(script, "/f.ps1", ["a"], "darwin")).toEqual(["pwsh", ...flags]);
+  });
+});

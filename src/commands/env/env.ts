@@ -76,10 +76,10 @@ export function listKeys(envPath: string): { keys: string[] } {
 const ENV_ASSIGNMENT =
   /^\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^\r\n]+)?\s*(?:#.*)?$/gm;
 
-/** The unquoted value on a line's remainder: a `#` starts a comment only at its start or after a space or tab. */
+/** The unquoted value on a line's remainder: a `#` starts a comment only after a space or tab. */
 function unquotedValue(rest: string): string {
   for (let i = 0; i < rest.length; i++) {
-    if (rest[i] === "#" && (i === 0 || rest[i - 1] === " " || rest[i - 1] === "\t")) return rest.slice(0, i).trim();
+    if (rest[i] === "#" && (rest[i - 1] === " " || rest[i - 1] === "\t")) return rest.slice(0, i).trim();
   }
   return rest.trim();
 }
@@ -88,7 +88,7 @@ function unquotedValue(rest: string): string {
  * Parse env file text into KEY/value pairs. This is the one parser every env-file read uses.
  *
  * dotenv parses the text (quoting, `export`, multi-line values, escapes). In an unquoted value a `#`
- * starts a comment only at the start of the value or after a space or tab (as bash `source` and docker
+ * starts a comment only after a space or tab (as bash `source` and docker
  * compose read it), so `URL=http://x/y#frag` keeps its `#`: each unquoted assignment's value is set from
  * `unquotedValue`, in file order, so a later quoted assignment of the same key still wins.
  */

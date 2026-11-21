@@ -30,7 +30,7 @@
 // shells out to `node`.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { BOUNDARY_MARKERS, NATIVE_CRASH_MARKER } from "./node-runtime-markers";
@@ -210,6 +210,27 @@ console.log(`node-smoke: temp root = ${root}`);
 try {
   // getDirname / package.json resolution via the boundary + text-import hook.
   step("version", ["--version"], { expect: "." });
+  // The installed launcher (`dist/akm`) with no Bun on PATH runs the CLI on Node, in its own process.
+  {
+    stepNo++;
+    const version = (JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as { version: string })
+      .version;
+    const noBunPath = path.join(root, "no-bun-path");
+    mkdirSync(noBunPath, { recursive: true });
+    const node = spawnSync(nodeBin, ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim();
+    const res = spawnSync(node, [path.join(repoRoot, "dist", "akm"), "--version"], {
+      env: { ...env, PATH: noBunPath },
+      encoding: "utf8",
+      timeout: 120_000,
+    });
+    const tag = `[${stepNo}] launcher --version, no Bun on PATH`;
+    if (res.status === 0 && (res.stdout ?? "").includes(version)) console.log(`  PASS ${tag}`);
+    else {
+      failures++;
+      console.error(`  FAIL ${tag}: exit ${res.status}, expected 0 and ${version}`);
+      console.error(`       stdout: ${(res.stdout ?? "").trim()}\n       stderr: ${(res.stderr ?? "").trim()}`);
+    }
+  }
   // better-sqlite3 open + config write.
   step("init", ["bundle", "create", "--dir", stash], { expect: '"created": true' });
   // SQLite write path (was broken by the better-sqlite3 `readonly:undefined` bug).

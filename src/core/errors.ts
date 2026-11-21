@@ -198,6 +198,7 @@ export type NotFoundErrorCode =
   | "WORKFLOW_NOT_FOUND"
   | "PROPOSAL_NOT_FOUND"
   | "FILE_NOT_FOUND"
+  | "COMMAND_NOT_EXECUTABLE"
   | "IMPROVE_RUN_NOT_FOUND"
   // The registry answered, but not with the thing asked for: HTTP 404/410, or
   // metadata that names no such version, dist-tag, or default branch.
@@ -324,6 +325,7 @@ const NOT_FOUND_HINTS: Partial<Record<NotFoundErrorCode, string>> = {
   // for a mistyped id, which points at the wrong thing entirely.
   PROPOSAL_NOT_FOUND: "Run `akm proposal list` to see pending proposals and their ids.",
   FILE_NOT_FOUND: "Check the path exists and is readable.",
+  COMMAND_NOT_EXECUTABLE: "Add execute permission (`chmod +x <program>`) or run it through an interpreter.",
   IMPROVE_RUN_NOT_FOUND:
     "Run `akm improve` first, or `akm doctor metrics improve --since 30d` to see recent run ids in `runIds`.",
   REGISTRY_NOT_FOUND:

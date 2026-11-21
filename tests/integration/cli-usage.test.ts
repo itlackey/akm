@@ -510,19 +510,29 @@ test("usage observers preserve a host-owned once signal handler and its asynchro
   );
   const child = spawn(
     "bun",
-    [entry, "env", "run", "env/cancel", "--", "bun", "-e", "console.log('READY');setTimeout(()=>{},1000)"],
+    [
+      entry,
+      "env",
+      "run",
+      "env/cancel",
+      "--",
+      "bun",
+      "-e",
+      "console.log('READY', process.pid);setTimeout(()=>{},30000)",
+    ],
     {
       env: { ...process.env },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
   try {
-    await new Promise<void>((resolve, reject) => {
+    const grandchild = await new Promise<number>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("child did not start")), 10000);
       child.stdout.on("data", (data) => {
-        if (String(data).includes("READY")) {
+        const ready = /READY (\d+)/.exec(String(data));
+        if (ready) {
           clearTimeout(timer);
-          resolve();
+          resolve(Number(ready[1]));
         }
       });
       child.once("error", reject);
@@ -530,13 +540,17 @@ test("usage observers preserve a host-owned once signal handler and its asynchro
     const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
       child.once("exit", (code, signal) => resolve({ code, signal })),
     );
+    const sent = Date.now();
     child.kill("SIGTERM");
     expect(await exited).toEqual({ code: 23, signal: null });
+    expect(Date.now() - sent).toBeLessThan(10000);
     expect(fs.readFileSync(marker, "utf8")).toBe("cleaned");
+    // The host kept its handler and its exit code, and akm still stopped the child it started.
+    expect(() => process.kill(grandchild, 0)).toThrow();
   } finally {
     child.kill("SIGKILL");
   }
-});
+}, 20000);
 
 const usageFile = () => path.join(getDataDir(), "metrics.db");
 
