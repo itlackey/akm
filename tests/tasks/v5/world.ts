@@ -267,7 +267,7 @@ function standIn(agent: NonNullable<WorldSpec["agent"]>) {
       stderr: "",
       durationMs: 0,
       reason,
-      error: reason,
+      error: `agent ${reason === "timeout" ? "timed out" : "was aborted"}`,
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const limit = new Promise<ReturnType<typeof failed>>((resolve) => {

@@ -40,9 +40,9 @@ interface ReservedTaskAttempt {
   historyReserved: boolean;
 }
 
-/** The lock file of a task that runs one at a time. */
-export function taskRunLockPath(id: string): string {
-  return path.join(getStateDir(), "locks", `task-${encodeURIComponent(id)}.lock`);
+/** The lock file of a task that runs one at a time, by its qualified ref (`bundle//tasks/<name>`). */
+export function taskRunLockPath(ref: string): string {
+  return path.join(getStateDir(), "locks", `task-${encodeURIComponent(ref)}.lock`);
 }
 
 /**
@@ -51,9 +51,10 @@ export function taskRunLockPath(id: string): string {
  */
 export function acquireTaskRunLock(
   id: string,
+  ref: string,
   options: { skip: boolean; at: Date },
 ): { ownership: LockOwnership } | { skipped: TaskRunResult } {
-  const acquired = tryAcquireRunLock(taskRunLockPath(id), { label: "task" });
+  const acquired = tryAcquireRunLock(taskRunLockPath(ref), { label: "task" });
   if (acquired.state === "acquired") return { ownership: acquired.ownership };
   const message = `Task ${id} is still running (PID ${formatLockHolderPid(acquired.holder)}, started ${acquired.holder.startedAt}); not starting another run.`;
   if (!options.skip) throw new TransientError(message, "RUN_LEASE_HELD");
@@ -200,6 +201,8 @@ export function recordTaskAttemptFailure(input: {
   historyReserved?: boolean;
   /** Whether the OS scheduler started the run; stored as the row's `trigger`. */
   scheduled?: boolean;
+  /** The bundle the task was to be read from. */
+  bundle?: string;
 }): void {
   let taskId = input.taskId;
   try {
@@ -225,6 +228,7 @@ export function recordTaskAttemptFailure(input: {
     durationMs: Math.max(0, finishedAt.getTime() - attempt.startedAt.getTime()),
     log: logPath,
     target: { kind: "unknown" },
+    ...(input.bundle ? { bundle: input.bundle } : {}),
     detail: { reason: input.reason, error: errorCode },
   };
 

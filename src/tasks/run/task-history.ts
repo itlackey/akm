@@ -24,19 +24,24 @@
  * imports appendHistory or readTaskHistory from here.
  */
 
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { rethrowIfTestIsolationError } from "../../core/errors";
 import { withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import {
   decodeTaskHistoryMetadata,
   finalizeTaskHistoryAttempt,
-  getTaskHistory,
-  getTaskHistoryRuns,
   queryTaskHistory,
   type TaskHistoryRow,
   upsertTaskHistory,
 } from "../../storage/repositories/task-history-repository";
 import type { TaskRunResult, TaskRunStatus } from "./task-result";
+
+/** The `bundle` a task's history row records, from its qualified ref `bundle//tasks/<name>`. */
+export function taskBundle(taskRef: string): { bundle?: string } {
+  const { bundle } = parseBundleRef(taskRef);
+  return bundle === undefined ? {} : { bundle };
+}
 
 /**
  * Append (or finalize a reserved attempt into) one task_history row. `scheduled` says whether the OS scheduler started
@@ -59,6 +64,7 @@ export function appendHistory(result: TaskRunResult, historyReserved = false, sc
       ...(result.target.kind === "command" ? { engine: result.target.engine } : {}),
       ...(result.steps ? { steps: result.steps } : {}),
       ...(result.run ? { run: result.run } : {}),
+      ...(result.bundle ? { bundle: result.bundle } : {}),
       ...(scheduled === undefined ? {} : { trigger: scheduled ? "schedule" : "manual" }),
     }),
   };
@@ -86,24 +92,22 @@ export function appendHistory(result: TaskRunResult, historyReserved = false, sc
  */
 export interface ReadHistoryOptions {
   id?: string;
+  /** Only the rows that recorded this bundle: a row written before the bundle was recorded matches none. */
+  bundle?: string;
   limit?: number;
 }
 
 export function readTaskHistory(options: ReadHistoryOptions = {}): TaskRunResult[] {
   return withStateDb((db) => {
     if (options.limit === 0) return [];
-    if (options.id) {
-      // An id-scoped query used the single-row helper, so `--limit` was silently
-      // discarded and `akm task history --id X --limit 20` always returned one
-      // run. The CLI documents --limit as "Maximum rows to return"; honour it.
-      if (options.limit !== undefined && options.limit > 0) {
-        return decodeTaskHistoryRows(getTaskHistoryRuns(db, options.id, options.limit));
-      }
-      const row = getTaskHistory(db, options.id);
-      return row ? decodeTaskHistoryRows([row]) : [];
-    }
+    // An id-scoped query without a limit is the latest run: `--limit` is "Maximum rows to return" and is honoured.
+    const limit = options.limit !== undefined && options.limit > 0 ? options.limit : options.id ? 1 : undefined;
     return decodeTaskHistoryRows(
-      queryTaskHistory(db, options.limit !== undefined && options.limit > 0 ? { limit: options.limit } : {}),
+      queryTaskHistory(db, {
+        ...(options.id ? { taskId: options.id } : {}),
+        ...(options.bundle ? { bundle: options.bundle } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      }),
     );
   });
 }
@@ -170,5 +174,6 @@ function taskHistoryRowToResult(row: TaskHistoryRow): TaskRunResult {
     ...(meta.steps ? { steps: meta.steps } : {}),
     ...(meta.trigger ? { trigger: meta.trigger } : {}),
     ...(meta.run ? { run: meta.run } : {}),
+    ...(meta.bundle ? { bundle: meta.bundle } : {}),
   };
 }

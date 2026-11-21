@@ -16,7 +16,7 @@ export const ENV_HASH_CASES: { name: string; text: string; key: string; value: s
   { name: "url fragment", text: "URL=http://x/y#frag\n", key: "URL", value: "http://x/y#frag", bash: true },
   { name: "hash then words", text: "PW=pa#ss word\n", key: "PW", value: "pa#ss word", bash: false },
   { name: "comment after space", text: "A=v # c\n", key: "A", value: "v", bash: true },
-  { name: "value starting with #", text: "A=#x\n", key: "A", value: "", bash: false },
+  { name: "value starting with #", text: "A=#x\n", key: "A", value: "#x", bash: true },
   { name: "single-quoted", text: "A='q#x'\n", key: "A", value: "q#x", bash: true },
   { name: "double-quoted", text: 'A="q#x"\n', key: "A", value: "q#x", bash: true },
   { name: "multi-line quoted", text: 'A="l1\nl2 # not\n#l3"\n', key: "A", value: "l1\nl2 # not\n#l3", bash: true },

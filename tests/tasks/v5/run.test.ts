@@ -413,7 +413,7 @@ describe("a clean environment", () => {
       .split("\n")
       .map((line) => line.split("=")[0]);
 
-  test("a command and an agent see what --clean keeps, akm's locations and what they are given, and nothing else", async () => {
+  test("a command sees what --clean keeps, akm's locations and what it is given, and nothing else; an agent sees akm's environment as it is", async () => {
     let agentEnv: Record<string, string> = {};
     const w = world({
       host,
@@ -448,10 +448,11 @@ describe("a clean environment", () => {
     }
     for (const name of ["CUSTOM_PROFILE", "GITHUB_TOKEN", "OPENCODE_CONFIG_DIR", "AKM_BUNDLE_DIR"])
       expect(seen).not.toContain(name);
-    expect([agentEnv.LOG_LEVEL, agentEnv.GITHUB_TOKEN, agentEnv.CUSTOM_PROFILE]).toEqual([
+    expect([agentEnv.LOG_LEVEL, agentEnv.GITHUB_TOKEN, agentEnv.CUSTOM_PROFILE, agentEnv.OPENCODE_CONFIG_DIR]).toEqual([
       "info",
-      undefined,
-      undefined,
+      "canary-host-token",
+      "work",
+      "/etc/opencode",
     ]);
     expect(agentEnv.AKM_STATE_DIR).toBeDefined();
     expect(agentEnv.AKM_TASK_STATE).toBeUndefined(); // an agent is not pointed at the state file
@@ -713,7 +714,7 @@ describe("secrets are never state", () => {
         },
       },
     });
-    expect(await message(w.start("tasks/t"))).toBe("step fetch: exit code 1: [REDACTED]");
+    expect(await message(w.start("tasks/t"))).toBe("step fetch: non_zero_exit: exit code 1: [REDACTED]");
     const { readTaskHistory } = await import("../../../src/tasks/run/task-history");
     const [row] = readTaskHistory({ id: "t", limit: 1 });
     expect(JSON.stringify(row)).not.toContain("canary-in-history");
@@ -1135,7 +1136,7 @@ describe("timeout: and max-retries:, as the flags", () => {
           ),
         ),
     });
-    expect(await message(w.start("tasks/t"))).toBe("step (only): timeout");
+    expect(await message(w.start("tasks/t"))).toBe("step (only): timeout: agent timed out");
     expect(told).toBe(true);
   });
 
@@ -1218,7 +1219,7 @@ describe("timeout: and max-retries:, as the flags", () => {
         "tasks/one": { "max-retries": 1, exec: flaky("one", 2) },
       },
     });
-    expect(await message(w.start("tasks/t"))).toBe("step c: exit code 1");
+    expect(await message(w.start("tasks/t"))).toBe("step c: non_zero_exit: exit code 1");
     expect([ran("a"), ran("b"), ran("c")]).toEqual([2, 2, 1]);
     expect(await w.start("tasks/one")).toBe("ok");
   });
@@ -1472,7 +1473,7 @@ describe("the history of a run", () => {
       },
       agent: () => "ok",
     });
-    expect(await message(w.start("tasks/t"))).toBe("step boom: exit code 3");
+    expect(await message(w.start("tasks/t"))).toBe("step boom: non_zero_exit: exit code 3");
     const [outer] = readTaskHistory({ id: "t", limit: 1 });
     expect(outer?.status).toBe("failed");
     expect(outer?.steps?.map((step) => [step.name, step.kind, step.status])).toEqual([

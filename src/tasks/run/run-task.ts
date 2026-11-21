@@ -56,6 +56,7 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
         finishedAt: now(),
         logDir: options.logDir,
         scheduled: true,
+        ...(options.bundleName ? { bundle: options.bundleName } : {}),
       });
     }
   };
@@ -87,7 +88,7 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
   let resume: ReturnType<typeof resolveResume> | undefined;
   let lock: { ownership: LockOwnership } | undefined;
   if (task.kind === "steps") {
-    const acquired = acquireTaskRunLock(id, { skip: options.scheduled === true, at: requestedStartedAt });
+    const acquired = acquireTaskRunLock(id, task.taskRef, { skip: options.scheduled === true, at: requestedStartedAt });
     if ("skipped" in acquired) return acquired.skipped;
     lock = acquired;
     try {
@@ -178,6 +179,7 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
       logDir: options.logDir,
       historyReserved: attempt.historyReserved,
       scheduled: provenance.scheduled,
+      ...(options.bundleName ? { bundle: options.bundleName } : {}),
     });
     throw failure;
   } finally {

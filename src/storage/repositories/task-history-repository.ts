@@ -54,6 +54,8 @@ export interface TaskHistoryMetadata {
   trigger?: "schedule" | "manual";
   /** The version 5 run this row is an attempt of; absent for every other task. */
   run?: TaskHistoryRun;
+  /** The bundle the task was read from; absent on rows written before it was recorded. */
+  bundle?: string;
   /** The process that reserved the attempt; present only while the row is `active`. Absent on rows reserved before it was recorded. */
   owner?: TaskHistoryOwner;
 }
@@ -127,6 +129,7 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
   validateDetail(detail);
   const steps = decodeSteps(parsed.steps);
   const run = decodeRun(parsed.run);
+  const bundle = typeof parsed.bundle === "string" ? parsed.bundle : undefined;
   const owner = decodeOwner(parsed.owner);
   const cleanDetail: TaskHistoryDetail | null = detail
     ? {
@@ -144,6 +147,7 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
     ...(steps !== undefined ? { steps } : {}),
     ...(trigger !== undefined ? { trigger } : {}),
     ...(run !== undefined ? { run } : {}),
+    ...(bundle !== undefined ? { bundle } : {}),
     ...(owner !== undefined ? { owner } : {}),
   };
 }
@@ -350,6 +354,8 @@ export function queryTaskHistory(
   db: Database,
   options: {
     taskId?: string;
+    /** Only rows that recorded this bundle. */
+    bundle?: string;
     since?: string;
     until?: string;
     status?: string;
@@ -363,6 +369,10 @@ export function queryTaskHistory(
   if (options.taskId) {
     conditions.push("task_id = ?");
     params.push(options.taskId);
+  }
+  if (options.bundle) {
+    conditions.push("json_extract(metadata_json, '$.bundle') = ?");
+    params.push(options.bundle);
   }
   if (options.since) {
     conditions.push("started_at >= ?");

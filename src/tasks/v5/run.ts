@@ -27,12 +27,12 @@ import {
 } from "../../commands/command/command-execution";
 import { buildChildEnv } from "../../commands/env/child-env";
 import { ensureWorkingFolder, resolveInjectionRefs, runProgram } from "../../commands/env/injection";
-import { parseBundleRef } from "../../core/asset/asset-ref";
+import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, TransientError, UsageError } from "../../core/errors";
 import { type LockOwnership, releaseLock } from "../../core/file-lock";
 import type { TaskLogLineInput } from "../../core/logs-db";
-import { getStateDir } from "../../core/paths";
+import { akmLocations, getStateDir } from "../../core/paths";
 import { collectInferredSecretValues, collectSensitiveValues, redactSensitiveValue } from "../../core/redaction";
 import { REF_TOKEN_RE } from "../../core/ref-token";
 import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
@@ -53,7 +53,7 @@ import { reconcileAbandonedExecutionState } from "../run/reconcile-abandoned";
 import { shellCommand } from "../run/run-native-task";
 import { expectLoop } from "../run/run-steps-task";
 import { appendHistory, readTaskHistory } from "../run/task-history";
-import { persistRunLog, resolveTaskLogPath, streamLines } from "../run/task-log";
+import { appendStreamLines, persistRunLog, processFailure, resolveTaskLogPath } from "../run/task-log";
 import type { RunTaskOptions, TaskRunResult } from "../run/task-result";
 import { parseTaskSource } from "../source/parse-task-source";
 import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
@@ -139,6 +139,11 @@ function taskIdOf(ref: string): string {
   return conceptId.slice(conceptId.indexOf("/") + 1);
 }
 
+/** `[bundle//]tasks/<name>` read from `bundle`, as `bundle//tasks/<name>`: the identity of a task across bundles. */
+function qualifiedRef(bundle: TaskV5Bundle, ref: string): string {
+  return makeBundleRef(bundle.name, parseBundleRef(ref).conceptId);
+}
+
 function runsFolder(taskId: string): string {
   return path.join(getStateDir(), "runs", encodeURIComponent(taskId));
 }
@@ -175,13 +180,18 @@ function discard(record: RunRecord): void {
   }
 }
 
-/** The failed or interrupted runs of a task that were started directly, newest first, that can still be resumed. */
-function resumableRuns(taskId: string): RunRecord[] {
+/** The failed or interrupted runs of a task (by its bundle and id) that were started directly, newest first, that can still be resumed. */
+function resumableRuns(task: { taskId: string; ref: string }): RunRecord[] {
   const found: RunRecord[] = [];
-  for (const row of readTaskHistory({ id: taskId, limit: 500 })) {
+  for (const row of readTaskHistory({ id: task.taskId, limit: 500 })) {
     if (!row.run || row.run.parent || (row.status !== "failed" && row.status !== "interrupted")) continue;
-    const kept = readRecord(taskId, row.run.id);
-    if (kept && !found.some((earlier) => earlier.runId === kept.runId)) found.push(kept);
+    const kept = readRecord(task.taskId, row.run.id);
+    if (
+      kept &&
+      qualifiedRef(kept.bundle, kept.ref) === task.ref &&
+      !found.some((earlier) => earlier.runId === kept.runId)
+    )
+      found.push(kept);
   }
   return found;
 }
@@ -272,7 +282,7 @@ export async function prepareRunV5(task: PreparedTaskV5, options: RunTaskOptions
     // Settling abandoned state is housekeeping; it never prevents a run.
   }
   if (start.resume) {
-    const [resume] = resumableRuns(task.taskId);
+    const [resume] = resumableRuns({ taskId: task.taskId, ref: qualifiedRef(task.bundle, task.ref) });
     if (!resume) throw noRunToResume(task.taskId);
     const document = await checkTaskV5({
       ref: task.ref,
@@ -295,7 +305,10 @@ export async function runPreparedV5(prepared: PreparedRunV5, options: RunTaskOpt
   const flags = prepared.resume?.flags ?? start.flags;
   const lock =
     document.lock === true
-      ? acquireTaskRunLock(task.taskId, { skip: provenance.scheduled || start.skipIfLocked, at: now() })
+      ? acquireTaskRunLock(task.taskId, qualifiedRef(task.bundle, task.ref), {
+          skip: provenance.scheduled || start.skipIfLocked,
+          at: now(),
+        })
       : undefined;
   if (lock && "skipped" in lock) return lock.skipped;
   const termination = abortOnTermination();
@@ -366,7 +379,8 @@ function lockRun(record: RunRecord): LockOwnership {
 /** When a run of a task succeeds, the failed runs before it are not resumed: what is kept of them goes too. */
 function discardEarlierFailedRuns(record: RunRecord): void {
   if (record.parent) return;
-  for (const earlier of resumableRuns(record.taskId)) if (earlier.runId !== record.runId) discard(earlier);
+  for (const earlier of resumableRuns({ taskId: record.taskId, ref: qualifiedRef(record.bundle, record.ref) }))
+    if (earlier.runId !== record.runId) discard(earlier);
 }
 
 /** A new run: its inputs, and a working folder of its own unless `--cwd` or the task's `cwd:` names one. */
@@ -500,6 +514,7 @@ async function runAttempt(
     durationMs: finishedAt.getTime() - startedAt.getTime(),
     log: logPath,
     target: { kind: "steps" },
+    bundle: record.bundle.name,
     ...(failure ? { detail: { reason: "step_failed", error: `${failure.name}: ${failure.reason}` } } : { result }),
     steps,
     run: { id: record.runId, ...(record.parent ? { parent: record.parent } : {}) },
@@ -632,27 +647,22 @@ async function runProcessStep(
     sink.lines.push(`exit_code=${result.exitCode}`);
     if (stdout) {
       sink.lines.push("--- stdout ---", stdout);
-      sink.dbLines.push(...streamLines(stdout, "stdout", "info"));
+      appendStreamLines(sink.dbLines, stdout, "stdout", "info");
     }
     if (stderr) {
       sink.lines.push("--- stderr ---", stderr);
-      sink.dbLines.push(...streamLines(stderr, "stderr", "error"));
+      appendStreamLines(sink.dbLines, stderr, "stderr", "error");
     }
-    if (result.aborted) return { ok: false, reason: "aborted" };
-    if (result.timedOut) return { ok: false, reason: "timeout" };
-    if (result.exitCode !== 0) return { ok: false, reason: withLastErrorLine(`exit code ${result.exitCode}`, stderr) };
+    if (result.aborted || result.timedOut || result.exitCode !== 0) {
+      const { reason, error } = processFailure({ ...result, stderr });
+      return { ok: false, reason: reason === "non_zero_exit" ? `${reason}: ${error}` : reason };
+    }
     const incomplete = streamCaptureFailure(result.stdoutRead, result.stderrRead);
     if (incomplete) return { ok: false, reason: incomplete };
     return { ok: true, value: stdout };
   } finally {
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
-}
-
-/** A failed step's reason, with the last line its program wrote to standard error (already scrubbed), which says why. */
-function withLastErrorLine(reason: string, stderr: string): string {
-  const line = stderr.trimEnd().split("\n").at(-1)?.trim();
-  return line ? `${reason}: ${line.slice(0, 300)}` : reason;
 }
 
 /** A prompt, an agent or a prompt asset: the agent's reply is the result, held to `expect:` when the step has it. */
@@ -704,16 +714,16 @@ async function runAgentStep(
     const stderr = scrub(context, reply.stderr) as string;
     if (stdout) {
       sink.lines.push("--- agent stdout ---", stdout);
-      sink.dbLines.push(...streamLines(stdout, "stdout", "info"));
+      appendStreamLines(sink.dbLines, stdout, "stdout", "info");
     }
     if (stderr) {
       sink.lines.push("--- agent stderr ---", stderr);
-      sink.dbLines.push(...streamLines(stderr, "stderr", "error"));
+      appendStreamLines(sink.dbLines, stderr, "stderr", "error");
     }
     if (!reply.ok) {
       return {
         ok: false,
-        failure: withLastErrorLine(reply.reason ?? reply.error ?? "dispatch failed", stderr),
+        failure: [reply.reason, reply.error].filter(Boolean).join(": ") || "dispatch failed",
       } as const;
     }
     return { ok: true, raw: reply.stdout } as const;
@@ -762,7 +772,10 @@ async function runTaskStep(
   const child = parseDocument(found.file);
   const taskId = taskIdOf(ref);
   const limit = limitOf(until, document, step);
-  const lock = child.lock === true ? tryAcquireRunLock(taskRunLockPath(taskId), { label: "task" }) : undefined;
+  const lock =
+    child.lock === true
+      ? tryAcquireRunLock(taskRunLockPath(qualifiedRef(found.bundle, ref)), { label: "task" })
+      : undefined;
   if (lock?.state === "held") throw new Error(`task ${ref} is still running, and it runs one at a time`);
   try {
     const kept = record.children[step.name];
@@ -799,8 +812,10 @@ async function runTaskStep(
 // ── The environment and secrets ─────────────────────────────────────────────
 
 /**
- * A step's environment: what `--clean` keeps, akm's own location variables, what `inherit:` and `--inherit` name; then
- * the task's `env:` and `secret:`, then the step's, then what the run was started with, each over the one before.
+ * A step's environment. A script or `exec:` step starts with what `--clean` keeps, akm's own location variables, and
+ * what `inherit:` and `--inherit` name. An agent step starts with akm's environment as it is, which `inherit:` has
+ * nothing to add to. Then the task's `env:` and `secret:`, then the step's, then what the run was started with, each
+ * over the one before.
  */
 function environmentOf(
   context: Context,
@@ -812,8 +827,13 @@ function environmentOf(
   const cached = context.environments.get(key);
   if (cached) return cached;
   const inherit = [...(flags.inherit ?? []), ...(document.options.inherit ?? []), ...(step.options.inherit ?? [])];
+  // An agent step runs the user's harness as the user would: akm's environment as it is, with the directories this akm resolved.
+  const startsClean = step.kind === "exec" || step.kind === "scripts";
   const env: Record<string, string> = {};
-  for (const [name, value] of Object.entries(buildChildEnv(context.host, { clean: true, inherit }))) {
+  const base = startsClean
+    ? buildChildEnv(context.host, { clean: true, inherit })
+    : { ...context.host, ...akmLocations() };
+  for (const [name, value] of Object.entries(base)) {
     if (value !== undefined) env[name] = value;
   }
   env.AKM_EVENT_SOURCE = taskEventSource(context.host, context.provenance);

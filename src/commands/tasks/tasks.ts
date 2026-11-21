@@ -554,8 +554,9 @@ export async function akmTasksHistory(input: {
   const bundle = resolveTaskReadBundle(parsed?.bundle, input.target);
   const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
   const id = parsed ? taskIdForAdapter(parsed.id, adapterId) : undefined;
-  // History rows are keyed by task id in state.db, not per bundle.
-  return { rows: readTaskHistory({ id, limit }) };
+  // A bundle named by `--bundle` or by the ref selects the rows that recorded that bundle.
+  const named = parsed?.bundle !== undefined || input.target !== undefined;
+  return { rows: readTaskHistory({ id, limit, ...(named ? { bundle: bundle.source.name } : {}) }) };
 }
 
 export interface TasksSyncResult {

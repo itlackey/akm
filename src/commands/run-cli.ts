@@ -6,7 +6,7 @@ import fs from "node:fs";
 import { type ArgsDef, type CommandDef, parseArgs, runCommand } from "citty";
 import { warnWorkflowUse } from "../cli/deprecations";
 import { createParsedInvocation, findCittyTopLevelCommandIndex, getParsedInvocation } from "../cli/invocation";
-import { parsePositiveIntFlag, parseTimeoutValue } from "../cli/parse-args";
+import { parseNonNegativeIntFlag, parseTimeoutValue } from "../cli/parse-args";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, reportChildExit } from "../cli/shared";
 import { assertKnownFlags, type FlagScanCommand } from "../cli/unknown-flags";
 import { setResolvedUsageAssetType } from "../cli/usage";
@@ -16,7 +16,6 @@ import { loadConfig } from "../core/config/config";
 import { AkmError, NotFoundError, UsageError } from "../core/errors";
 import { registerInjectedSecretValues } from "../core/redaction";
 import { valueInputNames } from "../execution/input-contract";
-import { withRetries } from "../execution/retry";
 import { resolveConceptOwner } from "../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { buildFileContext } from "../indexer/walk/file-context";
@@ -222,7 +221,7 @@ export const runAssetCommand = defineJsonCommand({
       versionFive
         ? [...tokens]
         : ownsRunFlags
-          ? withoutFlags(tokens, ["--env", "--secret", "--inherit", "--max-retries"], ["--clean"])
+          ? withoutFlags(tokens, ["--env", "--secret", "--inherit"], ["--clean"])
           : withoutInjectionFlags(tokens);
     const forwarded = withoutRunFlags(retarget(allTokens));
     if (type === "workflow" && own.some((token) => /^--(?:no-)?new(?:=|$)/.test(token))) {
@@ -246,7 +245,6 @@ export const runAssetCommand = defineJsonCommand({
     // Every process an executor starts inherits akm's environment, so the injected variables go there, and
     // the secrets among them join what each executor scrubs from the output it captures.
     const injected = versionFive ? { values: {}, secretValues: [] } : resolveInjections();
-    const maxRetries = ownsRunFlags ? (parsePositiveIntFlag(parsed["max-retries"], "--max-retries") ?? 0) : 0;
     if (ownsRunFlags && (parsed.clean === true || parsed.inherit !== undefined)) {
       const env = childEnvFromFlags(process.env, { clean: parsed.clean === true, inherit: parsed.inherit });
       for (const name of Object.keys(process.env)) delete process.env[name];
@@ -254,16 +252,9 @@ export const runAssetCommand = defineJsonCommand({
     }
     Object.assign(process.env, injected.values);
     registerInjectedSecretValues(injected.secretValues);
-    await withRetries(
-      maxRetries,
-      async () => {
-        // Bun ignores `process.exitCode = undefined`; 0 is the reset it honours.
-        process.exitCode = 0;
-        await runCommand(executor.command as CommandDef, { rawArgs: forwarded });
-        return process.exitCode;
-      },
-      (exitCode) => exitCode !== undefined && exitCode !== 0,
-    );
+    // Bun ignores `process.exitCode = undefined`; 0 is the reset it honours.
+    process.exitCode = 0;
+    await runCommand(executor.command as CommandDef, { rawArgs: forwarded });
   },
 });
 
@@ -284,7 +275,7 @@ async function runScript(
     script,
     env,
     capture: false,
-    maxRetries: parsePositiveIntFlag(flags["max-retries"], "--max-retries") ?? 0,
+    maxRetries: parseNonNegativeIntFlag(flags["max-retries"], "--max-retries") ?? 0,
     ...(flags.cwd !== undefined ? { cwd: flags.cwd } : {}),
     ...(flags.timeout !== undefined ? { timeoutMs: parseTimeoutValue(flags.timeout) } : {}),
   });

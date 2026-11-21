@@ -62,6 +62,8 @@ export interface TaskRunResult {
   result?: unknown;
   /** The version 5 run this is an attempt of. */
   run?: TaskHistoryRun;
+  /** The bundle the task was read from; absent on rows written before it was recorded. */
+  bundle?: string;
   /** Workflow run id (for workflow targets) or agent reason/error (for command targets). */
   detail?: { runId?: string; reason?: string; error?: string; exitCode?: number | null };
   /** Whether the OS scheduler or a person/script started the run; read back from task history, absent when not recorded. */
