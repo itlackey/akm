@@ -117,7 +117,7 @@ describe("scheduled task invocation", () => {
     ).toBeUndefined();
   });
 
-  test("every row sets AKM_BUNDLE_DIR to the working stash, plus only the AKM_*_DIR overrides set explicitly", () => {
+  test("every row sets AKM_BUNDLE_DIR to the working stash, plus each config, data, cache and state directory that is not the default, whatever set it", () => {
     const sandbox = makeSandboxDir("akm-row-environment-");
     try {
       const stash = path.join(sandbox.dir, "stash");
@@ -125,13 +125,23 @@ describe("scheduled task invocation", () => {
       const env = {
         HOME: sandbox.dir,
         PATH: "/opt/bin:/usr/bin",
-        // Resolved defaults, including an XDG directory some other application
-        // set for this shell, resolve at fire time and are never frozen in.
-        XDG_STATE_HOME: path.join(sandbox.dir, "some-desktop-app"),
+        // An XDG directory the shell set is a directory this sync resolved, and the row carries it.
+        XDG_STATE_HOME: path.join(sandbox.dir, "xdg-state"),
         AKM_BUNDLE_DIR: stash,
         AKM_LLM_API_KEY: "must-not-be-serialized",
       };
-      expect(scheduledRowEnvironment(env)).toEqual({ AKM_BUNDLE_DIR: stash });
+      expect(scheduledRowEnvironment(env)).toEqual({
+        AKM_BUNDLE_DIR: stash,
+        AKM_STATE_DIR: path.join(sandbox.dir, "xdg-state", "akm"),
+      });
+      // The default directories are not carried: they resolve at fire time as they do for an interactive command.
+      const { XDG_STATE_HOME: _xdg, ...plain } = env;
+      expect(scheduledRowEnvironment(plain)).toEqual({ AKM_BUNDLE_DIR: stash });
+      expect(
+        scheduledRowEnvironment({ ...plain, AKM_STATE_DIR: path.join(sandbox.dir, ".local", "state", "akm") }),
+      ).toEqual({
+        AKM_BUNDLE_DIR: stash,
+      });
       expect(
         scheduledRowEnvironment({
           ...env,

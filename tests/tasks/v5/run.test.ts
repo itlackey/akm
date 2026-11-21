@@ -832,7 +832,7 @@ describe("every run has a working folder", () => {
     expect(fs.readdirSync(at("made")).sort()).toEqual(["by-flag", "by-prompt-asset", "by-step", "by-task"]);
   });
 
-  test("a run's own folder that cannot be made refuses the run; a step's own fails that step", async () => {
+  test("a folder that cannot be made, named by the task or by a step, refuses the start", async () => {
     fs.writeFileSync(at("a-file"), "");
     const w = world({
       tasks: {
@@ -840,11 +840,9 @@ describe("every run has a working folder", () => {
         "tasks/step": { steps: [{ name: "a", exec: count("step"), cwd: path.join(at("a-file"), "under") }] },
       },
     });
-    await expect(w.start("tasks/run")).rejects.toThrow();
-    expect(ran("run")).toBe(0);
+    for (const ref of ["tasks/run", "tasks/step"]) expect(await rule(w.start(ref))).toBe("INVALID_FLAG_VALUE");
+    expect(ran("run") + ran("step")).toBe(0);
     expect(w.history()).toEqual([]); // refused: no run was recorded
-    expect(await rule(w.start("tasks/step"))).toBe(RUN_FAILED);
-    expect(ran("step")).toBe(0);
   });
 
   test("when a run of a task succeeds, the folders kept for its earlier failed runs are removed, and no folder cwd: or --cwd names", async () => {
@@ -1433,7 +1431,8 @@ describe("what a start gives, and what it checks before anything runs", () => {
     expect(json(await w.start("tasks/typed", { n: "10", on: "true", s: "x" }))).toEqual({ n: 10, on: true, s: "x" });
     expect(json(await w.start("tasks/typed", { n: "2.5", on: "false" }))).toEqual({ n: 2.5, on: false, s: "" });
     expect(json(await w.start("tasks/typed", { n: 4 })).n).toBe(4);
-    expect(json(await w.start("tasks/typed", { n: 4, s: true })).s).toBe("true");
+    // a flag given no value is not the text "true": a text input refuses it
+    expect(await rule(w.start("tasks/typed", { n: 4, s: true }))).toBe(BAD_VALUE);
     const refused = ran("typed");
     for (const values of [{ n: "ten" }, { n: "" }, { n: "1", on: "yes" }, { n: "1", on: "TRUE" }] as Record<
       string,

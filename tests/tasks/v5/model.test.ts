@@ -215,7 +215,7 @@ describe("inputs", () => {
     expect(await rule(w.check("tasks/typed", { n: "10", on: "true", s: "x" }))).toBe("no error");
     expect(await rule(w.check("tasks/typed", { n: "2.5", on: "false" }))).toBe("no error");
     expect(await rule(w.check("tasks/typed", { n: 4 }))).toBe("no error");
-    expect(await rule(w.check("tasks/typed", { n: 4, s: true }))).toBe("no error");
+    expect(await rule(w.check("tasks/typed", { n: 4, s: true }))).toBe(BAD_VALUE);
     for (const values of [{ n: "ten" }, { n: "" }, { n: "1", on: "yes" }, { n: "1", on: "TRUE" }] as Record<
       string,
       string
@@ -403,7 +403,7 @@ describe("options", () => {
     const steps = [{ name: "a", exec: "true" }];
     expect(await lint({ inputs: inputs({ out_root: "/tmp" }), cwd: "${out_root}", steps })).toBe(BAD_REFERENCE);
     expect(await lint({ steps: [...steps, { name: "b", exec: "true", cwd: "work/${a}" }] })).toBe(BAD_REFERENCE);
-    expect(await lint({ cwd: "/work", steps })).toBe("no error");
+    expect(await lint({ cwd: "work", steps })).toBe("no error");
   });
 
   test("checking a task makes no folder that cwd: names", async () => {

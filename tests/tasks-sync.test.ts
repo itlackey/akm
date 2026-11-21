@@ -21,6 +21,7 @@ import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/con
 import { isSchedulerRefEnabled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult, listBlocks } from "../src/tasks/backends/cron";
 import type { SchedulerBackend } from "../src/tasks/backends/types";
+import { sandboxRowEnvironmentInline } from "./_helpers/row-environment";
 import type { Cleanup } from "./_helpers/sandbox";
 import { sandboxStashDir, sandboxXdgConfigHome, sandboxXdgStateHome, writeSandboxConfig } from "./_helpers/sandbox";
 
@@ -157,7 +158,7 @@ describe("akmTasksSync — schedule drift", () => {
     expect(result.installed).toEqual([]);
     // The crontab now carries the new schedule, not the stale one.
     expect(exec.current()).toContain(
-      `45 */6 * * * AKM_BUNDLE_DIR=${path.resolve(stashDir)} /usr/local/bin/akm task run beta --bundle stash --scheduled`,
+      `45 */6 * * * ${sandboxRowEnvironmentInline(stashDir)} /usr/local/bin/akm task run beta --bundle stash --scheduled`,
     );
     expect(exec.current()).not.toContain("0 2 * * * ");
   });
@@ -399,7 +400,7 @@ describe("akmTasksSync — schedule drift", () => {
     );
 
     expect(exec.current().match(/# akm:task \S+ BEGIN/g)).toEqual(["# akm:task alpha BEGIN"]);
-    expect(exec.current()).toContain(`0 3 * * * AKM_BUNDLE_DIR=${path.resolve(stashDir)} /usr/local/bin/akm`);
+    expect(exec.current()).toContain(`0 3 * * * ${sandboxRowEnvironmentInline(stashDir)} /usr/local/bin/akm`);
   });
 
   test("symlinks in a bundle are followed, never refused", async () => {
@@ -492,7 +493,7 @@ describe("akmTasksSync — rows written before 0.9.17-alpha.7 (`--scheduler-cont
     expect(result.failures).toEqual([]);
     expect(result.updated.sort()).toEqual(["alpha", "beta"]);
     // The descriptor's one value, the working stash, moves into the row.
-    const inline = `AKM_BUNDLE_DIR=${path.resolve(stashDir)}`;
+    const inline = sandboxRowEnvironmentInline(stashDir);
     expect(byId(listBlocks(exec.current()))).toEqual([
       {
         id: "alpha",
@@ -535,7 +536,7 @@ describe("akmTasksSync — rows written before 0.9.17-alpha.7 (`--scheduler-cont
     expect(result.failures).toEqual([]);
     expect(result.updated).toEqual(["alpha"]);
     expect(result.installed).toEqual(["beta"]);
-    const inline = `AKM_BUNDLE_DIR=${path.resolve(stashDir)}`;
+    const inline = sandboxRowEnvironmentInline(stashDir);
     expect(byId(listBlocks(exec.current()))).toEqual([
       {
         id: "alpha",
@@ -702,7 +703,7 @@ describe("akmTasksSync — rows another installation wrote", () => {
       setSchedulerRefEnabled("flat//weekly", true);
       const row = [
         "# akm:task weekly BEGIN",
-        `0 5 * * 0 AKM_BUNDLE_DIR=${path.resolve(stashDir)} /usr/local/bin/akm task run weekly --bundle flat --scheduled > /var/log/akm/weekly.log 2>&1`,
+        `0 5 * * 0 ${sandboxRowEnvironmentInline(stashDir)} /usr/local/bin/akm task run weekly --bundle flat --scheduled > /var/log/akm/weekly.log 2>&1`,
         "# akm:task weekly END",
         "",
       ].join("\n");
