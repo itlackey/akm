@@ -293,7 +293,8 @@ test("visualizations survive late responses, a changed library and a narrow wind
       await expect(figures(page)).toHaveCount(0);
       // A filter lists exactly what it finds, most read first, each asset a link to its page.
       await pick(page, "Not linked to anything");
-      await expect(figures(page).getByRole("heading", { level: 3 })).toHaveText("Not linked to anything3");
+      await expect(sideHeading(page)).toHaveText("Not linked to anything");
+      await expect(figures(page)).toContainText("3 assets");
       await expect(figures(page).locator(".read-row")).toHaveText([
         "memories/auth/f1 read",
         "memories/auth/e0 reads",
@@ -335,9 +336,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
       await expect(figures(page).getByRole("link", { name: "Compare" })).toHaveAttribute("href", /compare=.*compare=/);
       // A second filter adds what it finds to the first; unticking the first leaves the second alone.
       await pick(page, "Outdated, unread");
-      await expect(figures(page).getByRole("heading", { level: 3 }).first()).toContainText(
-        "Near-identical pairs or Outdated, unread",
-      );
+      await expect(sideHeading(page)).toHaveText("Near-identical pairs or Outdated, unread");
       await pick(page, "Near-identical pairs");
       await expect(figures(page).locator(".read-row")).toHaveText(["knowledge/deploy/bsuperseded"]);
       // Unticking the last filter shows every asset again, and the column goes with it.
@@ -359,7 +358,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
       await expect(sideHeading(page)).toHaveText("auth");
       await expect(figures(page)).toContainText("Tag in Knowledge · 1 asset");
       // The filters count the tag's assets only, and say so beside them.
-      await expect(page.getByRole("button", { name: "In auth" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Leave auth" })).toBeVisible();
       await expect(filters.locator("label", { hasText: "Knowledge" })).toHaveText("Knowledge1");
       await expect(figures(page).locator(".read-row")).toHaveText(["knowledge/auth/d1 link"]);
       // c links to d, and d nearly duplicates f: two groups, two lines.
@@ -372,7 +371,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
       await expect(sideHeading(page)).toHaveText("auth");
       await expect(figures(page)).toContainText("Tag in Memories and facts");
       // The scope is cleared from beside the filters, or with Escape.
-      await page.getByRole("button", { name: "In auth" }).click();
+      await page.getByRole("button", { name: "Leave auth" }).click();
       await expect(sideHeading(page)).toHaveCount(0);
       await mapButton(page, "auth (Knowledge): 1").click();
       await page.keyboard.press("Escape");

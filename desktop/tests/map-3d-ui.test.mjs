@@ -295,7 +295,7 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
       await side(page).getByRole("button").first().click();
       await expect(side(page).getByRole("heading", { level: 2 })).toBeVisible();
       await expect(side(page)).toContainText("Group by meaning · 5 assets");
-      const scope = page.getByRole("button", { name: /^In / });
+      const scope = page.getByRole("button", { name: /^Leave / });
       await expect(scope).toBeVisible();
       await expect(filters(page).locator("label", { hasText: "Knowledge" })).toHaveText("Knowledge5");
       await scope.click();

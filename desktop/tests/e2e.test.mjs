@@ -312,7 +312,10 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     });
     // The fixture's four searches are counted beside the ones that found nothing, and its events are in the log.
     await expect(replay.getByRole("heading", { name: /^Searches that found nothing/ })).toContainText("of 4");
-    await replay.locator("section", { hasText: "Latest events" }).getByRole("button", { name: /^Show all/ }).click();
+    await replay
+      .locator("section", { hasText: "Latest events" })
+      .getByRole("button", { name: /^Show all/ })
+      .click();
     await expect(replay.locator("section", { hasText: "Latest events" }).locator(".rows")).toContainText(
       "“missing restore steps”",
     );

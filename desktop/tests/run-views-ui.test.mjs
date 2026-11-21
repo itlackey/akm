@@ -341,9 +341,3 @@ test("Replay: You and Everyone show different figures under their own labels", {
   await replay.getByLabel("Events by").selectOption({ label: "Your events" });
   await expect(searches).toContainText("1 of 2");
 });
-  await expect(figures).toContainText(/4\s*searches/);
-  await expect(figures).toContainText(/1\s*curates/);
-  await expect(figures).toContainText(/2\s*found nothing/);
-  await replay.getByLabel("Events by").selectOption({ label: "You" });
-  await expect(figures).toContainText(/2\s*searches/);
-});
