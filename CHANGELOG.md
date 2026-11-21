@@ -70,7 +70,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Deprecated
 
-- `akm env run` and `akm secret run`: use `akm exec` (turn it on with `experimental.exec`). Both still work, print a deprecation notice and are removed in 0.11. `env run --only` and `--except` have no `exec` form.
+- `akm env run` and `akm secret run`: put the command in a script asset under `scripts/` and run it with `akm run --env <ref> scripts/<file>` or `akm run --secret <ref>:<VAR> scripts/<file>` (in a task, a step's `env:` or `secret:`). Both still work, print a deprecation notice and are removed in 0.11. `env run --only` and `--except` have no replacement: keep the variables a command needs in an env asset of their own.
 
 ### Fixed
 

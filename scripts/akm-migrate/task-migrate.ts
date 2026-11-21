@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
+import { type WorkflowFilesOfBundle, workflowFilesIn } from "../../src/commands/health/workflow-files";
 import { type AkmConfig, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { withConfigLock } from "../../src/core/config/config-io";
 import { ConfigError } from "../../src/core/errors";
@@ -332,6 +333,14 @@ function v5Status(
     .filter((file) => file.status === "blocked")
     .map((file) => `${file.filePath}: ${file.reason}${file.detail ? ` (${file.detail})` : ""}`);
   return { schemaVersion: 1, status: blockers.length > 0 ? "blocked" : pending ? "ready" : "current", blockers, files };
+}
+
+/** The workflow files left in the writable roots a named workflow file is converted in (see {@link workflowOf}). */
+export function remainingWorkflowFiles(): WorkflowFilesOfBundle[] {
+  return taskRoots(loadConfig())
+    .filter((root) => root.writable && root.layout !== "akm-task")
+    .map((root) => ({ bundle: root.root, files: workflowFilesIn(root.root) }))
+    .filter((entry) => entry.files.length > 0);
 }
 
 /** Read-only: what `apply` would convert of the named files to version 5, and what it cannot. */

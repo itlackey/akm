@@ -21,8 +21,7 @@ import {
 } from "../../src/core/config/config-sources";
 import { ConfigError } from "../../src/core/errors";
 import { resolveWritable } from "../../src/core/write-source";
-import { implicitStashDir } from "../../src/indexer/search/search-source";
-import { lockContentRootFor } from "../../src/integrations/lockfile";
+import { implicitStashDir, resolveEntryContentDir } from "../../src/indexer/search/search-source";
 
 export interface BundleRoot {
   readonly bundleId: string;
@@ -90,7 +89,9 @@ export function bundleRoots(config: AkmConfig): BundleRoot[] {
     const configuredRoot =
       source.type === "filesystem" && source.path
         ? path.resolve(expandTilde(source.path))
-        : lockContentRootFor(bundleId, source.type);
+        : source.type === "git" || source.type === "npm"
+          ? resolveEntryContentDir(source)
+          : undefined;
     if (!configuredRoot || !existingDirectory(configuredRoot)) continue;
 
     const bundleRoot = path.resolve(configuredRoot);

@@ -274,8 +274,9 @@ conversion table and lists what does not convert. `akm migrate status
 `akm migrate apply workflows/<name>.md` makes `tasks/<name>.yml` from a named
 workflow file, which stays in place, after the same check; each prose step becomes
 a `prompt:` step and each plain exec step an `exec:` step. A workflow it cannot
-convert is reported `blocked` with `guidance`, and `akm doctor` lists the
-workflow files that remain. See
+convert is reported `blocked` with `guidance`. Delete a workflow file once its
+task works; `akm doctor` and `akm migrate status` count the workflow files that
+remain, by bundle. See
 [Converting a workflow](../migration/v0.10-to-v0.11.md#converting-a-workflow).
 
 ## Task source v4

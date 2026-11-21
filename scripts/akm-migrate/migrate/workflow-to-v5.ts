@@ -12,6 +12,7 @@
 
 import crypto from "node:crypto";
 import { Document } from "yaml";
+import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import { checkWorkflowPlan, compileWorkflowSource, workflowStepInstructions } from "../../../src/workflows/compile";
 import type { WorkflowPlan, WorkflowPlanStep } from "../../../src/workflows/plan";
 import { parseReference } from "../../../src/workflows/program/expressions";
@@ -63,6 +64,9 @@ const PLAIN_SHELL_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
 const START_AGAIN = (name: string): string => `Then run \`akm migrate apply workflows/${name}.md\` again.`;
 
 /** Why a file cannot convert, and what to do about it; one entry per reason. */
+/** The workflow frontmatter keys the conversion reads; any other key has no place in a task file. */
+const CONVERTED_FRONTMATTER = new Set(["type", "description", "when_to_use", "tags", "params", "defaults", "budget", "steps"]);
+
 const STEP_GUIDANCE = {
   "unknown-reference": (name: string) =>
     `Rewrite that step's text in workflows/${name}.md so every \${...} in it names an input or an earlier step; version 5 refuses any other \${...} in a prompt and has no escape. Where the text names a shell or environment variable for the agent to use, write it without braces (\`$XDG_CACHE_HOME\`) or in words; the step stays a prompt step and needs no new step or script. ${START_AGAIN(name)}`,
@@ -179,7 +183,8 @@ export function planWorkflowToV5File(input: WorkflowToV5Input): WorkflowToV5Outc
       `Remove or rename tasks/${name}.yml, or keep it and delete workflows/${name}.md if it already is the converted task. ${START_AGAIN(name)}`,
     );
   }
-  const compiled = compileWorkflowSource(input.bytes.toString("utf8"), { path: filePath, title: name });
+  const text = input.bytes.toString("utf8");
+  const compiled = compileWorkflowSource(text, { path: filePath, title: name });
   if (!compiled.ok) {
     return block(
       "invalid-workflow",
@@ -207,6 +212,10 @@ export function planWorkflowToV5File(input: WorkflowToV5Input): WorkflowToV5Outc
   const top = options(undefined, plan.defaults, undefined);
   notes.push(...top.notes);
   if (plan.budget !== undefined) notes.push("The workflow's budget is not kept: version 5 has no token or unit budget.");
+  const unkept = Object.keys(parseFrontmatter(text).data).filter((key) => !CONVERTED_FRONTMATTER.has(key));
+  if (unkept.length > 0) {
+    notes.push(`Frontmatter not kept (${unkept.join(", ")}): a task file has no such keys.`);
+  }
 
   const known = new Set(Object.keys(plan.paramSchemas ?? {}));
   const steps: Record<string, unknown>[] = [];
