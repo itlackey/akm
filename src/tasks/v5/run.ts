@@ -512,8 +512,11 @@ async function runAttempt(
     const durationMs = Math.max(0, context.now().getTime() - begun.getTime());
     const reason = outcome.ok ? undefined : (scrub(context, outcome.reason ?? "failed") as string);
     const header = `[akm task] step=${name} kind=${kind} attempts=${outcome.attempts} ok=${outcome.ok}`;
-    lines.push(header, ...outcome.lines);
-    dbLines.push({ level: outcome.ok ? "info" : "error", line: header }, ...outcome.dbLines);
+    // Loops, not spreads: a step can print more lines than a call accepts as arguments.
+    lines.push(header);
+    for (const line of outcome.lines) lines.push(line);
+    dbLines.push({ level: outcome.ok ? "info" : "error", line: header });
+    for (const row of outcome.dbLines) dbLines.push(row);
     steps.push({
       name,
       kind,

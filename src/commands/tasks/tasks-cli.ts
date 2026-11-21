@@ -42,7 +42,7 @@ import { UsageError } from "../../core/errors";
 import type { InputFlag } from "../../execution/input-contract";
 import type { RunTaskOptions } from "../../tasks/run/task-result";
 import { TASK_RUN_BOOLEAN_FLAGS, TASK_RUN_VALUE_FLAGS } from "../../tasks/task-run-reserved-flags";
-import { parseStartFlags, type TaskV5Start } from "../../tasks/v5/flags";
+import { parseStartFlags, type TaskV5Start, taskIdInStart } from "../../tasks/v5/flags";
 import { akmTaskExplain } from "./explain";
 import {
   akmTasksAdd,
@@ -336,10 +336,12 @@ export const tasksRunCommand = defineCommand({
   },
   async run({ args, rawArgs }) {
     await runWithJsonErrors(async () => {
-      const envelope = await akmTasksRun(args.id, {
+      // A start flag before the id takes its value from the next token, which citty, not knowing the flag, reads as the id.
+      const id = taskIdInStart(rawArgs, TASK_RUN_VALUE_FLAGS) ?? args.id;
+      const envelope = await akmTasksRun(id, {
         scheduled: args.scheduled === true,
         ...(args.bundle !== undefined ? { target: args.bundle } : {}),
-        ...taskInputReaders({ path: ["task", "run"], schema: tasksRunCommand as FlagScanCommand }, rawArgs, args.id),
+        ...taskInputReaders({ path: ["task", "run"], schema: tasksRunCommand as FlagScanCommand }, rawArgs, id),
       });
       output("task-run", envelope);
       // F4: was `process.exit(envelope.exitCode)`, terminating synchronously

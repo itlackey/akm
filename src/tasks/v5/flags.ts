@@ -66,3 +66,14 @@ export function parseStartFlags(rawArgs: readonly string[]): {
     rest: withoutFlags(rawArgs, VALUE_FLAGS, BOOLEAN_FLAGS),
   };
 }
+
+/** The task id in a start's tokens: the first positional once the start flags and the values of `valueFlags` are set aside. */
+export function taskIdInStart(rawArgs: readonly string[], valueFlags: readonly string[]): string | undefined {
+  const { rest } = parseStartFlags(rawArgs);
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index] as string;
+    if (!token.startsWith("-")) return token;
+    if (!token.includes("=") && valueFlags.includes(token.slice(2))) index += 1;
+  }
+  return undefined;
+}
