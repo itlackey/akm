@@ -92,8 +92,6 @@ describe("syncMirroredRepo: ahead with nothing to fast-forward is a no-op", () =
     git(["commit", "-m", "upstream commit"], seed);
     git(["push", "origin", "main"], seed);
 
-    await expect(ensureGitMirror(repo, cachePaths, { writable: true, force: true })).rejects.toThrow(
-      /unpushed commits/,
-    );
+    await expect(ensureGitMirror(repo, cachePaths, { writable: true, force: true })).rejects.toThrow(/commits not on/);
   });
 });

@@ -12,7 +12,7 @@
 
 import { getDbPath } from "../../core/paths";
 import { heldRebuildLock } from "../../indexer/index-rebuild-lock";
-import { SEMANTIC_SEARCH_META_KEY, type SemanticSearchRecord } from "../../indexer/walk/index-context";
+import { readSemanticSearchRecord, type SemanticSearchRecord } from "../../indexer/walk/index-context";
 import { LOCAL_EMBEDDING_RUNTIME } from "../../llm/embedders/local";
 import {
   closeDatabase,
@@ -45,11 +45,11 @@ export function readSemanticSearchState(mode: string | undefined): SemanticSearc
     if (!db) return { mode };
     try {
       if (!hasCurrentEntriesTable(db)) throw new Error("index.db has no searchable entries table");
-      const raw = getMeta(db, SEMANTIC_SEARCH_META_KEY);
+      const record = readSemanticSearchRecord(db);
       return {
         mode,
         index: {
-          ...(raw ? { record: JSON.parse(raw) as SemanticSearchRecord } : {}),
+          ...(record ? { record } : {}),
           builtAt: getMeta(db, "builtAt"),
           entryCount: getEmbeddableEntryCount(db),
           embeddingCount: getEmbeddingCount(db),

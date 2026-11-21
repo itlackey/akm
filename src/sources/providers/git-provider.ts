@@ -13,13 +13,7 @@ import { getRegistryIndexCacheDir } from "../../core/paths";
 import { validateGitUrl } from "../../registry/resolve";
 import { withFreshnessCache } from "../freshness";
 import type { SyncOptions as ProviderSyncOptions, SourceProvider } from "../provider";
-import {
-  assertCleanWorktree,
-  assertNoIgnoredPathOverwrite,
-  cloneRepo,
-  inspectGitUpstream,
-  runGit,
-} from "./git-install";
+import { assertNoIgnoredPathOverwrite, assertNoLocalWork, cloneRepo, inspectGitUpstream, runGit } from "./git-install";
 import type { SourceLockData, SyncOptions } from "./install-types";
 import { sanitizeString } from "./provider-utils";
 
@@ -99,7 +93,14 @@ export function getCachePaths(
 export async function ensureGitMirror(
   repo: ParsedRepoUrl,
   cachePaths: ReturnType<typeof getCachePaths>,
-  options?: { requireRepoDir?: boolean; writable?: boolean; force?: boolean; credential?: string },
+  options?: {
+    requireRepoDir?: boolean;
+    writable?: boolean;
+    force?: boolean;
+    credential?: string;
+    /** The live checkout, named in messages when `cachePaths` is a staging copy of it. */
+    displayRepoDir?: string;
+  },
 ): Promise<void> {
   const requireRepoDir = options?.requireRepoDir === true;
   const writable = options?.writable === true;
@@ -112,8 +113,15 @@ export async function ensureGitMirror(
       fs.mkdirSync(cachePaths.rootDir, { recursive: true });
       if (writable && fs.existsSync(path.join(cachePaths.repoDir, ".git"))) {
         // Writable repo already cloned — pull instead of re-clone to preserve local changes
-        pullRepo(cachePaths.repoDir, options?.credential);
+        pullRepo(cachePaths.repoDir, options?.credential, options?.displayRepoDir);
       } else {
+        // A checkout is replaced by the clone: only one without local work may be.
+        if (fs.existsSync(path.join(cachePaths.repoDir, ".git"))) {
+          assertNoLocalWork(
+            cachePaths.repoDir,
+            `Git source checkout at ${options?.displayRepoDir ?? cachePaths.repoDir}`,
+          );
+        }
         cloneRepo(repo.cloneUrl, repo.ref, cachePaths.repoDir, writable, options?.credential);
       }
       // Touch index file to track freshness
@@ -138,6 +146,7 @@ export async function syncMirroredRepo(config: SourceConfigEntry, options?: Sync
     writable: options?.writable ?? config.writable === true,
     force: options?.force,
     credential: options?.credential,
+    displayRepoDir: options?.displayRoot,
   });
 
   const syncedAt = (options?.now ?? new Date()).toISOString();
@@ -155,24 +164,20 @@ export async function syncMirroredRepo(config: SourceConfigEntry, options?: Sync
   };
 }
 
-function pullRepo(repoDir: string, credential?: string): void {
-  assertCleanWorktree(repoDir, `Writable Git source at ${repoDir}`, "has uncommitted changes; refusing to update it.");
+function pullRepo(repoDir: string, credential?: string, displayDir = repoDir): void {
+  const subject = `Writable Git source at ${displayDir}`;
+  assertNoLocalWork(repoDir, subject, false);
   const relation = inspectGitUpstream(repoDir, credential);
   if (relation.behind > 0 && relation.upstream) {
-    if (relation.ahead > 0) {
-      throw new UsageError(`Writable Git source at ${repoDir} has unpushed commits; refusing to update it.`);
-    }
-    assertCleanWorktree(
-      repoDir,
-      `Writable Git source at ${repoDir}`,
-      "changed while its update was prepared; refusing to merge.",
-    );
-    assertNoIgnoredPathOverwrite(repoDir, relation.upstream);
+    // ahead > 0 guarantees commits the upstream does not hold, so this names them and refuses.
+    if (relation.ahead > 0) assertNoLocalWork(repoDir, subject, relation.upstream);
+    assertNoLocalWork(repoDir, subject, false);
+    assertNoIgnoredPathOverwrite(repoDir, relation.upstream, displayDir);
     const merge = runGit(["-C", repoDir, "merge", "--ff-only", "--no-overwrite-ignore", relation.upstream], {
       timeout: 120_000,
     });
     if (merge.status !== 0) {
-      throw new Error(`Failed to fast-forward ${repoDir}: ${merge.stderr?.trim() || "unknown error"}`);
+      throw new Error(`Failed to fast-forward ${displayDir}: ${merge.stderr?.trim() || "unknown error"}`);
     }
   }
 }

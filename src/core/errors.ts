@@ -45,6 +45,9 @@ export type ConfigErrorCode =
   // A connection or harness was named (a flag, an asset, a config key) that is not configured: never replaced by a default.
   | "SELECTION_NOT_CONFIGURED"
   | "INVALID_CONFIG_FILE"
+  // A git bundle's checkout holds uncommitted paths or commits that are not on its upstream, and the
+  // command would replace or delete the checkout. The work is the person's: akm names it and stops.
+  | "SOURCE_HAS_LOCAL_WORK"
   | "UNKNOWN_IMPROVE_STRATEGY"
   // Refused stashDir that would clobber a sensitive system path or the user's
   // home directory (#473). Triggered by `akm bundle create`/`akm setup` when the

@@ -4,6 +4,9 @@
 
 /** Result types shared by `akmIndex()` and its callers. */
 
+import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
+import { getMeta } from "../../storage/repositories/index-meta-repository";
+
 /**
  * Live runtime state of semantic search, computed fresh at index-finalize
  * time. `ready-js` means every entry has a vector; the name is historical (the
@@ -47,6 +50,66 @@ export interface SemanticSearchRecord {
   runtime?: string;
   /** Why semantic search is blocked or unavailable. */
   reason?: string;
+}
+
+/** A configured source `akm index` could not scan completely: its last-known-good rows were kept. */
+export interface IncompleteIndexSource {
+  /** The bundle's id. */
+  bundle: string;
+  /** The component's name in the bundle's config (`main` for the implicit one). */
+  component: string;
+  path: string;
+  /** The filesystem error that stopped the scan, or why the source could not be scanned. */
+  reason: string;
+}
+
+/** The `index_meta` key holding the {@link IncompleteIndexSource} list of the last index run. */
+export const INCOMPLETE_SOURCES_META_KEY = "incompleteSources";
+
+/**
+ * The sources the last index run could not scan, whose last-known-good rows the index still serves. Undefined when
+ * no run recorded the list (an index built before it was recorded).
+ */
+export function readIncompleteSources(db: Parameters<typeof getMeta>[0]): IncompleteIndexSource[] | undefined {
+  const raw = getMeta(db, INCOMPLETE_SOURCES_META_KEY);
+  return raw ? (JSON.parse(raw) as IncompleteIndexSource[]) : undefined;
+}
+
+/** The last index run's {@link SemanticSearchRecord} in an open index, or undefined when no run recorded one. */
+export function readSemanticSearchRecord(db: Parameters<typeof getMeta>[0]): SemanticSearchRecord | undefined {
+  const raw = getMeta(db, SEMANTIC_SEARCH_META_KEY);
+  return raw ? (JSON.parse(raw) as SemanticSearchRecord) : undefined;
+}
+
+/** What the index reports about semantic search: the recorded status, or why none can be reported. */
+export interface SemanticSearchState {
+  status: SemanticSearchRecord["status"] | "pending" | "unknown";
+  /** For `unknown`: the error reading the index. */
+  reason?: string;
+}
+
+/**
+ * The state of semantic search as the index records it, read-only. `semanticSearchMode: "off"` is `disabled`; an
+ * index that cannot be read is `unknown` with the read error; an index that never recorded a run (none built, or
+ * none since embeddings were configured) is `pending`; otherwise the record's own status.
+ */
+export function readSemanticSearchState(
+  dbPath: string | undefined,
+  mode: string | undefined,
+  options?: { busyTimeoutMs?: number },
+): SemanticSearchState {
+  if (mode === "off") return { status: "disabled" };
+  try {
+    const db = openReadonlyExistingDatabase(dbPath, options);
+    if (!db) return { status: "pending" };
+    try {
+      return { status: readSemanticSearchRecord(db)?.status ?? "pending" };
+    } finally {
+      closeDatabase(db);
+    }
+  } catch (error) {
+    return { status: "unknown", reason: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /** Canonical configured owner that disappeared or moved since the last complete scan. */

@@ -6,7 +6,7 @@ import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { validateExplicitBundleName } from "../../core/bundle-id";
 import { isRemoteUrl } from "../../core/common";
-import type { BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
+import type { AkmConfig, BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
 import { bundleEntryToSourceEntry, bundlesToSourceEntries, getSources, mutateConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { revokeSchedulerActivationsForBundle } from "../../tasks/activation-config";
@@ -168,19 +168,23 @@ function urlBundleDescriptor(
 }
 
 /**
- * Remove a stash source by URL, path, or name.
- * Match priority: URL > path > name (most specific first).
+ * The configured bundle a remove target names, or undefined.
+ * Match priority: URL > path > bundle key (name), most specific first.
  */
-export function removeStash(target: string): SourceRemoveResult {
+export function resolveBundleKey(config: AkmConfig, target: string): string | undefined {
   const isUrlTarget = isRemoteUrl(target);
-  const resolvedPath = !isUrlTarget ? path.resolve(target) : undefined;
+  let key = isUrlTarget ? bundleKeyForUrl(config, target) : undefined;
+  if (!key && !isUrlTarget) key = bundleKeyForPath(config, path.resolve(target));
+  if (!key && target in (config.bundles ?? {})) key = target;
+  return key;
+}
+
+/** Remove a stash source by URL, path, or name ({@link resolveBundleKey}). */
+export function removeStash(target: string): SourceRemoveResult {
   let result: SourceRemoveResult | undefined;
   mutateConfig((config) => {
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
-    // Match priority: URL > path > bundle key (name).
-    let key = isUrlTarget ? bundleKeyForUrl(config, target) : undefined;
-    if (!key && resolvedPath) key = bundleKeyForPath(config, resolvedPath);
-    if (!key && target in bundles) key = target;
+    const key = resolveBundleKey(config, target);
     if (!key) {
       result = { sources: getSources(config), removed: false, message: "No matching source found" };
       return config;
