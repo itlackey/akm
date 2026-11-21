@@ -4,11 +4,14 @@
 
 // Integration: reads real isolated state/index databases, without network or harness probes.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { akmHealth } from "../../../src/commands/health";
 import { buildPerRunSummaries } from "../../../src/commands/health/task-runs";
 import { recordImproveRunResult, recordTerminatedImproveRun } from "../../../src/commands/improve/improve-result-file";
+import { processIdentity } from "../../../src/core/file-lock";
 import type { AkmImproveResult } from "../../../src/core/improve-types";
 import { getDbPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
@@ -42,7 +45,7 @@ const health = (since = at(now - DAY)) =>
     akmHealth({ since, now: () => now, readOnly: true, probe: false, groupBy: "run" }),
   );
 
-function task(taskId: string, startedAt: number, status = "active"): void {
+function task(taskId: string, startedAt: number, status = "active", owner?: object): void {
   const row: TaskHistoryRow = {
     task_id: taskId,
     status,
@@ -52,7 +55,12 @@ function task(taskId: string, startedAt: number, status = "active"): void {
     log_path: null,
     target_kind: "shell",
     target_ref: null,
-    metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 10_000, detail: null }),
+    metadata_json: JSON.stringify({
+      metadataVersion: 2,
+      durationMs: 10_000,
+      detail: null,
+      ...(owner ? { owner } : {}),
+    }),
   };
   const db = openStateDatabase();
   try {
@@ -79,8 +87,17 @@ function improve(id: string, startedAt: number, overrides: Partial<AkmImproveRes
 
 describe("health reporting correctness", () => {
   test("still-active runs do not disappear outside the history lookback", async () => {
-    task("stuck", now - 2 * DAY);
-    task("recent", now - 60_000);
+    // `stuck`'s akm process is gone; `recent` is owned by this live process. Age decides neither.
+    const exited = spawnSync(process.execPath, ["-e", "0"]);
+    const host = os.hostname();
+    const bootId = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    task("stuck", now - 2 * DAY, "active", { pid: exited.pid, host, bootId, startTime: "1" });
+    task("recent", now - 60_000, "active", {
+      pid: process.pid,
+      host,
+      bootId,
+      startTime: processIdentity(process.pid)?.startTime,
+    });
     task("old-completed", now - 3 * DAY, "completed");
     const short = await health();
     const wide = await health(at(now - 7 * DAY));

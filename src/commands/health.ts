@@ -42,8 +42,10 @@ import { collectConfigSkewAdvisory } from "./health/config-skew";
 import { runConnectionsAndHarnessesCheck } from "./health/connections-and-harnesses-check";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
 import { collectEgressAdvisory, type EgressConfigView } from "./health/egress";
-import { emptyImproveMetrics, roundRate } from "./health/improve-metrics";
+import { countTaskRuns, emptyImproveMetrics, roundRate, type TaskRunCounts } from "./health/improve-metrics";
+import { collectIndexSourcesCheck } from "./health/index-sources";
 import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "./health/llm-usage";
+import { collectOpencodeMajorAdvisory } from "./health/opencode-major";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
 import { readSemanticSearchState } from "./health/semantic-search-check";
@@ -232,6 +234,8 @@ interface TaskHistoryPhase {
   taskRowCount: number;
   stuckActiveRuns: number;
   stuckActiveTasks: { taskId: string; ageMs: number }[];
+  unverifiedActiveTasks: { taskId: string; ageMs: number }[];
+  taskRuns: TaskRunCounts;
   taskFailRate: number;
   worstTaskFailRate: { taskId: string; rate: number; rows: number } | null;
   agentFailureRate: number;
@@ -310,14 +314,9 @@ function gatherTaskHistoryPhase(
   const stateDbIntegrity = runStateDbIntegrityCheck(stateDbPath);
   const stateDbFreelist = getStateDbFreelistInfo(stateDbPath);
 
-  // A marked "command" row or a legacy (unmarked) "prompt"
-  // row is the agent/LLM arm; an unmarked "command" row is the legacy
-  // native shell/script arm and must not be counted here (see
-  // isAgentTaskHistoryRow's header comment, referenced from
-  // computeTaskWindowRates, for the full mapping).
   const taskRows = queryTaskHistory(db, { since });
   // Still-active runs must not age out of the historical reporting window.
-  const rates = computeTaskWindowRates(taskRows, now, queryTaskHistory(db, { status: "active" }));
+  const rates = computeTaskWindowRates(taskRows, queryTaskHistory(db, { status: "active" }));
 
   return {
     tableNames,
@@ -328,6 +327,8 @@ function gatherTaskHistoryPhase(
     taskRowCount: taskRows.length,
     stuckActiveRuns: rates.stuckActiveRuns,
     stuckActiveTasks: dedupeStuckActiveTasks(rates.stuckActiveRows, now),
+    unverifiedActiveTasks: dedupeStuckActiveTasks(rates.unverifiedActiveRows, now),
+    taskRuns: countTaskRuns(taskRows),
     taskFailRate: rates.taskFailRate,
     worstTaskFailRate: computeWorstTaskFailRate(taskRows),
     agentFailureRate: rates.agentFailureRate,
@@ -434,6 +435,20 @@ function gatherAncillaryAdvisories(
 
   const workflowFiles = collectWorkflowFilesAdvisory(options.stashDir);
   if (workflowFiles) advisories.push(workflowFiles);
+
+  try {
+    const opencodeMajor = collectOpencodeMajorAdvisory();
+    if (opencodeMajor) advisories.push(opencodeMajor);
+  } catch (error) {
+    advisories.push({
+      name: "opencode-major",
+      kind: "deterministic",
+      confidence: "high",
+      status: "unknown",
+      reason: "blocked",
+      message: `Could not look for OpenCode 1 harnesses: ${error instanceof Error ? error.message : String(error)}`,
+    });
+  }
 
   // #896: report the data dir's total size and its largest top-level
   // subdirectory, so a disk-usage blowup (e.g. unpruned migration snapshot
@@ -596,7 +611,7 @@ function resolveWindowComparePhase(
     windowResults = windowSpecs.map((spec) => {
       const winSince = parseHealthSince(spec.since);
       const winUntil = spec.until ? parseHealthSince(spec.until) : new Date(now()).toISOString();
-      const bundle = buildWindowMetrics(db, stateDbPath, winSince, winUntil, now, options.readOnly === true);
+      const bundle = buildWindowMetrics(db, stateDbPath, winSince, winUntil, options.readOnly === true);
       return {
         name: spec.name,
         since: winSince,
@@ -816,6 +831,9 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       taskFailRate: taskHistory.taskFailRate,
       stuckActiveRuns: taskHistory.stuckActiveRuns,
       stuckActiveTasks: taskHistory.stuckActiveTasks,
+      unverifiedActiveTasks: taskHistory.unverifiedActiveTasks,
+      taskRuns: taskHistory.taskRuns,
+      indexSources: collectIndexSourcesCheck(),
       worstTaskFailRate: taskHistory.worstTaskFailRate,
       agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       sessionExtractionLedger,

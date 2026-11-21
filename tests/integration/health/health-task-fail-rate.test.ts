@@ -90,10 +90,11 @@ describe("task-fail-rate advisory (C2)", () => {
     expect(advisory.status).toBe("pass");
   });
 
-  test("stays pass when no cron tasks ran in the window", async () => {
+  test("is unknown (idle), not pass, when no task ran in the window", async () => {
     const result = await akmHealth({ since: "7d" });
     const advisory = findCheck(result.advisories, "task-fail-rate");
-    expect(advisory.status).toBe("pass");
+    expect(advisory.status).toBe("unknown");
+    expect(advisory.reason).toBe("idle");
   });
 });
 

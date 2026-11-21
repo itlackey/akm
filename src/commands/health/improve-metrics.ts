@@ -21,50 +21,85 @@ export function roundRate(value: number): number {
 }
 
 /**
- * `task_history.metadata_json`'s `detail` field, decoded and skip-and-warn on
- * corruption instead of throwing (mirrors `listStateProposals`).
- * `decodeTaskHistoryMetadata` already tolerates legacy/additive shapes; only
- * genuine corruption reaches this catch, and a corrupt row must degrade the
- * metric (excluded, not fatal) rather than abort the whole `akm health`
- * computation.
+ * `task_history.metadata_json`, decoded; a corrupt row is skipped with a warning (it degrades the metric, never aborts
+ * `akm health`, mirrors `listStateProposals`). `decodeTaskHistoryMetadata` already tolerates legacy/additive shapes;
+ * only genuine corruption reaches this catch.
  */
-export function taskFailureDetail(row: TaskHistoryRow): Record<string, unknown> | undefined {
+function rowMetadata(row: TaskHistoryRow): ReturnType<typeof decodeTaskHistoryMetadata> | undefined {
   try {
-    return decodeTaskHistoryMetadata(row.metadata_json).detail ?? undefined;
+    return decodeTaskHistoryMetadata(row.metadata_json);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(
-      `[akm] Skipping unparseable task_history row in agent-failure-rate (task_id=${row.task_id}, started_at=${row.started_at}): ${message}`,
+      `[akm] Skipping unparseable task_history row in health metrics (task_id=${row.task_id}, started_at=${row.started_at}): ${message}`,
     );
     return undefined;
   }
 }
 
-/**
- * `akm health`'s `agentFailureRate` predicate: true for a `task_history` row
- * that represents a prepared command (agent/LLM) result. `target_kind` is
- * read in the current (post-D8) vocabulary — the
- * `025-task-history-vocabulary-backfill` state migration rewrites every
- * legacy-vocabulary row before this ever runs against it, so a `"command"`
- * row here is unambiguously the agent/LLM arm.
- */
-export function isAgentTaskHistoryRow(row: TaskHistoryRow): boolean {
-  return row.target_kind === "command";
+/** The runs of `task-fail-rate`'s window, by what started them (`trigger` in the row's metadata). */
+export interface TaskRunCounts {
+  runs: number;
+  tasks: number;
+  scheduled: number;
+  manual: number;
+  /** Rows written before the trigger was recorded. */
+  unrecorded: number;
+}
+
+/** The runs of `rows` by what started them, and how many distinct tasks they belong to. */
+export function countTaskRuns(rows: readonly TaskHistoryRow[]): TaskRunCounts {
+  const counts: TaskRunCounts = {
+    runs: rows.length,
+    tasks: new Set(rows.map((row) => row.task_id)).size,
+    scheduled: 0,
+    manual: 0,
+    unrecorded: 0,
+  };
+  for (const row of rows) {
+    const trigger = rowMetadata(row)?.trigger;
+    if (trigger === "schedule") counts.scheduled += 1;
+    else if (trigger === "manual") counts.manual += 1;
+    else counts.unrecorded += 1;
+  }
+  return counts;
+}
+
+/** One agent dispatch recorded in task history; `reason` is set when it failed. */
+export interface AgentDispatch {
+  reason?: string;
 }
 
 /**
- * #943: reason-value breakdown for a set of agent (command-kind) task
- * failure rows — how much of the observed failures are `timeout` vs
- * `non_zero_exit` vs `spawn_failed` etc., so `akm health`'s `task-fail-rate`
- * advisory can say "timeout-dominant" from data rather than log grep. A
- * reason-per-row read failure (already warned by {@link taskFailureDetail})
- * still counts under `"unknown"` rather than being dropped, so the total
- * always equals `agentFailures.length`.
+ * The agent dispatches `akm health` counts for `agentFailureRate`: every version 4 `command` row (the dispatch is the
+ * row; it failed when `detail.reason` is set) and every version 5 step that recorded an `agent` fact (it failed when
+ * `agent.reason` is set). A row written before the fact was recorded holds no dispatch: it is unknown, not a success.
  */
-export function countAgentFailureReasons(agentFailures: readonly TaskHistoryRow[]): Record<string, number> {
+export function agentDispatches(rows: readonly TaskHistoryRow[]): AgentDispatch[] {
+  const dispatches: AgentDispatch[] = [];
+  for (const row of rows) {
+    const metadata = rowMetadata(row);
+    if (!metadata) continue;
+    if (row.target_kind === "command") {
+      const reason = metadata.detail?.reason;
+      dispatches.push(typeof reason === "string" && reason.length > 0 ? { reason } : {});
+    }
+    for (const step of metadata.steps ?? []) {
+      if (step.agent) dispatches.push(step.agent.reason ? { reason: step.agent.reason } : {});
+    }
+  }
+  return dispatches;
+}
+
+/**
+ * #943: reason-value breakdown for the failed agent dispatches — how many are `timeout` vs `non_zero_exit` vs
+ * `parse_error` etc., so `akm health`'s `task-fail-rate` advisory can say "timeout-dominant" from data rather than log
+ * grep. The total equals the number of failed dispatches the rate counts.
+ */
+export function countAgentFailureReasons(dispatches: readonly AgentDispatch[]): Record<string, number> {
   const counts: Record<string, number> = {};
-  for (const row of agentFailures) {
-    const reason = String(taskFailureDetail(row)?.reason ?? "unknown");
+  for (const { reason } of dispatches) {
+    if (reason === undefined) continue;
     counts[reason] = (counts[reason] ?? 0) + 1;
   }
   return counts;

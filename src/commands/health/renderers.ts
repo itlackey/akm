@@ -24,18 +24,21 @@
  */
 
 import { registerMdRenderer } from "../../output/render-registry";
-import { renderRunsDetailMd, renderWindowCompareMd } from "./md-report";
+import { renderChecksMd, renderPendingProposalsMd, renderRunsDetailMd, renderWindowCompareMd } from "./md-report";
 import type { AkmHealthResult } from "./types-result";
 
 function isHealthResult(value: unknown): value is AkmHealthResult {
   return value !== null && typeof value === "object" && "status" in value;
 }
 
+/** Each part the result holds, in order, under its heading. */
 registerMdRenderer("health", (result) => {
   if (!isHealthResult(result)) return null;
+  const sections: [string, string][] = [["Checks", renderChecksMd([...result.hardChecks, ...result.advisories])]];
   if (result.windows && result.windows.length > 0) {
-    return renderWindowCompareMd(result.windows, result.deltas);
+    sections.push(["Window comparison", renderWindowCompareMd(result.windows, result.deltas)]);
   }
-  if (result.runs) return renderRunsDetailMd(result.runs);
-  return null;
+  if (result.runs) sections.push(["Runs", renderRunsDetailMd(result.runs)]);
+  if (result.report) sections.push(["Pending proposals", renderPendingProposalsMd(result.report.pendingProposals)]);
+  return sections.map(([heading, body]) => `## ${heading}\n\n${body}`).join("\n\n");
 });

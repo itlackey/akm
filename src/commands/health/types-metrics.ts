@@ -9,8 +9,8 @@ export interface HealthMetrics {
   agentFailureRate: number;
   /**
    * #943: reason-value breakdown behind {@link agentFailureRate} — how many
-   * command-task failures in the window carry each `detail.reason` value
-   * (`timeout`, `non_zero_exit`, `spawn_failed`, …; see `AgentFailureReason`
+   * agent dispatches in the window carry each reason (a version 4 command row's `detail.reason`, a version 5 step's `agent.reason`)
+   * (`timeout`, `non_zero_exit`, `parse_error`, …; see `AgentFailureReason`
    * in `src/integrations/agent/spawn.ts`).
    */
   agentFailureReasonCounts: Record<string, number>;

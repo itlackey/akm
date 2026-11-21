@@ -228,7 +228,7 @@ describe("tasks run attempt observability", () => {
     try {
       const rows = getTaskHistoryRuns(stateDb, "missing-after-success");
       expect(rows.map((row) => row.status)).toEqual(["failed", "completed"]);
-      expect(computeTaskWindowRates(rows, Date.now).taskFailRate).toBe(0.5);
+      expect(computeTaskWindowRates(rows).taskFailRate).toBe(0.5);
     } finally {
       stateDb.close();
     }
@@ -509,7 +509,7 @@ describe("abandoned task attempts", () => {
     const stateDb = openStateDatabase();
     const rows = getTaskHistoryRuns(stateDb, "crashed");
     stateDb.close();
-    const rates = computeTaskWindowRates(rows, Date.now);
+    const rates = computeTaskWindowRates(rows);
     expect(rates.taskFailRate).toBe(0);
     expect(rates.stuckActiveRuns).toBe(0);
   });
