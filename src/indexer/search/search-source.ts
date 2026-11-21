@@ -146,8 +146,9 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
   for (const entry of configuredEntries) {
     if (entry.enabled === false) continue;
     const component = bundleComponentConfig(config.bundles?.[entry.name ?? ""]);
-    const contentRoot = resolveEntryContentDir(entry);
-    if (contentRoot == null) {
+    const resolvedContent = resolveEntryContent(entry);
+    if ("error" in resolvedContent) {
+      if (resolvedContent.warning) warn(resolvedContent.warning);
       const unresolvedPath = path.join(
         getUnresolvedSourcesDir(implicitStash ?? process.cwd()),
         entry.name ?? entry.type,
@@ -158,11 +159,12 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
         component?.writable ?? resolveWritable(entry),
         entry.type,
         component?.adapter,
-        { reason: "the source has no materialized content directory" },
+        { reason: resolvedContent.error },
         entry.name === config.defaultBundle,
       );
       continue;
     }
+    const contentRoot = resolvedContent.dir;
     const dir = path.resolve(contentRoot, component?.root ?? ".");
     if (!isWithin(dir, contentRoot)) {
       warn(`Warning: component root "${component?.root}" escapes bundle "${entry.name}"; skipping source.`);
@@ -207,6 +209,16 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
  * so it stays here.
  */
 export function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
+  const resolved = resolveEntryContent(entry);
+  if ("error" in resolved) {
+    if (resolved.warning) warn(resolved.warning);
+    return undefined;
+  }
+  return resolved.dir;
+}
+
+/** The entry's content directory, or the provider's own reason there is none. */
+function resolveEntryContent(entry: SourceConfigEntry): { dir: string } | { error: string; warning?: string } {
   // §10.2 (WI-8.5) desired/resolved split: a git/npm bundle's desired config
   // carries only the source LOCATOR, not the materialized cache root — the
   // resolved root lives in the lock (`localRoot`). Resolve from there first via
@@ -217,43 +229,39 @@ export function resolveEntryContentDir(entry: SourceConfigEntry): string | undef
   // lock entry exists (for example while a configured source is being
   // materialized for the first time).
   const localRoot = lockContentRootFor(entry.name, entry.type);
-  if (localRoot != null) return localRoot;
+  if (localRoot != null) return { dir: localRoot };
 
+  const label = entry.name ?? entry.url ?? entry.path;
   const factory = resolveSourceProviderFactory(entry.type);
-  if (!factory) return undefined;
+  if (!factory) return { error: `no source provider is registered for type "${entry.type}"` };
 
   let provider: import("../../sources/provider").SourceProvider;
   try {
     provider = factory(entry);
   } catch (err) {
-    warn(
-      `Warning: failed to construct ${entry.type} source provider for "${entry.name ?? entry.url ?? entry.path}": ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-    return undefined;
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      error: message,
+      warning: `Warning: failed to construct ${entry.type} source provider for "${label}": ${message}`,
+    };
   }
 
   let dir: string;
   try {
     dir = provider.path();
   } catch (err) {
-    warn(
-      `Warning: failed to resolve ${entry.type} source path for "${entry.name ?? entry.url ?? entry.path}": ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-    return undefined;
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      error: message,
+      warning: `Warning: failed to resolve ${entry.type} source path for "${label}": ${message}`,
+    };
   }
 
   // Git providers expose the cloned repo root as their path. The akm content
   // layout puts indexable files under `<repo>/content/`, so the walker needs
   // that subdirectory. This is a content-layout convention, not a provider
   // capability — keep it here.
-  if (entry.type === "git") {
-    return resolveGitContentRoot(dir);
-  }
-  return dir;
+  return { dir: entry.type === "git" ? resolveGitContentRoot(dir) : dir };
 }
 
 /**

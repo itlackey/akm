@@ -115,6 +115,44 @@ describe("an unresolved source", () => {
   }, 60_000);
 });
 
+describe("an unresolved source reports the provider's own error", () => {
+  test("an invalid git URL is unknown, with the URL error as the reason", async () => {
+    saveConfig({ semanticSearchMode: "off", bundles: { broken: { git: "not a url" } } });
+
+    const result = await akmIndex({
+      stashDir: storage.stashDir,
+      hydrateSources: false,
+      persistDetectedAdapters: false,
+    });
+
+    const broken = result.incompleteSources.find((source) => source.bundle === "broken");
+    expect(broken?.path).toBe("unknown");
+    expect(broken?.reason).toContain("Invalid git URL");
+  }, 60_000);
+
+  test("a recorded but never-installed npm bundle is never walked as a relative path", async () => {
+    const cwd = path.join(storage.root, "cwd");
+    const decoy = path.join(cwd, "npm:left-pad", "knowledge");
+    fs.mkdirSync(decoy, { recursive: true });
+    fs.writeFileSync(path.join(decoy, "decoy.md"), "---\ndescription: decoy\n---\n\n# Decoy\n");
+    saveConfig({ semanticSearchMode: "off", bundles: { pad: { npm: "npm:left-pad" } } });
+
+    const previous = process.cwd();
+    process.chdir(cwd);
+    let result: Awaited<ReturnType<typeof akmIndex>>;
+    try {
+      result = await akmIndex({ stashDir: storage.stashDir, hydrateSources: false, persistDetectedAdapters: false });
+    } finally {
+      process.chdir(previous);
+    }
+
+    expect(result.totalEntries).toBe(0);
+    const pad = result.incompleteSources.find((source) => source.bundle === "pad");
+    expect(pad?.path).toBe("unknown");
+    expect(pad?.reason).toContain("akm bundle update");
+  }, 60_000);
+});
+
 describe("the adapter-skip warning", () => {
   function narrowAdapter(): void {
     const config = loadConfig();
