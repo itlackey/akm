@@ -83,7 +83,7 @@ const DEPRECATIONS: readonly Deprecation[] = [
   { path: ["show"], flag: "--context", value: "lead", use: "`--lead`" },
   { path: ["show"], flag: "--max-chars", use: "`--max-tokens`" },
   { path: ["lint"], flag: "--auto-fix", use: "`--fix`" },
-  { path: ["migrate", "apply"], flag: "--dry-run", use: "`akm migrate status`" },
+  { path: ["migrate", "apply"], flag: "--dry-run", use: "`akm migrate status [<file>...]`" },
   {
     path: ["hints"],
     flag: "--detail",

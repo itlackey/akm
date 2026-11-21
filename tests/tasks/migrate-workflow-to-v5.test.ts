@@ -8,10 +8,11 @@
  * and reported with what to change. `akm doctor` lists the workflow files that remain.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { main } from "../../scripts/akm-migrate/main";
 import { applyTaskFilesV5Migration, inspectTaskFilesV5Migration } from "../../scripts/akm-migrate/task-migrate";
 import { collectWorkflowFilesAdvisory } from "../../src/commands/health/workflow-files";
 import { resetConfigCache } from "../../src/core/config/config";
@@ -101,6 +102,21 @@ describe("a prose workflow", () => {
     expect(read(file)).toBe(before);
     const document = await checkTaskV5({ ref: "tasks/weekly", bundle: { name: "stash", dir: storage.stashDir } });
     expect(document.steps.map((step) => step.name)).toEqual(["collect", "write"]);
+  });
+
+  test("`akm-migrate status <workflow>` reports the conversion and writes nothing", async () => {
+    const file = workflow("weekly", WEEKLY);
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await main(["status", file]);
+      const plan = JSON.parse(String(log.mock.calls[0]?.[0]));
+      expect(plan.taskFilesV5).toEqual([
+        expect.objectContaining({ filePath: file, status: "converted", taskFile: taskFile("weekly") }),
+      ]);
+    } finally {
+      log.mockRestore();
+    }
+    expect(fs.existsSync(taskFile("weekly"))).toBe(false);
   });
 
   test("keeps its description, tags, lock, inputs, defaults, step options and expected keys", async () => {
@@ -197,7 +213,7 @@ describe("a workflow that cannot convert", () => {
     expect(result.detail).toContain("step fetch");
     expect(result.detail).toContain("${XDG_CACHE_HOME:-$HOME/.cache}");
     expect(result.guidance).toContain("every ${...} in it names an input or an earlier step");
-    expect(result.guidance).toContain("script asset under scripts/");
+    expect(result.guidance).toContain("shell or environment variables into a script asset under scripts/");
     expect(result.guidance).toContain("$AKM_TASK_STATE");
     expect(result.guidance).toContain("akm migrate apply workflows/curate.md");
     expect(status.status).toBe("blocked");

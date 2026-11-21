@@ -236,7 +236,6 @@ describe("a command takes only the positionals it declares", () => {
 
   test.each([
     ["a command that writes", ["backups", "prune", "old"]],
-    ["a migration", ["migrate", "status", "now"]],
     ["a nested leaf", ["doctor", "metrics", "usage", "extra"]],
     ["a leaf under a group that takes a positional", ["improve", "report", "extra"]],
     ["a subcommand only `doctor metrics` has", ["metrics", "usage"]],
