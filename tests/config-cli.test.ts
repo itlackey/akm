@@ -87,16 +87,11 @@ describe("config CLI helpers", () => {
     expect(updated.connections?.lab?.chat_template_kwargs).toEqual({ enable_thinking: false });
   });
 
-  test("setConfigValue warns and stores an unrecognized retired key like sources instead of rejecting it (#37)", () => {
+  test("setConfigValue refuses a retired key like sources, as config get and unset do (#37)", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    let result!: ReturnType<typeof setConfigValue>;
-    const warnings = captureWarnings(() => {
-      result = setConfigValue(base, "sources", '[{"type":"website","url":"https://example.com","writable":true}]');
-    });
-    expect((result as unknown as Record<string, unknown>).sources).toEqual([
-      { type: "website", url: "https://example.com", writable: true },
-    ]);
-    expect(warnings.some((w) => w.includes("sources") && w.includes("not a known config key"))).toBe(true);
+    expect(() =>
+      setConfigValue(base, "sources", '[{"type":"website","url":"https://example.com","writable":true}]'),
+    ).toThrow("Unknown config key: sources");
   });
 
   test("setConfigValue rejects writable non-filesystem bundles through config CLI", () => {
@@ -244,14 +239,18 @@ describe("config CLI helpers", () => {
     expect(withTimeout.connections?.local?.timeoutMs).toBe(5000);
   });
 
-  test("setConfigValue warns and stores a key not in the schema instead of rejecting it (#16)", () => {
+  test("setConfigValue refuses a key not in the schema, as config get and unset do (B10-46)", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    let result!: ReturnType<typeof setConfigValue>;
-    const warnings = captureWarnings(() => {
-      result = setConfigValue(base, "totally.unknown.path", "x");
-    });
-    expect((result as unknown as { totally?: { unknown?: { path?: string } } }).totally?.unknown?.path).toBe("x");
-    expect(warnings.some((w) => w.includes("totally.unknown.path"))).toBe(true);
+    expect(() => setConfigValue(base, "totally.unknown.path", "x")).toThrow("Unknown config key: totally.unknown.path");
+    expect(() => getConfigValue(base, "totally.unknown.path")).toThrow("Unknown config key");
+    expect(() => unsetConfigValue(base, "totally.unknown.path")).toThrow("Unknown config key");
+  });
+
+  test("unsetConfigValue removes a key the file holds but the schema does not know, so an older akm's key can be cleaned up (B10-46)", () => {
+    const written = { configVersion: "0.9.0", semanticSearchMode: "auto", fooBar: 1 } as unknown as AkmConfig;
+    const cleaned = unsetConfigValue(written, "fooBar") as unknown as Record<string, unknown>;
+    expect("fooBar" in cleaned).toBe(false);
+    expect(cleaned.semanticSearchMode).toBe("auto");
   });
 
   test("setConfigValue rejects non-integer embedding dimension in JSON", () => {
@@ -404,16 +403,11 @@ describe("unknown-key hint stays in sync with schema (#460)", () => {
 // #462 strict typo-catching on source/registry entries: unknown fields are now
 // preserved rather than rejected. Known fields are still type-validated.
 describe("registries/sources tolerate unknown fields at set time (lenient policy)", () => {
-  test("set sources warns and stores instead of rejecting — the key retired with the 0.9.0 bundles cutover (#37/#16)", () => {
+  test("set sources is refused — the key retired with the 0.9.0 bundles cutover (#37/#16)", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    let result!: ReturnType<typeof setConfigValue>;
-    const warnings = captureWarnings(() => {
-      result = setConfigValue(base, "sources", '[{"type":"git","name":"x","url":"https://example.com/r.git"}]');
-    });
-    expect((result as unknown as Record<string, unknown>).sources).toEqual([
-      { type: "git", name: "x", url: "https://example.com/r.git" },
-    ]);
-    expect(warnings.some((w) => w.includes("sources"))).toBe(true);
+    expect(() =>
+      setConfigValue(base, "sources", '[{"type":"git","name":"x","url":"https://example.com/r.git"}]'),
+    ).toThrow("Unknown config key: sources");
   });
 
   test("set registries tolerates and preserves an unknown field on a registry entry", () => {

@@ -150,6 +150,7 @@ export function info(...args: unknown[]): void {
  * Drop-in replacement for console.warn() across the codebase.
  */
 export function warn(...args: unknown[]): void {
+  if (suppressedScopes > 0) return;
   if (sinkOverride) {
     sinkOverride("warn", args);
     return;
@@ -162,12 +163,27 @@ export function warn(...args: unknown[]): void {
 
 const warnedOnceKeys = new Set<string>();
 
+let suppressedScopes = 0;
+
+/**
+ * Run `fn` with `warn` and `warnOnce` emitting nothing anywhere (stderr, log file, sink) and `warnOnce` keeping its
+ * keys, so a later call in the same process still warns. For a read nobody asked for.
+ */
+export function withWarningsSuppressed<T>(fn: () => T): T {
+  suppressedScopes++;
+  try {
+    return fn();
+  } finally {
+    suppressedScopes--;
+  }
+}
+
 /**
  * `warn()` at most once per process for a given `key`. For diagnostics that
  * would otherwise repeat on every read of the same bad row or value.
  */
 export function warnOnce(key: string, ...args: unknown[]): void {
-  if (warnedOnceKeys.has(key)) return;
+  if (suppressedScopes > 0 || warnedOnceKeys.has(key)) return;
   warnedOnceKeys.add(key);
   warn(...args);
 }

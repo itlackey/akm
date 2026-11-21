@@ -300,7 +300,7 @@ describe("the migrator step over configured bundles", () => {
       expect(applied).toMatchObject({
         status: "current",
         applied: 2,
-        taskFiles: { changed: 0, skipped: 2, blocked: 0 },
+        taskFiles: { changed: 2, skipped: 0, blocked: 0 },
       });
       const backupsRoot = path.join(getDataDir(), "backups", "tasks");
       expect(path.dirname(applied.backupPath as string)).toBe(backupsRoot);

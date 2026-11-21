@@ -381,7 +381,7 @@ describe("0.9 config contract", () => {
     });
     const named = warnings.filter((w) => w.includes("index.metadataEnhance"));
     expect(named).toHaveLength(1);
-    expect(named[0]).toContain("dropped by `akm migrate apply`");
+    expect(named[0]).toContain(`remove it from ${getConfigPath()}`);
 
     // An unrelated ordinary write (`akm config set`, the adapter-detection
     // persist `akm index` does) is not the cleanup path — it must not
@@ -406,7 +406,7 @@ describe("0.9 config contract", () => {
     });
     const named = warnings.filter((w) => w.includes("feedback.allowedFailureModes"));
     expect(named).toHaveLength(1);
-    expect(named[0]).toContain("dropped by `akm migrate apply`");
+    expect(named[0]).toContain(`remove it from ${getConfigPath()}`);
 
     // An ordinary write keeps it; only `akm migrate apply` removes it.
     mutateConfig((current) => ({ ...current, archiveRetentionDays: 30 }));

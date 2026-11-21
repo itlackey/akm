@@ -147,8 +147,10 @@ export function applyTaskFilesMigration(): TaskFilesMigrationStatus {
     if (before.result.taskFiles.changed === 0) return before.result;
     const backupPath = path.join(getDataDir(), "backups", "tasks", `${Date.now()}-${randomUUID()}`);
     const applied = applyTaskFilesPlan(before.plan, { backupRoot: backupPath });
+    // The files are those the run rewrote (with their hashes); status and blockers are what the files are now.
     return {
       ...inspectCurrent().result,
+      taskFiles: before.result.taskFiles,
       backupPath,
       applied: applied.changed.length,
       ...(applied.conflicts.length > 0 ? { conflicts: [...applied.conflicts] } : {}),

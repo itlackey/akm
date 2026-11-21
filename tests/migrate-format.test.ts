@@ -81,7 +81,7 @@ test("apply rewrites the v2 file straight to task source v4 under one backup", a
     expect(result).toMatchObject({
       status: "current",
       applied: 1,
-      taskFiles: { changed: 0, skipped: 1, blocked: 0 },
+      taskFiles: { changed: 1, skipped: 0, blocked: 0, files: [{ filePath: taskPath, status: "changed" }] },
     });
     expect(fs.existsSync(result.backupPath)).toBe(true);
     // The file lands on task source v4 in one pass — the planner chains

@@ -30,6 +30,7 @@ import { configGet, configSet, configUnset, unknownKeyHint } from "../core/confi
 import { isEnvReference } from "../core/config/schema/primitives";
 import { UsageError } from "../core/errors";
 import { getConfigPath } from "../core/paths";
+import { isInferredSecretName } from "../core/redaction";
 import { formatRegistryUrl } from "../core/registry-url";
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -79,16 +80,23 @@ export function listConfig(config: AkmConfig): Record<string, unknown> {
   return redactConfigValue({ ...DEFAULT_CONFIG, ...config }) as Record<string, unknown>;
 }
 
+/** A key whose string value is a credential: a name akm infers as secret, or an HTTP credential header. */
+function isCredentialKey(key: string): boolean {
+  return isInferredSecretName(key) || /^(?:proxy-)?authorization$/i.test(key);
+}
+
+/** A credential's value is never shown; an environment reference to it is (it names where the value lives). */
 function redactConfigValue(value: unknown, path: string[] = []): unknown {
-  if (path.at(-1) === "apiKey" && typeof value === "string" && !isEnvReference(value)) return undefined;
+  const key = path.at(-1);
+  if (typeof value === "string" && key !== undefined && isCredentialKey(key) && !isEnvReference(value))
+    return undefined;
   if (typeof value === "string" && isRegistryUrlPath(path)) return formatRegistryUrl(value);
   if (Array.isArray(value)) return value.map((child, index) => redactConfigValue(child, [...path, String(index)]));
   if (!value || typeof value !== "object") return value;
   const result: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (key !== "apiKey" || (typeof child === "string" && isEnvReference(child))) {
-      result[key] = redactConfigValue(child, [...path, key]);
-    }
+  for (const [name, child] of Object.entries(value as Record<string, unknown>)) {
+    const redacted = redactConfigValue(child, [...path, name]);
+    if (redacted !== undefined || child === undefined) result[name] = redacted;
   }
   return result;
 }
