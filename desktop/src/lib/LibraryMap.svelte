@@ -12,39 +12,30 @@
   import { api, apiState } from "./client";
   import {
     buildOverview,
-    type Chosen,
     DAY,
-    depthText,
-    FACETS,
-    type Facet,
-    facetCounts,
-    filtered,
     firstProblem,
+    flatPlace,
     groupFacts,
     groupJoins,
     groupsOf,
-    type Lens,
-    lensFor,
     mindMap,
     OUTDATED_LINKS,
     type Overview,
     type OverviewPayload,
     type Pair,
     PROBLEMS,
-    placeBy,
+    OLD_DAYS,
     RECENT_DAYS,
     relations,
     tally,
     unplaced,
     USE_CLASSES,
-    VIEW_FACETS,
     VIEWS,
     type View,
   } from "./library-overview";
   import { joinsOf, LEVEL_CAP, LEVEL_STYLES, reach } from "./link-levels";
   import { filesHref } from "./library-files-model";
   import { libraryRead, searchHref } from "./library-model";
-  import MapOptions from "./MapOptions.svelte";
   import MindMap, { type Segment } from "./MindMap.svelte";
   import SimilarityMap from "./SimilarityMap.svelte";
   import { workspace } from "./state/workspace.svelte";
@@ -75,22 +66,12 @@
   const drawing = $derived(chosenDrawing ?? (o?.groupCount ? "3d" : "tags"));
   const points = $derived(drawing !== "tags");
   const flat = $derived(drawing === "2d");
-  /** What depth shows in 3D: akm's own place until another lens is chosen. A view never moves the points. */
-  let lensId = $state<Lens["id"]>("meaning");
-  let flip = $state(false);
-  const lens = $derived(o ? lensFor(o, lensId, "meaning") : null);
-  const place = $derived(o && lens ? placeBy(o, lens, flip, flat) : new Float32Array(0));
+  const place = $derived(o ? (flat ? flatPlace(o) : o.place) : new Float32Array(0));
   const DRAWINGS = [
     ["tags", "Tags", "The asset types and the tags their assets carry most"],
     ["2d", "2D", "Every asset as a point, placed by meaning, in one plane"],
     ["3d", "3D", "Every asset as a point, placed by meaning, in 3D"],
   ] as const;
-  /** The classes chosen in the filters: they narrow both drawings, and stay when the view changes. */
-  let chosen = $state<Chosen>({});
-  function toggle(facet: Facet["id"], id: string) {
-    const now = chosen[facet] ?? [];
-    chosen = { ...chosen, [facet]: now.includes(id) ? now.filter((c) => c !== id) : [...now, id] };
-  }
   /** In 3D, the asset chosen on the map, or -1. */
   let picked = $state(-1);
   /** The asset whose closest content is open, and what was found. */
@@ -139,19 +120,8 @@
         })
       : bundleScope,
   );
-  /** The filters this view offers that akm has figures for, the one it colours by first; and the classes chosen in
-   * another view's filters, which still apply here. */
-  const shownFacets = $derived(
-    o ? VIEW_FACETS[view].flatMap((id) => FACETS.filter((f) => f.id === id && !f.unavailable(o!))) : [],
-  );
-  const carried = $derived(
-    FACETS.filter((f) => !shownFacets.includes(f)).flatMap((f) =>
-      (chosen[f.id] ?? []).map((id) => ({ facet: f, id, label: f.classes(o!).find((c) => c.id === id)?.label ?? id })),
-    ),
-  );
-  const narrowed = $derived(words.length > 0 || FACETS.some((f) => chosen[f.id]?.length));
-  /** The assets every filter keeps (the words typed and the classes chosen), or null when nothing narrows the map. */
-  const matching = $derived(o && narrowed ? new Set(filtered(o, found, chosen)) : null);
+  /** The assets whose name or tags hold every word typed, or null when nothing is typed. */
+  const matching = $derived(o && words.length ? new Set(found) : null);
   /** The assets in scope: those of the bundle that match what is typed. */
   const scope = $derived(matching ? bundleScope.filter((i) => matching.has(i)) : bundleScope);
   const readsOf = (members: readonly number[]) => members.reduce((sum, i) => sum + o!.shows[i]!, 0);
@@ -246,9 +216,6 @@
   /** Everything the map can be changed by, and the camera, back to how it opens. */
   function reset() {
     view = "contents";
-    chosen = {};
-    lensId = "meaning";
-    flip = false;
     bundle = -1;
     filter = "";
     chosenDrawing = null;
@@ -288,6 +255,36 @@
           .sort((a, b) => (o!.modified[a] ?? "").localeCompare(o!.modified[b] ?? "") || a - b)
       : [],
   );
+  /** Dead weight: never read in the window and not edited for long, the longest unchanged first. */
+  const deadWeight = $derived(neverRead.filter((i) => o!.use[i] === "unread"));
+  /** More negative feedback than positive, and still being read: the most read first. */
+  const dislikedRead = $derived(o && facts ? top(facts.disliked, (i) => o!.shows[i]!) : []);
+  /** Outdated assets still being read, the most read first; and the rest of the outdated. */
+  const outdatedRead = $derived(o && facts ? top(facts.outdated, (i) => o!.shows[i]!) : []);
+  const outdatedUnread = $derived(o && facts ? facts.outdated.filter((i) => !o!.shows[i]) : []);
+  /** No declared link either way. */
+  const unlinked = $derived(o ? members.filter((i) => !o!.degree[i]) : []);
+  /** Near-duplicate pairs whose two assets are in different bundles. */
+  const acrossBundles = $derived(
+    o && facts
+      ? [...facts.duplicatesInside, ...facts.duplicatesOutside].filter((d) => o!.bundle[d.a] !== o!.bundle[d.b])
+      : [],
+  );
+  /** What a group's name says on the map: the view's figure for that group. */
+  function groupNote(g: { members: number[] }): string {
+    if (view === "use")
+      return o!.useKnown
+        ? `${pct(g.members.filter((i) => o!.use[i] === "unread" || o!.use[i] === "new").length, g.members.length)} never read`
+        : "";
+    if (view === "problems") {
+      const n = problemsOf(g.members);
+      return n ? `${n.toLocaleString()} to fix` : "nothing to fix";
+    }
+    const types = new Map<string, number>();
+    for (const i of g.members) types.set(o!.types[o!.type[i]!]!, (types.get(o!.types[o!.type[i]!]!) ?? 0) + 1);
+    const [name, n] = [...types].sort((x, y) => y[1] - x[1])[0] ?? ["", 0];
+    return name ? `${pct(n, g.members.length)} ${name}` : "";
+  }
   const liked = $derived(o ? members.filter((i) => o!.positive[i]! > o!.negative[i]!).length : 0);
   /** What the group is made of: its bundles and its asset types, largest first. */
   const madeOf = $derived.by(() => {
@@ -408,20 +405,8 @@
         : view === "problems"
           ? (problem(i) ?? "no problem recorded")
           : (parts.get(`g:${o!.group[i]}`)?.name ?? "");
-    const byLens: Record<Lens["id"], () => string[]> = {
-      meaning: () => [],
-      recency: () => [reads(i)],
-      frequency: () => [reads(i)],
-      feedback: () => [
-        o!.feedbackKnown ? `${o!.positive[i]} positive, ${o!.negative[i]} negative feedback` : "feedback unknown",
-      ],
-      lifecycle: () => [
-        ...(o!.problems[i]!.includes("outdated") ? [PROBLEMS[0]!.label.toLowerCase()] : []),
-        edited(i) || "edit time unknown",
-      ],
-    };
     const bySize = view === "contents" ? plural(o!.degree[i]!, "link") : reads(i);
-    return [...new Set([colour, bySize, ...(flat ? [] : byLens[lens!.id]())])].filter(Boolean).join(" · ");
+    return [...new Set([colour, bySize])].filter(Boolean).join(" · ");
   }
 
   const filesLink = $derived(
@@ -438,13 +423,13 @@
   );
 </script>
 
-{#snippet assetList(list: number[], note: (i: number) => string = () => "", limit = 8)}
+{#snippet assetList(list: number[], note: (i: number) => string = () => "", limit = 8, act = "")}
   <ul class="read">
     {#each list.slice(0, limit) as i}<li>
         <div class="read-row">
           <a href={open(o!.ref[i]!)} title={o!.ref[i]}>{short(o!.ref[i]!)}</a>{#if note(i)}<span class="count"
               >{note(i)}</span
-            >{/if}<button
+            >{/if}{#if act}<a class="act" href={open(o!.ref[i]!)}>{act}</a>{/if}<button
             class="btn-quiet small"
             title="The assets closest to this one in meaning"
             aria-expanded={near?.ref === o!.ref[i]}
@@ -536,14 +521,7 @@
           onclick={() => (view = v.id)}>{v.label}</button
         >{/each}
     </div>
-    <div class="views" role="group" aria-label="Drawing">
-      {#each DRAWINGS as [id, name, title]}<button
-          class="btn-quiet"
-          aria-pressed={drawing === id}
-          {title}
-          onclick={() => (chosenDrawing = id)}>{name}</button
-        >{/each}
-    </div>
+    <p class="question">{question}</p>
     {#if o}<label class="bundle-pick"
         >Bundle <select
           bind:value={bundle}
@@ -555,20 +533,11 @@
             >{/each}</select
         ></label
       >
-      <label class="map-filter"
-        ><span class="sr-only">Filter</span><input
-          type="search"
-          bind:value={filter}
-          placeholder="Filter by name or tag"
-          autocomplete="off"
-        /></label
-      >
       <button
         class="btn-quiet"
         title="Camera, view, bundle, filter and selection back to how the map opens"
         onclick={reset}>Reset</button
-      >
-    {/if}
+      >{/if}
   </div>
   {#if error}<div class="notice notice-warn" role="alert">
       {error}<button class="btn-secondary" onclick={load}>Retry</button>
@@ -576,351 +545,396 @@
   {#if notice}<p class="notice" role="status">{notice}</p>{/if}
   {#if o === null && !error && !notice}<p class="muted" role="status">Reading the library…</p>{/if}
   {#if o && facts}
-    {@const answers = shownFacets[0]}
-    {@const keyed = answers?.id === (view === "use" ? "use" : view === "problems" ? "problem" : "")}
-    {#snippet option(f: Facet, c: { id: string; label: string; token?: string }, n: number, swatch: boolean)}
-      {@const on = chosen[f.id]?.includes(c.id) ?? false}
-      <button
-        class={f === answers ? "tile" : "chip"}
-        aria-pressed={on}
-        disabled={!on && !n}
-        title={on ? "Stop showing only these" : "Show only these"}
-        onclick={() => toggle(f.id, c.id)}
-        >{#if swatch && c.token}<span class="swatch" style={`background:var(${c.token})`}
-          ></span>{/if}{#if f === answers}<strong>{n.toLocaleString()}</strong>{c.label}{:else}{c.label}<span
-            class="chip-count">{n.toLocaleString()}</span
-          >{/if}</button
-      >
-    {/snippet}
-    <div class="filters" role="group" aria-label="Filters">
-      {#each shownFacets as f (f.id)}
-        {@const counts = facetCounts(o, found, chosen, f)}
-        <div class={f === answers ? "tiles" : "facet"} role="group" aria-label={f.label}>
-          {#if f === answers}<p class="question">{question}</p>{:else}<span class="facet-name">{f.label}</span>{/if}
-          {#each f.classes(o) as c (c.id)}{@render option(f, c, counts.get(c.id) ?? 0, keyed)}{/each}
-        </div>
-      {/each}
-      {#if matching}<div class="facet">
-          <span class="facet-name" role="status"
-            >Showing {matching.size.toLocaleString()} of {plural(bundleScope.length, "asset")}</span
-          >
-          {#each carried as c (c.facet.id + c.id)}<button
-              class="chip"
-              aria-pressed="true"
-              title="Chosen in another view; choose it to stop showing only these"
-              onclick={() => toggle(c.facet.id, c.id)}>{c.facet.label}: {c.label} ✕</button
-            >{/each}
-          {#if FACETS.some((f) => chosen[f.id]?.length)}<button class="chip" onclick={() => (chosen = {})}
-              >Clear filters</button
-            >{/if}
-        </div>{/if}
-    </div>
-    {#if view === "use" && !o.useKnown}<p class="muted small">
-        No usage history is available, so use cannot be shown.
-      </p>{/if}
-    {#if view === "problems" && (!o.feedbackKnown || !o.duplicatesKnown)}<p class="muted small">
-        {o.feedbackKnown ? "" : "Disliked assets cannot be shown. "}{o.duplicatesKnown
-          ? ""
-          : "Near-duplicates cannot be shown. "}{o.note}
+    {#if points}<p class="sr-only" role="status">
+        {picked >= 0 && levelFigures
+          ? `Selected ${o.ref[picked]}. ${levelFigures.map((l, k) => `${LEVEL_STYLES[k]!.label}: ${plural(l.shown.length, "asset")}`).join(". ")}.`
+          : ""}
       </p>{/if}
     <div class="map-body">
-      <div class="map-main">
-        <div class="map-legend">
-          {#if points}<p class="sr-only" role="status">
-              {picked >= 0 && levelFigures
-                ? `Selected ${o.ref[picked]}. ${levelFigures.map((l, k) => `${LEVEL_STYLES[k]!.label}: ${plural(l.shown.length, "asset")}`).join(". ")}.`
-                : ""}
-            </p>{/if}
+      <div class="map-stage">
+        <div class="stage-tools">
+          <div class="views" role="group" aria-label="Drawing">
+            {#each DRAWINGS as [id, name, title]}<button
+                class="btn-quiet"
+                aria-pressed={drawing === id}
+                {title}
+                onclick={() => (chosenDrawing = id)}>{name}</button
+              >{/each}
+          </div>
+          <label class="map-filter"
+            ><span class="sr-only">Filter</span><input
+              type="search"
+              bind:value={filter}
+              placeholder="Find by name or tag"
+              autocomplete="off"
+            /></label
+          >
+          {#if matching}<span class="muted small" role="status"
+              >{matching.size.toLocaleString()} of {plural(bundleScope.length, "asset")}</span
+            >{/if}
         </div>
-        <div class="map-stage">
-          {#if points}{#if groups.length && lens}{#if !flat}<div class="stage-options">
-                  <MapOptions
-                    {o}
-                    {lens}
-                    {flip}
-                    onLens={(id) => {
-                      lensId = id;
-                      flip = false;
-                    }}
-                    onFlip={() => (flip = !flip)}
-                  />
-                </div>{/if}
-              <SimilarityMap
-                bind:this={cloud}
-                {o}
-                {place}
-                {flat}
-                depthKey={flat ? [] : flip ? [...lens.bands].reverse() : lens.bands}
-                {size}
-                {describe}
-                scope={bundleScope}
-                {groups}
-                {colourOf}
-                {lit}
-                {lines}
-                levels={levelFigures
-                  ? [levelFigures[0]!.shown, levelFigures[1]!.shown, levelFigures[2]!.shown]
-                  : undefined}
-                {picked}
-                {selected}
-                related={joined.slice(0, 12).map((r) => r.key)}
-                onPick={pick}
-                onGroup={choose}
-                onStep={step}
-                label={`${question} The ${plural(bundleScope.length - offMap, "asset")} of ${scopeName} that have a group by meaning, as points, in ${plural(groups.length, "group")} named by their tags, groups alike in meaning near each other. ${depthText(lens, flip, flat)}${offMap ? ` ${plural(offMap, "asset")} not shown.` : ""}`}
-              >
-                {#snippet legend()}<p class="reading">
-                    {view === "contents"
-                      ? "Colour: group by meaning, named on the map"
-                      : view === "use"
-                        ? "Colour: when last read, as counted above"
-                        : "Colour: worst problem, as counted above"}{view === "problems" && o!.useKnown
-                      ? ". A large coloured point is a problem still in use"
-                      : ""}
-                  </p>
-                  {#if picked >= 0 && levelFigures}<div class="levels">
-                      <p class="small">
-                        <strong>{short(o!.ref[picked]!)}</strong> and what it is joined to, three steps out. A join is drawn
-                        once, at the nearest level it belongs to.
-                      </p>
-                      <ul>
-                        {#each LEVEL_STYLES as style, k}
-                          {@const f = levelFigures[k]!}
-                          {@const colour = `color-mix(in srgb, var(--map-highlight) ${Math.round(100 - 100 * style.mute)}%, var(--bg))`}
-                          <li>
-                            <svg class="level-key" width="46" height="26" viewBox="0 0 46 26" aria-hidden="true">
-                              <line
-                                x1="2"
-                                x2="30"
-                                y1="13"
-                                y2="13"
-                                style={`stroke:${colour}`}
-                                stroke-width={style.width}
-                                stroke-dasharray={style.dash ? "5 3" : undefined}
-                              />
-                              <circle
-                                cx="36"
-                                cy="13"
-                                r={style.ring / 2 - 1.5}
-                                fill="none"
-                                style={`stroke:${colour}`}
-                                stroke-width="2"
-                              />
-                            </svg>
-                            <span
-                              >{style.label}: {plural(f.shown.length, "asset")}{f.off
-                                ? `, ${f.off.toLocaleString()} not on this map`
-                                : ""}{f.cut
-                                ? `, ${f.cut.toLocaleString()} more not shown (a level shows its ${LEVEL_CAP} most joined assets)`
-                                : ""}</span
-                            >
-                          </li>
-                        {/each}
-                      </ul>
-                    </div>{/if}{/snippet}
-              </SimilarityMap>
-              <details class="map-help">
-                <summary>How to read and move the map</summary>
-                <p class="muted small">
-                  Groups alike in meaning sit near each other and are named by the tags their assets carry most.
-                  Position inside a group is approximate: use Closest, beside any asset, for measured similarity.
-                  {flat ? "Drag to move" : "Drag to turn, right-drag to move"}, scroll to zoom, hover a point for its
-                  name and figures. Choose a group's name to draw what joins it to other groups, or a point to draw its
-                  links and near-duplicates. With the map focused: left and right step through a group's assets{flat
-                    ? ""
-                    : ", up, down and Shift with left or right turn the view"}, + and − zoom{flat
-                    ? ""
-                    : ", 0 faces the front"}.
-                </p>
-              </details>
-              {#if offMap}<p class="muted small" role="status">
-                  {plural(offMap, "asset")}
-                  {offMap === 1 ? "has" : "have"} no group by meaning, so {offMap === 1 ? "is" : "are"} not shown (not embedded,
-                  or added since the last index build).
-                </p>{/if}{:else}<p class="notice">
-                No stored embeddings, so assets cannot be placed by meaning. Build the index with embeddings, or use
-                Tags.
-              </p>{/if}
-          {:else}<MindMap
-              {branches}
-              rootLabel={scopeName}
-              rootFigure={view === "contents" ? scope.length.toLocaleString() : figure(scope)}
-              {figure}
-              {bar}
-              scale={largestTag}
+        {#if points}{#if groups.length}<SimilarityMap
+              bind:this={cloud}
+              {o}
+              {place}
+              {flat}
+              {size}
+              {describe}
+              {groupNote}
+              scope={bundleScope}
+              {groups}
+              {colourOf}
+              {lit}
+              {lines}
+              levels={levelFigures
+                ? [levelFigures[0]!.shown, levelFigures[1]!.shown, levelFigures[2]!.shown]
+                : undefined}
+              {picked}
               {selected}
-              related={joined.slice(0, 12)}
-              onSelect={choose}
-              label={mapLabel}
-            />{/if}
-        </div>
+              related={joined.slice(0, 12).map((r) => r.key)}
+              onPick={pick}
+              onGroup={choose}
+              onStep={step}
+              label={`${question} The ${plural(bundleScope.length - offMap, "asset")} of ${scopeName} that have a group by meaning, as points, in ${plural(groups.length, "group")} named by their tags, groups alike in meaning near each other.${offMap ? ` ${plural(offMap, "asset")} not shown.` : ""}`}
+            >
+              {#snippet legend()}<ul class="colour-key">
+                  {#if view === "use" && o!.useKnown}{#each USE_CLASSES as u}<li>
+                        <span class="swatch" style={`background:var(${u.token})`}></span>{u.label}
+                      </li>{/each}
+                  {:else if view === "problems"}{#each PROBLEMS as p}<li>
+                        <span class="swatch" style={`background:var(${p.token})`}></span>{p.label}
+                      </li>{/each}
+                    <li><span class="swatch" style="background:var(--border)"></span>No problem recorded</li>
+                  {:else}<li>Colour: group by meaning</li>{/if}
+                </ul>
+                {#if picked >= 0 && levelFigures}<div class="levels">
+                    <p class="small">
+                      <strong>{short(o!.ref[picked]!)}</strong> and what it is joined to, three steps out. A join is drawn
+                      once, at the nearest level it belongs to.
+                    </p>
+                    <ul>
+                      {#each LEVEL_STYLES as style, k}
+                        {@const f = levelFigures[k]!}
+                        {@const colour = `color-mix(in srgb, var(--map-highlight) ${Math.round(100 - 100 * style.mute)}%, var(--bg))`}
+                        <li>
+                          <svg class="level-key" width="46" height="26" viewBox="0 0 46 26" aria-hidden="true">
+                            <line
+                              x1="2"
+                              x2="30"
+                              y1="13"
+                              y2="13"
+                              style={`stroke:${colour}`}
+                              stroke-width={style.width}
+                              stroke-dasharray={style.dash ? "5 3" : undefined}
+                            />
+                            <circle
+                              cx="36"
+                              cy="13"
+                              r={style.ring / 2 - 1.5}
+                              fill="none"
+                              style={`stroke:${colour}`}
+                              stroke-width="2"
+                            />
+                          </svg>
+                          <span
+                            >{style.label}: {plural(f.shown.length, "asset")}{f.off
+                              ? `, ${f.off.toLocaleString()} not on this map`
+                              : ""}{f.cut
+                              ? `, ${f.cut.toLocaleString()} more not shown (a level shows its ${LEVEL_CAP} most joined assets)`
+                              : ""}</span
+                          >
+                        </li>
+                      {/each}
+                    </ul>
+                  </div>{/if}{/snippet}
+            </SimilarityMap>
+            <p class="muted small map-note">
+              {flat ? "Drag to move" : "Drag to turn, right-drag to move"}, scroll to zoom. Choose a point or a group's
+              name for its details. Position inside a group is approximate: Closest gives measured similarity.
+              {#if offMap}{plural(offMap, "asset")}
+                {offMap === 1 ? "has" : "have"} no group by meaning, so {offMap === 1 ? "is" : "are"} not shown (not embedded,
+                or added since the last index build).{/if}
+            </p>{:else}<p class="notice">
+              No stored embeddings, so assets cannot be placed by meaning. Build the index with embeddings, or use Tags.
+            </p>{/if}
+        {:else}<MindMap
+            {branches}
+            rootLabel={scopeName}
+            rootFigure={view === "contents" ? scope.length.toLocaleString() : figure(scope)}
+            {figure}
+            {bar}
+            scale={largestTag}
+            {selected}
+            related={joined.slice(0, 12)}
+            onSelect={choose}
+            label={mapLabel}
+          />{/if}
       </div>
 
       <aside class="map-side" aria-label="Figures" aria-live="polite">
-        <header class="side-head">
-          <div>
-            <h2>{part ? part.name : scopeName}</h2>
-            <p class="muted small">
-              {part
-                ? `${part.group ? "Group by meaning · " : part.type ? `Tag in ${part.type} · ` : "Asset type · "}${scopeName}`
-                : "The whole scope"} ·
-              {plural(facts.count, "asset")}
-            </p>
-          </div>
-          {#if part}<button class="btn-quiet" onclick={() => choose(selected)} aria-label="Close">✕</button>{/if}
-        </header>
-
-        {#if matching && !part}<section>
-            <h3>Shown on the map, {size ? `most ${size.label} first` : "by name"}</h3>
-            {#if scope.length}{@render assetList(
-                [...scope].sort((a, b) => (size ? size.values[b]! - size.values[a]! : 0) || a - b),
-                (i) => (view === "contents" ? plural(o!.degree[i]!, "link") : reads(i)),
-                12,
-              )}{:else}<p class="muted small">No asset passes every filter.</p>{/if}
-          </section>{/if}
-
-        {#if picked >= 0}<section>
-            <h3>Chosen asset</h3>
-            {@render assetList([picked], (i) => plural(o!.shows[i]!, "read"))}
+        {#if picked >= 0}
+          {@const i = picked}
+          <header class="side-head">
+            <div>
+              <h2>{short(o.ref[i]!)}</h2>
+              <p class="muted small">{o.types[o.type[i]!]} · {o.bundles[o.bundle[i]!]} · {nameOf(`g:${o.group[i]}`)}</p>
+            </div>
+            <button class="btn-quiet" onclick={() => (picked = -1)} aria-label="Close">✕</button>
+          </header>
+          <section>
+            <div class="actions">
+              <a class="btn-secondary" href={open(o.ref[i]!)}>Open</a>
+              <button class="btn-secondary" aria-expanded={near?.ref === o.ref[i]} onclick={() => similar(o!.ref[i]!)}
+                >Closest in meaning</button
+              >
+            </div>
+            <dl class="figures">
+              <dt>Reads</dt>
+              <dd>{reads(i)}</dd>
+              <dt>Last edited</dt>
+              <dd>{o.modified[i] ? new Date(o.modified[i]!).toLocaleDateString() : "unknown"}</dd>
+              <dt>Feedback</dt>
+              <dd>{o.feedbackKnown ? `${o.positive[i]} positive · ${o.negative[i]} negative` : "unavailable"}</dd>
+              <dt>Links</dt>
+              <dd>{o.degree[i]!.toLocaleString()}</dd>
+              <dt>Problems</dt>
+              <dd>
+                {o.problems[i]!.map((id) => PROBLEMS.find((p) => p.id === id)!.label).join("; ") || "None recorded"}
+              </dd>
+            </dl>
+            {#if near?.ref === o.ref[i]}<div class="near">
+                {#if near.error}<p class="muted small">{near.error}</p>
+                {:else if !near.matches}<p class="muted small">Finding the closest content…</p>
+                {:else if !near.matches.length}<p class="muted small">No embedded content to compare.</p>
+                {:else}<ul>
+                    {#each near.matches as m}<li>
+                        <a href={open(m.ref)} title={m.ref}>{short(m.ref)}</a><span class="muted small"
+                          >{m.cosine.toFixed(2)}</span
+                        ><a class="small" href={compare(o.ref[i]!, m.ref)}>Compare</a>
+                      </li>{/each}
+                  </ul>{/if}
+              </div>{/if}
+          </section>
+          <section>
+            <h3>Joined to</h3>
             {#if pickedJoins.length}<ul class="rows">
-                {#each pickedJoins.slice(0, 10) as j}<li>
+                {#each pickedJoins.slice(0, 12) as j}<li>
                     <button class="link" onclick={() => pick(j.i)} title={o.ref[j.i]}>{short(o.ref[j.i]!)}</button><span
                       class="count">{j.what}</span
                     >
                   </li>{/each}
               </ul>{:else}<p class="muted small">No links or near-duplicates.</p>{/if}
-          </section>{/if}
-
-        {#if points && !part && groups.length}<section>
-            <h3>Groups by meaning</h3>
-            <ul class="rows">
-              {#each groups as g (g.key)}<li>
-                  <button class="link" onclick={() => choose(g.key)}>{g.label}</button><span class="count"
-                    >{figure(g.members)}</span
-                  >
-                </li>{/each}
-            </ul>
-          </section>{/if}
-
-        {#if view === "contents"}<section>
-            <h3>What it is made of</h3>
-            <div class="made-of">
-              <ul class="rows">
-                {#each madeOf.bundles.slice(0, 5) as [name, n]}<li>
-                    {name}<span class="count">{n.toLocaleString()}</span>
-                  </li>{/each}
-              </ul>
-              <ul class="rows">
-                {#each madeOf.types.slice(0, 5) as [name, n]}<li>
-                    {name}<span class="count">{n.toLocaleString()}</span>
-                  </li>{/each}
-              </ul>
+          </section>
+        {:else}
+          <header class="side-head">
+            <div>
+              <h2>{part ? part.name : scopeName}</h2>
+              <p class="muted small">
+                {part
+                  ? `${part.group ? "Group by meaning · " : part.type ? `Tag in ${part.type} · ` : "Asset type · "}${scopeName}`
+                  : "The whole scope"} ·
+                {plural(facts.count, "asset")}
+              </p>
             </div>
-          </section>
-          {@render connects("Joined by links and near-duplicates")}
-          <section>
-            <h3>Most connected</h3>
-            {#if mostLinked.length}{@render assetList(mostLinked, (i) => plural(o!.degree[i]!, "link"))}{:else}<p
-                class="muted small"
-              >
-                None of these assets has a declared link.
-              </p>{/if}
-          </section>
-          {@render overlap()}
-        {:else if view === "use"}{#if o.useKnown}<section>
-              <h3>Is it used?</h3>
+            {#if part}<button class="btn-quiet" onclick={() => choose(selected)} aria-label="Close">✕</button>{/if}
+          </header>
+
+          {#if view === "contents"}
+            <p class="answer">
+              <strong>{pct(facts.linked, facts.count)}</strong> of these assets are linked to another;
+              <strong>{unlinked.length.toLocaleString()}</strong>
+              {unlinked.length === 1 ? "stands" : "stand"} alone.
+            </p>
+            <section>
+              <h3>What it is made of</h3>
+              <div class="made-of">
+                <ul class="rows">
+                  {#each madeOf.bundles.slice(0, 5) as [name, n]}<li>
+                      {name}<span class="count">{n.toLocaleString()}</span>
+                    </li>{/each}
+                </ul>
+                <ul class="rows">
+                  {#each madeOf.types.slice(0, 5) as [name, n]}<li>
+                      {name}<span class="count">{n.toLocaleString()}</span>
+                    </li>{/each}
+                </ul>
+              </div>
+            </section>
+            <section>
+              <h3>Most connected</h3>
+              {#if mostLinked.length}{@render assetList(mostLinked, (i) => plural(o!.degree[i]!, "link"))}{:else}<p
+                  class="muted small"
+                >
+                  None of these assets has a declared link.
+                </p>{/if}
+            </section>
+            <section>
+              <h3>No links<span class="count">{unlinked.length.toLocaleString()}</span></h3>
+              {#if unlinked.length}<p class="muted small">Nothing points to these and they point to nothing.</p>
+                {@render assetList(unlinked, edited, 8, "Open to link")}{:else}<p class="muted small">
+                  Every asset here has a link.
+                </p>{/if}
+            </section>
+            <section>
+              <h3>
+                Repeated across bundles<span class="count"
+                  >{o.duplicatesKnown ? acrossBundles.length.toLocaleString() : "unavailable"}</span
+                >
+              </h3>
+              {#if acrossBundles.length}<p class="muted small">
+                  Nearly the same content in two bundles: compare and keep one.
+                </p>
+                {@render pairList(acrossBundles)}{:else if o.duplicatesKnown}<p class="muted small">
+                  No near-duplicate pair spans two bundles.
+                </p>{:else}<p class="muted small">{o.note}</p>{/if}
+            </section>
+            {#if selected}{@render connects("Joined by links and near-duplicates")}{/if}
+          {:else if view === "use"}{#if o.useKnown}
+              <p class="answer">
+                <strong>{deadWeight.length.toLocaleString()}</strong> of {plural(facts.count, "asset")}
+                {deadWeight.length === 1 ? "is" : "are"} dead weight: never read since
+                {o.useSince ? new Date(o.useSince).toLocaleDateString() : "the window began"} and not edited in {OLD_DAYS}
+                days.
+              </p>
               <div class="use-bar" role="img" aria-label="How the assets are used">
                 {#each USE_CLASSES as u}{#if facts.use[u.id]}<span
                       style={`flex:${facts.use[u.id]};background:var(${u.token})`}
                       title={`${u.label}: ${facts.use[u.id].toLocaleString()}`}
                     ></span>{/if}{/each}
               </div>
-              <dl class="figures">
-                <dt>Read in the last {RECENT_DAYS} days</dt>
-                <dd>{pct(facts.use.recent, facts.count)}</dd>
-                <dt>Never read since {o.useSince ? new Date(o.useSince).toLocaleDateString() : "–"}</dt>
-                <dd>{pct(facts.use.new + facts.use.unread, facts.count)}</dd>
-                <dt>Liked · disliked</dt>
-                <dd>
-                  {#if o.feedbackKnown}{liked.toLocaleString()} · {facts.disliked.length.toLocaleString()}{:else}unavailable{/if}
-                </dd>
-              </dl>
-              {#if !o.feedbackKnown}<p class="muted small">Feedback is unavailable: {o.note}</p>{/if}
-              {#if facts.useUnclassed}<p class="muted small">
-                  {plural(facts.useUnclassed, "asset")} not read in the window and with no edit time akm could read, so they
-                  are not classed.
+              <section>
+                <h3>Dead weight<span class="count">{deadWeight.length.toLocaleString()}</span></h3>
+                {#if deadWeight.length}{@render assetList(deadWeight, edited, 8, "Open to retire")}{:else}<p
+                    class="muted small"
+                  >
+                    Nothing here is both unread and old.
+                  </p>{/if}
+              </section>
+              <section>
+                <h3>Disliked but still read<span class="count">{dislikedRead.length.toLocaleString()}</span></h3>
+                {#if !o.feedbackKnown}<p class="muted small">Feedback is unavailable: {o.note}</p>
+                {:else if dislikedRead.length}{@render assetList(
+                    dislikedRead,
+                    (i) => `${plural(o!.shows[i]!, "read")} · ${o!.negative[i]} − · ${o!.positive[i]} +`,
+                    8,
+                    "Open to fix",
+                  )}{:else}<p class="muted small">Nothing read here has more negative feedback than positive.</p>{/if}
+              </section>
+              <section>
+                <h3>Most read</h3>
+                {#if mostRead.length}{@render assetList(mostRead, (i) => plural(o!.shows[i]!, "read"))}{:else}<p
+                    class="muted small"
+                  >
+                    Nothing here has been read.
+                  </p>{/if}
+              </section>
+              <section>
+                <h3>Never read, longest unchanged first</h3>
+                {@render assetList(neverRead, edited)}
+                {#if facts.useUnclassed}<p class="muted small">
+                    {plural(facts.useUnclassed, "asset")} not read in the window and with no edit time akm could read, so
+                    they are not classed.
+                  </p>{/if}
+              </section>{:else}<section><p class="muted small">{o.note}</p></section>{/if}
+            <section>
+              <h3>Searched for, not found</h3>
+              {#if gaps.length}<ul class="rows">
+                  {#each gaps as m}<li>
+                      <a href={`/library/search?${new URLSearchParams([["q", m.query]])}`}>{m.query}</a><span
+                        class="count">×{m.count}</span
+                      >
+                    </li>{/each}
+                </ul>{:else if missesNote}<p class="muted small">
+                  Searches that found nothing are unavailable. {missesNote}
+                </p>{:else}<p class="muted small">
+                  No search {part?.tag ? `mentioning “${part.tag}” ` : ""}came back empty in the last 90 days.
                 </p>{/if}
             </section>
+            {#if selected}{@render connects("Joined by links and near-duplicates")}{/if}
+          {:else}
+            <p class="answer">
+              <strong>{facts.outdated.length.toLocaleString()}</strong> outdated ·
+              <strong
+                >{o.duplicatesKnown
+                  ? (facts.duplicatesInside.length + facts.duplicatesOutside.length).toLocaleString()
+                  : "?"}</strong
+              >
+              near-duplicate pairs · <strong>{o.feedbackKnown ? facts.disliked.length.toLocaleString() : "?"}</strong> disliked
+              left to fix.
+            </p>
             <section>
-              <h3>Most read</h3>
-              {#if mostRead.length}{@render assetList(mostRead, (i) => plural(o!.shows[i]!, "read"))}{:else}<p
-                  class="muted small"
+              <h3>What to fix</h3>
+              <details open={outdatedRead.length > 0}>
+                <summary
+                  >Fix first: outdated and still read<span class="count">{outdatedRead.length.toLocaleString()}</span
+                  ></summary
                 >
-                  Nothing here has been read.
+                <p class="muted small">Agents are still given these. Retire them or fix the link, most read first.</p>
+                {@render assetList(outdatedRead, reads, 8, "Open to retire")}
+              </details>
+              <details open={outdatedRead.length === 0 && facts.outdated.length > 0}>
+                <summary
+                  >Outdated but still here<span class="count">{facts.outdated.length.toLocaleString()}</span></summary
+                >
+                <p class="muted small">Superseded, contradicted or deprecated: retire them or fix the link.</p>
+                {@render assetList(facts.outdated, edited, 8, "Open to retire")}
+              </details>
+              <details open={facts.outdated.length === 0 && facts.duplicatesInside.length > 0}>
+                <summary
+                  >Near-duplicates inside<span class="count"
+                    >{o.duplicatesKnown ? facts.duplicatesInside.length.toLocaleString() : "unavailable"}</span
+                  ></summary
+                >
+                <p class="muted small">Both assets here: compare and keep one.</p>
+                {@render pairList(facts.duplicatesInside)}
+              </details>
+              <details>
+                <summary
+                  >Near-duplicates elsewhere<span class="count"
+                    >{o.duplicatesKnown ? facts.duplicatesOutside.length.toLocaleString() : "unavailable"}</span
+                  ></summary
+                >
+                <p class="muted small">One asset here, the other outside {part ? "this group" : "this bundle"}.</p>
+                {@render pairList(facts.duplicatesOutside)}
+              </details>
+              <details>
+                <summary
+                  >Disliked<span class="count"
+                    >{o.feedbackKnown ? facts.disliked.length.toLocaleString() : "unavailable"}</span
+                  ></summary
+                >
+                <p class="muted small">More negative feedback than positive.</p>
+                {@render assetList(
+                  facts.disliked,
+                  (i) => `${o!.negative[i]} − · ${o!.positive[i]} +`,
+                  8,
+                  "Open to fix",
+                )}
+              </details>
+              {#if !o.feedbackKnown || !o.duplicatesKnown}<p class="muted small">
+                  {o.feedbackKnown ? "" : "Disliked assets cannot be shown. "}{o.duplicatesKnown
+                    ? ""
+                    : "Near-duplicates cannot be shown. "}{o.note}
+                </p>{/if}
+              {#if o.duplicatesTruncated}<p class="muted small">
+                  Near-duplicates count the {o.duplicates.length.toLocaleString()} most alike pairs in the library (cosine
+                  {o.duplicateThreshold} or more); there are more.
                 </p>{/if}
             </section>
-            <section>
-              <h3>Never read, longest unchanged first</h3>
-              {@render assetList(neverRead, edited)}
-            </section>{:else}<section><p class="muted small">{o.note}</p></section>{/if}
-          <section>
-            <h3>Searched for, not found</h3>
-            {#if gaps.length}<ul class="rows">
-                {#each gaps as m}<li>
-                    <a href={`/library/search?${new URLSearchParams([["q", m.query]])}`}>{m.query}</a><span
-                      class="count">×{m.count}</span
+            {#if selected}{@render connects("Joined by replacement or contradiction links and near-duplicates")}{/if}
+            {@render overlap()}
+          {/if}
+
+          {#if points && !part && groups.length}<section>
+              <h3>Groups by meaning</h3>
+              <ul class="rows">
+                {#each groups as g (g.key)}<li>
+                    <button class="link" onclick={() => choose(g.key)}>{g.label}</button><span class="count"
+                      >{groupNote(g) || figure(g.members)}</span
                     >
                   </li>{/each}
-              </ul>{:else if missesNote}<p class="muted small">
-                Searches that found nothing are unavailable. {missesNote}
-              </p>{:else}<p class="muted small">
-                No search {part?.tag ? `mentioning “${part.tag}” ` : ""}came back empty in the last 90 days.
-              </p>{/if}
-          </section>
-          {@render connects("Joined by links and near-duplicates")}
-        {:else}<section>
-            <h3>What to fix</h3>
-            <details open={facts.outdated.length > 0}>
-              <summary
-                >Outdated but still here<span class="count">{facts.outdated.length.toLocaleString()}</span></summary
-              >
-              <p class="muted small">Superseded, contradicted or deprecated: retire them or fix the link.</p>
-              {@render assetList(facts.outdated, edited)}
-            </details>
-            <details open={facts.outdated.length === 0 && facts.duplicatesInside.length > 0}>
-              <summary
-                >Near-duplicates inside<span class="count"
-                  >{o.duplicatesKnown ? facts.duplicatesInside.length.toLocaleString() : "unavailable"}</span
-                ></summary
-              >
-              <p class="muted small">Both assets here: compare and keep one.</p>
-              {@render pairList(facts.duplicatesInside)}
-            </details>
-            <details>
-              <summary
-                >Near-duplicates elsewhere<span class="count"
-                  >{o.duplicatesKnown ? facts.duplicatesOutside.length.toLocaleString() : "unavailable"}</span
-                ></summary
-              >
-              <p class="muted small">One asset here, the other outside {part ? "this group" : "this bundle"}.</p>
-              {@render pairList(facts.duplicatesOutside)}
-            </details>
-            <details>
-              <summary
-                >Disliked<span class="count"
-                  >{o.feedbackKnown ? facts.disliked.length.toLocaleString() : "unavailable"}</span
-                ></summary
-              >
-              <p class="muted small">More negative feedback than positive.</p>
-              {@render assetList(facts.disliked, (i) => `${o!.negative[i]} − · ${o!.positive[i]} +`)}
-            </details>
-            {#if o.duplicatesTruncated}<p class="muted small">
-                Near-duplicates count the {o.duplicates.length.toLocaleString()} most alike pairs in the library (cosine
-                {o.duplicateThreshold} or more); there are more.
-              </p>{/if}
-          </section>
-          {@render connects("Joined by replacement or contradiction links and near-duplicates")}
-          {@render overlap()}
+              </ul>
+            </section>{/if}
         {/if}
       </aside>
     </div>
@@ -949,7 +963,7 @@
     font-weight: 600;
   }
   .map-page {
-    padding: 16px 24px 24px;
+    padding: 12px 24px 16px;
   }
   .map-toolbar {
     display: flex;
@@ -989,86 +1003,20 @@
     color: var(--muted);
   }
   .question {
-    flex: none;
-    inline-size: 11rem;
+    flex: 1;
+    min-inline-size: 0;
     margin: 0;
-    align-self: center;
-    font-weight: 600;
+    color: var(--muted);
   }
   .map-filter input {
     inline-size: 12rem;
   }
-  .tiles {
-    display: flex;
-    flex-basis: 100%;
-    gap: 8px;
-  }
-  .tile {
-    position: relative;
-    display: grid;
-    flex: 1;
-    gap: 2px;
-    align-content: start;
-    min-inline-size: 0;
-    padding: 8px 12px 8px 20px;
-    font: inherit;
-    font-size: 13px;
-    text-align: start;
-    color: var(--text);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    cursor: pointer;
-  }
-  .tile strong {
-    font-size: 1.375rem;
-    line-height: 1.1;
-    font-variant-numeric: tabular-nums;
-  }
-  .tile .swatch {
-    position: absolute;
-    inset-block: 8px;
-    inset-inline-start: 8px;
-    inline-size: 6px;
-    block-size: auto;
-    border-radius: 3px;
-  }
-  .tile:hover:not(:disabled) {
-    border-color: var(--border-strong);
-  }
-  .tile[aria-pressed="true"] {
-    border-color: var(--text);
-    box-shadow: inset 0 0 0 1px var(--text);
-    background: var(--surface-2);
-  }
-  .tile:disabled {
-    color: var(--muted);
-    cursor: default;
-  }
-  .stage-options {
-    position: absolute;
-    inset-block-start: 16px;
-    inset-inline-end: 16px;
-    z-index: 3;
-    padding: 4px 8px;
-    background: color-mix(in srgb, var(--surface) 94%, transparent);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-  }
-  .reading {
-    margin: 0;
-    padding: 6px 10px;
-    font-size: var(--text-xs);
-  }
   .map-body {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 24rem;
-    gap: 24px;
+    grid-template-columns: minmax(0, 1fr) 26rem;
+    gap: 16px;
     align-items: start;
-  }
-  .map-main {
-    display: grid;
-    min-inline-size: 0;
+    margin-block-start: 10px;
   }
   .map-stage {
     position: relative;
@@ -1076,8 +1024,76 @@
     background: var(--surface);
     padding: 8px;
     min-inline-size: 0;
-    /* The map takes what the window has left under the toolbar and the filters. */
-    --stage-size: max(420px, calc(100vh - 330px));
+    /* The map takes what the window has left under the toolbar. */
+    --stage-size: max(420px, calc(100vh - 300px));
+  }
+  /* The drawing and the finder sit on the map; over the tags, which have no spare corner, they sit above it. */
+  .stage-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-block-end: 8px;
+  }
+  .map-stage:has(:global(.stage-3d)) .stage-tools {
+    position: absolute;
+    inset-block-start: 16px;
+    inset-inline-start: 16px;
+    z-index: 3;
+    margin: 0;
+    padding: 4px;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .map-note {
+    margin: 6px 0 0;
+  }
+  .colour-key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 12px;
+    margin: 0;
+    padding: 6px 10px;
+    list-style: none;
+    font-size: var(--text-xs);
+  }
+  .colour-key li {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .swatch {
+    flex: none;
+    inline-size: 10px;
+    block-size: 10px;
+    border-radius: 2px;
+  }
+  .answer {
+    margin: 0;
+    padding: 0 16px 12px;
+    font-size: 14px;
+  }
+  .answer strong {
+    font-size: 1.25rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .map-side > .use-bar {
+    margin-inline: 16px;
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
+    margin-block-end: 12px;
+  }
+  .act {
+    flex: none;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .map-side section > h3 {
+    display: flex;
+    gap: 8px;
   }
   .levels {
     padding: 6px 10px;
@@ -1100,72 +1116,6 @@
   }
   .level-key {
     flex: none;
-  }
-  .filters {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 20px;
-    margin-block: 10px;
-  }
-  .facet {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    align-items: center;
-  }
-  .facet-name {
-    margin-inline-end: 4px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--muted);
-  }
-  .chip {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    min-block-size: 28px;
-    padding: 2px 10px;
-    font: inherit;
-    font-size: 13px;
-    color: var(--text);
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
-    border-radius: 14px;
-    cursor: pointer;
-  }
-  .chip:hover:not(:disabled, [aria-pressed="true"]) {
-    background: var(--surface-2);
-  }
-  .chip[aria-pressed="true"] {
-    font-weight: 600;
-    color: var(--bg);
-    background: var(--text);
-    border-color: var(--text);
-  }
-  .chip:disabled {
-    color: var(--muted);
-    border-color: var(--border);
-    cursor: default;
-  }
-  .chip-count {
-    font-weight: 400;
-    font-variant-numeric: tabular-nums;
-    opacity: 0.8;
-  }
-  .chip .swatch {
-    outline: 1px solid var(--bg);
-  }
-  .map-help {
-    margin-block-start: 6px;
-    font-size: 13px;
-    color: var(--muted);
-  }
-  .map-help summary {
-    cursor: pointer;
-  }
-  .map-legend p {
-    margin: 0;
-    max-inline-size: 60rem;
   }
   ul {
     list-style: none;
@@ -1320,10 +1270,19 @@
   }
   .read-row {
     display: flex;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 0 8px;
     align-items: baseline;
     font-size: 13px;
     min-inline-size: 0;
+  }
+  /* The name has the row's first line to itself; its figure and what to do with it follow. */
+  .read-row > a:first-child {
+    flex: 1 0 100%;
+  }
+  .read-row .count {
+    margin-inline-start: 0;
+    margin-inline-end: auto;
   }
   .read-row button {
     padding: 0 6px;
@@ -1364,7 +1323,7 @@
   /* Beside the map the figures scroll on their own, so the map stays in view while they are read. */
   @media (min-width: 1401px) {
     .map-side {
-      max-block-size: calc(max(420px, 100vh - 330px) + 18px);
+      max-block-size: calc(max(420px, 100vh - 300px) + 44px);
       overflow-y: auto;
     }
   }

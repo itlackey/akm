@@ -17,18 +17,7 @@
   import { onDestroy } from "svelte";
   import { api } from "./client";
   import { FAMILIES } from "./graph-model";
-  import MapOptions from "./MapOptions.svelte";
-  import {
-    buildOverview,
-    depthText,
-    groupsOf,
-    type Lens,
-    lensFor,
-    mindMap,
-    type Overview,
-    type OverviewPayload,
-    placeBy,
-  } from "./library-overview";
+  import { buildOverview, flatPlace, groupsOf, mindMap, type Overview, type OverviewPayload } from "./library-overview";
   import { searchHref } from "./library-model";
   import MindMap from "./MindMap.svelte";
   import SimilarityMap from "./SimilarityMap.svelte";
@@ -36,10 +25,8 @@
     advance,
     axisLabels,
     describe,
-    type KindId,
     KINDS,
     kindBins,
-    playText,
     PULSES,
     pulsesAt,
     REPLAY_SECONDS,
@@ -50,7 +37,6 @@
     scrubTime,
     stampText,
     stepsOf,
-    stepsOfKinds,
     totalsAt,
     truncationNote,
     type UsageEventRow,
@@ -63,10 +49,7 @@
   let allSteps = $state.raw<ReplayStep[]>([]);
   /** Whose events play: yours, as Usage counts them, or every source including agents, improve and tasks. */
   let everyone = $state(false);
-  /** The kinds of event that play (all of them when none is chosen): everything on the page counts only these. */
-  let kinds = $state<KindId[]>([]);
-  const bySource = $derived(stepsOf(allSteps, everyone));
-  const steps = $derived(stepsOfKinds(bySource, kinds));
+  const steps = $derived(stepsOf(allSteps, everyone));
   let range = $state<{ since: string; until: string } | null>(null);
   let truncated = $state(false);
   /** What the server said when it has nothing to replay: no index, or no usage history. */
@@ -148,22 +131,15 @@
   // ---- The 3D map: every asset with a group by meaning is a point; used so far in full colour, the rest faint ----
   const everyAsset = $derived(o ? o.ref.map((_, i) => i) : []);
   const groups = $derived(o ? groupsOf(o, everyAsset) : []);
-  /** What depth shows: akm's own place until a lens is chosen, as on the library map. */
-  let chosenLens = $state<Lens["id"] | null>(null);
-  let flip = $state(false);
-  const lens = $derived(o ? lensFor(o, chosenLens, "meaning") : null);
-  const place = $derived(o && lens ? placeBy(o, lens, flip, flat) : new Float32Array(0));
+  const place = $derived(o ? (flat ? flatPlace(o) : o.place) : new Float32Array(0));
   /** A point's size is the events on its asset over the whole period, so it does not change as the replay plays. */
   const size = $derived.by(() => {
     const values = new Float32Array(o?.count ?? 0);
     for (const s of steps) if (s.node >= 0 && s.kind !== "hit") values[s.node]!++;
     return { label: "events in the period", values, largest: Math.max(0, ...values) };
   });
-  /** How many events of each kind the period holds, whichever kinds play. */
-  const kindTotals = $derived.by(() => {
-    const bins = kindBins(bySource, start, end).counts;
-    return new Map(KINDS.map((k) => [k.id, bins.reduce((sum, bin) => sum + bin[k.id], 0)]));
-  });
+  /** The feedback given so far, the latest first. */
+  const feedbackSoFar = $derived(steps.filter((s) => s.kind === "feedback" && s.t <= clock).reverse());
   /** The type colour of an asset: one of the map's eight families. */
   const colourOf = (i: number) => `--map-${o!.family[i]! + 1}`;
   /** The assets used so far, the same set while no new asset is used, so the points are redrawn only when one is. */
@@ -307,18 +283,6 @@
         ><option value={false}>You</option><option value={true}>Everyone: you, agents and automation</option></select
       ></label
     >
-    <div class="drawing">
-      <span class="muted">Map</span>
-      <div class="seg" role="group" aria-label="Map drawing">
-        {#each [["tags", "Tags"], ["2d", "2D"], ["3d", "3D"]] as const as [id, name]}<button
-            class="btn-quiet"
-            aria-pressed={drawing === id}
-            onclick={() => draw(id)}>{name}</button
-          >{/each}
-      </div>
-    </div>
-    <span class="grow"></span>
-    <p class="muted small">{playText(speed)}. Click or drag the timeline to move the playhead.</p>
   </div>
   {#if error}<div class="notice notice-warn" role="alert">
       {error}<button
@@ -332,21 +296,143 @@
   {#if loading}<p class="muted" role="status">Loading activity…</p>{/if}
   {#if unavailable && !loading}<div class="notice" role="status">{unavailable}</div>{/if}
   {#if o && range && !unavailable}
-    <div class="timeline">
-      <ul class="kinds" aria-label="Timeline key: choose kinds of event to play only those">
-        {#each KINDS as k}<li>
-            <button
-              class="chip"
-              aria-pressed={kinds.includes(k.id)}
-              disabled={!kinds.includes(k.id) && !kindTotals.get(k.id)}
-              title={kinds.includes(k.id) ? "Stop playing only these" : "Play only these"}
-              onclick={() => (kinds = kinds.includes(k.id) ? kinds.filter((id) => id !== k.id) : [...kinds, k.id])}
-              ><span class="swatch" style={`background:var(${k.token})`}></span>{k.label}<span class="chip-count"
-                >{(kindTotals.get(k.id) ?? 0).toLocaleString()}</span
-              ></button
+    <div class="replay-body">
+      <div class="replay-map">
+        <div class="stage-tools">
+          <div class="seg" role="group" aria-label="Map drawing">
+            {#each [["tags", "Tags"], ["2d", "2D"], ["3d", "3D"]] as const as [id, name]}<button
+                class="btn-quiet"
+                aria-pressed={drawing === id}
+                onclick={() => draw(id)}>{name}</button
+              >{/each}
+          </div>
+          <h3>Where the events landed, by {points ? "meaning" : "type and tag"}</h3>
+        </div>
+        {#if points}
+          {#if groups.length}
+            <SimilarityMap
+              {o}
+              {place}
+              {flat}
+              {size}
+              describe={(i) =>
+                `${FAMILIES[o!.family[i]!]!.label}${lit.has(i) ? ", used so far" : ""} · ${eventsText(size.values[i]!) || "no events"} in the period`}
+              scope={flat ? usedSoFarList : everyAsset}
+              groups={flat ? groups.filter((g) => g.members.some((i) => lit.has(i))) : groups}
+              {colourOf}
+              {lit}
+              emphasis={pulses}
+              label="The library's assets as points, in groups by meaning, groups alike in meaning near each other. An asset used so far is in its type's colour, the rest are faint, and an asset an event has just touched is ringed. The log beside it lists the same events."
             >
-          </li>{/each}
-        {#if kinds.length}<li><button class="btn-quiet small" onclick={() => (kinds = [])}>All events</button></li>{/if}
+              {#snippet legend()}
+                <ul class="key" aria-label="Key to the 3D map">
+                  <li><span class="dot"></span>Used so far, in its type's colour</li>
+                  {#if !flat}<li><span class="dot faint"></span>Not used yet, faint</li>{/if}
+                  {#each PULSES as pulse}<li>
+                      <span class="ring" style={`border-color:var(${pulse.token})`}></span>{pulse.label}, just now
+                    </li>{/each}
+                  {#each familiesShown as family}<li>
+                      <span class="dot" style={`background:var(--map-${family.k + 1})`}></span>{family.label}
+                    </li>{/each}
+                </ul>
+              {/snippet}
+            </SimilarityMap>
+            <p class="muted small">
+              Each point is an asset, coloured by its type; a larger point has more events in the period. An asset is
+              ringed for a moment when an event reads it, a search returns it or it is given feedback.
+              {flat ? "In 2D an asset and its group appear when it is first used." : ""}
+            </p>
+            {#if unplaced && (unplaced.notOnMap || unplaced.notListed)}<p class="muted small" role="status">
+                {#if unplaced.notOnMap}{unplaced.notOnMap.toLocaleString()}
+                  {unplaced.notOnMap === 1 ? "event" : "events"} so far touched assets with no place on this map (no group
+                  by meaning: not embedded, or added since the last index build).{/if}
+                {#if unplaced.notListed}{unplaced.notListed.toLocaleString()}
+                  {unplaced.notListed === 1 ? "event" : "events"} so far touched assets the index no longer lists.{/if}
+              </p>{/if}{:else}<p class="notice">
+              No stored embeddings, so assets cannot be placed by meaning and the 3D map cannot be drawn: {steps
+                .filter((s) => s.t <= clock && s.kind !== "hit" && s.ref)
+                .length.toLocaleString()} events so far touched assets. Build the index with embeddings, or use Tags.
+            </p>{/if}
+        {:else}
+          <MindMap
+            {branches}
+            rootLabel="Library"
+            rootFigure={eventsText(branches.reduce((sum, b) => sum + (counts.get(b.key) ?? 0), 0))}
+            figure={(_, key) => eventsText(counts.get(key) ?? 0)}
+            bar={(_, key) => [{ n: counts.get(key) ?? 0, token: "--accent" }]}
+            scale={most}
+            {selected}
+            appeared={(key) => (counts.get(key) ?? 0) > 0}
+            onSelect={(key) => (selected = selected === key ? "" : key)}
+            pulse={playing ? counts : null}
+            label="The library mind map: its asset types and the tags their assets carry most, each with the number of events on it so far. The log beside it lists the same events."
+          />
+          {#if offMap}<p class="muted small">
+              {offMap.toLocaleString()} events so far touched assets under none of the tags drawn, or no longer in the library.
+            </p>{/if}
+        {/if}
+      </div>
+      <aside class="replay-side">
+        <div class="figures">
+          <div><strong>{totals.events.toLocaleString()}</strong><span>events</span></div>
+          <div><strong>{totals.shows.toLocaleString()}</strong><span>reads</span></div>
+          <div><strong>{totals.searches.toLocaleString()}</strong><span>searches</span></div>
+          <div><strong>{totals.curates.toLocaleString()}</strong><span>curates</span></div>
+          <div class:bad={totals.foundNothing > 0}>
+            <strong>{totals.foundNothing.toLocaleString()}</strong><span>found nothing</span>
+          </div>
+          <div><strong>{totals.positive}/{totals.negative}</strong><span>feedback +/−</span></div>
+          <div><strong>{totals.used.size.toLocaleString()}</strong><span>assets used</span></div>
+        </div>
+        <section>
+          <h3>Searched for, not found</h3>
+          <ul class="log">
+            {#each totals.misses.slice(0, 6) as [query, count]}<li>
+                <span class="what">{query}</span><span class="muted small count">×{count}</span>
+                <a class="small" href={`/library/search?${new URLSearchParams([["q", query]])}`}>Search again</a>
+                <a class="small" href="/library/files">Create</a>
+              </li>{:else}<li class="muted">None so far</li>{/each}
+          </ul>
+        </section>
+        <section>
+          <h3>Most used so far</h3>
+          <ol class="log">
+            {#each mostUsed as row}<li>
+                <a href={searchHref(new URLSearchParams(), row.ref)}>{o.path(row.node)}</a>
+                <span class="muted small">×{row.count}</span>
+              </li>{:else}<li class="muted">Nothing yet</li>{/each}
+          </ol>
+        </section>
+        <section>
+          <h3>Feedback given so far</h3>
+          <ol class="log">
+            {#each feedbackSoFar.slice(0, 8) as step}<li>
+                <span class="sign" data-signal={step.signal}>{step.signal === "negative" ? "−" : "+"}</span>
+                {#if step.ref}<a href={searchHref(new URLSearchParams(), step.ref)}
+                    >{step.node >= 0 ? o.path(step.node) : step.ref}</a
+                  >{:else}<span>an asset</span>{/if}
+                <span class="muted small">{step.signal ?? ""} · {stampText(step.t, span)}</span>
+              </li>{:else}<li class="muted">None so far</li>{/each}
+          </ol>
+        </section>
+        <section>
+          <h3>Latest events</h3>
+          <ol class="log">
+            {#each recent as step}<li>
+                <span class="when muted small">{stampText(step.t, span)}</span>
+                <span class="kind" data-kind={step.kind === "search" && step.results === 0 ? "miss" : step.kind}></span>
+                <span class="what" title={describe(step)}>{describe(step)}</span>
+              </li>{:else}<li class="muted">Nothing yet</li>{/each}
+          </ol>
+        </section>
+        {#if cutNote}<p class="muted small">{cutNote}</p>{/if}
+      </aside>
+    </div>
+    {#if !steps.length}<p>No searches, reads or feedback recorded in this period.</p>{/if}
+    <div class="timeline">
+      <ul class="kinds" aria-label="Timeline key">
+        {#each KINDS as k}<li><span class="swatch" style={`background:var(${k.token})`}></span>{k.label}</li>{/each}
+        <li class="scale-note muted">Tallest bar = {timeline.max} events. Faded bars are after the playhead.</li>
       </ul>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <svg
@@ -392,141 +478,7 @@
         }}
       />
       <div class="ticks"><span>{axis[0]}</span><span>{axis[1]}</span><span>{axis[2]}</span></div>
-      <p class="muted small">Tallest bar = {timeline.max} events. Faded bars are after the playhead.</p>
     </div>
-
-    <div class="replay-body">
-      <div class="replay-map">
-        {#if points}<h3>Where the events landed, by meaning</h3>
-          {#if groups.length && lens}{#if !flat}<div class="stage-options">
-                <MapOptions
-                  {o}
-                  {lens}
-                  {flip}
-                  onLens={(id) => {
-                    chosenLens = id;
-                    flip = false;
-                  }}
-                  onFlip={() => (flip = !flip)}
-                />
-              </div>{/if}
-            <SimilarityMap
-              {o}
-              {place}
-              {flat}
-              depthKey={flat ? [] : flip ? [...lens.bands].reverse() : lens.bands}
-              {size}
-              describe={(i) =>
-                `${FAMILIES[o!.family[i]!]!.label}${lit.has(i) ? ", used so far" : ""} · ${eventsText(size.values[i]!) || "no events"} in the period`}
-              scope={flat ? usedSoFarList : everyAsset}
-              groups={flat ? groups.filter((g) => g.members.some((i) => lit.has(i))) : groups}
-              {colourOf}
-              {lit}
-              emphasis={pulses}
-              label={`The library's assets as points in 3D, in groups by meaning, groups alike in meaning near each other. An asset used so far is in its type's colour, the rest are faint, and an asset an event has just touched is ringed. ${depthText(lens, flip, flat)} The log beside it lists the same events.`}
-            >
-              {#snippet legend()}
-                <ul class="key" aria-label="Key to the 3D map">
-                  <li><span class="dot"></span>Used so far, in its type's colour</li>
-                  {#if !flat}<li><span class="dot faint"></span>Not used yet, faint</li>{/if}
-                  {#each PULSES as pulse}<li>
-                      <span class="ring" style={`border-color:var(${pulse.token})`}></span>{pulse.label}, just now
-                    </li>{/each}
-                  {#each familiesShown as family}<li>
-                      <span class="dot" style={`background:var(--map-${family.k + 1})`}></span>{family.label}
-                    </li>{/each}
-                </ul>
-              {/snippet}
-            </SimilarityMap>
-            <p class="muted small">
-              Each point is an asset, coloured by its type; a larger point has more events in the period. An asset is
-              ringed for a moment when an event reads it, a search returns it or it is given feedback.
-              {flat ? "In 2D an asset and its group appear when it is first used." : ""}
-            </p>
-            <details class="map-help">
-              <summary>How to read and move the map</summary>
-              <p class="muted small">
-                Groups alike in meaning sit near each other; position inside a group is approximate.
-                {flat ? "Drag to move" : "Drag to turn, right-drag to move"}, scroll to zoom, hover a point for its name
-                and figures. With the map focused: {flat ? "" : "the arrow keys turn the view, "}+ and − zoom{flat
-                  ? ""
-                  : ", 0 faces the front"}.
-              </p>
-            </details>
-            {#if unplaced && (unplaced.notOnMap || unplaced.notListed)}<p class="muted small" role="status">
-                {#if unplaced.notOnMap}{unplaced.notOnMap.toLocaleString()}
-                  {unplaced.notOnMap === 1 ? "event" : "events"} so far touched assets with no place on this map (no group
-                  by meaning: not embedded, or added since the last index build).{/if}
-                {#if unplaced.notListed}{unplaced.notListed.toLocaleString()}
-                  {unplaced.notListed === 1 ? "event" : "events"} so far touched assets the index no longer lists.{/if}
-              </p>{/if}{:else}<p class="notice">
-              No stored embeddings, so assets cannot be placed by meaning and the 3D map cannot be drawn: {steps
-                .filter((s) => s.t <= clock && s.kind !== "hit" && s.ref)
-                .length.toLocaleString()} events so far touched assets. Build the index with embeddings, or use Tags.
-            </p>{/if}
-        {:else}
-          <h3>Where the events landed, by type and tag</h3>
-          <MindMap
-            {branches}
-            rootLabel="Library"
-            rootFigure={eventsText(branches.reduce((sum, b) => sum + (counts.get(b.key) ?? 0), 0))}
-            figure={(_, key) => eventsText(counts.get(key) ?? 0)}
-            bar={(_, key) => [{ n: counts.get(key) ?? 0, token: "--accent" }]}
-            scale={most}
-            {selected}
-            appeared={(key) => (counts.get(key) ?? 0) > 0}
-            onSelect={(key) => (selected = selected === key ? "" : key)}
-            pulse={playing ? counts : null}
-            label="The library mind map: its asset types and the tags their assets carry most, each with the number of events on it so far. The log beside it lists the same events."
-          />
-          {#if offMap}<p class="muted small">
-              {offMap.toLocaleString()} events so far touched assets under none of the tags drawn, or no longer in the library.
-            </p>{/if}
-        {/if}
-      </div>
-      <aside class="replay-side">
-        <div class="figures">
-          <div><strong>{totals.events.toLocaleString()}</strong><span>events</span></div>
-          <div><strong>{totals.shows.toLocaleString()}</strong><span>reads</span></div>
-          <div><strong>{totals.searches.toLocaleString()}</strong><span>searches</span></div>
-          <div><strong>{totals.curates.toLocaleString()}</strong><span>curates</span></div>
-          <div class:bad={totals.foundNothing > 0}>
-            <strong>{totals.foundNothing.toLocaleString()}</strong><span>found nothing</span>
-          </div>
-          <div><strong>{totals.positive}/{totals.negative}</strong><span>feedback +/−</span></div>
-          <div><strong>{totals.used.size.toLocaleString()}</strong><span>assets used</span></div>
-        </div>
-        <section>
-          <h3>Latest events</h3>
-          <ol class="log">
-            {#each recent as step}<li>
-                <span class="when muted small">{stampText(step.t, span)}</span>
-                <span class="kind" data-kind={step.kind === "search" && step.results === 0 ? "miss" : step.kind}></span>
-                <span class="what" title={describe(step)}>{describe(step)}</span>
-              </li>{:else}<li class="muted">Nothing yet</li>{/each}
-          </ol>
-        </section>
-        <section>
-          <h3>Most used so far</h3>
-          <ol class="log">
-            {#each mostUsed as row}<li>
-                <a href={searchHref(new URLSearchParams(), row.ref)}>{o.path(row.node)}</a>
-                <span class="muted small">×{row.count}</span>
-              </li>{:else}<li class="muted">Nothing yet</li>{/each}
-          </ol>
-        </section>
-        <section>
-          <h3>Searches that found nothing</h3>
-          <ul class="log">
-            {#each totals.misses.slice(0, 6) as [query, count]}<li>
-                {query}<span class="muted small count">×{count}</span>
-              </li>{:else}<li class="muted">None so far</li>{/each}
-          </ul>
-        </section>
-        {#if cutNote}<p class="muted small">{cutNote}</p>{/if}
-      </aside>
-    </div>
-    {#if !steps.length}<p>No searches, reads or feedback recorded in this period.</p>{/if}
   {/if}
 </section>
 
@@ -537,9 +489,6 @@
     gap: 12px 16px;
     align-items: end;
     margin-bottom: 16px;
-  }
-  .replay-toolbar p {
-    margin: 0;
   }
   .replay-toolbar label {
     display: grid;
@@ -554,11 +503,6 @@
   .now strong {
     font-size: 1.375rem;
     font-variant-numeric: tabular-nums;
-  }
-  .drawing {
-    display: grid;
-    gap: 4px;
-    font-size: 12px;
   }
   .seg {
     display: flex;
@@ -606,9 +550,6 @@
     inline-size: 12px;
     block-size: 12px;
   }
-  .grow {
-    flex: 1;
-  }
   .figures {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
@@ -631,11 +572,15 @@
   .figures .bad strong {
     color: var(--fail);
   }
+  /* The timeline stays at the foot of the window, so the playhead is in view with the map whatever is scrolled. */
   .timeline {
-    padding: 10px 12px;
+    position: sticky;
+    inset-block-end: 0;
+    z-index: 4;
+    padding: 8px 12px;
     border: 1px solid var(--border);
     background: var(--surface);
-    margin-bottom: 16px;
+    margin-block-start: 12px;
   }
   .timeline svg {
     display: block;
@@ -654,9 +599,6 @@
     margin: 4px 0 0;
     accent-color: var(--accent);
   }
-  .timeline p {
-    margin: 4px 0 0;
-  }
   .kinds {
     list-style: none;
     margin: 0 0 8px;
@@ -671,42 +613,9 @@
     gap: 6px;
     align-items: center;
   }
-  .chip {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    min-block-size: 28px;
-    padding: 2px 10px;
-    font: inherit;
-    font-size: 13px;
-    color: var(--text);
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
-    border-radius: 14px;
-    cursor: pointer;
-  }
-  .chip[aria-pressed="true"] {
-    font-weight: 600;
-    color: var(--bg);
-    background: var(--text);
-    border-color: var(--text);
-  }
-  .chip:disabled {
-    color: var(--muted);
-    border-color: var(--border);
-    cursor: default;
-  }
-  .chip-count {
-    font-weight: 400;
-    font-variant-numeric: tabular-nums;
-    opacity: 0.8;
-  }
-  .map-help {
-    font-size: 13px;
-    color: var(--muted);
-  }
-  .map-help summary {
-    cursor: pointer;
+  .scale-note {
+    margin-inline-start: auto;
+    font-size: 12px;
   }
   .swatch {
     inline-size: 10px;
@@ -739,17 +648,27 @@
     padding: 8px;
     min-inline-size: 0;
     /* The timeline and the map fit one window together. */
-    --stage-size: max(420px, calc(100vh - 330px));
+    --stage-size: max(300px, calc(100vh - 610px));
   }
-  .stage-options {
-    position: absolute;
-    inset-block-start: 40px;
-    inset-inline-end: 16px;
-    z-index: 3;
-    padding: 4px 8px;
-    background: color-mix(in srgb, var(--surface) 94%, transparent);
-    border: 1px solid var(--border);
-    border-radius: 6px;
+  /* The drawing switch sits on the map; over the tags, which have no spare corner, it sits above them. */
+  .stage-tools {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-block-end: 6px;
+  }
+  .stage-tools h3 {
+    margin: 0;
+  }
+  .sign {
+    flex: none;
+    inline-size: 1.25rem;
+    font-weight: 700;
+    text-align: center;
+    color: var(--ok);
+  }
+  .sign[data-signal="negative"] {
+    color: var(--fail);
   }
   h3 {
     font-size: 12px;

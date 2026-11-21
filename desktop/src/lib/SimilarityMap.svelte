@@ -11,9 +11,9 @@
   // the pointer, within a fixed reach on screen, names its asset on hover. Choosing a point or a group's name picks it:
   // the pick is ringed and haloed, named by a label that stays over everything, what it is joined to is ringed and lined,
   // and the rest fades. With the map focused, the left and right arrow keys step to the previous and next asset, and the
-  // other keys turn and zoom the view. `place` is where each asset is drawn: when it changes (another depth lens, a
-  // flip, flattening) every mark moves there over 0.6 seconds, or at once under reduced motion. A marker in the corner
-  // turns with the view and names the front and the back, and `flat` draws the points in one plane, which cannot be turned.
+  // other keys turn and zoom the view. `place` is where each asset is drawn: when it changes (2D to 3D or back) every mark
+  // moves there over 0.6 seconds, or at once under reduced motion. A marker in the corner turns with the view and names
+  // the front and the back, and `flat` draws the points in one plane, which cannot be turned.
   import { LEVEL_STYLES } from "./link-levels";
   import { untrack, type Snippet } from "svelte";
   import { prefersReducedMotion } from "svelte/motion";
@@ -23,7 +23,7 @@
     o,
     place,
     flat = false,
-    depthKey = [],
+    groupNote,
     scope,
     groups,
     colourOf,
@@ -47,8 +47,8 @@
     place: Float32Array;
     /** Every point is in one plane: the view faces it and cannot be turned. */
     flat?: boolean;
-    /** What is at the front, in the middle and at the back of each group, when depth stands for a figure. */
-    depthKey?: string[];
+    /** What a group's name says after its count: the view's figure for that group. */
+    groupNote?: (g: Group) => string;
     scope: readonly number[];
     groups: Group[];
     /** The colour token of an asset in the view. */
@@ -818,7 +818,9 @@
   onkeydown={onKey}
 >
   {#if failed}<p class="notice notice-warn">{failed}</p>{/if}
-  {#snippet name(g: Group)}{g.label}<span>{g.members.length.toLocaleString()}</span>{/snippet}
+  {#snippet name(g: Group)}{g.label}<span>{g.members.length.toLocaleString()}</span>{#if groupNote?.(g)}<span
+        class="note">{groupNote(g)}</span
+      >{/if}{/snippet}
   {#each groups as g (g.key)}
     {#if onGroup}<button
         class="group-name"
@@ -832,17 +834,7 @@
         style={`font-size:${13 + 4 * Math.sqrt(g.members.length / largest)}px`}>{@render name(g)}</span
       >{/if}
   {/each}
-  {#if depthKey.length || sizeSteps.length || legend}<div class="stage-legend">
-      {#if depthKey.length}<div class="scale depth-key">
-          <span class="cap">Depth in each group</span>
-          <ol>
-            {#each depthKey as band, k}<li>
-                <i style={`inline-size:${11 - 3.5 * k}px;block-size:${11 - 3.5 * k}px`}></i>{band}{#if k === 0}<b
-                    >front</b
-                  >{:else if k === depthKey.length - 1}<b>back</b>{/if}
-              </li>{/each}
-          </ol>
-        </div>{/if}
+  {#if sizeSteps.length || legend}<div class="stage-legend">
       {#if sizeSteps.length}<div class="scale size-key">
           <span class="cap">Size: {size!.label}</span>
           <ol>
@@ -861,6 +853,7 @@
     {#if !flat}<button title="Turn the view to face the front; the zoom and the selection stay (0)" onclick={faceFront}
         >Front view</button
       >{/if}
+    <button title="The view back to where the map opens" onclick={reset}>Reset view</button>
   </div>
   {#snippet named(i: number)}<span class="ref">{o.ref[i]}</span>{#if describe?.(i)}<span class="value"
         >{` · ${describe(i)}`}</span
@@ -925,10 +918,6 @@
     padding: 0;
     list-style: none;
   }
-  .depth-key ol {
-    display: grid;
-    flex-basis: 100%;
-  }
   .scale li {
     display: flex;
     gap: 6px;
@@ -938,16 +927,6 @@
     flex: none;
     border-radius: 50%;
     background: var(--muted);
-  }
-  .depth-key i {
-    margin-inline: calc((11px - 100%) / 2);
-  }
-  .scale b {
-    font-weight: 400;
-    color: var(--muted);
-  }
-  .scale b::before {
-    content: "· ";
   }
   .view-buttons {
     position: absolute;
@@ -1050,6 +1029,13 @@
   .group-name span {
     font-weight: 400;
     font-size: 0.85em;
+    color: var(--muted);
+  }
+  .group-name .note {
+    color: var(--text);
+  }
+  .group-name .note::before {
+    content: "· ";
     color: var(--muted);
   }
   span.group-name {
