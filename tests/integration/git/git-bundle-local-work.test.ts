@@ -4,13 +4,14 @@
 // upstream. Every update, re-add or remove that would do so is refused with SOURCE_HAS_LOCAL_WORK (exit 78),
 // naming the work and the checkout's real path.
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../../../src/core/config/config";
 import { readLockfile } from "../../../src/integrations/lockfile";
-import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
+import * as gitProviderModule from "../../../src/sources/providers/git";
+import { getCachePaths, parseGitRepoUrl, syncMirroredRepo } from "../../../src/sources/providers/git";
 import { runCliCapture } from "../../_helpers/cli";
 import { type GitDaemon, startGitDaemon } from "../../_helpers/git-daemon";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, withTTY } from "../../_helpers/sandbox";
@@ -52,6 +53,12 @@ async function checkoutWithLocalWork(): Promise<string> {
   git(["-C", root, "commit", "-m", "unpushed work"]);
   fs.writeFileSync(path.join(root, "knowledge", "uncommitted.md"), "# Uncommitted\n");
   return root;
+}
+
+/** Discard the checkout's unpushed commit and uncommitted file, as the refusal tells the person to. */
+function discardWork(root: string): void {
+  git(["-C", root, "reset", "--hard", "origin/main"]);
+  git(["-C", root, "clean", "-fd"]);
 }
 
 /** A plain (lockless) git source mirrored into the registry-index cache, with the same local work. */
@@ -124,11 +131,12 @@ describe("a git bundle checkout with local work", () => {
     expectRefusedWithWork(await bundleCli("update", BUNDLE), root);
   }, 90_000);
 
-  test("removing a git source is refused with local work, and allowed with --force", async () => {
+  test("removing a git source is refused with local work, and allowed once the work is discarded", async () => {
     const root = await plainSourceWithLocalWork();
     expectRefusedWithWork(await bundleCli("remove", BUNDLE, "--yes"), root);
     expect(loadConfig().bundles?.[BUNDLE]).toBeDefined();
-    expect((await bundleCli("remove", BUNDLE, "--yes", "--force")).code).toBe(0);
+    discardWork(root);
+    expect((await bundleCli("remove", BUNDLE, "--yes")).code).toBe(0);
   }, 90_000);
 
   test("a diverged writable checkout is an environment error that names the live path", async () => {
@@ -151,13 +159,14 @@ describe("a git bundle checkout with local work", () => {
     expect(fs.existsSync(path.join(root, "knowledge", "committed.md"))).toBe(true);
   }, 90_000);
 
-  test("removing the bundle is refused with local work, and allowed with --force", async () => {
+  test("removing the bundle is refused with local work, and allowed once the work is discarded", async () => {
     const root = await checkoutWithLocalWork();
     expectRefusedWithWork(await bundleCli("remove", BUNDLE, "--yes"), root);
     expect(loadConfig().bundles?.[BUNDLE]).toBeDefined();
 
-    const forced = await bundleCli("remove", BUNDLE, "--yes", "--force");
-    expect(forced.code, forced.stderr).toBe(0);
+    discardWork(root);
+    const removed = await bundleCli("remove", BUNDLE, "--yes");
+    expect(removed.code, removed.stderr).toBe(0);
     expect(loadConfig().bundles?.[BUNDLE]).toBeUndefined();
   }, 90_000);
 
@@ -185,5 +194,42 @@ describe("a git bundle checkout with local work", () => {
     expect(updated.code, updated.stderr).toBe(0);
     const readded = await bundleCli("add", `git+${GIT_URL}`, "--name", BUNDLE, "--writable");
     expect(readded.code, readded.stderr).toBe(0);
+  }, 90_000);
+
+  test("a read-only update off a writable managed checkout refuses and keeps the work, also with --force", async () => {
+    const root = await checkoutWithLocalWork();
+    const work = path.join(storage.root, "other");
+    git(["clone", bare, work]);
+    configure(work);
+    fs.writeFileSync(path.join(work, "upstream.md"), "upstream\n");
+    git(["-C", work, "add", "-A"]);
+    git(["-C", work, "commit", "-m", "upstream change"]);
+    git(["-C", work, "push", "origin", "main"]);
+    makeReadOnly();
+
+    expectRefusedWithWork(await bundleCli("update", BUNDLE), root);
+    expectRefusedWithWork(await bundleCli("update", BUNDLE, "--force"), root);
+    expect(readLockfile().find((entry) => entry.id === BUNDLE)?.localRoot).toBe(root);
+  }, 90_000);
+
+  test("a git source that gains local work while its refresh is fetched is not replaced", async () => {
+    expect((await bundleCli("add", GIT_URL, "--provider", "git", "--name", BUNDLE, "--writable")).code).toBe(0);
+    const repoDir = getCachePaths(parseGitRepoUrl(GIT_URL).canonicalUrl).repoDir;
+    makeReadOnly();
+    const original = syncMirroredRepo;
+    const spy = spyOn(gitProviderModule, "syncMirroredRepo").mockImplementation(async (...args) => {
+      const result = await original(...args);
+      fs.writeFileSync(path.join(repoDir, "knowledge", "late.md"), "# Late work\n");
+      return result;
+    });
+    try {
+      const result = await bundleCli("update", BUNDLE);
+      const text = `${result.stdout}${result.stderr}`;
+      expect(result.code, text).toBe(78);
+      expect(text).toContain("late.md");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(fs.readFileSync(path.join(repoDir, "knowledge", "late.md"), "utf8")).toBe("# Late work\n");
   }, 90_000);
 });

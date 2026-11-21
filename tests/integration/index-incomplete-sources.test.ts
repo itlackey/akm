@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
+import { akmIndex } from "../../src/indexer/indexer";
 import { readIncompleteSources } from "../../src/indexer/walk/index-context";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
@@ -84,6 +85,36 @@ describe("a configured source that cannot be scanned", () => {
   }, 60_000);
 });
 
+describe("an unresolved source", () => {
+  test("reports its real path and the real reason, never the internal placeholder", async () => {
+    const outside = path.join(storage.root, "outside");
+    fs.mkdirSync(outside, { recursive: true });
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: {
+        escaping: {
+          path: dir,
+          components: { main: { root: "../team-notes-sibling", adapter: "akm", writable: false } },
+        },
+        unmaterialized: { git: "git://127.0.0.1:1/none.git" },
+      },
+    });
+
+    const result = await akmIndex({
+      stashDir: storage.stashDir,
+      hydrateSources: false,
+      persistDetectedAdapters: false,
+    });
+
+    const byBundle = Object.fromEntries(result.incompleteSources.map((source) => [source.bundle, source]));
+    expect(byBundle.escaping?.path).toBe(path.resolve(dir, "../team-notes-sibling"));
+    expect(byBundle.escaping?.reason).toContain("escapes bundle");
+    expect(byBundle.unmaterialized?.path).toContain("repo");
+    expect(byBundle.unmaterialized?.reason).toContain("ENOENT");
+    for (const source of result.incompleteSources) expect(source.path).not.toContain("unresolved");
+  }, 60_000);
+});
+
 describe("the adapter-skip warning", () => {
   function narrowAdapter(): void {
     const config = loadConfig();
@@ -113,5 +144,18 @@ describe("the adapter-skip warning", () => {
     fs.writeFileSync(path.join(dir, "knowledge", "second.md"), "---\ndescription: second\n---\n\n# Second\n");
     const changed = await index("--full");
     expect(changed.stderr).toContain("skipped 2 files");
+  }, 60_000);
+
+  test("a removed bundle takes its record with it, so a re-added bundle is warned about again", async () => {
+    expect((await runCliCapture(["bundle", "add", dir, "--name", "notes"])).code).toBe(0);
+    narrowAdapter();
+    expect((await index("--full")).stderr).toContain("adapter skipped");
+
+    expect((await runCliCapture(["bundle", "remove", "notes", "--yes"])).code).toBe(0);
+    await index("--full");
+    expect((await runCliCapture(["bundle", "add", dir, "--name", "notes"])).code).toBe(0);
+    narrowAdapter();
+
+    expect((await index("--full")).stderr).toContain("adapter skipped");
   }, 60_000);
 });

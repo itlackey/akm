@@ -195,8 +195,6 @@ export type TransientErrorCode =
 export type NotFoundErrorCode =
   | "ASSET_NOT_FOUND"
   | "SOURCE_NOT_FOUND"
-  // The program exists but the operating system refuses to execute it (no execute permission, or a folder).
-  | "COMMAND_NOT_EXECUTABLE"
   | "WORKFLOW_NOT_FOUND"
   | "PROPOSAL_NOT_FOUND"
   | "FILE_NOT_FOUND"

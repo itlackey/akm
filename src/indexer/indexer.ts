@@ -14,7 +14,7 @@ import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
 import { withStateDb } from "../core/state-db";
-import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
+import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { localEmbeddingRuntime } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
@@ -989,6 +989,8 @@ type SourceScanPlan = {
   walkComplete: boolean;
   /** When the scan of this source is incomplete: the error that stopped it. */
   incompleteReason?: string;
+  /** For a source that did not resolve: its real directory, or `unknown`. */
+  incompletePath?: string;
   /** Content the source's adapter skips that the `akm` adapter would index. */
   adapterSkip?: AdapterSkip;
 };
@@ -1109,7 +1111,7 @@ function configuredComponentName(config: AkmConfig, bundleId: string): string {
 
 /**
  * Warn about each bundle whose skipped content differs from what the last index recorded, then record this run's
- * skips. A bundle that was not scanned this run keeps its record.
+ * skips. A configured bundle that was not scanned this run keeps its record.
  */
 function reportAdapterSkips(db: Database, config: AkmConfig, plans: readonly SourceScanPlan[]): void {
   let previous: Record<string, AdapterSkip> = {};
@@ -1118,7 +1120,9 @@ function reportAdapterSkips(db: Database, config: AkmConfig, plans: readonly Sou
   } catch {
     previous = {};
   }
-  const next = { ...previous };
+  // A removed bundle takes its record with it.
+  const configured = new Set(plans.map((plan) => plan.component.id));
+  const next = Object.fromEntries(Object.entries(previous).filter(([id]) => configured.has(id)));
   for (const plan of plans) {
     if (!plan.adapter || !plan.walkComplete) continue;
     const id = plan.component.id;
@@ -1159,7 +1163,8 @@ function buildSourceScanPlans(
         dirGroups: new Map(),
         removals: [],
         walkComplete: false,
-        incompleteReason: "the source did not resolve to a directory this run",
+        incompleteReason: sourceAdded.unresolvedDetail?.reason ?? "the source did not resolve this run",
+        incompletePath: sourceAdded.unresolvedDetail?.path ?? "unknown",
       };
     }
     const adapter = adapterForId(component.adapter);
@@ -1329,7 +1334,7 @@ async function scanSourceDirs(
       incompleteSources.push({
         bundle: component.id,
         component: configuredComponentName(config, component.id),
-        path: currentStashDir,
+        path: plan.incompletePath ?? currentStashDir,
         reason,
       });
       warn(

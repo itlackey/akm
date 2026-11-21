@@ -22,8 +22,8 @@ import type { SourceLockData, SyncOptions } from "./install-types";
 import { buildInstallCacheDir, detectStashRoot, isDirectory } from "./provider-utils";
 
 const DIRTY_PATHS_SHOWN = 5;
-export const UPDATE_REFUSAL_HINT =
-  "Local work was preserved. Commit, move or discard the paths or commits named above in the checkout, then run `akm bundle update` again.";
+export const LOCAL_WORK_HINT =
+  "Local work was preserved. Commit, move or discard the paths or commits named above in the checkout, then run the command again.";
 
 /**
  * The one guard for a git checkout that akm is about to replace or delete. It refuses, naming what it found,
@@ -53,7 +53,7 @@ export function assertNoLocalWork(repoDir: string, subject: string, upstream?: s
   throw new ConfigError(
     `${subject} holds local work that would be lost; it has ${found.join("; it has ")}.`,
     "SOURCE_HAS_LOCAL_WORK",
-    UPDATE_REFUSAL_HINT,
+    LOCAL_WORK_HINT,
   );
 }
 
@@ -190,7 +190,7 @@ export function assertNoIgnoredPathOverwrite(repoDir: string, targetRevision: st
     throw new ConfigError(
       `Git update would overwrite ignored local path ${path.join(displayDir, conflict)}; move or remove it before update.`,
       "SOURCE_HAS_LOCAL_WORK",
-      UPDATE_REFUSAL_HINT,
+      LOCAL_WORK_HINT,
     );
   }
 }
@@ -529,7 +529,7 @@ export function syncExistingWritableCheckout(
       throw new ConfigError(
         `Writable Git install at ${shownRoot} cannot fast-forward without overwriting local work; nothing was changed. ${merge.stderr.trim()}`,
         "SOURCE_HAS_LOCAL_WORK",
-        UPDATE_REFUSAL_HINT,
+        LOCAL_WORK_HINT,
       );
     }
   }

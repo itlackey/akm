@@ -38,6 +38,8 @@ export interface SearchSource {
   adapterId?: string;
   /** Configured source whose provider/path could not be resolved this run. */
   unresolved?: boolean;
+  /** For an unresolved source: why, and its real directory when it has one. */
+  unresolvedDetail?: { reason: string; path?: string };
 }
 
 // ── Resolution ──────────────────────────────────────────────────────────────
@@ -96,7 +98,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     writable: boolean,
     type: SourceConfigEntry["type"],
     adapterId?: string,
-    unresolved = false,
+    unresolved?: { reason: string; path?: string },
     isDefault = false,
   ) => {
     const resolved = path.resolve(dir);
@@ -116,7 +118,10 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
         existing.writable = writable;
         existing.adapterId = adapterId;
       }
-      if (existing && unresolved) existing.unresolved = true;
+      if (existing && unresolved) {
+        existing.unresolved = true;
+        existing.unresolvedDetail = unresolved;
+      }
       return;
     }
     seen.add(identity);
@@ -130,7 +135,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       writable,
       type,
       ...(adapterId ? { adapterId } : {}),
-      ...(unresolved ? { unresolved: true } : {}),
+      ...(unresolved ? { unresolved: true, unresolvedDetail: unresolved } : {}),
     });
   };
 
@@ -153,7 +158,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
         component?.writable ?? resolveWritable(entry),
         entry.type,
         component?.adapter,
-        true,
+        { reason: "the source has no materialized content directory" },
         entry.name === config.defaultBundle,
       );
       continue;
@@ -168,7 +173,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
         component?.writable ?? resolveWritable(entry),
         entry.type,
         component?.adapter,
-        true,
+        { reason: `component root "${component?.root}" escapes bundle "${entry.name}"`, path: dir },
         entry.name === config.defaultBundle,
       );
       continue;
@@ -179,7 +184,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       component?.writable ?? resolveWritable(entry),
       entry.type,
       component?.adapter,
-      false,
+      undefined,
       entry.name === config.defaultBundle,
     );
   }

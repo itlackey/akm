@@ -40,7 +40,7 @@ import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
 import type { InstalledBundle, InstallKind } from "../../registry/types";
 import { getCachePaths, parseGitRepoUrl, runGit, syncMirroredRepo } from "../../sources/providers/git";
-import { assertNoLocalWork, replaceDirectory, UPDATE_REFUSAL_HINT } from "../../sources/providers/git-install";
+import { assertNoLocalWork, LOCAL_WORK_HINT, replaceDirectory } from "../../sources/providers/git-install";
 import type { SourceLockData } from "../../sources/providers/install-types";
 import { installRevisionDir, isDirectory } from "../../sources/providers/provider-utils";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
@@ -64,7 +64,7 @@ import type { Database } from "../../storage/database";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
 import { removeInstalledRegistryEntry } from "./source-add";
-import { removeStash } from "./source-manage";
+import { removeStash, resolveBundleKey } from "./source-manage";
 
 /**
  * A registry-managed source: its `bundles` entry (desired locator) joined with
@@ -290,10 +290,10 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
 
 /**
  * Removing a git bundle deletes or abandons its checkout: refuse while the checkout holds work that exists
- * nowhere else, unless the person decided to lose it (`--force`).
+ * nowhere else. The person pushes, moves or discards it, then removes again.
  */
-function assertRemovableCheckout(repoDir: string | undefined, force: boolean): void {
-  if (force || !repoDir || !fs.existsSync(path.join(repoDir, ".git"))) return;
+function assertRemovableCheckout(repoDir: string | undefined): void {
+  if (!repoDir || !fs.existsSync(path.join(repoDir, ".git"))) return;
   assertNoLocalWork(repoDir, `Git bundle checkout at ${repoDir}`);
 }
 
@@ -305,11 +305,7 @@ function managedCheckoutDir(managed: ManagedInstall): string | undefined {
   return repoDir && isWithin(repoDir, getRegistryCacheDir()) ? repoDir : undefined;
 }
 
-export async function akmRemove(input: {
-  target: string;
-  stashDir?: string;
-  force?: boolean;
-}): Promise<RemoveResponse> {
+export async function akmRemove(input: { target: string; stashDir?: string }): Promise<RemoveResponse> {
   const target = input.target.trim();
   if (!target)
     throw new UsageError(
@@ -322,7 +318,7 @@ export async function akmRemove(input: {
   // Registry-managed installs (lock-backed bundles) first.
   const managed = resolveManagedTarget(config, target);
   if (managed) {
-    assertRemovableCheckout(managedCheckoutDir(managed), input.force === true);
+    assertRemovableCheckout(managedCheckoutDir(managed));
     const updatedConfig = await removeInstalledRegistryEntry(managed.installId);
     if (managed.source !== "local" && managed.localRoot) {
       cleanupDirectoryBestEffort(managed.localRoot, "remove");
@@ -355,10 +351,9 @@ export async function akmRemove(input: {
   }
 
   // Plain sources (filesystem/git/website bundles) via the bundle-map remover.
-  const plainGit = getSources(config).find((source) => source.url && (source.name === target || source.url === target));
-  if (plainGit?.url) {
-    assertRemovableCheckout(getCachePaths(parseGitRepoUrl(plainGit.url).canonicalUrl).repoDir, input.force === true);
-  }
+  const plainKey = resolveBundleKey(config, target);
+  const plainGitUrl = plainKey ? config.bundles?.[plainKey]?.git : undefined;
+  if (plainGitUrl) assertRemovableCheckout(getCachePaths(parseGitRepoUrl(plainGitUrl).canonicalUrl).repoDir);
   const stashResult = removeStash(target);
   if (!stashResult.removed || !stashResult.entry) {
     throw new NotFoundError(`No matching source for target: ${target}`, "SOURCE_NOT_FOUND");
@@ -581,7 +576,7 @@ function fastForwardCheckout(
     throw new ConfigError(
       `Writable Git install at ${liveRepo} cannot fast-forward without overwriting local work; local work was preserved. ${merge.stderr.trim()}`,
       "SOURCE_HAS_LOCAL_WORK",
-      UPDATE_REFUSAL_HINT,
+      LOCAL_WORK_HINT,
     );
   }
 }
@@ -731,7 +726,7 @@ async function stageManagedUpdate(
 
   // A read-only update moves the install off a checkout that is not writable any more; the checkout is
   // abandoned there, so it must hold no local work.
-  assertRemovableCheckout(managedCheckoutDir(managed), false);
+  assertRemovableCheckout(managedCheckoutDir(managed));
 
   const cacheRoot = getRegistryCacheDir();
   const stagingParent = createStagingParent(cacheRoot);
@@ -775,9 +770,13 @@ async function syncGitPlainSource(
   const canonicalUrl = parseGitRepoUrl(gitSource.url).canonicalUrl;
   const livePaths = getCachePaths(canonicalUrl);
   // A read-only refresh replaces the live directory; a checkout there is replaced only without local work.
-  if (!component.writable && fs.existsSync(path.join(livePaths.repoDir, ".git"))) {
-    assertNoLocalWork(livePaths.repoDir, `Git source checkout at ${livePaths.repoDir}`);
-  }
+  // Checked before the fetch, and again right before the replacement, since work can appear in between.
+  const assertLiveCheckoutHasNoWork = () => {
+    if (!component.writable && fs.existsSync(path.join(livePaths.repoDir, ".git"))) {
+      assertNoLocalWork(livePaths.repoDir, `Git source checkout at ${livePaths.repoDir}`);
+    }
+  };
+  assertLiveCheckoutHasNoWork();
   const stagingParent = createStagingParent(path.dirname(livePaths.rootDir));
   try {
     const stagedPaths = getCachePaths(canonicalUrl, stagingParent);
@@ -797,7 +796,10 @@ async function syncGitPlainSource(
     });
     const index = await publishAndIndex(stashDir, () => {
       if (liveCheckout) fastForwardCheckout(livePaths.repoDir, stagedPaths.repoDir, expectedUpstream);
-      else replaceDirectory(stagedPaths.rootDir, livePaths.rootDir);
+      else {
+        assertLiveCheckoutHasNoWork();
+        replaceDirectory(stagedPaths.rootDir, livePaths.rootDir);
+      }
     });
     return { item: { id, kind: "git", ref }, index };
   } finally {

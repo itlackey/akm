@@ -105,11 +105,6 @@ const removeCommand = defineJsonCommand({
   args: {
     target: { type: "positional", description: "Bundle to remove (id, ref, path, URL, or name)", required: true },
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
-    force: {
-      type: "boolean",
-      description: "Remove a git bundle even if its checkout holds uncommitted or unpushed work",
-      default: false,
-    },
   },
   async run({ args }) {
     const { confirmDestructive } = await import("../../cli/confirm.js");
@@ -120,7 +115,7 @@ const removeCommand = defineJsonCommand({
       stderr().write("Aborted.\n");
       return;
     }
-    const result = await akmRemove({ target: args.target, force: args.force === true });
+    const result = await akmRemove({ target: args.target });
     appendEvent({
       eventType: "remove",
       metadata: {
