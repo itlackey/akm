@@ -665,6 +665,7 @@ describe("opencode by major", () => {
     );
     const unreadable = warnings.filter((line) => line.includes("Could not read the version of opencode"));
     expect(unreadable).toHaveLength(1);
+    expect(warnings.filter((line) => line.includes("[deprecated]"))).toEqual([]);
     expect(unreadable[0]).toContain("OpenCode 1");
     expect(unreadable[0]).toContain("agent and model work");
     expect(unreadable[0]).toContain("no --standalone");

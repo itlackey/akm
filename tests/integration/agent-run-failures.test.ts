@@ -81,7 +81,16 @@ describe("a prompt the command line cannot carry", () => {
     const result = await runAgent(profile("gemini", "quiet"), { dispatch: { prompt } });
     expect(result).toMatchObject({ ok: false, reason: "spawn_failed" });
     expect(result.error).toContain("the command line is longer than the system allows");
-    expect(result.error).toContain("200000 bytes");
+    expect(result.error).toContain("200000 bytes in the prompt argument");
     expect(result.error).toContain("takes the prompt on its command line");
+  });
+
+  test("an argument other than the prompt is not blamed on it: Claude Code reads the prompt from stdin", async () => {
+    const result = await runAgent(profile("claude", "quiet"), {
+      dispatch: { prompt: "go", systemPrompt: "x".repeat(200_000) },
+    });
+    expect(result).toMatchObject({ ok: false, reason: "spawn_failed" });
+    expect(result.error).toContain("the command line is longer than the system allows");
+    expect(result.error).not.toContain("prompt");
   });
 });
