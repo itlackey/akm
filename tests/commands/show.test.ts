@@ -522,7 +522,7 @@ describe("akmShow content-based classification", () => {
     expect(result.parameters).toEqual(["env", "version"]);
   });
 
-  test("script in scripts/ directory uses new renderer pipeline", async () => {
+  test("a script's run hint is the akm run command for its ref", async () => {
     writeFile(path.join(stashDir, "scripts", "build.sh"), "#!/usr/bin/env bash\necho build\n");
 
     saveConfig({ semanticSearchMode: "off" });
@@ -530,8 +530,7 @@ describe("akmShow content-based classification", () => {
     const result = await akmShow({ ref: "scripts/build.sh" });
 
     expect(result.type).toBe("script");
-    expect(result.run).toBeDefined();
-    expect(result.run).toContain("bash");
+    expect(result.run).toBe("akm run scripts/build.sh");
   });
 
   test("$ARGUMENTS in an untyped directory still discovers a command", async () => {
