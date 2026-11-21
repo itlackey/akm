@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildOverview,
-  DAY,
   clusterPlace,
+  DAY,
   flatPlace,
   groupFacts,
   groupJoins,

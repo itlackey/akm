@@ -333,11 +333,14 @@ test("Replay: You and Everyone show different figures under their own labels", {
   );
   await open(page, server, "/activity/replay");
   const replay = page.getByRole("region", { name: "Activity replay", exact: true });
-  const figures = replay.locator(".figures");
-  await expect(figures).toContainText(/2\s*searches/);
-  await expect(figures).toContainText(/0\s*curates/);
-  await expect(figures).toContainText(/1\s*found nothing/);
-  await replay.getByLabel("Events by").selectOption({ label: "Everyone: you, agents and automation" });
+  // The panel counts the period's searches beside the ones that found nothing; a curate is not a search.
+  const searches = replay.getByRole("heading", { name: /^Searches that found nothing/ });
+  await expect(searches).toContainText("1 of 2");
+  await replay.getByLabel("Events by").selectOption({ label: "Everyone's events (you, agents, automation)" });
+  await expect(searches).toContainText("2 of 4");
+  await replay.getByLabel("Events by").selectOption({ label: "Your events" });
+  await expect(searches).toContainText("1 of 2");
+});
   await expect(figures).toContainText(/4\s*searches/);
   await expect(figures).toContainText(/1\s*curates/);
   await expect(figures).toContainText(/2\s*found nothing/);

@@ -171,18 +171,8 @@ test("visualizations survive late responses, a changed library and a narrow wind
       .poll(async () => Number(await slider(page).getAttribute("max")) - Number(await slider(page).inputValue()))
       .toBeLessThan(60_000);
     const replay = page.getByRole("region", { name: "Activity replay", exact: true });
-    for (const figure of [
-      "events",
-      "reads",
-      "searches",
-      "curates",
-      "found nothing",
-      "negative feedback",
-      "assets used",
-    ])
-      await expect(replay.getByText(figure, { exact: true })).toBeVisible();
-    for (const list of ["Searched for, not found", "Most used so far", "Feedback given so far", "Latest events"])
-      await expect(replay.getByRole("heading", { name: list })).toBeVisible();
+    for (const list of ["Searches that found nothing", "Feedback", "Most used", "Latest events"])
+      await expect(replay.getByRole("heading", { name: new RegExp(`^${list}`) })).toBeVisible();
     await expect(replay.getByRole("button", { name: /^Play/ })).toHaveAttribute(
       "title",
       /Plays the whole period in about 1 minute/,
@@ -257,7 +247,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
   const withGraph = (page, payload = mapPayload) =>
     page.route("**/api/graph", (route) => route.fulfill({ json: { ok: true, data: payload } }));
   const tab = (page, name) => page.getByRole("tab", { name, exact: true });
-  const figures = (page) => page.getByRole("complementary", { name: "Figures" });
+  const figures = (page) => page.getByRole("complementary", { name: "Details" });
   const mapButton = (page, name) => page.locator(".mind-map").getByRole("button", { name, exact: true });
   const consoleErrors = (page, errors) =>
     page.on("console", (message) => message.type() === "error" && errors.push(message.text()));

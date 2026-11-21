@@ -153,18 +153,18 @@ export function regroup(o: Overview, by: Grouping): { o: Overview; names: string
               },
               [...EDITED.map((e) => e.label), "Edit time not known"],
             ]
-        : by === "use"
-          ? [
-              (i) => (o.use[i] ? USE_CLASSES.findIndex((u) => u.id === o.use[i]) : USE_CLASSES.length),
-              [...USE_CLASSES.map((u) => u.label), "Use not known"],
-            ]
-          : [
-              (i) => {
-                const first = firstProblem(o, i);
-                return first ? PROBLEMS.findIndex((p) => p.id === first) : PROBLEMS.length;
-              },
-              [...PROBLEMS.map((p) => p.label), "No problem recorded"],
-            ];
+          : by === "use"
+            ? [
+                (i) => (o.use[i] ? USE_CLASSES.findIndex((u) => u.id === o.use[i]) : USE_CLASSES.length),
+                [...USE_CLASSES.map((u) => u.label), "Use not known"],
+              ]
+            : [
+                (i) => {
+                  const first = firstProblem(o, i);
+                  return first ? PROBLEMS.findIndex((p) => p.id === first) : PROBLEMS.length;
+                },
+                [...PROBLEMS.map((p) => p.label), "No problem recorded"],
+              ];
   return { o: { ...o, group: Int32Array.from({ length: o.count }, (_, i) => of(i)), groupCount: names.length }, names };
 }
 
@@ -223,7 +223,8 @@ export function clusterPlace(o: Overview, dims: 2 | 3): Float32Array {
     if (!touching) break;
   }
   for (const c of clusters) {
-    const out = (i: number) => far([o.place[i * 3]!, o.place[i * 3 + 1]!, dims === 2 ? 0 : o.place[i * 3 + 2]!], c.middle);
+    const out = (i: number) =>
+      far([o.place[i * 3]!, o.place[i * 3 + 1]!, dims === 2 ? 0 : o.place[i * 3 + 2]!], c.middle);
     [...c.list]
       .sort((p, q) => out(p) - out(q) || p - q)
       .forEach((i, k) => {
