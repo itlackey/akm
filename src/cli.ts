@@ -788,7 +788,7 @@ const helpCommand = defineGroupCommand({
     }),
   },
   async defaultRun() {
-    stdout().write(`${helpText(await renderSectionedRootHelp())}\n`);
+    stdout().write(`${await renderSectionedRootHelp()}\n`);
   },
 });
 
@@ -1116,7 +1116,7 @@ function renderCommandSections(): string {
  * USAGE line + global OPTIONS, then cuts the string before citty's own
  * "COMMANDS" heading (present because `main` has `subCommands`) and appends
  * the grouped sections plus a one-line bundle/ref-grammar tagline and the
- * `akm hints` pointer.
+ * `akm hints` pointer. Every root-help site prints this, in the color `helpText` allows.
  */
 async function renderSectionedRootHelp(): Promise<string> {
   const base = await renderUsage(main as CommandDef, undefined);
@@ -1135,7 +1135,7 @@ async function renderSectionedRootHelp(): Promise<string> {
     "Run `akm help <command>` or `akm <command> --help` for details on any command.",
     "Agents: run `akm hints` for the guide.",
   ].join("\n");
-  return [head, "", renderCommandSections(), "", epilogue].join("\n");
+  return helpText([head, "", renderCommandSections(), "", epilogue].join("\n"));
 }
 
 /**

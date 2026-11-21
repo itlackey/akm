@@ -405,6 +405,7 @@ describe("a clean environment", () => {
     CUSTOM_PROFILE: "work",
     GITHUB_TOKEN: "canary-host-token",
     OPENCODE_CONFIG_DIR: "/etc/opencode",
+    AKM_LAUNCHER_PATH: "/x/akm",
     LC_ALL: "C",
   };
   const names = (output: unknown) =>
@@ -454,6 +455,7 @@ describe("a clean environment", () => {
       "work",
       "/etc/opencode",
     ]);
+    expect(agentEnv.AKM_LAUNCHER_PATH).toBeUndefined(); // set by akm's own launcher, not the user's
     expect(agentEnv.AKM_STATE_DIR).toBeDefined();
     expect(agentEnv.AKM_TASK_STATE).toBeUndefined(); // an agent is not pointed at the state file
   });
@@ -1382,6 +1384,23 @@ describe("what a start gives, and what it checks before anything runs", () => {
     expect([ran("own"), ran("step")]).toEqual([1, 1]);
     expect(await rule(w.start("tasks/t", {}, { maxRetries: -1 }))).toBe("INVALID_FLAG_VALUE");
     expect(await rule(w.start("tasks/t", {}, { inherit: ["not a name"] }))).toBe("INVALID_FLAG_VALUE");
+  });
+
+  test("a calling step's true binds as --name true does on the command line: text for a text input, true for a boolean one", async () => {
+    const w = world({
+      tasks: {
+        "tasks/show": {
+          inputs: { s: { type: "string", default: "" }, b: { type: "boolean", default: false }, u: { default: "" } },
+          exec: SHOW_STATE,
+        },
+        "tasks/caller": {
+          steps: [{ name: "a", run: "tasks/show", args: ["--s", true, "--b", true, "--u", true] }],
+        },
+      },
+    });
+    expect(json(await w.start("tasks/caller"))).toEqual({ s: "true", b: true, u: true });
+    // only a bare flag, one given no value, is refused for a text input
+    expect(await rule(w.start("tasks/show", { s: true }))).toBe(BAD_VALUE);
   });
 
   test("a value is converted to its input's type, from the command line or from a calling step's args:; one that cannot be is refused before anything runs", async () => {

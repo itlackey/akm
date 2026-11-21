@@ -32,7 +32,7 @@ import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, TransientError, UsageError } from "../../core/errors";
 import { type LockOwnership, releaseLock } from "../../core/file-lock";
 import type { TaskLogLineInput } from "../../core/logs-db";
-import { akmLocations } from "../../core/paths";
+import { childProcessEnv } from "../../core/paths";
 import { collectInferredSecretValues, collectSensitiveValues, redactSensitiveValue } from "../../core/redaction";
 import { REF_TOKEN_RE } from "../../core/ref-token";
 import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
@@ -231,7 +231,10 @@ function stepInputs(
   const literals: Record<string, unknown> = {};
   for (const { name, value } of step.taskInputs ?? []) {
     const given = argument(value, state);
-    if (typeof given === "string" || typeof given === "boolean") flags.push({ name, value: given });
+    if (typeof given === "boolean") {
+      // As `--name true` binds on the command line: text for a typed input, and as it is for one that declares no type.
+      flags.push({ name, value: child.inputs?.[name]?.schema.type === undefined ? given : String(given) });
+    } else if (typeof given === "string") flags.push({ name, value: given });
     else if (typeof given === "object" && given !== null && child.inputs?.[name]?.schema.type === undefined) {
       literals[name] = given;
     } else flags.push({ name, value: JSON.stringify(given) });
@@ -873,9 +876,7 @@ function environmentOf(
   // An agent step runs the user's harness as the user would: akm's environment as it is, with the directories this akm resolved.
   const startsClean = step.kind === "exec" || step.kind === "scripts";
   const env: Record<string, string> = {};
-  const base = startsClean
-    ? buildChildEnv(context.host, { clean: true, inherit })
-    : { ...context.host, ...akmLocations() };
+  const base = startsClean ? buildChildEnv(context.host, { clean: true, inherit }) : childProcessEnv(context.host);
   for (const [name, value] of Object.entries(base)) {
     if (value !== undefined) env[name] = value;
   }

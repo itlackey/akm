@@ -374,7 +374,7 @@ export function queryTaskHistory(
   db: Database,
   options: {
     taskId?: string;
-    /** Only rows that recorded this bundle. */
+    /** Only rows of this bundle: those that recorded it, and those that recorded none (rows written before it was recorded, whose bundle is not known). */
     bundle?: string;
     since?: string;
     until?: string;
@@ -391,7 +391,7 @@ export function queryTaskHistory(
     params.push(options.taskId);
   }
   if (options.bundle) {
-    conditions.push("json_extract(metadata_json, '$.bundle') = ?");
+    conditions.push("(json_extract(metadata_json, '$.bundle') = ? OR json_extract(metadata_json, '$.bundle') IS NULL)");
     params.push(options.bundle);
   }
   if (options.since) {

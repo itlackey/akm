@@ -97,6 +97,35 @@ test("doctor log --task accepts a bundle-qualified id and --bundle", () => {
   );
 });
 
+test("a bundle filter shows the rows that recorded no bundle, and not another bundle's", () => {
+  seedTaskHistory();
+  const db = openStateDatabase();
+  try {
+    upsertTaskHistory(db, {
+      task_id: "nightly",
+      status: "completed",
+      started_at: "2025-01-01T00:00:04.000Z",
+      completed_at: "2025-01-01T00:00:04.000Z",
+      failed_at: null,
+      log_path: null,
+      target_kind: "command",
+      target_ref: null,
+      metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 5, detail: null, bundle: "two" }),
+    });
+  } finally {
+    db.close();
+  }
+  for (const args of [
+    ["task", "history", "stash//tasks/nightly"],
+    ["task", "history", "nightly", "--bundle", "stash"],
+    ["doctor", "log", "--task", "nightly", "--bundle", "stash"],
+  ]) {
+    const rows = JSON.parse(akm(args).stdout).rows as Array<{ bundle?: string }>;
+    expect(rows, args.join(" ")).toHaveLength(2);
+    expect(rows.every((row) => row.bundle === undefined)).toBe(true);
+  }
+});
+
 test("doctor log without --task is the events stream", () => {
   const events = akm(["doctor", "log", "--limit", "1"]);
   expect(events.status).toBe(0);

@@ -140,7 +140,7 @@ async function checkTask(
       const known = new Set<string>();
       for (const { name, value } of step.taskInputs ?? []) {
         if (typeof value === "string" && WHOLE_TOKEN.test(value)) known.add(name);
-        else given.push({ name, value: typeof value === "boolean" ? value : String(value) });
+        else given.push({ name, value: String(value) });
       }
       await checkTask(found.bundle, target, given, known, visited, at);
       continue;

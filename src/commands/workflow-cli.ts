@@ -10,7 +10,7 @@
  * with `akm lint --type workflows`.
  */
 
-import { getStringArg, parseTimeoutValue } from "../cli/parse-args";
+import { getStringArg, parseNonNegativeIntFlag, parseTimeoutValue } from "../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output, outputWithExitCode } from "../cli/shared";
 import { armAbortDeadline } from "../core/abort-deadline";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
@@ -212,7 +212,7 @@ export const workflowRunCommand = defineJsonCommand({
     const { findLiveLockedRunOfRef, runWorkflowSteps } = await import("../workflows/exec/run-workflow.js");
     const parameterFlags = parseWorkflowParameterFlags(rawArgs, args.target);
     const maxSteps = parseIntegerFlag(getStringArg(args, "max-steps"), "--max-steps", 1);
-    const maxRetries = parseIntegerFlag(getStringArg(args, "max-retries"), "--max-retries", 0);
+    const maxRetries = parseNonNegativeIntFlag(getStringArg(args, "max-retries"), "--max-retries");
     const timeoutMs = parseWorkflowTimeout(getStringArg(args, "timeout"));
     const skipIfLocked = args["skip-if-locked"];
     const controller = new AbortController();

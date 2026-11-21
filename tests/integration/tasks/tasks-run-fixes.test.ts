@@ -75,6 +75,18 @@ describe.skipIf(!posix)("a step's output size", () => {
   });
 });
 
+describe.skipIf(!posix)("a version 4 steps task whose agent prints a million and a half lines", () => {
+  test("completes", () => {
+    const bin = path.join(bins.dir, "printer");
+    fs.writeFileSync(bin, "#!/bin/sh\ncat >/dev/null\nseq 1 1500000\n", { mode: 0o755 });
+    writeSandboxConfig({ harnesses: { claude: { platform: "claude", bin } } });
+    write("tasks/talk.yml", "version: 4\nsteps:\n  - name: ask\n    prompt: Hi.\n");
+    const run = akmJson(["task", "run", "talk"]);
+    expect(run.status, run.stderr).toBe(0);
+    expect(result(run).status).toBe("completed");
+  });
+});
+
 describe.skipIf(!posix)("why a task failed", () => {
   test("a version 4 task that timed out, exited non-zero or could not start says so in its detail", () => {
     write("tasks/slow.yml", "version: 4\nshell: sh\nrun: sleep 5\ntimeout: 1000\n");
@@ -140,6 +152,9 @@ describe.skipIf(!posix)("what a version 5 agent step is given", () => {
     const [call] = harnessCalls(bin);
     expect(call?.env.MY_PROVIDER_KEY).toBe("from-akm-env");
     expect(call?.env.CLAUDE_CONFIG_DIR).toBe("/somewhere/else");
+    // The variables akm's own launcher set are not the user's: a nested akm gets them from its own launcher.
+    expect(call?.env.AKM_LAUNCHER_PATH).toBeUndefined();
+    expect(call?.env.AKM_LAUNCHER_NODE).toBeUndefined();
     expect(result(run).result).toBe("[]");
   });
 });
@@ -187,6 +202,19 @@ describe.skipIf(!posix)("one timeout grammar and one limit", () => {
     expect(akm(["run", "--timeout", "24d", "scripts/ok.sh"]).stdout).toBe("ran");
     write("tasks/long.yml", v5("timeout: 30d\nexec: 'true'\n"));
     expect(akmJson(["run", "tasks/long"]).status).toBe(2);
+  });
+
+  test("a command asset and a version 4 task that runs one, each with timeout: 30s, complete", () => {
+    const bin = writeFakeHarness(bins.dir, "fake-claude", ["hello"]);
+    writeSandboxConfig({ harnesses: { claude: { platform: "claude", bin } } });
+    write("commands/greet30.md", "---\ntype: command\ntimeout: 30s\n---\nSay hello.\n");
+    write("tasks/greet.yml", "version: 4\nuses: commands/greet30\ntimeout: 30s\n");
+    expect(akm(["index", "--full"]).status).toBe(0);
+    const asset = akmJson(["run", "commands/greet30"]);
+    expect(asset.status, asset.stderr).toBe(0);
+    const task = akmJson(["task", "run", "greet"]);
+    expect(task.status, task.stderr).toBe(0);
+    expect(result(task).status).toBe("completed");
   });
 
   test("a version 4 timeout takes seconds, and fires after them", () => {
@@ -239,6 +267,13 @@ describe.skipIf(!posix)("the flags before and after a task's ref", () => {
     expect(result(akmJson(["task", "run", "who", "--who", "-x"])).result).toBe("-x");
     expect(akmJson(["task", "explain", "who", "--who", "-x"]).status).toBe(0);
     expect(akmJson(["doctor", "explain", "tasks/who", "--who", "-x"]).status).toBe(0);
+  });
+
+  test("start flags before the ref are read by akm task explain and akm doctor explain too", () => {
+    write("env/a.env", "REGION=eu\n");
+    write("tasks/envt.yml", v5("exec: 'true'\n"));
+    expect(akmJson(["task", "explain", "--env", "env/a", "envt"]).status).toBe(0);
+    expect(akmJson(["doctor", "explain", "--env", "env/a", "tasks/envt"]).status).toBe(0);
   });
 
   test("a version 4 value input that starts with - is read the same way by akm task run, explain and doctor explain", () => {
@@ -401,6 +436,30 @@ describe.skipIf(!posix)("help is plain text when it is not on a terminal", () =>
   });
 });
 
+describe.skipIf(!posix)("root help is plain text when it is not on a terminal", () => {
+  test("akm, akm --help and akm -h have no escape byte unless a color is forced", () => {
+    const env = { NO_COLOR: undefined, TERM: undefined, FORCE_COLOR: undefined, CI: undefined };
+    for (const args of [[], ["--help"], ["-h"]]) {
+      const plain = akm(args, env);
+      expect(plain.stdout, args.join(" ")).toContain("USAGE");
+      expect(`${plain.stdout}${plain.stderr}`, args.join(" ")).not.toContain("\x1b");
+      expect(akm(args, { ...env, FORCE_COLOR: "1" }).stdout, args.join(" ")).toContain("\x1b");
+    }
+  });
+});
+
+describe.skipIf(!posix)("one --max-retries parser", () => {
+  test("akm workflow run refuses what akm run refuses, in the same words", () => {
+    const refused = (args: string[]) => String(errorOf(akm(args)).error);
+    write("scripts/none.sh", "#!/bin/sh\ntrue\n", 0o755);
+    const viaRun = refused(["run", "--max-retries", "-1", "scripts/none.sh"]);
+    const viaWorkflow = refused(["workflow", "run", "workflows/none", "--max-retries", "-1"]);
+    expect(viaRun).toContain('Invalid --max-retries value: "-1". Must be a whole number, 0 or more.');
+    expect(viaWorkflow).toContain('Invalid --max-retries value: "-1". Must be a whole number, 0 or more.');
+    expect(refused(["workflow", "run", "workflows/none", "--max-retries", "0"])).not.toContain("--max-retries");
+  });
+});
+
 describe.skipIf(!posix)("the scheduler report in akm doctor", () => {
   test("lists a connection and a harness of the same name once each, in its own kind", () => {
     writeSandboxConfig({
@@ -425,7 +484,11 @@ describe.skipIf(!posix)("the scheduler report in akm doctor", () => {
 
   test("doctor explain checks each schedule entry's env and secrets, and reports a refusal under the entry", () => {
     write("tasks/sched.yml", v5("schedule:\n  - cron: \"0 3 * * *\"\n    env: [env/missing]\nexec: 'true'\n"));
-    const explained = JSON.parse(akmJson(["doctor", "explain", "tasks/sched"]).stdout);
+    const run = akmJson(["doctor", "explain", "tasks/sched"]);
+    // The preview says what the action says: `doctor scheduler sync` refuses the same entry.
+    expect(run.status).toBe(1);
+    const explained = JSON.parse(run.stdout);
+    expect(explained.ok).toBe(false);
     const [entry] = explained.result?.schedule ?? explained.schedule;
     expect(entry.error).toContain("env/missing");
   });

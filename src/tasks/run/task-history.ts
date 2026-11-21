@@ -93,7 +93,7 @@ export function appendHistory(result: TaskRunResult, historyReserved = false, sc
  */
 export interface ReadHistoryOptions {
   id?: string;
-  /** Only the rows that recorded this bundle: a row written before the bundle was recorded matches none. */
+  /** Only the rows of this bundle, and those that recorded none: a row written before the bundle was recorded is shown without one. */
   bundle?: string;
   limit?: number;
 }

@@ -218,6 +218,11 @@ function readV5Start(rawArgs: readonly string[], id: string): TaskV5Start {
   return { ...start, inputs: parseTaskInputFlags(rest, id) };
 }
 
+/** The task a command's tokens name: a start flag before it takes its value from the next token, which citty, not knowing the flag, reads as the task. */
+function taskRefOf(rawArgs: readonly string[], positional: string): string {
+  return taskIdInStart(rawArgs, TASK_RUN_VALUE_FLAGS) ?? positional;
+}
+
 /** The command a flag scan resolves `path` to, as the root of its tree. */
 function scanRoot(path: readonly string[], command: FlagScanCommand): FlagScanCommand {
   let root = command;
@@ -336,8 +341,7 @@ export const tasksRunCommand = defineCommand({
   },
   async run({ args, rawArgs }) {
     await runWithJsonErrors(async () => {
-      // A start flag before the id takes its value from the next token, which citty, not knowing the flag, reads as the id.
-      const id = taskIdInStart(rawArgs, TASK_RUN_VALUE_FLAGS) ?? args.id;
+      const id = taskRefOf(rawArgs, args.id);
       const envelope = await akmTasksRun(id, {
         scheduled: args.scheduled === true,
         ...(args.bundle !== undefined ? { target: args.bundle } : {}),
@@ -482,11 +486,14 @@ export async function runTaskExplain(
   // (silently skipped, never surfaced as unknown) rather than explain's,
   // since it has no way to know which command called it (F7 fix).
   rejectExplainScheduledFlag();
-  const result = await akmTaskExplain(args.ref, {
+  const ref = taskRefOf(rawArgs, args.ref);
+  const result = await akmTaskExplain(ref, {
     ...(args.bundle !== undefined ? { target: args.bundle } : {}),
-    ...taskInputReaders(command, rawArgs, args.ref),
+    ...taskInputReaders(command, rawArgs, ref),
   });
-  output("task-explain", result);
+  // A schedule entry the start check refuses fails the preview, as it fails `doctor scheduler sync`.
+  const refused = (result.schedule as readonly { error?: string }[]).some((entry) => entry.error !== undefined);
+  outputWithExitCode("task-explain", result, refused ? EXIT_CODES.GENERAL : undefined);
 }
 
 const tasksExplainCommand = defineJsonCommand({

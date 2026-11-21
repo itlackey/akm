@@ -196,8 +196,11 @@ export async function runStepsTask(input: {
       }
       const durationMs = Math.max(0, now().getTime() - begun.getTime());
       const header = `[akm task] step=${step.name} kind=${stepKind(step)} attempts=${attempts} ok=${outcome.ok}`;
-      lines.push(header, ...outcome.lines);
-      dbLines.push({ level: outcome.ok ? "info" : "error", line: header }, ...outcome.dbLines);
+      // Loops, not spreads: a step can print more lines than a call accepts as arguments.
+      lines.push(header);
+      for (const line of outcome.lines) lines.push(line);
+      dbLines.push({ level: outcome.ok ? "info" : "error", line: header });
+      for (const row of outcome.dbLines) dbLines.push(row);
       const text =
         outcome.value === undefined
           ? ""
