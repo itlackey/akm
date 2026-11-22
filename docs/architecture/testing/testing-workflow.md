@@ -516,12 +516,10 @@ Each runs its tool through `bunx` at an exact version pinned in `scripts/quality
 | `bun run quality:duplication` | jscpd | about 1 s | Verbatim repeated blocks in `src/` TypeScript, as clones and duplicated lines. | Every repetition: renamed or reshaped copies are not found, and moving a copy to a shared file may not change the number. |
 | `bun run quality:dead-code` | knip | about 5 s | Files, exports and types in `src/` that nothing reachable from the entry points imports. Entry points are set in `scripts/quality/knip.json`; dependency checks are not run. | Safe to delete. A file loaded by path or spawned by a test, or an export used only by tests, is judged by the entry list, so review each hit. |
 | `bun run quality:coverage` | `bun test --coverage` | about 30 min (one serial process over the whole suite) | Line and function coverage of `src/` from one process over every test file. `src/` files with runtime code that no test loads count at 0% (estimated lines, no functions); type-only files are skipped. | A real figure. It is a lower bound: code run only in a child process the test spawns (tests that spawn the CLI) is not counted. A hit line is not an asserted line, bun counts a one-line function as hit when declared, and there is no branch data. |
-| `bun run quality:mutation -- --mutate <src files> --tests <test files>` | StrykerJS, command runner | seconds per small file | The share of small code changes in the named files that the named tests detect. | The whole repo. Each mutant reruns the whole test command, so name few files and their tests (comma separated). A mutant reached only through a spawned CLI with a replaced env is not seen, so the score is a lower bound. |
 | `bun run quality:compare -- <base> [<head>=HEAD] [--coverage]` | the static tools above | about 10 s (suites twice with `--coverage`) | Both refs exported with `git archive`, measured with this checkout's configs, with `src/` and `tests/` file and line counts; delta is head minus base. | A verdict. Read it with the caveats of each tool. `--coverage` also runs `bun install` and the full suite on both trees. |
 
-Run mutation, and coverage and `--coverage` compares, one at a time and under a memory cap, for example
-`systemd-run --user --scope -p MemoryMax=8G -p MemorySwapMax=0 bun run quality:mutation -- --mutate src/core/time.ts --tests tests/core/time.test.ts`.
-A mutant can grow memory without bound; Stryker's timeout stops loops, not memory.
+Run coverage and `--coverage` compares one at a time and under a memory cap, for example
+`systemd-run --user --scope -p MemoryMax=8G -p MemorySwapMax=0 bun run quality:coverage`.
 
 ## Coverage Notes
 

@@ -106,7 +106,6 @@
     "quality:complexity": "bun scripts/quality/complexity.ts",
     "quality:duplication": "bun scripts/quality/duplication.ts",
     "quality:dead-code": "bun scripts/quality/dead-code.ts",
-    "quality:mutation": "bun scripts/quality/mutation.ts",
     "quality:compare": "bun scripts/quality/compare.ts",
     "test:workspace-package": "AKM_WORKSPACE_PACKAGE_TESTS=1 bun test --timeout=300000 tests/integration/install/workspace-package.test.ts"
   },

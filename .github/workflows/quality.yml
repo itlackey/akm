@@ -1,7 +1,7 @@
 name: Quality
 
-# On demand only: never runs on push or pull request. The static measures always run (seconds); coverage, mutation and
-# compare run when their input is set. Reports are uploaded as the `quality-reports` artifact. Nothing here gates a merge.
+# On demand only: never runs on push or pull request. The static measures always run (seconds); coverage and compare
+# run when their input is set. Reports are uploaded as the `quality-reports` artifact. Nothing here gates a merge.
 # How to read each number: docs/architecture/testing/testing-workflow.md ("Quality Measures").
 on:
   workflow_dispatch:
@@ -10,14 +10,6 @@ on:
         description: Run the whole suite once with coverage
         type: boolean
         default: false
-      mutate:
-        description: Mutation, src files to mutate (comma separated, e.g. src/core/time.ts); empty skips mutation
-        type: string
-        default: ""
-      mutate_tests:
-        description: Mutation, test files to run against those src files (comma separated)
-        type: string
-        default: ""
       compare_base:
         description: Compare this ref with the dispatched ref (static measures); empty skips compare
         type: string
@@ -46,11 +38,6 @@ jobs:
       - run: bun run quality:dead-code
       - if: ${{ inputs.coverage }}
         run: bun run quality:coverage
-      - if: ${{ inputs.mutate != '' && inputs.mutate_tests != '' }}
-        env:
-          MUTATE: ${{ inputs.mutate }}
-          MUTATE_TESTS: ${{ inputs.mutate_tests }}
-        run: bun run quality:mutation -- --mutate "$MUTATE" --tests "$MUTATE_TESTS"
       - if: ${{ inputs.compare_base != '' }}
         env:
           COMPARE_BASE: ${{ inputs.compare_base }}

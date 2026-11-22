@@ -11,7 +11,6 @@ export const pins = {
   fta: "fta-cli@3.1.0",
   jscpd: "jscpd@5.4.3",
   knip: "knip@6.47.0",
-  stryker: "@stryker-mutator/core@10.1.1",
 };
 
 export function flag(argv: string[], name: string): string | undefined {
