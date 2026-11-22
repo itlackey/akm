@@ -50,8 +50,8 @@ written are in [Core Principles](akm-core-principles.md).
   agent and command dispatch, `akm exec`, the improve and
   proposal processes, index passes, and fetcher modules in the working
   bundle's `scripts/wiki-fetchers/` directory during website sync. `search`
-  and `show` execute nothing; a script runs only as a task or workflow
-  target. Held by review.
+  and `show` execute nothing; a script runs only through `akm run`, a task
+  step or a workflow target. Held by review.
 - **Improvement is proposal-first.** Proposals are the unit of change: reflect,
   distill, extract and consolidate only emit proposals. Three lanes act
   without a person, and only with `experimental.improveAutonomy` on: memory
@@ -593,7 +593,7 @@ A config in the older `engines` form is converted to `connections` and
 `harnesses` by one pure function (`src/core/config/convert-engines.ts`), in
 memory on every load and permanently by `akm migrate apply`.
 
-Task source v4 execution and durable workflow dispatch use this runtime
+Task execution and durable workflow dispatch use this runtime
 boundary. Markdown workflows compile through source IR v1; new starts freeze
 `irVersion: 8`, which records a connection or harness where earlier versions
 recorded an engine. A stored plan that decodes runs whatever release froze it
@@ -603,7 +603,8 @@ which includes every earlier plan with a command step, is marked abandoned and
 refused, naming the upgrade. AKM does not support full GitHub Actions semantics
 or arbitrary remote action execution.
 
-Tasks are `tasks/<name>.yml` documents in task source v4 (`parseTaskSource`).
+Tasks are `tasks/<name>.yml` documents in task source v4 or the Experimental
+task source v5, `version: 5-beta.1` (`parseTaskSource`).
 Version 2 and 3 files are not read at runtime: they are refused with a message
 naming `akm migrate apply`, which converts them. Historical task-run metadata
 remains readable.
