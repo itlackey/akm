@@ -15,7 +15,7 @@
 
 import { placementTypes, stashDirFor, stashDirNames } from "../../../src/core/asset/asset-placement";
 import { escapeRegExp, rewritePathTokens, SPELLING_BEFORE, splitRun } from "../../../src/core/asset/ref-rewrite";
-import { withoutTypeHead } from "../../../src/indexer/lookup/adapter-concept-owner";
+import { withoutTypeHead } from "../../../src/core/assets/read";
 
 export interface ShadowedRef {
   readonly bundleId: string;

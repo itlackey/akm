@@ -7,8 +7,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { _setClackForTests } from "../../src/cli/clack";
 import { akmTasksSync, type TasksSyncResult } from "../../src/commands/tasks/tasks";
+import { writeAssets } from "../../src/core/assets/write";
 import { loadConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
-import { deleteAssetFromSource, writeAssetToSource } from "../../src/core/write-source";
 import { buildSetupSteps } from "../../src/setup/setup";
 import {
   _setScheduledTasksEnvForTests,
@@ -382,13 +382,12 @@ describe("task definition preparation", () => {
 
       await expect(
         prepareSetupTaskDefinitions(plans, {
-          writeAsset: async (...args) => {
-            const result = await writeAssetToSource(...args);
+          writeAssets: (target, options, run) => {
+            const result = writeAssets(target, options, run);
             writes += 1;
             if (writes === 2) throw new Error("injected write failure");
             return result;
           },
-          deleteAsset: deleteAssetFromSource,
           commitBoundary: () => {},
         }),
       ).rejects.toThrow("injected write failure");
@@ -414,8 +413,6 @@ describe("task definition preparation", () => {
 
       await expect(
         prepareSetupTaskDefinitions(managedPlans(["improve", "sync"]), {
-          writeAsset: writeAssetToSource,
-          deleteAsset: deleteAssetFromSource,
           commitBoundary: () => {
             commits += 1;
             if (commits === 1) throw new Error("injected commit failure");

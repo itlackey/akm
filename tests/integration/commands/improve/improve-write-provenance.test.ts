@@ -32,9 +32,10 @@ import { parsePlacementRef } from "../../../../src/core/asset/resolve-ref";
 import type { AkmConfig, SourceConfigEntry } from "../../../../src/core/config/config";
 import { getStateDir } from "../../../../src/core/paths";
 import { recordWrittenPath } from "../../../../src/core/write-provenance";
-import { deleteAssetFromSource, type WriteTargetSource, writeAssetToSource } from "../../../../src/core/write-source";
+import type { WriteTargetSource } from "../../../../src/core/write-source";
 import { saveGitStash } from "../../../../src/sources/providers/git";
 import { type Cleanup, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import { deleteAssetFromSource, writeAssetToSource } from "../../../_helpers/write-asset";
 
 let cleanup: Cleanup = () => {};
 let stashDir = "";

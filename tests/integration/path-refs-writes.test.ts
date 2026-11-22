@@ -15,11 +15,11 @@ import path from "node:path";
 import { contentHash } from "../../src/commands/improve/content-hash";
 import { collectEligibleRefs } from "../../src/commands/improve/eligibility";
 import { resolveImproveStrategy, shouldSkipRef } from "../../src/commands/improve/improve-strategies";
+import { resolveProposalAddress } from "../../src/commands/proposal/address";
 import { akmProposalAccept, akmProposalRevert } from "../../src/commands/proposal/proposal";
 import { createProposal, createRetireProposal, getProposal } from "../../src/commands/proposal/repository";
 import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
-import { resolveWriteAddress } from "../../src/indexer/lookup/adapter-concept-owner";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -73,12 +73,12 @@ const LOOSE: Array<[rel: string, ref: string]> = [
 describe("the write address of an existing asset", () => {
   test.each(LOOSE)("%s is written at its own file, with the type its file is recognized as", async (rel, ref) => {
     const file = write(rel, NOTE);
-    expect(resolveWriteAddress(stash, ref)).toMatchObject({ type: "knowledge", conceptId: ref, path: file });
+    expect(resolveProposalAddress(stash, ref)).toMatchObject({ type: "knowledge", conceptId: ref, path: file });
   });
 
   test("its ref in the outdated type-folder spelling writes the same file", () => {
     const file = write("reports/release.md", NOTE);
-    expect(resolveWriteAddress(stash, "knowledge/reports/release")).toMatchObject({
+    expect(resolveProposalAddress(stash, "knowledge/reports/release")).toMatchObject({
       type: "knowledge",
       conceptId: "reports/release",
       path: file,
@@ -86,7 +86,7 @@ describe("the write address of an existing asset", () => {
   });
 
   test("a new asset is placed in its ref's type folder", () => {
-    expect(resolveWriteAddress(stash, "lessons/new-one")).toMatchObject({
+    expect(resolveProposalAddress(stash, "lessons/new-one")).toMatchObject({
       type: "lesson",
       conceptId: "lessons/new-one",
       path: path.join(stash, "lessons", "new-one.md"),

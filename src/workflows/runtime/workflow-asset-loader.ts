@@ -5,10 +5,10 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { fileOf, findAsset } from "../../core/assets/read";
 import { loadConfig } from "../../core/config/config";
 import { COMPOSITION_INVALID_MULTI_JOB_HINT, NotFoundError, UsageError } from "../../core/errors";
 import { canonicalizeWorkflowName } from "../../core/recognition-util";
-import { resolveConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { compileWorkflowSource } from "../compile";
@@ -64,8 +64,8 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   const bundleRef = parseWorkflowRefInput(ref);
 
   const sources = resolveSourceEntries(undefined, loadConfig());
-  const match = resolveConceptOwner(bundleRef, sources);
-  if (!match) {
+  const asset = findAsset(bundleRef, { sources });
+  if (!asset) {
     if (bundleRef.bundle && resolveSourcesForOrigin(bundleRef.bundle, sources).length === 0) {
       throw new UsageError(
         `Bundle "${bundleRef.bundle}" was not found among configured sources.`,
@@ -74,8 +74,10 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
     }
     throw new NotFoundError(`Workflow not found for ref: ${ref}`);
   }
-  const { owner, source, bundleId, adapterId } = match;
-  if (workflowNameForSourcePath(source.path, adapterId, owner.path) === undefined) {
+  const { source, adapterId } = asset;
+  const bundleId = asset.bundle;
+  const assetPath = fileOf(asset);
+  if (workflowNameForSourcePath(source.path, adapterId, assetPath) === undefined) {
     throw new UsageError(
       `Bundle "${bundleId}" uses adapter "${adapterId}", which does not support native workflow execution.`,
       "WORKFLOW_SOURCE_INVALID",
@@ -84,10 +86,10 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
 
   // Canonicalize the stored ref: `workflows/foo.md` and `workflows/foo` resolve
   // to the same file, so they MUST share one run identity.
-  const canonicalName = canonicalizeWorkflowName(owner.conceptId);
+  const canonicalName = canonicalizeWorkflowName(asset.conceptId);
   const fullRef = makeBundleRef(bundleId, canonicalName);
 
-  return { assetPath: owner.path, sourcePath: source.path, adapterId, canonicalName, fullRef };
+  return { assetPath, sourcePath: source.path, adapterId, canonicalName, fullRef };
 }
 
 /**

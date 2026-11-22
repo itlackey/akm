@@ -17,9 +17,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { findAsset } from "../../core/assets/read";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -27,7 +27,6 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { info } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { resolveOwnedType } from "../../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -120,8 +119,7 @@ async function classifySchemaRepairs(args: {
       const raw = fs.readFileSync(filePath, "utf8");
       const frontmatter = parseFrontmatter(raw);
       // The asset's type is its file's (which fields to repair, and the type's standards and rules).
-      const assetType =
-        resolveOwnedType(parseBundleRef(failure.ref), resolveSourceEntries(stashDir), { mode: "read" }) ?? "";
+      const assetType = findAsset(failure.ref, { sources: resolveSourceEntries(stashDir), mode: "read" })?.type ?? "";
       const missingFields: string[] = [];
       if (!frontmatter.data.description) missingFields.push("description");
       if (assetType === "lesson" && !frontmatter.data.when_to_use) missingFields.push("when_to_use");

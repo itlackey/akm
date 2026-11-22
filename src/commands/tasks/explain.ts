@@ -71,6 +71,7 @@
 import fs from "node:fs";
 import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { fileOf, findAsset } from "../../core/assets/read";
 import { toErrorMessage } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
@@ -84,7 +85,6 @@ import {
 import { createInlineResolvedCommand } from "../../execution/resolved-request";
 import { isPortableExecutionAgentSelector, type UnresolvedExecutionDefaults } from "../../execution/source";
 import { lookupBundleRefReadonly } from "../../indexer/indexer";
-import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import {
   currentLayer,
   type ResolvedExecution,
@@ -428,14 +428,26 @@ export async function akmTaskExplain(ref: string, options: TaskExplainOptions = 
   if (adapterId === "akm-task") validateTaskConceptId(id);
   else validateTaskId(id);
   const taskConceptId = adapterId === "akm" ? `tasks/${id}` : id;
-  const owner = resolveAdapterConceptOwner(bundle.source, adapterId, taskConceptId);
-  if (!owner) {
+  const asset = findAsset(
+    { conceptId: taskConceptId },
+    {
+      sources: [
+        {
+          path: bundle.source.path,
+          registryId: bundle.source.name,
+          adapterId,
+          ...(bundle.source.location !== undefined ? { location: bundle.source.location } : {}),
+        },
+      ],
+    },
+  );
+  if (!asset) {
     throw new NotFoundError(
       `Task ${JSON.stringify(ref)} was not found in the configured ${JSON.stringify(adapterId)} bundle.`,
       "ASSET_NOT_FOUND",
     );
   }
-  const sourcePath = owner.path;
+  const sourcePath = fileOf(asset);
   const yaml = fs.readFileSync(sourcePath, "utf8");
   const parsed = parseTaskSource({ yaml, filePath: sourcePath });
   if (parsed.version !== 4) {

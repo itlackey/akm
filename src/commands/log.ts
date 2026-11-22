@@ -18,12 +18,12 @@
  */
 
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
+import { currentConceptId } from "../core/assets/read";
 import { type AkmConfig, loadConfig } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { type EventsContext, readEvents } from "../core/events";
 import type { EventEnvelope } from "../core/events-types";
 import { parseSinceToIso } from "../core/time";
-import { currentConceptId } from "../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
 
 export interface EventsListOptions {

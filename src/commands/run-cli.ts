@@ -10,14 +10,10 @@ import { parseNonNegativeIntFlag, parseTimeoutValue } from "../cli/parse-args";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, reportChildExit } from "../cli/shared";
 import { assertKnownFlags, type FlagScanCommand, scanRoot } from "../cli/unknown-flags";
 import { setResolvedUsageAssetType } from "../cli/usage";
-import { adapterForId, bundleOf } from "../core/adapter/registry";
-import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
-import { loadConfig } from "../core/config/config";
+import { parseBundleRef } from "../core/asset/asset-ref";
+import { fileOf, findAsset } from "../core/assets/read";
 import { AkmError, NotFoundError, UsageError } from "../core/errors";
 import { registerInjectedSecretValues } from "../core/redaction";
-import { resolveConceptOwner } from "../indexer/lookup/adapter-concept-owner";
-import { resolveSourceEntries } from "../indexer/search/search-source";
-import { buildFileContext } from "../indexer/walk/file-context";
 import { scriptProgram } from "../tasks/frozen-script";
 import { parseTaskSource } from "../tasks/source/parse-task-source";
 import { resolveWorkflowRunTarget } from "../workflows/runtime/runs";
@@ -119,26 +115,24 @@ export async function resolveRunTarget(runArgs: readonly string[]): Promise<RunT
       if (bundle !== undefined && bundleRef.bundle !== undefined && bundleRef.bundle !== bundle) {
         throw new UsageError("--bundle conflicts with the bundle in the asset ref.", "INVALID_FLAG_VALUE");
       }
-      const match = resolveConceptOwner(
-        { ...bundleRef, ...(bundle === undefined ? {} : { bundle }) },
-        resolveSourceEntries(undefined, loadConfig()),
-      );
-      if (!match) {
+      const asset = findAsset({ ...bundleRef, ...(bundle === undefined ? {} : { bundle }) });
+      if (!asset) {
         throw new NotFoundError(
           `Asset not found for ref: ${ref}`,
           "ASSET_NOT_FOUND",
           "Use akm search to find an executable asset.",
         );
       }
-      const owning = bundleOf({ name: match.bundleId, path: match.source.path, location: match.source.location });
-      const document = adapterForId(match.adapterId)?.recognize(
-        owning,
-        buildFileContext(match.source.path, match.owner.path),
-      );
-      const type = document?.type ?? "unknown";
-      const file = match.owner.path;
+      const file = fileOf(asset);
+      let type = "unknown";
+      try {
+        type = asset.type;
+      } catch (error) {
+        // An asset its adapter does not recognise is run as an unknown type, which refuses it below.
+        if (!(error instanceof UsageError)) throw error;
+      }
       if (type === "script") return { kind: "script", refIndex, ref, file };
-      return { kind: "asset", refIndex, ref, type, target: makeBundleRef(match.bundleId, match.owner.conceptId), file };
+      return { kind: "asset", refIndex, ref, type, target: asset.ref, file };
     };
     const before = parseArgs(runArgs.slice(0, refIndex), { bundle: args.bundle as ArgsDef[string] }).bundle;
     const located = locate(typeof before === "string" ? before : undefined);

@@ -3,12 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmShowUnified } from "../../../src/commands/read/show";
 import { parseBundleRef } from "../../../src/core/asset/asset-ref";
+import { findAsset } from "../../../src/core/assets/read";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex, lookupBundleRef } from "../../../src/indexer/indexer";
-import { resolveAdapterConceptOwner } from "../../../src/indexer/lookup/adapter-concept-owner";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { listWorkflowRuns, startWorkflowRun } from "../../../src/workflows/runtime/runs";
@@ -111,13 +111,11 @@ describe("workflow source canonical-ref collisions", () => {
     const canonicalConceptId = kind === "ordinary" ? "workflows/collision" : "collision";
 
     for (const ref of fixture.aliases) {
-      const owner = resolveAdapterConceptOwner(
-        { name: "test", path: fixture.root },
-        adapterId,
-        parseBundleRef(ref).conceptId,
+      const owner = findAsset(
+        { conceptId: parseBundleRef(ref).conceptId },
+        { sources: [{ path: fixture.root, registryId: "test", adapterId }] },
       );
       expect(owner, ref).toMatchObject({
-        path: sourcePath,
         conceptId: canonicalConceptId,
         type: "workflow",
         entry: { file: sourcePath },

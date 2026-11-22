@@ -9,11 +9,11 @@ import {
   placementTypes,
   refForFile,
 } from "../../src/core/asset/asset-placement";
+import { findAsset } from "../../src/core/assets/read";
 import { loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { isInstalledBundle, resolveEnvPath, resolveRefOwner } from "../../src/core/env-secret-ref";
 import { substituteRefTokens } from "../../src/core/ref-token";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
-import { resolveAdapterConceptOwner, resolveConceptOwner } from "../../src/indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
 import { buildFileContext } from "../../src/indexer/walk/file-context";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
@@ -100,7 +100,9 @@ describe("recognition gives a file its path as its ref", () => {
     expect(document?.conceptId).toBe(ref);
     expect(document?.ref).toBe(`akm//${ref}`);
     // The ref inverts to the file.
-    expect(resolveAdapterConceptOwner({ name: "test", path: storage.stashDir }, "akm", ref)?.path).toBe(file);
+    expect(findAsset({ conceptId: ref }, { sources: [{ path: storage.stashDir, adapterId: "akm" }] })?.entry.file).toBe(
+      file,
+    );
   });
 });
 
@@ -117,13 +119,13 @@ describe("the old, type-folder-prefixed spelling of a loose file's ref", () => {
         if (level === "warn") warnings.push(args.map(String).join(" "));
       },
       async () => {
-        const current = resolveConceptOwner({ conceptId: "reports/x" }, sources);
-        expect(current?.owner.path).toBe(file);
+        const current = findAsset({ conceptId: "reports/x" }, { sources });
+        expect(current?.entry.file).toBe(file);
         expect(warnings).toEqual([]);
-        const old = resolveConceptOwner({ conceptId: "knowledge/reports/x" }, sources);
-        expect(old?.owner.path).toBe(file);
-        expect(old?.owner.conceptId).toBe("reports/x");
-        resolveConceptOwner({ conceptId: "knowledge/reports/x" }, sources);
+        const old = findAsset({ conceptId: "knowledge/reports/x" }, { sources });
+        expect(old?.entry.file).toBe(file);
+        expect(old?.conceptId).toBe("reports/x");
+        findAsset({ conceptId: "knowledge/reports/x" }, { sources });
       },
     );
     expect(warnings).toHaveLength(1);
@@ -135,7 +137,7 @@ describe("the old, type-folder-prefixed spelling of a loose file's ref", () => {
     writeSandboxConfig({ semanticSearchMode: "off" });
     resetConfigCache();
     const sources = resolveSourceEntries(undefined, loadConfig());
-    expect(resolveConceptOwner({ conceptId: "knowledge/reports/missing" }, sources)).toBeUndefined();
+    expect(findAsset({ conceptId: "knowledge/reports/missing" }, { sources })).toBeUndefined();
   });
 });
 

@@ -11,15 +11,10 @@ import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import * as p from "../../cli/clack";
 import { akmTasksSync } from "../../commands/tasks/tasks";
 import { makeBundleRef } from "../../core/asset/asset-ref";
+import { writeAssets } from "../../core/assets/write";
 import { loadConfig, mutateConfig, resetConfigCache } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import {
-  commitWriteTargetBoundary,
-  deleteAssetFromSource,
-  prepareWriteTargetForMutation,
-  resolveWriteTarget,
-  writeAssetToSource,
-} from "../../core/write-source";
+import { commitWriteTargetBoundary, prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
 import { enabledRefsFromInstalled, isSchedulerBundleActive, schedulerEnabledRefs } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../../tasks/embedded";
@@ -155,8 +150,7 @@ export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
 }
 
 export interface PrepareSetupTaskDefinitionsDeps {
-  writeAsset?: typeof writeAssetToSource;
-  deleteAsset?: typeof deleteAssetFromSource;
+  writeAssets?: typeof writeAssets;
   commitBoundary?: typeof commitWriteTargetBoundary;
 }
 
@@ -169,8 +163,7 @@ export async function prepareSetupTaskDefinitions(
     resolveWriteTarget(config, config.defaultBundle, { requireWritable: true }),
   );
   const taskDir = path.join(target.source.path, "tasks");
-  const writeAsset = deps.writeAsset ?? writeAssetToSource;
-  const deleteAsset = deps.deleteAsset ?? deleteAssetFromSource;
+  const write = deps.writeAssets ?? writeAssets;
   const commitBoundary = deps.commitBoundary ?? commitWriteTargetBoundary;
 
   const prepared = tasks.map((plan) => {
@@ -189,14 +182,16 @@ export async function prepareSetupTaskDefinitions(
     for (const schedule of parsed.schedule) {
       parseSchedule(schedule.cron, backendNameForPlatform());
     }
-    return { filePath, original, yaml, ref: { type: "task" as const, name: plan.task.id } };
+    return { filePath, original, yaml, name: plan.task.id };
   });
   const changed = prepared.filter((entry) => entry.original !== entry.yaml);
   const attempted: typeof changed = [];
   try {
     for (const entry of changed) {
       attempted.push(entry);
-      await writeAsset(target.source, target.config, entry.ref, entry.yaml);
+      write(target, { purpose: "setup-tasks" }, (w) =>
+        w.create({ type: "task", name: entry.name, content: entry.yaml }),
+      );
     }
     commitBoundary(target, "Prepare scheduled tasks");
   } catch (error) {
@@ -204,9 +199,15 @@ export async function prepareSetupTaskDefinitions(
     for (const entry of [...attempted].reverse()) {
       try {
         if (entry.original === undefined) {
-          if (fs.existsSync(entry.filePath)) await deleteAsset(target.source, target.config, entry.ref);
+          write(target, { purpose: "setup-tasks" }, (w) => {
+            const address = w.address(`tasks/${entry.name}`);
+            if (address.exists) w.delete(address.conceptId);
+          });
         } else {
-          await writeAsset(target.source, target.config, entry.ref, entry.original);
+          const original = entry.original;
+          write(target, { purpose: "setup-tasks" }, (w) =>
+            w.create({ type: "task", name: entry.name, content: original }),
+          );
           fs.writeFileSync(entry.filePath, entry.original, "utf8");
         }
       } catch (rollbackError) {

@@ -3,9 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { findAsset } from "../../core/assets/read";
+import { safeRealpath } from "../../core/common";
 import { lookupBundleRef } from "../indexer";
 import { deriveInstallations } from "../installations";
-import { resolveConceptOwner } from "../lookup/adapter-concept-owner";
+import { indexedPathOf } from "../lookup/indexed-owner";
 import { resolveSourceEntries } from "../search/search-source";
 
 export interface ResolveAssetPathOptions {
@@ -34,7 +36,8 @@ function resolveViaDisk(ref: BundleRef, options: ResolveAssetPathOptions): strin
       })
     : allSources;
   const bundle = options.honorOrigin !== false ? ref.bundle : undefined;
-  return resolveConceptOwner({ bundle, conceptId: ref.conceptId }, sources)?.owner.realPath ?? null;
+  const asset = findAsset({ bundle, conceptId: ref.conceptId }, { sources });
+  return asset ? safeRealpath(indexedPathOf(asset)) : null;
 }
 
 export async function resolveAssetPath(ref: string, options: ResolveAssetPathOptions = {}): Promise<string | null> {

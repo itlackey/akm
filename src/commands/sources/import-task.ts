@@ -6,13 +6,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef } from "../../core/asset/asset-ref";
+import { writeAssets } from "../../core/assets/write";
 import { loadConfig, mutateConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import {
   commitWriteTargetBoundary,
+  fileOfChange,
   prepareWriteTargetForMutation,
   resolveWriteTarget,
-  writeAssetToSource,
 } from "../../core/write-source";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { selectBackend } from "../../tasks/backends";
@@ -66,8 +67,10 @@ export async function importTaskFile(
       }
       if (schedulerEnabledRefs(loadConfig())?.includes(ref)) setSchedulerRefEnabled(ref, false);
     }
-    const result = await writeAssetToSource(prepared.source, prepared.config, { type: "task", name: id }, yaml);
+    const change = writeAssets(prepared, { purpose: "import-task" }, (w) =>
+      w.create({ type: "task", name: id, content: yaml }),
+    );
     commitWriteTargetBoundary(prepared, `Import tasks/${id}`);
-    return { ...result, ref };
+    return { path: fileOfChange(change, prepared.source), ref };
   });
 }

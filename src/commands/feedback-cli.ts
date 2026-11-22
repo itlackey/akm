@@ -11,6 +11,7 @@ import { type BundleRef, makeBundleRef, parseBundleRef } from "../core/asset/ass
 import { assembleAsset, serializeFrontmatter } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "../core/asset/frontmatter";
 import { type AssetRef, displayDefaultBundle, displayRef } from "../core/asset/resolve-ref";
+import { currentConceptId } from "../core/assets/read";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, NotFoundError, TransientError, UsageError } from "../core/errors";
@@ -22,7 +23,6 @@ import { withWriteTargetMutation } from "../core/write-source";
 import { NO_INDEX_MESSAGE, openUsableIndex } from "../indexer/index-readiness";
 import { heldRebuildLock } from "../indexer/index-rebuild-lock";
 import { recomputeUtilityScores } from "../indexer/indexer";
-import { currentConceptId, resolveWriteAddress } from "../indexer/lookup/adapter-concept-owner";
 import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
 import { insertUsageEventStrict, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
@@ -42,6 +42,7 @@ import {
 import { getUtilityScore } from "../storage/repositories/index-utility-repository";
 import { contentHash } from "./improve/content-hash";
 import { readEdgeList } from "./improve/memory/memory-belief";
+import { resolveProposalAddress } from "./proposal/address";
 import { akmProposalAccept } from "./proposal/proposal";
 import { createProposal, recordGateDecision, rejectProposalDurably } from "./proposal/repository";
 
@@ -360,7 +361,7 @@ function assertFrontmatterStillParses(before: string, after: string, file: strin
  * not the indexed one, so accepting the proposal would leave the real one unfixed.
  */
 export function assertProposalWritesFile(itemRef: string, root: string, filePath: string): void {
-  const { type, path: writes } = resolveWriteAddress(path.resolve(root), itemRef);
+  const { type, path: writes } = resolveProposalAddress(path.resolve(root), itemRef);
   if (writes !== undefined && safeRealpath(writes) === safeRealpath(filePath)) return;
   throw new UsageError(
     `akm cannot queue a fix for ${itemRef}: its file is ${filePath}, but a proposal would write ${writes ?? `no file (akm has no directory for "${type}" assets)`}. Edit the file directly.`,

@@ -10,6 +10,7 @@
 
 import path from "node:path";
 import { deriveCanonicalAssetName } from "../core/asset/asset-placement";
+import { assetRevision as digest } from "../core/assets/read";
 import {
   findWriteTargetAsset,
   resolveEnvPath,
@@ -19,7 +20,6 @@ import {
   writeEnvSecret,
 } from "../core/env-secret-ref";
 import { AkmError, UsageError } from "../core/errors";
-import { assetRevision as digest } from "../core/write-source";
 import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { interactive } from "./lease";
 

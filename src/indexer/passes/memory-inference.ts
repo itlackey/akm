@@ -33,8 +33,8 @@
  * Locked v1 contract:
  *   - LLM access is exclusively via the frozen runner returned by
  *     `resolveIndexPassExecution("memory", config)`.
- *   - All child memory writes go through `writeAssetToSource` in
- *     `src/core/write-source.ts`. The parent's frontmatter rewrite is an
+ *   - All child memory writes go through `writeAssets` in
+ *     `src/core/assets/write.ts`. The parent's frontmatter rewrite is an
  *     explicit narrow exception — see {@link markParentProcessed}.
  */
 
@@ -49,7 +49,8 @@ import {
   readFrontmatterDate,
   replaceFrontmatterBlocks,
 } from "../../core/asset/frontmatter";
-import { conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
+import { writeAssets } from "../../core/assets/write";
 import { bestEffort } from "../../core/best-effort";
 import { asNonEmptyString, existingFileMode, writeFileAtomic } from "../../core/common";
 import { concurrentMap } from "../../core/concurrent";
@@ -57,7 +58,7 @@ import type { SourceConfigEntry } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { beginWriteProvenance, recordWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
-import { type WriteTargetSource, writeAssetToSource } from "../../core/write-source";
+import type { WriteTargetSource } from "../../core/write-source";
 import { type NoticeSink, noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -171,7 +172,7 @@ export interface MemoryInferenceResult {
   notices?: readonly Readonly<LoweringNotice>[];
   /**
    * Absolute paths this call actually wrote or rewrote — every derived child
-   * (`writeAssetToSource`) and every parent whose frontmatter was stamped
+   * (`writeAssets`) and every parent whose frontmatter was stamped
    * `inferenceProcessed: true` (`markParentProcessed`), plus every child whose
    * scope was synced. Lets the caller index
    * exactly these files (`indexWrittenAssets`) instead of a full reindex
@@ -802,7 +803,6 @@ async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDr
   };
 
   const childName = `${parent.name}.derived`;
-  const childRefStr = `memories/${childName}`;
   if (fs.existsSync(derivedChildPath(parent))) {
     // The derived child appeared on disk after the caller's pre-check (#588)
     // — a rare mid-flight race. Report `childExists` so the caller marks the
@@ -812,8 +812,9 @@ async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDr
 
   try {
     const content = renderDerivedMemory(parent, derived);
-    const childRef = parsePlacementRef(childRefStr);
-    await writeAssetToSource(writeTarget, writeConfig, childRef, content);
+    writeAssets({ source: writeTarget, config: writeConfig }, { purpose: "memory-inference" }, (w) =>
+      w.create({ type: "memory", name: childName, content }),
+    );
     return { written: 1, childExists: false };
   } catch (err) {
     warn(
@@ -864,10 +865,10 @@ function renderDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft):
 
 function markParentProcessed(parent: MemoryRecord): void {
   // Frontmatter-only rewrite of an existing asset: not a new asset write,
-  // so writeAssetToSource isn't a fit here (it would round-trip the body
+  // so writeAssets isn't a fit here (it would round-trip the body
   // through the asset-spec rendering layer instead of preserving the
   // user's original markdown bytes verbatim). This is the narrow exception
-  // to routing asset writes through writeAssetToSource.
+  // to routing asset writes through writeAssets.
   let raw: string;
   try {
     raw = fs.readFileSync(parent.filePath, "utf8");
@@ -894,7 +895,7 @@ function markParentProcessed(parent: MemoryRecord): void {
   try {
     fs.writeFileSync(parent.filePath, next, "utf8");
     // #652: the parent's `inference_processed` stamp is a real asset mutation
-    // (the documented writeAssetToSource exception above) — journal it.
+    // (the documented writeAssets exception above) — journal it.
     recordWrittenPath(parent.filePath);
   } catch (err) {
     warn(
@@ -911,7 +912,7 @@ function markParentProcessed(parent: MemoryRecord): void {
  * since the walk is judged as it is now; one that no longer drifts, is no
  * longer a derived child of that parent, or whose frontmatter cannot be edited
  * in place is left untouched. Like {@link markParentProcessed}, this is a
- * frontmatter-only exception to `writeAssetToSource`, written atomically and
+ * frontmatter-only exception to `writeAssets`, written atomically and
  * journaled so the caller indexes and commits it. Returns the rewrite count.
  */
 function syncDerivedChildScopes(drifts: readonly ScopeDrift[]): number {

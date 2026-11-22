@@ -341,7 +341,7 @@ export async function showLocal(input: {
     );
   }
 
-  if (!indexedEntry && !resolution.owner) {
+  if (!indexedEntry && !resolution.asset) {
     const unrecognized = findUnrecognizedScriptSource(parsed.conceptId, searchSources);
     if (unrecognized) {
       const displayExtension = unrecognized.extension || "no extension";
@@ -369,7 +369,7 @@ export async function showLocal(input: {
   enforceSensitiveFragmentPolicy(indexedEntry.type, parsed, input.contextMode, input.contextFlag);
 
   // The entry is the one the bundle's adapter read for the ref; an index row with no entry behind it is stale.
-  const owned = resolution.owner;
+  const owned = resolution.asset;
   if (!owned) throwIndexedPathNotFound(Object.assign(new Error("no entry"), { code: "ENOENT" }), input.ref);
 
   const source = findSourceForPath(assetPath, allSources);

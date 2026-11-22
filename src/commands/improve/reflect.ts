@@ -20,6 +20,7 @@ import { parseBundleRef } from "../../core/asset/asset-ref";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { AssetRef } from "../../core/asset/resolve-ref";
+import { findAsset } from "../../core/assets/read";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import { isWithin, resolveStashDir, safeRealpath } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
@@ -37,7 +38,6 @@ import { warnOnce } from "../../core/warn";
 import { type Notice, noticeSet } from "../../execution/notices";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
 import { lookupBundleRef } from "../../indexer/indexer";
-import { resolveOwnedType, resolveWriteAddress, type WriteAddress } from "../../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { AgentFailureReason } from "../../integrations/agent";
 import {
@@ -53,6 +53,7 @@ import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported } f
 import { isRefused, structuredLoop } from "../../llm/structured";
 import type { StructuredOutcome } from "../../llm/structured-call";
 import { enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
+import { resolveProposalAddress, type WriteAddress } from "../proposal/address";
 import type { EligibilitySource } from "../proposal/proposal-types";
 import type { CreateProposalInput, ProposalsContext } from "../proposal/repository";
 import { isValidDescription } from "../proposal/validators/proposal-quality-validators";
@@ -726,11 +727,12 @@ async function resolveReflectSource(
   // A proposal writes the file that owns the ref in the proposal's own bundle; the type is that of
   // the file that owns it wherever it is (a file in another bundle is `createProposal`'s to refuse, #1000).
   const root = path.resolve(options.target?.root ?? stash);
-  const address = resolveWriteAddress(root, options.ref);
-  const ownedType = resolveOwnedType(parseBundleRef(options.itemRef ?? options.ref), resolveSourceEntries(stash), {
-    mode: "read",
+  const address = resolveProposalAddress(root, options.ref);
+  const ownedType = findAsset(options.itemRef ?? options.ref, {
+    sources: resolveSourceEntries(stash),
     unlisted: true,
-  });
+    mode: "read",
+  })?.type;
   const parsedRef: WriteAddress = { ...address, type: ownedType ?? address.type };
   // A secret's content is never read, whatever it looks like.
   if (REFLECT_REFUSED_TYPES.has(parsedRef.type)) {

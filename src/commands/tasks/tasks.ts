@@ -23,7 +23,8 @@ import { warnWorkflowUse } from "../../cli/deprecations";
 import { adapterIdOf, detectAdapterId } from "../../core/adapter/detect-adapter";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { type AssetRef, conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
+import { writeAssets } from "../../core/assets/write";
 import { isWithin, resolveStashDir } from "../../core/common";
 import {
   defaultConnection,
@@ -46,7 +47,6 @@ import {
   type ResolvedWriteTarget,
   resolveWorkingStashTarget,
   resolveWriteTarget,
-  writeAssetToSource,
 } from "../../core/write-source";
 import { deriveInstallations } from "../../indexer/installations";
 import { retiredEngineSelection } from "../../integrations/agent/resolution";
@@ -142,7 +142,6 @@ export interface TasksAddResult {
 
 export interface TaskMutationDeps {
   backend?: SchedulerBackend;
-  writeAsset?: typeof writeAssetToSource;
   commitBoundary?: typeof commitWriteTargetBoundary;
   schedulerRuntime?: () => PreparedSchedulerRuntime;
 }
@@ -237,12 +236,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     }
     await ensureSchedulerChoice({ backend: sched });
     if (input.disabled) setSchedulerRefEnabled(qualifiedRef, false);
-    await (deps.writeAsset ?? writeAssetToSource)(
-      bundle.resolved.source,
-      bundle.resolved.config,
-      taskAssetRef(id),
-      yaml,
-    );
+    writeAssets(bundle.resolved, { purpose: "task-add" }, (w) => w.create({ type: "task", name: id, content: yaml }));
     (deps.commitBoundary ?? commitWriteTargetBoundary)(bundle.resolved, `Update tasks/${id}`);
     if (!input.disabled) setSchedulerRefEnabled(qualifiedRef, true);
     const sync = await akmTasksSync(deps, bundle.bundleName, { rebind: input.rebind === true });
@@ -1078,10 +1072,6 @@ function inspectInstalledBinding(entry: InstalledSchedulerBinding): string[] {
   if (absolutePaths.some((part) => !fs.existsSync(part))) status.push("missing-path");
   if (status.length === 0) status.push("ok");
   return status;
-}
-
-function taskAssetRef(id: string): AssetRef {
-  return { type: "task", name: id };
 }
 
 /** The bundle `task add` writes into: its write target, config, stash path, and name. */

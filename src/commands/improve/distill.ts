@@ -24,6 +24,7 @@ import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } fr
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { findAsset } from "../../core/assets/read";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
@@ -40,7 +41,6 @@ import { warn, warnVerbose } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import { type NoticeSet, noticeSet } from "../../execution/notices";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
-import { resolveOwnedType, resolveWriteAddress } from "../../indexer/lookup/adapter-concept-owner";
 import {
   SCOPE_FRONTMATTER_KEYS,
   type StashEntryScope,
@@ -54,6 +54,7 @@ import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { chatCompletion } from "../../llm/client";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
+import { resolveProposalAddress } from "../proposal/address";
 import type { EligibilitySource } from "../proposal/proposal-types";
 import { listProposals, type Proposal, type ProposalsContext } from "../proposal/repository";
 import { detectDoubleFrontmatter, isValidDescription } from "../proposal/validators/proposal-quality-validators";
@@ -477,7 +478,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const config = options.config ?? loadConfig();
   const stash = options.stashDir ?? resolveStashDir();
   // An existing input is addressed where its file is; only a ref no file owns is read by placement.
-  const address = resolveWriteAddress(stash, inputRef);
+  const address = resolveProposalAddress(stash, inputRef);
   const profile = options.improveProfile ?? resolveImproveStrategy(undefined, config).config;
   options = { ...options, improveProfile: profile };
   const targetKind = options.proposalKind ?? "lesson";
@@ -499,10 +500,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const eligMeta = options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {};
   // The input's type is its file's; the ref's first folder names it only for a ref no file owns.
   const inputType =
-    resolveOwnedType(parseBundleRef(inputRef), resolveSourceEntries(options.stashDir, config), {
-      mode: "read",
-      unlisted: true,
-    }) ?? address.type;
+    findAsset(inputRef, { sources: resolveSourceEntries(options.stashDir, config), unlisted: true, mode: "read" })
+      ?.type ?? address.type;
   if (isDistillRefusedInputType(inputType)) {
     const secret = inputType === "env" || inputType === "secret";
     const proposalRef = secret ? inputRef : conceptIdFromTypeName("lesson", address.name);

@@ -243,9 +243,9 @@ write the asset's type (`which does not write <type> assets`). The bundle's
 | `secret-tool`, `azure-key-vault` | `secret` |
 | every other adapter | none: read-only |
 
-Every asset write goes through `writeAsset` / `changeAsset`
-(`src/core/write-source.ts`), which check `writes`, call the adapter, and
-record the changed files for the bundle's commit boundary. An update or retire
+Every asset write goes through `writeAssets` (`src/core/assets/write.ts`),
+which checks `writes` (and `retires` for a retirement), calls the adapter, and
+records the changed files for the bundle's commit boundary. An update or retire
 may name the `revision` (the SHA-256 of the content last read) and a create
 may be `exclusive`; both are checked with the content the write replaces.
 

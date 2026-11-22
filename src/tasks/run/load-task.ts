@@ -14,6 +14,7 @@ import fs from "node:fs";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { makeBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
+import { fileOf, findAsset } from "../../core/assets/read";
 import { slugForPath } from "../../core/bundle-id";
 import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -29,7 +30,6 @@ import {
   validateInputs,
 } from "../../execution/input-contract";
 import type { ExecutionJsonObject } from "../../execution/json";
-import { resolveAdapterConceptOwner, resolveConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
@@ -84,8 +84,8 @@ export function resolveBundleAsset(
 ): { file: string; bundleRoot: string } {
   const conceptId = conceptIdFromTypeName(type, name);
   const sources = activeTaskSources(config);
-  const match = resolveConceptOwner({ bundle, conceptId }, sources);
-  if (match) return { file: match.owner.path, bundleRoot: match.source.path };
+  const asset = findAsset({ bundle, conceptId }, { sources });
+  if (asset) return { file: fileOf(asset), bundleRoot: asset.source.path };
   if (resolveSourcesForOrigin(bundle, sources).length === 0) {
     assertBundleNotDisabled(config, bundle);
     throw new UsageError(
@@ -106,18 +106,17 @@ export async function loadPreparedTask(
   if (adapterId === "akm-task") validateTaskConceptId(id);
   else validateTaskId(id);
   const taskConceptId = adapterId === "akm" ? `tasks/${id}` : id;
-  const owner = resolveAdapterConceptOwner(
-    { name: options.bundleName ?? slugForPath(bundleDir), path: bundleDir },
-    adapterId,
-    taskConceptId,
+  const asset = findAsset(
+    { conceptId: taskConceptId },
+    { sources: [{ path: bundleDir, registryId: options.bundleName ?? slugForPath(bundleDir), adapterId }] },
   );
-  if (!owner) {
+  if (!asset) {
     throw new NotFoundError(
       `Task ${JSON.stringify(id)} was not found in the configured ${JSON.stringify(adapterId)} bundle.`,
       "ASSET_NOT_FOUND",
     );
   }
-  const filePath = owner.path;
+  const filePath = fileOf(asset);
   const yaml = fs.readFileSync(filePath, "utf8");
   const parsed = parseTaskSource({ yaml, filePath });
   if (parsed.version !== 4) {

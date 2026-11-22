@@ -20,7 +20,8 @@ import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { type AssetRef, conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { writeAssets } from "../../core/assets/write";
 import { isHttpUrl, isWithin, resolveStashDir, safeRealpath, samePath, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -29,11 +30,11 @@ import { resolveStashStandards } from "../../core/standards/resolve-stash-standa
 import { warn } from "../../core/warn";
 import {
   commitWriteTargetBoundary,
+  fileOfChange,
   formatRefForMessage,
   type ResolvedWriteTarget,
   recordWriteTargetPath,
   resolveWriteTarget,
-  writeAssetToSource,
 } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
@@ -646,7 +647,7 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string, ta
  * Resolves the write target via the v1 precedence chain (`--bundle` →
  * `defaultWriteTarget` → working stash), validates the path is within the
  * type root, enforces `--force` semantics, and delegates the actual write
- * to `writeAssetToSource`.
+ * to `writeAssets`.
  */
 interface MarkdownAssetWriteOptions {
   type: "knowledge" | "memory";
@@ -770,9 +771,11 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
         return { ref: resolved.displayRef, path: assetPath, stashDir: source.path, unchanged: true as const };
       }
     }
-    const result = await writeAssetToSource(source, config, resolved.ref, options.content);
-    const durableRef = result.ref;
-    result.ref = resolved.displayRef;
+    const change = writeAssets({ source, config }, { purpose: "markdown-write" }, (w) =>
+      w.create({ type: resolved.ref.type, name: resolved.ref.name, content: options.content }),
+    );
+    const durableRef = displayRef({ conceptId: change.conceptId, bundleId: resolved.ref.origin });
+    const result = { path: fileOfChange(change, source), ref: resolved.displayRef };
     // SPEC-5 (--supersedes): demote each superseded asset by mutating its
     // frontmatter (`beliefState: superseded` + sorted-set-append `supersededBy`;
     // every other key and the body are preserved). Ordered BEFORE

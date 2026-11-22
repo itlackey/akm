@@ -21,7 +21,8 @@ import { findAbsoluteHomePaths } from "../../src/core/adapter/adapters/akm-forma
 import type { AssetRef } from "../../src/core/asset/resolve-ref";
 import type { SourceConfigEntry } from "../../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
-import { type WriteTargetSource, writeAssetToSource } from "../../src/core/write-source";
+import type { WriteTargetSource } from "../../src/core/write-source";
+import { writeAssetToSource } from "../_helpers/write-asset";
 
 describe("findAbsoluteHomePaths", () => {
   test("flags an absolute Linux home path", () => {

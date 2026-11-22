@@ -18,16 +18,16 @@
  *     with `--force-with-lease` when the target is writable and has an
  *     upstream.
  *
- * Nothing commits per asset (issue #507). Callers write and delete through
- * {@link writeAssetToSource} / {@link deleteAssetFromSource}, then fire
- * {@link commitWriteTargetBoundary} once — or wrap a custom mutation in
- * {@link withWriteTargetMutation}, which does both under the asset lease. An
+ * Nothing commits per asset (issue #507). Callers write assets through
+ * `writeAssets` (`src/core/assets/write.ts`) and plain files through
+ * {@link writeSourceFile}, then fire {@link commitWriteTargetBoundary} once — or
+ * wrap a custom mutation in {@link withWriteTargetMutation}, which does both
+ * under the asset lease. An
  * accepted proposal commits its own paths ({@link commitAcceptedPaths}), on a
  * filesystem stash that is a git repository too. A process that accepts many
  * proposals collects them and commits once at its boundary (#1185).
  */
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { withAssetMutationLeaseSync } from "../indexer/index-writer-lock";
@@ -43,19 +43,18 @@ import {
 } from "../sources/providers/git";
 import { listIgnoredExactPaths } from "../sources/providers/git-stash";
 import { findAbsoluteHomePaths } from "./adapter/adapters/akm-format";
-import type { AssetChange, BundleAdapter, NewAsset } from "./adapter/bundle-adapter";
+import type { AssetChange } from "./adapter/bundle-adapter";
 import { detectAdapterId } from "./adapter/detect-adapter";
 import { assertWritableFile } from "./adapter/directory-adapter";
-import { bundleOf, requireAdapter } from "./adapter/registry";
-import type { Bundle } from "./adapter/types";
 import { normalizeAkmMarkdown } from "./asset/akm-markdown";
 import type { AssetRef } from "./asset/resolve-ref";
-import { conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
+import { conceptIdFromTypeName } from "./asset/resolve-ref";
+import { assertAdapterWrites } from "./assets/bundle";
 import { deriveBundleId } from "./bundle-id";
 import { existingFileMode, isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
 import { bundleKeyForContentRoot, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
-import { ConfigError, NotFoundError, UsageError } from "./errors";
+import { ConfigError, UsageError } from "./errors";
 import { sanitizeCommitMessage } from "./git-message";
 import { getLocationBundleRoot } from "./paths";
 import { warn, warnOnce } from "./warn";
@@ -319,27 +318,6 @@ function pathFromConfiguredSource(runtime: ConfiguredSource): string | undefined
 
 // ── Preparing a target for mutation ─────────────────────────────────────────
 
-/** The adapter that writes `source`'s assets: its configured or detected one, `akm` when none is recorded. */
-function writerOf(source: WriteTargetSource): BundleAdapter {
-  return requireAdapter(source.name, source.adapterId ?? "akm");
-}
-
-/**
- * Refuse an asset write the bundle's adapter does not make: an adapter that
- * writes nothing, or (with `type`) one that does not write assets of that type.
- */
-export function assertAdapterWrites(source: WriteTargetSource, type?: string): void {
-  const adapter = writerOf(source);
-  const { writes } = adapter;
-  if (writes.length > 0 && (type === undefined || writes.includes(type))) return;
-  throw new UsageError(
-    writes.length === 0
-      ? `Bundle "${source.name}" uses adapter "${adapter.id}", which does not support AKM asset writes.`
-      : `Bundle "${source.name}" uses adapter "${adapter.id}", which does not write ${type} assets.`,
-    "INVALID_FLAG_VALUE",
-  );
-}
-
 /** What a write is, for the checks a target passes: an asset of a type, or a plain file (any bundle that takes writes). */
 export interface WriteKind {
   /** The type of the asset the write creates or changes. Absent: an asset of any type the adapter writes. */
@@ -436,109 +414,12 @@ export function prepareWriteTargetForMutation(target: ResolvedWriteTarget, kind:
 
 // ── Writing assets ──────────────────────────────────────────────────────────
 
-/**
- * An asset write a bundle's adapter makes. `exclusive` refuses to replace an
- * existing asset; `revision` (the SHA-256 of the content the writer last saw,
- * {@link assetRevision}) refuses to change an asset whose content has changed
- * since. Both are checked with the content the write replaces.
- */
-export type AssetOperation =
-  | { op: "create"; asset: NewAsset; exclusive?: boolean }
-  | { op: "update"; conceptId: string; content: string | Buffer; revision?: string }
-  | { op: "delete"; conceptId: string; revision?: string };
-
-/** An asset's revision: the SHA-256 of its content. */
-export function assetRevision(content: string | Buffer): string {
-  return createHash("sha256").update(content).digest("hex");
-}
-
-/**
- * Create, update or delete an asset of `source` through the bundle's adapter,
- * after the gates every asset write passes. The files it changed are recorded
- * for the target's boundary commit ({@link commitWriteTargetBoundary}); none
- * is committed here.
- */
-export function writeAsset(
-  source: WriteTargetSource,
-  config: SourceConfigEntry,
-  operation: AssetOperation,
-): AssetChange {
-  // The adapter writes the asset, however the bundle keeps it: the bundle need only take writes.
-  ensureWritable(source, config);
-  const adapter = writerOf(source);
-  const bundle = bundleOf(source);
-  const type =
-    operation.op === "create" ? operation.asset.type : existingAssetType(adapter, bundle, operation.conceptId);
-  assertAdapterWrites(source, type);
-  if (operation.op === "create" && operation.exclusive) {
-    const conceptId = adapter.place(bundle, operation.asset);
-    if (adapter.read(bundle, conceptId)) {
-      throw new UsageError(`Asset "${source.name}//${conceptId}" already exists.`, "RESOURCE_ALREADY_EXISTS");
-    }
-  }
-  if (operation.op !== "create" && operation.revision !== undefined) {
-    const current = adapter.read(bundle, operation.conceptId)?.entry.content();
-    if (current === undefined || assetRevision(current) !== operation.revision) {
-      throw new UsageError(
-        `Asset "${source.name}//${operation.conceptId}" changed since it was read; the change was not applied.`,
-        "ASSET_CONTENT_CHANGED",
-      );
-    }
-  }
-  const change =
-    operation.op === "create"
-      ? adapter.create(bundle, operation.asset)
-      : operation.op === "update"
-        ? adapter.update(bundle, operation.conceptId, operation.content)
-        : adapter.delete(bundle, operation.conceptId);
-  for (const file of change.changed) {
-    recordWriteTargetPath(source, file);
-    // Run-scoped write provenance (#652).
-    recordWrittenPath(file);
-  }
-  return change;
-}
-
 /** The file a write left an asset in, for a caller that works with files; refused when its bundle keeps no file for it. */
 export function fileOfChange(change: AssetChange, source: WriteTargetSource): string {
   if (change.file === undefined) {
     throw new UsageError(`Asset "${source.name}//${change.conceptId}" is not kept in a file.`);
   }
   return change.file;
-}
-
-/**
- * {@link writeAsset} under the asset-mutation lease, committed at the target's
- * boundary: one asset write as a whole operation.
- */
-export function changeAsset(
-  target: ResolvedWriteTarget,
-  operation: AssetOperation,
-  options: { purpose: string; message: string },
-): AssetChange {
-  return withAssetMutationLeaseSync(options.purpose, () => {
-    const change = writeAsset(target.source, target.config, operation);
-    commitWriteTargetBoundary(target, options.message);
-    return change;
-  });
-}
-
-/** The type of the asset `conceptId` names in the bundle, refused when there is none. */
-function existingAssetType(adapter: BundleAdapter, bundle: Bundle, conceptId: string): string {
-  const asset = adapter.read(bundle, conceptId);
-  if (!asset) throw new NotFoundError(`Asset not found: ${bundle.id}//${conceptId}`);
-  return asset.type;
-}
-
-/** Write a textual asset of `ref`'s type and name into `source`. No commit runs here. */
-export async function writeAssetToSource(
-  source: WriteTargetSource,
-  config: SourceConfigEntry,
-  ref: AssetRef,
-  content: string,
-): Promise<{ path: string; ref: string }> {
-  const change = writeAsset(source, config, { op: "create", asset: { type: ref.type, name: ref.name, content } });
-  return { path: fileOfChange(change, source), ref: displayRef({ conceptId: change.conceptId, bundleId: ref.origin }) };
 }
 
 /** The gates an asset write passes: {@link assertPlainWritable}, and an adapter that writes assets of `type`. */
@@ -586,21 +467,8 @@ export function writeSourceFile(
   }
 }
 
-/** Retire the asset at `ref` from `source`. Same gates as {@link writeAssetToSource}, no commit. */
-export async function deleteAssetFromSource(
-  source: WriteTargetSource,
-  config: SourceConfigEntry,
-  ref: AssetRef,
-): Promise<{ path?: string; ref: string }> {
-  const conceptId = conceptIdFromTypeName(ref.type, ref.name);
-  const change = writeAsset(source, config, { op: "delete", conceptId });
-  return {
-    ...(change.file !== undefined ? { path: change.file } : {}),
-    ref: displayRef({ conceptId, bundleId: ref.origin }),
-  };
-}
-
-function ensureWritable(source: WriteTargetSource, config: SourceConfigEntry): void {
+/** Refuse a write to a source that is not write-activated. */
+export function ensureWritable(source: WriteTargetSource, config: SourceConfigEntry): void {
   if (resolveWritable(config)) return;
   throw new UsageError(
     `Source "${source.name}" is not writable. Set \`writable: true\` on the source config entry to enable writes.`,

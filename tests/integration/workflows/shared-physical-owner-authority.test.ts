@@ -164,7 +164,7 @@ describe("shared adapter physical-owner authority", () => {
 
     const resolution = await lookupBundleRefWithResolution(parseBundleRef("early//collision"));
     expect(resolution.entry).toBeNull();
-    expect(resolution.owner?.path).toBe(workflowPath);
+    expect(resolution.asset?.entry.file).toBe(workflowPath);
   });
 
   test.each([

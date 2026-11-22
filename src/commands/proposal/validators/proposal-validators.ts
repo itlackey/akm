@@ -6,10 +6,10 @@ import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { parsePlacementRef } from "../../../core/asset/resolve-ref";
 import { proposalContent } from "../../../core/file-change";
 import { lintLessonContent } from "../../../core/lesson-lint";
-import { resolveWriteAddress } from "../../../indexer/lookup/adapter-concept-owner";
 import { isLegacyProposalRef } from "../../../storage/repositories/proposals-repository";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
 import { compileWorkflowSource } from "../../../workflows/compile";
+import { resolveProposalAddress } from "../address";
 import type {
   Proposal,
   ProposalValidationContext,
@@ -57,7 +57,7 @@ const genericProposalValidator: ProposalValidator = {
     try {
       // The bound bundle, when there is one, says what an existing target's type is.
       const root = proposal.acceptedTarget?.root ?? proposal.proposedTarget?.root;
-      ctx.parsedRef = root ? resolveWriteAddress(root, proposal.ref) : parsePlacementRef(proposal.ref);
+      ctx.parsedRef = root ? resolveProposalAddress(root, proposal.ref) : parsePlacementRef(proposal.ref);
     } catch (err) {
       findings.push({
         kind: "invalid-ref",

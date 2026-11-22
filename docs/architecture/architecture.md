@@ -356,17 +356,15 @@ kind for display (`targetKind: target.source.kind`) is not branching and stays
 in the command layer.
 
 ```ts
-writeAsset(source, config, { op: "create", asset } | { op: "update", conceptId, content } | { op: "retire", conceptId })
-changeAsset(target, operation, { purpose, message }) // writeAsset under the lease, committed at the boundary
-writeAssetToSource(source, config, ref, content)    // create, by ref
-deleteAssetFromSource(source, config, ref)          // retire, by ref
+writeAssets(target, { purpose, message? }, (w) => w.create(asset) | w.update(conceptId, content) | w.delete(conceptId))
+                                                     // src/core/assets/write.ts: under the lease; with `message`, committed at the boundary
 ```
 
 The flow:
 
 1. Refuse if the source is not `writable`, or its bundle's adapter does not
    write the asset's type (see [Adapters](adapters.md#writes)).
-2. The bundle's adapter makes the write (`create`, `update` or `retire`): a
+2. The bundle's adapter makes the write (`create`, `update` or `delete`): a
    directory adapter places the asset and writes it atomically inside the
    bundle's root, with no commit. The files it changed are recorded for the
    boundary commit of a git target.

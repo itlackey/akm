@@ -21,11 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parsePlacementRef } from "../../../src/core/asset/resolve-ref";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
-import {
-  commitWriteTargetBoundary,
-  prepareWriteTargetForMutation,
-  writeAssetToSource,
-} from "../../../src/core/write-source";
+import { commitWriteTargetBoundary, prepareWriteTargetForMutation } from "../../../src/core/write-source";
 import { saveGitStash } from "../../../src/sources/providers/git";
 import { seedLockEntries } from "../../_helpers/lockfile";
 import {
@@ -36,6 +32,7 @@ import {
   sandboxXdgDataHome,
   writeSandboxConfig,
 } from "../../_helpers/sandbox";
+import { writeAssetToSource } from "../../_helpers/write-asset";
 
 function configureRepo(dir: string): void {
   for (const args of [

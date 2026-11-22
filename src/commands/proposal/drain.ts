@@ -36,7 +36,6 @@ import { escapeJsonStringControls, stripCodeFences, stripThinkBlocks } from "../
 import { info, warn } from "../../core/warn";
 import { type Notice, noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { resolveWriteAddress } from "../../indexer/lookup/adapter-concept-owner";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
@@ -51,6 +50,7 @@ import {
 } from "../improve/consolidate/coverage";
 import { resolveImproveExecution } from "../improve/execution";
 import { errMessage } from "../improve/stage";
+import { resolveProposalAddress } from "./address";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
 import { isRetireProposal, PAIR_PASS_GATE, type ProposalDecider, STALE_TARGET_GATE_REASON } from "./proposal-types";
 import {
@@ -584,7 +584,7 @@ function promotionNeighbours(
 ): ReturnType<typeof nearestKnowledgeNotes> {
   if (!isPromotionProposal(proposal) || proposal.promotionSource === undefined) return [];
   try {
-    const memoryPath = resolveWriteAddress(stashDir, proposal.promotionSource).path;
+    const memoryPath = resolveProposalAddress(stashDir, proposal.promotionSource).path;
     if (!memoryPath) return [];
     const existing = nearestKnowledgeNotes(memoryPath);
     const source = fs.readFileSync(memoryPath, "utf8");
@@ -614,7 +614,7 @@ function promotionNeighbours(
 /** The live asset a proposal would overwrite, if any. */
 function readLiveAssetContent(stashDir: string, ref: string): string | undefined {
   try {
-    const assetPath = resolveWriteAddress(stashDir, ref).path;
+    const assetPath = resolveProposalAddress(stashDir, ref).path;
     return assetPath && fs.existsSync(assetPath) ? fs.readFileSync(assetPath, "utf8") : undefined;
   } catch {
     return undefined;

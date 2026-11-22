@@ -29,6 +29,9 @@ import {
 import { MEMORY_ARCHIVE_REL } from "../../core/asset/memory-archive";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { stalePathRoots } from "../../core/asset/stale-path";
+import { assertAdapterWrites } from "../../core/assets/bundle";
+import { currentConceptId } from "../../core/assets/read";
+import { writeAssets } from "../../core/assets/write";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -39,7 +42,6 @@ import { getStateDbPath, withImmediateTransaction, withStateDb } from "../../cor
 import { warn } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import {
-  assertAdapterWrites,
   assertWritePathsInsideSource,
   type CommitOutcome,
   commitAcceptedPaths,
@@ -49,12 +51,10 @@ import {
   type ResolvedWriteTarget,
   resolveWriteTarget,
   type WriteTargetSource,
-  writeAsset,
 } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { deriveInstallations } from "../../indexer/installations";
-import { currentConceptId, resolveWriteAddress, type WriteAddress } from "../../indexer/lookup/adapter-concept-owner";
 import { sameScope, scopeFromFrontmatter } from "../../indexer/passes/metadata";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { sha256Hex } from "../../runtime";
@@ -86,6 +86,7 @@ import { archiveCleanupCandidate, derivedTwinPath } from "../improve/memory/memo
 import { runBaseChecks } from "../lint/base-linter";
 import type { LintIssue, LintIssueType } from "../lint/types";
 import { akmTasksDisable, akmTasksEnable, inspectTaskSchedulerBindings } from "../tasks/tasks";
+import { resolveProposalAddress, type WriteAddress } from "./address";
 import { formatNewAssetDiff, formatRetireDiff, formatUnifiedDiff } from "./diff-format";
 import {
   ASSET_MISSING_GATE_REASON,
@@ -416,7 +417,7 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
   const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, origin);
   let parsedRef: WriteAddress;
   try {
-    parsedRef = resolveWriteAddress(proposalTarget.root, input.ref);
+    parsedRef = resolveProposalAddress(proposalTarget.root, input.ref, { name: proposalTarget.source });
   } catch (err) {
     return rejectProposal(
       "invalid_ref",
@@ -586,7 +587,7 @@ export function createRetireProposal(
   const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, origin);
   let parsedRef: WriteAddress;
   try {
-    parsedRef = resolveWriteAddress(proposalTarget.root, input.ref);
+    parsedRef = resolveProposalAddress(proposalTarget.root, input.ref, { name: proposalTarget.source });
   } catch (err) {
     throw invalid(err);
   }
@@ -653,7 +654,13 @@ function queryProposals(db: Database, stashDir: string, options: ListProposalsOp
     if (wantRef !== undefined && !proposalMatchesRef(p.ref, wantRef)) return false;
     if (!options.type) return true;
     try {
-      return resolveWriteAddress(p.proposedTarget?.root ?? stashDir, p.ref).type === options.type;
+      return (
+        resolveProposalAddress(
+          p.proposedTarget?.root ?? stashDir,
+          p.ref,
+          p.proposedTarget && { name: p.proposedTarget.source },
+        ).type === options.type
+      );
     } catch {
       return false;
     }
@@ -895,7 +902,7 @@ export function purgeOrphanProposals(
     const spec = stashDirFor(parsed.type);
     if (parsed.type === "lesson" || !spec) continue;
     const exists = sourceDirs.some((root) => {
-      const assetPath = resolveWriteAddress(root, p.ref).path;
+      const assetPath = resolveProposalAddress(root, p.ref).path;
       return assetPath !== undefined && fs.existsSync(assetPath);
     });
     if (exists) continue;
@@ -1442,7 +1449,7 @@ export function preflightProposalPromotion(
     );
   }
   const target = resolveProposalWriteTarget(config, prepared, options.target, options.queueTarget);
-  const ref = resolveWriteAddress(target.source.path, prepared.ref);
+  const ref = resolveProposalAddress(target.source.path, prepared.ref, target.source);
   const assetPath = ref.path;
   if (!assetPath) {
     throw new UsageError(`Proposal ${proposal.id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
@@ -1636,7 +1643,11 @@ export function commitCollectedAccepts(collector: AcceptCommitCollector, label: 
 function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Proposal, paths: string[]): void {
   if (!accepted.promotionSource) return;
   try {
-    const sourceRef = resolveWriteAddress(mutationTarget.source.path, accepted.promotionSource);
+    const sourceRef = resolveProposalAddress(
+      mutationTarget.source.path,
+      accepted.promotionSource,
+      mutationTarget.source,
+    );
     const sourcePath = sourceRef.path;
     if (!sourcePath || !fs.existsSync(sourcePath)) return;
     if (!accepted.promotionSourceHash) {
@@ -1745,12 +1756,10 @@ async function promoteProposalWithLease(
   const decidedAt = nowIso(ctx);
   const stamped = preflight.stampedContent.endsWith("\n") ? preflight.stampedContent : `${preflight.stampedContent}\n`;
   // The bundle's adapter writes the asset: the published content, in place of the existing one or as a new asset.
-  const written = writeAsset(
-    mutationTarget.source,
-    mutationTarget.config,
+  const written = writeAssets(mutationTarget, { purpose: "proposal-accept" }, (w) =>
     backup !== undefined
-      ? { op: "update", conceptId: address.conceptId, content: stamped }
-      : { op: "create", asset: { type: address.type, name: address.name, content: stamped } },
+      ? w.update(address.conceptId, stamped)
+      : w.create({ type: address.type, name: address.name, content: stamped }),
   );
   const assetPath = fileOfChange(written, mutationTarget.source);
   const content = String(written.content ?? stamped);
@@ -2026,7 +2035,7 @@ async function retireProposalWithLease(
       "PROPOSAL_NOT_PENDING",
     );
   }
-  const ref = resolveWriteAddress(target.source.path, proposal.ref);
+  const ref = resolveProposalAddress(target.source.path, proposal.ref, target.source);
   const assetPath = ref.path;
   if (!assetPath) throw new UsageError(`Cannot resolve proposal target ${proposal.ref}.`, "INVALID_PROPOSAL");
 
@@ -2831,17 +2840,14 @@ function matchesBeforeHash(proposal: Proposal, bytes: Buffer): boolean {
   );
 }
 
-/** The file a write to `ref` goes to in `source` (see {@link resolveWriteAddress}), or undefined. */
+/** The file a write to `ref` goes to in `source` (see {@link resolveProposalAddress}), or undefined. */
 function resolveAssetFilePathSafe(source: WriteTargetSource, ref: string): string | undefined {
   return resolveAddressSafe(source, ref)?.path;
 }
 
-function resolveAddressSafe(
-  source: WriteTargetSource,
-  ref: string,
-): ReturnType<typeof resolveWriteAddress> | undefined {
+function resolveAddressSafe(source: WriteTargetSource, ref: string): WriteAddress | undefined {
   try {
-    return resolveWriteAddress(source.path, ref);
+    return resolveProposalAddress(source.path, ref, source);
   } catch {
     return undefined;
   }

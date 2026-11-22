@@ -8,6 +8,7 @@ import type { BundleAdapter, BundleListing } from "../core/adapter/bundle-adapte
 import { adapterIdOf, detectAdapterId } from "../core/adapter/detect-adapter";
 import { adapterForId, requireAdapter } from "../core/adapter/registry";
 import type { Bundle } from "../core/adapter/types";
+import { type Asset, findAsset } from "../core/assets/read";
 import { compareCodePoints, isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
 import { appendEvent } from "../core/events";
@@ -91,13 +92,7 @@ import {
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
 import { legacyRefMove, rekeyLegacyEntry } from "./legacy-refs";
-import {
-  type AdapterConceptOwner,
-  type ConceptOwnerMatch,
-  entryFromFiles,
-  indexedPathMatchesOwner,
-  resolveConceptOwner,
-} from "./lookup/adapter-concept-owner";
+import { entryFromFiles, indexedPathMatchesOwner, indexedPathOf } from "./lookup/indexed-owner";
 import { type EmbeddingGenerationResult, embeddingInputCap, generateEmbeddingsForDb } from "./materialize-embeddings";
 import {
   canUseIncrementalSkip,
@@ -1888,15 +1883,15 @@ export interface IndexEntry {
 export interface BundleRefLookupResolution {
   /** The indexed row, when the index has one for the physical owner. */
   entry: IndexEntry | null;
-  /** First physical owner, retained even when its index row is absent/stale. */
-  owner?: AdapterConceptOwner;
+  /** The first asset the ref names, retained even when its index row is absent/stale. */
+  asset?: Asset;
   /**
    * What the owning file and its adapter give without the index, set when `entry` is null and
    * a file owns the ref. `show` serves it, so no read depends on a build; it has no links,
    * usage or indexed fragments.
    */
   fileEntry?: IndexEntry;
-  /** Deferred index failure for callers (such as show) that can use owner.path. */
+  /** Deferred index failure for callers (such as show) that can use the asset. */
   indexError?: unknown;
 }
 
@@ -1930,20 +1925,22 @@ async function lookupBundleRefWithResolutionUsing(
   } catch (error) {
     indexError = error;
   }
-  const resolved = (entry: IndexEntry | null, match?: ConceptOwnerMatch): BundleRefLookupResolution => {
-    const fileEntry = !entry && match ? entryFromFiles(match) : undefined;
+  const resolved = (entry: IndexEntry | null, asset?: Asset): BundleRefLookupResolution => {
+    const fileEntry = !entry && asset ? entryFromFiles(asset) : undefined;
     return {
       entry,
-      ...(match ? { owner: match.owner } : {}),
+      ...(asset ? { asset } : {}),
       ...(fileEntry ? { fileEntry } : {}),
       ...(indexError === undefined ? {} : { indexError }),
     };
   };
   try {
-    const match = resolveConceptOwner(ref, sources);
-    if (!match) return resolved(null);
-    const { owner, source, bundleId, adapterId } = match;
-    const inputRef = makeBundleRef(qualified ? ref.bundle : undefined, owner.conceptId);
+    const asset = findAsset(ref, { sources });
+    if (!asset) return resolved(null);
+    const { source, adapterId } = asset;
+    const bundleId = asset.bundle;
+    const ownerPath = indexedPathOf(asset);
+    const inputRef = makeBundleRef(qualified ? ref.bundle : undefined, asset.conceptId);
     let entry: IndexEntry | null | undefined;
     try {
       const id = db ? findEntryIdByRef(db, inputRef, bundleId) : undefined;
@@ -1951,33 +1948,33 @@ async function lookupBundleRefWithResolutionUsing(
     } catch (error) {
       // An index a build is still creating or rewriting cannot answer; the owner's file can.
       indexError = error;
-      return resolved(null, match);
+      return resolved(null, asset);
     }
     if (entry) {
-      if (workflowNameForSourcePath(source.path, adapterId, owner.path) !== undefined) {
+      if (workflowNameForSourcePath(source.path, adapterId, ownerPath) !== undefined) {
         try {
           assertIndexedWorkflowSourceIdentity(inputRef, entry.filePath, {
-            path: owner.path,
-            realPath: owner.realPath,
-            relativePath: owner.entry.relPath,
-            canonicalName: owner.conceptId,
+            path: ownerPath,
+            realPath: safeRealpath(ownerPath),
+            relativePath: asset.entry.relPath,
+            canonicalName: asset.conceptId,
           });
           if (entry.adapterId !== adapterId) {
-            throw new WorkflowSourceIdentityError(inputRef, entry.filePath, owner.path);
+            throw new WorkflowSourceIdentityError(inputRef, entry.filePath, ownerPath);
           }
         } catch (error) {
           if (!(error instanceof WorkflowSourceIdentityError)) throw error;
           warn(`${error.message} Falling back to the physical owner.`);
-          return resolved(null, match);
+          return resolved(null, asset);
         }
-      } else if (entry.adapterId !== adapterId || !indexedPathMatchesOwner(entry.filePath, owner)) {
-        return resolved(null, match);
+      } else if (entry.adapterId !== adapterId || !indexedPathMatchesOwner(entry.filePath, asset)) {
+        return resolved(null, asset);
       }
-      return resolved(entry, match);
+      return resolved(entry, asset);
     }
     // A physical owner with a missing/incomplete index row still owns this
     // concept: no later source can retarget it.
-    return resolved(null, match);
+    return resolved(null, asset);
   } finally {
     if (db && !borrowed) closeDatabase(db);
   }

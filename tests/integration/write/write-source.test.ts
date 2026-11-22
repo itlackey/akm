@@ -26,18 +26,17 @@ import { ConfigError, NotFoundError, UsageError } from "../../../src/core/errors
 import { sanitizeCommitMessage } from "../../../src/core/git-message";
 import {
   commitWriteTargetBoundary,
-  deleteAssetFromSource,
   formatRefForMessage,
   type ResolvedWriteTarget,
   resolveWritable,
   resolveWriteTarget,
   type WriteTargetSource,
-  writeAssetToSource,
 } from "../../../src/core/write-source";
 import { resolveSourceEntries } from "../../../src/indexer/search/search-source";
 import { writeLockfile } from "../../../src/integrations/lockfile";
 import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { deleteAssetFromSource, writeAssetToSource } from "../../_helpers/write-asset";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
