@@ -52,9 +52,8 @@ const ctx: ValidateContext = {
 };
 
 describe("claude adapter — metadata", () => {
-  test("id / version / extensions", () => {
+  test("id / extensions", () => {
     expect(claudeAdapter.id).toBe("claude");
-    expect(claudeAdapter.version).toBe("0.9.0");
     expect(claudeAdapter.extensions).toEqual([".md"]);
   });
 });

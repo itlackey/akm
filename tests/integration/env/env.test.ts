@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildShellExportScript, createEnv, listKeys, loadEnv } from "../../../src/commands/env/env";
+import { buildShellExportScript, createEnv, listKeys, loadEnv, parseEnvText } from "../../../src/commands/env/env";
 import { sensitiveMarkerPath } from "../../../src/core/env-secret-ref";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
@@ -479,7 +479,7 @@ describe("env export / path (read-path safety)", () => {
     const result = await runCli(["env", "path", "env/prod"], { AKM_BUNDLE_DIR: stashDir });
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim().endsWith(path.join("env", "prod.env"))).toBe(true);
+    expect(result.stdout.trim()).toBe(path.join(stashDir, "env", "prod.env"));
     expect(result.stderr).toContain("akm run --env");
 
     // --quiet suppresses the warning (for the _FILE / --env-file convention).
@@ -598,5 +598,17 @@ describe("env slash ref form", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe(envPath);
+  });
+});
+
+describe("parseEnvText: # in an unquoted value", () => {
+  test("starts a comment only after a space or tab", () => {
+    expect(parseEnvText("A=#abc\nB= #c\nC=x#frag\nD=v # note\nE=\t#t\n")).toEqual({
+      A: "#abc",
+      B: "",
+      C: "x#frag",
+      D: "v",
+      E: "",
+    });
   });
 });

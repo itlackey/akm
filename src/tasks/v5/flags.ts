@@ -11,9 +11,10 @@
 
 import path from "node:path";
 import { createParsedInvocation } from "../../cli/invocation";
-import { parsePositiveIntFlag } from "../../cli/parse-args";
+import { parseNonNegativeIntFlag } from "../../cli/parse-args";
 import { withoutFlags } from "../../commands/env/injection";
 import type { InputFlag } from "../../execution/input-contract";
+import { TASK_RUN_VALUE_FLAGS } from "../task-run-reserved-flags";
 import type { TaskV5StartFlags } from "./check";
 
 const VALUE_FLAGS = ["--env", "--secret", "--cwd", "--timeout", "--max-retries", "--inherit"];
@@ -29,13 +30,7 @@ export interface TaskV5Start {
 }
 
 /** The flags a run was first started with: its tasks and steps get them, and a resume uses them again. */
-export interface StartedWith extends TaskV5StartFlags {
-  readonly env?: readonly string[];
-  readonly secret?: readonly string[];
-  readonly inherit?: readonly string[];
-  /** Absolute: a `--cwd` is taken from the folder akm was started in. */
-  readonly cwd?: string;
-}
+export type StartedWith = TaskV5StartFlags;
 
 /** The start flags in `rawArgs`, and the rest, which are the task id and its input flags. */
 export function parseStartFlags(rawArgs: readonly string[]): {
@@ -53,7 +48,7 @@ export function parseStartFlags(rawArgs: readonly string[]): {
     .filter(Boolean);
   const cwd = invocation.getFlagValue("--cwd");
   const timeout = invocation.getFlagValue("--timeout");
-  const maxRetries = parsePositiveIntFlag(invocation.getFlagValue("--max-retries"), "--max-retries");
+  const maxRetries = parseNonNegativeIntFlag(invocation.getFlagValue("--max-retries"), "--max-retries");
   return {
     flags: {
       ...(env.length > 0 ? { env } : {}),
@@ -67,4 +62,19 @@ export function parseStartFlags(rawArgs: readonly string[]): {
     skipIfLocked: invocation.hasFlag("--skip-if-locked"),
     rest: withoutFlags(rawArgs, VALUE_FLAGS, BOOLEAN_FLAGS),
   };
+}
+
+/**
+ * The task a command's tokens name: the first positional once the start flags and the values of the task run's value
+ * flags are set aside. A start flag before it takes its value from the next token, which citty, not knowing the flag,
+ * reads as the task.
+ */
+export function taskIdInStart(rawArgs: readonly string[]): string | undefined {
+  const { rest } = parseStartFlags(rawArgs);
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index] as string;
+    if (!token.startsWith("-")) return token;
+    if (!token.includes("=") && TASK_RUN_VALUE_FLAGS.includes(token.slice(2))) index += 1;
+  }
+  return undefined;
 }

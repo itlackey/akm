@@ -73,7 +73,7 @@ function underTestOrCi(env: NodeJS.ProcessEnv): boolean {
  */
 export function usageReportEnabled(): boolean {
   try {
-    return loadConfig().usage?.report !== false;
+    return loadConfig({ warn: false }).usage?.report !== false;
   } catch {
     return false;
   }

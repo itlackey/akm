@@ -8,9 +8,8 @@
  */
 
 import type { Database } from "../../storage/database";
-import { queryImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import { queryTaskHistory } from "../../storage/repositories/task-history-repository";
-import { projectImproveRunSummary } from "./improve-metrics";
+import { type DecodedImproveRow, projectImproveRunSummary } from "./improve-metrics";
 import type { ImproveRunSummary } from "./types";
 
 /** A scheduled-task occurrence used to attribute an improve run to its task. */
@@ -68,16 +67,21 @@ export function matchImproveTaskId(startedAt: string, completedAt: string, taskR
   return best ?? "manual";
 }
 
-export function buildPerRunSummaries(db: Database, since: string, until?: string): ImproveRunSummary[] {
-  const rows = queryImproveRuns(db, since, until);
+export function buildPerRunSummaries(
+  db: Database,
+  rows: readonly DecodedImproveRow[],
+  since: string,
+  until?: string,
+): ImproveRunSummary[] {
   const improveTaskRuns = loadImproveTaskRuns(db, since, until);
   const summaries: ImproveRunSummary[] = [];
-  for (const row of rows) {
+  for (const decoded of rows) {
+    const { row } = decoded;
     const startMs = new Date(row.started_at).getTime();
     const endMs = new Date(row.completed_at).getTime();
     const wallTimeMs = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs ? endMs - startMs : 0;
     const taskId = matchImproveTaskId(row.started_at, row.completed_at, improveTaskRuns);
-    summaries.push(projectImproveRunSummary(row, wallTimeMs, taskId));
+    summaries.push(projectImproveRunSummary(decoded, wallTimeMs, taskId));
   }
   return summaries;
 }

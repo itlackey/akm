@@ -11,6 +11,7 @@
  * proper only ever reads current schemas.
  */
 
+import { describeRemainingWorkflowFiles, type WorkflowFilesOfBundle } from "../../src/commands/health/workflow-files";
 import { resolveStashDir } from "../../src/core/common";
 import {
   bundleKeyForContentRoot,
@@ -21,31 +22,30 @@ import {
   resetConfigCache,
 } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
-import { describeRemainingWorkflowFiles, type WorkflowFilesOfBundle } from "../../src/commands/health/workflow-files";
 import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
 import { resolveSecretFromStore } from "../../src/sources/snapshot-fetchers/secret-seam";
 import {
-  type DeadResidueEntry,
-  type DeadResidueRemoval,
-  findDeadResidueEntries,
-  removeDeadResidue,
-} from "./migrate/dead-residue";
-import {
-  applyEngineKeysMigration,
-  type EngineKeysMigrationStatus,
-  inspectEngineKeysMigration,
-} from "./engine-key-migrate";
+  applyBundlePolicyMigration,
+  type BundlePolicyMigrationStatus,
+  inspectBundlePolicyMigration,
+} from "./bundle-policy-migrate";
 import {
   applyContentRefsMigration,
   type ContentRefsMigrationStatus,
   inspectContentRefsMigration,
 } from "./content-ref-migrate";
 import {
-  applyBundlePolicyMigration,
-  type BundlePolicyMigrationStatus,
-  inspectBundlePolicyMigration,
-} from "./bundle-policy-migrate";
+  applyEngineKeysMigration,
+  type EngineKeysMigrationStatus,
+  inspectEngineKeysMigration,
+} from "./engine-key-migrate";
+import {
+  type DeadResidueEntry,
+  type DeadResidueRemoval,
+  findDeadResidueEntries,
+  removeDeadResidue,
+} from "./migrate/dead-residue";
 import {
   applyTaskFilesMigration,
   applyTaskFilesV5Migration,
@@ -138,7 +138,7 @@ function statusWithFailedSteps(status: MigrationStatus, failedSteps: readonly Fa
  * helper covers sync and async actions alike, since every caller already
  * runs inside the async `runMigration`.
  */
-// Exported (only) so tests/migrate/run-migrate-poisoned-step.test.ts can pin
+// Exported (only) so tests/integration/migrate/run-migrate-poisoned-step.test.ts can pin
 // the isolation guarantee directly, against synthetic steps, instead of only
 // through `runMigration`'s own real steps.
 export async function migrationStep<T>(
@@ -280,10 +280,14 @@ export async function runMigration(options: {
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
-      [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus, bundlePolicyStatus, taskFilesV5?.status ?? "current"].reduce(
-        worstStatus,
-        taskFiles?.status ?? "blocked",
-      ),
+      [
+        stateStatus,
+        configFileStatus,
+        engineKeysStatus,
+        contentRefsStatus,
+        bundlePolicyStatus,
+        taskFilesV5?.status ?? "current",
+      ].reduce(worstStatus, taskFiles?.status ?? "blocked"),
       failedSteps,
     ),
     blockers: [...(taskFiles?.blockers ?? []), ...(taskFilesV5?.blockers ?? []), ...failedStepBlockers(failedSteps)],

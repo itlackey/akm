@@ -314,6 +314,7 @@ remove a research capability or skip its replacement.
 | Standalone `akm-migrate` executable | Use `akm migrate status` and `akm migrate apply` |
 | Workflows: the workflow asset format, the engine and every `akm workflow` command ([#1096](https://github.com/itlackey/akm/issues/1096)) | Tasks with ordered steps, in 0.11.0. `akm migrate apply` converts workflow files, exports run history to a file and drops the workflow tables. Nothing changes in 0.10.x; see [Workflow formats and capabilities](#workflow-formats-and-capabilities-deprecated) |
 | Task source v4 (`version`, `uses`, `with`, typed `inputs:` and `output:`) | A simpler task format in 0.11.0. The schedule that runs moves to host config; `schedule:` in the file may stay as the default applied when a task is enabled. The format is being finalized; `akm migrate apply` converts v4 files |
+| OpenCode 1 as the `opencode` harness (`opencode` 1.x) | OpenCode 2 (`opencode` 2.x on `PATH`, or the harness's `bin`). Through 0.10 an OpenCode 1 run works, with `--format json`, and prints a one-line `[deprecated]` notice (silenced by `--quiet`, for scheduled runs, and in an akm that a task or improve started); `akm doctor` warns (`opencode-major`) while a configured harness is OpenCode 1. In 0.11 the harness refuses an OpenCode 1 binary. |
 
 In 0.11, the scheduler-facing `task dispatch` (introduced on the 0.11 branch, not in 0.10) is the one minute dispatcher: it spawns `akm run <bundle//tasks/id> --scheduled`, and `akm migrate apply` removes the 0.10 per-task rows.
 
@@ -505,8 +506,8 @@ lives outside the CLI, in `scripts/build-registry-index.ts`.
 ### Harnesses and runtime (Evolving)
 
 Agent and command execution support these
-harnesses: `claude`, `codex`, `opencode` (through `opencode run`, for OpenCode 2
-and for the legacy OpenCode 1, which keeps working with no removal date),
+harnesses: `claude`, `codex`, `opencode` (through `opencode run`; OpenCode 2 is the
+supported major, and OpenCode 1 is Deprecated and removed in 0.11),
 `copilot`, `pi`, `gemini`, `aider`, `amazonq`, and `openhands`. Every harness is
 Evolving: it translates a request into a command, using your environment as it is
 ([Configuration](docs/reference/configuration.md#how-akm-runs-a-harness)). With
@@ -741,7 +742,7 @@ override are supported installation interfaces.
 
 ### Runtime support (Stable)
 
-The npm package requires Node.js >= 22 as its bootstrap and
+The npm package requires Node.js >= 22.15 as its bootstrap and
 prefers a working Bun >= 1.0 for execution when both are available; old,
 unusable, or absent Bun installations fall back to Node.js. Standalone
 binaries are runtime-free.

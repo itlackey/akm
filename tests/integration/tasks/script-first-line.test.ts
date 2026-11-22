@@ -74,27 +74,50 @@ const throughV4Task = (name: string): Outcome => {
 
 const entryPoints = { "akm run": throughRun, "a v5 run: step": throughV5Step, "a v4 frozen task": throughV4Task };
 
-const scripts: ReadonlyArray<{ name: string; text: string; direct: (file: string) => string[] }> = [
+const scripts: ReadonlyArray<{
+  name: string;
+  text: string | ((root: string) => string);
+  direct: (file: string) => string[];
+}> = [
   { name: "stop.sh", text: "#!/bin/bash -e\nfalse\necho still-running\n", direct: (f) => [f] },
   { name: "unset.sh", text: '#!/usr/bin/env -S bash -eu\necho "$NOT_SET"\necho reached\n', direct: (f) => [f] },
   { name: "env-python.py", text: "#!/usr/bin/env python3\nprint('from python')\n", direct: (f) => [f] },
   { name: "unmarked.py", text: "print('from python')\n", direct: (f) => ["python3", f] },
   { name: "bun-first-line.sh", text: '#!/usr/bin/env bun\necho "[$#]"\n', direct: (f) => [f] },
+  { name: "comment-first-line.sh", text: '# a comment, not a program\necho "[$#]"\n', direct: (f) => ["sh", f] },
+  { name: "UPPER-CASE.SH", text: "echo upper-case\n", direct: (f) => ["sh", f] },
+  {
+    name: "bun-flags.js",
+    text: (root) =>
+      `#!${process.execPath} --env-file=${path.join(root, "flags.env")}\nconsole.log(process.env.FROM_FIRST_LINE);\n`,
+    direct: (f) => [f],
+  },
 ];
 
 describe.skipIf(process.platform !== "linux")("a script's first line decides how it runs", () => {
   for (const script of scripts) {
     for (const [entry, run] of Object.entries(entryPoints)) {
       test(`${script.name} through ${entry} gives what running the file directly gives`, () => {
-        const file = write(`scripts/${script.name}`, script.text);
+        write("flags.env", "FROM_FIRST_LINE=read-through-the-first-line\n");
+        const file = write(
+          `scripts/${script.name}`,
+          typeof script.text === "function" ? script.text(storage.stashDir) : script.text,
+        );
         const [program, ...rest] = script.direct(file);
-        const direct = spawnSync(program as string, rest, { encoding: "utf8" });
+        const direct = spawnSync(program as string, rest, { encoding: "utf8", cwd: storage.stashDir });
         const outcome = run(script.name);
         expect(outcome.code).toBe(direct.status as number);
         if (direct.status === 0) expect(outcome.stdout.trim()).toContain(direct.stdout.trim());
       });
     }
   }
+
+  test("a frozen task starts a script from a subfolder in the bundle's root folder", () => {
+    write("scripts/nested/folder/where.sh", "#!/bin/sh\npwd -P\n");
+    const outcome = throughV4Task("nested/folder/where.sh");
+    expect(outcome.code).toBe(0);
+    expect(outcome.stdout.trim()).toBe(fs.realpathSync(storage.stashDir));
+  });
 
   test("a first line naming a program that is not there is reported as the script's, with its first line", () => {
     write("scripts/missing.sh", "#!/nonexistent/prog\necho hi\n");

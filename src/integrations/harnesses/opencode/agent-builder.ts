@@ -13,9 +13,12 @@
  * a flag; stdin is read verbatim. akm closes it after the write, which the CLI
  * needs: with stdin open it waits for more input.
  *
- * Agent work adds nothing: `opencode run`, the authored args as written, `--model` when akm
- * names one, `--agent` when the asset names one, and the prompt on stdin. The run is the
- * user's own, on their OpenCode as they have it set up.
+ * Agent work is `opencode run`, the authored args as written, `--model` when akm names one,
+ * `--agent` when the asset names one, and the prompt on stdin. The run is the user's own, on
+ * their OpenCode as they have it set up. On OpenCode 1 it also adds `--format json` (an authored
+ * `--format` is replaced), which changes how OpenCode reports and nothing about what it runs:
+ * OpenCode 1 exits 0 when its turn ends on a refused tool call, and only its event stream says so
+ * ({@link readOpencode1Run}). The reply is the text OpenCode prints in its default format.
  *
  * Model work is akm's own process. It sets `OPENCODE_DISABLE_FREE_MODELS` (OpenCode 2.1.2 and
  * later, where the variable first appears): with no usable provider, OpenCode 2 would
@@ -28,7 +31,7 @@
  * which names the session and spares the second model request that would otherwise generate a
  * title, and `--agent`, which selects {@link MODEL_WORK_AGENT} and its one-line system prompt.
  *
- * A binary whose version cannot be read runs model work as OpenCode 1, with one warning that says so.
+ * A binary whose version cannot be read runs as OpenCode 1, with one warning that says so.
  *
  * Model work drops the config's `args`, keeping the model they name, as the
  * Claude and Codex shells do. It runs as {@link MODEL_WORK_AGENT}, an agent defined
@@ -36,6 +39,7 @@
  * are limited to reading and searching.
  */
 
+import { warnOpencode1Use } from "../../../cli/deprecations";
 import { asRecord, parseJsonc } from "../../../core/common";
 import { warnOnce } from "../../../core/warn";
 import {
@@ -44,9 +48,11 @@ import {
   type HarnessBuilder,
   type HarnessSpawn,
   modelFromArgs,
+  withoutFlag,
   withoutLeading,
   withoutModelFlag,
 } from "../harness";
+import { readOpencode1Run } from "./run-events";
 import { detectOpencodeMajor, isOpencode2 } from "./version";
 
 /** The agent OpenCode runs akm's model work as, limited to reading and searching; the name also marks those sessions in the user's history (`./session-log-v2.ts`). */
@@ -171,33 +177,61 @@ function withEnvReferences(content: string): string {
 
 const NO_FREE_MODELS = { OPENCODE_DISABLE_FREE_MODELS: "1" };
 
+const JSON_FORMAT = ["--format", "json"];
+
+/**
+ * What an OpenCode 1 run adds: its event stream is read for the outcome. The run is OpenCode 1 either because the binary
+ * says so, which is deprecated, or because it said nothing readable, which gets its own warning.
+ */
+function opencode1Run(bin: string): Pick<BuiltCommand, "report"> {
+  const { reportedMajor, version } = detectOpencodeMajor(bin);
+  if (reportedMajor === undefined) {
+    warnOnce(
+      `opencode-version-unreadable:${bin}`,
+      `Could not read the version of ${bin}, so akm runs it as OpenCode 1: agent and model work read its event stream (--format json), and model work gets no --standalone. An OpenCode 2 would be read wrongly. Check \`${bin} --version\`.`,
+    );
+  } else {
+    warnOpencode1Use(bin, version);
+  }
+  return { report: readOpencode1Run };
+}
+
 export const opencodeBuilder: HarnessBuilder = {
   build({ bin, args }: HarnessSpawn, req: AgentDispatchRequest): BuiltCommand {
     const agent = req.agent ? ["--agent", req.agent] : [];
     const model = req.model ? ["--model", req.model] : [];
+    const authored = withoutLeading(args, "run");
     if (req.prompt === undefined) {
       // An interactive launch is the TUI, which `run` (headless) is not.
-      const authored = withoutLeading(args, "run");
       return { argv: [bin, ...(req.model ? withoutModelFlag(authored) : authored), ...agent, ...model] };
     }
 
+    const oc2 = isOpencode2(bin);
+    // OpenCode 2 writes its failure reason on stderr; OpenCode 1's comes from its event stream.
+    const oc1: Pick<BuiltCommand, "report" | "failureStream"> = oc2 ? { failureStream: "stderr" } : opencode1Run(bin);
+
     if (!req.modelWork) {
-      return { argv: [bin, ...(req.model ? withoutModelFlag(args) : args), ...agent, ...model], stdin: req.prompt };
+      const extra = oc2 ? authored : withoutFlag(authored, "--format");
+      return {
+        argv: [
+          bin,
+          "run",
+          ...(req.model ? withoutModelFlag(extra) : extra),
+          ...agent,
+          ...model,
+          ...(oc2 ? [] : JSON_FORMAT),
+        ],
+        stdin: req.prompt,
+        ...oc1,
+      };
     }
 
-    const oc2 = isOpencode2(bin);
-    if (!oc2 && detectOpencodeMajor(bin).reportedMajor === undefined) {
-      warnOnce(
-        `opencode-version-unreadable:${bin}`,
-        `Could not read the version of ${bin}, so akm runs its model work as OpenCode 1: no --standalone (an OpenCode 2 would attach to its shared background service). Check \`${bin} --version\`.`,
-      );
-    }
     const named = req.model ?? modelFromArgs(args);
     return {
       argv: [
         bin,
         "run",
-        ...(oc2 ? ["--standalone"] : []),
+        ...(oc2 ? ["--standalone"] : JSON_FORMAT),
         "--title",
         "akm",
         "--agent",
@@ -206,6 +240,7 @@ export const opencodeBuilder: HarnessBuilder = {
       ],
       env: { ...NO_FREE_MODELS, [CONFIG_CONTENT_ENV]: modelWorkConfig(oc2) },
       stdin: req.prompt,
+      ...oc1,
     };
   },
 };

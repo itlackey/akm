@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { daysToMs, resolveStashDir } from "../core/common";
+import { daysToMs, resolveStashDir, toErrorMessage } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
@@ -42,8 +42,10 @@ import { collectConfigSkewAdvisory } from "./health/config-skew";
 import { runConnectionsAndHarnessesCheck } from "./health/connections-and-harnesses-check";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
 import { collectEgressAdvisory, type EgressConfigView } from "./health/egress";
-import { emptyImproveMetrics, roundRate } from "./health/improve-metrics";
-import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "./health/llm-usage";
+import { roundOrNull, type TaskRunCounts } from "./health/improve-metrics";
+import { collectIndexSourcesCheck } from "./health/index-sources";
+import { readLlmUsageAggregate } from "./health/llm-usage";
+import { collectOpencodeMajorAdvisory } from "./health/opencode-major";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
 import { readSemanticSearchState } from "./health/semantic-search-check";
@@ -229,12 +231,13 @@ interface TaskHistoryPhase {
   probe: ReturnType<typeof probeStateDbRoundTrip>;
   stateDbIntegrity: ReturnType<typeof runStateDbIntegrityCheck>;
   stateDbFreelist: ReturnType<typeof getStateDbFreelistInfo>;
-  taskRowCount: number;
   stuckActiveRuns: number;
   stuckActiveTasks: { taskId: string; ageMs: number }[];
-  taskFailRate: number;
+  unverifiedActiveTasks: { taskId: string; ageMs: number }[];
+  taskRuns: TaskRunCounts;
+  taskFailRate: number | null;
   worstTaskFailRate: { taskId: string; rate: number; rows: number } | null;
-  agentFailureRate: number;
+  agentFailureRate: number | null;
   agentFailureReasonCounts: Record<string, number>;
 }
 
@@ -310,14 +313,9 @@ function gatherTaskHistoryPhase(
   const stateDbIntegrity = runStateDbIntegrityCheck(stateDbPath);
   const stateDbFreelist = getStateDbFreelistInfo(stateDbPath);
 
-  // A marked "command" row or a legacy (unmarked) "prompt"
-  // row is the agent/LLM arm; an unmarked "command" row is the legacy
-  // native shell/script arm and must not be counted here (see
-  // isAgentTaskHistoryRow's header comment, referenced from
-  // computeTaskWindowRates, for the full mapping).
   const taskRows = queryTaskHistory(db, { since });
   // Still-active runs must not age out of the historical reporting window.
-  const rates = computeTaskWindowRates(taskRows, now, queryTaskHistory(db, { status: "active" }));
+  const rates = computeTaskWindowRates(taskRows, queryTaskHistory(db, { status: "active" }));
 
   return {
     tableNames,
@@ -325,9 +323,10 @@ function gatherTaskHistoryPhase(
     probe,
     stateDbIntegrity,
     stateDbFreelist,
-    taskRowCount: taskRows.length,
     stuckActiveRuns: rates.stuckActiveRuns,
     stuckActiveTasks: dedupeStuckActiveTasks(rates.stuckActiveRows, now),
+    unverifiedActiveTasks: dedupeStuckActiveTasks(rates.unverifiedActiveRows, now),
+    taskRuns: rates.taskRuns,
     taskFailRate: rates.taskFailRate,
     worstTaskFailRate: computeWorstTaskFailRate(taskRows),
     agentFailureRate: rates.agentFailureRate,
@@ -434,6 +433,20 @@ function gatherAncillaryAdvisories(
 
   const workflowFiles = collectWorkflowFilesAdvisory(options.stashDir);
   if (workflowFiles) advisories.push(workflowFiles);
+
+  try {
+    const opencodeMajor = collectOpencodeMajorAdvisory(Boolean(options.probe));
+    if (opencodeMajor) advisories.push(opencodeMajor);
+  } catch (error) {
+    advisories.push({
+      name: "opencode-major",
+      kind: "deterministic",
+      confidence: "high",
+      status: "unknown",
+      reason: "blocked",
+      message: `Could not look for OpenCode 1 harnesses: ${toErrorMessage(error)}`,
+    });
+  }
 
   // #896: report the data dir's total size and its largest top-level
   // subdirectory, so a disk-usage blowup (e.g. unpruned migration snapshot
@@ -596,7 +609,7 @@ function resolveWindowComparePhase(
     windowResults = windowSpecs.map((spec) => {
       const winSince = parseHealthSince(spec.since);
       const winUntil = spec.until ? parseHealthSince(spec.until) : new Date(now()).toISOString();
-      const bundle = buildWindowMetrics(db, stateDbPath, winSince, winUntil, now, options.readOnly === true);
+      const bundle = buildWindowMetrics(db, stateDbPath, winSince, winUntil, options.readOnly === true);
       return {
         name: spec.name,
         since: winSince,
@@ -644,14 +657,15 @@ function degradedStateDbReport(hardCheck: HealthCheckResult, options: AkmHealthO
     since: parseHealthSince(options.since),
     hardChecks: [hardCheck],
     advisories: [],
+    // state.db could not be read: nothing was measured.
     metrics: {
-      taskFailRate: 0,
-      agentFailureRate: 0,
-      agentFailureReasonCounts: {},
-      stuckActiveRuns: 0,
-      llmUsage: emptyLlmUsageAggregate(),
+      taskFailRate: null,
+      agentFailureRate: null,
+      agentFailureReasonCounts: null,
+      stuckActiveRuns: null,
+      llmUsage: null,
     },
-    improve: emptyImproveMetrics(),
+    improve: null,
   };
 }
 
@@ -812,10 +826,12 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       stateDbIntegrity: taskHistory.stateDbIntegrity,
       stateDbFreelist: taskHistory.stateDbFreelist,
       stateDbMigrations: { applied: opened.applied, ...(opened.backupPath ? { backupPath: opened.backupPath } : {}) },
-      taskRowCount: taskHistory.taskRowCount,
       taskFailRate: taskHistory.taskFailRate,
       stuckActiveRuns: taskHistory.stuckActiveRuns,
       stuckActiveTasks: taskHistory.stuckActiveTasks,
+      unverifiedActiveTasks: taskHistory.unverifiedActiveTasks,
+      taskRuns: taskHistory.taskRuns,
+      indexSources: collectIndexSourcesCheck(),
       worstTaskFailRate: taskHistory.worstTaskFailRate,
       agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       sessionExtractionLedger,
@@ -834,8 +850,8 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     }
 
     const metrics: HealthMetrics = {
-      taskFailRate: roundRate(taskHistory.taskFailRate),
-      agentFailureRate: roundRate(taskHistory.agentFailureRate),
+      taskFailRate: roundOrNull(taskHistory.taskFailRate),
+      agentFailureRate: roundOrNull(taskHistory.agentFailureRate),
       agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       stuckActiveRuns: taskHistory.stuckActiveRuns,
       llmUsage,

@@ -45,6 +45,9 @@ export type ConfigErrorCode =
   // A connection or harness was named (a flag, an asset, a config key) that is not configured: never replaced by a default.
   | "SELECTION_NOT_CONFIGURED"
   | "INVALID_CONFIG_FILE"
+  // A git bundle's checkout holds uncommitted paths or commits that are not on its upstream, and the
+  // command would replace or delete the checkout. The work is the person's: akm names it and stops.
+  | "SOURCE_HAS_LOCAL_WORK"
   | "UNKNOWN_IMPROVE_STRATEGY"
   // Refused stashDir that would clobber a sensitive system path or the user's
   // home directory (#473). Triggered by `akm bundle create`/`akm setup` when the
@@ -195,6 +198,7 @@ export type NotFoundErrorCode =
   | "WORKFLOW_NOT_FOUND"
   | "PROPOSAL_NOT_FOUND"
   | "FILE_NOT_FOUND"
+  | "COMMAND_NOT_EXECUTABLE"
   | "IMPROVE_RUN_NOT_FOUND"
   // The registry answered, but not with the thing asked for: HTTP 404/410, or
   // metadata that names no such version, dist-tag, or default branch.
@@ -321,6 +325,7 @@ const NOT_FOUND_HINTS: Partial<Record<NotFoundErrorCode, string>> = {
   // for a mistyped id, which points at the wrong thing entirely.
   PROPOSAL_NOT_FOUND: "Run `akm proposal list` to see pending proposals and their ids.",
   FILE_NOT_FOUND: "Check the path exists and is readable.",
+  COMMAND_NOT_EXECUTABLE: "Add execute permission (`chmod +x <program>`) or run it through an interpreter.",
   IMPROVE_RUN_NOT_FOUND:
     "Run `akm improve` first, or `akm doctor metrics improve --since 30d` to see recent run ids in `runIds`.",
   REGISTRY_NOT_FOUND:

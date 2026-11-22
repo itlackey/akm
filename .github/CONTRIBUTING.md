@@ -5,7 +5,7 @@ Thanks for your interest in contributing! This guide will help you get started.
 ## Prerequisites
 
 - [Bun](https://bun.sh/) >= 1.0
-- [Node.js](https://nodejs.org/) >= 22 and npm for npm package acceptance and global-install workflows
+- [Node.js](https://nodejs.org/) >= 22.15 and npm for npm package acceptance and global-install workflows
 
 ## Setting Up the Dev Environment
 
@@ -165,7 +165,7 @@ When you tag a new release:
    publisher changes, breaking CLI/flag moves. Link to the longform guide
    (e.g. `docs/migration/v0.8-to-v0.9.md`) in the last paragraph if one
    exists.
-3. Extend the `for ... of` list in `tests/migration-help.test.ts`
+3. Extend the `for ... of` list in `tests/integration/migration-help.test.ts`
    (`"every bundled release-notes file is surfaced by the loader"`) so the
    new version is explicitly exercised.
 4. Smoke-test end-to-end: `bun src/cli.ts help migrate <version>`.
@@ -220,7 +220,7 @@ files at runtime from the release-notes directory.
   reports the pipe's.
 - `TMPDIR` must be a `/tmp`-family path (`/tmp/...`, `/var/tmp/...`, or their
   macOS `/private/...` equivalents) and must contain neither `.cache` nor
-  `registry`. `tests/setup-tmp-stash-guard.test.ts` exercises a production guard
+  `registry`. `tests/integration/setup-tmp-stash-guard.test.ts` exercises a production guard
   (`isTransientStashPath` in `src/core/paths.ts`) that is hardcoded to the real
   OS temp-dir families, not to whatever `TMPDIR` is, so any other `TMPDIR` makes
   that file fail for reasons unrelated to the code under test. A `TMPDIR`

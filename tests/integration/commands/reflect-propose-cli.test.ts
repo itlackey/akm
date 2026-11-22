@@ -1,0 +1,374 @@
+/**
+ * In-tree CLI argv-coercion tests for `akm reflect` and `akm propose` (#226).
+ *
+ * The real CLI dispatcher in `src/cli.ts` coerces citty's argv shape
+ * (`{ ref?, task?, "timeout-ms"?, type, name }`) into the
+ * `AkmReflectOptions` / `AkmProposeOptions` shape consumed by
+ * `akmReflect` / `akmPropose`. Exercising the live `runMain` here would
+ * require spawning the CLI and stubbing PATH-resolved binaries, which is
+ * brittle. Instead we replicate the exact argv coercion logic and assert it
+ * matches the production code, then drive `akmReflect` / `akmPropose` with
+ * a fake harness binary for deterministic happy + failure paths.
+ *
+ * Backfill for issue #284 GAP-CRIT 2.
+ */
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { akmReflect } from "../../../src/commands/improve/reflect";
+import { akmPropose } from "../../../src/commands/proposal/propose";
+import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { durableItemRef } from "../../_helpers/durable-ref";
+import { type FakeHarnessOptions, harnessCalls, writeFakeHarness } from "../../_helpers/engine-stubs";
+import { quietQualityGateConfig, reflectReply } from "../../_helpers/factories";
+import { installFakeOpencodeRuntime } from "../../_helpers/fake-opencode-runtime";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../../_helpers/sandbox";
+
+const fixtureDirs: string[] = [];
+
+function makeTempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  fixtureDirs.push(dir);
+  return dir;
+}
+
+function makeStashDir(): string {
+  const stash = makeTempDir("akm-rp-cli-stash-");
+  for (const sub of ["lessons", "skills", "memories", "knowledge"]) {
+    fs.mkdirSync(path.join(stash, sub), { recursive: true });
+  }
+  return stash;
+}
+
+afterAll(() => {
+  for (const dir of fixtureDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** A fake harness binary that answers with `replies`, in its own directory; returns its path. */
+function fakeAgent(replies: readonly string[], options?: FakeHarnessOptions): string {
+  return writeFakeHarness(makeTempDir("akm-rp-cli-bin-"), "fake-agent", replies, options);
+}
+
+const VALID_LESSON_PAYLOAD = reflectReply({
+  description: "Use ripgrep before grep",
+  when_to_use: "Searching large repos for patterns",
+});
+const LESSON_SOURCE = "---\ndescription: Search guidance\nwhen_to_use: Searching repositories\n---\n\nUse grep.\n";
+
+const VALID_SKILL_PAYLOAD = JSON.stringify({
+  ref: "skills/hello",
+  content: "---\ndescription: Say hi\nwhen_to_use: When greeting\n---\n\nSay hi politely.\n",
+});
+
+let envCleanup: Cleanup = () => {};
+
+beforeEach(() => {
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  envCleanup = cfgResult.cleanup;
+});
+
+afterEach(() => {
+  envCleanup();
+  envCleanup = () => {};
+});
+
+// ── argv coercion helpers (mirror src/cli.ts) ───────────────────────────────
+
+/**
+ * Mirror of `cli.ts` reflect-command coercion.  Exercises the same string
+ * trimming + Number.parseInt path the CLI dispatcher uses so a regression in
+ * either place fails this test.
+ */
+function coerceReflectArgs(args: Record<string, unknown>): {
+  ref?: string;
+  task?: string;
+  timeoutMs?: number;
+} {
+  const timeoutRaw = args["timeout-ms"];
+  const timeoutMs = typeof timeoutRaw === "string" && timeoutRaw.trim() ? Number.parseInt(timeoutRaw, 10) : undefined;
+  return {
+    ref: typeof args.ref === "string" && (args.ref as string).trim() ? (args.ref as string) : undefined,
+    task: typeof args.task === "string" && (args.task as string).trim() ? (args.task as string) : undefined,
+    ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+  };
+}
+
+function coerceProposeArgs(args: Record<string, unknown>): {
+  type: string;
+  name: string;
+  task: string;
+  timeoutMs?: number;
+} {
+  const timeoutRaw = args["timeout-ms"];
+  const timeoutMs = typeof timeoutRaw === "string" && timeoutRaw.trim() ? Number.parseInt(timeoutRaw, 10) : undefined;
+  return {
+    type: String(args.type),
+    name: String(args.name),
+    task: String(args.task ?? ""),
+    ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+  };
+}
+
+// ── Coercion unit tests ────────────────────────────────────────────────────
+
+describe("citty argv → akmReflect coercion", () => {
+  test("string fields trimmed; empty strings → undefined", () => {
+    expect(coerceReflectArgs({ ref: "lessons/foo", task: "  " })).toEqual({
+      ref: "lessons/foo",
+      task: undefined,
+    });
+  });
+
+  test("--timeout-ms parsed as integer", () => {
+    expect(coerceReflectArgs({ "timeout-ms": "1500" })).toMatchObject({ timeoutMs: 1500 });
+  });
+
+  test("non-numeric --timeout-ms → omitted (Number.isFinite filter)", () => {
+    expect(coerceReflectArgs({ "timeout-ms": "abc" })).not.toHaveProperty("timeoutMs");
+  });
+
+  test("blank --timeout-ms is omitted", () => {
+    expect(coerceReflectArgs({ "timeout-ms": "   " })).not.toHaveProperty("timeoutMs");
+  });
+});
+
+describe("citty argv → akmPropose coercion", () => {
+  test("type/name/task always strings", () => {
+    expect(coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi" })).toEqual({
+      type: "skill",
+      name: "hello",
+      task: "Say hi",
+    });
+  });
+
+  test("missing task coerced to empty string (downstream UsageError)", () => {
+    expect(coerceProposeArgs({ type: "skill", name: "x" })).toMatchObject({ task: "" });
+  });
+
+  test("--timeout-ms parsed", () => {
+    expect(coerceProposeArgs({ type: "skill", name: "x", task: "go", "timeout-ms": "9000" })).toMatchObject({
+      timeoutMs: 9000,
+    });
+  });
+});
+
+// ── Reflect command behaviour with coerced args ────────────────────────────
+
+describe("akmReflect — argv-coerced calls (happy + failure)", () => {
+  test("happy: argv-shape passed through coercion → queues a proposal", async () => {
+    const stash = makeStashDir();
+    const coerced = coerceReflectArgs({ ref: "lessons/rg-over-grep", task: "focus on speed", "timeout-ms": "5000" });
+    const bin = fakeAgent([VALID_LESSON_PAYLOAD]);
+    const result = await akmReflect({
+      ...coerced,
+      stashDir: stash,
+      config: quietQualityGateConfig(bin),
+      assetContent: LESSON_SOURCE,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.proposal.ref).toBe(durableItemRef(stash, "lesson", "rg-over-grep"));
+    expect(harnessCalls(bin)).toHaveLength(1);
+  });
+
+  test("parse_error: agent stdout is malformed → ok:false envelope", async () => {
+    const stash = makeStashDir();
+    const coerced = coerceReflectArgs({ ref: "lessons/rg-over-grep" });
+    const result = await akmReflect({
+      ...coerced,
+      stashDir: stash,
+      config: quietQualityGateConfig(fakeAgent(["not json"])),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.reason).toBe("parse_error");
+  });
+
+  test("timeout: short --timeout-ms is honoured by the wrapper", async () => {
+    const stash = makeStashDir();
+    const coerced = coerceReflectArgs({ ref: "lessons/rg-over-grep", "timeout-ms": "400" });
+    const result = await akmReflect({
+      ...coerced,
+      stashDir: stash,
+      config: quietQualityGateConfig(fakeAgent([""], { hang: true })),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.reason).toBe("timeout");
+  });
+
+  test("nothing configured → refused as not configured, pointing at setup, with no engine call", async () => {
+    const stash = makeStashDir();
+    const host = installFakeOpencodeRuntime({ reply: () => VALID_LESSON_PAYLOAD });
+    const failure = await akmReflect({
+      ref: "lessons/rg-over-grep",
+      stashDir: stash,
+      assetContent: LESSON_SOURCE,
+      // No config file exists under the sandboxed XDG_CONFIG_HOME.
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "LLM_NOT_CONFIGURED" });
+    expect((failure as { hint(): string }).hint()).toContain("akm setup");
+    expect(host.calls).toHaveLength(0);
+  });
+});
+
+// ── Propose command behaviour with coerced args ────────────────────────────
+
+describe("akmPropose — argv-coerced calls (happy + failure)", () => {
+  test("happy: argv-shape passed through coercion → queues skill proposal", async () => {
+    const stash = makeStashDir();
+    const coerced = coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi", "timeout-ms": "5000" });
+    const result = await akmPropose({
+      ...coerced,
+      stashDir: stash,
+      agentConfig: quietQualityGateConfig(fakeAgent([VALID_SKILL_PAYLOAD])),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.proposal.ref).toBe(durableItemRef(stash, "skill", "hello"));
+  });
+
+  test("a project's scope and metadata are stamped; the model's own keys win (#1461)", async () => {
+    const stash = makeStashDir();
+    const reply = JSON.stringify({
+      ref: "skills/hello",
+      content: "---\ndescription: Say hi\nteam: model\n---\n\nSay hi politely.\n",
+    });
+    const result = await akmPropose({
+      ...coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi" }),
+      stashDir: stash,
+      scope: { user: "u1", channel: "acme" },
+      metadata: { team: "config", client: "acme", project: "acme" },
+      agentConfig: quietQualityGateConfig(fakeAgent([reply])),
+    });
+    if (!result.ok) throw new Error("expected ok");
+    expect(parseFrontmatter(result.proposal.payload.content).data).toMatchObject({
+      scope_user: "u1",
+      scope_channel: "acme",
+      team: "model",
+      client: "acme",
+      project: "acme",
+    });
+  });
+
+  test("a scope the model wrote is removed, with one warning (#1446)", async () => {
+    const stash = makeStashDir();
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn" && String(args[0]).includes("ignored scope")) warnings.push(String(args[0]));
+    });
+    try {
+      const reply = JSON.stringify({
+        ref: "skills/hello",
+        content: "---\ndescription: Say hi\nscope_user: mallory\n---\n\nSay hi politely.\n",
+        frontmatter: { description: "Say hi", scope_user: "mallory" },
+      });
+      const result = await akmPropose({
+        ...coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi" }),
+        stashDir: stash,
+        agentConfig: quietQualityGateConfig(fakeAgent([reply])),
+      });
+      if (!result.ok) throw new Error("expected ok");
+      expect(parseFrontmatter(result.proposal.payload.content).data.scope_user).toBeUndefined();
+      expect(result.proposal.payload.frontmatter?.scope_user).toBeUndefined();
+      expect(parseFrontmatter(result.proposal.payload.content).data.description).toBe("Say hi");
+      expect(warnings).toHaveLength(1);
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+  });
+
+  test("the scope flags replace a scope the model wrote, with one warning (#1454)", async () => {
+    const stash = makeStashDir();
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn" && String(args[0]).includes("ignored scope")) warnings.push(String(args[0]));
+    });
+    try {
+      const reply = JSON.stringify({
+        ref: "skills/hello",
+        content: "---\ndescription: Say hi\nscope_user: mallory\n---\n\nSay hi politely.\n",
+        frontmatter: { description: "Say hi", scope_user: "mallory" },
+      });
+      const result = await akmPropose({
+        ...coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi" }),
+        scope: { user: "alice", channel: "ops" },
+        stashDir: stash,
+        agentConfig: quietQualityGateConfig(fakeAgent([reply])),
+      });
+      if (!result.ok) throw new Error("expected ok");
+      const data = parseFrontmatter(result.proposal.payload.content).data;
+      expect(data).toMatchObject({ description: "Say hi", scope_user: "alice", scope_channel: "ops" });
+      expect(result.proposal.payload.frontmatter).toMatchObject({ scope_user: "alice", scope_channel: "ops" });
+      expect(warnings).toHaveLength(1);
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+  });
+
+  test("the scope flags are stamped when the model wrote none (#1454)", async () => {
+    const stash = makeStashDir();
+    const reply = JSON.stringify({
+      ref: "skills/hello",
+      content: "---\ndescription: Say hi\n---\n\nSay hi politely.\n",
+    });
+    const result = await akmPropose({
+      ...coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi" }),
+      scope: { user: "alice" },
+      stashDir: stash,
+      agentConfig: quietQualityGateConfig(fakeAgent([reply])),
+    });
+    if (!result.ok) throw new Error("expected ok");
+    expect(parseFrontmatter(result.proposal.payload.content).data.scope_user).toBe("alice");
+  });
+
+  test("parse_error: agent returns malformed JSON", async () => {
+    const stash = makeStashDir();
+    const coerced = coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi" });
+    const result = await akmPropose({
+      ...coerced,
+      stashDir: stash,
+      agentConfig: quietQualityGateConfig(fakeAgent(["garbage {"])),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.reason).toBe("parse_error");
+  });
+
+  test("nothing configured → refused as not configured, pointing at setup, with no engine call", async () => {
+    const stash = makeStashDir();
+    const host = installFakeOpencodeRuntime({ reply: () => VALID_SKILL_PAYLOAD });
+    const failure = await akmPropose({
+      type: "skill",
+      name: "hello",
+      task: "Say hi",
+      stashDir: stash,
+      // Do not pass agentConfig: the sandbox has no harness or connection.
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "AGENT_NOT_CONFIGURED" });
+    expect((failure as { hint(): string }).hint()).toContain("akm setup");
+    expect(host.calls).toHaveLength(0);
+  });
+
+  test("missing --task surfaces UsageError (matches CLI contract for empty positional)", async () => {
+    const stash = makeStashDir();
+    const coerced = coerceProposeArgs({ type: "skill", name: "x" }); // task absent
+    let thrown: unknown;
+    try {
+      await akmPropose({
+        ...coerced,
+        stashDir: stash,
+        agentConfig: quietQualityGateConfig(fakeAgent([VALID_SKILL_PAYLOAD])),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain("--task");
+  });
+});

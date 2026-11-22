@@ -46,9 +46,9 @@ describe("akm health --window-compare=1h JSON shape (akm-health-discord.ts contr
       expect(windowNames).toContain("prior");
       for (const window of result.windows ?? []) {
         expect(typeof window.improve.coverage.distinctRefs).toBe("number");
-        expect(typeof window.metrics.llmUsage.calls).toBe("number");
-        expect(typeof window.metrics.llmUsage.totalTokens).toBe("number");
-        expect(typeof window.metrics.llmUsage.totalDurationMs).toBe("number");
+        expect(typeof window.metrics.llmUsage?.calls).toBe("number");
+        expect(typeof window.metrics.llmUsage?.totalTokens).toBe("number");
+        expect(typeof window.metrics.llmUsage?.totalDurationMs).toBe("number");
       }
     } finally {
       storage.cleanup();

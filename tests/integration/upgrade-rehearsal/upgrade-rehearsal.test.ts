@@ -342,11 +342,13 @@ for (const origin of ["previous", "0.9.32"] as const) {
       expect(taskList.status, taskList.stderr).toBe(0);
     });
 
-    test("5. task sync --dry-run reconciles each previous-release row in place: an update for a descriptor row, unchanged for an inline row; no adds, no removals, no failures", async () => {
+    test("5. task sync --dry-run reconciles each previous-release row in place: one update per row; no adds, no removals, no failures", async () => {
       // A release before INLINE_SCHEDULER_ROWS_SINCE wrote rows that name a
-      // `--scheduler-context` descriptor; the candidate rewrites each one in
-      // place, never adding or removing a row. A release since then already
-      // writes the inline row the candidate writes, so every row is current.
+      // `--scheduler-context` descriptor; a release since then wrote inline
+      // rows that set only AKM_BUNDLE_DIR. This home's config, data, cache and
+      // state directories are not the defaults, which the candidate's rows
+      // carry inline, so either kind of row is rewritten in place once, never
+      // added or removed.
       const crontab = fs.readFileSync(home.fakeCrontab, "utf8");
       if (originWritesInlineRows) {
         expect(crontab).not.toContain("--scheduler-context");
@@ -370,8 +372,7 @@ for (const origin of ["previous", "0.9.32"] as const) {
       expect(preview.adds ?? []).toEqual([]);
       expect(preview.removes ?? []).toEqual([]);
       const bothRows = [home.taskIds.a, home.taskIds.b].sort();
-      expect((preview.updates ?? []).map((update) => update.id).sort()).toEqual(originWritesInlineRows ? [] : bothRows);
-      if (originWritesInlineRows) expect([...(preview.unchanged ?? [])].sort()).toEqual(bothRows);
+      expect((preview.updates ?? []).map((update) => update.id).sort()).toEqual(bothRows);
     });
 
     test("6. task sync (plain, no --rebind) keeps a/b scheduled inside `live`; c stays absent", async () => {
@@ -390,11 +391,8 @@ for (const origin of ["previous", "0.9.32"] as const) {
       const synced = JSON.parse(result.stdout) as { installed?: string[]; updated?: string[]; removed?: string[] };
       expect(synced.installed ?? []).toEqual([]);
       expect(synced.removed ?? []).toEqual([]);
-      // A descriptor row is rewritten in place; a row the origin already wrote
-      // inline is current, so sync leaves it alone.
-      expect([...(synced.updated ?? [])].sort()).toEqual(
-        originWritesInlineRows ? [] : [home.taskIds.a, home.taskIds.b].sort(),
-      );
+      // Each row is rewritten in place once, to carry this home's directories.
+      expect([...(synced.updated ?? [])].sort()).toEqual([home.taskIds.a, home.taskIds.b].sort());
 
       const crontab = fs.readFileSync(home.fakeCrontab, "utf8");
       const commandA = extractCronCommandContaining(crontab, home.taskIds.a);
@@ -408,8 +406,16 @@ for (const origin of ["previous", "0.9.32"] as const) {
       // launcher and its time.
       expect(crontab).not.toContain("--scheduler-context");
       expect(commandA.startsWith(`AKM_BUNDLE_DIR=${home.stashDir} `)).toBe(true);
+      expect(commandA).toContain(`AKM_CONFIG_DIR=${path.join(home.env.XDG_CONFIG_HOME ?? "", "akm")} `);
+      expect(commandA).toContain(`AKM_DATA_DIR=${path.join(home.env.XDG_DATA_HOME ?? "", "akm")} `);
       expect(cronSchedules(crontab)).toEqual(cronSchedules(before));
       expect(cronLaunchers(crontab)).toEqual(cronLaunchers(before));
+      // The rewritten rows are current: a second sync changes nothing.
+      const again = await runLauncher(candidateLauncher, ["task", "sync", "--dry-run"], home.env);
+      expect(again.status, again.stderr).toBe(0);
+      const second = JSON.parse(again.stdout) as { updates?: unknown[]; unchanged?: string[] };
+      expect(second.updates ?? []).toEqual([]);
+      expect([...(second.unchanged ?? [])].sort()).toEqual([home.taskIds.a, home.taskIds.b].sort());
     });
 
     test("7. the generated cron command for scheduled-a runs the CANDIDATE and writes a task log", async () => {

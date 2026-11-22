@@ -16,7 +16,7 @@ import type { SpawnFn } from "../../../src/core/subprocess";
 import {
   decodeTaskHistoryMetadata,
   finalizeTaskHistoryAttempt,
-  getTaskHistoryRuns,
+  queryTaskHistory,
   reserveTaskHistoryAttempt,
 } from "../../../src/storage/repositories/task-history-repository";
 import { recordTaskAttemptFailure, reserveTaskAttempt } from "../../../src/tasks/run/attempt-lifecycle";
@@ -75,7 +75,7 @@ async function captureThrown(run: () => Promise<unknown>): Promise<unknown> {
 function assertNoAttempt(taskId: string): void {
   const stateDb = openStateDatabase();
   try {
-    expect(getTaskHistoryRuns(stateDb, taskId)).toEqual([]);
+    expect(queryTaskHistory(stateDb, { taskId })).toEqual([]);
   } finally {
     stateDb.close();
   }
@@ -96,9 +96,9 @@ function assertRecordedDispatchFailure(input: {
   expectedAttempts?: number;
 }): void {
   const stateDb = openStateDatabase();
-  let rows: ReturnType<typeof getTaskHistoryRuns>;
+  let rows: ReturnType<typeof queryTaskHistory>;
   try {
-    rows = getTaskHistoryRuns(stateDb, input.taskId);
+    rows = queryTaskHistory(stateDb, { taskId: input.taskId });
   } finally {
     stateDb.close();
   }
@@ -226,9 +226,9 @@ describe("tasks run attempt observability", () => {
     }
     const stateDb = openStateDatabase();
     try {
-      const rows = getTaskHistoryRuns(stateDb, "missing-after-success");
+      const rows = queryTaskHistory(stateDb, { taskId: "missing-after-success" });
       expect(rows.map((row) => row.status)).toEqual(["failed", "completed"]);
-      expect(computeTaskWindowRates(rows, Date.now).taskFailRate).toBe(0.5);
+      expect(computeTaskWindowRates(rows).taskFailRate).toBe(0.5);
     } finally {
       stateDb.close();
     }
@@ -319,7 +319,7 @@ describe("tasks run attempt observability", () => {
         }),
       ).toBe(false);
 
-      const [row] = getTaskHistoryRuns(stateDb, "single-finalizer");
+      const [row] = queryTaskHistory(stateDb, { taskId: "single-finalizer" });
       expect(row).toMatchObject({
         status: "completed",
         completed_at: firstCompletedAt,
@@ -351,9 +351,9 @@ describe("tasks run attempt observability", () => {
     ]);
 
     const stateDb = openStateDatabase();
-    let rows: ReturnType<typeof getTaskHistoryRuns>;
+    let rows: ReturnType<typeof queryTaskHistory>;
     try {
-      rows = getTaskHistoryRuns(stateDb, "same-millisecond");
+      rows = queryTaskHistory(stateDb, { taskId: "same-millisecond" });
     } finally {
       stateDb.close();
     }
@@ -453,7 +453,7 @@ describe("a failure before the task ran records how it was triggered", () => {
     });
     const stateDb = openStateDatabase();
     try {
-      const row = getTaskHistoryRuns(stateDb, "pre-run-failure")[0];
+      const row = queryTaskHistory(stateDb, { taskId: "pre-run-failure" })[0];
       expect(decodeTaskHistoryMetadata(row?.metadata_json ?? "{}").trigger).toBe(trigger);
     } finally {
       stateDb.close();
@@ -465,7 +465,7 @@ describe("abandoned task attempts", () => {
   function statusOf(taskId: string): string | undefined {
     const stateDb = openStateDatabase();
     try {
-      return getTaskHistoryRuns(stateDb, taskId)[0]?.status;
+      return queryTaskHistory(stateDb, { taskId })[0]?.status;
     } finally {
       stateDb.close();
     }
@@ -507,9 +507,9 @@ describe("abandoned task attempts", () => {
     const [shown] = readTaskHistory({ id: "crashed" });
     expect(shown?.status).toBe("interrupted");
     const stateDb = openStateDatabase();
-    const rows = getTaskHistoryRuns(stateDb, "crashed");
+    const rows = queryTaskHistory(stateDb, { taskId: "crashed" });
     stateDb.close();
-    const rates = computeTaskWindowRates(rows, Date.now);
+    const rates = computeTaskWindowRates(rows);
     expect(rates.taskFailRate).toBe(0);
     expect(rates.stuckActiveRuns).toBe(0);
   });

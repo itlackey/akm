@@ -41,7 +41,7 @@ export function hasTokenUsage(record: LlmUsageRecord): boolean {
   );
 }
 
-/** A zeroed aggregate — also the value health reports when it could not read state.db at all (#791). */
+/** A zeroed aggregate. */
 export function emptyLlmUsageAggregate(): LlmUsageAggregate {
   return { ...emptyLlmUsageStageAggregate(), byStage: {}, byProcess: {}, byEngine: {} };
 }

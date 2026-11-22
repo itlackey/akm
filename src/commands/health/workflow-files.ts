@@ -33,7 +33,7 @@ export interface WorkflowFilesOfBundle {
 /** The workflow files left in each enabled, writable bundle that has any; the default bundle first. */
 export function remainingWorkflowFiles(stashDir?: string): WorkflowFilesOfBundle[] {
   return resolveSourceEntries(stashDir)
-    .filter((source) => source.writable === true && source.unresolved !== true)
+    .filter((source) => source.writable === true && !source.unresolved)
     .sort((a, b) => Number(b.isDefault === true) - Number(a.isDefault === true))
     .map((source) => ({ bundle: source.path, files: workflowFilesIn(source.path) }))
     .filter((entry) => entry.files.length > 0);

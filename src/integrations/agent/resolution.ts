@@ -23,6 +23,7 @@
  */
 
 import path from "node:path";
+import { timeoutMilliseconds } from "../../cli/parse-args";
 import { closestMatch } from "../../core/closest-match";
 import {
   type AkmConfig,
@@ -39,7 +40,6 @@ import { deepMergeConfig } from "../../core/config/deep-merge";
 import { type ModelEntry, STANDARD_ALIASES } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
 import { type LlmInference, mergeRequestFields } from "../../core/llm-inference";
-import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warnOnce } from "../../core/warn";
 import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
 import { EXECUTION_MAX_TIMEOUT_MS } from "../../execution/limits";
@@ -86,7 +86,7 @@ function nearest<K extends keyof UnresolvedExecutionDefaults>(
 /** A timeout as milliseconds (or `null` for none): a whole number, or a duration such as `20m`. */
 export function parseTimeout(value: unknown): number | null {
   if (value === null) return null;
-  const milliseconds = typeof value === "string" ? parseDuration(value, DURATION_UNITS) : value;
+  const milliseconds = typeof value === "string" ? timeoutMilliseconds(value) : value;
   if (
     typeof milliseconds !== "number" ||
     !Number.isInteger(milliseconds) ||
@@ -94,7 +94,7 @@ export function parseTimeout(value: unknown): number | null {
     milliseconds > EXECUTION_MAX_TIMEOUT_MS
   ) {
     throw new ConfigError(
-      "Execution timeout must be null, a whole number of milliseconds, or a duration such as 20m.",
+      "Execution timeout must be null, a whole number of milliseconds, or a duration such as 20m or 30s.",
       "INVALID_CONFIG_FILE",
     );
   }

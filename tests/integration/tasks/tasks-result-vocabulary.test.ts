@@ -35,7 +35,7 @@ import path from "node:path";
 import { UsageError } from "../../../src/core/errors";
 import { openStateDatabase } from "../../../src/core/state-db";
 import type { SpawnFn } from "../../../src/core/subprocess";
-import { getTaskHistory } from "../../../src/storage/repositories/task-history-repository";
+import { queryTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import { recordTaskAttemptFailure } from "../../../src/tasks/run/attempt-lifecycle";
 import { runTask } from "../../../src/tasks/run/run-task";
 import { readTaskHistory } from "../../../src/tasks/run/task-history";
@@ -97,7 +97,7 @@ function completedSpawn(exitCode: number): ReturnType<SpawnFn> {
 function rawMetadata(taskId: string): Record<string, unknown> | undefined {
   const db = openStateDatabase();
   try {
-    const row = getTaskHistory(db, taskId);
+    const [row] = queryTaskHistory(db, { taskId, limit: 1 });
     return row ? (JSON.parse(row.metadata_json) as Record<string, unknown>) : undefined;
   } finally {
     db.close();

@@ -272,7 +272,9 @@ export function replaceFilesWithBackups(
  * Create each file with its bytes, under its own name and never over a file: one that exists by the time it is
  * written is a conflict, left as it is, and named.
  */
-export function createFiles(files: readonly { readonly filePath: string; readonly after: Buffer; readonly mode: number }[]): {
+export function createFiles(
+  files: readonly { readonly filePath: string; readonly after: Buffer; readonly mode: number }[],
+): {
   readonly created: readonly string[];
   readonly conflicts: readonly string[];
 } {
@@ -314,7 +316,11 @@ export function applyTaskFilesPlan(
 /** The task ref a file under a root's task directory has. */
 function taskRefOf(root: TaskFileRoot, filePath: string): string {
   const tasksDir = root.layout === "akm-task" ? root.root : path.join(root.root, "tasks");
-  return `tasks/${path.relative(tasksDir, filePath).split(path.sep).join("/").replace(/\.yml$/, "")}`;
+  return `tasks/${path
+    .relative(tasksDir, filePath)
+    .split(path.sep)
+    .join("/")
+    .replace(/\.yml$/, "")}`;
 }
 
 /** The root whose task directory holds `filePath`. */
@@ -333,7 +339,8 @@ function rootOfTaskFile(roots: readonly TaskFileRoot[], filePath: string): TaskF
 function overlayOf(root: TaskFileRoot, overlay: string, replaced: ReadonlyMap<string, Buffer>): string {
   const tasksDir = root.layout === "akm-task" ? root.root : path.join(root.root, "tasks");
   for (const entry of fs.readdirSync(root.root)) {
-    if (root.layout !== "akm-task" && entry !== "tasks") fs.symlinkSync(path.join(root.root, entry), path.join(overlay, entry));
+    if (root.layout !== "akm-task" && entry !== "tasks")
+      fs.symlinkSync(path.join(root.root, entry), path.join(overlay, entry));
   }
   const copy = (from: string, to: string): void => {
     fs.mkdirSync(to, { recursive: true });

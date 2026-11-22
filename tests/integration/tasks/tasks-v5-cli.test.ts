@@ -106,7 +106,7 @@ steps:
     );
     const failed = akm(["run", "tasks/flow", "--env", "env/lab"]);
     expect(failed.status).toBe(1);
-    expect(out(failed).result.detail.error).toBe("second: exit code 1");
+    expect(out(failed).result.detail.error).toBe("second: non_zero_exit: exit code 1");
     fs.writeFileSync(marker, "");
     const resumed = akm(["run", "tasks/flow", "--resume"]);
     expect(resumed.status).toBe(0);
@@ -116,9 +116,9 @@ steps:
     expect(akm(["run", "tasks/flow", "--resume"]).status).toBe(2);
   });
 
-  test("a failed step's reason ends with the last line its program wrote to standard error", () => {
+  test("a failed step's reason ends with the line its program reported its failure on", () => {
     const agent = path.join(storage.root, "agent");
-    fs.writeFileSync(agent, "#!/bin/sh\necho starting >&2\necho 'model endpoint unreachable' >&2\nexit 1\n", {
+    fs.writeFileSync(agent, "#!/bin/sh\necho starting\necho 'model endpoint unreachable'\nexit 1\n", {
       mode: 0o755,
     });
     writeSandboxConfig({ harnesses: { local: { platform: "claude", bin: agent, args: [] } } });
@@ -126,8 +126,12 @@ steps:
     write("tasks/fetch.yml", "version: 5-beta.1\nexec: echo 'no route to host' >&2; exit 7\n");
     const asked = akm(["run", "tasks/ask"]);
     expect(asked.status).toBe(1);
-    expect(out(asked).result.detail.error).toMatch(/^ask: .+: model endpoint unreachable$/);
-    expect(out(akm(["run", "tasks/fetch"])).result.detail.error).toBe("(only): exit code 7: no route to host");
+    expect(out(asked).result.detail.error).toMatch(
+      /^ask: non_zero_exit: .+ exited with code 1: model endpoint unreachable$/,
+    );
+    expect(out(akm(["run", "tasks/fetch"])).result.detail.error).toBe(
+      "(only): non_zero_exit: exit code 7: no route to host",
+    );
   });
 
   test("a task whose steps changed since the failed run is refused for --resume, and the failed run is left as it was", () => {

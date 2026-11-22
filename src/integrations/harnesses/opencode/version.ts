@@ -8,10 +8,10 @@
  * The opencode harness runs the installed binary through its CLI for both majors;
  * the binary's major decides the flags (`./agent-builder.ts`). Plugin upgrades also
  * ask it, to refresh a plugin cache with the major that owns it.
- * {@link detectOpencodeMajor} runs `<bin> --version` once per binary per process.
+ * {@link detectOpencodeMajor} runs `<bin> --version` once per binary per process. OpenCode 1 is
+ * deprecated; the run notice is `warnOpencode1Use` (`cli/deprecations.ts`), which the builder calls.
  */
 
-import { warnOnce } from "../../../core/warn";
 import { defaultWhich, probeVersion } from "../../agent/detect";
 
 /**
@@ -83,12 +83,6 @@ export function detectOpencodeMajor(bin: string): OpencodeVersionInfo {
   const raw = (probeOverride ?? defaultProbe)(path);
   const version = raw ?? "";
   const reportedMajor = raw === undefined ? undefined : parseOpencodeMajor(raw);
-  if (reportedMajor === 1) {
-    warnOnce(
-      `opencode-version:${path}`,
-      `${path} is OpenCode ${version}. OpenCode 1 support continues, but upgrading to OpenCode 2 is recommended.`,
-    );
-  }
   const info: OpencodeVersionInfo = {
     ...(reportedMajor !== undefined ? { reportedMajor } : {}),
     version,

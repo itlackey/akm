@@ -12,8 +12,8 @@
  * `./migrate/content-ref-planner.ts`.
  */
 
-import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
@@ -159,7 +159,11 @@ function plan(): {
     const adapterId = root.adapter ?? detectAdapterId(root.root);
     if (UNOWNED_ADAPTERS.has(adapterId)) continue;
     for (const filePath of textFiles(root.root)) {
-      if (seen.has(filePath) || !(documents.files.has(filePath) || isStructuralFile(root.root, adapterId, filePath, assetDirs))) continue;
+      if (
+        seen.has(filePath) ||
+        !(documents.files.has(filePath) || isStructuralFile(root.root, adapterId, filePath, assetDirs))
+      )
+        continue;
       seen.add(filePath);
       const before = fs.readFileSync(filePath);
       const text = before.toString("utf8");
@@ -168,12 +172,20 @@ function plan(): {
       const { text: rewritten, count } = rewriter.rewrite(text);
       if (count === 0) continue;
       files.push({
-        replacement: { filePath, before, after: Buffer.from(rewritten, "utf8"), mode: fs.statSync(filePath).mode & 0o777 },
+        replacement: {
+          filePath,
+          before,
+          after: Buffer.from(rewritten, "utf8"),
+          mode: fs.statSync(filePath).mode & 0o777,
+        },
         refs: count,
       });
     }
   }
-  return { files: files.sort((a, b) => a.replacement.filePath.localeCompare(b.replacement.filePath)), shadowed: [...rewriter.shadowed] };
+  return {
+    files: files.sort((a, b) => a.replacement.filePath.localeCompare(b.replacement.filePath)),
+    shadowed: [...rewriter.shadowed],
+  };
 }
 
 function summarize(planned: ReturnType<typeof plan>): ContentRefsSummary {
@@ -208,10 +220,15 @@ export function applyContentRefsMigration(): ContentRefsMigrationStatus {
       backupPath,
     );
     // A file that changed since it was planned was left as it is; the report says so, and a run again plans it afresh.
-    const files = summary.files.map((file): ContentRefFileSummary =>
-      conflicts.includes(file.filePath)
-        ? { ...file, status: "skipped", reason: "it changed after it was planned, so it was left as it is; run again to plan it afresh" }
-        : file,
+    const files = summary.files.map(
+      (file): ContentRefFileSummary =>
+        conflicts.includes(file.filePath)
+          ? {
+              ...file,
+              status: "skipped",
+              reason: "it changed after it was planned, so it was left as it is; run again to plan it afresh",
+            }
+          : file,
     );
     const reconcile = gitReconcile(replaced, backupPath);
     return {

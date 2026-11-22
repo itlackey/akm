@@ -10,19 +10,13 @@
  * search used to obey); it reports what the index says.
  */
 
-import { getDbPath } from "../../core/paths";
-import { heldRebuildLock } from "../../indexer/index-rebuild-lock";
-import { SEMANTIC_SEARCH_META_KEY, type SemanticSearchRecord } from "../../indexer/walk/index-context";
+import { readSemanticSearchRecord, type SemanticSearchRecord } from "../../indexer/walk/index-context";
 import { LOCAL_EMBEDDING_RUNTIME } from "../../llm/embedders/local";
-import {
-  closeDatabase,
-  indexDbIsDamaged,
-  openReadonlyExistingDatabase,
-} from "../../storage/repositories/index-connection";
 import { getEmbeddableEntryCount } from "../../storage/repositories/index-entries-repository";
 import { hasCurrentEntriesTable } from "../../storage/repositories/index-entry-schema";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount } from "../../storage/repositories/index-vec-repository";
+import { readHealthIndex } from "./read-index";
 import type { HealthCheckResult, HealthUnknownReason } from "./types";
 
 /** What the check reads: the config's mode and, when there is an index, its record and counts. */
@@ -39,29 +33,20 @@ export interface SemanticSearchState {
 
 /** Read the last index run's record and the index's counts, read-only. */
 export function readSemanticSearchState(mode: string | undefined): SemanticSearchState {
-  try {
-    if (indexDbIsDamaged()) throw new Error("index.db is damaged");
-    const db = openReadonlyExistingDatabase(getDbPath());
-    if (!db) return { mode };
-    try {
-      if (!hasCurrentEntriesTable(db)) throw new Error("index.db has no searchable entries table");
-      const raw = getMeta(db, SEMANTIC_SEARCH_META_KEY);
-      return {
-        mode,
-        index: {
-          ...(raw ? { record: JSON.parse(raw) as SemanticSearchRecord } : {}),
-          builtAt: getMeta(db, "builtAt"),
-          entryCount: getEmbeddableEntryCount(db),
-          embeddingCount: getEmbeddingCount(db),
-        },
-      };
-    } finally {
-      closeDatabase(db);
-    }
-  } catch (error) {
-    if (heldRebuildLock()) return { mode, building: true };
-    return { mode, error: error instanceof Error ? error.message : String(error) };
-  }
+  const read = readHealthIndex((db) => {
+    if (!hasCurrentEntriesTable(db)) throw new Error("index.db has no searchable entries table");
+    const record = readSemanticSearchRecord(db);
+    return {
+      ...(record ? { record } : {}),
+      builtAt: getMeta(db, "builtAt"),
+      entryCount: getEmbeddableEntryCount(db),
+      embeddingCount: getEmbeddingCount(db),
+    };
+  });
+  if ("noIndex" in read) return { mode };
+  if ("building" in read) return { mode, building: true };
+  if ("error" in read) return { mode, error: read.error };
+  return { mode, index: read.value };
 }
 
 export function semanticSearchCheck(state: SemanticSearchState): HealthCheckResult {

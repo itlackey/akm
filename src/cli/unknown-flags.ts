@@ -61,6 +61,13 @@ export interface FlagScanCommand {
   readonly subCommands?: Record<string, FlagScanCommand> | undefined;
 }
 
+/** The command a flag scan resolves `path` to, as the root of its tree. */
+export function scanRoot(path: readonly string[], command: FlagScanCommand): FlagScanCommand {
+  let root = command;
+  for (const part of [...path].reverse()) root = { subCommands: { [part]: root } };
+  return root;
+}
+
 /** Flags citty implements itself, which no command declares. */
 const IMPLICIT_FLAGS = ["help", "h", "version", "v"];
 
@@ -295,21 +302,30 @@ const DYNAMIC_INPUT_COMMANDS: ReadonlySet<string> = new Set([
   "run",
 ]);
 
+/** The commands whose tokens after their target (a ref or a task id) are checked by the command, which knows what that target declares. */
+const CHECKED_AFTER_TARGET: ReadonlySet<string> = new Set(["run", "task run", "task explain", "doctor explain"]);
+
 /**
  * Throw a {@link UsageError} naming the first flag the resolved command does
  * not declare. Returns silently when every flag is known.
+ *
+ * `untilTarget` is the pre-dispatch gate's: for {@link CHECKED_AFTER_TARGET} it checks only up to the target, and the
+ * command checks the rest from inside its body, where a failure is rendered as the command's own error.
  */
-export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string[]): void {
+export function assertKnownFlags(
+  root: FlagScanCommand,
+  rawArgs: readonly string[],
+  options: { untilTarget?: boolean } = {},
+): void {
   let ownArgs = rawArgs;
   const known = collectKnownArgs(root, rawArgs);
   if (!known.resolved) return;
-  // After `run`'s ref the tokens are the executor's: `run` checks them against it once the asset's type is known.
-  if (known.path.join(" ") === "run") {
-    const ref = findCittyTopLevelCommandIndex(
+  if (options.untilTarget === true && CHECKED_AFTER_TARGET.has(known.path.join(" "))) {
+    const target = findCittyTopLevelCommandIndex(
       known.commandArgs,
       (known.command.args ?? {}) as CittyArgsDefinitionForScan,
     );
-    if (ref >= 0) ownArgs = ownArgs.slice(0, rawArgs.length - known.commandArgs.length + ref + 1);
+    if (target >= 0) ownArgs = ownArgs.slice(0, rawArgs.length - known.commandArgs.length + target + 1);
   }
   const dynamicWorkflowParams = DYNAMIC_INPUT_COMMANDS.has(known.path.join(" "));
   const tolerant = TOLERANT_COMMANDS.has(known.path.join(" "));

@@ -46,7 +46,7 @@
  * `freezeWorkflow` helper (`tests/_helpers/workflow.ts`) — a genuine,
  * dispatchable `WorkflowPlan` — then wrapped into a
  * `FrozenChildWorkflowTarget` by `buildChildTarget` below, mirroring
- * `tests/workflows/hash-v6.test.ts`'s established fixture-builder
+ * `tests/integration/workflows/hash-v6.test.ts`'s established fixture-builder
  * convention for this exact target shape (kept local to this file per this
  * repo's test-file self-containment convention).
  */

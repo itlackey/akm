@@ -2,9 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { toErrorMessage } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { EXTRACT_INFRASTRUCTURE_SKIP_REASONS } from "../../core/improve-types";
 import { listPendingStateMigrations, type StateDatabaseMigrationReport } from "../../core/state-db";
+import { learningStatus } from "../../setup/learning";
 import type { ExtractOutcomeCount } from "../../storage/repositories/extract-sessions-repository";
 import {
   STATE_DB_FREELIST_WARN_RATIO,
@@ -13,9 +15,9 @@ import {
 } from "../../storage/state-db-integrity";
 import { resolveImproveStrategy, resolveProcessEnabled } from "../improve/improve-strategies";
 import { resolveProposalQueueTarget } from "../proposal/repository";
-import type { ImproveRunOutcomes } from "./improve-metrics";
+import type { ImproveRunOutcomes, TaskRunCounts } from "./improve-metrics";
 import { type SemanticSearchState, semanticSearchCheck } from "./semantic-search-check";
-import { ACTIVE_RUN_WARN_MS, type HealthCheckResult, type ImproveHealthMetrics, TASK_FAIL_RATE_WARN } from "./types";
+import { type HealthCheckResult, type ImproveHealthMetrics, TASK_FAIL_RATE_WARN } from "./types";
 
 /**
  * Pre-computed inputs shared by the health-check registry. `akmHealth` runs the
@@ -40,14 +42,16 @@ export interface HealthCheckContext {
   stateDbFreelist: StateDbFreelistInfo;
   /** What this run's own state.db open applied (every open applies pending migrations). */
   stateDbMigrations: StateDatabaseMigrationReport;
-  /** Total task_history rows read in the window. */
-  taskRowCount: number;
-  /** Fraction of task_history rows in the window whose status is `failed` (0..1, raw). */
-  taskFailRate: number;
-  /** Active runs older than the stale threshold. */
+  /** The window's runs by what started them, and how many tasks they belong to. */
+  taskRuns: TaskRunCounts;
+  /** Failed share of the window's runs; null when there were none. */
+  taskFailRate: number | null;
+  /** Active runs whose owner process is gone (`classifyAttempt`). */
   stuckActiveRuns: number;
-  /** One entry per {@link stuckActiveRuns} row: which task and how stale. */
+  /** One entry per task with such a run: which task and how long ago it started. */
   stuckActiveTasks: { taskId: string; ageMs: number }[];
+  /** Tasks with an active run whose owner cannot be told apart from a live one (another host, no liveness evidence). */
+  unverifiedActiveTasks: { taskId: string; ageMs: number }[];
   /**
    * The task_id with the highest per-task fail rate among tasks with at least
    * `MIN_ROWS_FOR_WORST_TASK_FAIL_RATE` rows in the window. `null` when no
@@ -55,7 +59,7 @@ export interface HealthCheckContext {
    */
   worstTaskFailRate: { taskId: string; rate: number; rows: number } | null;
   /**
-   * #943: `detail.reason` breakdown across the window's command-task
+   * #943: `detail.reason` breakdown across the window's agent dispatch
    * failures (see `HealthMetrics.agentFailureReasonCounts`'s doc comment).
    * Always present in `task-fail-rate`'s evidence; drives the
    * "<reason>-dominant" message suffix when the check is warn/fail.
@@ -74,6 +78,8 @@ export interface HealthCheckContext {
   autoAccept: ImproveHealthMetrics["autoAccept"];
   /** Recorded failures and signal interruptions in the selected window, scheduled or manual. */
   improveOutcomes: ImproveRunOutcomes;
+  /** The `index-sources` check, collected once (`index-sources.ts`). */
+  indexSources: HealthCheckResult;
   /** The connections, harnesses and work table, collected once (`connections-and-harnesses-check.ts`). */
   connectionsAndHarnesses: HealthCheckResult;
   /** The last index run's semantic-search record and the index's counts, read once (`semantic-search-check.ts`). */
@@ -98,7 +104,13 @@ export interface HealthCheckContext {
 /** Who owns the primary stash's proposal queue, and whether the active strategy extracts. */
 export interface ProposalQueueState {
   stashDir: string;
-  /** The active improve strategy enables the extract process. */
+  /** Background learning is on (`improve.enabled`). */
+  learningOn: boolean;
+  /** The configured improve strategy's name, as the resolver reports it; absent when it did not resolve. */
+  strategy?: string;
+  /** The resolver's refusal of the configured strategy (a removed or unknown one); absent when it resolved. */
+  strategyError?: string;
+  /** The configured improve strategy enables the extract process. */
   extractEnabled: boolean;
   /** The resolver's refusal; absent when the queue has a writable owner. */
   problem?: string;
@@ -106,21 +118,25 @@ export interface ProposalQueueState {
 
 /**
  * Resolve the proposal queue owner through the resolver extract and every other
- * proposal writer use. A config that cannot load or a strategy that cannot
- * resolve counts as extraction off: those are other checks' findings.
+ * proposal writer use. A strategy that does not resolve carries the resolver's error: extraction is then not known to
+ * be on or off.
  */
 export function proposalQueueState(config: AkmConfig, stashDir: string): ProposalQueueState {
   let extractEnabled = false;
+  let strategy: { strategy: string } | { strategyError: string };
   try {
-    extractEnabled = resolveProcessEnabled("extract", resolveImproveStrategy(undefined, config).config);
-  } catch {
-    // reported by the config checks
+    const selected = resolveImproveStrategy(undefined, config);
+    extractEnabled = resolveProcessEnabled("extract", selected.config);
+    strategy = { strategy: selected.name };
+  } catch (error) {
+    strategy = { strategyError: toErrorMessage(error) };
   }
+  const base = { stashDir, learningOn: learningStatus(config).on, ...strategy, extractEnabled };
   try {
     resolveProposalQueueTarget(stashDir, config);
-    return { stashDir, extractEnabled };
+    return base;
   } catch (error) {
-    return { stashDir, extractEnabled, problem: error instanceof Error ? error.message : String(error) };
+    return { ...base, problem: toErrorMessage(error) };
   }
 }
 
@@ -205,8 +221,8 @@ export function appliedStateMigrationsCheck(
 
 /**
  * #943: name the dominant `detail.reason` behind `task-fail-rate`'s warning
- * when one reason accounts for at least half of the window's command-task
- * failures — e.g. "(timeout-dominant: 9/12 command-task failures)" — so an
+ * when one reason accounts for at least half of the window's agent dispatch
+ * failures — e.g. "(timeout-dominant: 9/12 agent dispatch failures)" — so an
  * operator sees the shape of the failure from data instead of grepping task
  * logs. Ties break on reason name for determinism. `undefined` when there are
  * no counted failures or no single reason reaches the 50% floor.
@@ -221,6 +237,18 @@ export function dominantAgentFailureReason(
     entry[1] > best[1] || (entry[1] === best[1] && entry[0] < best[0]) ? entry : best,
   );
   return count / total >= 0.5 ? { reason, count, total } : undefined;
+}
+
+/** "132 runs of 8 tasks (120 scheduled, 12 manual)": what `task-fail-rate` counted, by what started each run. */
+function describeTaskRuns(counts: TaskRunCounts): string {
+  const noun = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const byTrigger = [
+    counts.scheduled > 0 ? `${counts.scheduled} scheduled` : "",
+    counts.manual > 0 ? `${counts.manual} manual` : "",
+    counts.unrecorded > 0 ? `${counts.unrecorded} with no recorded trigger` : "",
+    counts.unreadable > 0 ? `${counts.unreadable} unreadable` : "",
+  ].filter(Boolean);
+  return `${noun(counts.runs, "run")} of ${noun(counts.tasks, "task")}${byTrigger.length > 0 ? ` (${byTrigger.join(", ")})` : ""}`;
 }
 
 /**
@@ -334,29 +362,53 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
       kind: "deterministic",
       status: "pass",
       confidence: "high",
-      message: `Read ${ctx.taskRowCount} task-history row(s) since ${ctx.since}.`,
-      evidence: { rows: ctx.taskRowCount, since: ctx.since },
+      message: `Read ${ctx.taskRuns.runs} task-history row(s) since ${ctx.since}.`,
+      evidence: { rows: ctx.taskRuns.runs, since: ctx.since },
     }),
   },
   {
+    // Whether an active run's akm is still there is `classifyAttempt`'s answer (owner pid, host, boot), never the
+    // run's age: a long run is not a stuck one.
     name: "active-runs",
     channel: "hard",
     run: (ctx) => {
-      // Name the stuck task_ids (deduped, oldest first) so an operator knows
-      // WHICH tasks to investigate, not just how many rows are stale. No
-      // pid/liveness detection — that's out of scope here.
-      const named = [...ctx.stuckActiveTasks].sort((a, b) => b.ageMs - a.ageMs);
-      const detail = named.map((t) => `${t.taskId} (${Math.round(t.ageMs / 60000)}m)`).join(", ");
+      const name = (tasks: { taskId: string; ageMs: number }[]) =>
+        [...tasks]
+          .sort((a, b) => b.ageMs - a.ageMs)
+          .map((t) => `${t.taskId} (started ${Math.round(t.ageMs / 60000)}m ago)`)
+          .join(", ");
+      const base = { name: "active-runs", kind: "deterministic", confidence: "high" } as const;
+      const evidence = {
+        stuckActiveRuns: ctx.stuckActiveRuns,
+        stuckActiveTasks: ctx.stuckActiveTasks,
+        unverifiedActiveTasks: ctx.unverifiedActiveTasks,
+      };
+      if (ctx.stuckActiveRuns > 0) {
+        const unverified =
+          ctx.unverifiedActiveTasks.length > 0
+            ? ` Cannot tell whether ${name(ctx.unverifiedActiveTasks)} are still running.`
+            : "";
+        return {
+          ...base,
+          status: "warn",
+          message: `${ctx.stuckActiveRuns} active task run(s) whose akm process is gone: ${name(ctx.stuckActiveTasks)}.${unverified}`,
+          evidence,
+        };
+      }
+      if (ctx.unverifiedActiveTasks.length > 0) {
+        return {
+          ...base,
+          status: "unknown",
+          reason: "blocked",
+          message: `Cannot tell whether ${name(ctx.unverifiedActiveTasks)} are still running: the owner is on another host or recorded no liveness evidence.`,
+          evidence,
+        };
+      }
       return {
-        name: "active-runs",
-        kind: "deterministic",
-        status: ctx.stuckActiveRuns === 0 ? "pass" : "warn",
-        confidence: "high",
-        message:
-          ctx.stuckActiveRuns === 0
-            ? "No active task runs exceeded the stale threshold."
-            : `${ctx.stuckActiveRuns} active task run(s) are older than ${Math.round(ACTIVE_RUN_WARN_MS / 60000)} minutes: ${detail}.`,
-        evidence: { stuckActiveRuns: ctx.stuckActiveRuns, stuckActiveTasks: ctx.stuckActiveTasks },
+        ...base,
+        status: "pass",
+        message: "Every active task run has a live owner, or there are none.",
+        evidence,
       };
     },
   },
@@ -397,6 +449,11 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     },
   },
   {
+    name: "index-sources",
+    channel: "hard",
+    run: (ctx) => ctx.indexSources,
+  },
+  {
     name: "semantic-search",
     channel: "hard",
     run: (ctx) => semanticSearchCheck(ctx.semanticSearch),
@@ -414,48 +471,53 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     name: "task-fail-rate",
     channel: "advisory",
     run: (ctx) => {
-      const pctStr = `${(ctx.taskFailRate * 100).toFixed(1)}%`;
+      const pctStr = ctx.taskFailRate === null ? "unknown" : `${(ctx.taskFailRate * 100).toFixed(1)}%`;
       const thresholdPct = `${(TASK_FAIL_RATE_WARN * 100).toFixed(0)}%`;
-      const aggregateWarn = ctx.taskFailRate >= TASK_FAIL_RATE_WARN;
+      const aggregateWarn = ctx.taskFailRate !== null && ctx.taskFailRate >= TASK_FAIL_RATE_WARN;
       const worst = ctx.worstTaskFailRate;
       const worstWarn = worst !== null && worst.rate >= TASK_FAIL_RATE_WARN;
       const warn = aggregateWarn || worstWarn;
 
-      // #943: name the dominant command-task failure reason (timeout,
+      // #943: name the dominant agent dispatch failure reason (timeout,
       // non_zero_exit, spawn_failed, …) when the check is already warning, so
       // "timeout-dominant" is visible without grepping task logs.
       const agentFailureReasonCounts = ctx.agentFailureReasonCounts ?? {};
       const dominant = warn ? dominantAgentFailureReason(agentFailureReasonCounts) : undefined;
       const dominantSuffix = dominant
-        ? ` (${dominant.reason}-dominant: ${dominant.count}/${dominant.total} command-task failures)`
+        ? ` (${dominant.reason}-dominant: ${dominant.count}/${dominant.total} agent dispatch failures)`
         : "";
 
+      const counted = describeTaskRuns(ctx.taskRuns);
       let message: string;
-      if (ctx.taskRowCount === 0) {
-        message = `No cron tasks ran since ${ctx.since} — no task-fail-rate signal.`;
+      if (ctx.taskRuns.runs === 0) {
+        message = `No task runs since ${ctx.since} — no task-fail-rate signal.`;
       } else if (warn) {
         const parts: string[] = [];
         if (aggregateWarn) {
-          parts.push(`aggregate ${pctStr} across ${ctx.taskRowCount} task(s) since ${ctx.since} ≥ ${thresholdPct}`);
+          parts.push(`aggregate ${pctStr} across ${counted} since ${ctx.since} ≥ ${thresholdPct}`);
         }
         if (worstWarn && worst) {
           const worstPctStr = `${(worst.rate * 100).toFixed(1)}%`;
           parts.push(`task "${worst.taskId}" fails ${worstPctStr} of its ${worst.rows} run(s) ≥ ${thresholdPct}`);
         }
-        message = `Cron task fail rate warning: ${parts.join("; ")}${dominantSuffix} — inspect failed runs (ok=false) for early-exit/harness errors.`;
+        message = `Task fail rate warning: ${parts.join("; ")}${dominantSuffix} — inspect failed runs (ok=false) for early-exit/harness errors.`;
       } else {
-        message = `Cron task fail rate ${pctStr} across ${ctx.taskRowCount} task(s) since ${ctx.since} (below ${thresholdPct} threshold).`;
+        message = `Task fail rate ${pctStr} across ${counted} since ${ctx.since} (below ${thresholdPct} threshold).`;
       }
 
       return {
         name: "task-fail-rate",
         kind: "deterministic",
-        status: warn ? "warn" : "pass",
+        // No run in the window is no signal, not a pass.
+        ...(ctx.taskRuns.runs === 0
+          ? ({ status: "unknown", reason: "idle" } as const)
+          : { status: warn ? ("warn" as const) : ("pass" as const) }),
         confidence: "high",
         message,
         evidence: {
           taskFailRate: ctx.taskFailRate,
-          taskRowCount: ctx.taskRowCount,
+          taskRowCount: ctx.taskRuns.runs,
+          taskRuns: ctx.taskRuns,
           threshold: TASK_FAIL_RATE_WARN,
           worstTaskFailRate: worst,
           // #943: always present (even pass/empty) so scripts reading evidence
@@ -486,7 +548,12 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
       const totalRows = rows.reduce((sum, row) => sum + row.count, 0);
       if (totalRows === 0) {
         // Extraction is off when the strategy does not enable it; with the config unreadable that is not known.
-        const reason = !ctx.proposalQueue ? "blocked" : ctx.proposalQueue.extractEnabled ? "idle" : "off";
+        const reason =
+          !ctx.proposalQueue || ctx.proposalQueue.strategyError
+            ? "blocked"
+            : ctx.proposalQueue.extractEnabled
+              ? "idle"
+              : "off";
         return { ...base, status: "unknown", reason, message: `No extraction recorded in the last ${days} days.` };
       }
 
@@ -564,14 +631,30 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
           message: "The primary stash or config could not be read; the proposal queue owner was not checked.",
         };
       }
-      const { stashDir, extractEnabled, problem } = ctx.proposalQueue;
+      const { stashDir, learningOn, strategy, strategyError, extractEnabled, problem } = ctx.proposalQueue;
       const ranRecently = ctx.sessionExtractionLedger.rows.some((row) => row.count > 0);
-      if (!extractEnabled && !ranRecently) {
+      if (!learningOn) {
         return {
           ...base,
           status: "unknown",
           reason: "off",
           message: "Learning is off, so the proposal queue owner was not checked.",
+        };
+      }
+      if (strategyError && !ranRecently) {
+        return {
+          ...base,
+          status: "unknown",
+          reason: "blocked",
+          message: `The configured improve strategy does not resolve, so the proposal queue owner was not checked: ${strategyError}`,
+        };
+      }
+      if (!extractEnabled && !ranRecently) {
+        return {
+          ...base,
+          status: "unknown",
+          reason: "off",
+          message: `Session extraction is not enabled in improve strategy "${strategy}", so the proposal queue owner was not checked.`,
         };
       }
       if (!problem)
@@ -589,18 +672,34 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     channel: "advisory",
     run: (ctx) => {
       const aa = ctx.autoAccept;
-      return {
+      const base = {
         name: "auto-accept-validation",
         kind: "heuristic",
-        status: aa.validationFailed > 0 ? "warn" : "pass",
-        confidence: aa.promoted + aa.validationFailed > 0 ? "high" : "low",
-        message:
-          aa.validationFailed > 0
-            ? `${aa.validationFailed} auto-accept validation attempt(s) failed after passing the confidence threshold (truncated description, invalid frontmatter, etc.) — the affected proposals remain pending for manual review.`
-            : aa.promoted > 0
-              ? `Auto-accept healthy: ${aa.promoted} proposal(s) promoted, 0 validation failures.`
-              : "Auto-accept gate did not run (disabled or no proposals above threshold).",
         evidence: { promoted: aa.promoted, validationFailed: aa.validationFailed },
+      } as const;
+      if (aa.validationFailed > 0) {
+        return {
+          ...base,
+          status: "warn",
+          confidence: "high",
+          message: `${aa.validationFailed} auto-accept validation attempt(s) failed after passing the confidence threshold (truncated description, invalid frontmatter, etc.) — the affected proposals remain pending for manual review.`,
+        };
+      }
+      if (aa.promoted > 0) {
+        return {
+          ...base,
+          status: "pass",
+          confidence: "high",
+          message: `Auto-accept healthy: ${aa.promoted} proposal(s) promoted, 0 validation failures.`,
+        };
+      }
+      return {
+        ...base,
+        status: "unknown",
+        reason: "idle",
+        confidence: "low",
+        message:
+          "Auto-accept did not promote or reject any proposal in this window (disabled, or none above the threshold).",
       };
     },
   },

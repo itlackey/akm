@@ -12,7 +12,7 @@
  * injected into the in-process harness (tests/_helpers/cli.ts); each `akm`
  * invocation is a real `bun src/cli.ts` subprocess fed via `input`. The
  * non-stdin slug-stability surface is pinned in
- * tests/commands/remember-import-xref.test.ts.
+ * tests/integration/commands/remember-import-xref.test.ts.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

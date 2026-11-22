@@ -12,6 +12,7 @@ import { classifyPathAccess, describeInaccessiblePath } from "../../core/path-ac
 import { getCacheDir, getConfigDir, getDataDir, getDefaultStashDir, getStateDir } from "../../core/paths";
 import { formatRegistryUrl } from "../../core/registry-url";
 import { error } from "../../core/warn";
+import { readSemanticSearchState } from "../../indexer/walk/index-context";
 import { learningStatus } from "../../setup/learning";
 import type { InfoResponse } from "../../sources/types";
 import type { Database } from "../../storage/database";
@@ -136,13 +137,14 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     ? readIndexStats(resolvedDbPath)
     : { entryCount: 0, byType: {}, lastBuiltAt: null, hasEmbeddings: false, unavailable: dataDirError };
 
-  // Semantic status is read live from the index's own state, not a cached
-  // verdict — a failed embed attempt at search time falls back to FTS and
-  // reports that in the search response, it never disables the mode here.
-  const semanticStatus: InfoResponse["semanticSearch"]["status"] =
-    config.semanticSearchMode === "off" ? "disabled" : indexStats.hasEmbeddings ? "ready-js" : "pending";
+  // Semantic status is what the index recorded at its last run, read now — not a cached
+  // verdict. A failed embed attempt at search time falls back to FTS and reports that in
+  // the search response; it never disables the mode here.
+  const semanticState = readSemanticSearchState(resolvedDbPath, config.semanticSearchMode, {
+    busyTimeoutMs: INFO_INDEX_BUSY_TIMEOUT_MS,
+  });
   const searchModes: string[] = ["fts"];
-  if (semanticStatus === "ready-js") {
+  if (config.semanticSearchMode !== "off" && indexStats.hasEmbeddings) {
     searchModes.push("semantic", "hybrid");
   }
 
@@ -161,7 +163,8 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     searchModes,
     semanticSearch: {
       mode: config.semanticSearchMode,
-      status: semanticStatus,
+      status: semanticState.status,
+      ...(semanticState.reason ? { reason: semanticState.reason } : {}),
     },
     registries,
     connectionsAndHarnesses: safeTargets(config),

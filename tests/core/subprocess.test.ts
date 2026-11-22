@@ -21,13 +21,7 @@
  *     bounded run the earlier of that and the wall budget.
  */
 import { describe, expect, test } from "bun:test";
-import {
-  buildSpawnOptions,
-  childGroup,
-  runManagedSubprocess,
-  type SpawnedSubprocess,
-  type SpawnFn,
-} from "../../src/core/subprocess";
+import { runManagedSubprocess, type SpawnedSubprocess, type SpawnFn } from "../../src/core/subprocess";
 
 function asReadableStream(text: string): ReadableStream<Uint8Array> {
   const bytes = new TextEncoder().encode(text);
@@ -276,8 +270,7 @@ describe("runManagedSubprocess — abort", () => {
 });
 
 describe("runManagedSubprocess — when the stream-drain deadline is armed", () => {
-  const SAFETY_MS = 60 * 60 * 1000;
-  /** The post-exit grace a bounded run's pipes get once nothing owns them. */
+  /** The post-exit grace a run's pipes get once nothing owns them, bounded or not. */
   const GRACE_MS = 2_000;
 
   test("a null timeout schedules NOTHING against a still-running child", async () => {
@@ -311,7 +304,7 @@ describe("runManagedSubprocess — when the stream-drain deadline is armed", () 
     expect(result.stdoutRead.timedOut).toBe(false);
   });
 
-  test("the safety bound is armed by the child's EXIT, so a descendant cannot hold the drain open forever", async () => {
+  test("an unbounded run's drain deadline is armed by the child's EXIT, so a descendant cannot hold it open forever", async () => {
     const { timers, setTimeoutFn, clearTimeoutFn } = fakeTimers();
     const child = controllableSpawn();
 
@@ -328,14 +321,17 @@ describe("runManagedSubprocess — when the stream-drain deadline is armed", () 
     expect(timers).toHaveLength(0);
 
     // The leader exits 0 but stdout stays open — a background descendant still
-    // holds the fd. THAT is what the safety bound exists to cut.
+    // holds the fd. The drain gets the grace, then the leftovers are dealt with and the deadline cuts it.
     child.exit(0);
     await tick();
-    // One, not two: stderr drained before the exit, and a finished drain arms
-    // no timer at all.
-    const safety = timers.filter((timer) => timer.ms === SAFETY_MS);
-    expect(safety).toHaveLength(1);
-    safety[0]?.cb();
+    const grace = timers.filter((timer) => timer.ms === GRACE_MS);
+    expect(grace).toHaveLength(1);
+    grace[0]?.cb();
+    await tick();
+    // The grace timer and the one drain deadline: stderr drained before the exit, and a finished drain arms none.
+    const drain = timers.filter((timer) => timer.ms === GRACE_MS);
+    expect(drain).toHaveLength(2);
+    drain[1]?.cb();
 
     const result = await promise;
     expect(result.exitCode).toBe(0);
@@ -361,16 +357,17 @@ describe("runManagedSubprocess — when the stream-drain deadline is armed", () 
     // its pipes are a live process's.
     expect(timers.filter((timer) => timer.ms === 30_000)).toHaveLength(1);
     expect(timers.filter((timer) => timer.ms === GRACE_MS)).toHaveLength(0);
-    expect(timers.some((timer) => timer.ms === SAFETY_MS)).toBe(false);
 
     // The leader exits 0 in milliseconds but stdout stays open — a background
     // descendant holds the fd. The deadline is armed HERE, so the run cannot
     // stall for a 30 s budget it never came close to spending.
     child.exit(0);
     await tick();
+    timers.filter((timer) => timer.ms === GRACE_MS)[0]?.cb(); // the grace before leftovers are stopped
+    await tick();
     const drain = timers.filter((timer) => timer.ms === GRACE_MS);
-    expect(drain).toHaveLength(1); // stderr drained before the exit; a finished drain arms nothing.
-    drain[0]?.cb();
+    expect(drain).toHaveLength(2); // stderr drained before the exit; a finished drain arms nothing.
+    drain[1]?.cb();
 
     const result = await promise;
     expect(result.exitCode).toBe(0);
@@ -440,49 +437,6 @@ describe("runManagedSubprocess — capture and failure surfacing", () => {
     expect(result.stdout).toBe("");
   });
 
-  test("a child gets its own process group except on Windows and on a terminal without capture", () => {
-    // On POSIX `detached` is setsid(), which is what makes killGroup's negative-pid kill reach the whole tree,
-    // and what takes the controlling terminal away. On Windows the same flag is DETACHED_PROCESS: the child
-    // gets no console, a console host allocates its own and thereby replaces the std handles it was handed,
-    // and every byte it writes goes to that phantom console instead of our pipe.
-    for (const platform of ["linux", "darwin"] as const) {
-      expect(childGroup(true, platform, true)).toBe("own");
-      expect(childGroup(true, platform, false)).toBe("own");
-      expect(childGroup(false, platform, false)).toBe("own");
-      expect(childGroup(false, platform, true)).toBe("shared");
-    }
-    expect(childGroup(true, "win32", false)).toBe("shared");
-    expect(childGroup(false, "win32", false)).toBe("shared");
-
-    // The WIRING, asserted for a platform this test host is not.
-    expect(buildSpawnOptions({ capture: true }, childGroup(true, "win32", false)).detached).toBeUndefined();
-    expect(buildSpawnOptions({ capture: true }, "own").detached).toBe(true);
-    // Captured Windows runs still pipe all three streams; only the group flag goes.
-    expect(buildSpawnOptions({ capture: true }, "shared").stdout).toBe("pipe");
-    expect(buildSpawnOptions({ capture: true }, "shared").stderr).toBe("pipe");
-    expect(buildSpawnOptions({ capture: false }, "shared").detached).toBeUndefined();
-    expect(buildSpawnOptions({ capture: false }, "shared").stdout).toBe("inherit");
-  });
-
-  test("a captured managed run spawns detached on POSIX", async () => {
-    let detached: unknown = "unset";
-    const spawn: SpawnFn = (_cmd, opts) => {
-      detached = opts.detached;
-      return {
-        exitCode: 0,
-        exited: Promise.resolve(0),
-        stdout: asReadableStream("out\n"),
-        stderr: asReadableStream(""),
-        stdin: null,
-        kill() {},
-      };
-    };
-    const result = await runManagedSubprocess(["echo"], { capture: true, timeoutMs: null, spawnFn: spawn });
-    expect(result.stdout).toBe("out\n");
-    // The live wiring must follow the helper on whichever platform runs this.
-    expect(detached).toBe(process.platform === "win32" ? undefined : true);
-  });
-
   test("interactive (capture: false) does not read streams", async () => {
     let capturedStdout: unknown;
     const spawn: SpawnFn = (_cmd, opts) => {
@@ -530,4 +484,31 @@ describe("runManagedSubprocess — termination-signal guard", () => {
       }
     },
   );
+});
+
+describe("runManagedSubprocess — one signal, two owners", () => {
+  test("the kill ladder starts once when the host aborts the run and the signal guard stops it on the same SIGQUIT (the test runner itself handles SIGTERM, SIGINT and SIGHUP)", async () => {
+    const { timers, setTimeoutFn, clearTimeoutFn } = fakeTimers();
+    // pid-less fake: killGroup falls back to proc.kill. It swallows SIGINT so the child outlives the first step.
+    const { spawn, signals } = killTrackingSpawn({ ignore: ["SIGINT"] });
+    const abort = new AbortController();
+    process.once("SIGQUIT", () => abort.abort());
+
+    const promise = runManagedSubprocess(["job"], {
+      capture: true,
+      timeoutMs: null,
+      signal: abort.signal,
+      spawnFn: spawn,
+      setTimeoutFn,
+      clearTimeoutFn,
+    });
+    process.emit("SIGQUIT");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(signals).toEqual(["SIGINT"]);
+
+    for (const timer of timers) timer.cb();
+    const result = await promise;
+    expect(result.aborted).toBe(true);
+    expect(signals.filter((signal) => signal === "SIGINT")).toHaveLength(1);
+  });
 });

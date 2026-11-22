@@ -37,10 +37,12 @@ import {
   outputWithExitCode,
   runWithJsonErrors,
 } from "../../cli/shared";
+import { assertKnownFlags, type FlagScanCommand, scanRoot } from "../../cli/unknown-flags";
 import { UsageError } from "../../core/errors";
 import type { InputFlag } from "../../execution/input-contract";
+import type { RunTaskOptions } from "../../tasks/run/task-result";
 import { TASK_RUN_BOOLEAN_FLAGS, TASK_RUN_VALUE_FLAGS } from "../../tasks/task-run-reserved-flags";
-import { parseStartFlags, type TaskV5Start } from "../../tasks/v5/flags";
+import { parseStartFlags, type TaskV5Start, taskIdInStart } from "../../tasks/v5/flags";
 import { akmTaskExplain } from "./explain";
 import {
   akmTasksAdd,
@@ -195,7 +197,7 @@ export function parseTaskInputFlags(rawArgs: readonly string[], id: string): Inp
  * {@link parseTaskInputFlags} cannot mistake for a flag. The unknown-flag scan and the binder both read the result,
  * so neither takes `-x` for a flag of its own.
  */
-export function inlineInputValues(tokens: readonly string[], valueInputs: ReadonlySet<string>): string[] {
+function inlineInputValues(tokens: readonly string[], valueInputs: ReadonlySet<string>): string[] {
   const joined: string[] = [];
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index] as string;
@@ -214,6 +216,33 @@ export function inlineInputValues(tokens: readonly string[], valueInputs: Readon
 function readV5Start(rawArgs: readonly string[], id: string): TaskV5Start {
   const { rest, ...start } = parseStartFlags(rawArgs);
   return { ...start, inputs: parseTaskInputFlags(rest, id) };
+}
+
+/**
+ * The one reader of a task's input tokens, run once the task's declared value inputs are known: each declared value
+ * input is joined to its value (`--who -x` is `--who=-x`), and the tokens are checked as the command at `path` checks
+ * its flags. `akm run`, `akm task run`, `akm task explain` and `akm doctor explain` all read through it.
+ */
+function readTaskInputTokens(
+  command: { path: readonly string[]; schema: FlagScanCommand },
+  rawArgs: readonly string[],
+  valueInputs: ReadonlySet<string>,
+): string[] {
+  const joined = inlineInputValues(rawArgs, valueInputs);
+  assertKnownFlags(scanRoot(command.path, command.schema), [...command.path, ...joined]);
+  return joined;
+}
+
+/** What a task command hands the task layer to read its input flags and start flags once the task is known. */
+function taskInputReaders(
+  command: { path: readonly string[]; schema: FlagScanCommand },
+  rawArgs: readonly string[],
+  id: string,
+): Pick<RunTaskOptions, "inputFlags" | "start"> {
+  return {
+    inputFlags: (valueInputs) => parseTaskInputFlags(readTaskInputTokens(command, rawArgs, valueInputs), id),
+    start: (valueInputs) => readV5Start(readTaskInputTokens(command, rawArgs, valueInputs), id),
+  };
 }
 
 const tasksAddCommand = defineJsonCommand({
@@ -300,11 +329,11 @@ export const tasksRunCommand = defineCommand({
   },
   async run({ args, rawArgs }) {
     await runWithJsonErrors(async () => {
-      const envelope = await akmTasksRun(args.id, {
+      const id = taskIdInStart(rawArgs) ?? args.id;
+      const envelope = await akmTasksRun(id, {
         scheduled: args.scheduled === true,
         ...(args.bundle !== undefined ? { target: args.bundle } : {}),
-        inputFlags: parseTaskInputFlags(rawArgs, args.id),
-        start: () => readV5Start(rawArgs, args.id),
+        ...taskInputReaders({ path: ["task", "run"], schema: tasksRunCommand as FlagScanCommand }, rawArgs, id),
       });
       output("task-run", envelope);
       // F4: was `process.exit(envelope.exitCode)`, terminating synchronously
@@ -438,23 +467,21 @@ const tasksSyncCommand = defineJsonCommand({
 export async function runTaskExplain(
   args: { ref: string; bundle?: string },
   rawArgs: readonly string[],
+  command: { path: readonly string[]; schema: FlagScanCommand },
 ): Promise<void> {
   // `--scheduled` must be rejected BEFORE the shared scanner below ever
   // sees it — the scanner treats it as `task run`'s own reserved flag
   // (silently skipped, never surfaced as unknown) rather than explain's,
   // since it has no way to know which command called it (F7 fix).
   rejectExplainScheduledFlag();
-  // Stage 1 (capture): the SAME exact-name flag scanner `akm task run`
-  // uses (`parseTaskInputFlags` above) — `explain` never declares
-  // `--scheduled`, but reusing the identical scanner is deliberate: one
-  // implementation of "which argv tokens are task input flags", not two.
-  const inputFlags = parseTaskInputFlags(rawArgs, args.ref);
-  const result = await akmTaskExplain(args.ref, {
+  const ref = taskIdInStart(rawArgs) ?? args.ref;
+  const result = await akmTaskExplain(ref, {
     ...(args.bundle !== undefined ? { target: args.bundle } : {}),
-    inputFlags,
-    start: () => readV5Start(rawArgs, args.ref),
+    ...taskInputReaders(command, rawArgs, ref),
   });
-  output("task-explain", result);
+  // A schedule entry the start check refuses fails the preview, as it fails `doctor scheduler sync`.
+  const refused = (result.schedule as readonly { error?: string }[]).some((entry) => entry.error !== undefined);
+  outputWithExitCode("task-explain", result, refused ? EXIT_CODES.GENERAL : undefined);
 }
 
 const tasksExplainCommand = defineJsonCommand({
@@ -470,7 +497,7 @@ const tasksExplainCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args, rawArgs }) {
-    await runTaskExplain(args, rawArgs);
+    await runTaskExplain(args, rawArgs, { path: ["task", "explain"], schema: tasksExplainCommand as FlagScanCommand });
   },
 });
 

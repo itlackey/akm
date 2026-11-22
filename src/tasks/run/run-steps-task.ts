@@ -24,7 +24,7 @@ import type { Parsed } from "../../core/structured";
 import { runManagedSubprocess } from "../../core/subprocess";
 import type { ExecutionJsonValue } from "../../execution/json";
 import { sortExecutionJson } from "../../execution/json";
-import { type Correction, isRefused, jsonParser, structuredLoop } from "../../llm/structured";
+import { type Correction, type Dispatched, isRefused, jsonParser, structuredLoop } from "../../llm/structured";
 import type { TaskHistoryStep } from "../../storage/repositories/task-history-repository";
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskStep, PreparedTaskV3Steps } from "../prepare/prepared-execution";
@@ -33,8 +33,8 @@ import { taskEventSource } from "./provenance";
 import { withUnattendedTimeout } from "./run-command-task";
 import { shellCommand } from "./run-native-task";
 import { DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } from "./run-workflow-task";
-import { appendHistory, readTaskHistory } from "./task-history";
-import { persistRunLog, scrubTaskOutput, streamLines } from "./task-log";
+import { appendHistory, readTaskHistory, taskBundle } from "./task-history";
+import { appendStreamLines, persistRunLog, scrubTaskOutput } from "./task-log";
 import type { RunTaskOptions, TaskRunResult } from "./task-result";
 
 /** A step's result is kept to this many bytes of text. */
@@ -125,11 +125,11 @@ function replyCheck(expect: readonly string[]): (raw: string) => Parsed<Record<s
 }
 
 /** An agent's reply held to `expect:`: asked once more, with what failed the check, when it does. */
-export function expectLoop(
+export function expectLoop<S extends object = object>(
   expect: readonly string[],
-  dispatch: (correction?: Correction) => Promise<{ ok: true; raw: string } | { ok: false; failure: string }>,
+  dispatch: (correction?: Correction) => Promise<Dispatched<{ failure: string } & NoInfer<S>, NoInfer<S>>>,
 ) {
-  return structuredLoop<Record<string, unknown>, { failure: string }>({
+  return structuredLoop<Record<string, unknown>, { failure: string } & S, S>({
     dispatch,
     parse: replyCheck(expect),
     attempts: 2,
@@ -196,8 +196,11 @@ export async function runStepsTask(input: {
       }
       const durationMs = Math.max(0, now().getTime() - begun.getTime());
       const header = `[akm task] step=${step.name} kind=${stepKind(step)} attempts=${attempts} ok=${outcome.ok}`;
-      lines.push(header, ...outcome.lines);
-      dbLines.push({ level: outcome.ok ? "info" : "error", line: header }, ...outcome.dbLines);
+      // Loops, not spreads: a step can print more lines than a call accepts as arguments.
+      lines.push(header);
+      for (const line of outcome.lines) lines.push(line);
+      dbLines.push({ level: outcome.ok ? "info" : "error", line: header });
+      for (const row of outcome.dbLines) dbLines.push(row);
       const text =
         outcome.value === undefined
           ? ""
@@ -249,6 +252,7 @@ export async function runStepsTask(input: {
     finishedAt: finishedAt.toISOString(),
     durationMs: finishedAt.getTime() - startedAt.getTime(),
     log: logPath,
+    ...taskBundle(task.taskRef),
     target: { kind: "steps" },
     ...(failure ? { detail: { reason: "step_failed", error: `${failure.name}: ${failure.reason}` } } : {}),
     steps,
@@ -330,11 +334,11 @@ async function runShellStep(step: Extract<PreparedTaskStep, { kind: "shell" }>, 
   }
   if (result.stdout) {
     out.lines.push("--- stdout ---", result.stdout);
-    out.dbLines.push(...streamLines(result.stdout, "stdout", "info"));
+    appendStreamLines(out.dbLines, result.stdout, "stdout", "info");
   }
   if (result.stderr) {
     out.lines.push("--- stderr ---", result.stderr);
-    out.dbLines.push(...streamLines(result.stderr, "stderr", "error"));
+    appendStreamLines(out.dbLines, result.stderr, "stderr", "error");
   }
   if (result.timedOut) out.reason = "timeout";
   else if (exitCode !== 0) out.reason = `exit code ${exitCode}`;
@@ -363,11 +367,11 @@ async function runPromptStep(step: Extract<PreparedTaskStep, { kind: "command" }
     out.lines.push(`engine=${result.engine} ok=${result.ok} exit_code=${result.exitCode ?? "null"}`);
     if (result.stdout) {
       out.lines.push("--- agent stdout ---", result.stdout);
-      out.dbLines.push(...streamLines(result.stdout, "stdout", "info"));
+      appendStreamLines(out.dbLines, result.stdout, "stdout", "info");
     }
     if (result.stderr) {
       out.lines.push("--- agent stderr ---", result.stderr);
-      out.dbLines.push(...streamLines(result.stderr, "stderr", "error"));
+      appendStreamLines(out.dbLines, result.stderr, "stderr", "error");
     }
     return result.ok
       ? ({ ok: true, raw: result.stdout } as const)

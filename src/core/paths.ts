@@ -424,14 +424,20 @@ export function akmLocations(): Record<string, string> {
   return locations;
 }
 
+/** `env` without the `AKM_LAUNCHER_*` variables akm's own launcher set for this process: a nested `akm` gets them from its own launcher. */
+export function withoutLauncherVars<T extends NodeJS.ProcessEnv>(env: T): T {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !name.startsWith("AKM_LAUNCHER_"))) as T;
+}
+
 /**
  * The environment of a process akm starts for the user: akm's own, as the program
  * has it when the user runs it from their shell, with {@link akmLocations} set over
- * it. akm filters nothing.
+ * it. akm filters nothing of the user's, and omits only the `AKM_LAUNCHER_*` variables its own launcher set for
+ * this process: a nested `akm` gets them from its own launcher. `host` is the environment akm runs in.
  */
-export function childProcessEnv(): Record<string, string> {
+export function childProcessEnv(host: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const inherited: Record<string, string> = {};
-  for (const [name, value] of Object.entries(process.env)) {
+  for (const [name, value] of Object.entries(withoutLauncherVars(host))) {
     if (value !== undefined) inherited[name] = value;
   }
   return { ...inherited, ...akmLocations() };

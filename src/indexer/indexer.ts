@@ -14,7 +14,7 @@ import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
 import { withStateDb } from "../core/state-db";
-import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
+import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { localEmbeddingRuntime } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
@@ -125,6 +125,8 @@ import type { SearchSource } from "./search/search-source";
 import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
 import type { FileContext } from "./walk/file-context";
 import {
+  INCOMPLETE_SOURCES_META_KEY,
+  type IncompleteIndexSource,
   type IndexVerification,
   type RemovedIndexSource,
   SEMANTIC_SEARCH_META_KEY,
@@ -133,6 +135,11 @@ import {
 import { walkStashFlatWithStatus } from "./walk/walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
+
+/** `--clean` did not run: removing rows for files that cannot be listed would delete rows for files that exist. */
+interface IndexCleanSkipped {
+  skipped: { reason: "incomplete-scan"; sources: IncompleteIndexSource[] };
+}
 
 export interface IndexCleanResult {
   /** Number of entries checked for disk presence. */
@@ -155,6 +162,8 @@ export interface IndexResponse {
   directoriesSkipped: number;
   /** False when any configured source could not be scanned and LKG rows were preserved. */
   scanComplete: boolean;
+  /** Each source that could not be scanned completely; empty when every source was. */
+  incompleteSources: IncompleteIndexSource[];
   warnings?: string[];
   verification: IndexVerification;
   /** Timing counters in milliseconds */
@@ -170,8 +179,8 @@ export interface IndexResponse {
     sourceCacheMs: number;
     endToEndMs: number;
   };
-  /** Present when --clean was passed: stale-entry purge results. */
-  clean?: IndexCleanResult;
+  /** Present when --clean was passed: stale-entry purge results, or why the purge did not run. */
+  clean?: IndexCleanResult | IndexCleanSkipped;
   /**
    * Present when files were renamed or moved since the last run: each moved asset's old and new ref (its history
    * went with it), and the number of vanished files whose identical-content matches could not be paired and were
@@ -396,6 +405,7 @@ function finalizeIndex(args: {
   db: Database;
   sources: SearchSource[];
   scanComplete: boolean;
+  incompleteSources: IncompleteIndexSource[];
   signal: AbortSignal | undefined;
   onProgress: (event: IndexProgressEvent) => void;
 }): { tFtsEnd: number } {
@@ -438,6 +448,8 @@ function finalizeIndex(args: {
     setMeta(db, "builtAt", new Date().toISOString());
     setMeta(db, "sourceOwners", JSON.stringify(sourceOwners(sources)));
   }
+  // The sources the index holds last-known-good rows for: what `akm doctor` reads. Empty once every source scanned.
+  setMeta(db, INCOMPLETE_SOURCES_META_KEY, JSON.stringify(args.incompleteSources));
 
   return { tFtsEnd };
 }
@@ -774,15 +786,17 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     throwIfAborted(signal);
     const tWalkStart = Date.now();
     // Walk every source and pre-generate all metadata outside any transaction…
-    const { dirRecords, scannedDirs, skippedDirs, generatedCount, warnings, complete } = await scanSourceDirs(
-      db,
-      sources,
-      isIncremental,
-      builtAtMs,
-      removedSources.length > 0,
-      onProgress,
-      !clean,
-    );
+    const { dirRecords, scannedDirs, skippedDirs, generatedCount, warnings, complete, incompleteSources } =
+      await scanSourceDirs(
+        db,
+        sources,
+        isIncremental,
+        builtAtMs,
+        removedSources.length > 0,
+        config,
+        onProgress,
+        !clean,
+      );
     // …then write it in one transaction: `item_ref = <bundle>//<conceptId>`
     // plus canonical component/adapter provenance per source root.
     const bundleByRoot = buildIndexedSourceOwners(sources);
@@ -824,7 +838,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     // Reconcile explicit missing-file cleanup before embeddings, totals, or
     // verification describe this generation. Dry-run intentionally leaves
     // the generation unchanged while still returning the previewed refs.
-    let cleanResult: IndexCleanResult | undefined;
+    let cleanResult: IndexCleanResult | IndexCleanSkipped | undefined;
     const cleanStart = Date.now();
     if (clean) {
       onProgress({
@@ -835,7 +849,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
         cleanResult = runCleanPass(db, dryRun);
       } else {
         warn("[index] --clean skipped because one or more configured sources were not scanned completely.");
-        cleanResult = { checked: 0, removed: 0, removedRefs: [], dryRun };
+        cleanResult = { skipped: { reason: "incomplete-scan", sources: incompleteSources } };
       }
     }
     const cleanEnd = Date.now();
@@ -862,6 +876,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       db,
       sources,
       scanComplete: complete,
+      incompleteSources,
       signal,
       onProgress,
     });
@@ -906,6 +921,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       directoriesScanned: scannedDirs,
       directoriesSkipped: skippedDirs,
       scanComplete: complete,
+      incompleteSources,
       ...(warnings.length > 0 ? { warnings } : {}),
       ...(Object.keys(persistedAdapters).length > 0 ? { configUpdated: { detectedAdapters: persistedAdapters } } : {}),
       verification,
@@ -971,6 +987,12 @@ type SourceScanPlan = {
   dirGroups: Map<string, FileContext[]>;
   removals: Array<DirRecord & { reason: DirScanReason }>;
   walkComplete: boolean;
+  /** When the scan of this source is incomplete: the error that stopped it. */
+  incompleteReason?: string;
+  /** For a source that did not resolve: its real directory, or `unknown`. */
+  incompletePath?: string;
+  /** Content the source's adapter skips that the `akm` adapter would index. */
+  adapterSkip?: AdapterSkip;
 };
 
 type SourceScanResult = {
@@ -980,6 +1002,7 @@ type SourceScanResult = {
   generatedCount: number;
   warnings: string[];
   complete: boolean;
+  incompleteSources: IncompleteIndexSource[];
 };
 
 function removalsFirst(records: DirRecord[]): DirRecord[] {
@@ -1023,24 +1046,25 @@ function sourceSnapshotRemovals(
 }
 
 /**
- * Warn ONCE per process (#908) when the chosen adapter for a component
- * entirely skips a top-level directory that holds files the `akm` adapter —
- * the format-neutral superset — would have indexed. `detectAdapterId` now
- * corrects this for AUTO-DETECTION (a mixed layout detects as `akm`); this
- * covers the case detection cannot see, an EXPLICITLY configured narrow
- * adapter (`components.<name>.adapter: "agent-skills"`, say) sitting next to
- * ordinary akm content. One line for the whole process — not one per bundle,
- * not one per directory — naming the count and the directories is enough to
- * point an operator at the fix.
+ * What the chosen adapter for a component entirely skips (#908): top-level directories that hold files the `akm`
+ * adapter, the format-neutral superset, would have indexed. `detectAdapterId` corrects this for AUTO-DETECTION (a
+ * mixed layout detects as `akm`); this covers what detection cannot see, an EXPLICITLY configured narrow adapter
+ * (`components.<name>.adapter: "agent-skills"`, say) sitting next to ordinary akm content.
  */
-function warnIfAdapterSkipsAkmContent(
+interface AdapterSkip {
+  adapter: string;
+  count: number;
+  dirs: string[];
+}
+
+function adapterSkippedAkmContent(
   component: BundleComponent,
   files: readonly FileContext[],
   adapter: BundleAdapter,
-): void {
-  if (adapter.id === "akm") return;
+): AdapterSkip | undefined {
+  if (adapter.id === "akm") return undefined;
   const akm = adapterForId("akm");
-  if (!akm) return;
+  if (!akm) return undefined;
 
   const byTopDir = new Map<string, FileContext[]>();
   for (const file of files) {
@@ -1052,8 +1076,8 @@ function warnIfAdapterSkipsAkmContent(
   }
 
   const akmComponent: BundleComponent = { ...component, adapter: "akm" };
-  let skippedCount = 0;
-  const skippedDirs: string[] = [];
+  let count = 0;
+  const dirs: string[] = [];
   for (const [dir, dirFiles] of byTopDir) {
     const chosenRecognizesAny = dirFiles.some((file) => {
       try {
@@ -1071,16 +1095,50 @@ function warnIfAdapterSkipsAkmContent(
       }
     });
     if (akmCandidates.length === 0) continue; // akm would drop it too — not a shadowing case
-    skippedCount += akmCandidates.length;
-    skippedDirs.push(dir);
+    count += akmCandidates.length;
+    dirs.push(dir);
   }
-  if (skippedCount === 0) return;
-  skippedDirs.sort();
-  warnOnce(
-    "adapter-skip-akm-content",
-    `${adapter.id} adapter skipped ${skippedCount} file${skippedCount === 1 ? "" : "s"} in ` +
-      `${skippedDirs.map((dir) => `${dir}/`).join(", ")} — set components.<name>.adapter to "akm" to index them`,
-  );
+  return count === 0 ? undefined : { adapter: adapter.id, count, dirs: dirs.sort() };
+}
+
+/** `index_meta` key holding each bundle's {@link AdapterSkip}, so a skip is reported once, and again only when it changes. */
+const ADAPTER_SKIPS_META_KEY = "adapterSkips";
+
+/** The component's name in its bundle's config; `main` is the implicit one every bundle has. */
+function configuredComponentName(config: AkmConfig, bundleId: string): string {
+  return Object.keys(config.bundles?.[bundleId]?.components ?? {})[0] ?? "main";
+}
+
+/**
+ * Warn about each bundle whose skipped content differs from what the last index recorded, then record this run's
+ * skips. A configured bundle that was not scanned this run keeps its record.
+ */
+function reportAdapterSkips(db: Database, config: AkmConfig, plans: readonly SourceScanPlan[]): void {
+  let previous: Record<string, AdapterSkip> = {};
+  try {
+    previous = JSON.parse(getMeta(db, ADAPTER_SKIPS_META_KEY) ?? "{}") as Record<string, AdapterSkip>;
+  } catch {
+    previous = {};
+  }
+  // A removed bundle takes its record with it.
+  const configured = new Set(plans.map((plan) => plan.component.id));
+  const next = Object.fromEntries(Object.entries(previous).filter(([id]) => configured.has(id)));
+  for (const plan of plans) {
+    if (!plan.adapter || !plan.walkComplete) continue;
+    const id = plan.component.id;
+    if (!plan.adapterSkip) {
+      delete next[id];
+      continue;
+    }
+    next[id] = plan.adapterSkip;
+    if (JSON.stringify(previous[id]) === JSON.stringify(plan.adapterSkip)) continue;
+    const { adapter, count, dirs } = plan.adapterSkip;
+    warn(
+      `[index] bundle "${id}": ${adapter} adapter skipped ${count} file${count === 1 ? "" : "s"} in ` +
+        `${dirs.map((dir) => `${dir}/`).join(", ")} — set bundles.${id}.components.${configuredComponentName(config, id)}.adapter to "akm" to index them`,
+    );
+  }
+  if (JSON.stringify(next) !== JSON.stringify(previous)) setMeta(db, ADAPTER_SKIPS_META_KEY, JSON.stringify(next));
 }
 
 function buildSourceScanPlans(
@@ -1105,6 +1163,8 @@ function buildSourceScanPlans(
         dirGroups: new Map(),
         removals: [],
         walkComplete: false,
+        incompleteReason: sourceAdded.unresolved.reason,
+        incompletePath: sourceAdded.unresolved.path ?? "unknown",
       };
     }
     const adapter = adapterForId(component.adapter);
@@ -1112,7 +1172,7 @@ function buildSourceScanPlans(
       includeAllDirectories: adapter?.walkMode === "all-directories",
     });
     const dirGroups = groupFileContextsByDir(walked.files);
-    if (adapter) warnIfAdapterSkipsAkmContent(component, walked.files, adapter);
+    const adapterSkip = adapter ? adapterSkippedAkmContent(component, walked.files, adapter) : undefined;
     return {
       currentStashDir,
       component,
@@ -1120,6 +1180,8 @@ function buildSourceScanPlans(
       dirGroups,
       removals: [],
       walkComplete: walked.complete,
+      ...(walked.incompleteReason ? { incompleteReason: walked.incompleteReason } : {}),
+      ...(adapterSkip ? { adapterSkip } : {}),
     };
   });
 
@@ -1210,6 +1272,7 @@ async function scanSourceDirs(
   isIncremental: boolean,
   builtAtMs: number,
   hadRemovedSources: boolean,
+  config: AkmConfig,
   onProgress?: (event: IndexProgressEvent) => void,
   reconcileMissingDirs = true,
 ): Promise<SourceScanResult> {
@@ -1217,8 +1280,10 @@ async function scanSourceDirs(
   let skippedDirs = 0;
   let generatedCount = 0;
   const warnings: string[] = [];
+  const incompleteSources: IncompleteIndexSource[] = [];
   const seenPaths = new Set<string>();
   const { plans, handoffDirs } = buildSourceScanPlans(db, allSourceEntries, isIncremental, reconcileMissingDirs);
+  reportAdapterSkips(db, config, plans);
 
   const dirRecords: DirRecord[] = [];
   let processedDirs = 0;
@@ -1265,7 +1330,16 @@ async function scanSourceDirs(
 
     if (!walkComplete) {
       for (const dirPath of dirGroups.keys()) seenPaths.add(path.resolve(dirPath));
-      warn(`[index] source "${component.id}" was not scanned completely; preserving its last-known-good rows.`);
+      const reason = plan.incompleteReason ?? "the scan did not complete";
+      incompleteSources.push({
+        bundle: component.id,
+        component: configuredComponentName(config, component.id),
+        path: plan.incompletePath ?? currentStashDir,
+        reason,
+      });
+      warn(
+        `[index] source "${component.id}" was not scanned completely; preserving its last-known-good rows. ${reason}`,
+      );
       continue;
     }
 
@@ -1274,6 +1348,12 @@ async function scanSourceDirs(
     // component with a warning (one bundle = one component = one adapter).
     if (!adapter) {
       for (const dirPath of dirGroups.keys()) seenPaths.add(path.resolve(dirPath));
+      incompleteSources.push({
+        bundle: component.id,
+        component: configuredComponentName(config, component.id),
+        path: currentStashDir,
+        reason: `unknown adapter id "${component.adapter}"`,
+      });
       warn(`Skipping component "${component.id}": unknown adapter id "${component.adapter}".`);
       continue;
     }
@@ -1396,6 +1476,7 @@ async function scanSourceDirs(
     generatedCount,
     warnings,
     complete: plans.every((plan) => plan.walkComplete && plan.adapter !== undefined),
+    incompleteSources,
   };
 }
 

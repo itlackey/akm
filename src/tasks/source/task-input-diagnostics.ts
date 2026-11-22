@@ -46,3 +46,23 @@ export const TASK_INPUT_DIAGNOSTICS: InputFlagDiagnostics = {
   duplicateNonArray: (name) => invalidTaskInput(name, "was provided more than once but is not declared as an array"),
   malformedJson: (name) => invalidTaskInput(name, "must contain valid JSON"),
 };
+
+/** The flags of `akm run` that a start of a version 5 task does not take: not input names, so not "unknown inputs". */
+const NOT_TAKEN_BY_V5_START: ReadonlySet<string> = new Set([
+  "clean",
+  "dry-run",
+  "model",
+  "harness",
+  "prompt",
+  "timeout-ms",
+  "max-steps",
+]);
+
+/** {@link TASK_INPUT_DIAGNOSTICS} for a version 5 start, which names an akm flag it does not take as that. */
+export const TASK_V5_INPUT_DIAGNOSTICS: InputFlagDiagnostics = {
+  ...TASK_INPUT_DIAGNOSTICS,
+  unknownFlag: (name, declared) =>
+    NOT_TAKEN_BY_V5_START.has(name)
+      ? new UsageError(`--${name} is not taken by a version 5 task start.`, "UNKNOWN_FLAG")
+      : TASK_INPUT_DIAGNOSTICS.unknownFlag(name, declared),
+};

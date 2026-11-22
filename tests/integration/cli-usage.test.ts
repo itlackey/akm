@@ -140,19 +140,29 @@ test("real entry captures help/version/invalid/config failures once and redacts 
   expect(result.details.map((row: { category: string }) => row.category)).toContain("config");
 });
 
-test("concurrent CLI writes and overlapping export snapshots keep stable aggregate identities", async () => {
+test("concurrent CLI writes commit beside a reader that stays open, and overlapping export snapshots keep stable aggregate identities", async () => {
   sandbox();
-  await Promise.all(
-    Array.from(
-      { length: 8 },
-      () =>
-        new Promise<void>((resolve, reject) => {
-          const child = spawn("bun", [CLI, "--version"], { env: { ...process.env }, stdio: "ignore" });
-          child.on("error", reject);
-          child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`exit ${code}`))));
-        }),
-    ),
-  );
+  const INVOCATIONS = 16;
+  expect(cli(["--version"]).status).toBe(0);
+  // A reader that stays open for the whole run: under a rollback journal every commit would wait on it.
+  const reader = openDatabase(path.join(getDataDir(), "metrics.db"), { readonly: true });
+  try {
+    reader.exec("BEGIN");
+    reader.prepare("SELECT count(*) FROM cli_usage_invocations").get();
+    await Promise.all(
+      Array.from(
+        { length: INVOCATIONS },
+        () =>
+          new Promise<void>((resolve, reject) => {
+            const child = spawn("bun", [CLI, "--version"], { env: { ...process.env }, stdio: "ignore" });
+            child.on("error", reject);
+            child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`exit ${code}`))));
+          }),
+      ),
+    );
+  } finally {
+    reader.close();
+  }
   const first = report(["--source", "unknown"]);
   const second = report(["--source", "unknown"]);
   const version = (
@@ -162,8 +172,6 @@ test("concurrent CLI writes and overlapping export snapshots keep stable aggrega
       key: string;
     }>,
   ) => rows.filter((row) => row.dimensions.command.length === 0);
-  // Capture is fail-open with a short busy wait, so a loaded host may drop an invocation; what must hold is that
-  // the aggregates count exactly the invocations stored, in both overlapping snapshots.
   const db = openDatabase(path.join(getDataDir(), "metrics.db"), { readonly: true });
   try {
     const stored = (
@@ -173,19 +181,18 @@ test("concurrent CLI writes and overlapping export snapshots keep stable aggrega
         )
         .get() as { n: number }
     ).n;
-    expect(stored).toBeGreaterThan(0);
-    expect(stored).toBeLessThanOrEqual(8);
+    // Capture waits at most 250 ms (`openUsage`), so a contended write may be dropped by design. Under WAL the
+    // first concurrent writer always commits beside the open reader; under a rollback journal none of them can.
+    expect(stored).toBeGreaterThan(1);
+    expect(stored).toBeLessThanOrEqual(INVOCATIONS + 1);
     expect(version(first.aggregates).reduce((sum, row) => sum + row.attempts, 0)).toBe(stored);
     const merged = new Map([...first.aggregates, ...second.aggregates].map((row) => [row.key, row]));
     expect(version([...merged.values()]).reduce((sum, row) => sum + row.attempts, 0)).toBe(stored);
     expect(new Set(second.details.map((row: { id: string }) => row.id)).size).toBe(second.details.length);
-    // WAL is what keeps concurrent invocations inside capture's short wait: under the rollback journal each
-    // commit waited on every reader, and on a disk-backed data dir a third of 8 concurrent captures were dropped.
-    expect((db.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode).toBe("wal");
   } finally {
     db.close();
   }
-});
+}, 60_000);
 
 test("retention expires detail without losing durable counts and unavailable capture preserves exits", () => {
   sandbox();
@@ -510,19 +517,29 @@ test("usage observers preserve a host-owned once signal handler and its asynchro
   );
   const child = spawn(
     "bun",
-    [entry, "env", "run", "env/cancel", "--", "bun", "-e", "console.log('READY');setTimeout(()=>{},1000)"],
+    [
+      entry,
+      "env",
+      "run",
+      "env/cancel",
+      "--",
+      "bun",
+      "-e",
+      "console.log('READY', process.pid);setTimeout(()=>{},30000)",
+    ],
     {
       env: { ...process.env },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
   try {
-    await new Promise<void>((resolve, reject) => {
+    const grandchild = await new Promise<number>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("child did not start")), 10000);
       child.stdout.on("data", (data) => {
-        if (String(data).includes("READY")) {
+        const ready = /READY (\d+)/.exec(String(data));
+        if (ready) {
           clearTimeout(timer);
-          resolve();
+          resolve(Number(ready[1]));
         }
       });
       child.once("error", reject);
@@ -530,13 +547,17 @@ test("usage observers preserve a host-owned once signal handler and its asynchro
     const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
       child.once("exit", (code, signal) => resolve({ code, signal })),
     );
+    const sent = Date.now();
     child.kill("SIGTERM");
     expect(await exited).toEqual({ code: 23, signal: null });
+    expect(Date.now() - sent).toBeLessThan(10000);
     expect(fs.readFileSync(marker, "utf8")).toBe("cleaned");
+    // The host kept its handler and its exit code, and akm still stopped the child it started.
+    expect(() => process.kill(grandchild, 0)).toThrow();
   } finally {
     child.kill("SIGKILL");
   }
-});
+}, 20000);
 
 const usageFile = () => path.join(getDataDir(), "metrics.db");
 

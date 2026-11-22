@@ -297,7 +297,7 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
         // — citty/mri would otherwise ignore them silently. Part of the startup
         // contract this harness replicates, like the --help / --version
         // handling above.
-        assertKnownFlags(cmd as unknown as FlagScanCommand, invocation.ownArgs);
+        assertKnownFlags(cmd as unknown as FlagScanCommand, invocation.ownArgs, { untilTarget: true });
         assertNoStrayPositionals(cmd as unknown as FlagScanCommand, rawArgs);
         await runCommand(cmd, { rawArgs: [...rawArgs] });
       }

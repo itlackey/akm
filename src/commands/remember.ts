@@ -19,6 +19,7 @@ import { SHIPPED_ALIAS } from "../core/config/model-aliases";
 import { ConfigError, UsageError } from "../core/errors";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { DURATION_UNITS, parseDuration as parseDurationSpec } from "../core/time";
+import { urlsInText } from "../core/urls";
 import { warn, warnOnce } from "../core/warn";
 import { noticeSet } from "../execution/notices";
 import type { LoweringNotice } from "../execution/resolved-request";
@@ -265,8 +266,7 @@ export function runAutoHeuristics(body: string): HeuristicResult {
   const subjective = /\b(I|we|my|our)\b/.test(body) ? true : undefined;
 
   // First URL-shaped token → source
-  const urlMatch = body.match(/https?:\/\/[^\s)>'"]+/);
-  const source = urlMatch ? urlMatch[0] : undefined;
+  const source = urlsInText(body)[0];
 
   // ISO date token or obvious relative date phrase → observed
   const observed_at = detectObservedAt(body);

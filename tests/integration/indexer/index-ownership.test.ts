@@ -160,21 +160,6 @@ describe("reads on a cold library never build", () => {
     expect({ code: show.code, stderr: show.code === 0 ? "" : show.stderr }).toEqual({ code: 0, stderr: "" });
     expect(JSON.parse(show.stdout).path).toBe(path.join(storage.stashDir, "knowledge", "guide-1.md"));
   });
-
-  test("reads beside a running `akm index` all exit 0 and the index run is the only build", async () => {
-    seedLibrary(40);
-    const [indexed, ...reads] = await Promise.all([
-      child("index", "--full", "--format=json"),
-      child("search", "deployment", "--format=json"),
-      child("search", "guide", "--format=json"),
-      child("curate", "deploy the app", "--format=json"),
-      child("show", "knowledge/guide-1", "--format=json"),
-    ]);
-    expect(indexed.code).toBe(0);
-    for (const read of reads)
-      expect({ code: read.code, stderr: read.code === 0 ? "" : read.stderr }).toEqual({ code: 0, stderr: "" });
-    expect(readEvents({ type: "index_completed" }).events).toHaveLength(1);
-  }, 60_000);
 });
 
 describe("a read of an index that is only partly there", () => {

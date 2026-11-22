@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #956: `scripts/node-runtime/akm-migrate` shares the same launcher shape as
- * `scripts/node-runtime/akm` (see tests/integration/launcher-signal-forwarding.test.ts) —
+ * #956: `scripts/node-runtime/akm-migrate.mjs` shares the same launcher shape as
+ * `scripts/node-runtime/akm.mjs` (see tests/integration/launcher-signal-forwarding.test.ts) —
  * it forwards SIGTERM/SIGINT/SIGHUP to the child it spawns so a
  * `kill <launcher-pid>` does not orphan it. It carries the exact same
  * pre-spawn race: the forwarding listeners went up only after spawn()
@@ -36,7 +36,7 @@ function launcherFixture(root: string): { launcher: string; readyFile: string; s
   // layout `bun run build` produces).
   const entryDir = path.join(dist, "scripts");
   fs.mkdirSync(entryDir, { recursive: true });
-  fs.copyFileSync(path.resolve("scripts/node-runtime/akm-migrate"), launcher);
+  fs.copyFileSync(path.resolve("scripts/node-runtime/akm-migrate.mjs"), launcher);
   // A fake child entry: registers its handler, then announces it is alive
   // (readyFile). Announcing first let the test signal a child with no handler
   // yet, which the forwarded SIGTERM then killed outright. The handler records
@@ -126,7 +126,7 @@ describe("akm-migrate launcher signal forwarding (#956)", () => {
       const doneFile = path.join(sandbox.dir, "done.txt");
       const entryDir = path.join(dist, "scripts");
       fs.mkdirSync(entryDir, { recursive: true });
-      fs.copyFileSync(path.resolve("scripts/node-runtime/akm-migrate"), launcher);
+      fs.copyFileSync(path.resolve("scripts/node-runtime/akm-migrate.mjs"), launcher);
       // A fake child entry whose SIGINT handler mimics a real graceful
       // shutdown with async cleanup: it records that shutdown started, waits
       // (standing in for e.g. releasing a lock), THEN writes a completion
@@ -193,7 +193,7 @@ describe("akm-migrate launcher signal forwarding (#956)", () => {
       const readyFile = path.join(sandbox.dir, "ready.txt");
       const entryDir = path.join(dist, "scripts");
       fs.mkdirSync(entryDir, { recursive: true });
-      fs.copyFileSync(path.resolve("scripts/node-runtime/akm-migrate"), launcher);
+      fs.copyFileSync(path.resolve("scripts/node-runtime/akm-migrate.mjs"), launcher);
       fs.writeFileSync(
         path.join(entryDir, "akm-migrate.js"),
         [

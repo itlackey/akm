@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { akmLocations } from "../../core/paths";
+import { akmLocations, withoutLauncherVars } from "../../core/paths";
 
 /**
  * What `env run --clean` / `secret run --clean` keeps of the parent environment. The user typed
@@ -56,7 +56,7 @@ export function buildChildEnv(
   parentEnv: NodeJS.ProcessEnv,
   options: ChildEnvOptions,
 ): Record<string, string | undefined> {
-  const base: Record<string, string | undefined> = options.clean ? {} : { ...parentEnv };
+  const base: Record<string, string | undefined> = options.clean ? {} : { ...withoutLauncherVars(parentEnv) };
 
   if (options.clean) {
     for (const key of CLEAN_ENV_ALLOWLIST) {

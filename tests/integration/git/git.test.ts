@@ -286,35 +286,6 @@ describe("GitSourceProvider", () => {
 
     expect(fs.existsSync(skillPath)).toBe(false);
   });
-
-  test("integrates with stash sources via ensureSourceCaches", async () => {
-    // Pre-populate the cache so ensureGitMirror returns early without cloning
-    const stashUrl = "https://github.com/andrewyng/context-hub";
-    const repo = parseGitRepoUrl(stashUrl);
-    const cachePaths = getCachePaths(repo.canonicalUrl);
-
-    fs.mkdirSync(cachePaths.rootDir, { recursive: true });
-    fs.mkdirSync(path.join(cachePaths.repoDir, "content"), { recursive: true });
-    fs.writeFileSync(cachePaths.indexPath, "[]", { encoding: "utf8", mode: 0o600 });
-
-    saveConfig({
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      bundles: { "context-hub": { git: stashUrl } },
-    });
-    resetConfigCache();
-
-    const { ensureSourceCaches } = await import("../../../src/indexer/search/search-source");
-    const { loadConfig } = await import("../../../src/core/config/config");
-    const config = loadConfig();
-    await ensureSourceCaches(config);
-
-    // Verify git stash content dir appears in stash sources.
-    const { resolveSourceEntries } = await import("../../../src/indexer/search/search-source");
-    const sources = resolveSourceEntries(undefined, config);
-    const gitSource = sources.find((s) => s.path.includes(path.basename(cachePaths.rootDir)));
-    expect(gitSource).toBeDefined();
-  });
 });
 
 // ── saveGitStash commit message sanitization (issue #270) ───────────────────

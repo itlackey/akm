@@ -36,7 +36,7 @@
  */
 
 import type { DetailLevel } from "../context";
-import { flattenForText } from "../generic-render";
+import { flattenForText, nullAsUnknown } from "../generic-render";
 import { renderStatusEntries, type StatusEntry, summarizeCounts } from "./status-list";
 import { renderTargetsTable } from "./targets-table";
 
@@ -129,7 +129,7 @@ export function formatHealthPlain(r: Record<string, unknown>, detail: DetailLeve
   for (const [key, value] of Object.entries(r)) {
     if (HANDLED_KEYS.has(key) || value === undefined) continue;
     const fieldLines: string[] = [];
-    flattenForText(value, key, fieldLines);
+    flattenForText(nullAsUnknown(value), key, fieldLines);
     if (fieldLines.length > 0) lines.push("", ...fieldLines);
   }
 

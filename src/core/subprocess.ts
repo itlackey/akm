@@ -31,11 +31,13 @@
 
 import fs from "node:fs";
 import { spawn as runtimeSpawn } from "../runtime";
-import { hasSignalOwner } from "./signal-observers";
+import { endBySignal, guardSignal, hasSignalOwner } from "./signal-observers";
 
 /** Minimum subprocess surface we need. The runtime spawn returns this shape. */
 export interface SpawnedSubprocess {
   exitCode: number | null;
+  /** The signal that ended the process, when one did. */
+  signalCode?: string | null;
   exited: Promise<number>;
   stdout?: ReadableStream<Uint8Array> | null;
   stderr?: ReadableStream<Uint8Array> | null;
@@ -189,7 +191,7 @@ export function scheduleKillLadder(
   opts: { onKill: () => void; setTimeoutFn: typeof setTimeout; graceMs?: number; group?: ChildGroup },
 ): void {
   const group = opts.group ?? "own";
-  if (!proc || proc.exitCode !== null) return;
+  if (!proc || !groupRunning(proc, group)) return;
   opts.onKill();
   const afterGrace = (run: () => void): void => {
     const timer = opts.setTimeoutFn(run, opts.graceMs ?? 5000);
@@ -220,11 +222,11 @@ interface LiveChild {
 }
 
 const liveChildren = new Set<LiveChild>();
-let signalGuardHandlers: Array<[GuardSignal, () => void]> | undefined;
+let removeGuardListeners: Array<() => void> | undefined;
 
 function removeSignalGuard(): void {
-  for (const [signal, handler] of signalGuardHandlers ?? []) process.off(signal, handler);
-  signalGuardHandlers = undefined;
+  for (const remove of removeGuardListeners ?? []) remove();
+  removeGuardListeners = undefined;
 }
 
 /**
@@ -239,9 +241,9 @@ function removeSignalGuard(): void {
  * (a shell at its prompt) keeps akm waiting. SIGTERM and SIGHUP reach akm alone, so they are forwarded to
  * the child and re-raised once it has exited.
  *
- * The listeners are installed only while a child is live and only when nothing else handles the signals. A
- * command that handles them itself (`workflow run`, `improve`, task runs) unwinds through its own cleanup,
- * which already aborts its children, and must not have its handling pre-empted by a re-raise.
+ * The guard reaches every live child. A process that owns a signal (a listener that is not one of akm's
+ * own observers: a host that embeds akm, `workflow run`, task runs, `index`) decides how akm ends, and the
+ * guard leaves the exit to it. With no owner, akm ends by the signal once its children are gone.
  *
  * They go in BEFORE the spawn ({@link installSignalGuard}): a signal that lands between the spawn and the
  * registration would otherwise meet the default disposition, end akm, and leave the new group running
@@ -256,10 +258,9 @@ function registerLiveChild(child: LiveChild): () => void {
 }
 
 function installSignalGuard(): void {
-  if (signalGuardHandlers || (["SIGINT", "SIGTERM", "SIGHUP"] as const).some((signal) => hasSignalOwner(signal)))
-    return;
+  if (removeGuardListeners) return;
   let reraise: GuardSignal | undefined;
-  const handlers: Array<[GuardSignal, () => void]> = [];
+  const removers: Array<() => void> = [];
   for (const signal of ["SIGINT", "SIGQUIT", "SIGTERM", "SIGHUP"] as const) {
     const handler = (): void => {
       if (reraise) return;
@@ -274,16 +275,17 @@ function installSignalGuard(): void {
       }
       // Only the terminal's signals to shared children remain: they have it, akm just waits.
       if (!reachesAkmAlone && !stoppedOwn) return;
+      if (hasSignalOwner(signal)) return;
       reraise = signal;
       void Promise.allSettled(children.map((live) => live.proc.exited)).then(() => {
         removeSignalGuard();
-        process.kill(process.pid, signal);
+        endBySignal(signal);
+        process.exit();
       });
     };
-    process.on(signal, handler);
-    handlers.push([signal, handler]);
+    removers.push(guardSignal(signal, handler));
   }
-  signalGuardHandlers = handlers;
+  removeGuardListeners = removers;
 }
 
 /** Result of draining one captured pipe. */
@@ -549,6 +551,8 @@ export interface RunManagedSubprocessOptions {
  */
 export interface ManagedSubprocessResult {
   exitCode: number | null;
+  /** The signal that ended the child, or null when it exited by itself. */
+  signal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
   timedOut: boolean;
@@ -566,19 +570,10 @@ const EMPTY_READ: StreamReadResult = {
   retainedBytes: 0,
 };
 /**
- * Drain deadline for a run with no wall budget, counted from the child's EXIT
- * (never from capture — see {@link runManagedSubprocess}). It bounds only the
- * window in which a descendant can keep an inherited pipe open after the leader
- * is gone, so it can be generous without ever capping the run itself.
- */
-const UNBOUNDED_STREAM_READ_SAFETY_MS = 60 * 60 * 1000;
-/**
- * Drain deadline for a run WITH a wall budget, counted from the moment the
- * pipe's owner left — the child exited, or (a child that survived its own kill
- * ladder) the budget expired. Anything still holding the fd open then is a
- * background descendant, not the command, so this is the same 2 s the old
- * capture-anchored deadline allowed past the budget; only its starting point
- * moved earlier.
+ * How long a captured pipe may stay open after the pipe's owner left, with or without a wall budget: the
+ * child exited, or (a child that survived its own kill ladder) the budget expired. Anything still holding
+ * the fd open then is a background descendant, not the command. It bounds only what a pipe does after its
+ * owner is gone, so it never caps the run itself.
  */
 const POST_EXIT_STREAM_DRAIN_GRACE_MS = 2_000;
 
@@ -606,6 +601,7 @@ export async function runManagedSubprocess(
   if (opts.signal?.aborted) {
     return {
       exitCode: null,
+      signal: null,
       stdout: "",
       stderr: "",
       timedOut: false,
@@ -626,6 +622,7 @@ export async function runManagedSubprocess(
     if (guardsChild && liveChildren.size === 0) removeSignalGuard();
     return {
       exitCode: null,
+      signal: null,
       stdout: "",
       stderr: "",
       timedOut: false,
@@ -651,16 +648,23 @@ export async function runManagedSubprocess(
           onBudgetExpiry = resolve;
         })
       : undefined;
+  // The kill ladder starts at most once, whichever of the timeout, the abort and the signal guard starts it.
+  let stopping = false;
+  const stop = (onKill: () => void): void => {
+    if (stopping) return;
+    stopping = true;
+    scheduleKillLadder(proc, {
+      onKill,
+      group,
+      setTimeoutFn: setTimeoutImpl,
+      ...(opts.graceMs !== undefined ? { graceMs: opts.graceMs } : {}),
+    });
+  };
   if (timeoutMs !== null) {
     timer = setTimeoutImpl(() => {
       onBudgetExpiry?.();
-      scheduleKillLadder(proc, {
-        onKill: () => {
-          timedOut = true;
-        },
-        group,
-        setTimeoutFn: setTimeoutImpl,
-        ...(opts.graceMs !== undefined ? { graceMs: opts.graceMs } : {}),
+      stop(() => {
+        timedOut = true;
       });
     }, timeoutMs);
   }
@@ -670,13 +674,8 @@ export async function runManagedSubprocess(
   let aborted = false;
   const abortSignal = opts.signal;
   const onAbort = () => {
-    scheduleKillLadder(proc, {
-      onKill: () => {
-        aborted = true;
-      },
-      group,
-      setTimeoutFn: setTimeoutImpl,
-      ...(opts.graceMs !== undefined ? { graceMs: opts.graceMs } : {}),
+    stop(() => {
+      aborted = true;
     });
   };
   if (abortSignal) {
@@ -688,26 +687,36 @@ export async function runManagedSubprocess(
 
   const unregisterLiveChild = guardsChild ? registerLiveChild({ proc, group, terminate: onAbort }) : () => {};
 
-  // Stream-drain timeout: a short grace once nothing living owns the pipe any
-  // more, or a one-hour safety bound when execution itself is unbounded.
+  // Stream-drain timeout: a short grace once nothing living owns the pipe any more, counted from the child's
+  // exit (never from capture) and, for a bounded run, from the wall budget's expiry if that came first.
   //
-  // Neither is armed while the command is still running: every byte up to then
-  // is a live process's, and cancelling the reader would discard the output of
-  // work that is still going. What ends that ownership is where the two cases
-  // differ. Unbounded, the caller asked for NO cap on the run, so only the
-  // child's own exit can end it. Bounded, the wall budget ends it too — a child
-  // that outlived its own kill ladder is not something akm can keep waiting on
-  // — which leaves the SAME budget + grace ceiling as before for a command that
-  // really did spend its whole budget, and cuts the common case that used to
-  // stall: a leader exiting in milliseconds no longer holds the drain (and with
-  // it the unit, and with it a fan-out slot) open for a budget it never came
-  // close to spending.
-  const streamDrainTimeoutMs = timeoutMs !== null ? POST_EXIT_STREAM_DRAIN_GRACE_MS : UNBOUNDED_STREAM_READ_SAFETY_MS;
+  // It is not armed while the command is still running: every byte up to then is a live process's, and
+  // cancelling the reader would discard the output of work that is still going. A leader exiting in
+  // milliseconds no longer holds the drain (and with it the unit, and with it a fan-out slot) open for a
+  // budget it never came close to spending.
   // Settles on a rejected `proc.exited` too: either way the child is gone.
   const childSettled = capture ? proc.exited.catch(() => undefined) : undefined;
-  const pipeOwnerGone = childSettled && budgetExpired ? Promise.race([childSettled, budgetExpired]) : childSettled;
+  // What the leader left behind in its own process group is stopped once the drain has had its grace (see
+  // below), so a daemon that holds the pipe cannot keep the run waiting. One that wants to outlive the run
+  // starts its own session.
+  const { promise: bothDrained, resolve: drainStarted } = Promise.withResolvers<unknown>();
+  const leftoversStopped = childSettled?.then(async () => {
+    if (group !== "own") return;
+    let graceTimer: ReturnType<typeof setTimeoutImpl> | undefined;
+    await Promise.race([
+      bothDrained,
+      new Promise<void>((resolve) => {
+        graceTimer = setTimeoutImpl(resolve, POST_EXIT_STREAM_DRAIN_GRACE_MS);
+        if (typeof graceTimer !== "number") graceTimer.unref?.();
+      }),
+    ]);
+    clearTimeoutImpl(graceTimer);
+    if (groupRunning(proc, group)) stop(() => {});
+  });
+  const pipeOwnerGone =
+    leftoversStopped && budgetExpired ? Promise.race([leftoversStopped, budgetExpired]) : leftoversStopped;
   const readOpts = {
-    timeoutMs: streamDrainTimeoutMs,
+    timeoutMs: POST_EXIT_STREAM_DRAIN_GRACE_MS,
     setTimeoutFn: setTimeoutImpl,
     clearTimeoutFn: clearTimeoutImpl,
     ...(pipeOwnerGone ? { armTimeoutAfter: pipeOwnerGone } : {}),
@@ -715,6 +724,7 @@ export async function runManagedSubprocess(
   };
   const stdoutPromise = capture ? readStream(proc.stdout ?? null, readOpts) : Promise.resolve(EMPTY_READ);
   const stderrPromise = capture ? readStream(proc.stderr ?? null, readOpts) : Promise.resolve(EMPTY_READ);
+  drainStarted(Promise.all([stdoutPromise, stderrPromise]));
 
   // Optional stdin payload (captured mode only). Race the write/close against
   // proc.exited so a child that never drains stdin cannot pin us past the
@@ -753,6 +763,7 @@ export async function runManagedSubprocess(
     await Promise.allSettled([stdoutPromise, stderrPromise]);
     return {
       exitCode: null,
+      signal: null,
       stdout: "",
       stderr: "",
       timedOut: false,
@@ -769,6 +780,7 @@ export async function runManagedSubprocess(
   const [stdoutRead, stderrRead] = await Promise.all([stdoutPromise, stderrPromise]);
   return {
     exitCode,
+    signal: (proc.signalCode as NodeJS.Signals | null | undefined) ?? null,
     stdout: stdoutRead.text,
     stderr: stderrRead.text,
     timedOut,

@@ -13,7 +13,7 @@
  * `$AKM_STATE_DIR/runs/<task>/<run>/` unless `cwd:` or `--cwd` names a folder. Both are removed when the run succeeds.
  */
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,12 +27,12 @@ import {
 } from "../../commands/command/command-execution";
 import { buildChildEnv } from "../../commands/env/child-env";
 import { ensureWorkingFolder, resolveInjectionRefs, runProgram } from "../../commands/env/injection";
-import { parseBundleRef } from "../../core/asset/asset-ref";
+import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, TransientError, UsageError } from "../../core/errors";
 import { type LockOwnership, releaseLock } from "../../core/file-lock";
 import type { TaskLogLineInput } from "../../core/logs-db";
-import { getStateDir } from "../../core/paths";
+import { childProcessEnv } from "../../core/paths";
 import { collectInferredSecretValues, collectSensitiveValues, redactSensitiveValue } from "../../core/redaction";
 import { REF_TOKEN_RE } from "../../core/ref-token";
 import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
@@ -47,16 +47,23 @@ import { withRetries } from "../../execution/retry";
 import type { TaskHistoryRun, TaskHistoryStep } from "../../storage/repositories/task-history-repository";
 import { scriptProgram } from "../frozen-script";
 import type { ExecutionProvenanceContext } from "../model/invocation";
-import { abortOnTermination, acquireTaskRunLock, reserveTaskAttempt, taskRunLockPath } from "../run/attempt-lifecycle";
+import {
+  abortOnTermination,
+  acquireTaskRunLock,
+  reserveTaskAttempt,
+  runRecordPath,
+  runsFolder,
+  taskRunLockPath,
+} from "../run/attempt-lifecycle";
 import { resolveProvenanceContext, taskEventSource } from "../run/provenance";
 import { reconcileAbandonedExecutionState } from "../run/reconcile-abandoned";
 import { shellCommand } from "../run/run-native-task";
 import { expectLoop } from "../run/run-steps-task";
 import { appendHistory, readTaskHistory } from "../run/task-history";
-import { persistRunLog, resolveTaskLogPath, streamLines } from "../run/task-log";
+import { appendStreamLines, persistRunLog, processFailure, resolveTaskLogPath } from "../run/task-log";
 import type { RunTaskOptions, TaskRunResult } from "../run/task-result";
 import { parseTaskSource } from "../source/parse-task-source";
-import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
+import { TASK_V5_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
 import { checkTaskV5, locateTaskV5Asset, type TaskV5Bundle } from "./check";
 import type { StartedWith, TaskV5Start } from "./flags";
 import {
@@ -65,6 +72,7 @@ import {
   type TaskSourceV5Step,
   type TaskV5Options,
   taskV5StepKey,
+  taskV5StepLabel,
 } from "./source";
 
 /** A version 5 task found by `loadPreparedTask`: what `runTask` needs to run it. */
@@ -75,6 +83,8 @@ export interface PreparedTaskV5 {
   /** `tasks/<name>`, read from `bundle`. */
   readonly ref: string;
   readonly bundle: TaskV5Bundle;
+  /** The inputs the task declares that take a value: what a start's input flags are read against. */
+  readonly valueInputs: ReadonlySet<string>;
 }
 
 /** The limit of a step that has no `timeout:` on it or at the top of its task. */
@@ -94,7 +104,8 @@ interface RunRecord {
   inputs: readonly InputFlag[];
   /** The inputs as the run has them, and then each finished step's result under its name. */
   state: Record<string, unknown>;
-  steps: { name: string; status: StepStatus }[];
+  /** Each step's status and kind, and a hash of its definition when it was started: a finished step is reused only while it is unchanged. Absent on a record written before it was kept. */
+  steps: { name: string; status: StepStatus; kind?: TaskHistoryStep["kind"]; hash?: string }[];
   /** The run each step that runs a task started. */
   children: Record<string, { task: string; run: string }>;
   flags: StartedWith;
@@ -125,6 +136,7 @@ interface StepOutcome {
   value?: unknown;
   reason?: string;
   startedAt?: string;
+  agent?: NonNullable<TaskHistoryStep["agent"]>;
   attempts: number;
   lines: string[];
   dbLines: TaskLogLineInput[];
@@ -132,24 +144,23 @@ interface StepOutcome {
 
 /** A value as text: text as it is, anything else as JSON. */
 const asText = (value: unknown): string => (typeof value === "string" ? value : JSON.stringify(value));
-const stepLabel = (name: string): string => (name === TASK_V5_SINGLE_STEP ? "(only)" : name);
 
 function taskIdOf(ref: string): string {
   const { conceptId } = parseBundleRef(ref);
   return conceptId.slice(conceptId.indexOf("/") + 1);
 }
 
-function runsFolder(taskId: string): string {
-  return path.join(getStateDir(), "runs", encodeURIComponent(taskId));
+/** `[bundle//]tasks/<name>` read from `bundle`, as `bundle//tasks/<name>`: the identity of a task across bundles. */
+function qualifiedRef(bundle: TaskV5Bundle, ref: string): string {
+  return makeBundleRef(bundle.name, parseBundleRef(ref).conceptId);
 }
-const recordPath = (taskId: string, runId: string): string => path.join(runsFolder(taskId), `${runId}.state.json`);
 
 function newRunId(at: Date): string {
   return `${at.toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}`;
 }
 
 function writeRecord(record: RunRecord): void {
-  const file = recordPath(record.taskId, record.runId);
+  const file = runRecordPath(record.taskId, record.runId);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const pending = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(pending, JSON.stringify(record));
@@ -158,7 +169,7 @@ function writeRecord(record: RunRecord): void {
 
 function readRecord(taskId: string, runId: string): RunRecord | undefined {
   try {
-    return JSON.parse(fs.readFileSync(recordPath(taskId, runId), "utf8")) as RunRecord;
+    return JSON.parse(fs.readFileSync(runRecordPath(taskId, runId), "utf8")) as RunRecord;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
@@ -168,20 +179,25 @@ function readRecord(taskId: string, runId: string): RunRecord | undefined {
 /** A run that will not be resumed: the folder akm made for it and for the runs it started, and what is kept of it. */
 function discard(record: RunRecord): void {
   if (record.madeDir) fs.rmSync(record.dir, { recursive: true, force: true });
-  fs.rmSync(recordPath(record.taskId, record.runId), { force: true });
+  fs.rmSync(runRecordPath(record.taskId, record.runId), { force: true });
   for (const child of Object.values(record.children)) {
     const kept = readRecord(child.task, child.run);
     if (kept) discard(kept);
   }
 }
 
-/** The failed or interrupted runs of a task that were started directly, newest first, that can still be resumed. */
-function resumableRuns(taskId: string): RunRecord[] {
+/** The failed or interrupted runs of a task (by its bundle and id) that were started directly, newest first, that can still be resumed. */
+function resumableRuns(task: { taskId: string; ref: string }): RunRecord[] {
   const found: RunRecord[] = [];
-  for (const row of readTaskHistory({ id: taskId, limit: 500 })) {
+  for (const row of readTaskHistory({ id: task.taskId, limit: 500 })) {
     if (!row.run || row.run.parent || (row.status !== "failed" && row.status !== "interrupted")) continue;
-    const kept = readRecord(taskId, row.run.id);
-    if (kept && !found.some((earlier) => earlier.runId === kept.runId)) found.push(kept);
+    const kept = readRecord(task.taskId, row.run.id);
+    if (
+      kept &&
+      qualifiedRef(kept.bundle, kept.ref) === task.ref &&
+      !found.some((earlier) => earlier.runId === kept.runId)
+    )
+      found.push(kept);
   }
   return found;
 }
@@ -196,10 +212,10 @@ function resolveInputs(
   literals: Record<string, unknown> = {},
 ): Record<string, unknown> {
   const contract = document.inputs ?? {};
-  const given = { ...materializeInputFlags(contract, flags, TASK_INPUT_DIAGNOSTICS), ...literals };
+  const given = { ...materializeInputFlags(contract, flags, TASK_V5_INPUT_DIAGNOSTICS), ...literals };
   const defaulted = applyInputDefaults(contract, given);
   const errors = validateInputs(contract, defaulted);
-  if (errors.length > 0) throw TASK_INPUT_DIAGNOSTICS.contractViolation(errors);
+  if (errors.length > 0) throw TASK_V5_INPUT_DIAGNOSTICS.contractViolation(errors);
   const state: Record<string, unknown> = {};
   for (const name of Object.keys(contract)) state[name] = name in defaulted ? defaulted[name] : "";
   return state;
@@ -215,7 +231,10 @@ function stepInputs(
   const literals: Record<string, unknown> = {};
   for (const { name, value } of step.taskInputs ?? []) {
     const given = argument(value, state);
-    if (typeof given === "string" || typeof given === "boolean") flags.push({ name, value: given });
+    if (typeof given === "boolean") {
+      // As `--name true` binds on the command line: text for a typed input, and as it is for one that declares no type.
+      flags.push({ name, value: child.inputs?.[name]?.schema.type === undefined ? given : String(given) });
+    } else if (typeof given === "string") flags.push({ name, value: given });
     else if (typeof given === "object" && given !== null && child.inputs?.[name]?.schema.type === undefined) {
       literals[name] = given;
     } else flags.push({ name, value: JSON.stringify(given) });
@@ -259,11 +278,11 @@ export interface PreparedRunV5 {
  * (`checkTaskV5`), and, for a `--resume`, that there is a run to continue.
  */
 export async function prepareRunV5(task: PreparedTaskV5, options: RunTaskOptions): Promise<PreparedRunV5> {
-  const start = options.start?.() ?? {
+  const start = options.start?.(task.valueInputs) ?? {
     flags: {},
     resume: false,
     skipIfLocked: false,
-    inputs: options.inputFlags ?? [],
+    inputs: options.inputFlags?.(task.valueInputs) ?? [],
   };
   try {
     reconcileAbandonedExecutionState();
@@ -272,7 +291,18 @@ export async function prepareRunV5(task: PreparedTaskV5, options: RunTaskOptions
     // Settling abandoned state is housekeeping; it never prevents a run.
   }
   if (start.resume) {
-    const [resume] = resumableRuns(task.taskId);
+    const dropped = [
+      ...start.inputs.map((input) => `--${input.name}`),
+      ...Object.keys(start.flags).map((key) => `--${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`),
+    ];
+    if (dropped.length > 0) {
+      throw new UsageError(
+        `A resumed run uses the inputs and flags it was started with, so --resume does not take ${dropped.join(", ")}.`,
+        "INVALID_FLAG_VALUE",
+        "Run the task without --resume to start it again with other inputs or flags.",
+      );
+    }
+    const [resume] = resumableRuns({ taskId: task.taskId, ref: qualifiedRef(task.bundle, task.ref) });
     if (!resume) throw noRunToResume(task.taskId);
     const document = await checkTaskV5({
       ref: task.ref,
@@ -295,7 +325,10 @@ export async function runPreparedV5(prepared: PreparedRunV5, options: RunTaskOpt
   const flags = prepared.resume?.flags ?? start.flags;
   const lock =
     document.lock === true
-      ? acquireTaskRunLock(task.taskId, { skip: provenance.scheduled || start.skipIfLocked, at: now() })
+      ? acquireTaskRunLock(task.taskId, qualifiedRef(task.bundle, task.ref), {
+          skip: provenance.scheduled || start.skipIfLocked,
+          at: now(),
+        })
       : undefined;
   if (lock && "skipped" in lock) return lock.skipped;
   const termination = abortOnTermination();
@@ -366,7 +399,8 @@ function lockRun(record: RunRecord): LockOwnership {
 /** When a run of a task succeeds, the failed runs before it are not resumed: what is kept of them goes too. */
 function discardEarlierFailedRuns(record: RunRecord): void {
   if (record.parent) return;
-  for (const earlier of resumableRuns(record.taskId)) if (earlier.runId !== record.runId) discard(earlier);
+  for (const earlier of resumableRuns({ taskId: record.taskId, ref: qualifiedRef(record.bundle, record.ref) }))
+    if (earlier.runId !== record.runId) discard(earlier);
 }
 
 /** A new run: its inputs, and a working folder of its own unless `--cwd` or the task's `cwd:` names one. */
@@ -400,7 +434,12 @@ function newRecord(
     ...(parent ? { parent: { task: parent.taskId, run: parent.runId, step: stepName as string } } : {}),
     inputs,
     state,
-    steps: document.steps.map((step) => ({ name: step.name, status: "pending" as StepStatus })),
+    steps: document.steps.map((step) => ({
+      name: step.name,
+      status: "pending" as StepStatus,
+      kind: taskV5StepKey(step),
+      hash: stepHash(step),
+    })),
     children: {},
     flags,
     dir,
@@ -412,7 +451,11 @@ function newRecord(
 
 // ── Running ─────────────────────────────────────────────────────────────────
 
-/** A run is resumed only when its task has the steps it had: what each recorded step finished belongs to that step. */
+function stepHash(step: TaskSourceV5Step): string {
+  return createHash("sha256").update(JSON.stringify(step)).digest("hex");
+}
+
+/** A run is resumed only when its task has the steps it had, and each step it finished is as it was: what a recorded step finished belongs to that step. */
 function assertSameSteps(record: RunRecord, document: TaskSourceV5Document): void {
   const recorded = record.steps.map((step) => step.name);
   if (
@@ -421,6 +464,16 @@ function assertSameSteps(record: RunRecord, document: TaskSourceV5Document): voi
   ) {
     throw new UsageError(
       `Task ${JSON.stringify(record.taskId)} changed its steps since the failed run. Run it without --resume.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  const changed = document.steps.find((step, index) => {
+    const kept = record.steps[index] as RunRecord["steps"][number];
+    return kept.status === "completed" && kept.hash !== undefined && kept.hash !== stepHash(step);
+  });
+  if (changed) {
+    throw new UsageError(
+      `Task ${JSON.stringify(record.taskId)} changed step ${JSON.stringify(taskV5StepLabel(changed.name))}, which the failed run had finished. Run it without --resume.`,
       "INVALID_FLAG_VALUE",
     );
   }
@@ -447,7 +500,7 @@ async function runAttempt(
   for (const step of document.steps) {
     const kept = record.steps.find((recorded) => recorded.name === step.name) as { name: string; status: StepStatus };
     const kind = taskV5StepKey(step);
-    const name = stepLabel(step.name);
+    const name = taskV5StepLabel(step.name);
     if (kept.status === "completed") {
       result = record.state[step.name];
       steps.push({ name, kind, status: "reused", durationMs: 0, attempts: 0 });
@@ -462,8 +515,11 @@ async function runAttempt(
     const durationMs = Math.max(0, context.now().getTime() - begun.getTime());
     const reason = outcome.ok ? undefined : (scrub(context, outcome.reason ?? "failed") as string);
     const header = `[akm task] step=${name} kind=${kind} attempts=${outcome.attempts} ok=${outcome.ok}`;
-    lines.push(header, ...outcome.lines);
-    dbLines.push({ level: outcome.ok ? "info" : "error", line: header }, ...outcome.dbLines);
+    // Loops, not spreads: a step can print more lines than a call accepts as arguments.
+    lines.push(header);
+    for (const line of outcome.lines) lines.push(line);
+    dbLines.push({ level: outcome.ok ? "info" : "error", line: header });
+    for (const row of outcome.dbLines) dbLines.push(row);
     steps.push({
       name,
       kind,
@@ -472,6 +528,7 @@ async function runAttempt(
       attempts: outcome.attempts,
       ...(reason ? { reason } : {}),
       ...(outcome.startedAt ? { startedAt: outcome.startedAt } : {}),
+      ...(outcome.agent ? { agent: outcome.agent } : {}),
     });
     if (outcome.ok) {
       result = outcome.value ?? "";
@@ -500,6 +557,7 @@ async function runAttempt(
     durationMs: finishedAt.getTime() - startedAt.getTime(),
     log: logPath,
     target: { kind: "steps" },
+    bundle: record.bundle.name,
     ...(failure ? { detail: { reason: "step_failed", error: `${failure.name}: ${failure.reason}` } } : { result }),
     steps,
     run: { id: record.runId, ...(record.parent ? { parent: record.parent } : {}) },
@@ -526,11 +584,9 @@ async function runStep(
   const retries = option(document, step, "max-retries") ?? record.flags.maxRetries ?? 0;
   const lines: string[] = [];
   const dbLines: TaskLogLineInput[] = [];
-  let attempts = 0;
   const last = await withRetries(
     retries,
-    async (): Promise<StepOutcome> => {
-      attempts += 1;
+    async (attempts): Promise<StepOutcome> => {
       try {
         const remaining = limitOf(until, document, step) - Date.now();
         if (remaining <= 0) return { ok: false, reason: "timeout", attempts, lines, dbLines };
@@ -556,7 +612,7 @@ interface Sink {
   dbLines: TaskLogLineInput[];
 }
 
-type Done = Pick<StepOutcome, "ok" | "value" | "reason" | "startedAt">;
+type Done = Pick<StepOutcome, "ok" | "value" | "reason" | "startedAt" | "agent">;
 
 async function doStep(
   context: Context,
@@ -632,27 +688,22 @@ async function runProcessStep(
     sink.lines.push(`exit_code=${result.exitCode}`);
     if (stdout) {
       sink.lines.push("--- stdout ---", stdout);
-      sink.dbLines.push(...streamLines(stdout, "stdout", "info"));
+      appendStreamLines(sink.dbLines, stdout, "stdout", "info");
     }
     if (stderr) {
       sink.lines.push("--- stderr ---", stderr);
-      sink.dbLines.push(...streamLines(stderr, "stderr", "error"));
+      appendStreamLines(sink.dbLines, stderr, "stderr", "error");
     }
-    if (result.aborted) return { ok: false, reason: "aborted" };
-    if (result.timedOut) return { ok: false, reason: "timeout" };
-    if (result.exitCode !== 0) return { ok: false, reason: withLastErrorLine(`exit code ${result.exitCode}`, stderr) };
+    if (result.aborted || result.timedOut || result.exitCode !== 0) {
+      const { reason, error } = processFailure({ ...result, stderr });
+      return { ok: false, reason: reason === "non_zero_exit" ? `${reason}: ${error}` : reason };
+    }
     const incomplete = streamCaptureFailure(result.stdoutRead, result.stderrRead);
     if (incomplete) return { ok: false, reason: incomplete };
     return { ok: true, value: stdout };
   } finally {
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
-}
-
-/** A failed step's reason, with the last line its program wrote to standard error (already scrubbed), which says why. */
-function withLastErrorLine(reason: string, stderr: string): string {
-  const line = stderr.trimEnd().split("\n").at(-1)?.trim();
-  return line ? `${reason}: ${line.slice(0, 300)}` : reason;
 }
 
 /** A prompt, an agent or a prompt asset: the agent's reply is the result, held to `expect:` when the step has it. */
@@ -699,33 +750,42 @@ async function runAgentStep(
                 }
               : {},
           );
+    const agent = {
+      engine: reply.engine,
+      ...(reply.ok || reply.reason === undefined ? {} : { reason: reply.reason }),
+    };
     sink.lines.push(`engine=${reply.engine} ok=${reply.ok} exit_code=${reply.exitCode ?? "null"}`);
     const stdout = scrub(context, reply.stdout) as string;
     const stderr = scrub(context, reply.stderr) as string;
     if (stdout) {
       sink.lines.push("--- agent stdout ---", stdout);
-      sink.dbLines.push(...streamLines(stdout, "stdout", "info"));
+      appendStreamLines(sink.dbLines, stdout, "stdout", "info");
     }
     if (stderr) {
       sink.lines.push("--- agent stderr ---", stderr);
-      sink.dbLines.push(...streamLines(stderr, "stderr", "error"));
+      appendStreamLines(sink.dbLines, stderr, "stderr", "error");
     }
     if (!reply.ok) {
       return {
         ok: false,
-        failure: withLastErrorLine(reply.reason ?? reply.error ?? "dispatch failed", stderr),
+        failure: [reply.reason, reply.error].filter(Boolean).join(": ") || "dispatch failed",
+        agent,
       } as const;
     }
-    return { ok: true, raw: reply.stdout } as const;
+    return { ok: true, raw: reply.stdout, agent } as const;
   };
   if (!step.expect) {
     const reply = await dispatch();
-    return reply.ok ? { ok: true, value: scrub(context, reply.raw) } : { ok: false, reason: reply.failure };
+    return {
+      ...(reply.ok ? { ok: true, value: scrub(context, reply.raw) } : { ok: false, reason: reply.failure }),
+      agent: reply.agent,
+    };
   }
-  const loop = await expectLoop(step.expect, dispatch);
-  if (loop.ok) return { ok: true, value: scrub(context, loop.value) };
-  if ("errors" in loop) return { ok: false, reason: `reply_check_failed: ${loop.errors.join("; ")}` };
-  return { ok: false, reason: loop.failure };
+  const loop = await expectLoop<{ agent: NonNullable<Done["agent"]> }>(step.expect, dispatch);
+  const { agent } = loop;
+  if (loop.ok) return { ok: true, value: scrub(context, loop.value), agent };
+  if ("errors" in loop) return { ok: false, reason: `reply_check_failed: ${loop.errors.join("; ")}`, agent };
+  return { ok: false, reason: loop.failure, agent };
 }
 
 async function dispatchPromptAsset(
@@ -762,7 +822,10 @@ async function runTaskStep(
   const child = parseDocument(found.file);
   const taskId = taskIdOf(ref);
   const limit = limitOf(until, document, step);
-  const lock = child.lock === true ? tryAcquireRunLock(taskRunLockPath(taskId), { label: "task" }) : undefined;
+  const lock =
+    child.lock === true
+      ? tryAcquireRunLock(taskRunLockPath(qualifiedRef(found.bundle, ref)), { label: "task" })
+      : undefined;
   if (lock?.state === "held") throw new Error(`task ${ref} is still running, and it runs one at a time`);
   try {
     const kept = record.children[step.name];
@@ -799,8 +862,10 @@ async function runTaskStep(
 // ── The environment and secrets ─────────────────────────────────────────────
 
 /**
- * A step's environment: what `--clean` keeps, akm's own location variables, what `inherit:` and `--inherit` name; then
- * the task's `env:` and `secret:`, then the step's, then what the run was started with, each over the one before.
+ * A step's environment. A script or `exec:` step starts with what `--clean` keeps, akm's own location variables, and
+ * what `inherit:` and `--inherit` name. An agent step starts with akm's environment as it is, which `inherit:` has
+ * nothing to add to. Then the task's `env:` and `secret:`, then the step's, then what the run was started with, each
+ * over the one before.
  */
 function environmentOf(
   context: Context,
@@ -812,8 +877,11 @@ function environmentOf(
   const cached = context.environments.get(key);
   if (cached) return cached;
   const inherit = [...(flags.inherit ?? []), ...(document.options.inherit ?? []), ...(step.options.inherit ?? [])];
+  // An agent step runs the user's harness as the user would: akm's environment as it is, with the directories this akm resolved.
+  const startsClean = step.kind === "exec" || step.kind === "scripts";
   const env: Record<string, string> = {};
-  for (const [name, value] of Object.entries(buildChildEnv(context.host, { clean: true, inherit }))) {
+  const base = startsClean ? buildChildEnv(context.host, { clean: true, inherit }) : childProcessEnv(context.host);
+  for (const [name, value] of Object.entries(base)) {
     if (value !== undefined) env[name] = value;
   }
   env.AKM_EVENT_SOURCE = taskEventSource(context.host, context.provenance);

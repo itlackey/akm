@@ -122,6 +122,14 @@ export interface SetupSummary {
    * `blocked: <reason>` when they do not, `skipped` for an offline run (`--no-probe`).
    */
   semanticAssets?: string;
+  /** Bundle entries the saved config no longer holds. Their directories are untouched; `akm bundle add` registers one again. */
+  removedBundles: RemovedBundle[];
+}
+
+interface RemovedBundle {
+  id: string;
+  /** The bundle's path, or its url or package for a bundle that has none. */
+  path: string;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -251,6 +259,13 @@ async function saveSetupConfig<T>(
     options,
   );
   return { config: result.config, precommit: result.precommit };
+}
+
+/** The bundle entries `before` held that `saved` no longer does: what a setup save removed. */
+function removedBundles(before: AkmConfig, saved: AkmConfig): RemovedBundle[] {
+  return Object.entries(before.bundles ?? {})
+    .filter(([id]) => !(id in (saved.bundles ?? {})))
+    .map(([id, entry]) => ({ id, path: entry.path ?? entry.git ?? entry.website?.url ?? entry.npm ?? "" }));
 }
 
 /** Registry-managed bundles are not editable through setup's source picker. */
@@ -706,6 +721,13 @@ export async function runSetupWizard(opts?: {
     { persistTopLevelKeys: ["semanticSearchMode"] },
   );
 
+  const dropped = removedBundles(current, savedConfig);
+  if (dropped.length > 0) {
+    p.log.warn(
+      `Removed from the configuration (their directories are untouched): ${dropped.map((b) => `${b.id} (${b.path})`).join(", ")}`,
+    );
+  }
+
   // After config persistence, the task step reviews the plan and asks one
   // explicit confirmation before changing task files or scheduler state.
   // Non-interactive setup paths never reach this interactive-only step.
@@ -837,6 +859,7 @@ export async function runSetupWithDefaults(opts: {
     written: true,
     fields: Object.keys(finalConfig).filter((k) => finalConfig[k as keyof AkmConfig] !== undefined),
     runs: describeRuns(finalConfig),
+    removedBundles: removedBundles(current, savedConfig),
     ...(semanticAssets ? { semanticAssets } : {}),
   };
 }
@@ -977,6 +1000,7 @@ export async function runSetupFromConfig(opts: {
     written: true,
     fields: Object.keys(incoming).filter((k) => (incoming as Record<string, unknown>)[k] !== undefined),
     runs: describeRuns(finalizedMerged),
+    removedBundles: removedBundles(current, savedConfig),
     ...(semanticAssets ? { semanticAssets } : {}),
   };
 }

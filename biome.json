@@ -21,8 +21,7 @@
     "includes": [
       "src/**",
       "tests/**",
-      "scripts/*.ts",
-      "scripts/quality/*.ts",
+      "scripts/**",
       "!src/vendor/**",
       "!tests/fixtures/goldens/**/*.json",
       "!tests/fixtures/format-family-goldens/**/*.json",

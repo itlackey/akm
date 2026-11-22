@@ -6,6 +6,8 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { GLOBAL_OUTPUT_ARGS } from "../../../src/cli/shared";
+import { runAssetCommand } from "../../../src/commands/run-cli";
 import { readEvents } from "../../../src/core/events";
 import { _resetWarnOnceForTests } from "../../../src/core/warn";
 import { akmIndex } from "../../../src/indexer/indexer";
@@ -187,6 +189,28 @@ describe("additive akm run", () => {
     expect(invalid.stderr).toContain("missing");
   });
 
+  test("a task found in another bundle runs from that bundle, not from a same-named task in the default one", async () => {
+    const other = path.join(storage.root, "other");
+    write("tasks/only-there.yml", "version: 4\nrun: printf from-other\nshell: sh\n", other);
+    write("tasks/both.yml", "version: 4\nrun: printf from-other\nshell: sh\n", other);
+    write("tasks/both.yml", "version: 4\nrun: printf from-fixture\nshell: sh\n");
+    writeSandboxConfig({
+      bundles: {
+        fixture: { path: storage.stashDir },
+        other: { path: other, components: { main: { root: ".", adapter: "akm" } } },
+      },
+    });
+    const only = await runCliCapture(["run", "tasks/only-there"]);
+    expect(only.code, only.stderr).toBe(0);
+    expect(fs.readFileSync(JSON.parse(only.stdout).result.log, "utf8")).toContain("from-other");
+    const both = await runCliCapture(["run", "tasks/both"]);
+    expect(both.code, both.stderr).toBe(0);
+    expect(fs.readFileSync(JSON.parse(both.stdout).result.log, "utf8")).toContain("from-fixture");
+    const named = await runCliCapture(["run", "other//tasks/both"]);
+    expect(named.code, named.stderr).toBe(0);
+    expect(fs.readFileSync(JSON.parse(named.stdout).result.log, "utf8")).toContain("from-other");
+  });
+
   test("workflow parameters, limits, frozen ID continuation and existing lifecycle operations remain available", async () => {
     const run = await runCliCapture([
       "run",
@@ -297,6 +321,9 @@ describe("additive akm run", () => {
     ["agents/reviewer", "--arguments", "ignored"],
     ["commands/review", "extra"],
     ["commands/review", "--", "--child-flag"],
+    ["commands/review", "--arguments", "x", "--"],
+    ["agents/reviewer", "--prompt", "x", "--harness", "reviewer", "--"],
+    ["agents/reviewer", "--prompt", "x", "--harness", "reviewer", "--", "extra"],
     ["agents/reviewer", "--prompt", "x", "--prompt-stdin"],
     ["workflows/check", "--new"],
     ["workflows/check", "--", "extra"],
@@ -364,6 +391,27 @@ describe("akm run scripts/<file>", () => {
     const result = await runCliCapture(["run", "scripts/args.sh", ...tail]);
     expect(result.code, result.stderr).toBe(0);
     expect(lines()).toEqual(tail);
+  });
+
+  test("every flag akm knows reaches the script as given when it comes after the ref", async () => {
+    type Definition = { type: string; alias?: string };
+    const known: Record<string, Definition> = {
+      ...(runAssetCommand.args as Record<string, Definition>),
+      ...GLOBAL_OUTPUT_ARGS,
+    };
+    const tails: string[][] = [["--help"], ["-h"], ["--version"], ["--unknown-flag", "v"]];
+    for (const [name, definition] of Object.entries(known)) {
+      if (definition.type === "positional") continue;
+      const value = definition.type === "boolean" ? [] : ["v"];
+      tails.push([`--${name}`, ...value], [`--${name}=v`]);
+      if (definition.alias) tails.push([`-${definition.alias}`, ...value]);
+    }
+    expect(tails.length).toBeGreaterThan(30);
+    for (const tail of tails) {
+      const result = await runCliCapture(["run", "scripts/args.sh", ...tail]);
+      expect(result.code, `${tail.join(" ")}: ${result.stderr}`).toBe(0);
+      expect(lines(), tail.join(" ")).toEqual(tail);
+    }
   });
 
   test("a script's tail changes nothing akm itself prints: -q after the ref does not hide a warning", async () => {

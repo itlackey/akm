@@ -29,7 +29,8 @@ export interface WindowResult {
 }
 
 export interface DeltaEntry {
-  from: number;
-  to: number;
+  /** `null`: unknown in that window. */
+  from: number | null;
+  to: number | null;
   pctChange: number | string;
 }

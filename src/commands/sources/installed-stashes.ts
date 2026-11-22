@@ -34,12 +34,13 @@ import {
 } from "../../indexer/index-build";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import type { IndexOptions, IndexResponse } from "../../indexer/indexer";
+import { readSemanticSearchState, type SemanticSearchState } from "../../indexer/walk/index-context";
 import type { LockfileEntry } from "../../integrations/lockfile";
 import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
 import type { InstalledBundle, InstallKind } from "../../registry/types";
 import { getCachePaths, parseGitRepoUrl, runGit, syncMirroredRepo } from "../../sources/providers/git";
-import { replaceDirectory, UPDATE_REFUSAL_HINT } from "../../sources/providers/git-install";
+import { assertCheckoutHasNoLocalWork, LOCAL_WORK_HINT, replaceDirectory } from "../../sources/providers/git-install";
 import type { SourceLockData } from "../../sources/providers/install-types";
 import { installRevisionDir, isDirectory } from "../../sources/providers/provider-utils";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
@@ -63,7 +64,7 @@ import type { Database } from "../../storage/database";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
 import { removeInstalledRegistryEntry } from "./source-add";
-import { removeStash } from "./source-manage";
+import { removeStash, resolveBundleKey } from "./source-manage";
 
 /**
  * A registry-managed source: its `bundles` entry (desired locator) joined with
@@ -287,6 +288,22 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
   };
 }
 
+/**
+ * Removing a git bundle deletes or abandons its checkout: refuse while the checkout holds work that exists
+ * nowhere else. The person pushes, moves or discards it, then removes again.
+ */
+function assertRemovableCheckout(repoDir: string | undefined): void {
+  if (repoDir) assertCheckoutHasNoLocalWork(repoDir, `Git bundle checkout at ${repoDir}`);
+}
+
+/** The git checkout holding a managed install's content, when it is one (a read-only snapshot keeps no `.git`). */
+function managedCheckoutDir(managed: ManagedInstall): string | undefined {
+  if (!managed.localRoot || !isDirectory(managed.localRoot)) return undefined;
+  const top = runGit(["-C", managed.localRoot, "rev-parse", "--show-toplevel"]);
+  const repoDir = top.status === 0 ? top.stdout.trim() : "";
+  return repoDir && isWithin(repoDir, getRegistryCacheDir()) ? repoDir : undefined;
+}
+
 export async function akmRemove(input: { target: string; stashDir?: string }): Promise<RemoveResponse> {
   const target = input.target.trim();
   if (!target)
@@ -300,6 +317,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
   // Registry-managed installs (lock-backed bundles) first.
   const managed = resolveManagedTarget(config, target);
   if (managed) {
+    assertRemovableCheckout(managedCheckoutDir(managed));
     const updatedConfig = await removeInstalledRegistryEntry(managed.installId);
     if (managed.source !== "local" && managed.localRoot) {
       cleanupDirectoryBestEffort(managed.localRoot, "remove");
@@ -332,6 +350,9 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
   }
 
   // Plain sources (filesystem/git/website bundles) via the bundle-map remover.
+  const plainKey = resolveBundleKey(config, target);
+  const plainGitUrl = plainKey ? config.bundles?.[plainKey]?.git : undefined;
+  if (plainGitUrl) assertRemovableCheckout(getCachePaths(parseGitRepoUrl(plainGitUrl).canonicalUrl).repoDir);
   const stashResult = removeStash(target);
   if (!stashResult.removed || !stashResult.entry) {
     throw new NotFoundError(`No matching source for target: ${target}`, "SOURCE_NOT_FOUND");
@@ -403,6 +424,16 @@ function readCurrentIndexSummary(): UpdateIndexSummary {
   }
 }
 
+/** A pass that ran reports its own verified status; otherwise the index's recorded state is the answer. */
+function semanticFields(
+  verification: IndexResponse["verification"] | undefined,
+  config: AkmConfig,
+): { semanticStatus: SemanticSearchState["status"]; semanticReason?: string } {
+  if (verification) return { semanticStatus: verification.semanticStatus };
+  const recorded = readSemanticSearchState(getDbPath(), config.semanticSearchMode);
+  return { semanticStatus: recorded.status, ...(recorded.reason ? { semanticReason: recorded.reason } : {}) };
+}
+
 /** Build a standard UpdateResponse summary block from a committed or unchanged index generation. */
 function buildUpdateResponse(
   stashDir: string,
@@ -436,13 +467,7 @@ function buildUpdateResponse(
           directoriesScanned: index.directoriesScanned,
           directoriesSkipped: index.directoriesSkipped,
           ...(index.scanComplete !== undefined ? { scanComplete: index.scanComplete } : {}),
-          // A real embedding pass (`akmIndex`/`runEmbeddingPass`) reports its own
-          // verified `semanticStatus`. When no pass ran this update (the
-          // no-op/nothing-configured fallback) the only two facts known without
-          // fabricating a verification are whether semantic search is off at all
-          // or, if not, that its state is simply unverified this run.
-          semanticStatus:
-            index.verification?.semanticStatus ?? (finalConfig.semanticSearchMode === "off" ? "disabled" : "pending"),
+          ...semanticFields(index.verification, finalConfig),
         },
   };
 }
@@ -547,10 +572,10 @@ function fastForwardCheckout(
     );
   }
   if (merge.status !== 0) {
-    throw new UsageError(
+    throw new ConfigError(
       `Writable Git install at ${liveRepo} cannot fast-forward without overwriting local work; local work was preserved. ${merge.stderr.trim()}`,
-      "INVALID_FLAG_VALUE",
-      UPDATE_REFUSAL_HINT,
+      "SOURCE_HAS_LOCAL_WORK",
+      LOCAL_WORK_HINT,
     );
   }
 }
@@ -665,6 +690,7 @@ async function stageManagedUpdate(
         force,
         writable: true,
         writableRoot: stagedRoot,
+        displayRoot: managed.localRoot,
         allowLocalChanges: true,
         writableRequiredRoots: managed.requiredRoots.map((root) =>
           path.join(stagedRoot, path.relative(managed.localRoot, root)),
@@ -684,10 +710,6 @@ async function stageManagedUpdate(
       };
     } catch (error) {
       cleanupDirectoryBestEffort(stagingParent, "bundle update");
-      // Report the configured bundle path, not the throwaway staging copy.
-      if (error instanceof UsageError) {
-        error.message = error.message.replaceAll(stagedRepo, liveRepo);
-      }
       throw error;
     }
   }
@@ -700,6 +722,10 @@ async function stageManagedUpdate(
       staged: { publish() {}, cleanup() {} },
     };
   }
+
+  // A read-only update moves the install off a checkout that is not writable any more; the checkout is
+  // abandoned there, so it must hold no local work.
+  assertRemovableCheckout(managedCheckoutDir(managed));
 
   const cacheRoot = getRegistryCacheDir();
   const stagingParent = createStagingParent(cacheRoot);
@@ -742,6 +768,14 @@ async function syncGitPlainSource(
   const component = bundleComponent(config, id);
   const canonicalUrl = parseGitRepoUrl(gitSource.url).canonicalUrl;
   const livePaths = getCachePaths(canonicalUrl);
+  // A read-only refresh replaces the live directory; a checkout there is replaced only without local work.
+  // Checked before the fetch, and again right before the replacement, since work can appear in between.
+  const assertLiveCheckoutHasNoWork = () => {
+    if (!component.writable) {
+      assertCheckoutHasNoLocalWork(livePaths.repoDir, `Git source checkout at ${livePaths.repoDir}`);
+    }
+  };
+  assertLiveCheckoutHasNoWork();
   const stagingParent = createStagingParent(path.dirname(livePaths.rootDir));
   try {
     const stagedPaths = getCachePaths(canonicalUrl, stagingParent);
@@ -754,13 +788,17 @@ async function syncGitPlainSource(
       force: true,
       writable: component.writable,
       cacheRootDir: stagingParent,
+      displayRoot: livePaths.repoDir,
       ...(gitSource.credential
         ? { credential: resolveSecret(gitSource.credential, storeSecretResolver.resolveSecret) }
         : {}),
     });
     const index = await publishAndIndex(stashDir, () => {
       if (liveCheckout) fastForwardCheckout(livePaths.repoDir, stagedPaths.repoDir, expectedUpstream);
-      else replaceDirectory(stagedPaths.rootDir, livePaths.rootDir);
+      else {
+        assertLiveCheckoutHasNoWork();
+        replaceDirectory(stagedPaths.rootDir, livePaths.rootDir);
+      }
     });
     return { item: { id, kind: "git", ref }, index };
   } finally {
@@ -885,6 +923,8 @@ async function updateManagedInstall(
 
   const { synced, staged } = await stageManagedUpdate(managed, force);
   try {
+    // A check that moved nothing is not an install: the last real install time stays.
+    const installedAt = staged.unchanged && managed.installedAt ? managed.installedAt : synced.syncedAt;
     const installedEntry: InstalledBundle = {
       id: managed.installId,
       // Preserve the original source classification. syncFromRef() re-derives the
@@ -897,7 +937,7 @@ async function updateManagedInstall(
       resolvedRevision: synced.resolvedRevision,
       stashRoot: synced.contentDir,
       cacheDir: synced.cacheDir,
-      installedAt: synced.syncedAt,
+      installedAt,
       writable: synced.writable ?? managed.writable,
     };
     const movedRoot =
@@ -927,7 +967,7 @@ async function updateManagedInstall(
             resolvedRevision: synced.resolvedRevision,
             integrity: synced.integrity ?? (synced.source === "local" ? "local" : undefined),
             localRoot: synced.contentDir,
-            installedAt: synced.syncedAt,
+            installedAt,
           });
         });
 

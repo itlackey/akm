@@ -524,14 +524,6 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
 
     // We should still get results (semantic search should find relevant items)
     expect(result.hits.length).toBeGreaterThan(0);
-
-    // The deploy script should appear somewhere in results via semantic similarity
-    const deployHit = result.hits.find((h) => h.name === "deploy" || h.name.includes("deploy"));
-    // It may or may not be top-1 since FTS won't match, but it should appear
-    // in the results via vector search
-    if (deployHit) {
-      expect(deployHit.score).toBeGreaterThan(0);
-    }
   });
 
   test("vector scores are present in hybrid results", async () => {

@@ -8,7 +8,7 @@
  * These tests MUST spawn a real Bun subprocess: the default `secret set`
  * reads the value from process.stdin, and the in-process harness
  * (runCliCapture) has no way to feed stdin. Everything else about the
- * secret surface is covered in-process in tests/secret.test.ts.
+ * secret surface is covered in-process in tests/integration/secret.test.ts.
  */
 
 import { afterAll, describe, expect, test } from "bun:test";

@@ -36,7 +36,7 @@ import { loadConfig } from "../../core/config/config";
 import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { openStateDatabase } from "../../core/state-db";
-import { warn, warnVerbose } from "../../core/warn";
+import { info, warn, warnVerbose } from "../../core/warn";
 import { type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-source";
 import { type NoticeSink, noticeSet } from "../../execution/notices";
 import { deriveInstallations } from "../../indexer/installations";
@@ -690,7 +690,7 @@ async function judgeConsolidationChunks(args: {
       }
     }
     const chunk = chunks[chunkIdx] as MemoryEntry[];
-    warn(`[consolidate] chunk ${chunkIdx + 1}/${chunks.length} (${chunk.length} memories) …`);
+    info(`[consolidate] chunk ${chunkIdx + 1}/${chunks.length} (${chunk.length} memories) …`);
     processed++;
     if (!llmRunner) {
       failChunk("No LLM configured for consolidation", chunk);
@@ -891,7 +891,7 @@ async function consolidate(
     durationMs: Date.now() - startMs,
   });
   if (opts.dryRun) return makeConsolidateResult({ ...summary(), dryRun: true, previewOnly: true, pairPass });
-  warn(`[consolidate] plan: ${plan.allOps.length} operation(s)`);
+  info(`[consolidate] plan: ${plan.allOps.length} operation(s)`);
   const ctx: PromoteContext = {
     config,
     stashDir,

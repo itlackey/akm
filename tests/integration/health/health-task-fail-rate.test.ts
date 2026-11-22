@@ -90,10 +90,11 @@ describe("task-fail-rate advisory (C2)", () => {
     expect(advisory.status).toBe("pass");
   });
 
-  test("stays pass when no cron tasks ran in the window", async () => {
+  test("is unknown (idle), not pass, when no task ran in the window", async () => {
     const result = await akmHealth({ since: "7d" });
     const advisory = findCheck(result.advisories, "task-fail-rate");
-    expect(advisory.status).toBe("pass");
+    expect(advisory.status).toBe("unknown");
+    expect(advisory.reason).toBe("idle");
   });
 });
 
@@ -195,7 +196,7 @@ function seedCommandFailure(taskId: string, reason: string): void {
 
 // #943: `task-fail-rate`'s evidence now carries a `detail.reason` breakdown
 // for command-task (agent/LLM) failures, and the warn message names the
-// dominant reason (>= 50% of counted command-task failures) so an operator
+// dominant reason (>= 50% of counted agent dispatch failures) so an operator
 // sees "timeout-dominant" from data rather than log grep.
 describe("task-fail-rate agentFailureReasonCounts breakdown (#943)", () => {
   test("evidence carries reason counts and the warn message names the dominant reason", async () => {
@@ -212,7 +213,7 @@ describe("task-fail-rate agentFailureReasonCounts breakdown (#943)", () => {
     const advisory = findCheck(result.advisories, "task-fail-rate");
     expect(advisory.status).toBe("warn");
     expect(advisory.evidence?.agentFailureReasonCounts).toEqual({ timeout: 3, non_zero_exit: 1 });
-    expect(advisory.message).toContain("(timeout-dominant: 3/4 command-task failures)");
+    expect(advisory.message).toContain("(timeout-dominant: 3/4 agent dispatch failures)");
   });
 
   test("no dominant suffix when the warning is driven by non-command failures", async () => {

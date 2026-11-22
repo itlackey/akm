@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isWithin } from "../../core/common";
-import { UsageError } from "../../core/errors";
+import { ConfigError, UsageError } from "../../core/errors";
 import { getRegistryCacheDir } from "../../core/paths";
 import {
   gitCredentialEnvironment,
@@ -22,14 +22,17 @@ import type { SourceLockData, SyncOptions } from "./install-types";
 import { buildInstallCacheDir, detectStashRoot, isDirectory } from "./provider-utils";
 
 const DIRTY_PATHS_SHOWN = 5;
-export const UPDATE_REFUSAL_HINT =
-  "Local work was preserved. Commit, move or discard the paths or commits named above in the checkout, then run `akm bundle update` again.";
+export const LOCAL_WORK_HINT =
+  "Local work was preserved. Commit, move or discard the paths or commits named above in the checkout, then run the command again.";
 
 /**
- * Throw a UsageError unless the worktree is clean. A failing `git status` is reported as a
- * git error; otherwise the refusal names the first few changed paths.
+ * The one guard for a git checkout that akm is about to replace or delete. It refuses, naming what it found,
+ * when the checkout holds uncommitted paths or commits that are not on `upstream` (`false` skips the commit
+ * check, for a fast-forward that keeps them; omitted compares against the checkout's own upstream, else every
+ * remote). The refusal is an environment error: the work is the person's, and only they can move it.
+ * `subject` names the live checkout in the message; `repoDir` is the directory inspected.
  */
-export function assertCleanWorktree(repoDir: string, subject: string, refusal: string): void {
+export function assertNoLocalWork(repoDir: string, subject: string, upstream?: string | false): void {
   const status = runGit(["-C", repoDir, "-c", "core.quotePath=false", "status", "--porcelain"]);
   if (status.error || status.status !== 0) {
     throw new UsageError(
@@ -40,9 +43,50 @@ export function assertCleanWorktree(repoDir: string, subject: string, refusal: s
     .split("\n")
     .filter((line) => line.trim())
     .map((line) => line.slice(3));
-  if (paths.length === 0) return;
-  const more = paths.length > DIRTY_PATHS_SHOWN ? ` (and ${paths.length - DIRTY_PATHS_SHOWN} more)` : "";
-  throw new UsageError(`${subject} ${refusal} Changed: ${paths.slice(0, DIRTY_PATHS_SHOWN).join(", ")}${more}.`);
+  const found: string[] = [];
+  if (paths.length > 0) found.push(`uncommitted changes: ${listShown(paths)}`);
+  if (upstream !== false) {
+    const unpushed = unpushedCommits(repoDir, upstream);
+    if (unpushed.commits.length > 0) found.push(`commits not on ${unpushed.against}: ${listShown(unpushed.commits)}`);
+  }
+  if (found.length === 0) return;
+  throw new ConfigError(
+    `${subject} holds local work that would be lost; it has ${found.join("; it has ")}.`,
+    "SOURCE_HAS_LOCAL_WORK",
+    LOCAL_WORK_HINT,
+  );
+}
+
+/** {@link assertNoLocalWork} for `dir` when it is a git checkout; a directory with no `.git` holds none. */
+export function assertCheckoutHasNoLocalWork(dir: string, subject: string): void {
+  if (fs.existsSync(path.join(dir, ".git"))) assertNoLocalWork(dir, subject);
+}
+
+function listShown(items: string[]): string {
+  const more = items.length > DIRTY_PATHS_SHOWN ? ` (and ${items.length - DIRTY_PATHS_SHOWN} more)` : "";
+  return `${items.slice(0, DIRTY_PATHS_SHOWN).join(", ")}${more}`;
+}
+
+function unpushedCommits(repoDir: string, upstream?: string): { against: string; commits: string[] } {
+  let against = upstream;
+  if (!against) {
+    const own = runGit(["-C", repoDir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+    against = own.status === 0 && own.stdout.trim() ? own.stdout.trim() : undefined;
+  }
+  const range = against ? [`${against}..HEAD`] : ["HEAD", "--not", "--remotes"];
+  const log = runGit(["-C", repoDir, "log", "--oneline", ...range]);
+  if (log.error || log.status !== 0) {
+    // An unborn HEAD has no commits to lose; any other failure must not read as "no local work".
+    const head = runGit(["-C", repoDir, "rev-parse", "--verify", "-q", "HEAD"]);
+    if (head.status !== 0) return { against: against ?? "any remote", commits: [] };
+    throw new UsageError(
+      `Cannot list the commits of ${repoDir} (${log.error?.message || log.stderr?.trim() || `exit ${log.status}`}).`,
+    );
+  }
+  return {
+    against: against ?? "any remote",
+    commits: log.stdout.split("\n").filter((line) => line.trim()),
+  };
 }
 
 /**
@@ -127,7 +171,7 @@ function gitRelation(repoDir: string, target: string): { ahead: number; behind: 
 }
 
 /** Reject a fast-forward that would replace an ignored, untracked local path. */
-export function assertNoIgnoredPathOverwrite(repoDir: string, targetRevision: string): void {
+export function assertNoIgnoredPathOverwrite(repoDir: string, targetRevision: string, displayDir = repoDir): void {
   const ignored = runGit(["-C", repoDir, "ls-files", "--others", "--ignored", "--exclude-standard", "-z"]);
   if (ignored.status !== 0) {
     throw new UsageError(`Cannot inspect ignored files at ${repoDir}: ${ignored.stderr.trim()}`);
@@ -148,10 +192,10 @@ export function assertNoIgnoredPathOverwrite(repoDir: string, targetRevision: st
     ),
   );
   if (conflict) {
-    throw new UsageError(
-      `Git update would overwrite ignored local path ${path.join(repoDir, conflict)}; move or remove it before update.`,
-      "INVALID_FLAG_VALUE",
-      UPDATE_REFUSAL_HINT,
+    throw new ConfigError(
+      `Git update would overwrite ignored local path ${path.join(displayDir, conflict)}; move or remove it before update.`,
+      "SOURCE_HAS_LOCAL_WORK",
+      LOCAL_WORK_HINT,
     );
   }
 }
@@ -237,6 +281,7 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
       options.writableRequiredRoots,
       options.credential,
       options.allowLocalChanges,
+      options.displayRoot,
     );
   }
   const cacheRootDir = options?.cacheRootDir ?? getRegistryCacheDir();
@@ -378,33 +423,33 @@ export function syncExistingWritableCheckout(
   requiredRoots: readonly string[] = [],
   credential?: string,
   allowLocalChanges = false,
+  displayRoot?: string,
 ): SourceLockData {
   const root = path.resolve(contentRoot);
+  // Messages name the live checkout, not the staging copy an update works in.
+  const shownRoot = displayRoot ? path.resolve(displayRoot) : root;
   const repoResult = runGit(["-C", root, "rev-parse", "--show-toplevel"]);
   if (repoResult.status !== 0 || !repoResult.stdout.trim()) {
     throw new UsageError(
-      `Writable Git install at ${root} is not a checkout; refusing to replace it because it may contain local work.`,
+      `Writable Git install at ${shownRoot} is not a checkout; refusing to replace it because it may contain local work.`,
     );
   }
   const repoDir = path.resolve(repoResult.stdout.trim());
   if (!isWithin(root, repoDir)) {
-    throw new UsageError(`Writable Git content root ${root} resolves outside its checkout at ${repoDir}.`);
+    throw new UsageError(`Writable Git content root ${shownRoot} resolves outside its checkout at ${repoDir}.`);
   }
+  const shownRepo = path.resolve(shownRoot, path.relative(root, repoDir));
 
   const remote = runGit(["-C", repoDir, "remote", "get-url", "origin"]);
   if (remote.status !== 0 || normalizeRemoteUrl(remote.stdout) !== normalizeRemoteUrl(parsed.url)) {
     throw new UsageError(
-      `Writable Git install at ${root} points at a different origin; refusing to update or replace the checkout.`,
+      `Writable Git install at ${shownRoot} points at a different origin; refusing to update or replace the checkout.`,
     );
   }
 
   // Only the staged `bundle update` path leaves local changes to git's own fast-forward protection.
   if (!allowLocalChanges) {
-    assertCleanWorktree(
-      repoDir,
-      `Writable Git install at ${root}`,
-      "has uncommitted changes; commit or discard them before update.",
-    );
+    assertNoLocalWork(repoDir, `Writable Git install at ${shownRoot}`, false);
   }
 
   if (parsed.requestedRef) {
@@ -412,7 +457,7 @@ export function syncExistingWritableCheckout(
     const expectedBranch = parsed.requestedRef.replace(/^refs\/heads\//, "");
     if (branch.status !== 0 || !branch.stdout.trim() || branch.stdout.trim() !== expectedBranch) {
       throw new UsageError(
-        `Writable Git install at ${root} is checked out on a different branch than requested ref "${parsed.requestedRef}".`,
+        `Writable Git install at ${shownRoot} is checked out on a different branch than requested ref "${parsed.requestedRef}".`,
       );
     }
   }
@@ -425,7 +470,7 @@ export function syncExistingWritableCheckout(
   const fetch = runGit(fetchArgs, { timeout: 120_000, env: gitCredentialEnvironment(credential) });
   if (fetch.status !== 0) {
     throw new UsageError(
-      `Writable Git install at ${root} could not fetch its expected origin; local work was preserved. ${fetch.stderr.trim()}`,
+      `Writable Git install at ${shownRoot} could not fetch its expected origin; local work was preserved. ${fetch.stderr.trim()}`,
     );
   }
 
@@ -444,7 +489,7 @@ export function syncExistingWritableCheckout(
       parsed.requestedRef ? "FETCH_HEAD" : "@{u}",
     ]);
     if (fallbackTarget.status !== 0 || !fallbackTarget.stdout.trim()) {
-      throw new UsageError(`Writable Git install at ${root} has no verifiable upstream revision.`);
+      throw new UsageError(`Writable Git install at ${shownRoot} has no verifiable upstream revision.`);
     }
     targetRevision = fallbackTarget.stdout.trim();
   }
@@ -459,14 +504,11 @@ export function syncExistingWritableCheckout(
 
   if (relation.behind > 0) {
     if (relation.ahead > 0) {
-      throw new UsageError(
-        `Writable Git install at ${root} has local commits that are not in the requested upstream revision; push or reconcile them before update.`,
-        "INVALID_FLAG_VALUE",
-        UPDATE_REFUSAL_HINT,
-      );
+      // ahead > 0 guarantees commits the target does not hold, so this names them and refuses.
+      assertNoLocalWork(repoDir, `Writable Git install at ${shownRoot}`, targetRevision);
     }
 
-    assertNoIgnoredPathOverwrite(repoDir, targetRevision);
+    assertNoIgnoredPathOverwrite(repoDir, targetRevision, shownRepo);
 
     for (const requiredRoot of rootsToPreserve) {
       const relative = path.relative(repoDir, requiredRoot).replaceAll(path.sep, "/");
@@ -481,22 +523,18 @@ export function syncExistingWritableCheckout(
     }
 
     if (!allowLocalChanges) {
-      assertCleanWorktree(
-        repoDir,
-        `Writable Git install at ${root}`,
-        "changed while its update was prepared; local work was preserved.",
-      );
+      assertNoLocalWork(repoDir, `Writable Git install at ${shownRoot}`, false);
     }
-    assertNoIgnoredPathOverwrite(repoDir, targetRevision);
+    assertNoIgnoredPathOverwrite(repoDir, targetRevision, shownRepo);
     // Git itself refuses (and changes nothing) when the fast-forward would overwrite local work.
     const merge = runGit(["-C", repoDir, "merge", "--ff-only", "--no-overwrite-ignore", targetRevision], {
       timeout: 120_000,
     });
     if (merge.status !== 0) {
-      throw new UsageError(
-        `Writable Git install at ${root} cannot fast-forward without overwriting local work; nothing was changed. ${merge.stderr.trim()}`,
-        "INVALID_FLAG_VALUE",
-        UPDATE_REFUSAL_HINT,
+      throw new ConfigError(
+        `Writable Git install at ${shownRoot} cannot fast-forward without overwriting local work; nothing was changed. ${merge.stderr.trim()}`,
+        "SOURCE_HAS_LOCAL_WORK",
+        LOCAL_WORK_HINT,
       );
     }
   }

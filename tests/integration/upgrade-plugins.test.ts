@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { collectPluginStalenessAdvisories } from "../../src/commands/health/plugin-staleness";
 import {
   openCodeConfigSpec,
   runUpgrade,
@@ -507,8 +508,10 @@ esac`,
       writeConfig(["akm-opencode"]);
       writeConfig(["akm-opencode@next"], "opencode.jsonc");
       const found = await withEnv(world.env, async () => openCodeConfigSpec(OPENCODE_V1));
-      expect(found?.spec).toBe("akm-opencode@next");
-      expect(found?.file).toBe(path.join(world.root, "xdg-config", "opencode", "opencode.jsonc"));
+      expect(found).toMatchObject({
+        spec: "akm-opencode@next",
+        file: path.join(world.root, "xdg-config", "opencode", "opencode.jsonc"),
+      });
     });
 
     test("a bare akm-opencode in the config: the entry is skipped with the line to add", async () => {
@@ -943,5 +946,120 @@ describe("usesHostCache", () => {
     fakeProcess("15");
     expect(usesHostCache("15", proc)).toBe(true);
     expect(usesHostCache("16", proc)).toBe(true);
+  });
+});
+
+posixOnly("plugin state akm could not read is unknown or failed, with the reason (B10-43)", () => {
+  const CLI = "0.10.261130";
+
+  function writeOpenCodeConfig(text: string): void {
+    const dir = path.join(world.root, "xdg-config", "opencode");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "opencode.json"), text);
+  }
+
+  function advisories(name: string) {
+    return withEnv(world.env, async () =>
+      collectPluginStalenessAdvisories({
+        cliVersion: CLI,
+        probe: false,
+        pluginsRoot: path.join(world.root, "no-claude-plugins"),
+        opencodeCacheRoot: path.join(world.cache, "opencode"),
+      }).filter((c) => c.name === name),
+    );
+  }
+
+  test("a failing claude CLI with a registered marketplace: upgrade reports failed with its error, not skipped", async () => {
+    const plugins = path.join(world.root, "claude-plugins");
+    fs.mkdirSync(plugins, { recursive: true });
+    fs.writeFileSync(path.join(plugins, "known_marketplaces.json"), '{"akm-plugins":{}}');
+    stub("claude", 'echo "Error: failed to read settings (EACCES)" >&2; exit 1');
+    for (const args of [CHECK, UPGRADE]) {
+      const run = await withEnv({ ...world.env, AKM_CLAUDE_PLUGINS_DIR: plugins }, () =>
+        runUpgrade(args, "0.9.28", fakeDeps("0.9.28", "0.9.28")),
+      );
+      expect(entry(run, "claude-code")).toMatchObject({ outcome: "failed", channel: "unknown" });
+      expect(entry(run, "claude-code").message).toContain("EACCES");
+    }
+  });
+
+  test("an unparseable opencode.json: doctor row is unknown with the parse error; upgrade --check fails the entry", async () => {
+    writeCachedOpenCode("0.10.261130-beta", "next");
+    writeOpenCodeConfig("{ not json");
+    const rows = await advisories("opencode-plugin-version");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "unknown", reason: "blocked" });
+    expect(rows[0]?.message).toContain("could not parse");
+    const run = await upgrade(CHECK, fakeDeps("0.9.28", "0.9.28"));
+    expect(entry(run, "opencode").outcome).toBe("failed");
+    expect(entry(run, "opencode").message).toContain("could not parse");
+    expect(entry(run, "opencode").message).not.toContain("no cached");
+  });
+
+  test("an opencode.json that becomes unreadable while the CLI upgrades fails the switch with the read error", async () => {
+    const dir = path.join(world.root, "xdg-config", "opencode");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "opencode.json"), JSON.stringify({ plugin: ["akm-opencode@next"] }));
+    writeCachedOpenCode("0.9.20", "next");
+    stub("npm", `printf '{"version":"0.9.30"}\\n'`);
+    stub("opencode", 'case "$*" in "--version") echo 1.0.0;; *) exit 2;; esac');
+    stub("pgrep", "exit 1");
+    stub("trash-put", `/bin/mkdir -p "$STUB_STATE/trash" && /bin/mv "$1" "$STUB_STATE/trash/"`);
+    const deps = fakeDeps("0.9.28", "0.9.28");
+    const performUpgrade = deps.performUpgrade;
+    deps.performUpgrade = async (check, opts) => {
+      // The CLI step can take minutes; the config is read again after it.
+      fs.writeFileSync(path.join(dir, "opencode.json"), "{ not json");
+      return performUpgrade(check, opts);
+    };
+    const run = await withEnv(world.env, () => runUpgrade({ ...UPGRADE, channel: "latest" }, "0.9.28", deps));
+    expect(entry(run, "opencode").outcome).toBe("failed");
+    expect(entry(run, "opencode").message).toContain("could not parse");
+    expect(entry(run, "opencode").message).not.toContain("disappeared");
+  });
+
+  test("an unparseable codex config.toml: doctor row is unknown; upgrade --check fails the entry with no invented channel", async () => {
+    stubCodex({ from: "0.10.261130-beta", to: "0.10.261130-beta" });
+    const dir = path.join(world.root, "codex-home");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "config.toml"), "[marketplaces.akm-plugins\nref = ");
+    const rows = await advisories("codex-plugin-version");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "unknown", reason: "blocked" });
+    expect(rows[0]?.message).toContain("config.toml");
+    const run = await upgrade(CHECK, fakeDeps("0.9.28", "0.9.28"));
+    expect(entry(run, "codex")).toMatchObject({ outcome: "failed", channel: "unknown" });
+    expect(entry(run, "codex").channelMismatch).toBeUndefined();
+    expect(entry(run, "codex").message).toContain("config.toml");
+  });
+});
+
+posixOnly("--check reports the plan the run would carry out (B10-44)", () => {
+  test("--check --channel latest leaves an OpenCode @next cache newer than npm's @latest where it is", async () => {
+    const dir = path.join(world.root, "xdg-config", "opencode");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "opencode.json"), JSON.stringify({ plugin: ["akm-opencode@next"] }));
+    writeCachedOpenCode("0.10.261130-beta", "next");
+    stub(
+      "npm",
+      `case "$2" in
+akm-opencode@latest) printf '{"version":"0.10.261017"}\\n';;
+*) exit 2;;
+esac`,
+    );
+    const run = await withEnv(world.env, () =>
+      runUpgrade({ ...CHECK, channel: "latest" }, "0.10.261130-beta", fakeDeps("0.10.261017", "0.10.261130-beta")),
+    );
+    const opencode = entry(run, "opencode");
+    expect(opencode).toMatchObject({ outcome: "current", from: "0.10.261130-beta", to: "0.10.261130-beta" });
+    expect(opencode.message).toContain("has nothing newer");
+    expect(opencode.backups).toBeUndefined();
+    expect(fs.readFileSync(path.join(dir, "opencode.json"), "utf8")).toContain("akm-opencode@next");
+    // The real run reports the same for OpenCode, and edits nothing.
+    const real = await withEnv(world.env, () =>
+      runUpgrade({ ...UPGRADE, channel: "latest" }, "0.10.261130-beta", fakeDeps("0.10.261017", "0.10.261130-beta")),
+    );
+    expect(entry(real, "opencode")).toEqual(opencode);
+    expect(fs.readFileSync(path.join(dir, "opencode.json"), "utf8")).toContain("akm-opencode@next");
   });
 });

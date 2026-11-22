@@ -13,7 +13,7 @@
  * "one core overlay implementation, not one per adapter" (the interface's own
  * words) — so every `validate()` caller shares identical overlay semantics
  * rather than each hand-rolling its own (as every adapter's own test suite has
- * done up to now, see e.g. `tests/core/adapter/okf-adapter.test.ts`'s
+ * done up to now, see e.g. `tests/integration/core/adapter/okf-adapter.test.ts`'s
  * `overlayCtx`/`diskCtx`).
  *
  * The production caller of this factory is `akm lint`'s non-akm adapter dispatch
