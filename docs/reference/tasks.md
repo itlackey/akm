@@ -891,7 +891,7 @@ for full before/after examples and recovery guidance.
   the shell that ran the sync (its `AKM_BUNDLE_DIR`, or the default bundle),
   so the scheduled run uses the same working stash, `--bundle` finds a stash
   no config names, and sync tells rows of other installations sharing the
-  scheduler apart (#846). A row also sets `AKM_CONFIG_DIR`, `AKM_DATA_DIR`,
+  scheduler apart. A row also sets `AKM_CONFIG_DIR`, `AKM_DATA_DIR`,
   `AKM_CACHE_DIR` and `AKM_STATE_DIR` for each directory that the shell that ran
   the sync resolved to something other than the default, whatever set it (an
   `AKM_*_DIR` variable or an `XDG_*_HOME` one); a directory that is the default is

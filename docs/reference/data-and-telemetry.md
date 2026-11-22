@@ -95,7 +95,7 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 | `backups/asset-content-refs/` | Copies of the markdown and YAML files `akm migrate apply` rewrote to the current ref spelling. `akm backups prune` removes the old ones. |
 | `backups/asset-engine-keys/` | Copies of commands, agents, workflows and task sources made by `akm migrate apply` before it rewrites their `engine:` key. |
 | `migrate/engine-targets.json` | The connection or harness each old engine name became, kept by `akm migrate apply` until every `engine:` key is rewritten. |
-| `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --type opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces). Recreated on next use; deleting it loses the runtime's session history. |
+| `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --sessions opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces). Recreated on next use; deleting it loses the runtime's session history. |
 
 If akm cannot read this directory, commands fail with `DATA_DIR_UNREADABLE`
 (exit 78) naming the path; `akm doctor` still runs and reports it.
@@ -131,8 +131,8 @@ instead of reporting success for feedback it could not store.
 
 ### Bundle directory
 
-`~/akm/` by default; override with `AKM_BUNDLE_DIR`, or configure `bundles` and
-`defaultBundle` in `config.json`. This holds your asset files and is not
+`~/akm/` by default; configure `bundles` and `defaultBundle` in `config.json`
+(`AKM_BUNDLE_DIR` still overrides it, Deprecated). This holds your asset files and is not
 regenerable. akm also writes into it:
 
 | Path | Contents |
@@ -181,7 +181,7 @@ Event types, for `akm doctor log --type <type>`:
 
 - Bundles and assets: `add`, `remove`, `update`, `remember`, `import`
 - Retrieval and sync: `search`, `curate`, `show`, `select`, `feedback`, `sync`,
-  `stash_synced`, `index_completed`, `index_db_vacuumed`, `env_access`,
+  `stash_synced`, `moved`, `index_completed`, `index_db_vacuumed`, `env_access`,
   `secret_access`
 - Proposals: `promoted`, `rejected`, `proposal_reopened`, `proposal_reverted`,
   `proposal_expired`, `proposal_expiration_pass`, `proposal_orphan_purge`,
@@ -190,7 +190,7 @@ Event types, for `akm doctor log --type <type>`:
   `improve_skipped`, `improve_lock_recovered`, `improve_review_needed`,
   `reflect_invoked`, `reflect_completed`, `improve_reflect_outcome`,
   `propose_invoked`, `distill_invoked`, `extract_invoked`, `extract_triaged`,
-  `schema_repair_invoked`, `proactive_selected`, `events_purged`,
+  `schema_repair_invoked`, `proactive_selected`, `improve_salience_rank_change` (no longer emitted; old rows only), `events_purged`,
   `improve_runs_purged`, `asset_state_gc`, `state_db_vacuumed`,
   `task_logs_purged`, `task_log_files_purged`, `run_log_files_purged`
 - Workflows: `workflow_started`, `workflow_step_completed`,
@@ -329,7 +329,7 @@ the config, data, state and cache directories.
 | Variable | Effect |
 | --- | --- |
 | `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Override the config, data, state and cache directories |
-| `AKM_BUNDLE_DIR` | Default bundle directory (`~/akm/`) |
+| `AKM_BUNDLE_DIR` | Deprecated: register the bundle and select `defaultBundle`. Default bundle directory (`~/akm/`) |
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` | XDG bases; akm appends `/akm` |
 | `AKM_SQLITE_JOURNAL_MODE` | Deprecated, no replacement; removed in 0.11. SQLite journal mode: `WAL` (default), `DELETE` or `TRUNCATE`. akm falls back from WAL to `DELETE` on its own when the data directory is on a detected network filesystem (NFS, SMB/CIFS, 9p, CephFS, FUSE such as sshfs or virtiofs); detection works on Linux only, so a data directory on a network filesystem on macOS or Windows is unsupported. In containers that are thrown away, keep SQLite on local disk and use snapshots. |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror. Replaces `registry.npmjs.org` for npm bundle resolution. |

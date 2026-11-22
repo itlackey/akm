@@ -17,7 +17,7 @@ Reference documentation for the akm CLI, configuration and data. Run
 - [Refs](refs.md) -- The `[bundle//]conceptId[#fragment]` grammar, namespacing and renames
 - [Memory](memory.md) -- The `memory` asset type: capture, belief states and derived memories
 - [Environment and secrets](env-and-secrets.md) -- `akm env` and `akm secret`: what they print and how values reach a process
-- [Supported formats](supported-formats.md) -- The 11 bundle formats akm indexes in place, with their detection markers
+- [Supported formats](supported-formats.md) -- The 12 bundle formats akm indexes in place, with their detection markers
 - [Bundle types](bundle-types.md) -- Pointer to the supported-formats table and the adapter internals
 
 ## Sources and registries
@@ -27,6 +27,6 @@ Reference documentation for the akm CLI, configuration and data. Run
 
 ## Automation
 
-- [Tasks](tasks.md) -- Task source v4, targets, scheduling and scheduler operations
-- [Workflows](workflows.md) -- Map of the workflow documentation
-- [Workflow schema](workflow-schema.md) -- A workflow asset's frontmatter and body syntax
+- [Tasks](tasks.md) -- Task source v4 and the Experimental v5, targets, scheduling and scheduler operations
+- [Workflows](workflows.md) -- Map of the workflow documentation (Deprecated, removed in 0.11)
+- [Workflow schema](workflow-schema.md) -- A workflow asset's frontmatter and body syntax (Deprecated)
