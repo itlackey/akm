@@ -241,10 +241,11 @@ akm does not tell the two apart:
 | --- | --- | --- |
 | Index (`listStoreEntries`, `src/indexer/scan/store-entries.ts`) | the core walk lists files | `SecretStore.list` lists secrets; a store that cannot be listed counts as an incomplete walk, so its indexed entries are kept |
 | Recognition | `recognize(file)` | the same `recognize`, given `secrets/<name>` as a path that no file is at |
-| Ref ownership (`resolveConceptOwner`) | `readCandidates`, probed on disk | the store lists a secret of that name; a ref that names no secret never reaches the store |
-| Value (`readSecret`, `src/core/env-secret-ref.ts`) | the file's content, trimmed | `SecretStore.read`, trimmed |
+| Ref ownership (`resolveConceptOwner`) | `readCandidates`, probed on disk | the store lists a secret of that name, and no value is read; a ref that names no secret never reaches the store |
+| Value (`readSecret`, `src/core/env-secret-ref.ts`) | the file's content, trimmed | `SecretStore.read`, trimmed. The lookup finds the secret by reading it (`readStoreSecret`), so a read is one request to the store and no listing |
 | `akm secret set` / `secret remove` | the file, under the secret lock and the bundle's git boundary | `SecretStore.write` / `SecretStore.remove` |
 | `akm secret list` | files under `secrets/` | `SecretStore.list` |
+| `akm-cli/workspace` `sensitive.*` and `assets.bundleFiles` | the file | the store entry, through the same operations |
 
 A secret whose name no ref can spell (`#`, `..`, an empty segment) is not an
 entry: `listSecretNames` (`src/core/adapter/secret-store.ts`) leaves it out with

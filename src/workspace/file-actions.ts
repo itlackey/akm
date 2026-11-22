@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../core/config/config";
 import { inspectWriteTarget } from "../core/write-source";
-import { resolveSourceEntries } from "../indexer/search/search-source";
+import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
 import { isProtectedPlace, managedFolderOf } from "../indexer/walk/place-rules";
 
 export type FileAction = "read" | "edit" | "move" | "copy" | "retire" | "delete";
@@ -83,23 +83,39 @@ export interface EntryFacts {
  * The two write questions about a bundle, each from its owner. `plain` is whether a person may change the bundle's files
  * as files (the bundle is not read-only: `writable`, the rule `isEditable` applies); the same sentence refuses a plain
  * create. `asset` is whether akm's writer accepts an asset write to it (`inspectWriteTarget`: also refuses an adapter that
- * takes no AKM asset writes). Each is null when accepted.
+ * takes no AKM asset writes). `secret` is whether a secret may be made or changed there. Each is null when accepted.
  */
 export interface WriteBlockers {
   plain: string | null;
   asset: string | null;
+  /** Whether a secret may be made or changed in the bundle: as `plain`, except that a secret store takes secrets and no files. */
+  secret: string | null;
 }
 
-export function plainWriteBlocker(config: AkmConfig, bundle: string): string | null {
-  const source = resolveSourceEntries(undefined, config).find((entry) => entry.registryId === bundle);
-  // A bundle that does not resolve is the caller's error to name, not a read-only bundle.
+function bundleSource(config: AkmConfig, bundle: string): SearchSource | undefined {
+  return resolveSourceEntries(undefined, config).find((entry) => entry.registryId === bundle);
+}
+
+/** Why akm writes nothing to the bundle. A bundle that does not resolve is the caller's error to name, not a read-only bundle. */
+function readOnlyBlocker(source: SearchSource | undefined, bundle: string): string | null {
   return source === undefined || source.writable === true
     ? null
     : `Bundle ${bundle} is read-only: akm does not write to it, and an update would replace the edit.`;
 }
 
+export function plainWriteBlocker(config: AkmConfig, bundle: string): string | null {
+  const source = bundleSource(config, bundle);
+  return source?.locator !== undefined
+    ? `Bundle ${bundle} is a secret store: it holds secrets, not files.`
+    : readOnlyBlocker(source, bundle);
+}
+
 export function bundleWriteBlockers(config: AkmConfig, bundle: string): WriteBlockers {
-  return { plain: plainWriteBlocker(config, bundle), asset: inspectWriteTarget(config, bundle).blocker };
+  return {
+    plain: plainWriteBlocker(config, bundle),
+    asset: inspectWriteTarget(config, bundle).blocker,
+    secret: readOnlyBlocker(bundleSource(config, bundle), bundle),
+  };
 }
 
 function managedReason(relative: string): string | null {

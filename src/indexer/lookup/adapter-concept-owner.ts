@@ -35,6 +35,8 @@ export interface AdapterConceptOwner {
   conceptId: string;
   adapterId: string;
   workflowSource?: WorkflowSourceFile;
+  /** A secret store entry's value as its store returned it, set when the lookup found the entry by reading it. */
+  storeValue?: string;
 }
 
 export abstract class AdapterConceptOwnershipError extends UsageError {}
@@ -153,6 +155,11 @@ export interface ResolveAdapterConceptOwnerOptions {
    * the index. For resolving a file to run or inject; never for show or search.
    */
   includeSensitive?: boolean;
+  /**
+   * Find a secret store's entry by reading it and keep the value on the owner, so that finding and reading are one
+   * request to the store. For a caller about to use the value; without it a store is only asked which secrets it holds.
+   */
+  readStoreSecret?: boolean;
 }
 
 /** True for an env/secret file that a sibling `.sensitive` marker hides from the index. */
@@ -369,11 +376,15 @@ function storeConceptOwner(
   adapterId: string,
   store: SecretStore,
   conceptId: string,
+  options?: ResolveAdapterConceptOwnerOptions,
 ): AdapterConceptOwner | undefined {
   const name = secretNameOf(conceptId);
-  if (name === undefined || !listSecretNames(store).includes(name)) return undefined;
+  if (name === undefined) return undefined;
   const entryPath = path.join(root, conceptId);
-  return { path: entryPath, realPath: entryPath, conceptId, adapterId };
+  const owner: AdapterConceptOwner = { path: entryPath, realPath: entryPath, conceptId, adapterId };
+  if (!options?.readStoreSecret) return listSecretNames(store).includes(name) ? owner : undefined;
+  const storeValue = store.read(name);
+  return storeValue === undefined ? undefined : { ...owner, storeValue };
 }
 
 function ownerAmong(
@@ -388,7 +399,7 @@ function ownerAmong(
     const adapterId = source.adapterId ?? detectAdapterId(source.path);
     const store = secretStoreOf(source);
     const owner = store
-      ? storeConceptOwner(source.path, adapterId, store, ref.conceptId)
+      ? storeConceptOwner(source.path, adapterId, store, ref.conceptId, options)
       : resolveAdapterConceptOwner(source.path, adapterId, ref.conceptId, options);
     if (owner) return { owner, source, bundleId, adapterId };
   }

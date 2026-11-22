@@ -130,9 +130,11 @@ function ownerOfType(
   ref: string,
   type: "env" | "secret",
   form: string,
+  options?: StoreReadOptions,
 ): { match: ConceptOwnerMatch; conceptId: string } {
   const parsed = parseBundleRef(ref);
-  const match = parsed.fragment === undefined ? findEnvSecretOwner(parsed.bundle, parsed.conceptId) : undefined;
+  const match =
+    parsed.fragment === undefined ? findEnvSecretOwner(parsed.bundle, parsed.conceptId, options) : undefined;
   if (!match) {
     // Not owned: a typed placement address reads as "not found", anything else as the wrong kind of ref.
     parseTypedRef(ref, type, form);
@@ -147,10 +149,24 @@ function ownerOfType(
   return { match, conceptId: match.owner.conceptId };
 }
 
+/**
+ * How a lookup treats a secret store. With `readStoreSecret` the store's secret is found by reading it, and the value
+ * comes back with the owner: one request to the store, for a caller about to use the value. Without it the store is
+ * only asked which secrets it holds, and no value is read.
+ */
+export interface StoreReadOptions {
+  readStoreSecret?: boolean;
+}
+
 /** The bundle and file that own an env or secret ref right now, or undefined. Sensitive files resolve too. */
-function findEnvSecretOwner(origin: string | undefined, conceptId: string): ConceptOwnerMatch | undefined {
+function findEnvSecretOwner(
+  origin: string | undefined,
+  conceptId: string,
+  options?: StoreReadOptions,
+): ConceptOwnerMatch | undefined {
   return resolveConceptOwner({ bundle: origin, conceptId }, resolveSourceEntries(undefined, loadConfig()), {
     includeSensitive: true,
+    readStoreSecret: options?.readStoreSecret === true,
   });
 }
 
@@ -159,7 +175,10 @@ function findEnvSecretOwner(origin: string | undefined, conceptId: string): Conc
  * names, and the bundle-qualified spelling of the ref), or undefined when no
  * bundle owns it. The lookup behind `${ref}` tokens.
  */
-export function resolveRefOwner(ref: string):
+export function resolveRefOwner(
+  ref: string,
+  options?: StoreReadOptions,
+):
   | {
       absPath: string;
       type: string | undefined;
@@ -169,7 +188,7 @@ export function resolveRefOwner(ref: string):
     }
   | undefined {
   const { bundle, conceptId } = parseBundleRef(ref);
-  const match = findEnvSecretOwner(bundle, conceptId);
+  const match = findEnvSecretOwner(bundle, conceptId, options);
   return (
     match && {
       absPath: match.owner.path,
@@ -188,7 +207,8 @@ export function resolveRefOwner(ref: string):
 function secretValue(match: ConceptOwnerMatch): string {
   const store = secretStoreOf(match.source);
   if (!store) return readValue(match.owner.path);
-  const value = store.read(secretNameOf(match.owner.conceptId) as string);
+  // A lookup that read the store to find the secret already holds its value.
+  const value = match.owner.storeValue ?? store.read(secretNameOf(match.owner.conceptId) as string);
   if (value === undefined) throw new NotFoundError(`Secret not found: ${match.bundleId}//${match.owner.conceptId}`);
   return value.trim();
 }
@@ -255,13 +275,20 @@ function displayDefaultBundle(source?: IndexSearchSource, config: AkmConfig = lo
   return primary && path.resolve(primary.path) === path.resolve(source.path) ? source.registryId : undefined;
 }
 
-export function resolveSecretPath(ref: string): {
+export function resolveSecretPath(
+  ref: string,
+  options?: StoreReadOptions,
+): {
   conceptId: string;
+  /** The secret's file. A secret store entry has none: this is only where it is indexed. */
   absPath: string;
   source: IndexSearchSource;
+  /** A secret store entry's value as its store returned it, when `readStoreSecret` asked for it. */
+  storeValue?: string;
 } {
-  const { match, conceptId } = ownerOfType(ref, "secret", "secrets/<name>");
-  return { conceptId, absPath: match.owner.path, source: match.source };
+  const { match, conceptId } = ownerOfType(ref, "secret", "secrets/<name>", options);
+  const { path: absPath, storeValue } = match.owner;
+  return { conceptId, absPath, source: match.source, ...(storeValue !== undefined ? { storeValue } : {}) };
 }
 
 /**
@@ -270,7 +297,7 @@ export function resolveSecretPath(ref: string): {
  * any log.
  */
 export function readSecret(ref: string): { conceptId: string; source: IndexSearchSource; value: string } {
-  const { match, conceptId } = ownerOfType(ref, "secret", "secrets/<name>");
+  const { match, conceptId } = ownerOfType(ref, "secret", "secrets/<name>", { readStoreSecret: true });
   return { conceptId, source: match.source, value: secretValue(match) };
 }
 

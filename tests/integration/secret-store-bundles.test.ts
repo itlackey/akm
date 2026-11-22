@@ -13,11 +13,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveEnvBinding } from "../../src/commands/env/env-binding";
 import { resolveInjectionRefs } from "../../src/commands/env/injection";
 import { akmIndex } from "../../src/indexer/indexer";
+import { assets, sensitive } from "../../src/workspace";
 import { runCliCapture } from "../_helpers/cli";
 import { type FakeKeyringItem, withFakeSecretStores } from "../_helpers/fake-secret-stores";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
@@ -60,6 +62,22 @@ async function akm(...args: string[]): Promise<{ code: number; json: Record<stri
   const result = await runCliCapture([...args, "--format", "json"]);
   return { code: result.code, json: JSON.parse(result.stdout || result.stderr) as Record<string, unknown> };
 }
+
+/** Each request a fake client received, as its program and verb: `az show`, `busctl get-property`, `secret-tool lookup`. */
+function requests(calls: string[][]): string[] {
+  return calls.map(([program, ...args]) => {
+    const words = args.filter((arg) => !arg.startsWith("--"));
+    return `${program} ${program === "az" ? words[2] : words[0]}`;
+  });
+}
+
+const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+/** The error code a workspace operation fails with. */
+const code = (operation: Promise<unknown>) =>
+  operation.then(
+    () => undefined,
+    (error: { code?: string }) => error.code,
+  );
 
 function writeValueFile(name: string, value: string): string {
   const file = path.join(storage.root, name);
@@ -126,6 +144,28 @@ describe("secret store bundles", () => {
       expect(injected.values).toEqual({ GH_TOKEN: "ghp-keyring-value", WIFI: "hunter2", DEPLOY: "vault-value" });
 
       expect(resolveEnvBinding("env/prod").values).toEqual({ GH: "ghp-keyring-value", DEPLOY: "vault-value" });
+    });
+  });
+
+  test("reading a secret is one request to its store, and listing it is no part of that", async () => {
+    await withFakeSecretStores({ vaults: VAULT }, async (stores) => {
+      resolveInjectionRefs({ secret: ["vault//secrets/deploy-token:T"] });
+      expect(requests(stores.state().calls)).toEqual(["az show"]);
+    });
+    fs.writeFileSync(path.join(storage.stashDir, "env", "one.env"), "DEPLOY=${vault//secrets/deploy-token}\n");
+    await withFakeSecretStores({ vaults: VAULT }, async (stores) => {
+      resolveEnvBinding("env/one");
+      expect(requests(stores.state().calls)).toEqual(["az show"]);
+    });
+    // A keyring is read once: its entries, each entry's label and attributes, then the one lookup.
+    await withFakeSecretStores({ keyrings: KEYRING }, async (stores) => {
+      resolveInjectionRefs({ secret: ["keyring//secrets/wifi:T"] });
+      expect(requests(stores.state().calls)).toEqual([
+        "busctl get-property",
+        "busctl call",
+        "busctl call",
+        "secret-tool lookup",
+      ]);
     });
   });
 
@@ -269,6 +309,114 @@ describe("secret store bundles", () => {
       expect(remembered.json.error).toBe(
         'Bundle "keyring" uses adapter "secret-tool", which does not support AKM asset writes.',
       );
+    });
+  });
+});
+
+describe("secret store bundles in the workspace API", () => {
+  test("a store's secrets are browsed as the files under secrets/", async () => {
+    const keyring = { akm: [...KEYRING.akm, keyringItem(3, "team/deploy", "d", { akm: "akm/team/deploy" })] };
+    await withFakeSecretStores({ keyrings: keyring }, async () => {
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+      const notFiles = { allowed: false, reason: "Bundle keyring is a secret store: it holds secrets, not files." };
+
+      const root = assets.bundleFiles({ bundle: "keyring" });
+      expect(root.entries.map((entry) => [entry.name, entry.kind])).toEqual([["secrets", "directory"]]);
+      expect(root.newFile).toMatchObject(notFiles);
+      expect(root.place).toEqual(notFiles);
+
+      const secrets = assets.bundleFiles({ bundle: "keyring", path: "secrets" });
+      expect(secrets.entries.map((entry) => [entry.name, entry.kind, entry.protected])).toEqual([
+        ["team", "directory", false],
+        ["gh_token", "file", true],
+        ["wifi", "file", true],
+      ]);
+      expect(secrets.entries[1]?.assets).toEqual([{ ref: "keyring//secrets/gh_token", type: "secret" }]);
+      // A secret is made, shown and edited through the protected editor, as a secret file is.
+      expect(secrets.newFile).toEqual({ allowed: true, type: "secret", through: "protected-editor" });
+      expect(secrets.entries[1]?.actions.read.allowed).toBe(false);
+
+      const nested = assets.bundleFiles({ bundle: "keyring", path: "secrets/team" });
+      expect(nested.entries.map((entry) => entry.path)).toEqual(["secrets/team/deploy"]);
+      expect(() => assets.bundleFiles({ bundle: "keyring", path: "knowledge" })).toThrow(
+        "The folder no longer exists.",
+      );
+    });
+  });
+
+  test("the protected editor describes and reads a store secret with one request to the store", async () => {
+    await withFakeSecretStores({ vaults: VAULT }, async (stores) => {
+      const info = sensitive.describe({ bundle: "vault", file: "secrets/deploy-token" });
+      expect(info).toEqual({
+        ref: "vault//secrets/deploy-token",
+        type: "secret",
+        name: "deploy-token",
+        bundle: "vault",
+        path: "azure-key-vault:team-vault",
+        actions: { edit: { allowed: true }, delete: { allowed: true } },
+        revision: sha("vault-value"),
+        location: { bundle: "vault", path: "secrets/deploy-token", parent: "secrets" },
+      });
+      expect(requests(stores.state().calls)).toEqual(["az show"]);
+
+      expect(sensitive.readValue({ ref: info.ref })).toEqual({ content: "vault-value", revision: info.revision });
+      expect(requests(stores.state().calls)).toEqual(["az show", "az show"]);
+    });
+  });
+
+  test("the protected editor creates, replaces and deletes a store secret, checking the revision it replaces", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, vaults: VAULT }, async (stores) => {
+      const created = await sensitive.save({ bundle: "vault", file: "secrets/api-key", content: "k-1" });
+      expect(created).toEqual({
+        bundle: "vault",
+        file: "secrets/api-key",
+        ref: "vault//secrets/api-key",
+        warnings: [],
+        revision: sha("k-1"),
+      });
+      expect(await code(sensitive.save({ ref: created.ref, content: "k-2" }))).toBe("RESOURCE_ALREADY_EXISTS");
+      expect(await code(sensitive.save({ ref: created.ref, content: "k-2", revision: sha("old") }))).toBe(
+        "ASSET_CONTENT_CHANGED",
+      );
+      expect(await code(sensitive.remove({ ref: created.ref, revision: sha("old") }))).toBe("ASSET_CONTENT_CHANGED");
+      expect(stores.state().vaults["team-vault"]?.["api-key"]).toBe("k-1");
+
+      const saved = await sensitive.save({ ref: created.ref, content: "k-2", revision: created.revision });
+      expect(saved.revision).toBe(sha("k-2"));
+      expect(stores.state().vaults["team-vault"]?.["api-key"]).toBe("k-2");
+      expect(await sensitive.remove({ ref: created.ref, revision: saved.revision })).toMatchObject({ removed: true });
+      expect(stores.state().vaults["team-vault"]).toEqual(VAULT["team-vault"]);
+
+      // A keyring entry another program stored is replaced through the attributes it has.
+      const wifi = sensitive.describe({ ref: "keyring//secrets/wifi" });
+      expect(wifi.path).toBe("secret-tool:akm");
+      await sensitive.save({ ref: wifi.ref, content: "new-pass", revision: wifi.revision });
+      expect(stores.state().keyrings.akm).toContainEqual(
+        keyringItem(2, "wifi", "new-pass", { ssid: "home", kind: "wpa" }),
+      );
+
+      expect(JSON.stringify(stores.state().calls)).not.toContain("new-pass");
+      expect(fs.existsSync(path.join(storage.cacheDir, "akm", "index", "stores"))).toBe(false);
+    });
+  });
+
+  test("a store bundle that takes no writes says so before the editor is opened", async () => {
+    writeSandboxConfig({
+      bundles: {
+        stash: { path: storage.stashDir, writable: true },
+        vault: { store: "azure-key-vault:team-vault", writable: false },
+      },
+    });
+    await withFakeSecretStores({ vaults: VAULT }, async (stores) => {
+      const info = sensitive.describe({ ref: "vault//secrets/deploy-token" });
+      expect(info.actions.edit).toMatchObject({ allowed: false });
+      expect(assets.bundleFiles({ bundle: "vault", path: "secrets" }).newFile).toEqual({
+        allowed: false,
+        reason: "Bundle vault is read-only: akm does not write to it, and an update would replace the edit.",
+        type: "secret",
+      });
+      await expect(sensitive.save({ bundle: "vault", file: "secrets/api-key", content: "k" })).rejects.toThrow();
+      expect(stores.state().vaults).toEqual(VAULT);
     });
   });
 });

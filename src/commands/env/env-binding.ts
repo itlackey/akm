@@ -47,7 +47,7 @@ export interface ResolvedEnvBinding {
 export function resolveRefToken(
   ref: string,
 ): { kind: "secret"; value: string } | { kind: "path"; path: string } | undefined {
-  const owner = resolveRefOwner(ref);
+  const owner = resolveRefOwner(ref, { readStoreSecret: true });
   if (owner === undefined) return undefined;
   return owner.type === "secret"
     ? { kind: "secret", value: owner.secretValue() }

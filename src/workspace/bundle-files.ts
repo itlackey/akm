@@ -4,6 +4,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { secretStoreOf } from "../core/adapter/registry";
+import { listSecretNames, secretConceptId } from "../core/adapter/secret-store";
 import { isWithin, relativeToRoot, safeRealpath } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
@@ -34,19 +36,20 @@ export function bundleFileLocation(filePath: string): BundleFileLocation | null 
   };
 }
 
-/**
- * One directory, not a recursive walk or an index refresh. Each entry says what akm accepts doing to it (`actions`) and
- * why not. A file's contents are not listed; the first bytes of a file that is neither protected nor managed are probed
- * to tell text from binary, and a protected file is never opened.
- */
-export function listBundleFiles(bundle: string, relative = "", showHidden = false) {
-  if (!bundle) throw new UsageError("Choose a registered bundle.", "MISSING_REQUIRED_ARGUMENT");
-  const source = resolveSourceEntries().find((entry) => entry.registryId === bundle);
-  if (!source || source.unresolved)
-    throw new NotFoundError(`Bundle ${JSON.stringify(bundle)} is disabled or unavailable.`);
-  if (path.isAbsolute(relative) || relative.includes("\0")) throw new UsageError("Use a path relative to the bundle.");
-  const target = path.resolve(source.path, relative);
-  if (!isWithin(target, source.path)) throw new UsageError("The folder is outside this bundle.");
+/** One row of a listing, before akm's verdicts are added. `absolute` is the path the index holds the entry under. */
+interface FileRow {
+  name: string;
+  path: string;
+  kind: "directory" | "file" | "other";
+  modified?: string;
+  size?: number;
+  absolute: string;
+  symlink?: boolean;
+  unavailable?: string;
+}
+
+/** The entries of one directory of a directory bundle. */
+function directoryRows(root: string, target: string, showHidden: boolean): FileRow[] {
   let children: fs.Dirent[];
   try {
     children = fs.readdirSync(target, { withFileTypes: true });
@@ -55,8 +58,8 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
       throw new NotFoundError("The folder no longer exists.", "FILE_NOT_FOUND");
     throw new UsageError("This folder cannot be listed. Check its path and filesystem permissions.");
   }
-  const physicalRoot = safeRealpath(source.path);
-  const rows = children
+  const physicalRoot = safeRealpath(root);
+  return children
     .filter((entry) => showHidden || !entry.name.startsWith("."))
     .map((entry) => {
       const absolute = path.join(target, entry.name);
@@ -64,7 +67,7 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
       let unavailable: string | undefined;
       if (entry.isSymbolicLink()) {
         try {
-          if (!isWithin(absolute, source.path)) unavailable = "Link points outside this bundle.";
+          if (!isWithin(absolute, root)) unavailable = "Link points outside this bundle.";
           else {
             const stat = fs.statSync(absolute);
             kind = stat.isDirectory() ? "directory" : stat.isFile() ? "file" : "other";
@@ -82,21 +85,63 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
       }
       return {
         name: entry.name,
-        path: portable(path.relative(source.path, absolute)),
+        path: portable(path.relative(root, absolute)),
         kind,
         ...(stat ? { modified: stat.mtime.toISOString(), ...(stat.isFile() ? { size: stat.size } : {}) } : {}),
         // Keep the displayed alias, but look up the file under this bundle's indexed root.
-        absolute: path.join(source.path, path.relative(physicalRoot, safeRealpath(absolute))),
+        absolute: path.join(root, path.relative(physicalRoot, safeRealpath(absolute))),
         ...(entry.isSymbolicLink() ? { symlink: true } : {}),
         ...(unavailable ? { unavailable } : {}),
       };
-    })
-    .sort(
-      (a, b) =>
-        Number(b.kind === "directory") - Number(a.kind === "directory") ||
-        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }) ||
-        a.name.localeCompare(b.name),
-    );
+    });
+}
+
+/**
+ * The entries of one folder of a secret store bundle. Each secret is the file `secrets/<name>`, and a `/` in a name
+ * makes a folder, as it does in a ref. The bundle's root and `secrets/` are there even when the store is empty.
+ */
+function storeRows(root: string, target: string, names: readonly string[]): FileRow[] {
+  const folder = portable(path.relative(root, target));
+  const prefix = folder ? `${folder}/` : "";
+  const children = new Map<string, FileRow["kind"]>();
+  for (const entry of names.map(secretConceptId)) {
+    if (!entry.startsWith(prefix)) continue;
+    const [name, ...deeper] = entry.slice(prefix.length).split("/");
+    if (name) children.set(name, deeper.length > 0 || children.get(name) === "directory" ? "directory" : "file");
+  }
+  if (folder === "") children.set("secrets", "directory");
+  if (children.size === 0 && folder !== "secrets")
+    throw new NotFoundError("The folder no longer exists.", "FILE_NOT_FOUND");
+  return [...children].map(([name, kind]) => ({
+    name,
+    path: `${prefix}${name}`,
+    kind,
+    absolute: path.join(target, name),
+  }));
+}
+
+/**
+ * One directory, not a recursive walk or an index refresh. Each entry says what akm accepts doing to it (`actions`) and
+ * why not. A file's contents are not listed; the first bytes of a file that is neither protected nor managed are probed
+ * to tell text from binary, and a protected file is never opened.
+ */
+export function listBundleFiles(bundle: string, relative = "", showHidden = false) {
+  if (!bundle) throw new UsageError("Choose a registered bundle.", "MISSING_REQUIRED_ARGUMENT");
+  const source = resolveSourceEntries().find((entry) => entry.registryId === bundle);
+  if (!source || source.unresolved)
+    throw new NotFoundError(`Bundle ${JSON.stringify(bundle)} is disabled or unavailable.`);
+  if (path.isAbsolute(relative) || relative.includes("\0")) throw new UsageError("Use a path relative to the bundle.");
+  const target = path.resolve(source.path, relative);
+  if (!isWithin(target, source.path)) throw new UsageError("The folder is outside this bundle.");
+  const store = secretStoreOf(source);
+  const rows = (
+    store ? storeRows(source.path, target, listSecretNames(store)) : directoryRows(source.path, target, showHidden)
+  ).sort(
+    (a, b) =>
+      Number(b.kind === "directory") - Number(a.kind === "directory") ||
+      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }) ||
+      a.name.localeCompare(b.name),
+  );
   let indexAvailable = false;
   let refs = new Map<string, Array<{ ref: string; type: string }>>();
   try {

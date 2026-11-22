@@ -259,7 +259,9 @@ reaches a store bundle after the bundles before it in priority.
 | A secret's name | the entry's label | the vault's name for the secret (letters, digits and `-`) |
 
 - akm reaches a store through its command-line client on every read and write;
-  nothing of a store is kept on disk. The index holds each secret's name. A
+  nothing of a store is kept on disk. Reading a secret is one request to its
+  store: one `az keyvault secret show` for a vault, and one reading of the
+  keyring followed by one `secret-tool lookup` for a keyring. The index holds each secret's name. A
   store that cannot be reached at `akm index` keeps the entries it had, and
   `akm index` names it under `incompleteSources`. `akm secret list` lists the
   other bundles and warns about the store.
@@ -283,8 +285,10 @@ reaches a store bundle after the bundles before it in priority.
   recovered afterwards is the vault's soft-delete setting.
 - A secret whose name no ref can spell (one containing `#`, a `..` segment, or
   an empty segment) is not listed, and akm warns about it.
-- A store has no `.sensitive` marker and no env files: `akm env` commands and
-  the Desktop file editor work on directory bundles only.
+- A store has no `.sensitive` marker and no env files: `akm env` commands work
+  on directory bundles only.
+- AKM Desktop lists a store bundle's secrets under `secrets/` and shows, edits,
+  creates and deletes them in its protected-file view, as it does a secret file.
 
 ## Write-target resolution
 

@@ -69,10 +69,12 @@ export function newFileVerdict(
   blockers: WriteBlockers,
 ): FileVerdict & { type: string | null; through?: "protected-editor" } {
   const protectedType = PROTECTED_FOLDERS[folder];
-  if (protectedType !== undefined)
-    return blockers.plain === null
+  if (protectedType !== undefined) {
+    const blocker = protectedType === "secret" ? blockers.secret : blockers.plain;
+    return blocker === null
       ? { allowed: true, type: protectedType, through: "protected-editor" }
-      : { allowed: false, reason: blockers.plain, type: protectedType };
+      : { allowed: false, reason: blocker, type: protectedType };
+  }
   const { type } = planNewFile(folder);
   // A typed asset goes through akm's writer; a file of no type is a plain file.
   const blocker = folderBlocker(folder) ?? blockers.plain ?? (type === null ? null : blockers.asset);
