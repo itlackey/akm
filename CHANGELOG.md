@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261130] - 2026-11-22
+
 ### Added
 
 - `akm migrate apply workflows/<name>.md` makes `tasks/<name>.yml` (task source v5) from a named workflow file, after the check a start makes of it, and leaves the workflow in place: prose steps become `prompt:` steps (the step's text, then the run inputs and earlier results the workflow engine attached), plain exec steps become `exec:` steps, `params:` become `inputs:`, and `required` output keys become `expect:`. The task has `cwd: .`, so its steps work at the bundle root as the workflow's did. A workflow with a fan-out, a child workflow, the retired `engine:` key, an exec argv that is not plain shell words, an existing task file, or a `${...}` in a step that is not an input or an earlier step is blocked, with `reason`, `detail` and `guidance` naming the step and what to change; what version 5 cannot keep and loses safely is listed in `notes`. `akm doctor` adds a `workflow-files` advisory listing the workflow files left in writable bundles.
