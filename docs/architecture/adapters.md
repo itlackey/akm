@@ -165,13 +165,15 @@ every directory adapter shares:
 
 - `list` is the bundle walk (`walkStashFlatWithStatus`), with the adapter's
   `walkMode`.
-- `read` finds the one file that holds a concept id without reading authored
-  bytes: workflow arbitration first, then every spelling `readCandidates`
-  inverts the id into (plus case-only siblings), each probed with a
-  byte-denying `FileContext` so the adapter's path-level abstention decides.
-  Two files for one id is an `AdapterConceptCollisionError` for a write and a
-  warning for a read (`mode: "read"`). A `.sensitive` env file or secret is
-  found only with `includeSensitive`.
+- `read` finds the one file that holds a concept id: workflow arbitration
+  first, then every spelling `readCandidates` inverts the id into (plus
+  case-only siblings), each probed with a byte-denying `FileContext` so the
+  adapter's path-level abstention decides. Where more than one file holds the
+  id, one rule picks the winner for every caller: the spelling `place` gives for
+  the asset's type and name, else the first by code point. `list` returns only
+  the winner, and `validate` reports the ignored files (`shadowed-spelling`,
+  shown by `akm lint`). An asset a `.sensitive` marker hides, or a full walk
+  would not reach, reads with `listed: false`.
 - `create` places and serializes the asset, `update` writes the content
   given, and `retire` deletes the file and its `.sensitive` marker. Every
   write is atomic and refuses a path that leaves the bundle or passes through

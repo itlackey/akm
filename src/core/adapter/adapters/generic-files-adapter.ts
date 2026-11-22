@@ -93,7 +93,7 @@ export class GenericFilesAdapter extends DirectoryAdapterBase {
     return recognize(b, file);
   }
 
-  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
     return validateChangesWithBaseChecks(b, changes, ctx);
   }
 

@@ -12,7 +12,7 @@ import { withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
 import type { SearchSource } from "../../indexer/search/search-source";
 import type { AssetChange, NewAsset, Retirement, RetireNote } from "../adapter/bundle-adapter";
 import { stashDirFor } from "../asset/asset-placement";
-import { parseBundleRef } from "../asset/asset-ref";
+import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { parsePlacementRef } from "../asset/resolve-ref";
 import { NotFoundError, UsageError } from "../errors";
 import { recordWrittenPath } from "../write-provenance";
@@ -39,19 +39,25 @@ export interface AssetAddress {
   file?: string;
 }
 
+/** What a write tells its caller: the asset's ref, and the content it now holds (absent after a delete or retire). */
+export interface WriteResult {
+  ref: string;
+  content?: string | Buffer;
+}
+
 export interface AssetWriter {
   /** The asset `conceptId` names in the target's bundle, or undefined. */
-  read(conceptId: string, options?: { unlisted?: boolean }): Asset | undefined;
+  read(conceptId: string): Asset | undefined;
   /** An existing asset by ref (the outdated spelling retried), else where a new one of the ref's type goes. */
   address(ref: string): AssetAddress;
-  create(asset: NewAsset, options?: { exclusive?: boolean }): AssetChange;
-  update(conceptId: string, content: string | Buffer, options?: { revision?: string }): AssetChange;
-  delete(conceptId: string, options?: { revision?: string }): AssetChange;
-  retire(conceptId: string, note: RetireNote, options?: { revision?: string }): AssetChange & { handle: string };
+  create(asset: NewAsset, options?: { exclusive?: boolean }): WriteResult;
+  update(conceptId: string, content: string | Buffer, options?: { revision?: string }): WriteResult;
+  delete(conceptId: string, options?: { revision?: string }): WriteResult;
+  retire(conceptId: string, note: RetireNote, options?: { revision?: string }): WriteResult & { handle: string };
   retired(): Retirement[];
-  restore(handle: string, fallback?: string | Buffer): AssetChange;
-  forget(handle: string): { changed: string[] };
-  expireRetired(before: Date): { changed: string[] };
+  restore(handle: string, fallback?: string | Buffer): WriteResult;
+  forget(handle: string): void;
+  expireRetired(before: Date): void;
 }
 
 type WriteSource = { name: string; path: string; location?: string; adapterId?: string };
@@ -66,7 +72,7 @@ function searchSourceOf(source: WriteSource): SearchSource {
 }
 
 function addressIn(held: AssetBundle, source: WriteSource, ref: string): AssetAddress {
-  const readIn = (id: string): Asset | undefined => readFrom(searchSourceOf(source), source.name, id, { mode: "read" });
+  const readIn = (id: string): Asset | undefined => readFrom(searchSourceOf(source), source.name, id);
   const { bundle: origin, conceptId: asWritten, fragment } = parseBundleRef(ref);
   let conceptId = asWritten;
   let found = fragment === undefined ? readIn(conceptId) : undefined;
@@ -109,25 +115,32 @@ export function addressOf(source: WriteSource, ref: string): AssetAddress {
 }
 
 /** The asset `conceptId` names in `source`'s bundle, read outside a write session; `unlisted` finds one `list` leaves out. */
-export function readAsset(source: WriteSource, conceptId: string, options?: { unlisted?: boolean }): Asset | undefined {
-  return readFrom(searchSourceOf(source), source.name, conceptId, { unlisted: options?.unlisted });
+export function readAsset(source: WriteSource, conceptId: string): Asset | undefined {
+  return readFrom(searchSourceOf(source), source.name, conceptId);
 }
 
 function writerFor(target: ResolvedWriteTarget): AssetWriter {
   const { source, config } = target;
   const held = assetBundleOf(source);
-  const record = <T extends { changed: string[] }>(change: T): T => {
+  /** Record the files a change touched for the boundary commit and the run's provenance; answer with its result. */
+  const record = (change: { changed: string[] }): void => {
     for (const file of change.changed) {
       recordWriteTargetPath(source, file);
       // Run-scoped write provenance (#652).
       recordWrittenPath(file);
     }
-    return change;
+  };
+  const result = (change: AssetChange): WriteResult => {
+    record(change);
+    return {
+      ref: makeBundleRef(source.name, change.conceptId),
+      ...(change.content !== undefined ? { content: change.content } : {}),
+    };
   };
   /** The asset a change applies to, after the gates every change to an existing asset passes. */
   const existing = (conceptId: string, options?: { revision?: string; retire?: boolean }): Asset => {
     ensureWritable(source, config);
-    const asset = readAsset(source, conceptId, { unlisted: true });
+    const asset = readAsset(source, conceptId);
     if (!asset) throw new NotFoundError(`Asset not found: ${source.name}//${conceptId}`);
     const { type } = asset;
     held.assertWrites(type);
@@ -141,7 +154,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     return asset;
   };
   return {
-    read: (conceptId, options) => readAsset(source, conceptId, options),
+    read: (conceptId) => readAsset(source, conceptId),
     address: (ref) => addressIn(held, source, ref),
     create(asset, options) {
       ensureWritable(source, config);
@@ -152,32 +165,33 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
           throw new UsageError(`Asset "${source.name}//${conceptId}" already exists.`, "RESOURCE_ALREADY_EXISTS");
         }
       }
-      return record(held.create(asset));
+      return result(held.create(asset));
     },
     update(conceptId, content, options) {
       existing(conceptId, options);
-      return record(held.update(conceptId, content));
+      return result(held.update(conceptId, content));
     },
     delete(conceptId, options) {
       existing(conceptId, options);
-      return record(held.delete(conceptId));
+      return result(held.delete(conceptId));
     },
     retire(conceptId, note, options) {
       existing(conceptId, { ...options, retire: true });
-      return record(held.retire(conceptId, note));
+      const change = held.retire(conceptId, note);
+      return { ...result(change), handle: change.handle };
     },
     retired: () => held.retired(),
     restore(handle, fallback) {
       ensureWritable(source, config);
-      return record(held.restore(handle, fallback));
+      return result(held.restore(handle, fallback));
     },
     forget(handle) {
       ensureWritable(source, config);
-      return record(held.forget(handle));
+      record(held.forget(handle));
     },
     expireRetired(before) {
       ensureWritable(source, config);
-      return record(held.expireRetired(before));
+      record(held.expireRetired(before));
     },
   };
 }

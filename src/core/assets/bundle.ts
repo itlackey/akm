@@ -11,7 +11,6 @@
 import type {
   AssetChange,
   AssetEntry,
-  AssetReadOptions,
   BundleAdapter,
   BundleAsset,
   BundleListing,
@@ -68,8 +67,8 @@ export class AssetBundle {
   list(): BundleListing {
     return this.#adapter.list(this.#bundle);
   }
-  read(conceptId: string, options?: AssetReadOptions): BundleAsset | undefined {
-    return this.#adapter.read(this.#bundle, conceptId, options);
+  read(conceptId: string): BundleAsset | undefined {
+    return this.#adapter.read(this.#bundle, conceptId);
   }
   recognize(entry: AssetEntry): IndexDocument | null {
     return this.#adapter.recognize(this.#bundle, entry);

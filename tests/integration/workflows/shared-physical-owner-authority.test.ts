@@ -299,11 +299,11 @@ describe("shared adapter physical-owner authority", () => {
     expect((await loadWorkflowAsset("skills/pkg/nested")).path).toBe(laterPath);
   });
 
-  test("generic document collisions reject runtime without reads, state, runs, or dispatch", async () => {
+  test("generic document collisions: the winner is no workflow, so runtime is refused without state, runs, or dispatch", async () => {
     const early = fixture("early-generic-collision", "generic-files");
     const later = fixture("later-generic-collision", "akm-workflow");
-    const markdown = write(early.root, "collision.md", "# markdown owner\n");
-    const text = write(early.root, "collision.txt", "text owner\n");
+    write(early.root, "collision.md", "# markdown owner\n");
+    write(early.root, "collision.txt", "text owner\n");
     const laterPath = write(later.root, "collision.md", getWorkflowTemplate());
     configure(early, later);
     await akmIndex({ stashDir: early.root, full: true });
@@ -312,25 +312,18 @@ describe("shared adapter physical-owner authority", () => {
     const stateBefore = stateDbSnapshot();
     let dispatches = 0;
 
-    const markdownSpy = denyAssetRead(markdown);
-    const textSpy = denyAssetRead(text);
-    try {
-      await expect(loadWorkflowAsset("collision")).rejects.toThrow(/multiple physical owners/i);
-      await expect(startWorkflowRun("collision")).rejects.toThrow(/multiple physical owners/i);
-      await expect(
-        runWorkflowSteps({
-          target: "collision",
-          summaryJudge: null,
-          dispatcher: async () => {
-            dispatches++;
-            return { ok: true as const, text: "unexpected" };
-          },
-        }),
-      ).rejects.toThrow(/multiple physical owners/i);
-    } finally {
-      markdownSpy.mockRestore();
-      textSpy.mockRestore();
-    }
+    await expect(loadWorkflowAsset("collision")).rejects.toThrow(/not a native workflow/i);
+    await expect(startWorkflowRun("collision")).rejects.toThrow(/not a native workflow/i);
+    await expect(
+      runWorkflowSteps({
+        target: "collision",
+        summaryJudge: null,
+        dispatcher: async () => {
+          dispatches++;
+          return { ok: true as const, text: "unexpected" };
+        },
+      }),
+    ).rejects.toThrow(/not a native workflow/i);
     expect(dispatches).toBe(0);
     expect(stateDbSnapshot()).toEqual(stateBefore);
     expect((await listWorkflowRuns()).runs).toHaveLength(0);
@@ -399,12 +392,10 @@ describe("shared adapter physical-owner authority", () => {
 
   test.each([
     ["akm-task", "near", "near.yaml", "schedule: '* * * * *'\nprompt: nope\n"],
-    ["dotenv", "env/prod", "env/prod.env", "TOKEN=hidden\n"],
   ] as const)("path-level abstention in %s falls through consistently", async (adapter, conceptId, relativePath, content) => {
     const early = fixture(`early-abstain-${adapter}`, adapter);
     const later = fixture(`later-abstain-${adapter}`, "akm-workflow");
     write(early.root, relativePath, content);
-    if (adapter === "dotenv") write(early.root, "env/prod.sensitive", "");
     const laterPath = write(later.root, `${conceptId}.md`, getWorkflowTemplate());
     configure(early, later);
     await akmIndex({ stashDir: early.root, full: true });
@@ -412,6 +403,18 @@ describe("shared adapter physical-owner authority", () => {
     expect(await lookupBundleRef(parseBundleRef(conceptId))).toMatchObject({ filePath: laterPath });
     expect((await showLocal({ ref: conceptId })).path).toBe(laterPath);
     expect((await loadWorkflowAsset(conceptId)).path).toBe(laterPath);
+  });
+
+  test("a sensitive env file keeps its ref: a later bundle's asset does not take it over", async () => {
+    const early = fixture("early-sensitive-dotenv", "dotenv");
+    const later = fixture("later-sensitive-dotenv", "akm-workflow");
+    write(early.root, "env/prod.env", "TOKEN=hidden\n");
+    write(early.root, "env/prod.sensitive", "");
+    write(later.root, "env/prod.md", getWorkflowTemplate());
+    configure(early, later);
+    await akmIndex({ stashDir: early.root, full: true });
+
+    expect(await lookupBundleRef(parseBundleRef("env/prod"))).toBeNull();
   });
 
   test.each([

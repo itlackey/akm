@@ -11,7 +11,7 @@ import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, reportChildExit } from "../cli/s
 import { assertKnownFlags, type FlagScanCommand, scanRoot } from "../cli/unknown-flags";
 import { setResolvedUsageAssetType } from "../cli/usage";
 import { parseBundleRef } from "../core/asset/asset-ref";
-import { fileOf, findAsset } from "../core/assets/read";
+import { findAsset } from "../core/assets/read";
 import { AkmError, NotFoundError, UsageError } from "../core/errors";
 import { registerInjectedSecretValues } from "../core/redaction";
 import { scriptProgram } from "../tasks/frozen-script";
@@ -123,7 +123,8 @@ export async function resolveRunTarget(runArgs: readonly string[]): Promise<RunT
           "Use akm search to find an executable asset.",
         );
       }
-      const file = fileOf(asset);
+      const file = asset.entry.file;
+      if (file === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
       let type = "unknown";
       try {
         type = asset.type;

@@ -21,7 +21,6 @@ import { hashContent } from "./adapters/shared";
 import type {
   AssetChange,
   AssetEntry,
-  AssetReadOptions,
   BundleAdapter,
   BundleAsset,
   BundleListing,
@@ -120,7 +119,7 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     }
   }
 
-  read(b: Bundle, conceptId: string, _options?: AssetReadOptions): BundleAsset | undefined {
+  read(b: Bundle, conceptId: string): BundleAsset | undefined {
     const name = secretNameOf(conceptId);
     if (name === undefined) return undefined;
     const found = this.findSecret(this.locationOf(b), name);

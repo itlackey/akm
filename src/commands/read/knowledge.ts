@@ -1,3 +1,4 @@
+import { parseBundleRef } from "../../core/asset/asset-ref";
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
@@ -30,7 +31,6 @@ import { resolveStashStandards } from "../../core/standards/resolve-stash-standa
 import { warn } from "../../core/warn";
 import {
   commitWriteTargetBoundary,
-  fileOfChange,
   formatRefForMessage,
   type ResolvedWriteTarget,
   recordWriteTargetPath,
@@ -774,8 +774,9 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
     const change = writeAssets({ source, config }, { purpose: "markdown-write" }, (w) =>
       w.create({ type: resolved.ref.type, name: resolved.ref.name, content: options.content }),
     );
-    const durableRef = displayRef({ conceptId: change.conceptId, bundleId: resolved.ref.origin });
-    const result = { path: fileOfChange(change, source), ref: resolved.displayRef };
+    const { conceptId } = parseBundleRef(change.ref);
+    const durableRef = displayRef({ conceptId, bundleId: resolved.ref.origin });
+    const result = { path: assetPath, ref: resolved.displayRef };
     // SPEC-5 (--supersedes): demote each superseded asset by mutating its
     // frontmatter (`beliefState: superseded` + sorted-set-append `supersededBy`;
     // every other key and the body are preserved). Ordered BEFORE

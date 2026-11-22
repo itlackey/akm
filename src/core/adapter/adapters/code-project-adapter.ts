@@ -217,7 +217,7 @@ export class CodeProjectAdapter extends DirectoryAdapterBase {
 
   // The base checks misfire on source (`stale-path` flags `/tmp/...` literals,
   // the ref regex matches Python's `y//2`), so they run on Markdown only.
-  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
     return validateChangesWithBaseChecks(
       b,
       changes.filter((change) => MARKDOWN_EXTENSIONS.has(path.extname(change.path).toLowerCase())),

@@ -500,8 +500,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const eligMeta = options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {};
   // The input's type is its file's; the ref's first folder names it only for a ref no file owns.
   const inputType =
-    findAsset(inputRef, { sources: resolveSourceEntries(options.stashDir, config), unlisted: true, mode: "read" })
-      ?.type ?? address.type;
+    findAsset(inputRef, { sources: resolveSourceEntries(options.stashDir, config) })?.type ?? address.type;
   if (isDistillRefusedInputType(inputType)) {
     const secret = inputType === "env" || inputType === "secret";
     const proposalRef = secret ? inputRef : conceptIdFromTypeName("lesson", address.name);

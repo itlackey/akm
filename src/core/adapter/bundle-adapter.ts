@@ -69,14 +69,6 @@ export interface BundleAsset {
   listed: boolean;
 }
 
-export interface AssetReadOptions {
-  /**
-   * When more than one entry holds the asset: `"read"` warns and reads the first; otherwise (`"write"`, the
-   * default) the read is refused (a write must not pick one of two copies).
-   */
-  mode?: "read" | "write";
-}
-
 /** An asset to create: its type and its name within the type (`env/prod` is type `env`, name `prod`). */
 export interface NewAsset {
   type: string;
@@ -130,8 +122,11 @@ export interface BundleAdapter {
 
   /** Every entry of the bundle. The indexer describes each with `recognize`. */
   list(b: Bundle): BundleListing;
-  /** The asset `conceptId` names, or undefined when the bundle has none. */
-  read(b: Bundle, conceptId: string, options?: AssetReadOptions): BundleAsset | undefined;
+  /**
+   * The asset `conceptId` names, or undefined when the bundle has none. When storage holds the concept under more
+   * than one spelling the adapter picks one by a rule of its own, the same for every caller; `validate` reports the rest.
+   */
+  read(b: Bundle, conceptId: string): BundleAsset | undefined;
   /** An entry's metadata for the index; null when it is no asset. */
   recognize(b: Bundle, entry: AssetEntry): IndexDocument | null;
   /**

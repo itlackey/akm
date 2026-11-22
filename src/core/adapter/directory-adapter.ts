@@ -27,7 +27,6 @@ import { warnOnce } from "../warn";
 import type {
   AssetChange,
   AssetEntry,
-  AssetReadOptions,
   AssetResource,
   BundleAdapter,
   BundleAsset,
@@ -54,21 +53,6 @@ export interface AdapterReadCandidate {
   path: string;
   /** Canonical concept identity this authored path may own. */
   conceptId: string;
-}
-
-export abstract class AdapterConceptOwnershipError extends UsageError {}
-
-/** Two files hold one asset, and the operation must not pick one. */
-export class AdapterConceptCollisionError extends AdapterConceptOwnershipError {
-  constructor(adapterId: string, conceptId: string, paths: readonly string[]) {
-    const sorted = [...paths].sort(compareCodePoints);
-    super(
-      `Adapter "${adapterId}" has multiple physical owners for "${conceptId}": ${sorted.join(", ")}.`,
-      "RESOURCE_ALREADY_EXISTS",
-    );
-    this.name = "AdapterConceptCollisionError";
-    Object.setPrototypeOf(this, new.target.prototype);
-  }
 }
 
 const CONTENT_READ_REQUIRED = Symbol("adapter ownership probe requires content");
@@ -100,7 +84,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
    * without reading authored bytes; recognition then decides which candidate owns it.
    */
   protected abstract readCandidates(b: Bundle, conceptId: string): AdapterReadCandidate[];
-  abstract validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]>;
+  protected abstract validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]>;
 
   /** Where a new asset of `type` and `name` is kept. */
   protected placeFile(b: Bundle, { type }: Pick<NewAsset, "type" | "name">): string {
@@ -139,8 +123,27 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
 
   list(b: Bundle): BundleListing {
     const walked = walkStashFlatWithStatus(b.root, this.walkOptions());
+    // One entry per concept: where several files hold one, the winner `read` acts on. A file's concept comes from its
+    // path when that says; otherwise it is read (once: the entry keeps its bytes for the caller's `recognize`).
+    const byConcept = new Map<string, FileContext[]>();
+    for (const file of walked.files) {
+      let conceptId: string | undefined;
+      try {
+        const document = this.pathDocument(b, file);
+        conceptId = (document === undefined ? this.recognizeFile(b, file) : document)?.conceptId;
+      } catch {
+        // A file that cannot be recognized is listed as it is; the caller's `recognize` reports it.
+      }
+      if (conceptId) byConcept.set(conceptId, [...(byConcept.get(conceptId) ?? []), file]);
+    }
+    const shadowed = new Set<FileContext>();
+    for (const group of byConcept.values()) {
+      if (group.length < 2) continue;
+      const winner = this.winner(b, { found: group, pathTypes: new Map() });
+      for (const file of group) if (file !== winner) shadowed.add(file);
+    }
     return {
-      entries: walked.files,
+      entries: walked.files.filter((file) => !shadowed.has(file)),
       complete: walked.complete,
       ...(walked.incompleteReason !== undefined ? { incompleteReason: walked.incompleteReason } : {}),
     };
@@ -155,7 +158,60 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
    * spelling `readCandidates` inverts the concept id into, each probed with a byte-denying context so the
    * adapter's path-level abstention decides.
    */
-  read(b: Bundle, conceptId: string, options?: AssetReadOptions): BundleAsset | undefined {
+  read(b: Bundle, conceptId: string): BundleAsset | undefined {
+    const held = this.holders(b, conceptId);
+    if (!held) return undefined;
+    const { resolved, pathTypes } = held;
+    const file = this.winner(b, held);
+    if (!file) return undefined;
+    const dir = this.packageDir(file);
+    const entry: AssetEntry =
+      dir === undefined ? file : { ...file, resources: () => packageResources(dir, file.absPath) };
+    // The type recognizing the path gave, else the one its place declares, else what reading it says (which a path
+    // alone settles for most adapters, so finding an asset reads no authored bytes). A file none gives one is no asset.
+    const type = pathTypes.get(file) ?? this.declaredType(file) ?? this.recognizeFile(b, file)?.type;
+    if (type === undefined) return undefined;
+    return {
+      conceptId: resolved,
+      type,
+      entry,
+      // Not listed: a marker hides it, or a full walk would not reach it (a skipped or ignored directory).
+      listed: !this.isMarkedUnlisted(file) && this.walksFile(b, file.absPath),
+    };
+  }
+
+  /**
+   * Native validation, and a finding for every concept in `changes` that more than one file spells (`skills/x.md`
+   * and `skills/x/SKILL.md`): reads and writes act on the winner, so the ignored files are only visible here.
+   */
+  async validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    const diagnostics = await this.validateFiles(b, changes, ctx);
+    const seen = new Set<string>();
+    for (const change of changes) {
+      const file = candidateFile(b, path.join(b.root, change.path));
+      const conceptId = file ? this.recognizeFile(b, file)?.conceptId : undefined;
+      if (!conceptId || seen.has(conceptId)) continue;
+      seen.add(conceptId);
+      const held = this.holders(b, conceptId);
+      if (!held || held.found.length < 2) continue;
+      const winner = this.winner(b, held);
+      if (!winner) continue;
+      const ignored = held.found.filter((other) => other !== winner).map((other) => other.relPath);
+      diagnostics.push({
+        file: winner.relPath,
+        issue: "shadowed-spelling",
+        detail: `"${conceptId}" is held by more than one file; "${winner.relPath}" is used and ${ignored.join(", ")} ignored. Remove the ignored ${ignored.length === 1 ? "file" : "files"}.`,
+        fixed: false,
+      });
+    }
+    return diagnostics;
+  }
+
+  /** Every file that holds `conceptId`, by code point, with the types their paths gave. Undefined: the root is gone. */
+  private holders(
+    b: Bundle,
+    conceptId: string,
+  ): { resolved: string; found: FileContext[]; pathTypes: Map<FileContext, string> } | undefined {
     const normalized = normalizedConceptId(conceptId);
     if (!normalized) return undefined;
     try {
@@ -186,34 +242,28 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
       if (claim?.type !== undefined) pathTypes.set(file, claim.type);
       if (claim || this.isMarkedUnlisted(file)) owners.set(key, file);
     }
-
     const found = [...owners.values()].sort((left, right) => compareCodePoints(left.absPath, right.absPath));
-    if (found.length > 1) {
-      const relatives = found.map((file) => file.relPath);
-      if (options?.mode !== "read") throw new AdapterConceptCollisionError(this.id, resolved, relatives);
-      const [winner, ...losers] = relatives;
-      warnOnce(
-        `adapter-concept-collision:${this.id}:${resolved}`,
-        `Adapter "${this.id}" has multiple physical owners for "${resolved}": ${relatives.join(", ")}. ` +
-          `Reading "${winner}" and ignoring ${losers.join(", ")}.`,
-      );
+    return { resolved, found, pathTypes };
+  }
+
+  /**
+   * The file that is the concept when several hold it, by the one rule the adapter owns: the spelling `place` gives
+   * for the concept's type and name, else the first by code point. Reads, updates, deletes and retires all act on it.
+   */
+  private winner(b: Bundle, { found, pathTypes }: { found: FileContext[]; pathTypes: Map<FileContext, string> }) {
+    if (found.length < 2) return found[0];
+    for (const file of found) {
+      try {
+        const document = this.recognizeFile(b, file);
+        const type = pathTypes.get(file) ?? document?.type ?? this.declaredType(file);
+        if (document && type && path.resolve(this.placeFile(b, { type, name: document.name })) === file.absPath) {
+          return file;
+        }
+      } catch {
+        // A file that cannot be recognized or placed is not the placed spelling.
+      }
     }
-    const file = found[0];
-    if (!file) return undefined;
-    const dir = this.packageDir(file);
-    const entry: AssetEntry =
-      dir === undefined ? file : { ...file, resources: () => packageResources(dir, file.absPath) };
-    // The type recognizing the path gave, else the one its place declares, else what reading it says (which a path
-    // alone settles for most adapters, so finding an asset reads no authored bytes). A file none gives one is no asset.
-    const type = pathTypes.get(file) ?? this.declaredType(file) ?? this.recognizeFile(b, file)?.type;
-    if (type === undefined) return undefined;
-    return {
-      conceptId: resolved,
-      type,
-      entry,
-      // Not listed: a marker hides it, or a full walk would not reach it (a skipped or ignored directory).
-      listed: !this.isMarkedUnlisted(file) && this.walksFile(b, file.absPath),
-    };
+    return found[0];
   }
 
   place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {
@@ -361,11 +411,8 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return marker !== undefined && fs.existsSync(marker);
   }
 
-  /**
-   * Whether the adapter recognizes `file` as `conceptId` from its path alone (an adapter that needs bytes claims it,
-   * with no type yet); a claim carries the type the path gave.
-   */
-  private claimsWithoutContent(b: Bundle, file: FileContext, conceptId: string): { type?: string } | undefined {
+  /** The document the adapter gives `file` from its path alone: undefined when it needs the file's bytes to say. */
+  private pathDocument(b: Bundle, file: FileContext): IndexDocument | null | undefined {
     let requestedBytes = false;
     const denyBytes = (): never => {
       requestedBytes = true;
@@ -373,12 +420,21 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     };
     try {
       const document = this.recognizeFile(b, { ...file, content: denyBytes, bytes: denyBytes, frontmatter: denyBytes });
-      if (requestedBytes) return {};
-      return document?.conceptId === conceptId ? { type: document.type } : undefined;
+      return requestedBytes ? undefined : document;
     } catch (error) {
-      if (error === CONTENT_READ_REQUIRED) return {};
+      if (error === CONTENT_READ_REQUIRED) return undefined;
       throw error;
     }
+  }
+
+  /**
+   * Whether the adapter recognizes `file` as `conceptId` from its path alone (an adapter that needs bytes claims it,
+   * with no type yet); a claim carries the type the path gave.
+   */
+  private claimsWithoutContent(b: Bundle, file: FileContext, conceptId: string): { type?: string } | undefined {
+    const document = this.pathDocument(b, file);
+    if (document === undefined) return {};
+    return document?.conceptId === conceptId ? { type: document.type } : undefined;
   }
 
   /** The concept id the adapter gives the file a new asset is placed in; its relative path when it recognizes none. */

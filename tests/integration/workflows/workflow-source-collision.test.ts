@@ -139,7 +139,7 @@ describe("workflow source canonical-ref collisions", () => {
     expect(fs.existsSync(getDbPath())).toBe(false);
   });
 
-  test("ordinary load rejects a workflow source colliding with another file that inverts to the same ref", async () => {
+  test("ordinary load takes the workflow source over another file that inverts to the same ref", async () => {
     const fixture = configure("ordinary");
     const canonicalPath = path.join(fixture.ownedDir, "collision.md");
     const peerPath = path.join(fixture.ownedDir, "collision", "SKILL.md");
@@ -147,11 +147,8 @@ describe("workflow source canonical-ref collisions", () => {
     fs.writeFileSync(canonicalPath, markdownWorkflow("canonical"));
     fs.writeFileSync(peerPath, "---\ndescription: peer skill\n---\n# Peer\n");
 
-    await expect(loadWorkflowAsset(`${fixture.canonicalRef}.MD`)).rejects.toMatchObject({
-      code: "RESOURCE_ALREADY_EXISTS",
-      message: expect.stringMatching(/multiple physical owners.*collision\.md.*collision\/SKILL\.md/is),
-    });
-    expect(fs.existsSync(getDbPath())).toBe(false);
+    // `place` gives the workflow's own spelling, so it wins; the peer is ignored (and `akm lint` says so).
+    await expect(loadWorkflowAsset(`${fixture.canonicalRef}.MD`)).resolves.toMatchObject({ path: canonicalPath });
   });
 
   test("a .yml sibling is not a workflow source: the .md loads and runs, with no collision", async () => {

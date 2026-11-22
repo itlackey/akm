@@ -14,7 +14,7 @@ import fs from "node:fs";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { makeBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
-import { fileOf, findAsset } from "../../core/assets/read";
+import { findAsset } from "../../core/assets/read";
 import { slugForPath } from "../../core/bundle-id";
 import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -86,7 +86,10 @@ export function resolveBundleAsset(
   const conceptId = conceptIdFromTypeName(type, name);
   const sources = activeTaskSources(config);
   const asset = findAsset({ bundle, conceptId }, { sources });
-  if (asset) return { file: fileOf(asset), bundleRoot: sourceOfBundle(sources, asset.bundle).path };
+  if (asset?.entry.file !== undefined) {
+    return { file: asset.entry.file, bundleRoot: sourceOfBundle(sources, asset.bundle).path };
+  }
+  if (asset) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
   if (resolveSourcesForOrigin(bundle, sources).length === 0) {
     assertBundleNotDisabled(config, bundle);
     throw new UsageError(
@@ -117,7 +120,8 @@ export async function loadPreparedTask(
       "ASSET_NOT_FOUND",
     );
   }
-  const filePath = fileOf(asset);
+  const filePath = asset.entry.file;
+  if (filePath === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
   const yaml = fs.readFileSync(filePath, "utf8");
   const parsed = parseTaskSource({ yaml, filePath });
   if (parsed.version !== 4) {

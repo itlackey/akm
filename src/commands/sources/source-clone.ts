@@ -330,8 +330,8 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
  * index use, so a clone sees exactly the file the index holds for the ref.
  */
 function resolveOpaqueAsset(source: SearchSource, conceptId: string): { path: string; type?: string } | undefined {
-  const asset = findAsset({ conceptId }, { sources: [source], mode: "read" });
-  if (!asset?.entry.file) return undefined;
+  const asset = findAsset({ conceptId }, { sources: [source] });
+  if (!asset?.listed || !asset.entry.file) return undefined;
   let type: string | undefined;
   try {
     type = asset.type;

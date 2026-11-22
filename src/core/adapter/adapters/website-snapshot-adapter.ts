@@ -140,7 +140,7 @@ export class WebsiteSnapshotAdapter extends DirectoryAdapterBase {
     return recognize(b, file);
   }
 
-  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
     return validate(b, changes, ctx);
   }
 

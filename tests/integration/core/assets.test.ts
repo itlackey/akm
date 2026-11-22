@@ -22,7 +22,6 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
-import { AdapterConceptCollisionError } from "../../../src/core/adapter/directory-adapter";
 import {
   assetOfEntry,
   assetRevision,
@@ -141,22 +140,22 @@ describe("finding an asset in one bundle — closed-form candidates (#857)", () 
     }
   });
 
-  test("two files that invert to the same ref collide (default: write)", () => {
+  test("two files that invert to the same ref: the spelling place gives wins, for every caller", () => {
     const sandbox = sandboxStashDir();
     try {
       const root = path.join(sandbox.dir, "akm");
       fs.mkdirSync(path.join(root, "tasks"), { recursive: true });
       fs.writeFileSync(path.join(root, "tasks", "same.md"), "# Same note\n");
       fs.writeFileSync(path.join(root, "tasks", "same.yml"), "name: same\n");
-      expect(() => findInBundle({ name: "test", path: root }, "akm", "tasks/same")).toThrow(
-        AdapterConceptCollisionError,
+      expect(findInBundle({ name: "test", path: root }, "akm", "tasks/same")?.entry.file).toBe(
+        path.join(root, "tasks", "same.yml"),
       );
     } finally {
       sandbox.cleanup();
     }
   });
 
-  test("an explicit read resolves the same collision to the first owner instead of aborting", () => {
+  test("the same collision reads the same winner whatever the caller", () => {
     const sandbox = sandboxStashDir();
     try {
       const root = path.join(sandbox.dir, "akm");
@@ -165,8 +164,9 @@ describe("finding an asset in one bundle — closed-form candidates (#857)", () 
       fs.writeFileSync(first, "# Same note\n");
       fs.writeFileSync(path.join(root, "tasks", "same.yml"), "name: same\n");
 
-      const owner = findInBundle({ name: "test", path: root }, "akm", "tasks/same", { mode: "read" });
-      expect(owner?.entry.file).toBe(first);
+      const owner = findInBundle({ name: "test", path: root }, "akm", "tasks/same");
+      expect(owner?.entry.file).toBe(path.join(root, "tasks", "same.yml"));
+      expect(first).not.toBe(owner?.entry.file);
     } finally {
       sandbox.cleanup();
     }
@@ -200,7 +200,7 @@ describe("finding an asset in one bundle — closed-form candidates (#857)", () 
     }
   });
 
-  test("env duality collides when both '.env' and 'default.env' are authored together (default: write)", () => {
+  test("env duality: when both '.env' and 'default.env' are authored, one wins", () => {
     const sandbox = sandboxStashDir();
     try {
       const root = path.join(sandbox.dir, "dotenv");
@@ -208,15 +208,16 @@ describe("finding an asset in one bundle — closed-form candidates (#857)", () 
       fs.mkdirSync(envDir, { recursive: true });
       fs.writeFileSync(path.join(envDir, ".env"), "TOKEN=hidden\n");
       fs.writeFileSync(path.join(envDir, "default.env"), "TOKEN=hidden\n");
-      expect(() => findInBundle({ name: "test", path: root }, "dotenv", "env/default")).toThrow(
-        AdapterConceptCollisionError,
+      // `place` gives the bare `.env` for the default.
+      expect(findInBundle({ name: "test", path: root }, "dotenv", "env/default")?.entry.file).toBe(
+        path.join(envDir, ".env"),
       );
     } finally {
       sandbox.cleanup();
     }
   });
 
-  test("an explicit read resolves the same env-duality collision to the first owner", () => {
+  test("a read of the same env-duality collision gives the same winner", () => {
     const sandbox = sandboxStashDir();
     try {
       const root = path.join(sandbox.dir, "dotenv");
@@ -226,8 +227,9 @@ describe("finding an asset in one bundle — closed-form candidates (#857)", () 
       const namedEnv = path.join(envDir, "default.env");
       fs.writeFileSync(dotEnv, "TOKEN=hidden\n");
       fs.writeFileSync(namedEnv, "TOKEN=hidden\n");
-      const owner = findInBundle({ name: "test", path: root }, "dotenv", "env/default", { mode: "read" });
+      const owner = findInBundle({ name: "test", path: root }, "dotenv", "env/default");
       expect(owner?.entry.file).toBe(dotEnv);
+      expect(namedEnv).not.toBe(owner?.entry.file);
     } finally {
       sandbox.cleanup();
     }
@@ -349,7 +351,7 @@ describe("findAsset", () => {
     expect(found?.entry.content()).toContain("Body");
   });
 
-  test("an env file marked sensitive is found only for a caller that asks, and says it is not listed", () => {
+  test("an env file marked sensitive is found, and says it is not listed", () => {
     const stash = bundleOf("stash", {
       "env/prod.env": "A=1\n",
       "env/prod.sensitive": "",
@@ -357,11 +359,11 @@ describe("findAsset", () => {
       "secrets/token.sensitive": "",
     });
 
-    expect(findAsset("env/prod", { sources: [stash] })).toBeUndefined();
-    const env = findAsset("env/prod", { sources: [stash], unlisted: true });
+    const env = findAsset("env/prod", { sources: [stash] });
     expect(env).toMatchObject({ type: "env", listed: false });
     expect(env?.entry.file).toBe(path.join(stash.path, "env", "prod.env"));
-    expect(findAsset("secrets/token", { sources: [stash], unlisted: true })?.type).toBe("secret");
+    expect(findAsset("secrets/token", { sources: [stash] })?.type).toBe("secret");
+    expect(listAssets({ sources: [stash] }).map((asset) => asset.ref)).toEqual([]);
   });
 
   test("nothing is found for a missing concept or an unknown bundle", () => {
@@ -377,13 +379,10 @@ describe("findAsset", () => {
     expect(() => requireAsset("knowledge/none", { sources: [stash] })).toThrow(NotFoundError);
   });
 
-  test("two files holding one ref are refused by default, and read as the first when the caller only reads", () => {
+  test("two files holding one ref read as one winner, the same for every caller", () => {
     const stash = bundleOf("stash", { "tasks/same.md": "# Same note\n", "tasks/same.yml": "name: same\n" });
 
-    expect(() => findAsset("tasks/same", { sources: [stash] })).toThrow(AdapterConceptCollisionError);
-    expect(findAsset("tasks/same", { sources: [stash], mode: "read" })?.entry.file).toBe(
-      path.join(stash.path, "tasks", "same.md"),
-    );
+    expect(findAsset("tasks/same", { sources: [stash] })?.entry.file).toBe(path.join(stash.path, "tasks", "same.yml"));
   });
 
   test("a ref in the outdated type-folder spelling finds the asset, with one warning", () => {
@@ -481,8 +480,8 @@ describe("writeAssets", () => {
     const created = writeAssets(target, { purpose: "test" }, (w) =>
       w.create({ type: "knowledge", name: "note", content: "---\ndescription: n\n---\nBody\n" }),
     );
-    expect(created).toMatchObject({ conceptId: "knowledge/note", file: path.join(stash.path, "knowledge", "note.md") });
-    expect(created.changed).toContain(path.join(stash.path, "knowledge", "note.md"));
+    expect(created).toEqual({ ref: "stash//knowledge/note", content: "---\ndescription: n\n---\nBody\n" });
+    expect(fs.existsSync(path.join(stash.path, "knowledge", "note.md"))).toBe(true);
 
     writeAssets(target, { purpose: "test" }, (w) => {
       expect(w.read("knowledge/note")?.type).toBe("knowledge");
@@ -491,7 +490,7 @@ describe("writeAssets", () => {
     expect(fs.readFileSync(path.join(stash.path, "knowledge", "note.md"), "utf8")).toContain("Changed");
 
     const deleted = writeAssets(target, { purpose: "test" }, (w) => w.delete("knowledge/note"));
-    expect(deleted.changed).toEqual([path.join(stash.path, "knowledge", "note.md")]);
+    expect(deleted).toEqual({ ref: "stash//knowledge/note" });
     expect(fs.existsSync(path.join(stash.path, "knowledge", "note.md"))).toBe(false);
   });
 
@@ -519,7 +518,9 @@ describe("writeAssets", () => {
     expect(() =>
       writeAssets(target, { purpose: "test" }, (w) => w.create({ type: "knowledge", name: "note", content: "x" })),
     ).toThrow('Bundle "env-only" uses adapter "dotenv", which does not write knowledge assets.');
-    expect(writeAssets(target, { purpose: "test" }, (w) => w.update("env/prod", "A=2\n")).conceptId).toBe("env/prod");
+    expect(writeAssets(target, { purpose: "test" }, (w) => w.update("env/prod", "A=2\n")).ref).toBe(
+      "env-only//env/prod",
+    );
   });
 
   test("an asset the bundle does not hold is not found", () => {

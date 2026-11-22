@@ -787,9 +787,8 @@ describe("OKF first-class conformance", () => {
       expect((await loadWorkflowAsset("native//upper")).path).toBe(path.join(workflowRoot, "upper.MD"));
       // A workflow that is a symlink to a file outside the bundle loads (#1237).
       expect((await loadWorkflowAsset("native//linked")).path).toBe(path.join(workflowRoot, "linked.md"));
-      await expect(loadWorkflowAsset("native//duplicate")).rejects.toMatchObject({
-        code: "RESOURCE_ALREADY_EXISTS",
-      });
+      // Two spellings of one workflow: the one `place` gives (`.md`) is the workflow, the other is ignored.
+      expect((await loadWorkflowAsset("native//duplicate")).path).toBe(path.join(workflowRoot, "duplicate.md"));
       // SRC BUG (reported, not fixed — src is frozen for this port):
       // `createWorkflowAsset`'s cross-name-collision guard
       // (`findExistingWorkflowPaths`, pre-unification) was deleted in the

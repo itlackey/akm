@@ -414,14 +414,6 @@ export function prepareWriteTargetForMutation(target: ResolvedWriteTarget, kind:
 
 // ── Writing assets ──────────────────────────────────────────────────────────
 
-/** The file a write left an asset in, for a caller that works with files; refused when its bundle keeps no file for it. */
-export function fileOfChange(change: AssetChange, source: WriteTargetSource): string {
-  if (change.file === undefined) {
-    throw new UsageError(`Asset "${source.name}//${change.conceptId}" is not kept in a file.`);
-  }
-  return change.file;
-}
-
 /** The gates an asset write passes: {@link assertPlainWritable}, and an adapter that writes assets of `type`. */
 export function assertWritableSource(source: WriteTargetSource, config: SourceConfigEntry, type?: string): void {
   assertPlainWritable(source, config);

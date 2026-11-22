@@ -285,7 +285,7 @@ export abstract class ToolDirAdapterBase extends DirectoryAdapterBase {
     return renderToolDirExecutionSource(this.layout, b, entry);
   }
 
-  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
     return validateToolDir(this.layout, b, changes, ctx);
   }
 

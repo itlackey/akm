@@ -119,7 +119,7 @@ async function classifySchemaRepairs(args: {
       const raw = fs.readFileSync(filePath, "utf8");
       const frontmatter = parseFrontmatter(raw);
       // The asset's type is its file's (which fields to repair, and the type's standards and rules).
-      const assetType = findAsset(failure.ref, { sources: resolveSourceEntries(stashDir), mode: "read" })?.type ?? "";
+      const assetType = findAsset(failure.ref, { sources: resolveSourceEntries(stashDir) })?.type ?? "";
       const missingFields: string[] = [];
       if (!frontmatter.data.description) missingFields.push("description");
       if (assetType === "lesson" && !frontmatter.data.when_to_use) missingFields.push("when_to_use");

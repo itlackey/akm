@@ -71,11 +71,11 @@
 import fs from "node:fs";
 import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { fileOf, findAsset } from "../../core/assets/read";
+import { findAsset } from "../../core/assets/read";
 import { toErrorMessage } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
-import { ConfigError, NotFoundError } from "../../core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import {
   applyInputDefaults,
   type InputContract,
@@ -447,7 +447,8 @@ export async function akmTaskExplain(ref: string, options: TaskExplainOptions = 
       "ASSET_NOT_FOUND",
     );
   }
-  const sourcePath = fileOf(asset);
+  const sourcePath = asset.entry.file;
+  if (sourcePath === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
   const yaml = fs.readFileSync(sourcePath, "utf8");
   const parsed = parseTaskSource({ yaml, filePath: sourcePath });
   if (parsed.version !== 4) {

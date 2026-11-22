@@ -18,7 +18,7 @@ import { type BundleRef, makeBundleRef, parseBundleRef } from "../asset/asset-re
 import { deriveBundleIds } from "../bundle-id";
 import { compareCodePoints } from "../common";
 import { loadConfig } from "../config/config";
-import { NotFoundError, UsageError } from "../errors";
+import { NotFoundError } from "../errors";
 import { warn, warnOnce } from "../warn";
 import { type AssetBundle, assetBundleOf } from "./bundle";
 
@@ -40,13 +40,6 @@ export interface Asset {
 export interface FindOptions {
   /** The ordered sources to look in. Default: every configured source, default bundle first. */
   sources?: readonly SearchSource[];
-  /** Also find an asset `listAssets` leaves out (injection, the protected-file view). */
-  unlisted?: boolean;
-  /**
-   * Two entries hold the asset: `"read"` warns and takes the first; `"write"` (default) refuses, so nothing runs or
-   * changes on a guess. A caller that only reads for display passes `"read"`.
-   */
-  mode?: "read" | "write";
 }
 
 function defaultSources(options?: { sources?: readonly SearchSource[] }): readonly SearchSource[] {
@@ -75,22 +68,17 @@ function bundleOfSource(source: SearchSource, id: string): AssetBundle {
 }
 
 /** The asset `conceptId` names in one source, as its adapter reads it. */
-export function readFrom(
-  source: SearchSource,
-  bundle: string,
-  conceptId: string,
-  options: FindOptions,
-): Asset | undefined {
-  const found = bundleOfSource(source, bundle).read(conceptId, { mode: options.mode });
-  return found && (found.listed || options.unlisted) ? assetOf(bundle, found) : undefined;
+export function readFrom(source: SearchSource, bundle: string, conceptId: string): Asset | undefined {
+  const found = bundleOfSource(source, bundle).read(conceptId);
+  return found ? assetOf(bundle, found) : undefined;
 }
 
-function findAmong(ref: BundleRef, sources: readonly SearchSource[], options: FindOptions): Asset | undefined {
+function findAmong(ref: BundleRef, sources: readonly SearchSource[]): Asset | undefined {
   const installations = deriveInstallations([...sources]);
   for (const [index, source] of sources.entries()) {
     const bundle = installations[index]?.id;
     if (!bundle || (ref.bundle !== undefined && bundle !== ref.bundle)) continue;
-    const found = readFrom(source, bundle, ref.conceptId, options);
+    const found = readFrom(source, bundle, ref.conceptId);
     if (found) return found;
   }
   return undefined;
@@ -103,10 +91,10 @@ function findAmong(ref: BundleRef, sources: readonly SearchSource[], options: Fi
 export function findAsset(ref: string | BundleRef, options: FindOptions = {}): Asset | undefined {
   const parsed = typeof ref === "string" ? parseBundleRef(ref) : ref;
   const sources = defaultSources(options);
-  const found = findAmong(parsed, sources, options);
+  const found = findAmong(parsed, sources);
   if (found) return found;
   const current = withoutTypeHead(parsed.conceptId);
-  const legacy = current === undefined ? undefined : findAmong({ ...parsed, conceptId: current }, sources, options);
+  const legacy = current === undefined ? undefined : findAmong({ ...parsed, conceptId: current }, sources);
   if (legacy) warnOutdatedRef(parsed.conceptId, current as string);
   return legacy;
 }
@@ -121,16 +109,10 @@ export function requireAsset(ref: string | BundleRef, options: FindOptions = {})
   return found;
 }
 
-/** The file that holds `asset`, for a caller that works with files; refused when its bundle keeps it elsewhere. */
-export function fileOf(asset: Asset): string {
-  if (asset.entry.file === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
-  return asset.entry.file;
-}
-
 /** The asset an index row names, read from the source that holds it: the row's bundle, else the row's root. */
 export function assetOfEntry(
   entry: { bundleId: string; conceptId: string; stashDir: string },
-  options: Omit<FindOptions, "mode"> = {},
+  options: FindOptions = {},
 ): Asset | undefined {
   const sources = defaultSources(options);
   const installations = deriveInstallations([...sources]);
@@ -138,7 +120,7 @@ export function assetOfEntry(
   if (index < 0) index = sources.findIndex((source) => path.resolve(source.path) === path.resolve(entry.stashDir));
   const source = sources[index];
   const bundle = installations[index]?.id;
-  return source && bundle ? readFrom(source, bundle, entry.conceptId, { ...options, mode: "read" }) : undefined;
+  return source && bundle ? readFrom(source, bundle, entry.conceptId) : undefined;
 }
 
 /**
@@ -179,7 +161,7 @@ function sortKey({ entry }: Asset): string {
  * asset's ref with one warning; as written when no asset holds it.
  */
 export function currentConceptId(ref: BundleRef, sources: readonly SearchSource[]): string {
-  return findAsset(ref, { sources, mode: "read" })?.conceptId ?? ref.conceptId;
+  return findAsset(ref, { sources })?.conceptId ?? ref.conceptId;
 }
 
 /** Whether a bundle holds a retirement of the asset `ref` names: it was retired recoverably, not deleted. */

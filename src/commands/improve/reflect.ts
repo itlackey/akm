@@ -730,8 +730,6 @@ async function resolveReflectSource(
   const address = resolveProposalAddress(root, options.ref);
   const ownedType = findAsset(options.itemRef ?? options.ref, {
     sources: resolveSourceEntries(stash),
-    unlisted: true,
-    mode: "read",
   })?.type;
   const parsedRef: WriteAddress = { ...address, type: ownedType ?? address.type };
   // A secret's content is never read, whatever it looks like.

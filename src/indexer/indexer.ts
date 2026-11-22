@@ -1931,7 +1931,9 @@ async function lookupBundleRefWithResolutionUsing(
     };
   };
   try {
-    const asset = findAsset(ref, { sources });
+    // An asset its adapter keeps out of listings (a sensitive env file, a file outside the walk) is not served.
+    const found = findAsset(ref, { sources });
+    const asset = found?.listed ? found : undefined;
     if (!asset) return resolved(null);
     const bundleId = asset.bundle;
     const source = sourceOfBundle(sources, bundleId);

@@ -537,7 +537,7 @@ export class AkmAdapter extends AkmFormatAdapterBase {
     return renderExecutionSource(b, entry);
   }
 
-  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
     return validate(b, changes, ctx);
   }
 

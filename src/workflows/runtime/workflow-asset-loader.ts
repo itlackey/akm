@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { assetBundleOf } from "../../core/assets/bundle";
-import { fileOf, findAsset } from "../../core/assets/read";
+import { findAsset } from "../../core/assets/read";
 import { loadConfig } from "../../core/config/config";
 import { COMPOSITION_INVALID_MULTI_JOB_HINT, NotFoundError, UsageError } from "../../core/errors";
 import { canonicalizeWorkflowName } from "../../core/recognition-util";
@@ -90,7 +90,8 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
       "WORKFLOW_SOURCE_INVALID",
     );
   }
-  const assetPath = fileOf(asset);
+  const assetPath = asset.entry.file;
+  if (assetPath === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
 
   // Canonicalize the stored ref: `workflows/foo.md` and `workflows/foo` resolve
   // to the same file, so they MUST share one run identity.

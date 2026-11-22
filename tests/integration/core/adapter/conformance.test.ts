@@ -47,7 +47,7 @@ import {
   opencodeAdapter,
   secretToolAdapter,
 } from "../../../../src/core/adapter/adapters";
-import { AdapterConceptCollisionError, DirectoryAdapterBase } from "../../../../src/core/adapter/directory-adapter";
+import { DirectoryAdapterBase } from "../../../../src/core/adapter/directory-adapter";
 import { adapterForId, getAdapters } from "../../../../src/core/adapter/registry";
 import type { Bundle, IndexDocument } from "../../../../src/core/adapter/types";
 import { buildFileContext } from "../../../../src/indexer/walk/file-context";
@@ -283,8 +283,9 @@ describe("conformance — read candidates and recognition are two-way canonical 
       );
 
       fs.writeFileSync(path.join(genericRoot, "docs", "format.md"), "# collision");
-      expect(() => findInBundle({ name: "test", path: genericRoot }, "generic-files", "docs/format")).toThrow(
-        AdapterConceptCollisionError,
+      // Two spellings: the first by code point wins (generic-files places nothing): `.TEXT` sorts before `.md`.
+      expect(findInBundle({ name: "test", path: genericRoot }, "generic-files", "docs/format")?.entry.file).toBe(
+        upperText,
       );
 
       const extensionless = path.join(genericRoot, "LICENSE");
@@ -318,7 +319,9 @@ describe("conformance — read candidates and recognition are two-way canonical 
       });
       fs.writeFileSync(path.join(dotenvRoot, "env", ".sensitive"), "");
       expect(dotenvAdapter.recognize(dotenvComponent, buildFileContext(dotenvRoot, defaultEnv))).toBeNull();
-      expect(findInBundle({ name: "test", path: dotenvRoot }, "dotenv", "env/default")).toBeUndefined();
+      expect(findInBundle({ name: "test", path: dotenvRoot }, "dotenv", "env/default")).toMatchObject({
+        listed: false,
+      });
 
       const toolComponent = bundle("tool", toolRoot);
       const singular = path.join(toolRoot, "skill", "pkg", "SKILL.md");
@@ -419,7 +422,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
     }
   });
 
-  test("two files that invert to one ref collide without reading either file", () => {
+  test("two files that invert to one ref read as the one place gives, and the other is ignored", () => {
     const sandbox = sandboxStashDir();
     try {
       const root = path.join(sandbox.dir, "akm");
@@ -428,23 +431,8 @@ describe("conformance — read candidates and recognition are two-way canonical 
       fs.mkdirSync(path.dirname(canonical), { recursive: true });
       fs.writeFileSync(loose, "Use $ARGUMENTS exactly.\n");
       fs.writeFileSync(canonical, "name: same\n");
-      const originalRead = fs.readFileSync;
-      const readSpy = spyOn(fs, "readFileSync").mockImplementation(((candidate, options) => {
-        if ([loose, canonical].some((entry) => path.resolve(entry) === path.resolve(String(candidate)))) {
-          throw new Error(`owner resolution must not read ${candidate}`);
-        }
-        return originalRead(candidate, options as never);
-      }) as typeof fs.readFileSync);
-      try {
-        expect(() => findInBundle({ name: "test", path: root }, "akm", "tasks/same")).toThrow(
-          AdapterConceptCollisionError,
-        );
-      } finally {
-        readSpy.mockRestore();
-      }
-      // The first owner wins a read; its file is read for its type once it is chosen.
-      const owner = findInBundle({ name: "test", path: root }, "akm", "tasks/same", { mode: "read" });
-      expect(owner?.entry.file).toBe(loose);
+      const owner = findInBundle({ name: "test", path: root }, "akm", "tasks/same");
+      expect(owner?.entry.file).toBe(canonical);
     } finally {
       sandbox.cleanup();
     }

@@ -58,6 +58,38 @@ describe("DirectoryAdapterBase", () => {
     expect(akmAdapter.read(bundle, "stray/none")).toBeUndefined();
   });
 
+  test("a concept held by two files acts on the winner, and validate names the winner and the ignored file", async () => {
+    const dir = path.join(bundle.root, "tasks");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "same.md"), "# loose\n");
+    fs.writeFileSync(path.join(dir, "same.yml"), "name: same\n");
+    const winner = path.join(dir, "same.yml");
+
+    expect(akmAdapter.read(bundle, "tasks/same")?.entry.file).toBe(winner);
+    akmAdapter.update(bundle, "tasks/same", "name: changed\n");
+    expect(fs.readFileSync(winner, "utf8")).toBe("name: changed\n");
+    expect(fs.readFileSync(path.join(dir, "same.md"), "utf8")).toBe("# loose\n");
+
+    // List agrees with read: one entry for the concept, the winner.
+    expect(
+      akmAdapter
+        .list(bundle)
+        .entries.map((entry) => entry.relPath)
+        .filter((rel) => rel.startsWith("tasks/same.")),
+    ).toEqual(["tasks/same.yml"]);
+
+    const diagnostics = await akmAdapter.validate(
+      bundle,
+      [{ path: "tasks/same.md", op: "delete" }] as never,
+      {
+        readFile: async (file: string) => fs.readFileSync(path.join(bundle.root, file), "utf8"),
+      } as never,
+    );
+    expect(diagnostics.filter((d) => d.issue === "shadowed-spelling")).toEqual([
+      expect.objectContaining({ file: "tasks/same.yml", detail: expect.stringContaining("tasks/same.md") }),
+    ]);
+  });
+
   test("forget and expireRetired answer with the files they changed, and nothing else", () => {
     akmAdapter.create(bundle, { type: "memory", name: "old", content: "# old\n" });
     const { handle } = akmAdapter.retire(bundle, "memories/old", { retiredAt: "2020-01-01T00:00:00.000Z" });

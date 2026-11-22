@@ -11,13 +11,12 @@
 
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
-import type { AssetChange } from "./adapter/bundle-adapter";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
 import { stashDirFor } from "./asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
 import { type Asset, findAsset, listAssets } from "./assets/read";
-import { readAsset, writeAssets } from "./assets/write";
+import { readAsset, type WriteResult, writeAssets } from "./assets/write";
 import { deriveBundleIds } from "./bundle-id";
 import { scanEnvKeyNames } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
@@ -104,7 +103,7 @@ function ownerOfType(ref: string, type: "env" | "secret", form: string): Asset {
 
 /** The asset any ref names right now (a sensitive env file or secret included), or undefined when no bundle holds it. The lookup behind `${ref}` tokens. */
 export function resolveRefOwner(ref: string): Asset | undefined {
-  return findAsset(ref, { sources: resolveSourceEntries(undefined, loadConfig()), unlisted: true });
+  return findAsset(ref, { sources: resolveSourceEntries(undefined, loadConfig()) });
 }
 
 /**
@@ -229,7 +228,7 @@ export function resolveSecretWriteTarget(
 
 /** The env file or secret a write resolution names, as the target bundle's adapter reads it; undefined when it has none. */
 export function findWriteTargetAsset(resolution: EnvSecretWriteResolution): Asset | undefined {
-  return readAsset(resolution.target.source, resolution.conceptId, { unlisted: true });
+  return readAsset(resolution.target.source, resolution.conceptId);
 }
 
 /**
@@ -242,7 +241,7 @@ export function writeEnvSecret(
     | { op: "create"; content: string | Buffer; sensitive?: boolean; exclusive?: boolean }
     | { op: "update"; content: string | Buffer; revision?: string }
     | { op: "delete"; revision?: string },
-): AssetChange {
+): WriteResult {
   const { type, name, conceptId, target } = resolution;
   const verb = operation.op === "delete" ? "Remove" : "Update";
   return writeAssets(

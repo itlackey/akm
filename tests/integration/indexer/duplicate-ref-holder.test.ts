@@ -80,16 +80,14 @@ describe("a ref that two files claim", () => {
     const full = await akmIndex({ stashDir: storage.stashDir, full: true });
     const afterFull = holder();
     expect(afterFull?.file).toBe(IN_KNOWLEDGE);
-    // The collision is reported, naming the file indexed and the one skipped.
-    expect(full.warnings).toEqual([
-      `Two files claim stash//${REF}: indexed ${path.join(storage.stashDir, IN_KNOWLEDGE)}, skipped ${path.join(storage.stashDir, IN_SKILLS)}.`,
-    ]);
+    // The adapter lists one entry for the ref, so the index never sees the collision; `akm lint` reports the ignored file.
+    expect(full.warnings ?? []).toEqual([]);
 
     // No file is touched: nothing may change, the winner, its entry id, and the text its vector is embedded from.
     const incremental = await akmIndex({ stashDir: storage.stashDir });
     expect(incremental.mode).toBe("incremental");
     expect(holder()).toEqual(afterFull);
-    expect(incremental.warnings).toHaveLength(1);
+    expect(incremental.warnings ?? []).toEqual([]);
 
     // `--full` over an existing index agrees with both.
     await akmIndex({ stashDir: storage.stashDir, full: true });

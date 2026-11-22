@@ -46,7 +46,6 @@ import {
   type CommitOutcome,
   commitAcceptedPaths,
   commitWriteTargetBoundary,
-  fileOfChange,
   prepareWriteTargetForMutation,
   type ResolvedWriteTarget,
   resolveWriteTarget,
@@ -1761,7 +1760,7 @@ async function promoteProposalWithLease(
       ? w.update(address.conceptId, stamped)
       : w.create({ type: address.type, name: address.name, content: stamped }),
   );
-  const assetPath = fileOfChange(written, mutationTarget.source);
+  const assetPath = plannedPath;
   const content = String(written.content ?? stamped);
   const accepted = persistProposalDecision(
     stashDir,

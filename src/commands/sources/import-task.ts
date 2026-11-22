@@ -9,12 +9,7 @@ import { makeBundleRef } from "../../core/asset/asset-ref";
 import { writeAssets } from "../../core/assets/write";
 import { loadConfig, mutateConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import {
-  commitWriteTargetBoundary,
-  fileOfChange,
-  prepareWriteTargetForMutation,
-  resolveWriteTarget,
-} from "../../core/write-source";
+import { commitWriteTargetBoundary, prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { selectBackend } from "../../tasks/backends";
 import type { SchedulerBackend } from "../../tasks/backends/types";
@@ -71,6 +66,6 @@ export async function importTaskFile(
       w.create({ type: "task", name: id, content: yaml }),
     );
     commitWriteTargetBoundary(prepared, `Import tasks/${id}`);
-    return { path: fileOfChange(change, prepared.source), ref };
+    return { path: file, ref };
   });
 }
