@@ -170,7 +170,7 @@ export function drainDirDocuments(
  * callers, so the synthetic bundle id is immaterial.
  */
 export function recognizeStashEntries(stashRoot: string, files: string[]): StashFile {
-  const bundle: Bundle = { id: stashRoot, root: stashRoot, writable: false };
+  const bundle: Bundle = { id: stashRoot, root: stashRoot };
   // No pre-filter: the `akm` adapter's `recognize` claims/abstains per file
   // (owner ruling 2026-07-21 — adapter-owned filtering).
   const contexts = files.map((file) => buildFileContext(stashRoot, file));

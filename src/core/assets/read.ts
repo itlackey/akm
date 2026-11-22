@@ -20,7 +20,7 @@ import { compareCodePoints } from "../common";
 import { loadConfig } from "../config/config";
 import { NotFoundError, UsageError } from "../errors";
 import { warn, warnOnce } from "../warn";
-import { assetBundleOf } from "./bundle";
+import { type AssetBundle, assetBundleOf } from "./bundle";
 
 /** One asset, found in its bundle. */
 export interface Asset {
@@ -35,10 +35,6 @@ export interface Asset {
   readonly entry: AssetEntry;
   /** Whether `listAssets` lists it. False for an env file or secret kept out of listings (`.sensitive`). */
   readonly listed: boolean;
-  /** The source that holds it, for a caller that needs its root or `registryId`. */
-  readonly source: SearchSource;
-  /** The adapter that read it. */
-  readonly adapterId: string;
 }
 
 export interface FindOptions {
@@ -57,19 +53,25 @@ function defaultSources(options?: { sources?: readonly SearchSource[] }): readon
   return options?.sources ?? resolveSourceEntries(undefined, loadConfig());
 }
 
-function assetOf(source: SearchSource, bundle: string, adapterId: string, found: BundleAsset): Asset {
+function assetOf(bundle: string, found: BundleAsset): Asset {
   return {
     bundle,
     conceptId: found.conceptId,
     ref: makeBundleRef(bundle, found.conceptId),
-    get type() {
-      return found.type;
-    },
+    type: found.type,
     entry: found.entry,
     listed: found.listed,
-    source,
-    adapterId,
   };
+}
+
+/** The bundle a search source is, under the id refs use. */
+function bundleOfSource(source: SearchSource, id: string): AssetBundle {
+  return assetBundleOf({
+    name: id,
+    path: source.path,
+    ...(source.location !== undefined ? { location: source.location } : {}),
+    ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
+  });
 }
 
 /** The asset `conceptId` names in one source, as its adapter reads it. */
@@ -79,14 +81,8 @@ export function readFrom(
   conceptId: string,
   options: FindOptions,
 ): Asset | undefined {
-  const { adapter, bundle: b } = assetBundleOf({
-    name: bundle,
-    path: source.path,
-    ...(source.location !== undefined ? { location: source.location } : {}),
-    ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
-  });
-  const found = adapter.read(b, conceptId, { mode: options.mode });
-  return found && (found.listed || options.unlisted) ? assetOf(source, bundle, adapter.id, found) : undefined;
+  const found = bundleOfSource(source, bundle).read(conceptId, { mode: options.mode });
+  return found && (found.listed || options.unlisted) ? assetOf(bundle, found) : undefined;
 }
 
 function findAmong(ref: BundleRef, sources: readonly SearchSource[], options: FindOptions): Asset | undefined {
@@ -159,35 +155,23 @@ export function listAssets(
   for (const [index, source] of sources.entries()) {
     const bundle = ids[index] as string;
     if (source.unresolved || (options.bundle !== undefined && bundle !== options.bundle)) continue;
-    const { adapter, bundle: b } = assetBundleOf({
-      name: bundle,
-      path: source.path,
-      ...(source.location !== undefined ? { location: source.location } : {}),
-      ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
-    });
-    const listing = adapter.list(b);
+    const held = bundleOfSource(source, bundle);
+    const listing = held.list();
     if (!listing.complete && listing.incompleteReason) {
       warn(`Bundle "${source.registryId ?? source.path}" was not listed completely: ${listing.incompleteReason}`);
     }
     for (const entry of listing.entries) {
-      const document = adapter.recognize(b, entry);
+      const document = held.recognize(entry);
       if (!document?.conceptId || (options.type !== undefined && document.type !== options.type)) continue;
-      found.push(
-        assetOf(source, bundle, adapter.id, {
-          conceptId: document.conceptId,
-          type: document.type,
-          entry,
-          listed: true,
-        }),
-      );
+      found.push(assetOf(bundle, { conceptId: document.conceptId, type: document.type, entry, listed: true }));
     }
   }
   return found.sort((left, right) => compareCodePoints(sortKey(left), sortKey(right)));
 }
 
-/** Where an asset sorts: its file, else the path its bundle indexes it under. */
-function sortKey({ source, entry }: Asset): string {
-  return entry.file ?? path.join(source.path, entry.relPath);
+/** Where an asset sorts: its file, else its path inside its bundle. */
+function sortKey({ entry }: Asset): string {
+  return entry.file ?? entry.relPath;
 }
 
 /**
@@ -204,13 +188,9 @@ export function isRetired(ref: BundleRef, sources: readonly SearchSource[] = def
   return sources.some((source, index) => {
     const bundle = installations[index]?.id;
     if (!bundle || (ref.bundle !== undefined && bundle !== ref.bundle)) return false;
-    const { adapter, bundle: b } = assetBundleOf({
-      name: bundle,
-      path: source.path,
-      ...(source.location !== undefined ? { location: source.location } : {}),
-      ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
-    });
-    return adapter.retired(b).some((retirement) => retirement.conceptId === ref.conceptId);
+    return bundleOfSource(source, bundle)
+      .retired()
+      .some((retirement) => retirement.conceptId === ref.conceptId);
   });
 }
 

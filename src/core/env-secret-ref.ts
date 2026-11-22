@@ -9,8 +9,7 @@
  * here is a secret's, for the callers that inject it ({@link readSecret}); no value is surfaced.
  */
 
-import path from "node:path";
-import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
+import { resolveSourceEntries } from "../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { AssetChange } from "./adapter/bundle-adapter";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
@@ -19,13 +18,12 @@ import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
 import { type Asset, findAsset, listAssets } from "./assets/read";
 import { readAsset, writeAssets } from "./assets/write";
+import { deriveBundleIds } from "./bundle-id";
 import { scanEnvKeyNames } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
 import { resolveMutationTarget } from "./mutation-target";
 import { formatRefForMessage, type ResolvedWriteTarget } from "./write-source";
-
-export type { IndexSearchSource };
 
 /**
  * Every listed env asset with its key names (never values or comments), for `commands/health` as well as
@@ -35,8 +33,8 @@ export function listEnvsRecursive(
   config: AkmConfig = loadConfig(),
 ): Array<{ ref: string; path?: string; keys: string[] }> {
   return listAssets({ sources: resolveSourceEntries(undefined, config), type: "env" }).map(
-    ({ conceptId, source, entry }) => ({
-      ref: makeEnvRef(conceptId, source, config),
+    ({ conceptId, bundle, entry }) => ({
+      ref: makeEnvRef(conceptId, bundle, config),
       ...(entry.file !== undefined ? { path: entry.file } : {}),
       keys: scanEnvKeyNames(entry.content()),
     }),
@@ -46,8 +44,8 @@ export function listEnvsRecursive(
 /** Every listed secret, by ref. Its value is not read. */
 export function listSecrets(config: AkmConfig = loadConfig()): Array<{ ref: string; path?: string }> {
   return listAssets({ sources: resolveSourceEntries(undefined, config), type: "secret" }).map(
-    ({ conceptId, source, entry }) => ({
-      ref: makeSecretRef(conceptId, source),
+    ({ conceptId, bundle, entry }) => ({
+      ref: makeSecretRef(conceptId, bundle),
       ...(entry.file !== undefined ? { path: entry.file } : {}),
     }),
   );
@@ -135,19 +133,19 @@ export function isInstalledBundle(bundle: string): boolean {
  * `config` defaults to the real `loadConfig()`; `listEnvsRecursive` threads its own through so a caller-supplied
  * config governs ref display as it governs which bundles are listed.
  */
-export function makeEnvRef(conceptId: string, source?: IndexSearchSource, config: AkmConfig = loadConfig()): string {
+export function makeEnvRef(conceptId: string, bundleId?: string, config: AkmConfig = loadConfig()): string {
   // `env/name` in the primary bundle, `bundle//env/name` in another.
-  return displayRef({ conceptId, bundleId: source?.registryId }, displayDefaultBundle(source, config));
+  return displayRef({ conceptId, bundleId }, displayDefaultBundle(bundleId, config));
 }
 
-export function makeSecretRef(conceptId: string, source?: IndexSearchSource): string {
-  return displayRef({ conceptId, bundleId: source?.registryId }, displayDefaultBundle(source));
+export function makeSecretRef(conceptId: string, bundleId?: string): string {
+  return displayRef({ conceptId, bundleId }, displayDefaultBundle(bundleId));
 }
 
-function displayDefaultBundle(source?: IndexSearchSource, config: AkmConfig = loadConfig()): string | undefined {
-  if (config.defaultBundle || !source) return config.defaultBundle;
-  const primary = resolveSourceEntries(undefined, config)[0];
-  return primary && path.resolve(primary.path) === path.resolve(source.path) ? source.registryId : undefined;
+function displayDefaultBundle(bundleId?: string, config: AkmConfig = loadConfig()): string | undefined {
+  if (config.defaultBundle || !bundleId) return config.defaultBundle;
+  const primary = deriveBundleIds(resolveSourceEntries(undefined, config))[0];
+  return primary === bundleId ? bundleId : undefined;
 }
 
 /** The env asset a ref names right now; `NotFoundError` when no bundle holds it (creating one goes through {@link resolveEnvWriteTarget}). */
@@ -166,9 +164,9 @@ export function resolveSecretPath(ref: string): { conceptId: string; asset: Asse
  * Read the secret `ref` names: its trimmed value, and the bundle that holds it.
  * Callers MUST NOT write the value to stdout or any log.
  */
-export function readSecret(ref: string): { conceptId: string; source: IndexSearchSource; value: string } {
+export function readSecret(ref: string): { conceptId: string; bundle: string; value: string } {
   const asset = ownerOfType(ref, "secret", "secrets/<name>");
-  return { conceptId: asset.conceptId, source: asset.source, value: secretValueOf(asset) };
+  return { conceptId: asset.conceptId, bundle: asset.bundle, value: secretValueOf(asset) };
 }
 
 // ── Write-target resolution (env/secret mutations) ───────────────────────────

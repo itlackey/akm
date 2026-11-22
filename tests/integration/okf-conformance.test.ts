@@ -679,9 +679,7 @@ describe("OKF first-class conformance", () => {
   test("OKF concepts cannot be executed as native workflows", async () => {
     write(okfRoot, "workflows/foreign.md", getWorkflowTemplate());
 
-    await expect(loadWorkflowAsset("adversarial//workflows/foreign")).rejects.toThrow(
-      /adapter "okf".*does not support native workflow execution/i,
-    );
+    await expect(loadWorkflowAsset("adversarial//workflows/foreign")).rejects.toThrow(/not a native workflow/i);
   });
 
   test("the native akm-workflow adapter remains executable", async () => {
@@ -865,9 +863,7 @@ describe("OKF first-class conformance", () => {
 
     await withEnv({ AKM_BUNDLE_DIR: undefined }, async () => {
       resetConfigCache();
-      await expect(loadWorkflowAsset("workflows/same")).rejects.toThrow(
-        /adapter "okf".*does not support native workflow execution/i,
-      );
+      await expect(loadWorkflowAsset("workflows/same")).rejects.toThrow(/not a native workflow/i);
       expect((await loadWorkflowAsset("local//workflows/same")).path).toBe(
         path.join(storage.stashDir, "workflows", "same.md"),
       );
@@ -898,9 +894,7 @@ describe("OKF first-class conformance", () => {
     });
     resetConfigCache();
 
-    await expect(loadWorkflowAsset("same")).rejects.toThrow(
-      /adapter "okf".*does not support native workflow execution/i,
-    );
+    await expect(loadWorkflowAsset("same")).rejects.toThrow(/not a native workflow/i);
     expect((await loadWorkflowAsset("native//same")).ref).toBe("native//same");
     expect((await loadWorkflowAsset("index")).ref).toBe("native//index");
   });

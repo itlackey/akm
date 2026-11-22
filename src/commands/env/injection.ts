@@ -78,10 +78,10 @@ export function resolveInjectionRefs(refs: {
     secretValues.push(...binding.secretValues);
   }
   for (const { ref, variable } of secrets) {
-    const { conceptId, source, value } = readSecret(ref);
+    const { conceptId, bundle, value } = readSecret(ref);
     values[variable] = value;
     secretValues.push(value);
-    appendEvent({ eventType: "secret_access", ref: makeSecretRef(conceptId, source), metadata: { var: variable } });
+    appendEvent({ eventType: "secret_access", ref: makeSecretRef(conceptId, bundle), metadata: { var: variable } });
   }
   return { values, secretValues };
 }

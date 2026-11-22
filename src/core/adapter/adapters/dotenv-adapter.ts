@@ -35,7 +35,7 @@ import { assetPathCandidatesForName } from "../../asset/asset-placement";
 import { isScratchPath } from "../../asset/scratch";
 import { scanEnvKeyNames, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate } from "../bundle-adapter";
+import type { AdapterReadCandidate } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { AkmFormatAdapterBase, sensitiveMarkerPath } from "./akm-format";
 import { dangerousEnvKeyDiagnostics } from "./akm-lint";
@@ -168,7 +168,7 @@ export class DotenvAdapter extends AkmFormatAdapterBase {
    * `.env`/`<name>.env` duality; the sensitive-marker sibling spellings are then
    * layered on each. `recognize` decides which candidate really owns the ref.
    */
-  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
+  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const posix = toPosix(conceptId);
     const expanded = (["env", "secret"] as const).flatMap((type) =>
       assetPathCandidatesForName(type, c.root, posix).flatMap((primary) =>

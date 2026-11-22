@@ -33,7 +33,7 @@ import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate } from "../bundle-adapter";
+import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate } from "./shared";
@@ -144,7 +144,7 @@ export class WebsiteSnapshotAdapter extends DirectoryAdapterBase {
     return validate(b, changes, ctx);
   }
 
-  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
+  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const canonical = toPosix(conceptId).replace(/\.md$/i, "");
     return [{ path: path.join(c.root, PAGES_PREFIX, `${canonical}.md`), conceptId: canonical }];
   }

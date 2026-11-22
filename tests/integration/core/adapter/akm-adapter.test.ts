@@ -50,7 +50,7 @@ afterAll(() => {
 });
 
 function bundle(overrides: Partial<Bundle> = {}): Bundle {
-  return { id: BUNDLE_ID, root: ALL_TYPES_ROOT, writable: true, ...overrides };
+  return { id: BUNDLE_ID, root: ALL_TYPES_ROOT, ...overrides };
 }
 
 /** Every asset FileContext in the all-types stash, MANIFEST.json excluded — exactly the golden capture's walk. */

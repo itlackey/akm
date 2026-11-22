@@ -27,7 +27,7 @@ function loadGolden(name: string): Record<string, unknown> {
 }
 
 function bundle(): Bundle {
-  return { id: BUNDLE_ID, root: FIXTURE_ROOT, writable: true };
+  return { id: BUNDLE_ID, root: FIXTURE_ROOT };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {

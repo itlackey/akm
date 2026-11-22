@@ -15,7 +15,7 @@
  */
 import { isDeepStrictEqual } from "node:util";
 import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
-import { requireConfiguredAdapters } from "../core/adapter/registry";
+import { requireAdapter } from "../core/adapter/registry";
 import { isRecord } from "../core/common";
 import {
   type AkmConfig,
@@ -27,6 +27,7 @@ import {
   resolveConfigRefSource,
   unusableEntryAt,
 } from "../core/config/config";
+import { resolveConfiguredSources } from "../core/config/config-sources";
 import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config/config-walker";
 import { isEnvReference } from "../core/config/schema/primitives";
 import { UsageError } from "../core/errors";
@@ -50,7 +51,11 @@ export function setConfigValue(config: AkmConfig, key: string, rawValue: string)
   }
   const next = configSet(config as unknown as Record<string, unknown>, key, rawValue) as unknown as AkmConfig;
   // A typo in an adapter id is caught as it is typed, not when a bundle is next read.
-  if (key === "bundles" || key.startsWith("bundles.")) requireConfiguredAdapters(next);
+  if (key === "bundles" || key.startsWith("bundles.")) {
+    for (const source of resolveConfiguredSources(next)) {
+      if (source.adapterId !== undefined) requireAdapter(source.name, source.adapterId);
+    }
+  }
   return next;
 }
 

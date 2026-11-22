@@ -64,7 +64,7 @@ function makeStash(): { stashDir: string; goodPath: string; badPath: string } {
 }
 
 function bundle(root: string): Bundle {
-  return { id: "b", root, writable: true };
+  return { id: "b", root };
 }
 
 describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
@@ -129,7 +129,7 @@ describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
       ].join("\n"),
     );
     try {
-      const c: Bundle = { id: "b", root, writable: true };
+      const c: Bundle = { id: "b", root };
       const context = buildFileContext(root, templatePath);
       expect(adapter.recognize(c, context)).toMatchObject({ type: "workflow" });
 

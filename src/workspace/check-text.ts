@@ -54,7 +54,7 @@ function unreadableReason(
     }
   }
   if (taskFinding !== undefined) return { reason: taskFinding };
-  const scratchBundle: Bundle = { id: bundle, root: scratchRoot, writable: true };
+  const scratchBundle: Bundle = { id: bundle, root: scratchRoot };
   const file = buildFileContext(scratchRoot, path.join(scratchRoot, relative));
   const adapter = adapterForId("akm");
   const drained = adapter ? drainDirDocuments(adapter, scratchBundle, [file]) : undefined;

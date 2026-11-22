@@ -30,6 +30,7 @@ import {
   validateInputs,
 } from "../../execution/input-contract";
 import type { ExecutionJsonObject } from "../../execution/json";
+import { sourceOfBundle } from "../../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
@@ -85,7 +86,7 @@ export function resolveBundleAsset(
   const conceptId = conceptIdFromTypeName(type, name);
   const sources = activeTaskSources(config);
   const asset = findAsset({ bundle, conceptId }, { sources });
-  if (asset) return { file: fileOf(asset), bundleRoot: asset.source.path };
+  if (asset) return { file: fileOf(asset), bundleRoot: sourceOfBundle(sources, asset.bundle).path };
   if (resolveSourcesForOrigin(bundle, sources).length === 0) {
     assertBundleNotDisabled(config, bundle);
     throw new UsageError(

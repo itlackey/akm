@@ -100,7 +100,8 @@ import {
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { looksLikeLlmWikiRoot } from "../../asset/llm-wiki-root";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate, AssetEntry } from "../bundle-adapter";
+import type { AssetEntry } from "../bundle-adapter";
+import type { AdapterReadCandidate } from "../directory-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import { recognizeMatch } from "../recognize-match";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
@@ -555,7 +556,7 @@ export class AkmAdapter extends AkmFormatAdapterBase {
    * type spells the file's ref itself. `recognize` decides which candidate
    * really owns the ref.
    */
-  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
+  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const posix = conceptId.replace(/\\/g, "/");
     const paths = placementTypes().flatMap((type) =>
       assetPathCandidatesForName(type, c.root, posix).filter((candidate) => {

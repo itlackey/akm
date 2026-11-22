@@ -59,7 +59,7 @@ function makeFileContext(overrides: Partial<FileContext> = {}): FileContext {
 }
 
 function makeComponent(overrides: Partial<Bundle> = {}): Bundle {
-  return { id: "main", root: "/bundle", writable: true, ...overrides };
+  return { id: "main", root: "/bundle", ...overrides };
 }
 
 function makeValidateContext(): ValidateContext {

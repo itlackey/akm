@@ -196,7 +196,7 @@ function hasExtractedRepo(repoDir: string): boolean {
   try {
     if (!fs.statSync(repoDir).isDirectory()) return false;
     // The "any type dir present" test is sourced from the `akm` adapter's directoryList().
-    const ownedDirs = akmAdapter.directoryList({ id: "akm", root: repoDir, writable: false });
+    const ownedDirs = akmAdapter.directoryList({ id: "akm", root: repoDir });
     return ownedDirs.some((dirName) => fs.existsSync(path.join(repoDir, dirName)));
   } catch {
     return false;

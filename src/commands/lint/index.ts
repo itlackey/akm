@@ -274,7 +274,6 @@ async function lintViaAdapter(
   const bundle: Bundle = {
     id: sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot,
     root: stashRoot,
-    writable: true,
   };
   const changes: FileChange[] = adapter
     .list(bundle)

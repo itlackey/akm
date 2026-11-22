@@ -45,7 +45,7 @@ function hasExtraAkmContent(root: string, winnerId: string): boolean {
   if (akm?.looksLikeRoot?.(root) !== true) return false;
 
   const winner = adapterForId(winnerId);
-  const stubBundle: Bundle = { id: "detect", root, writable: false };
+  const stubBundle: Bundle = { id: "detect", root };
   const ownedDirs = new Set(winner instanceof DirectoryAdapterBase ? winner.directoryList(stubBundle) : []);
 
   let entries: fs.Dirent[];

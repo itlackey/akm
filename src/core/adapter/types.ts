@@ -49,7 +49,6 @@ export interface Bundle {
   id: BundleId;
   /** Absolute materialized root; workspace state NEVER written here. */
   root: string;
-  writable: boolean;
   /**
    * Where the adapter finds a bundle that is not a directory (a keyring's name,
    * a vault's name): the bundle's configured `location`. `root` is then only the

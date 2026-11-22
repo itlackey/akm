@@ -22,7 +22,7 @@ import {
   type ResolvedWriteTarget,
   recordWriteTargetPath,
 } from "../write-source";
-import { type AssetBundle, assertAdapterWrites, assetBundleOf } from "./bundle";
+import { type AssetBundle, assetBundleOf } from "./bundle";
 import { type Asset, assetRevision, readFrom, warnOutdatedRef, withoutTypeHead } from "./read";
 
 /** Where a write to a ref goes. */
@@ -40,7 +40,6 @@ export interface AssetAddress {
 }
 
 export interface AssetWriter {
-  readonly bundle: AssetBundle;
   /** The asset `conceptId` names in the target's bundle, or undefined. */
   read(conceptId: string, options?: { unlisted?: boolean }): Asset | undefined;
   /** An existing asset by ref (the outdated spelling retried), else where a new one of the ref's type goes. */
@@ -51,8 +50,8 @@ export interface AssetWriter {
   retire(conceptId: string, note: RetireNote, options?: { revision?: string }): AssetChange & { handle: string };
   retired(): Retirement[];
   restore(handle: string, fallback?: string | Buffer): AssetChange;
-  forget(handle: string): AssetChange;
-  expireRetired(before: Date): AssetChange;
+  forget(handle: string): { changed: string[] };
+  expireRetired(before: Date): { changed: string[] };
 }
 
 type WriteSource = { name: string; path: string; location?: string; adapterId?: string };
@@ -94,8 +93,9 @@ function addressIn(held: AssetBundle, source: WriteSource, ref: string): AssetAd
     };
   }
   const placed = parsePlacementRef(ref);
+  held.assertWrites(placed.type);
   return {
-    conceptId: held.adapter.place(held.bundle, placed),
+    conceptId: held.place(placed),
     type: placed.type,
     name: placed.name,
     ...(origin !== undefined ? { origin } : {}),
@@ -116,8 +116,7 @@ export function readAsset(source: WriteSource, conceptId: string, options?: { un
 function writerFor(target: ResolvedWriteTarget): AssetWriter {
   const { source, config } = target;
   const held = assetBundleOf(source);
-  const { adapter, bundle } = held;
-  const record = <T extends AssetChange>(change: T): T => {
+  const record = <T extends { changed: string[] }>(change: T): T => {
     for (const file of change.changed) {
       recordWriteTargetPath(source, file);
       // Run-scoped write provenance (#652).
@@ -131,13 +130,8 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     const asset = readAsset(source, conceptId, { unlisted: true });
     if (!asset) throw new NotFoundError(`Asset not found: ${source.name}//${conceptId}`);
     const { type } = asset;
-    assertAdapterWrites(source, type);
-    if (options?.retire && !adapter.retires.includes(type)) {
-      throw new UsageError(
-        `Bundle "${source.name}" uses adapter "${adapter.id}", which does not retire ${type} assets.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
+    held.assertWrites(type);
+    if (options?.retire) held.assertRetires(type);
     if (options?.revision !== undefined && assetRevision(asset.entry.bytes()) !== options.revision) {
       throw new UsageError(
         `Asset "${source.name}//${conceptId}" changed since it was read; the change was not applied.`,
@@ -147,44 +141,43 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     return asset;
   };
   return {
-    bundle: held,
     read: (conceptId, options) => readAsset(source, conceptId, options),
     address: (ref) => addressIn(held, source, ref),
     create(asset, options) {
       ensureWritable(source, config);
-      assertAdapterWrites(source, asset.type);
+      held.assertWrites(asset.type);
       if (options?.exclusive) {
-        const conceptId = adapter.place(bundle, asset);
-        if (adapter.read(bundle, conceptId)) {
+        const conceptId = held.place(asset);
+        if (held.read(conceptId)) {
           throw new UsageError(`Asset "${source.name}//${conceptId}" already exists.`, "RESOURCE_ALREADY_EXISTS");
         }
       }
-      return record(adapter.create(bundle, asset));
+      return record(held.create(asset));
     },
     update(conceptId, content, options) {
       existing(conceptId, options);
-      return record(adapter.update(bundle, conceptId, content));
+      return record(held.update(conceptId, content));
     },
     delete(conceptId, options) {
       existing(conceptId, options);
-      return record(adapter.delete(bundle, conceptId));
+      return record(held.delete(conceptId));
     },
     retire(conceptId, note, options) {
       existing(conceptId, { ...options, retire: true });
-      return record(adapter.retire(bundle, conceptId, note));
+      return record(held.retire(conceptId, note));
     },
-    retired: () => adapter.retired(bundle),
+    retired: () => held.retired(),
     restore(handle, fallback) {
       ensureWritable(source, config);
-      return record(adapter.restore(bundle, handle, fallback));
+      return record(held.restore(handle, fallback));
     },
     forget(handle) {
       ensureWritable(source, config);
-      return record(adapter.forget(bundle, handle));
+      return record(held.forget(handle));
     },
     expireRetired(before) {
       ensureWritable(source, config);
-      return record(adapter.expireRetired(bundle, before));
+      return record(held.expireRetired(before));
     },
   };
 }

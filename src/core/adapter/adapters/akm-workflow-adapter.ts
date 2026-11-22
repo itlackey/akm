@@ -25,7 +25,8 @@ import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate, NewAsset } from "../bundle-adapter";
+import type { NewAsset } from "../bundle-adapter";
+import type { AdapterReadCandidate } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { AkmFormatAdapterBase } from "./akm-format";
 import { perTypeDiagnostics } from "./akm-lint";
@@ -165,7 +166,12 @@ export class AkmWorkflowAdapter extends AkmFormatAdapterBase {
     return path.join(b.root, `${name}.md`);
   }
 
-  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
+  /** Everything the bundle holds is a workflow, wherever it sits. */
+  protected override declaredType(): string {
+    return "workflow";
+  }
+
+  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const posix = toPosix(conceptId);
     const canonical = posix.replace(/\.md$/i, "");
     return /\.md$/i.test(posix)

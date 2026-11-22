@@ -226,12 +226,8 @@ describe("generic lookup/show installation-priority ownership", () => {
     expect((await showLocal({ ref: "workflows/same" })).path).toBe(earlyPath);
 
     const stateBeforeRuntimeRejection = fs.readFileSync(getStateDbPath());
-    await expect(loadWorkflowAsset("workflows/same")).rejects.toThrow(
-      /adapter "okf".*does not support native workflow execution/i,
-    );
-    await expect(startWorkflowRun("workflows/same")).rejects.toThrow(
-      /adapter "okf".*does not support native workflow execution/i,
-    );
+    await expect(loadWorkflowAsset("workflows/same")).rejects.toThrow(/not a native workflow/i);
+    await expect(startWorkflowRun("workflows/same")).rejects.toThrow(/not a native workflow/i);
     expect(fs.readFileSync(getStateDbPath())).toEqual(stateBeforeRuntimeRejection);
 
     expect(await lookupBundleRef(parseBundleRef("later//workflows/same"))).toMatchObject({
@@ -264,7 +260,7 @@ describe("generic lookup/show installation-priority ownership", () => {
     expect(await lookupBundleRef(parseBundleRef("workflows/same"))).toBeNull();
     expect((await showLocal({ ref: "workflows/same" })).path).toBe(earlyPath);
     const stateBeforeRuntimeRejection = fs.readFileSync(getStateDbPath());
-    await expect(loadWorkflowAsset("workflows/same")).rejects.toThrow(/adapter "okf"/i);
+    await expect(loadWorkflowAsset("workflows/same")).rejects.toThrow(/not a native workflow/i);
     expect(fs.readFileSync(getStateDbPath())).toEqual(stateBeforeRuntimeRejection);
 
     expect(await lookupBundleRef(parseBundleRef("later//workflows/same"))).toMatchObject({

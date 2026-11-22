@@ -6,7 +6,7 @@ import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { findAsset } from "../../core/assets/read";
 import { safeRealpath } from "../../core/common";
 import { lookupBundleRef } from "../indexer";
-import { deriveInstallations } from "../installations";
+import { deriveInstallations, sourceOfBundle } from "../installations";
 import { indexedPathOf } from "../lookup/indexed-owner";
 import { resolveSourceEntries } from "../search/search-source";
 
@@ -37,7 +37,7 @@ function resolveViaDisk(ref: BundleRef, options: ResolveAssetPathOptions): strin
     : allSources;
   const bundle = options.honorOrigin !== false ? ref.bundle : undefined;
   const asset = findAsset({ bundle, conceptId: ref.conceptId }, { sources });
-  return asset ? safeRealpath(indexedPathOf(asset)) : null;
+  return asset ? safeRealpath(indexedPathOf(asset, sourceOfBundle(sources, asset.bundle))) : null;
 }
 
 export async function resolveAssetPath(ref: string, options: ResolveAssetPathOptions = {}): Promise<string | null> {

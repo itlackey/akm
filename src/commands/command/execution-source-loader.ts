@@ -97,7 +97,6 @@ function implicitBundleForEntry(entry: IndexEntry, config: AkmConfig): Bundle | 
     return Object.freeze({
       id: installation.id,
       root: canonicalRoot,
-      writable: installation.writable,
     });
   }
   return undefined;

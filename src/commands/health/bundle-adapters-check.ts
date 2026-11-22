@@ -7,10 +7,11 @@
  * accepts any adapter id, so this is where a typo (`agent_skills`) is reported before the bundle is next read.
  */
 
-import { requireConfiguredAdapters } from "../../core/adapter/registry";
+import { requireAdapter } from "../../core/adapter/registry";
 import { toErrorMessage } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
+import { resolveConfiguredSources } from "../../core/config/config-sources";
 import type { HealthCheckResult } from "./types";
 
 export function collectBundleAdaptersCheck(readConfig: () => AkmConfig = loadConfig): HealthCheckResult {
@@ -27,7 +28,9 @@ export function collectBundleAdaptersCheck(readConfig: () => AkmConfig = loadCon
     };
   }
   try {
-    requireConfiguredAdapters(config);
+    for (const source of resolveConfiguredSources(config)) {
+      if (source.adapterId !== undefined) requireAdapter(source.name, source.adapterId);
+    }
   } catch (error) {
     return {
       ...base,

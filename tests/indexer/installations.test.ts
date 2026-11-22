@@ -17,7 +17,12 @@ import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { adapterIdOf } from "../../src/core/adapter/detect-adapter";
 import { slugForRegistryId } from "../../src/core/bundle-id";
-import { deriveBundleId, deriveInstallations, slugForPath } from "../../src/indexer/installations";
+import {
+  deriveBundleId,
+  deriveInstallations,
+  deriveWritableBundleIds,
+  slugForPath,
+} from "../../src/indexer/installations";
 import type { SearchSource } from "../../src/indexer/search/search-source";
 
 // NO registry setup: the registry is a static frozen map (normative §12.6)
@@ -111,13 +116,13 @@ describe("deriveInstallations — id / trust / bundle shape", () => {
     expect(installed!.id).toBe("team-catalog");
   });
 
-  test("a bundle carries root and writable under its id", () => {
-    const [writable, readonly] = deriveInstallations([
+  test("a bundle carries its root under its id; writability is the source's, by bundle id", () => {
+    const sources: SearchSource[] = [
       { path: AKM_ROOT, writable: true },
       { path: OKF_ROOT, registryId: "ro", writable: false },
-    ]);
-    expect(writable).toMatchObject({ id: "all-types", root: AKM_ROOT, writable: true });
-    expect(readonly!.writable).toBe(false);
+    ];
+    expect(deriveInstallations(sources)[0]).toEqual({ id: "all-types", root: AKM_ROOT });
+    expect([...deriveWritableBundleIds(sources)]).toEqual(["all-types"]);
   });
 
   test("source order is preserved as installation priority", () => {

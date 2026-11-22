@@ -43,7 +43,7 @@ import {
 } from "../../../tasks/source-v3";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate } from "../bundle-adapter";
+import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { hashContent } from "./shared";
@@ -122,7 +122,7 @@ export class AkmTaskAdapter extends DirectoryAdapterBase {
     return validate(b, changes, ctx);
   }
 
-  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
+  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const posix = toPosix(conceptId).replace(/\.ya?ml$/i, "");
     return [
       { path: path.join(c.root, `${posix}.yml`), conceptId: posix },

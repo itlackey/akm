@@ -30,6 +30,7 @@
 import type { Bundle } from "../core/adapter/types";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
 import { deriveBundleId, deriveBundleIds, slugForPath } from "../core/bundle-id";
+import { ConfigError } from "../core/errors";
 import { isSourceWriteActivated } from "../core/write-source";
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
 import type { SearchSource } from "./search/search-source";
@@ -49,18 +50,22 @@ export function deriveInstallations(sources: SearchSource[]): Bundle[] {
     // derivation. A non-slug-legal registryId slugs from the path instead.
     id: ids[index] as string,
     root: source.path,
-    writable: isSourceWriteActivated(source),
     ...(source.location !== undefined ? { location: source.location } : {}),
   }));
 }
 
+/** The source that is the bundle `bundleId` (an id from {@link deriveBundleIds}); refused when none is. */
+export function sourceOfBundle(sources: readonly SearchSource[], bundleId: string): SearchSource {
+  const source = sources[deriveBundleIds([...sources]).indexOf(bundleId)];
+  if (!source)
+    throw new ConfigError(`Bundle "${bundleId}" is not among the configured sources.`, "INVALID_CONFIG_FILE");
+  return source;
+}
+
 /** Canonical bundle ids whose configured policy permits mutation. */
 export function deriveWritableBundleIds(sources: SearchSource[]): Set<string> {
-  return new Set(
-    deriveInstallations(sources)
-      .filter((bundle) => bundle.writable)
-      .map((bundle) => bundle.id),
-  );
+  const ids = deriveBundleIds(sources);
+  return new Set(sources.flatMap((source, index) => (isSourceWriteActivated(source) ? [ids[index] as string] : [])));
 }
 
 /**

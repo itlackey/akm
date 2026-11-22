@@ -93,7 +93,7 @@ describe("finding an asset in one bundle — closed-form candidates (#857)", () 
         frontmatter: () => null,
         stat: () => fs.statSync(target),
       };
-      const document = akmAdapter.recognize({ id: "akm", root, writable: false }, entry);
+      const document = akmAdapter.recognize({ id: "akm", root }, entry);
       expect(document?.conceptId).toBe("vendor/tools/deploy");
 
       const readdirSpy = spyOn(fs, "readdirSync");
@@ -327,7 +327,6 @@ describe("findAsset", () => {
 
     expect(found?.bundle).toBe("second");
     expect(found?.ref).toBe("second//scripts/deploy.sh");
-    expect(found?.source).toBe(second);
     expect(found?.entry.file).toBe(path.join(second.path, "scripts", "deploy.sh"));
   });
 
@@ -340,12 +339,12 @@ describe("findAsset", () => {
     expect(findAsset("scripts/deploy.sh", { sources: [third, second, first] })?.bundle).toBe("third");
   });
 
-  test("an asset carries its type and its adapter, and reads as its adapter holds it", () => {
+  test("an asset carries its type, and reads as its adapter holds it", () => {
     const stash = bundleOf("stash", { "knowledge/note.md": "---\ndescription: A note\n---\nBody\n" });
 
     const found = findAsset("knowledge/note", { sources: [stash] });
 
-    expect(found).toMatchObject({ type: "knowledge", conceptId: "knowledge/note", adapterId: "akm", listed: true });
+    expect(found).toMatchObject({ type: "knowledge", conceptId: "knowledge/note", listed: true });
     expect(found?.entry.frontmatter()).toMatchObject({ description: "A note" });
     expect(found?.entry.content()).toContain("Body");
   });
@@ -468,7 +467,9 @@ describe("addressOf", () => {
 
   test("a bundle whose adapter does not write is refused when a new asset is placed", () => {
     const okf = bundleOf("okf", {}, "okf");
-    expect(() => addressOf({ name: "okf", path: okf.path, adapterId: "okf" }, "lessons/new-one")).toThrow(UsageError);
+    expect(() => addressOf({ name: "okf", path: okf.path, adapterId: "okf" }, "lessons/new-one")).toThrow(
+      /adapter "okf", which does not support AKM asset writes/,
+    );
   });
 });
 
@@ -619,7 +620,7 @@ describe("a keyring bundle behind the facade", () => {
         async () => {
           const sources = resolveSourceEntries(undefined, loadConfig());
           const found = findAsset("keyring//secrets/gh_token", { sources });
-          expect(found).toMatchObject({ type: "secret", bundle: "keyring", adapterId: "secret-tool" });
+          expect(found).toMatchObject({ type: "secret", bundle: "keyring" });
           expect(found?.entry.file).toBeUndefined();
           expect(found?.entry.content()).toBe("ghp-value");
           expect(listAssets({ sources, type: "secret" }).map((asset) => asset.ref)).toEqual([
@@ -627,7 +628,11 @@ describe("a keyring bundle behind the facade", () => {
           ]);
 
           const indexed = assetOfEntry(
-            { bundleId: "keyring", conceptId: "secrets/gh_token", stashDir: found?.source.path ?? "" },
+            {
+              bundleId: "keyring",
+              conceptId: "secrets/gh_token",
+              stashDir: sources.find((source) => source.registryId === "keyring")?.path ?? "",
+            },
             { sources },
           );
           expect(indexed?.entry.content()).toBe("ghp-value");

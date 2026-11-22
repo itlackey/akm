@@ -150,7 +150,7 @@ const secretRunCommand = defineJsonCommand({
       throw new UsageError("Missing command. Usage: akm secret run <ref> <VAR> -- <command>");
     }
 
-    const { conceptId, source, value } = readSecret(args.ref);
+    const { conceptId, bundle, value } = readSecret(args.ref);
 
     const mergedEnv = buildChildEnv(process.env, {
       clean: args.clean === true,
@@ -161,7 +161,7 @@ const secretRunCommand = defineJsonCommand({
     // Audit trail: record access by ref + var name only — never the value.
     appendEvent({
       eventType: "secret_access",
-      ref: makeSecretRef(conceptId, source),
+      ref: makeSecretRef(conceptId, bundle),
       metadata: { var: varName },
     });
 

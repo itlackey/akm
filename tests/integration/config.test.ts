@@ -3,8 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setConfigValue } from "../../src/commands/config-cli";
+import { collectBundleAdaptersCheck } from "../../src/commands/health/bundle-adapters-check";
 import { resolveImproveExecution } from "../../src/commands/improve/execution";
-import { requireConfiguredAdapters } from "../../src/core/adapter/registry";
 import {
   DEFAULT_CONFIG,
   defaultConnection,
@@ -799,9 +799,12 @@ describe("bundles.*.adapter (#909)", () => {
       defaultBundle: "main",
     });
     expect(loadConfig().bundles?.main?.adapter).toBe("__invalid__");
-    expect(() => requireConfiguredAdapters(loadConfig())).toThrow(
-      /Bundle "main" names adapter "__invalid__", which akm does not have\. Expected one of: .*\bagent-skills\b.*\bokf\b/,
-    );
+    expect(collectBundleAdaptersCheck(() => loadConfig())).toMatchObject({
+      status: "fail",
+      message: expect.stringMatching(
+        /Bundle "main" names adapter "__invalid__", which akm does not have\. Expected one of: .*\bagent-skills\b.*\bokf\b/,
+      ),
+    });
   });
 
   test("a valid adapter name loads without error", () => {

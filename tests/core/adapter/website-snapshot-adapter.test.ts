@@ -38,7 +38,7 @@ function loadGolden(name: string): Record<string, unknown> {
 
 function bundle(): Bundle {
   // Read-only snapshot (Mode A): writable false.
-  return { id: BUNDLE_ID, root: FIXTURE_ROOT, writable: false };
+  return { id: BUNDLE_ID, root: FIXTURE_ROOT };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {

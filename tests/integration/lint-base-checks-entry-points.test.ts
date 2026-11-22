@@ -188,7 +188,7 @@ describe("the base checks give the same findings through the lint sweep and thro
     const sweep = (await akmLint({ dir: root, config })).flagged;
     const ctx = createValidateContext({ root, sources: resolveSourceEntries(root, config) });
     const validated = await akmAdapter.validate(
-      { id: "stash", root, writable: true },
+      { id: "stash", root },
       FIXTURE.map((file) => ({ path: file.rel, op: "update" as const })),
       ctx,
     );
@@ -282,7 +282,7 @@ describe("a ref a file declares is checked wherever it points", () => {
     );
     const config = loadConfig();
     const found = await okfAdapter.validate(
-      { id: "okf", root, writable: true },
+      { id: "okf", root },
       [{ path: "concepts/a.md", op: "update" }],
       createValidateContext({ root, sources: [{ path: root }], config }),
     );

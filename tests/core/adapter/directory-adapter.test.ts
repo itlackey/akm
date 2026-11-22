@@ -22,7 +22,7 @@ let bundle: Bundle;
 
 beforeEach(() => {
   sandbox = sandboxStashDir();
-  bundle = { id: "stash", root: sandbox.dir, writable: true };
+  bundle = { id: "stash", root: sandbox.dir };
 });
 afterEach(() => sandbox.cleanup());
 
@@ -33,11 +33,36 @@ describe("DirectoryAdapterBase", () => {
   });
 
   test("an adapter that writes no types refuses to place or create", () => {
-    expect(() => okfAdapter.place(bundle, { type: "knowledge", name: "a" })).toThrow(/does not hold knowledge assets/);
+    // A plain invariant: the asset facade refuses these with the sentence users see, before an adapter is asked.
+    expect(() => okfAdapter.place(bundle, { type: "knowledge", name: "a" })).toThrow(/does not write knowledge assets/);
     expect(() => okfAdapter.create(bundle, { type: "knowledge", name: "a", content: "x" })).toThrow(
-      /does not hold knowledge assets/,
+      /does not write knowledge assets/,
     );
     expect(() => okfAdapter.delete(bundle, "a")).toThrow();
+  });
+
+  test("read tells an asset a full walk would not reach (a dot-directory) from one it lists", () => {
+    for (const rel of ["knowledge/ok.md", ".hidden/knowledge/x.md"]) {
+      fs.mkdirSync(path.dirname(path.join(bundle.root, rel)), { recursive: true });
+      fs.writeFileSync(path.join(bundle.root, rel), "# x\n");
+    }
+    expect(akmAdapter.read(bundle, "knowledge/ok")).toMatchObject({ type: "knowledge", listed: true });
+    expect(akmAdapter.read(bundle, ".hidden/knowledge/x")).toMatchObject({ type: "knowledge", listed: false });
+  });
+
+  test("read knows an asset's type when it returns it, and finds nothing for a file it cannot type", () => {
+    const file = path.join(bundle.root, "stray", "note.md");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "# a note\n");
+    expect(akmAdapter.read(bundle, "stray/note")?.type).toBe("knowledge");
+    expect(akmAdapter.read(bundle, "stray/none")).toBeUndefined();
+  });
+
+  test("forget and expireRetired answer with the files they changed, and nothing else", () => {
+    akmAdapter.create(bundle, { type: "memory", name: "old", content: "# old\n" });
+    const { handle } = akmAdapter.retire(bundle, "memories/old", { retiredAt: "2020-01-01T00:00:00.000Z" });
+    expect(Object.keys(akmAdapter.expireRetired(bundle, new Date()))).toEqual(["changed"]);
+    expect(Object.keys(akmAdapter.forget(bundle, handle))).toEqual(["changed"]);
   });
 
   test("create writes the asset, update replaces it, delete removes it", () => {

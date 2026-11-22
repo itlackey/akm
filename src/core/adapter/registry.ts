@@ -30,8 +30,6 @@
  * frozen list pulls the concrete adapters into no query-time graph.
  */
 
-import { resolveConfiguredSources } from "../config/config-sources";
-import type { AkmConfig } from "../config/config-types";
 import { ConfigError } from "../errors";
 import { BUILTIN_ADAPTERS } from "./adapters";
 import type { BundleAdapter } from "./bundle-adapter";
@@ -74,19 +72,11 @@ export function requireAdapter(bundle: string, id: string): BundleAdapter {
   return adapter;
 }
 
-/** Refuse a config in which a bundle names an adapter akm does not have. */
-export function requireConfiguredAdapters(config: AkmConfig): void {
-  for (const source of resolveConfiguredSources(config)) {
-    if (source.adapterId !== undefined) requireAdapter(source.name, source.adapterId);
-  }
-}
-
 /** The bundle its adapter is called with: its id (its config name), root, and `location` when it has one. */
 export function bundleOf(source: { name: string; path: string; location?: string }): Bundle {
   return {
     id: source.name,
     root: source.path,
-    writable: false,
     ...(source.location ? { location: source.location } : {}),
   };
 }

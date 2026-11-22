@@ -87,7 +87,7 @@ describe("agent-skills: a package directory with no SKILL.md is flagged (issue #
     write(root, "team/pdf-processing/SKILL.md", skillManifest("pdf-processing"));
 
     const diagnostics = await agentSkillsAdapter.validate(
-      { id: "grouped", root, writable: true },
+      { id: "grouped", root },
       [{ path: "team/pdf-processing/SKILL.md", op: "update" }],
       createValidateContext({ root }),
     );
@@ -103,7 +103,7 @@ describe("agent-skills: a package directory with no SKILL.md is flagged (issue #
     write(root, "team/half-built/reference/NOTES.md", "# Notes\n");
 
     const diagnostics = await agentSkillsAdapter.validate(
-      { id: "mixed-grouped", root, writable: true },
+      { id: "mixed-grouped", root },
       [{ path: "team/pdf-processing/SKILL.md", op: "update" }],
       createValidateContext({ root }),
     );
@@ -126,7 +126,7 @@ describe("agent-skills: a package directory with no SKILL.md is flagged (issue #
     write(root, ".github/workflows/ci.yml", "name: ci\n");
 
     const diagnostics = await agentSkillsAdapter.validate(
-      { id: "dotted", root, writable: true },
+      { id: "dotted", root },
       [{ path: "pdf-processing/SKILL.md", op: "update" }],
       createValidateContext({ root }),
     );

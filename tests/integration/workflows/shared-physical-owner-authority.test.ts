@@ -193,7 +193,7 @@ describe("shared adapter physical-owner authority", () => {
     await akmIndex({ stashDir: early.root, full: true });
     mutateEntry("early//skills/once", "missing", "");
 
-    const candidateSpy = spyOn(opencodeAdapter, "readCandidates");
+    const candidateSpy = spyOn(opencodeAdapter as unknown as { readCandidates(): unknown }, "readCandidates");
     try {
       expect((await showLocal({ ref: "skills/once" })).path).toBe(earlyPath);
       expect(candidateSpy).toHaveBeenCalledTimes(1);
@@ -214,7 +214,7 @@ describe("shared adapter physical-owner authority", () => {
   )("%s rejects a loose AKM command owner with a %s row before mutation", async (surface, state) => {
     const early = fixture(`early-loose-runtime-${surface}-${state}`, "akm");
     const later = fixture(`later-loose-runtime-${surface}-${state}`, "akm-workflow");
-    const earlyPath = write(early.root, "same.md", "Use $ARGUMENTS exactly.\n");
+    write(early.root, "same.md", "Use $ARGUMENTS exactly.\n");
     const laterPath = write(later.root, "commands/same.md", getWorkflowTemplate());
     configure(early, later);
     await akmIndex({ stashDir: early.root, full: true });
@@ -223,25 +223,21 @@ describe("shared adapter physical-owner authority", () => {
     const stateBefore = stateDbSnapshot();
     let dispatches = 0;
 
-    const readSpy = denyAssetRead(earlyPath);
-    try {
-      const operation =
-        surface === "load"
-          ? loadWorkflowAsset("same")
-          : surface === "start"
-            ? startWorkflowRun("same")
-            : runWorkflowSteps({
-                target: "same",
-                summaryJudge: null,
-                dispatcher: async () => {
-                  dispatches++;
-                  return { ok: true as const, text: "unexpected" };
-                },
-              });
-      await expect(operation).rejects.toThrow(/adapter "akm".*does not support native workflow execution/i);
-    } finally {
-      readSpy.mockRestore();
-    }
+    // The loose file's type is the one thing read about it: that is how it is told from a workflow.
+    const operation =
+      surface === "load"
+        ? loadWorkflowAsset("same")
+        : surface === "start"
+          ? startWorkflowRun("same")
+          : runWorkflowSteps({
+              target: "same",
+              summaryJudge: null,
+              dispatcher: async () => {
+                dispatches++;
+                return { ok: true as const, text: "unexpected" };
+              },
+            });
+    await expect(operation).rejects.toThrow(/not a native workflow/i);
     expect(dispatches).toBe(0);
     expect(stateDbSnapshot()).toEqual(stateBefore);
     expect((await listWorkflowRuns()).runs).toHaveLength(0);
@@ -450,7 +446,7 @@ describe("shared adapter physical-owner authority", () => {
                   return { ok: true as const, text: "unexpected" };
                 },
               });
-      await expect(operation).rejects.toThrow(/adapter "opencode".*does not support native workflow execution/i);
+      await expect(operation).rejects.toThrow(/not a native workflow/i);
     } finally {
       readSpy.mockRestore();
     }

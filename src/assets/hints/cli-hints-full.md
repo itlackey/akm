@@ -279,7 +279,7 @@ akm bundle add https://github.com/org/private.git --provider git --credential '$
 akm registry add https://skills.sh --name skills.sh --provider skills-sh  # Add the skills.sh registry
 akm registry remove skills.sh                 # Remove the skills.sh registry
 akm bundle list                                      # List all sources
-akm bundle list --kind git                           # Filter by provider (filesystem, git, npm, website)
+akm bundle list --kind git                           # Filter by provider (filesystem, git, npm, website, location)
 akm bundle remove <target>                           # Remove by id, ref, path, or name
 akm bundle update --all                              # Update all managed sources
 akm bundle update <target> --force                   # Force re-download

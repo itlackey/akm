@@ -5,6 +5,7 @@ import { codeProjectAdapter, eligibleType } from "../../../../src/core/adapter/a
 import type { Bundle, ValidateContext } from "../../../../src/core/adapter/types";
 import { buildFileContext, type FileContext } from "../../../../src/indexer/walk/file-context";
 import { walkStashFlat } from "../../../../src/indexer/walk/walker";
+import { readCandidates } from "../../../_helpers/read-candidates";
 
 const ROOT = path.join(import.meta.dir, "../../../fixtures/bundles/code-project");
 const GOLDEN = JSON.parse(
@@ -13,7 +14,7 @@ const GOLDEN = JSON.parse(
     "utf8",
   ),
 ) as { byRelPath: Record<string, { type: string; ref: string; name: string; tags?: string[] }> };
-const bundle: Bundle = { id: "sample-project", root: ROOT, writable: false };
+const bundle: Bundle = { id: "sample-project", root: ROOT };
 
 describe("code-project eligibility", () => {
   test.each([
@@ -96,7 +97,7 @@ describe("code-project recognize", () => {
   });
 
   test("readCandidates is the identity inversion", () => {
-    expect(codeProjectAdapter.readCandidates?.(bundle, "src/auth/oauth.ts")).toEqual([
+    expect(readCandidates(codeProjectAdapter, bundle, "src/auth/oauth.ts")).toEqual([
       { path: path.join(ROOT, "src/auth/oauth.ts"), conceptId: "src/auth/oauth.ts" },
     ]);
     expect(codeProjectAdapter.looksLikeRoot).toBeUndefined();

@@ -94,7 +94,7 @@ function bundleDocuments(roots: readonly BundleRoot[]): { bundles: Map<string, s
     const adapterId = root.adapter ?? detectAdapterId(root.root);
     const adapter = adapterForId(adapterId);
     if (!adapter) continue;
-    const bundle: Bundle = { id: root.bundleId, root: root.root, writable: root.writable };
+    const bundle: Bundle = { id: root.bundleId, root: root.root };
     const documents = walkStashFlat(root.root).flatMap((file): string[] => {
       const doc = adapter.recognize(bundle, file);
       if (doc) files.add(file.absPath);

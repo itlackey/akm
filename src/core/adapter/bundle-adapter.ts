@@ -50,12 +50,6 @@ export interface AssetResource {
   bytes(): Buffer;
 }
 
-export interface AdapterReadCandidate {
-  path: string;
-  /** Canonical concept identity this authored path may own. */
-  conceptId: string;
-}
-
 /** Every entry of a bundle. */
 export interface BundleListing {
   entries: AssetEntry[];
@@ -106,7 +100,13 @@ export interface AssetChange {
 }
 
 /** What the caller records with a retirement; kept with it and returned by `retired`. YAML-serializable. */
-export type RetireNote = Readonly<Record<string, unknown>>;
+export interface RetireNote {
+  /** Names the retirement's archive (default: the asset's ref). */
+  readonly ref?: string;
+  /** When it was retired (ISO 8601): `expireRetired` measures its age from it. */
+  readonly retiredAt?: string;
+  readonly [key: string]: unknown;
+}
 
 /** A recoverable retirement. */
 export interface Retirement {
@@ -163,9 +163,9 @@ export interface BundleAdapter {
    */
   restore(b: Bundle, handle: string, fallback?: string | Buffer): AssetChange;
   /** Drop a retirement's record, and with it any retired content that remains. */
-  forget(b: Bundle, handle: string): AssetChange;
+  forget(b: Bundle, handle: string): { changed: string[] };
   /** Delete the retired content of every retirement recorded before `before`, when the adapter can recover it elsewhere. */
-  expireRetired(b: Bundle, before: Date): AssetChange;
+  expireRetired(b: Bundle, before: Date): { changed: string[] };
 
   /**
    * Runtime translation for executable agent assets. The adapter receives the authoritative native entry and

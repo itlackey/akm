@@ -321,10 +321,10 @@ export interface SourceInstallStatus extends InstalledBundle {
 }
 
 /** Canonical source provider kinds. */
-export type SourceKind = "filesystem" | "git" | "npm" | "website";
+export type SourceKind = "filesystem" | "git" | "npm" | "website" | "location";
 
 export interface SourceDescriptor {
-  kind: "path" | "git" | "npm" | "website";
+  kind: "path" | "git" | "npm" | "website" | "location";
   locator: string;
   maxPages?: number;
 }

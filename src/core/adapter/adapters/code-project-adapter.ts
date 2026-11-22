@@ -35,7 +35,7 @@ import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate } from "../bundle-adapter";
+import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { hashContent, nonEmptyString, readTags, validateChangesWithBaseChecks } from "./shared";
@@ -225,7 +225,7 @@ export class CodeProjectAdapter extends DirectoryAdapterBase {
     );
   }
 
-  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
+  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     return [{ path: path.join(c.root, conceptId), conceptId }];
   }
 }

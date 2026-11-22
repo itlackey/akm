@@ -1041,7 +1041,7 @@ function syncBeforeRun(run: ImproveRunSetup, eventsCtx: EventsContext): ImproveS
 
 /** Changed paths under the asset directories and `.akm`, minus ignored ones (git refuses to stage those). */
 function managedFallbackPaths(repoDir: string, changedPaths: string[]): string[] {
-  const ownedDirs = akmAdapter.directoryList({ id: "akm", root: repoDir, writable: false });
+  const ownedDirs = akmAdapter.directoryList({ id: "akm", root: repoDir });
   const prefixes = [...ownedDirs, ".akm"];
   const managed = changedPaths.filter((changedPath) =>
     prefixes.some((prefix) => changedPath === prefix || changedPath.startsWith(`${prefix}/`)),

@@ -84,13 +84,9 @@ import { upsertUtilityScore } from "../storage/repositories/index-utility-reposi
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { withImmediateTransaction } from "../storage/sqlite-transaction";
 import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo, vacuumIfReclaimable } from "../storage/state-db-integrity";
-import {
-  assertIndexedWorkflowSourceIdentity,
-  WorkflowSourceIdentityError,
-  workflowNameForSourcePath,
-} from "../workflows/source-files";
+import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { reclassifyIndexDbContention } from "./index-db-contention";
-import { deriveEntryProvenance, deriveInstallations } from "./installations";
+import { deriveEntryProvenance, deriveInstallations, sourceOfBundle } from "./installations";
 import { legacyRefMove, rekeyLegacyEntry } from "./legacy-refs";
 import { entryFromFiles, indexedPathMatchesOwner, indexedPathOf } from "./lookup/indexed-owner";
 import { type EmbeddingGenerationResult, embeddingInputCap, generateEmbeddingsForDb } from "./materialize-embeddings";
@@ -1926,7 +1922,7 @@ async function lookupBundleRefWithResolutionUsing(
     indexError = error;
   }
   const resolved = (entry: IndexEntry | null, asset?: Asset): BundleRefLookupResolution => {
-    const fileEntry = !entry && asset ? entryFromFiles(asset) : undefined;
+    const fileEntry = !entry && asset ? entryFromFiles(asset, sourceOfBundle(sources, asset.bundle)) : undefined;
     return {
       entry,
       ...(asset ? { asset } : {}),
@@ -1937,9 +1933,10 @@ async function lookupBundleRefWithResolutionUsing(
   try {
     const asset = findAsset(ref, { sources });
     if (!asset) return resolved(null);
-    const { source, adapterId } = asset;
     const bundleId = asset.bundle;
-    const ownerPath = indexedPathOf(asset);
+    const source = sourceOfBundle(sources, bundleId);
+    const adapterId = adapterIdOf(source);
+    const ownerPath = indexedPathOf(asset, source);
     const inputRef = makeBundleRef(qualified ? ref.bundle : undefined, asset.conceptId);
     let entry: IndexEntry | null | undefined;
     try {
@@ -1951,7 +1948,7 @@ async function lookupBundleRefWithResolutionUsing(
       return resolved(null, asset);
     }
     if (entry) {
-      if (workflowNameForSourcePath(source.path, adapterId, ownerPath) !== undefined) {
+      if (asset.type === "workflow") {
         try {
           assertIndexedWorkflowSourceIdentity(inputRef, entry.filePath, {
             path: ownerPath,
@@ -1967,7 +1964,7 @@ async function lookupBundleRefWithResolutionUsing(
           warn(`${error.message} Falling back to the physical owner.`);
           return resolved(null, asset);
         }
-      } else if (entry.adapterId !== adapterId || !indexedPathMatchesOwner(entry.filePath, asset)) {
+      } else if (entry.adapterId !== adapterId || !indexedPathMatchesOwner(entry.filePath, asset, source)) {
         return resolved(null, asset);
       }
       return resolved(entry, asset);

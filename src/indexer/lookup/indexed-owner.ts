@@ -8,20 +8,21 @@
  */
 
 import path from "node:path";
-import { DirectoryAdapterBase } from "../../core/adapter/directory-adapter";
+import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { assetBundleOf } from "../../core/assets/bundle";
 import type { Asset } from "../../core/assets/read";
 import { safeRealpath } from "../../core/common";
 import { withMdVariants } from "../../storage/repositories/index-entries-repository";
 import type { IndexEntry } from "../indexer";
 import { deriveEntryProvenance } from "../installations";
+import type { SearchSource } from "../search/search-source";
 
 /**
  * The path the index keys an asset under: its file, else (for an asset no file holds) `<root>/<relPath>`, which is
  * not a path to anything.
  */
-export function indexedPathOf(asset: Asset): string {
-  return asset.entry.file ?? path.join(asset.source.path, asset.entry.relPath);
+export function indexedPathOf(asset: Asset, source: SearchSource): string {
+  return asset.entry.file ?? path.join(source.path, asset.entry.relPath);
 }
 
 /**
@@ -32,18 +33,17 @@ export function indexedPathOf(asset: Asset): string {
  * `.md` (a file-name spelling such as `tasks/nightly.yml`): an index miss refuses that spelling, so does this. It has
  * no links, usage or indexed fragments.
  */
-export function entryFromFiles(asset: Asset): IndexEntry | undefined {
-  const { source, adapterId } = asset;
+export function entryFromFiles(asset: Asset, source: SearchSource): IndexEntry | undefined {
   const bundleId = asset.bundle;
+  const adapterId = adapterIdOf(source);
   try {
-    const { adapter, bundle } = assetBundleOf({
+    if (!asset.listed) return undefined;
+    const document = assetBundleOf({
       name: bundleId,
       path: source.path,
       ...(source.location !== undefined ? { location: source.location } : {}),
       adapterId,
-    });
-    if (adapter instanceof DirectoryAdapterBase && !adapter.walksFile(bundle, indexedPathOf(asset))) return undefined;
-    const document = adapter.recognize(bundle, asset.entry);
+    }).recognize(asset.entry);
     if (!document?.conceptId || !withMdVariants(asset.conceptId).includes(document.conceptId)) return undefined;
     const { itemRef, conceptId } = deriveEntryProvenance(
       { bundleId, adapterId },
@@ -52,7 +52,7 @@ export function entryFromFiles(asset: Asset): IndexEntry | undefined {
       document.conceptId,
     );
     return {
-      filePath: indexedPathOf(asset),
+      filePath: indexedPathOf(asset, source),
       stashDir: source.path,
       type: document.type,
       name: document.name,
@@ -69,8 +69,8 @@ export function entryFromFiles(asset: Asset): IndexEntry | undefined {
 }
 
 /** Whether `indexedPath` is where the index keys `asset`: the same path, and the same file behind it. */
-export function indexedPathMatchesOwner(indexedPath: string, asset: Asset): boolean {
-  const owner = indexedPathOf(asset);
+export function indexedPathMatchesOwner(indexedPath: string, asset: Asset, source: SearchSource): boolean {
+  const owner = indexedPathOf(asset, source);
   if (path.resolve(indexedPath) !== path.resolve(owner)) return false;
   // The asset was found, so its entry exists; an entry that is no file resolves to its own path.
   return safeRealpath(indexedPath) === path.resolve(safeRealpath(owner));

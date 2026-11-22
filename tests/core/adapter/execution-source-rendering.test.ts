@@ -41,7 +41,6 @@ function render(testCase: (typeof cases)[number]) {
   const bundle: Bundle = {
     id: `fixture-${testCase.adapterId}`,
     root,
-    writable: false,
   };
   const file = buildFileContext(root, path.join(root, testCase.file));
   const source = testCase.adapter.renderExecutionSource?.(bundle, file);

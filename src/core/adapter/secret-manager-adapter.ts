@@ -187,11 +187,11 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     return this.refuseRetire();
   }
 
-  forget(_b: Bundle, _handle: string): AssetChange {
+  forget(_b: Bundle, _handle: string): { changed: string[] } {
     return this.refuseRetire();
   }
 
-  expireRetired(_b: Bundle, _before: Date): AssetChange {
+  expireRetired(_b: Bundle, _before: Date): { changed: string[] } {
     return this.refuseRetire();
   }
 

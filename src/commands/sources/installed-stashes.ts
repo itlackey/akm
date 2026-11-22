@@ -25,6 +25,7 @@ import { AkmError, ConfigError, NotFoundError, UsageError } from "../../core/err
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath, getRegistryCacheDir } from "../../core/paths";
 import { warn } from "../../core/warn";
+import { resolveWritable } from "../../core/write-source";
 import {
   buildIndex,
   isSkippedIndexBuild,
@@ -137,6 +138,7 @@ function resolveManagedTarget(config: AkmConfig, target: string): ManagedInstall
 function describeBundleSource(entry: BundleConfigEntry): SourceDescriptor {
   if (entry.path) return { kind: "path", locator: entry.path };
   if (entry.git) return { kind: "git", locator: entry.git };
+  if (entry.location !== undefined) return { kind: "location", locator: entry.location };
   if (entry.website) {
     return {
       kind: "website",
@@ -264,7 +266,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
       ...(lock ? { ref: lock.ref } : {}),
       provider: bundle.url != null ? bundle.type : undefined,
       ...(lock?.resolvedVersion !== undefined ? { version: lock.resolvedVersion } : {}),
-      writable: bundle.writable ?? kind === "filesystem",
+      writable: resolveWritable(bundle),
       ...(configured.registryId !== undefined ? { registryId: configured.registryId } : {}),
       ...described,
       components: describeComponents(configured, described),

@@ -77,7 +77,7 @@ import { LLM_WIKI_PAGES_DIR, looksLikeLlmWikiRoot } from "../../asset/llm-wiki-r
 import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate } from "../bundle-adapter";
+import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { hashContent, nonEmptyString } from "./shared";
@@ -411,7 +411,7 @@ export class LlmWikiAdapter extends DirectoryAdapterBase {
     return validate(b, changes, ctx);
   }
 
-  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
+  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const canonical = toPosix(conceptId).replace(/\.md$/i, "");
     return [{ path: path.join(c.root, `${canonical}.md`), conceptId: canonical }];
   }

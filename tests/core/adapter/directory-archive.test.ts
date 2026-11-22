@@ -28,7 +28,7 @@ const NOTE = { ref: "memories/old-note", reason: "duplicate", proposalId: "p1", 
 beforeEach(() => {
   resetArchiveCache();
   sandbox = sandboxStashDir();
-  bundle = { id: "stash", root: sandbox.dir, writable: true };
+  bundle = { id: "stash", root: sandbox.dir };
 });
 afterEach(() => sandbox.cleanup());
 

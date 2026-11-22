@@ -36,7 +36,7 @@ import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { isScratchPath } from "../../asset/scratch";
 import { isRecord, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate } from "../bundle-adapter";
+import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, OkfSourceEntry, OkfVerifiedEntry, ValidateContext } from "../types";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
@@ -319,7 +319,7 @@ export class OkfAdapter extends DirectoryAdapterBase {
     return validate(b, changes, ctx);
   }
 
-  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
+  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const canonical = conceptId.replace(/\\/g, "/").replace(/\.md$/i, "");
     return [{ path: path.join(c.root, `${canonical}.md`), conceptId: canonical }];
   }

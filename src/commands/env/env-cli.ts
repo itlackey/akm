@@ -177,7 +177,7 @@ const envExportCommand = defineJsonCommand({
     const { buildShellExportScript } = await import("./env.js");
     const resolvedOut = path.resolve(outPath);
     writeFileAtomic(resolvedOut, buildShellExportScript(asset.entry.content()), 0o600);
-    output("env-export", { ref: makeEnvRef(conceptId, asset.source), out: resolvedOut });
+    output("env-export", { ref: makeEnvRef(conceptId, asset.bundle), out: resolvedOut });
   },
 });
 

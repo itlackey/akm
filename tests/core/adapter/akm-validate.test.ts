@@ -44,7 +44,7 @@ const LINT_GOLDEN = JSON.parse(
 ) as LintGolden;
 
 function bundle(overrides: Partial<Bundle> = {}): Bundle {
-  return { id: BUNDLE_ID, root: ALL_TYPES_ROOT, writable: true, ...overrides };
+  return { id: BUNDLE_ID, root: ALL_TYPES_ROOT, ...overrides };
 }
 
 /** Disk-backed ValidateContext (reads the real fixture stash) — for the CLEAN golden-parity run. */

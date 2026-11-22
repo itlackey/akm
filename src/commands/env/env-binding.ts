@@ -80,7 +80,7 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
   const warn = options.warn ?? ((message: string) => stderr().write(`warning: ${message}\n`));
   const { conceptId, asset } = resolveEnvPath(target);
   const bundleId = asset.bundle;
-  const envRef = makeEnvRef(conceptId, asset.source);
+  const envRef = makeEnvRef(conceptId, bundleId);
 
   const allValues = parseEnvText(asset.entry.content());
 

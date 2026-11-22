@@ -1700,7 +1700,7 @@ akm bundle list --kind filesystem,git      # Multiple kinds (comma-separated)
 
 | Flag | Description |
 | --- | --- |
-| `--kind` | Filter by source provider: `filesystem`, `git`, `npm`, `website` (comma-separated). Any other value is a usage error (exit 2) — there is no `local`/`managed`/`remote` grouping. |
+| `--kind` | Filter by source provider: `filesystem`, `git`, `npm`, `website`, `location` (comma-separated). Any other value is a usage error (exit 2) — there is no `local`/`managed`/`remote` grouping. |
 
 Each entry has `adapter` (the adapter that reads the bundle: the configured one, or the one detected from its content)
 and `detected` (`true` when no `adapter` is configured). `components`, a one-entry list

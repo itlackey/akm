@@ -54,7 +54,8 @@ import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate, AssetEntry } from "../bundle-adapter";
+import type { AssetEntry } from "../bundle-adapter";
+import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
@@ -288,7 +289,7 @@ export abstract class ToolDirAdapterBase extends DirectoryAdapterBase {
     return validateToolDir(this.layout, b, changes, ctx);
   }
 
-  readCandidates(b: Bundle, conceptId: string): AdapterReadCandidate[] {
+  protected readCandidates(b: Bundle, conceptId: string): AdapterReadCandidate[] {
     return readCandidatesToolDir(this.layout, b, conceptId);
   }
 
@@ -299,5 +300,10 @@ export abstract class ToolDirAdapterBase extends DirectoryAdapterBase {
   /** A skill's folder holds its `SKILL.md` and the resources that belong to it. */
   protected override packageDir(file: FileContext): string | undefined {
     return file.fileName === SKILL_MANIFEST ? file.parentDirAbs : undefined;
+  }
+
+  /** The type its place gives, without reading the file. */
+  protected override declaredType(file: FileContext): string | undefined {
+    return classify(file.relPath, this.layout)?.type;
   }
 }

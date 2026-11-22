@@ -66,7 +66,7 @@ function writeFile(filePath: string, content: string): void {
 }
 
 function bundle(root: string): Bundle {
-  return { id: "fixture", root, writable: true };
+  return { id: "fixture", root };
 }
 
 const VALID_V4_TASK = ["version: 4", "run: echo hi", "shell: sh", ""].join("\n");

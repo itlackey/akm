@@ -187,4 +187,30 @@ describe("akm list bundle inventory", () => {
       { name: "main", root: ".", adapter: "agent-skills", detected: true },
     ]);
   });
+  test("bundle list shows a location bundle as a location source, writable by the one default", async () => {
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      bundles: {
+        primary: { path: storage.stashDir, adapter: "akm", writable: true },
+        keyring: { adapter: "secret-tool", location: "akm" },
+        vault: { adapter: "azure-key-vault", location: "team-vault", writable: false },
+      },
+      defaultBundle: "primary",
+    });
+    resetConfigCache();
+
+    const result = await runCliCapture(["bundle", "list", "--format", "json"]);
+    expect(result.code).toBe(0);
+    const byName = new Map((JSON.parse(result.stdout).sources as { name: string }[]).map((s) => [s.name, s]));
+    expect(byName.get("keyring")).toMatchObject({
+      kind: "location",
+      source: { kind: "location", locator: "akm" },
+      adapter: "secret-tool",
+      writable: true,
+    });
+    expect(byName.get("vault")).toMatchObject({
+      source: { kind: "location", locator: "team-vault" },
+      writable: false,
+    });
+  });
 });

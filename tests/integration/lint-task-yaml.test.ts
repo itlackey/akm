@@ -49,7 +49,7 @@ function writeTask(stashDir: string, relPath: string, content: string): string {
 }
 
 function bundle(root: string): Bundle {
-  return { id: "fixture", root, writable: true };
+  return { id: "fixture", root };
 }
 
 describe("akm lint — malformed task YAML (issue #760)", () => {

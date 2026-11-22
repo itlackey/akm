@@ -29,7 +29,7 @@ import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import { SCRIPT_EXTENSIONS } from "../../recognition-util";
-import type { AdapterReadCandidate } from "../bundle-adapter";
+import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { hashContent, nonEmptyString, RESERVED_FILES, readTags, validateChangesWithBaseChecks } from "./shared";
@@ -97,7 +97,7 @@ export class GenericFilesAdapter extends DirectoryAdapterBase {
     return validateChangesWithBaseChecks(b, changes, ctx);
   }
 
-  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
+  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const posix = toPosix(conceptId);
     const extension = path.extname(posix).toLowerCase();
     const documentCandidates = [...DOCUMENT_EXTENSIONS].map((candidateExtension) => ({

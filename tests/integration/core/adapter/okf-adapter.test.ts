@@ -33,7 +33,7 @@ function loadGolden(name: string): Record<string, unknown> {
 }
 
 function bundle(overrides: Partial<Bundle> = {}): Bundle {
-  return { id: BUNDLE_ID, root: FIXTURE_ROOT, writable: true, ...overrides };
+  return { id: BUNDLE_ID, root: FIXTURE_ROOT, ...overrides };
 }
 
 /** A real FileContext for a fixture-relative path. */

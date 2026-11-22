@@ -66,7 +66,7 @@ function selection(input: SensitiveSelector): { type: Kind; ref: string } {
 function locate(input: SensitiveSelector) {
   const { type, ref } = selection(input);
   const { asset } = type === "env" ? resolveEnvPath(ref) : resolveSecretPath(ref);
-  const bundle = asset.source.registryId ?? input.bundle ?? "";
+  const bundle = asset.bundle;
   return {
     bundle,
     file: asset.entry.file,

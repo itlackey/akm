@@ -49,7 +49,7 @@ import { parseFrontmatter } from "../../asset/frontmatter";
 import { isScratchPath } from "../../asset/scratch";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate } from "../bundle-adapter";
+import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { hashContent, nonEmptyString, readTags } from "./shared";
@@ -263,7 +263,12 @@ export class AgentSkillsAdapter extends DirectoryAdapterBase {
     return file.fileName === SKILL_MANIFEST ? file.parentDirAbs : undefined;
   }
 
-  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
+  /** Every package's entry is a skill, whatever its content says. */
+  protected override declaredType(file: FileContext): string | undefined {
+    return file.fileName === SKILL_MANIFEST ? "skill" : undefined;
+  }
+
+  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     return [{ path: path.join(c.root, conceptId, SKILL_MANIFEST), conceptId }];
   }
 

@@ -17,13 +17,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { BUILTIN_ADAPTERS, okfAdapter } from "../../../src/core/adapter/adapters";
-import {
-  adapterForId,
-  adapterIds,
-  getAdapters,
-  requireAdapter,
-  requireConfiguredAdapters,
-} from "../../../src/core/adapter/registry";
+import { adapterForId, adapterIds, getAdapters, requireAdapter } from "../../../src/core/adapter/registry";
 import { ConfigError } from "../../../src/core/errors";
 
 /** The frozen §1.2 probe order (array order == probe precedence). */
@@ -97,16 +91,5 @@ describe("adapter registry — the one list of adapter ids", () => {
     expect((thrown as ConfigError).message).toBe(
       `Bundle "docs" names adapter "agent_skills", which akm does not have. Expected one of: ${PROBE_ORDER.join(", ")}.`,
     );
-  });
-
-  test("requireConfiguredAdapters refuses a configured bundle with an unknown adapter, and passes known or absent ones", () => {
-    const bundles = (adapter?: string) => ({
-      configVersion: "0.9.0" as const,
-      semanticSearchMode: "auto" as const,
-      bundles: { docs: { path: "/tmp/docs", ...(adapter ? { adapter } : {}) } },
-    });
-    expect(() => requireConfiguredAdapters(bundles("okf"))).not.toThrow();
-    expect(() => requireConfiguredAdapters(bundles())).not.toThrow();
-    expect(() => requireConfiguredAdapters(bundles("nope"))).toThrow(/Bundle "docs" names adapter "nope"/);
   });
 });

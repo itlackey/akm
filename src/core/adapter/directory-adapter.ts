@@ -25,7 +25,6 @@ import { ConfigError, NotFoundError, UsageError } from "../errors";
 import type { FileChange } from "../file-change";
 import { warnOnce } from "../warn";
 import type {
-  AdapterReadCandidate,
   AssetChange,
   AssetEntry,
   AssetReadOptions,
@@ -49,6 +48,13 @@ import {
   type Tombstone,
 } from "./directory-archive";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "./types";
+
+/** A file that may hold a concept: where a placement could put it, and the identity it would then own. */
+export interface AdapterReadCandidate {
+  path: string;
+  /** Canonical concept identity this authored path may own. */
+  conceptId: string;
+}
 
 export abstract class AdapterConceptOwnershipError extends UsageError {}
 
@@ -93,12 +99,14 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
    * Every file any placement could give `conceptId` (no walk). Each carries that identity, so `read` arbitrates
    * without reading authored bytes; recognition then decides which candidate owns it.
    */
-  abstract readCandidates(b: Bundle, conceptId: string): AdapterReadCandidate[];
+  protected abstract readCandidates(b: Bundle, conceptId: string): AdapterReadCandidate[];
   abstract validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]>;
 
   /** Where a new asset of `type` and `name` is kept. */
   protected placeFile(b: Bundle, { type }: Pick<NewAsset, "type" | "name">): string {
-    throw new UsageError(`Bundle "${b.id}" (adapter "${this.id}") does not hold ${type} assets.`);
+    throw new Error(
+      `Adapter "${this.id}" does not write ${type} assets in bundle "${b.id}"; the asset facade checks \`writes\` first.`,
+    );
   }
   /** The bytes a file of `type` holds for `content`. */
   protected serialize(_type: string, _file: string, content: string | Buffer): string | Buffer {
@@ -138,11 +146,6 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     };
   }
 
-  /** Whether a full walk of the bundle would list `file`: not in a skipped or ignored directory. */
-  walksFile(b: Bundle, file: string): boolean {
-    return isWalkedFile(b.root, file, this.walkOptions());
-  }
-
   recognize(b: Bundle, entry: AssetEntry): IndexDocument | null {
     return this.recognizeFile(b, fileContextOfEntry(b.root, entry));
   }
@@ -164,6 +167,8 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     }
 
     const owners = new Map<string, FileContext>();
+    /** The type a file's path alone gave, found while claiming it: knowing it then reads nothing. */
+    const pathTypes = new Map<FileContext, string>();
     const workflowSource = resolveUniqueWorkflowSource(b.root, this.id, normalized);
     const resolved = workflowSource ? workflowSource.canonicalName : normalized;
     if (workflowSource) owners.set(path.resolve(workflowSource.path), buildFileContext(b.root, workflowSource.path));
@@ -176,7 +181,10 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
       const key = path.resolve(candidate.path);
       if (owners.has(key)) continue;
       const file = candidateFile(b, candidate.path);
-      if (file && (this.claimsWithoutContent(b, file, resolved) || this.isMarkedUnlisted(file))) owners.set(key, file);
+      if (!file) continue;
+      const claim = this.claimsWithoutContent(b, file, resolved);
+      if (claim?.type !== undefined) pathTypes.set(file, claim.type);
+      if (claim || this.isMarkedUnlisted(file)) owners.set(key, file);
     }
 
     const found = [...owners.values()].sort((left, right) => compareCodePoints(left.absPath, right.absPath));
@@ -192,23 +200,19 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     }
     const file = found[0];
     if (!file) return undefined;
-    const self = this;
     const dir = this.packageDir(file);
     const entry: AssetEntry =
       dir === undefined ? file : { ...file, resources: () => packageResources(dir, file.absPath) };
-    let type: string | undefined;
+    // The type recognizing the path gave, else the one its place declares, else what reading it says (which a path
+    // alone settles for most adapters, so finding an asset reads no authored bytes). A file none gives one is no asset.
+    const type = pathTypes.get(file) ?? this.declaredType(file) ?? this.recognizeFile(b, file)?.type;
+    if (type === undefined) return undefined;
     return {
       conceptId: resolved,
-      // Asked for, not read with the asset: knowing the type can mean reading the file, which finding it does not.
-      get type() {
-        type ??= self.recognizeFile(b, file)?.type ?? self.declaredType(file);
-        if (type === undefined) {
-          throw new UsageError(`Bundle adapter "${self.id}" does not recognize ${resolved} as an asset.`);
-        }
-        return type;
-      },
+      type,
       entry,
-      listed: !this.isMarkedUnlisted(file),
+      // Not listed: a marker hides it, or a full walk would not reach it (a skipped or ignored directory).
+      listed: !this.isMarkedUnlisted(file) && this.walksFile(b, file.absPath),
     };
   }
 
@@ -218,7 +222,9 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
 
   create(b: Bundle, asset: NewAsset): AssetChange {
     if (!this.writes.includes(asset.type)) {
-      throw new UsageError(`Bundle "${b.id}" (adapter "${this.id}") does not hold ${asset.type} assets.`);
+      throw new Error(
+        `Adapter "${this.id}" does not write ${asset.type} assets in bundle "${b.id}"; the asset facade checks \`writes\` first.`,
+      );
     }
     const file = this.placeFile(b, asset);
     const entry = buildFileContext(b.root, file);
@@ -267,7 +273,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const file = entry.file as string;
     assertWritableFile(b.root, b.id, file);
     assertWritableFile(b.root, b.id, path.join(b.root, MEMORY_ARCHIVE_REL, "retirement"));
-    const ref = typeof note.ref === "string" ? note.ref : `${b.id}//${conceptId}`;
+    const ref = note.ref ?? `${b.id}//${conceptId}`;
     const written = archiveFile(b.root, file, { ref, archivedAt: new Date().toISOString(), note });
     return { conceptId, changed: written.changed, handle: written.handle };
   }
@@ -291,21 +297,14 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return { conceptId, file, changed: restoreArchive(b.root, tombstone, fallback) };
   }
 
-  forget(b: Bundle, handle: string): AssetChange {
+  forget(b: Bundle, handle: string): { changed: string[] } {
     this.requireRetiring(b);
-    let conceptId = "";
-    try {
-      conceptId = this.describeRetired(b, readTombstone(b.root, handle)).conceptId;
-    } catch (error) {
-      // Forgetting what is already gone is how a resumed caller finishes.
-      if (!(error instanceof NotFoundError)) throw error;
-    }
-    return { conceptId, changed: forgetArchive(b.root, handle) };
+    return { changed: forgetArchive(b.root, handle) };
   }
 
-  expireRetired(b: Bundle, before: Date): AssetChange {
+  expireRetired(b: Bundle, before: Date): { changed: string[] } {
     this.requireRetiring(b);
-    return { conceptId: "", changed: expireArchive(b.root, before).changed };
+    return { changed: expireArchive(b.root, before).changed };
   }
 
   // ── Internals ───────────────────────────────────────────────────────────────
@@ -348,6 +347,11 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     }
   }
 
+  /** Whether a full walk of the bundle would list `file`: not in a skipped or ignored directory. */
+  private walksFile(b: Bundle, file: string): boolean {
+    return isWalkedFile(b.root, file, this.walkOptions());
+  }
+
   private walkOptions() {
     return { includeAllDirectories: this.walkMode === "all-directories" };
   }
@@ -357,8 +361,11 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return marker !== undefined && fs.existsSync(marker);
   }
 
-  /** Whether the adapter recognizes `file` as `conceptId` from its path alone (an adapter that needs bytes claims it). */
-  private claimsWithoutContent(b: Bundle, file: FileContext, conceptId: string): boolean {
+  /**
+   * Whether the adapter recognizes `file` as `conceptId` from its path alone (an adapter that needs bytes claims it,
+   * with no type yet); a claim carries the type the path gave.
+   */
+  private claimsWithoutContent(b: Bundle, file: FileContext, conceptId: string): { type?: string } | undefined {
     let requestedBytes = false;
     const denyBytes = (): never => {
       requestedBytes = true;
@@ -366,9 +373,10 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     };
     try {
       const document = this.recognizeFile(b, { ...file, content: denyBytes, bytes: denyBytes, frontmatter: denyBytes });
-      return requestedBytes || document?.conceptId === conceptId;
+      if (requestedBytes) return {};
+      return document?.conceptId === conceptId ? { type: document.type } : undefined;
     } catch (error) {
-      if (error === CONTENT_READ_REQUIRED) return true;
+      if (error === CONTENT_READ_REQUIRED) return {};
       throw error;
     }
   }
