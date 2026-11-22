@@ -1295,8 +1295,9 @@ to run `akm bundle add <origin>` first.
 
 ### workflow
 
-**Experimental** (see [STABILITY.md](../../STABILITY.md)): the workflow commands, asset format and engine may
-change in any release through the 0.10 series, which decides whether the feature is stabilized or removed.
+**Deprecated** (see [STABILITY.md](../../STABILITY.md)): workflows, the workflow asset format, the engine and every
+`akm workflow` command are removed in 0.11, where tasks with ordered steps replace them. Nothing changes in 0.10.x.
+Start runs with `akm run <ref>`; `akm migrate apply` converts workflow files in 0.11.
 
 Author, inspect, and execute structured workflow assets.
 
@@ -1328,7 +1329,7 @@ Subcommands:
 | `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs (the Experimental `unit: { workflow: … }` step) are excluded unless `--children` is passed. Lists every run on the host, most recently updated first, from any working directory. `--all-scopes` is a deprecated no-op |
 | `resume <run-id>` | Flip a `blocked` or `failed` run back to `active` so `run <run-id>` can continue it; it executes nothing. Completed runs cannot be resumed |
 | `abandon <run-id>` | Mark a run failed so it stops counting as active (`resume` can reopen it) |
-| `plan <ref>` | **Evolving.** Compile and freeze a workflow WITHOUT publishing a run: the canonical step graph, per-step frozen target kinds, task/child expansion, input bindings, source read set, and lowering notices — zero durable writes. Returns the full JSON envelope by default, like every other command; pass `--format text` for a human-readable summary |
+| `plan <ref>` | Deprecated; use `akm doctor explain <ref>`. Compile and freeze a workflow WITHOUT publishing a run: the canonical step graph, per-step frozen target kinds, task/child expansion, input bindings, source read set, and lowering notices — zero durable writes. Returns the full JSON envelope by default, like every other command; pass `--format text` for a human-readable summary |
 
 Everywhere a run id is accepted (`run`, `status`, `resume`, `abandon`), a
 unique run-id **prefix** of 8 or more characters works too — the same
@@ -1418,7 +1419,7 @@ budget is left. `gate.max_loops` (1–100) is the per-step ceiling;
 `budget.max_units` and `budget.max_tokens` are the whole-run ceilings, seeded
 from the unit journal so they hold across resumes.
 
-`run` is Experimental and does not consult `experimental.workflowEngine`. Every
+Every
 non-empty `### gate` needs a connection or a harness to judge it before a new
 run can be frozen (the judge runs where model work runs; see
 [Configuration](configuration.md#where-each-process-runs)). Gate evaluation is
@@ -1612,6 +1613,8 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | --- | --- |
 | `--name` | The bundle key. A contract, not a hint: it must be a legal bundle slug (no `:` `.` `#` `/` or whitespace) and not already taken by a different bundle, or the add fails before any write. Re-adding an already-installed source under a different `--name` than it already carries also fails — use `akm bundle rename <old> <new>` instead. Omit it and akm derives a name (falling back to a `-<hash>` suffix on a collision). |
 | `--provider` | Explicit provider for declarative source configuration; normally inferred from the input |
+| `--adapter` | Component adapter for a local directory: `website-snapshot`, `agent-skills`, `claude`, `opencode`, `dotenv`, `akm-workflow`, `akm-task`, `llm-wiki`, `akm`, `okf`, `generic-files` or `code-project`; normally detected |
+| `--before` / `--after` | Insert the new bundle before or after this configured bundle, setting its search order |
 | `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
 | `--options` | Provider options as JSON (e.g. `'{"maxPages":100}'`) |
 | `--allow-insecure-transport` | Allow a plain-HTTP source URL after explicitly accepting transport substitution risk |
@@ -2294,6 +2297,8 @@ A session loads its rules with [`akm rules`](#rules), not with search. The AKM a
 run it at session start and after compaction; an agent without a plugin runs the same command.
 
 ### rules
+
+**Experimental** (see [STABILITY.md](../../STABILITY.md)): the flags, the JSON shape and the `rules` metrics section may change in any release.
 
 Print the rules that apply here, in full: the project's rules first, then shared ones, each
 group by ref.
@@ -4633,7 +4638,7 @@ not a reason to record against it.
 shell commands. It manages on-disk task definitions under
 `<bundle>/tasks/<id>.yml` and reconciles them with the OS-native scheduler
 (cron / launchd / schtasks). Task source v4 YAML (`version: 4`) is the only
-executable source contract this release accepts; `akm import <file> --type task`
+stable source contract this release accepts (the Experimental `version: 5-beta.1` is described in [Tasks](tasks.md#task-source-v5-experimental)); `akm import <file> --type task`
 imports a v4 file — see the canonical [Tasks reference](tasks.md). The
 group is `add | enable | disable | run | explain | sync | doctor | history | prune`
 — there is no `show` or `remove`; use `akm show tasks/<id>` to inspect one

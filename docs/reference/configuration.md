@@ -1290,15 +1290,18 @@ akm config diff fleet//config/shared.json
 | --- | --- |
 | `AKM_CONFIG_FILE` | Select a config file; `--config` wins. Children inherit its absolute path, including native rows written by `task sync`. Credentials and `models.json` stay in the default config directory. An empty value is warned about once and ignored. Does not change data, state, cache, or bundle locations. |
 | `AKM_CONFIG_DIR` | Override the user config directory (or set `XDG_CONFIG_HOME`); used when no file selector is set |
-| `AKM_BUNDLE_DIR` | Override the bundle directory |
+| `AKM_BUNDLE_DIR` | Deprecated, stays retired in 0.11: register the bundle and select `defaultBundle`. Overrides the bundle directory |
 | `AKM_DATA_DIR` | Override the data directory — `index.db`, durable `state.db`, and `akm.lock` (or set `XDG_DATA_HOME`) |
 | `AKM_CACHE_DIR` | Override the cache directory — regenerable caches (or set `XDG_CACHE_HOME`) |
 | `AKM_STATE_DIR` | Override the state directory — the scheduler lock and, per bundle, `akm improve`'s whole-run lock (or set `XDG_STATE_HOME`) |
 | `AKM_SQLITE_JOURNAL_MODE` | Deprecated, no replacement; removed in 0.11. SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE` |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror; replaces `registry.npmjs.org` for npm bundle resolution |
-| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm doctor info` and the `egress-endpoints` health advisory still show the configured list (prefix an entry with `<provider>::` to choose a provider) |
-| `AKM_VERBOSE` | Truthy value enables the same diagnostics as `--verbose` |
-| `AKM_DEBUG` | `1` prints a stack trace on unexpected internal errors |
+| `AKM_REGISTRY_URL` | Deprecated; migrate the selection to config. Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm doctor info` and the `egress-endpoints` health advisory still show the configured list (prefix an entry with `<provider>::` to choose a provider) |
+| `AKM_VERBOSE` | Deprecated: use `--verbose`. A truthy value enables the same diagnostics |
+| `AKM_DEBUG` | Deprecated: use `--verbose`. `1` prints a stack trace on unexpected internal errors |
+| `AKM_UPGRADE_SKIP_CHECKSUM` | Deprecated, removed in 0.11: use `akm upgrade --skip-checksum` |
+| `AKM_EVENT_SOURCE` | `user`, `agent`, `task`, `improve` or `audit` marks the provenance of the commands a process runs (usage events and CLI usage counts); akm sets it for the programs it runs for a task. Anything else means `unknown` |
+| `AKM_TASK_STATE` | Experimental. Path of the JSON state file of a version 5 task run; akm sets it for a step it runs as a process and does not read it |
 
 `AKM_SQLITE_JOURNAL_MODE` is Deprecated, has no replacement and is removed in
 0.11. AKM uses WAL and, on its own, falls back to `DELETE` when the data
