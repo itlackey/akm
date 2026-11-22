@@ -48,7 +48,7 @@ import { collectOpencodeMajorAdvisory } from "./health/opencode-major";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
 import { readHealthIndex } from "./health/read-index";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
-import { readSemanticSearchState } from "./health/semantic-search-check";
+import { readSemanticSearchHealth } from "./health/semantic-search-check";
 import { buildTypeDirectoryAdvisory } from "./health/type-directory-check";
 import {
   type AkmHealthResult,
@@ -814,7 +814,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       autoAccept: improveSummary.autoAccept,
       improveOutcomes: outcomes,
       connectionsAndHarnesses,
-      semanticSearch: readSemanticSearchState(gatherSemanticSearchMode()),
+      semanticSearch: readSemanticSearchHealth(gatherSemanticSearchMode()),
       versionDrift,
       schedulerBinaryDrift,
     };

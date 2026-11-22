@@ -16,6 +16,7 @@ import {
   type SemanticSearchStatus,
 } from "../../indexer/walk/index-context";
 import { LOCAL_EMBEDDING_RUNTIME } from "../../llm/embedders/local";
+import { indexDbIsDamaged } from "../../storage/repositories/index-connection";
 import { getEmbeddableEntryCount } from "../../storage/repositories/index-entries-repository";
 import { hasCurrentEntriesTable } from "../../storage/repositories/index-entry-schema";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
@@ -54,6 +55,15 @@ export function readSemanticSearchState(
   if ("building" in read) return { mode, building: true };
   if ("error" in read) return { mode, error: read.error };
   return { mode, index: read.value };
+}
+
+/**
+ * The state doctor checks: a damaged page fails search even when this read succeeds, so doctor also checks the
+ * file's integrity, once per run. `akm info` and `akm bundle update` read the state without that pass.
+ */
+export function readSemanticSearchHealth(mode: string | undefined): SemanticSearchState {
+  const state = readSemanticSearchState(mode);
+  return state.index && indexDbIsDamaged() ? { mode, error: "index.db is damaged" } : state;
 }
 
 /**
