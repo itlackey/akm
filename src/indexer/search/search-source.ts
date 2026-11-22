@@ -189,9 +189,8 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
 }
 
 /**
- * Resolve the content directory the indexer should walk for a given config
- * entry. Returns `undefined` if the entry has no walkable content
- * so the caller can skip it.
+ * The content directory the indexer should walk for a config entry: `{ dir }`, or `{ error }` with the
+ * provider's own reason there is none, so the caller can skip the entry and say why.
  *
  * Single source of truth: each provider owns its own path. We instantiate the
  * registered {@link import("../../sources/provider").SourceProvider} for the entry
@@ -202,7 +201,6 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
  * That convention is part of the akm content layout, not a provider concern,
  * so it stays here.
  */
-/** The entry's content directory, or the provider's own reason there is none. */
 export function resolveEntryContent(entry: SourceConfigEntry): { dir: string } | { error: string } {
   // §10.2 (WI-8.5) desired/resolved split: a git/npm bundle's desired config
   // carries only the source LOCATOR, not the materialized cache root — the
@@ -356,7 +354,7 @@ export async function ensureSourceCaches(
   // provider and call `sync()`. Every cache-backed kind (git, website, npm)
   // refreshes the same way — a bad source warns and is skipped without
   // aborting the others. The git content/-subdir layout convention stays in
-  // resolveEntryContentDir. Provider projection comes only from `bundles`.
+  // resolveEntryContent. Provider projection comes only from `bundles`.
   //
   // DISTINCTION (deliberately NOT lock-first): refresh derives the PROVIDER's
   // own cache path to git-pull/re-materialize INTO — that derived path is where

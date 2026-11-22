@@ -471,7 +471,7 @@ describe("abandoned task attempts", () => {
     }
   }
 
-  function seedActive(taskId: string, startedAt: string, owner?: Record<string, unknown>): void {
+  function seedActive(taskId: string, startedAt: string, owner?: Record<string, unknown>, rawMetadata?: string): void {
     const stateDb = openStateDatabase();
     try {
       reserveTaskHistoryAttempt(stateDb, {
@@ -483,7 +483,9 @@ describe("abandoned task attempts", () => {
         log_path: null,
         target_kind: null,
         target_ref: null,
-        metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 0, detail: null, ...(owner ? { owner } : {}) }),
+        metadata_json:
+          rawMetadata ??
+          JSON.stringify({ metadataVersion: 2, durationMs: 0, detail: null, ...(owner ? { owner } : {}) }),
       });
     } finally {
       stateDb.close();
@@ -538,5 +540,22 @@ describe("abandoned task attempts", () => {
     reconcileAbandonedExecutionState();
     expect(statusOf("pre-boot")).toBe("interrupted");
     expect(statusOf("post-boot")).toBe("active");
+  });
+
+  test("an attempt whose metadata cannot be read is interrupted when it predates this boot, and says why", () => {
+    seedActive("unreadable-pre-boot", "2001-01-01T00:00:00.000Z", undefined, "not json");
+    seedActive("unreadable-post-boot", new Date().toISOString(), undefined, "not json");
+    reconcileAbandonedExecutionState();
+    expect(statusOf("unreadable-pre-boot")).toBe("interrupted");
+    expect(statusOf("unreadable-post-boot")).toBe("active");
+    const stateDb = openStateDatabase();
+    try {
+      const row = queryTaskHistory(stateDb, { taskId: "unreadable-pre-boot" })[0];
+      expect(decodeTaskHistoryMetadata(row?.metadata_json ?? "{}").detail?.error).toContain(
+        "its metadata cannot be read",
+      );
+    } finally {
+      stateDb.close();
+    }
   });
 });

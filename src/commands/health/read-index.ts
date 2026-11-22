@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The one way health reads `index.db`: read-only, refusing a damaged file, closed after the read. A read that fails
+ * The one way health reads `index.db`: read-only, closed after the read, and a failed read on a damaged file says so. A read that fails
  * while a first build holds the rebuild lock reports `building` (the partial index is expected), not an error.
  */
 
@@ -31,7 +31,6 @@ export function readHealthIndex<T>(
     return { error: toErrorMessage(error) };
   }
   try {
-    if (indexDbIsDamaged()) throw new Error("index.db is damaged");
     const db = openReadonlyExistingDatabase(dbPath, options);
     if (!db) return { noIndex: true };
     try {
@@ -41,6 +40,7 @@ export function readHealthIndex<T>(
     }
   } catch (error) {
     if (heldRebuildLock()) return { building: true };
-    return { error: toErrorMessage(error) };
+    // The integrity check costs a pass over the file, so only a read that has failed pays for it.
+    return { error: indexDbIsDamaged(dbPath) ? "index.db is damaged" : toErrorMessage(error) };
   }
 }

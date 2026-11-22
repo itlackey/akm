@@ -170,6 +170,23 @@ steps:
     expect((await run("declared", { inputFlags: () => [{ name: "resume", value: true }] })).status).toBe("completed");
   });
 
+  test("a step killed by a signal, which the runtime reports without an exit code, is not reported as exit code null", async () => {
+    write("killed", "version: 4\nsteps:\n  - { name: victim, run: 'true' }\n");
+    const closed = () => new ReadableStream({ start: (controller) => controller.close() });
+    const killed = {
+      exitCode: null,
+      signalCode: "SIGKILL",
+      exited: Promise.resolve(null),
+      stdout: closed(),
+      stderr: closed(),
+      stdin: null,
+      kill() {},
+    };
+    const result = await run("killed", { spawnFn: () => killed as never });
+    expect(result.status).toBe("failed");
+    expect(result.steps?.[0]?.reason).toBe("non_zero_exit: exit code 1");
+  });
+
   test("a step that exceeds its timeout fails with timeout", async () => {
     write("slow", "version: 4\nsteps:\n  - { name: sleepy, run: 'sleep 5', timeout: 0 }\n");
     // timeout 0 is the v4 "no limit"; use a real bound via the task-level key instead.

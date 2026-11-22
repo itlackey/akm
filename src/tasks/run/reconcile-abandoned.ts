@@ -10,6 +10,7 @@
  */
 
 import fs from "node:fs";
+import { toErrorMessage } from "../../core/common";
 import { probeLock } from "../../core/file-lock";
 import { withStateDb } from "../../core/state-db";
 import type { Database } from "../../storage/database";
@@ -31,8 +32,18 @@ import { classifyAttempt, hereNow } from "./attempt-liveness";
  * that was running, the rest skipped), and the step named in the reason. A record that cannot be read says so.
  */
 function interruptedMetadata(row: TaskHistoryRow): string | undefined {
-  // `classifyAttempt` called this row interrupted only because its metadata decoded.
-  const meta = decodeTaskHistoryMetadata(row.metadata_json);
+  let meta: ReturnType<typeof decodeTaskHistoryMetadata>;
+  try {
+    meta = decodeTaskHistoryMetadata(row.metadata_json);
+  } catch (error) {
+    return JSON.stringify({
+      durationMs: 0,
+      detail: {
+        reason: "interrupted",
+        error: `akm ended while the run was in progress; its metadata cannot be read (${toErrorMessage(error)})`,
+      },
+    });
+  }
   if (!meta.run) return undefined;
   const withDetail = (detail: { reason: string; error: string }, steps?: TaskHistoryStep[]): string =>
     JSON.stringify({ ...JSON.parse(row.metadata_json), detail, ...(steps ? { steps } : {}) });

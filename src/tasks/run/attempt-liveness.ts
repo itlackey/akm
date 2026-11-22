@@ -47,8 +47,9 @@ export function classifyAttempt(row: TaskHistoryRow, here: Here): AttemptLivenes
   try {
     owner = decodeTaskHistoryMetadata(row.metadata_json).owner;
   } catch {
-    // A row whose metadata cannot be read says nothing about its owner: its liveness is not known.
-    return "indeterminate";
+    // Metadata that cannot be read names no owner, so the start-time rule below decides: an attempt that started
+    // before this boot has an owner that is gone, whatever its metadata says.
+    owner = undefined;
   }
   if (owner) return classifyOwner(owner, here);
   return new Date(row.started_at).getTime() < here.bootedAtMs ? "interrupted" : "indeterminate";

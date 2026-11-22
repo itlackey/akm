@@ -342,7 +342,7 @@ async function runShellStep(step: Extract<PreparedTaskStep, { kind: "shell" }>, 
     appendStreamLines(out.dbLines, result.stderr, "stderr", "error");
   }
   if (result.timedOut || result.aborted || exitCode !== 0) {
-    const { reason, error } = processFailure(result);
+    const { reason, error } = processFailure({ ...result, exitCode });
     out.reason = reason === "non_zero_exit" ? `${reason}: ${error}` : reason;
   } else {
     out.ok = true;
