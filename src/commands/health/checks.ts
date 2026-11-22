@@ -59,7 +59,7 @@ export interface HealthCheckContext {
    */
   worstTaskFailRate: { taskId: string; rate: number; rows: number } | null;
   /**
-   * #943: `detail.reason` breakdown across the window's agent dispatch
+   * `detail.reason` breakdown across the window's agent dispatch
    * failures (see `HealthMetrics.agentFailureReasonCounts`'s doc comment).
    * Always present in `task-fail-rate`'s evidence; drives the
    * "<reason>-dominant" message suffix when the check is warn/fail.
@@ -220,7 +220,7 @@ export function appliedStateMigrationsCheck(
 }
 
 /**
- * #943: name the dominant `detail.reason` behind `task-fail-rate`'s warning
+ * Name the dominant `detail.reason` behind `task-fail-rate`'s warning
  * when one reason accounts for at least half of the window's agent dispatch
  * failures — e.g. "(timeout-dominant: 9/12 agent dispatch failures)" — so an
  * operator sees the shape of the failure from data instead of grepping task
@@ -478,7 +478,7 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
       const worstWarn = worst !== null && worst.rate >= TASK_FAIL_RATE_WARN;
       const warn = aggregateWarn || worstWarn;
 
-      // #943: name the dominant agent dispatch failure reason (timeout,
+      // Name the dominant agent dispatch failure reason (timeout,
       // non_zero_exit, spawn_failed, …) when the check is already warning, so
       // "timeout-dominant" is visible without grepping task logs.
       const agentFailureReasonCounts = ctx.agentFailureReasonCounts ?? {};
@@ -516,11 +516,10 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
         message,
         evidence: {
           taskFailRate: ctx.taskFailRate,
-          taskRowCount: ctx.taskRuns.runs,
           taskRuns: ctx.taskRuns,
           threshold: TASK_FAIL_RATE_WARN,
           worstTaskFailRate: worst,
-          // #943: always present (even pass/empty) so scripts reading evidence
+          // Always present (even pass/empty) so scripts reading evidence
           // never need to branch on check status to find the breakdown.
           agentFailureReasonCounts,
         },

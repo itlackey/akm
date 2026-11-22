@@ -31,12 +31,8 @@ import { classifyAttempt, hereNow } from "./attempt-liveness";
  * that was running, the rest skipped), and the step named in the reason. A record that cannot be read says so.
  */
 function interruptedMetadata(row: TaskHistoryRow): string | undefined {
-  let meta: ReturnType<typeof decodeTaskHistoryMetadata>;
-  try {
-    meta = decodeTaskHistoryMetadata(row.metadata_json);
-  } catch {
-    return undefined;
-  }
+  // `classifyAttempt` called this row interrupted only because its metadata decoded.
+  const meta = decodeTaskHistoryMetadata(row.metadata_json);
   if (!meta.run) return undefined;
   const withDetail = (detail: { reason: string; error: string }, steps?: TaskHistoryStep[]): string =>
     JSON.stringify({ ...JSON.parse(row.metadata_json), detail, ...(steps ? { steps } : {}) });

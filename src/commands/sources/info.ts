@@ -12,7 +12,6 @@ import { classifyPathAccess, describeInaccessiblePath } from "../../core/path-ac
 import { getCacheDir, getConfigDir, getDataDir, getDefaultStashDir, getStateDir } from "../../core/paths";
 import { formatRegistryUrl } from "../../core/registry-url";
 import { error } from "../../core/warn";
-import { readSemanticSearchState } from "../../indexer/walk/index-context";
 import { learningStatus } from "../../setup/learning";
 import type { InfoResponse } from "../../sources/types";
 import type { Database } from "../../storage/database";
@@ -22,6 +21,7 @@ import { countLinksByKind } from "../../storage/repositories/index-links-reposit
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { isSqliteContentionError } from "../../storage/sqlite-transaction";
 import { pkgVersion } from "../../version";
+import { readSemanticSearchState, semanticSearchStatus } from "../health/semantic-search-check";
 import { type TargetRow, targetRows } from "../targets";
 
 /**
@@ -140,9 +140,12 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
   // Semantic status is what the index recorded at its last run, read now — not a cached
   // verdict. A failed embed attempt at search time falls back to FTS and reports that in
   // the search response; it never disables the mode here.
-  const semanticState = readSemanticSearchState(resolvedDbPath, config.semanticSearchMode, {
-    busyTimeoutMs: INFO_INDEX_BUSY_TIMEOUT_MS,
-  });
+  const semanticState = semanticSearchStatus(
+    readSemanticSearchState(config.semanticSearchMode, {
+      ...(resolvedDbPath ? { dbPath: resolvedDbPath } : {}),
+      busyTimeoutMs: INFO_INDEX_BUSY_TIMEOUT_MS,
+    }),
+  );
   const searchModes: string[] = ["fts"];
   if (config.semanticSearchMode !== "off" && indexStats.hasEmbeddings) {
     searchModes.push("semantic", "hybrid");

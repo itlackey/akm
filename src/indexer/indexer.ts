@@ -8,7 +8,7 @@ import type { BundleAdapter } from "../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../core/adapter/detect-adapter";
 import { adapterForId } from "../core/adapter/registry";
 import type { BundleComponent } from "../core/adapter/types";
-import { compareCodePoints, isHttpUrl, safeRealpath } from "../core/common";
+import { compareCodePoints, isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
 import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
@@ -1117,7 +1117,8 @@ function reportAdapterSkips(db: Database, config: AkmConfig, plans: readonly Sou
   let previous: Record<string, AdapterSkip> = {};
   try {
     previous = JSON.parse(getMeta(db, ADAPTER_SKIPS_META_KEY) ?? "{}") as Record<string, AdapterSkip>;
-  } catch {
+  } catch (error) {
+    warn(`[index] the recorded adapter skips cannot be read (${toErrorMessage(error)}); each skip is reported again.`);
     previous = {};
   }
   // A removed bundle takes its record with it.

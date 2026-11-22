@@ -10,7 +10,11 @@
  * search used to obey); it reports what the index says.
  */
 
-import { readSemanticSearchRecord, type SemanticSearchRecord } from "../../indexer/walk/index-context";
+import {
+  readSemanticSearchRecord,
+  type SemanticSearchRecord,
+  type SemanticSearchStatus,
+} from "../../indexer/walk/index-context";
 import { LOCAL_EMBEDDING_RUNTIME } from "../../llm/embedders/local";
 import { getEmbeddableEntryCount } from "../../storage/repositories/index-entries-repository";
 import { hasCurrentEntriesTable } from "../../storage/repositories/index-entry-schema";
@@ -32,7 +36,10 @@ export interface SemanticSearchState {
 }
 
 /** Read the last index run's record and the index's counts, read-only. */
-export function readSemanticSearchState(mode: string | undefined): SemanticSearchState {
+export function readSemanticSearchState(
+  mode: string | undefined,
+  options?: { dbPath?: string; busyTimeoutMs?: number },
+): SemanticSearchState {
   const read = readHealthIndex((db) => {
     if (!hasCurrentEntriesTable(db)) throw new Error("index.db has no searchable entries table");
     const record = readSemanticSearchRecord(db);
@@ -42,11 +49,22 @@ export function readSemanticSearchState(mode: string | undefined): SemanticSearc
       entryCount: getEmbeddableEntryCount(db),
       embeddingCount: getEmbeddingCount(db),
     };
-  });
+  }, options);
   if ("noIndex" in read) return { mode };
   if ("building" in read) return { mode, building: true };
   if ("error" in read) return { mode, error: read.error };
   return { mode, index: read.value };
+}
+
+/**
+ * The state as `akm info` and `akm bundle update` report it: `disabled` when the mode is off, `unknown` with the read
+ * error when the index cannot be read, `pending` when no run recorded one (no index, one being built, or none since
+ * embeddings were configured), otherwise the record's own status.
+ */
+export function semanticSearchStatus(state: SemanticSearchState): { status: SemanticSearchStatus; reason?: string } {
+  if (state.mode === "off") return { status: "disabled" };
+  if (state.error) return { status: "unknown", reason: state.error };
+  return { status: state.index?.record?.status ?? "pending" };
 }
 
 export function semanticSearchCheck(state: SemanticSearchState): HealthCheckResult {

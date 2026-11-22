@@ -88,9 +88,9 @@ export function parseNonNegativeIntFlag(raw: string | undefined, flagName: strin
 }
 
 /**
- * The one `--timeout` grammar: bare N is milliseconds, or N with `ms`, `s`, `m`,
- * `h` or `d`. Private to `--timeout` flags; asset `timeout:` fields and
- * `--since`/`--expires` keep the shared duration grammar in core/time.
+ * The one timeout grammar, for `--timeout` flags and asset `timeout:` fields: bare N
+ * is milliseconds, or N with `ms`, `s`, `m`, `h` or `d`. `--since`/`--expires` use the
+ * shared duration grammar in core/time.
  */
 const TIMEOUT_UNITS: Readonly<Record<string, number>> = {
   ms: 1,

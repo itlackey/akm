@@ -20,8 +20,9 @@ import {
   bundlesToSourceEntries,
 } from "../../src/core/config/config-sources";
 import { ConfigError } from "../../src/core/errors";
+import { warn } from "../../src/core/warn";
 import { resolveWritable } from "../../src/core/write-source";
-import { implicitStashDir, resolveEntryContentDir } from "../../src/indexer/search/search-source";
+import { implicitStashDir, resolveEntryContent } from "../../src/indexer/search/search-source";
 
 export interface BundleRoot {
   readonly bundleId: string;
@@ -86,12 +87,14 @@ export function bundleRoots(config: AkmConfig): BundleRoot[] {
     if (bundle.enabled === false) continue;
     const source = sources.get(bundleId);
     if (!source) continue;
-    const configuredRoot =
-      source.type === "filesystem" && source.path
-        ? path.resolve(expandTilde(source.path))
-        : source.type === "git" || source.type === "npm"
-          ? resolveEntryContentDir(source)
-          : undefined;
+    let configuredRoot: string | undefined;
+    if (source.type === "filesystem" && source.path) {
+      configuredRoot = path.resolve(expandTilde(source.path));
+    } else if (source.type === "git" || source.type === "npm") {
+      const content = resolveEntryContent(source);
+      if ("error" in content) warn(`akm-migrate: skipping bundle "${bundleId}": ${content.error}`);
+      else configuredRoot = content.dir;
+    }
     if (!configuredRoot || !existingDirectory(configuredRoot)) continue;
 
     const bundleRoot = path.resolve(configuredRoot);

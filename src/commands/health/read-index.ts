@@ -20,10 +20,19 @@ type IndexDb = NonNullable<ReturnType<typeof openReadonlyExistingDatabase>>;
 
 type HealthIndexRead<T> = { value: T } | { noIndex: true } | { building: true } | { error: string };
 
-export function readHealthIndex<T>(read: (db: IndexDb) => T): HealthIndexRead<T> {
+export function readHealthIndex<T>(
+  read: (db: IndexDb) => T,
+  options?: { dbPath?: string; busyTimeoutMs?: number },
+): HealthIndexRead<T> {
+  let dbPath: string;
+  try {
+    dbPath = options?.dbPath ?? getDbPath();
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
   try {
     if (indexDbIsDamaged()) throw new Error("index.db is damaged");
-    const db = openReadonlyExistingDatabase(getDbPath());
+    const db = openReadonlyExistingDatabase(dbPath, options);
     if (!db) return { noIndex: true };
     try {
       return { value: read(db) };

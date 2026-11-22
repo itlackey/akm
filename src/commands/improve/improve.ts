@@ -40,7 +40,7 @@ import { buildIndex, isSkippedIndexBuild } from "../../indexer/index-build";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import type { IndexResponse } from "../../indexer/indexer";
 import { countPendingMemoriesNeedingDecision } from "../../indexer/passes/memory-inference";
-import { resolveEntryContentDir, resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveEntryContent, resolveSourceEntries } from "../../indexer/search/search-source";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { type LlmUsageRecord, withLlmStage } from "../../llm/usage-telemetry";
 import {
@@ -442,14 +442,14 @@ export function resolveImproveReadSource(
         "INVALID_FLAG_VALUE",
       );
     }
-    const sourcePath = resolveEntryContentDir(entry);
-    if (!sourcePath) {
+    const content = resolveEntryContent(entry);
+    if ("error" in content) {
       throw new ConfigError(
-        `Source "${configuredSelector}" has no resolvable on-disk path; improve cannot inspect this entry.`,
+        `Source "${configuredSelector}" has no resolvable on-disk path (${content.error}); improve cannot inspect this entry.`,
         "INVALID_CONFIG_FILE",
       );
     }
-    return { selector: configuredSelector, source: { name: configuredSelector, path: sourcePath } };
+    return { selector: configuredSelector, source: { name: configuredSelector, path: content.dir } };
   }
   const implicit = resolveSourceEntries(undefined, config)[0];
   if (!implicit) throw new ConfigError("no source configured; run `akm bundle create`", "STASH_DIR_NOT_FOUND");

@@ -34,7 +34,7 @@ import {
 } from "../../indexer/index-build";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import type { IndexOptions, IndexResponse } from "../../indexer/indexer";
-import { readSemanticSearchState, type SemanticSearchState } from "../../indexer/walk/index-context";
+import type { SemanticSearchStatus } from "../../indexer/walk/index-context";
 import type { LockfileEntry } from "../../integrations/lockfile";
 import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
@@ -63,6 +63,7 @@ import type {
 import type { Database } from "../../storage/database";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
+import { readSemanticSearchState, semanticSearchStatus } from "../health/semantic-search-check";
 import { removeInstalledRegistryEntry } from "./source-add";
 import { removeStash, resolveBundleKey } from "./source-manage";
 
@@ -428,9 +429,9 @@ function readCurrentIndexSummary(): UpdateIndexSummary {
 function semanticFields(
   verification: IndexResponse["verification"] | undefined,
   config: AkmConfig,
-): { semanticStatus: SemanticSearchState["status"]; semanticReason?: string } {
+): { semanticStatus: SemanticSearchStatus; semanticReason?: string } {
   if (verification) return { semanticStatus: verification.semanticStatus };
-  const recorded = readSemanticSearchState(getDbPath(), config.semanticSearchMode);
+  const recorded = semanticSearchStatus(readSemanticSearchState(config.semanticSearchMode));
   return { semanticStatus: recorded.status, ...(recorded.reason ? { semanticReason: recorded.reason } : {}) };
 }
 

@@ -8,7 +8,7 @@ import { daysToMs, resolveStashDir, toErrorMessage } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
-import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../core/paths";
+import { getConfigPath, getDataDir, getStateDbPathInDataDir } from "../core/paths";
 import {
   classifyStateDbError,
   isStateDbCorruption,
@@ -23,7 +23,6 @@ import { probeLlmEndpoint } from "../llm/client";
 import { type Database, openDatabase } from "../storage/database";
 import { insertEvent } from "../storage/repositories/events-repository";
 import { getExtractOutcomeCountsSince } from "../storage/repositories/extract-sessions-repository";
-import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries } from "../storage/repositories/index-entries-repository";
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
 import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
@@ -47,6 +46,7 @@ import { collectIndexSourcesCheck } from "./health/index-sources";
 import { readLlmUsageAggregate } from "./health/llm-usage";
 import { collectOpencodeMajorAdvisory } from "./health/opencode-major";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
+import { readHealthIndex } from "./health/read-index";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
 import { readSemanticSearchState } from "./health/semantic-search-check";
 import { buildTypeDirectoryAdvisory } from "./health/type-directory-check";
@@ -483,10 +483,7 @@ function gatherAncillaryAdvisories(
  * mirrors {@link detectIndexStateGenerationMismatch}'s best-effort shape.
  */
 function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult | undefined {
-  let indexDb: ReturnType<typeof openReadonlyExistingDatabase>;
-  try {
-    indexDb = openReadonlyExistingDatabase(getDbPath());
-    if (!indexDb) return undefined;
+  const read = readHealthIndex((indexDb) => {
     // Directory intent is read only from inside the component root that owns the entry.
     // Both spellings of each root: indexed paths may be realpaths (a symlinked
     // stash, macOS /var -> /private/var) while config holds the configured path.
@@ -508,17 +505,8 @@ function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult 
     return buildTypeDirectoryAdvisory(entries, undefined, (absPath) =>
       absPath.startsWith(stashRoot) ? path.relative(stashRoot, absPath) : absPath,
     );
-  } catch {
-    return undefined;
-  } finally {
-    if (indexDb) {
-      try {
-        closeDatabase(indexDb);
-      } catch {
-        // Best-effort advisory: a close failure must not abort health.
-      }
-    }
-  }
+  });
+  return "value" in read ? read.value : undefined;
 }
 
 /**
@@ -535,11 +523,7 @@ function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult 
  * diagnostics and must not make the state health path throw.
  */
 function detectIndexStateGenerationMismatch(stateDb: Database): HealthCheckResult | undefined {
-  let indexDb: Database | undefined;
-  try {
-    indexDb = openReadonlyExistingDatabase(getDbPath());
-    if (!indexDb) return undefined;
-
+  const read = readHealthIndex((indexDb): HealthCheckResult | undefined => {
     const byId = indexDb.prepare<{ item_ref: string | null }>("SELECT item_ref FROM entries WHERE id = ?");
     const rows = stateDb
       .prepare<{ entry_id: number; entry_ref: string }>(
@@ -566,17 +550,8 @@ function detectIndexStateGenerationMismatch(stateDb: Database): HealthCheckResul
         "Stop concurrent writers and run 'akm index --full' to relink state to the current index.",
       evidence: { mismatches, sample },
     };
-  } catch {
-    return undefined;
-  } finally {
-    if (indexDb) {
-      try {
-        closeDatabase(indexDb);
-      } catch {
-        // Best-effort advisory: a close failure must not abort health.
-      }
-    }
-  }
+  });
+  return "value" in read ? read.value : undefined;
 }
 
 interface WindowComparePhaseResult {

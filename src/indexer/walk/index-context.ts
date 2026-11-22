@@ -1,11 +1,3 @@
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
-
-/** Result types shared by `akmIndex()` and its callers. */
-
-import { toErrorMessage } from "../../core/common";
-import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 
 /**
@@ -82,36 +74,8 @@ export function readSemanticSearchRecord(db: Parameters<typeof getMeta>[0]): Sem
   return raw ? (JSON.parse(raw) as SemanticSearchRecord) : undefined;
 }
 
-/** What the index reports about semantic search: the recorded status, or why none can be reported. */
-export interface SemanticSearchState {
-  status: SemanticSearchRecord["status"] | "pending" | "unknown";
-  /** For `unknown`: the error reading the index. */
-  reason?: string;
-}
-
-/**
- * The state of semantic search as the index records it, read-only. `semanticSearchMode: "off"` is `disabled`; an
- * index that cannot be read is `unknown` with the read error; an index that never recorded a run (none built, or
- * none since embeddings were configured) is `pending`; otherwise the record's own status.
- */
-export function readSemanticSearchState(
-  dbPath: string | undefined,
-  mode: string | undefined,
-  options?: { busyTimeoutMs?: number },
-): SemanticSearchState {
-  if (mode === "off") return { status: "disabled" };
-  try {
-    const db = openReadonlyExistingDatabase(dbPath, options);
-    if (!db) return { status: "pending" };
-    try {
-      return { status: readSemanticSearchRecord(db)?.status ?? "pending" };
-    } finally {
-      closeDatabase(db);
-    }
-  } catch (error) {
-    return { status: "unknown", reason: toErrorMessage(error) };
-  }
-}
+/** What `akm info` and `akm bundle update` report about semantic search: the recorded status, or why none can be reported. */
+export type SemanticSearchStatus = SemanticSearchRecord["status"] | "pending" | "unknown";
 
 /** Canonical configured owner that disappeared or moved since the last complete scan. */
 export interface RemovedIndexSource {

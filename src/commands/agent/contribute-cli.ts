@@ -35,7 +35,7 @@ import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli
 import { EXIT_CODES, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import { withRetries } from "../../execution/retry";
+import { retryDispatch } from "../../execution/retry";
 import { getHyphenatedBoolean } from "../../output/context";
 import { akmLint } from "../lint/index";
 import { akmAgentDispatch } from "./agent-dispatch";
@@ -105,9 +105,9 @@ export const agentCommand = defineCommand({
 
       const stdinPrompt = promptStdin ? readPromptStdin() : undefined;
 
-      const result = await withRetries(
+      const result = await retryDispatch(
         parseNonNegativeIntFlag(getExactStringArg(args, "max-retries"), "--max-retries") ?? 0,
-        (n) =>
+        () =>
           akmAgentDispatch({
             prompt: stdinPrompt ?? promptText,
             ...(agentRef === undefined ? {} : { agentRef }),
@@ -115,8 +115,7 @@ export const agentCommand = defineCommand({
             ...(Object.keys(selection).length === 0 ? {} : { selection }),
             ...(cwd ? { cwd } : {}),
             ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
-          }).then((dispatched) => (n > 1 ? { ...dispatched, attempts: n } : dispatched)),
-        (attempt) => !attempt.ok,
+          }),
       );
 
       output("agent-result", result);

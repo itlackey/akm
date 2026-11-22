@@ -385,7 +385,7 @@ function entrySpec(entry: unknown): string | undefined {
 
 const namesPackage = (spec: string, pkg: string) => spec === pkg || spec.startsWith(`${pkg}@`);
 
-export interface OpenCodeConfigSpec {
+interface OpenCodeConfigSpec {
   spec: string;
   key: string;
   file: string;

@@ -696,7 +696,10 @@ async function runProcessStep(
     }
     if (result.aborted || result.timedOut || result.exitCode !== 0) {
       const { reason, error } = processFailure({ ...result, stderr });
-      return { ok: false, reason: reason === "non_zero_exit" ? `${reason}: ${error}` : reason };
+      return {
+        ok: false,
+        reason: reason === "non_zero_exit" || reason === "spawn_error" ? `${reason}: ${error}` : reason,
+      };
     }
     const incomplete = streamCaptureFailure(result.stdoutRead, result.stderrRead);
     if (incomplete) return { ok: false, reason: incomplete };

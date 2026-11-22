@@ -34,7 +34,7 @@ import { withUnattendedTimeout } from "./run-command-task";
 import { shellCommand } from "./run-native-task";
 import { DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } from "./run-workflow-task";
 import { appendHistory, readTaskHistory, taskBundle } from "./task-history";
-import { appendStreamLines, persistRunLog, scrubTaskOutput } from "./task-log";
+import { appendStreamLines, persistRunLog, processFailure, scrubTaskOutput } from "./task-log";
 import type { RunTaskOptions, TaskRunResult } from "./task-result";
 
 /** A step's result is kept to this many bytes of text. */
@@ -320,9 +320,10 @@ async function runShellStep(step: Extract<PreparedTaskStep, { kind: "shell" }>, 
   });
   const out: StepOutcome = { ok: false, lines: [], dbLines: [] };
   if (result.spawnError) {
-    out.reason = `spawn_error: ${result.spawnError.message}`;
-    out.lines.push(`spawn_error=${result.spawnError.message}`);
-    out.dbLines.push({ level: "error", line: `spawn_error=${result.spawnError.message}` });
+    const { reason, error } = processFailure(result);
+    out.reason = `${reason}: ${error}`;
+    out.lines.push(`spawn_error=${error}`);
+    out.dbLines.push({ level: "error", line: `spawn_error=${error}` });
     return out;
   }
   const exitCode = result.exitCode ?? (result.timedOut ? 143 : 1);
@@ -340,9 +341,10 @@ async function runShellStep(step: Extract<PreparedTaskStep, { kind: "shell" }>, 
     out.lines.push("--- stderr ---", result.stderr);
     appendStreamLines(out.dbLines, result.stderr, "stderr", "error");
   }
-  if (result.timedOut) out.reason = "timeout";
-  else if (exitCode !== 0) out.reason = `exit code ${exitCode}`;
-  else {
+  if (result.timedOut || result.aborted || exitCode !== 0) {
+    const { reason, error } = processFailure(result);
+    out.reason = reason === "non_zero_exit" ? `${reason}: ${error}` : reason;
+  } else {
     out.ok = true;
     out.value = bound(result.stdout);
   }

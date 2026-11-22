@@ -692,7 +692,7 @@ export async function runManagedSubprocess(
   //
   // It is not armed while the command is still running: every byte up to then is a live process's, and
   // cancelling the reader would discard the output of work that is still going. A leader exiting in
-  // milliseconds no longer holds the drain (and with it the unit, and with it a fan-out slot) open for a
+  // milliseconds does not hold the drain (and with it the unit, and with it a fan-out slot) open for a
   // budget it never came close to spending.
   // Settles on a rejected `proc.exited` too: either way the child is gone.
   const childSettled = capture ? proc.exited.catch(() => undefined) : undefined;

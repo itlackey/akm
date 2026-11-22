@@ -13,7 +13,7 @@ import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { isVerbose, setVerbose, warn, warnVerbose } from "../../core/warn";
-import { withRetries } from "../../execution/retry";
+import { retryDispatch } from "../../execution/retry";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
 import { lookupBundleRefReadonly } from "../../indexer/indexer";
 import { ensureWorkingFolder } from "../env/injection";
@@ -98,13 +98,9 @@ export const commandRunCommand = defineJsonCommand({
         })}`,
       );
     }
-    const result = await withRetries(
+    const result = await retryDispatch(
       parseNonNegativeIntFlag(getExactStringArg(args, "max-retries"), "--max-retries") ?? 0,
-      (n) =>
-        dispatchPreparedCommandInvocation(prepared).then((dispatched) =>
-          n > 1 ? { ...dispatched, attempts: n } : dispatched,
-        ),
-      (attempt) => !attempt.ok,
+      () => dispatchPreparedCommandInvocation(prepared),
     );
     for (const message of result.warnings ?? []) warn(message);
     output("agent-result", result);

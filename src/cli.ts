@@ -10,7 +10,7 @@
 // `dist/cli-node.mjs` wrapper, which registers the text-import loader hook
 // before this module graph loads; running `node dist/cli.js` directly still
 // works for code paths that touch no embedded text asset, but the wrapper is
-// the supported entry. The hard floor is Node 22.15 (`process.execve`; Node 20 support dropped 2026-07; `@clack/core` imports
+// the supported entry. The hard floor is Node 22.15 (`process.execve`; `@clack/core` imports
 // `node:util`'s `styleText` (added in Node 20.12) — Node 18 (EOL) throws at import.
 {
   const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";

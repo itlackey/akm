@@ -202,13 +202,8 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
  * That convention is part of the akm content layout, not a provider concern,
  * so it stays here.
  */
-export function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
-  const resolved = resolveEntryContent(entry);
-  return "error" in resolved ? undefined : resolved.dir;
-}
-
 /** The entry's content directory, or the provider's own reason there is none. */
-function resolveEntryContent(entry: SourceConfigEntry): { dir: string } | { error: string } {
+export function resolveEntryContent(entry: SourceConfigEntry): { dir: string } | { error: string } {
   // §10.2 (WI-8.5) desired/resolved split: a git/npm bundle's desired config
   // carries only the source LOCATOR, not the materialized cache root — the
   // resolved root lives in the lock (`localRoot`). Resolve from there first via
@@ -471,15 +466,11 @@ function isMaterializedDir(dir: string): boolean {
  * source whose content lives at its lock `localRoot` counts as materialized.
  */
 function warnIfSourceUnavailableForRead(entry: SourceConfigEntry, providerName: string): void {
-  let dir: string | undefined;
-  try {
-    dir = resolveEntryContentDir(entry);
-  } catch {
-    dir = undefined;
-  }
-  if (dir && isMaterializedDir(dir)) return;
+  const resolved = resolveEntryContent(entry);
+  if ("dir" in resolved && isMaterializedDir(resolved.dir)) return;
+  const why = "error" in resolved ? ` (${resolved.error})` : "";
   warn(
-    `Warning: source "${providerName}" is not materialized locally; skipping it for this read. ` +
+    `Warning: source "${providerName}" is not materialized locally${why}; skipping it for this read. ` +
       "Run `akm index` (or `akm bundle update`) to fetch it.",
   );
 }

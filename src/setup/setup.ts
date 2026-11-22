@@ -128,8 +128,8 @@ export interface SetupSummary {
 
 interface RemovedBundle {
   id: string;
-  /** The bundle's path, or its url or package for a bundle that has none. */
-  path: string;
+  /** The bundle's path, or its url or package for a bundle that has none; null when the entry names none. */
+  path: string | null;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -265,7 +265,7 @@ async function saveSetupConfig<T>(
 function removedBundles(before: AkmConfig, saved: AkmConfig): RemovedBundle[] {
   return Object.entries(before.bundles ?? {})
     .filter(([id]) => !(id in (saved.bundles ?? {})))
-    .map(([id, entry]) => ({ id, path: entry.path ?? entry.git ?? entry.website?.url ?? entry.npm ?? "" }));
+    .map(([id, entry]) => ({ id, path: entry.path ?? entry.git ?? entry.website?.url ?? entry.npm ?? null }));
 }
 
 /** Registry-managed bundles are not editable through setup's source picker. */
@@ -724,7 +724,7 @@ export async function runSetupWizard(opts?: {
   const dropped = removedBundles(current, savedConfig);
   if (dropped.length > 0) {
     p.log.warn(
-      `Removed from the configuration (their directories are untouched): ${dropped.map((b) => `${b.id} (${b.path})`).join(", ")}`,
+      `Removed from the configuration (their directories are untouched): ${dropped.map((b) => `${b.id} (${b.path ?? "unknown"})`).join(", ")}`,
     );
   }
 

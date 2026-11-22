@@ -23,10 +23,10 @@ import {
   type TaskHistoryRow,
 } from "../../storage/repositories/task-history-repository";
 
-export type AttemptLiveness = "running" | "interrupted" | "indeterminate";
+type AttemptLiveness = "running" | "interrupted" | "indeterminate";
 
 /** This host and process, read once per pass over rows. */
-export interface Here {
+interface Here {
   host: string;
   self: ReturnType<typeof processIdentity>;
   bootedAtMs: number;
@@ -47,7 +47,8 @@ export function classifyAttempt(row: TaskHistoryRow, here: Here): AttemptLivenes
   try {
     owner = decodeTaskHistoryMetadata(row.metadata_json).owner;
   } catch {
-    owner = undefined;
+    // A row whose metadata cannot be read says nothing about its owner: its liveness is not known.
+    return "indeterminate";
   }
   if (owner) return classifyOwner(owner, here);
   return new Date(row.started_at).getTime() < here.bootedAtMs ? "interrupted" : "indeterminate";

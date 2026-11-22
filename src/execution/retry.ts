@@ -12,3 +12,15 @@ export async function withRetries<T>(
   for (let retry = 1; retry <= maxRetries && failed(result); retry++) result = await attempt(retry + 1);
   return result;
 }
+
+/** `withRetries` for a dispatch result: tries again while it is not `ok`, and reports `attempts` when more than one try ran. */
+export function retryDispatch<T extends { ok: boolean }>(
+  maxRetries: number,
+  dispatch: () => Promise<T>,
+): Promise<T | (T & { attempts: number })> {
+  return withRetries(
+    maxRetries,
+    (n) => dispatch().then((dispatched) => (n > 1 ? { ...dispatched, attempts: n } : dispatched)),
+    (attempt) => !attempt.ok,
+  );
+}

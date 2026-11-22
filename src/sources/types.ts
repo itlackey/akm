@@ -9,7 +9,7 @@ import type { IncludeSelectors } from "../core/include";
 import type { ProjectView } from "../core/projects";
 import type { SkippedIndexReport } from "../indexer/index-build";
 import type { ScopeFilters } from "../indexer/passes/metadata";
-import type { SemanticSearchState } from "../indexer/walk/index-context";
+import type { SemanticSearchStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
 import type { WorkflowExec as ProgramExecCore } from "../workflows/plan";
 
@@ -478,7 +478,7 @@ export interface UpdateResponse {
          * (`"blocked"`), exactly like a plain `akm index` whose embedding phase
          * failed.
          */
-        semanticStatus?: SemanticSearchState["status"];
+        semanticStatus?: SemanticSearchStatus;
         /** When no embedding pass ran and the index could not be read: why `semanticStatus` is `unknown`. */
         semanticReason?: string;
       }
@@ -679,7 +679,7 @@ export interface InfoResponse {
   semanticSearch: {
     mode: "off" | "auto";
     /** What the index recorded at its last run, read at call time — never a cached verdict. `unknown` when the index cannot be read. */
-    status: SemanticSearchState["status"];
+    status: SemanticSearchStatus;
     /** For `unknown`: why the index could not be read. */
     reason?: string;
   };
