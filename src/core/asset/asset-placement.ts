@@ -104,7 +104,7 @@ const BUILTIN_PLACEMENT_SPECS = {
   command: { stashDir: "commands", ...markdownSpec },
   agent: { stashDir: "agents", ...markdownSpec },
   knowledge: { stashDir: "knowledge", ...markdownSpec },
-  // R-045 / Q-18 second half (owner ruling 11, EXECUTE NOW) — `instruction` as
+  // `instruction` as
   // a real stash-resident type, mirroring `knowledge`'s plain markdown spec.
   // This is distinct from the ADAPTER-OWNED instruction docs emitted by
   // format-family adapters (root CLAUDE.md/AGENTS.md via `tool-dir-shared.ts`):

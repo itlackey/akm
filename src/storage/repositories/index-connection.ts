@@ -9,7 +9,7 @@
  * (writable) open path. This module lives BELOW the
  * indexer, so the storage loan helpers (`index-db.ts`, `registry-index-cache-repository.ts`)
  * import their opener from a sibling here instead of reaching up into the
- * indexer — inverting the old storage→indexer arrow.
+ * indexer (no storage→indexer dependency).
  */
 
 import fs from "node:fs";

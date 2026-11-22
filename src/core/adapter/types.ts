@@ -115,18 +115,13 @@ export type ScopeKey = keyof StashEntryScope;
  */
 export type ScopeFilters = Partial<Record<string, string | string[]>>;
 
-// ── §3 — IndexDocument (Chunk 5 F4a M-core-1: IS IndexDocument + provenance) ─────
+// ── IndexDocument (IS IndexDocument + provenance) ─────
 //
-// The spec's §3 `IndexDocument` IS `IndexDocument` + provenance (M1 decision). The
-// scan engine drains `IndexDocument`s; the durable `document_json` column is a
-// faithful `IndexDocument`, so `IndexDocument` is now a deprecated alias OF this type
-// (`metadata.ts`; Chunk-8 cleanup). To let a metadata-pipeline entry literal
-// (`{ name, type, … }`, no provenance) satisfy the alias, the seven provenance
+// The scan engine drains `IndexDocument`s; the durable `document_json` column is a
+// faithful `IndexDocument`. To let a metadata-pipeline entry literal
+// (`{ name, type, … }`, no provenance) satisfy the type, the seven provenance
 // fields are OPTIONAL here; `recognize` and the scan writer fill them in, and
 // they are never serialized onto `document_json`.
-// Where the pre-merge `IndexDocument` and `IndexDocument` field shapes conflicted
-// (`supersededBy`, `scope`, `captureMode`, `quality`, `beliefState`), the
-// IndexDocument shape wins — the durable truth.
 
 export interface IndexDocument {
   // ── Provenance — OPTIONAL for the IndexDocument alias; see header ──
@@ -284,7 +279,7 @@ export interface IndexDocument {
   created?: string;
   observed?: string;
   expires?: string;
-  /** Resolved native links = relationships (§9); navigation/lint, NOT graph boost. */
+  /** Resolved native links = relationships; navigation/lint, NOT graph boost. */
   links?: string[];
   /** The assets a workflow's steps or a task target (`uses:` refs, stored `akm/command` refs), in authored order. */
   uses?: string[];

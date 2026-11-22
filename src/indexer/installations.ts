@@ -37,10 +37,9 @@
  * ── Adapter selection (ordered probe) ──
  *
  * The adapter is chosen by the ordered `looksLikeRoot` probe over the built-in
- * adapters (`getAdapters()`), first match wins. The registry is now a STATIC
- * FROZEN map populated at module load, so this probe runs in
- * production with the full 11-family set — no registration call is required
- * first. Array order (`BUILTIN_ADAPTERS`) is the probe precedence, most-specific
+ * adapters (`getAdapters()`), first match wins. The registry is a STATIC
+ * FROZEN map populated at module load, so this probe runs with the full
+ * 11-family set — no registration call is required first. Array order (`BUILTIN_ADAPTERS`) is the probe precedence, most-specific
  * first, so a `.claude`/dotenv/wiki root is claimed by its tight probe before
  * the loose `akm` stash-shape probe.
  *
@@ -127,12 +126,11 @@ export function deriveWritableBundleIds(sources: SearchSource[]): Set<string> {
 }
 
 /**
- * Derive the durable `EntryProvenance` for an indexed entry (Chunk-5 flip
- * §14.4): `conceptId` is the owning adapter's, else the one a new asset of this
+ * Derive the durable `EntryProvenance` for an indexed entry: `conceptId` is the owning adapter's, else the one a new asset of this
  * type and name is placed under (`conceptIdFromTypeName`), and `item_ref` is `<bundle>//<conceptId>` — the exact
  * spelling `recognize` emits as `IndexDocument.ref`. Shared by the full-index
  * diff-persist writer and the write-path `indexWrittenAssets` fast path so both
- * populate item_ref identically (F4a M-core-2 item 5 — no NULL-item_ref rows).
+ * populate item_ref identically (no NULL-item_ref rows).
  */
 export function deriveEntryProvenance(
   bundle: { bundleId: string; componentId: string; adapterId: string },

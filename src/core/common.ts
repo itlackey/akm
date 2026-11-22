@@ -12,7 +12,7 @@ import { isTerminal } from "./stdio";
 // ── Constants ───────────────────────────────────────────────────────────────
 
 // Moved to the platform leaf so paths.ts can use it without a common↔paths
-// cycle (chunk-8 WI-8.6, DoD 11); re-exported here for the existing surface.
+// cycle; re-exported here for the existing surface.
 export { IS_WINDOWS } from "./platform";
 export const MAX_LOCK_METADATA_BYTES = 64 * 1024;
 

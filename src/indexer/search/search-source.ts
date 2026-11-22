@@ -202,7 +202,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
  * so it stays here.
  */
 export function resolveEntryContent(entry: SourceConfigEntry): { dir: string } | { error: string } {
-  // §10.2 (WI-8.5) desired/resolved split: a git/npm bundle's desired config
+  // §10.2 desired/resolved split: a git/npm bundle's desired config
   // carries only the source LOCATOR, not the materialized cache root — the
   // resolved root lives in the lock (`localRoot`). Resolve from there first via
   // the SHARED lock-first resolver (the same one write-source consults, so reads

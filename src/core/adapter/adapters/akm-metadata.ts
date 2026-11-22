@@ -17,7 +17,7 @@
  *   - `workflows/renderer.ts` (1): workflow-document-metadata (the historical
  *     `workflow-md` renderer id now presents both peer workflow sources).
  *
- * ── Cycle-safety (chunk-2 ratchet, baseline 18) ──
+ * ── Cycle-safety ──
  *
  * Imported ONLY by `akm-adapter.ts` (itself imported by nothing in `src/` — see
  * that file's header), so this leaf can never gain an inbound edge from a cycle
@@ -51,8 +51,7 @@
  * workflow is dropped); here the compile/projection is wrapped
  * so a broken workflow yields no folded metadata instead of throwing out of the
  * synchronous `recognize` — the drop-the-entry behavior is an index-drain
- * concern (Chunk 4/5), not recognition's. On the valid Chunk-0b fixture this
- * distinction never triggers.
+ * concern, not recognition's.
  */
 
 import type { ParsedBuiltinCommandAction } from "../../../commands/command/builtin-action";
@@ -376,7 +375,7 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
 
 /**
  * Apply {@link foldRecognizedMetadata}'s output onto a `IndexDocument` with the
- * SAME precedence the live in-place renderer contributors use (Chunk 5 M-b), so
+ * SAME precedence the live in-place renderer contributors use so
  * `entry.applyPreContributorFields → applyFoldedMetadata → applyPostContributorFields`
  * reproduces `buildEntryFromFile`'s `P1/P2 → contributors → P4` byte-for-byte.
  *

@@ -127,7 +127,7 @@ export function inheritedConnectionsOf(config: AkmConfig): ReadonlySet<string> {
 }
 
 /**
- * {@link inheritedConnectionsOf} the config as it is now on this host, loaded here when the cache holds
+ * {@link inheritedConnectionsOf} the config as it is on this host, loaded here when the cache holds
  * nothing: for a caller with no config in hand.
  */
 export function isInheritedConnection(name: string): boolean {

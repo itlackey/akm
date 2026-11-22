@@ -45,8 +45,7 @@ function nextLine(text: string, start: number): { line: string; next: number } {
  * A third party's markdown that genuinely cannot be parsed into a mapping
  * (unterminated frontmatter, broken YAML syntax, a non-mapping document)
  * throws {@link UsageError} \u2014 exit 2, an actionable usage problem, not exit
- * 70 (`TypeError`'s "unclassified internal error" code, which is what a
- * `throw new TypeError(...)` here used to surface as). Anchors, explicit
+ * 70 (`TypeError`'s "unclassified internal error" code). Anchors, explicit
  * tags, and non-string mapping keys are recognized-but-unsupported
  * constructs rather than parse failures on their own \u2014 an anchor nobody
  * aliases, or a tag `toJS` converts to a plain value, is harmless \u2014 so they

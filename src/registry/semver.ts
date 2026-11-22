@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Registry semver engine (§4.6 dedup, WI-9.3).
+ * Registry semver engine.
  *
  * This module delegates to `semver` (the npm package, a runtime dependency)
  * rather than re-deriving a subset of its behavior, so every range form

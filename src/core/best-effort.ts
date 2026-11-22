@@ -6,13 +6,12 @@
  * `bestEffort` — a single chokepoint for the project's many intentionally
  * silent error swallows (`} catch { /* nothing *\/ }`).
  *
- * Historically these were scattered as bare `try/catch {}` blocks with no
- * binding and no handling, hiding errors with no way to opt into visibility.
- * This helper centralizes that pattern WITHOUT changing default behaviour:
+ Bare `try/catch {}` blocks hide errors with no way to opt into
+ * visibility. This helper centralizes that pattern:
  *
  *   - It runs `fn`. On success it returns the result.
- *   - On throw it SWALLOWS the error and returns `undefined` — byte-identical
- *     to the previous bare swallow at the default verbosity level.
+ *   - On throw it SWALLOWS the error and returns `undefined` — identical
+ *     to a bare swallow at the default verbosity level.
  *   - ONLY when verbose/debug output is enabled (`isVerbose()`) does it route a
  *     one-line diagnostic to the existing verbose stderr seam (`warnVerbose`).
  *     At the default (non-verbose) verbosity this emits nothing — no new

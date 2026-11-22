@@ -5,12 +5,8 @@
 /**
  * Explicit composition root for the indexer's built-in registrations.
  *
- * Historically a lazy gate (`ensureBuiltinsRegistered` in `walk/file-context.ts`)
- * registered the built-in renderer set on first use. That implicit,
- * order-dependent wiring is the M1/M2 finding in
- * the 2026-06 code-health brittleness audit.
- *
- * `initIndexer()` folds the renderer registration into a single deterministic,
+ * Registering the built-in renderer set on first use would be implicit,
+ * order-dependent wiring, so `initIndexer()` is a single deterministic,
  * idempotent entry point. It registers, exactly once:
  *
  *  1. Built-in renderers — `registerBuiltinRenderers()` (`output/renderers.ts`),

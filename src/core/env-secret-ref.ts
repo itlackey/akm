@@ -3,13 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Shared ref-resolution helpers for the `env` and `secret` command families
- * (WS6). These were duplicated/co-located inline in `src/cli.ts`; hoisting them
- * here lets `src/commands/env/env-cli.ts` and `src/commands/env/secret-cli.ts` import a
- * single copy of the parse/resolve/make + path-traversal-guard logic (the WS6
- * "env traversal-guard copies 5 → 1" KPI). Behaviour is byte-identical to the
- * inline forms: env/secret VALUES are never read or surfaced here — these
- * helpers only resolve refs to absolute paths and guard against directory
+ * Shared ref-resolution helpers for the `env` and `secret` command families.
+ * `src/commands/env/env-cli.ts` and `src/commands/env/secret-cli.ts` share the
+ * parse/resolve/make + path-traversal-guard logic here. env/secret VALUES are
+ * never read or surfaced here — these helpers only resolve refs to absolute paths and guard against directory
  * traversal.
  */
 
@@ -189,7 +186,7 @@ export function isInstalledBundle(bundle: string): boolean {
  * second time even when the walk itself honoured an injected one.
  */
 export function makeEnvRef(conceptId: string, source?: IndexSearchSource, config: AkmConfig = loadConfig()): string {
-  // F4b output-spelling flip: `env/name` in the primary stash, `bundle//env/name`
+  // Output spelling: `env/name` in the primary stash, `bundle//env/name`
   // for a slug-clean named source.
   return displayRef({ conceptId, bundleId: source?.registryId }, displayDefaultBundle(source, config));
 }
@@ -218,7 +215,7 @@ export function parseSecretRef(ref: string): AssetRef {
 }
 
 export function makeSecretRef(conceptId: string, source?: IndexSearchSource): string {
-  // F4b output-spelling flip: `secrets/name` in the primary stash,
+  // Output spelling: `secrets/name` in the primary stash,
   // `bundle//secrets/name` for a slug-clean named source.
   return displayRef({ conceptId, bundleId: source?.registryId }, displayDefaultBundle(source));
 }

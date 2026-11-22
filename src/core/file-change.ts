@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `FileChange` — the minimal durable change unit (plan §2.2).
+ * `FileChange` — the minimal durable change unit.
  *
  * One `FileChange` describes one file mutation; a `Proposal` carries
  * `changes: FileChange[]` (multi-file capable — consolidate ops ride the same
@@ -18,12 +18,12 @@
 export type FileChangeOp = "create" | "update" | "delete";
 
 /**
- * The content of a proposal's PRIMARY change (WI-6.2 envelope read path).
+ * The content of a proposal's PRIMARY change (the envelope read path).
  *
  * By construction `changes[0].after === payload.content` for a `create` or
  * `update` change; consumers read through this accessor so the
  * single-content assumption lives in ONE place. A `delete` primary change (a
- * consolidate retire proposal, alpha.9) writes no content by definition, so
+ * consolidate retire proposal) writes no content by definition, so
  * it reads as `""` here rather than throwing — every generic proposal scan
  * (dedup-by-body-hash, the triage drain's diff-size filter, the quality
  * validators) can call this on ANY pending proposal, retire included,

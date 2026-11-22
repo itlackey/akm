@@ -190,8 +190,8 @@ export interface IndexResponse {
   /**
    * Present when this run auto-detected a bundle's adapter and persisted it
    * to config.json (`bundles.<id>.components.<component>.adapter`) — a
-   * maintenance-command config write that would otherwise be invisible
-   * (R-056). Keyed by bundle id, valued by the detected adapter id.
+   * maintenance-command config write that would otherwise be invisible.
+   * Keyed by bundle id, valued by the detected adapter id.
    */
   configUpdated?: { detectedAdapters: Record<string, string> };
 }
@@ -257,7 +257,7 @@ export interface IndexOptions {
    * pre-run index) rather than by an explicit `akm index`.
    *
    * Only affects DISCLOSURE, never behavior. The adapter-detection config
-   * write (R-056) is always reported in the result envelope, but its stderr
+   * write is always reported in the result envelope, but its stderr
    * notice is suppressed for implicit runs: a read command's stderr carries
    * its JSON error envelope, so an extra human-readable line there makes the
    * envelope unparseable for callers doing `JSON.parse(stderr)` — and would
@@ -685,14 +685,14 @@ function detectAndPersistBundleAdapters(
 }
 
 async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
-  // R-022: `dryRun` only ever gated the `--clean` stale-entry removal pass
+  // `dryRun` only gates the `--clean` stale-entry removal pass
   // (see `runCleanPass` below) — every other phase (walk, embeddings, FTS,
-  // the adapter-detection config write) ran for real regardless, so
-  // `akm index --dry-run` alone silently performed a full,
+  // the adapter-detection config write) runs for real regardless, so
+  // `akm index --dry-run` alone would silently perform a full,
   // real index. The flag's own docs (`IndexOptions.dryRun` above, and the
-  // CLI help in stash-cli.ts) already scope it to `--clean`; reject the
-  // combination that was never implemented instead of quietly doing
-  // something other than what "dry run" promised. Checked before the writer
+  // CLI help in stash-cli.ts) scope it to `--clean`; reject the
+  // unsupported combination instead of quietly doing
+  // something other than what "dry run" promises. Checked before the writer
   // lease is even requested so a bad invocation fails instantly.
   if (options?.dryRun === true && options?.clean !== true) {
     const { UsageError } = await import("../core/errors.js");
@@ -949,7 +949,7 @@ type DirRecord = {
   /** Walked-set fingerprint taken at scan time (#900); persisted as-is for scanned and unchanged dirs. */
   fingerprint?: DirFingerprint;
   /**
-   * F4a M-core-2: `doc.hash` keyed by recognized-file absolute path, produced by
+   * `doc.hash` keyed by recognized-file absolute path, produced by
    * the per-dir document drain. Read by the persist layer to populate
    * `content_hash`. Absent on skipped dirs (nothing drained).
    */
@@ -1261,7 +1261,7 @@ function buildSourceScanPlans(
  * {@link persistDirRecords} later writes.
  *
  * The per-dir document drain (`drainDirDocuments` × the component's dispatched
- * `adapter.recognize`, F4a M-core-2) is synchronous, but the walk still runs
+ * `adapter.recognize`) is synchronous, but the walk still runs
  * outside `db.transaction()` so the persist pass can be a single synchronous
  * transaction.
  */
@@ -1342,7 +1342,7 @@ async function scanSourceDirs(
       continue;
     }
 
-    // Owner ruling 2026-07-21: dispatch each component's DETECTED adapter (§4).
+    // Dispatch each component's DETECTED adapter.
     // An unknown adapter id has no `adapterForId` match → skip the whole
     // component with a warning (one bundle = one component = one adapter).
     if (!adapter) {
@@ -1406,7 +1406,7 @@ async function scanSourceDirs(
         continue;
       }
 
-      // F4a M-core-2 (the flip): drain the dir's `IndexDocument` stream via the
+      // Drain the dir's `IndexDocument` stream via the
       // component's dispatched `adapter.recognize` (broken workflows dropped-with-
       // warning at the drain layer) and reconstruct the durable `IndexDocument`s.
       drainObserverForTests?.(dirPath, ctxs.length);
@@ -2123,8 +2123,8 @@ export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntr
   const EMA_DECAY = 0.7;
   const scoped = onlyEntryId !== undefined;
 
-  // Purge stale usage events (90-day retention). usage_events lives in state.db
-  // (Chunk-8 WI-8.3); its table is created by state migration 020.
+  // Purge stale usage events (90-day retention). usage_events lives in state.db;
+  // its table is created by state migration 020.
   if (!scoped) purgeOldUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS);
 
   // Aggregate explicit user demand per `entry_ref` from state.db's usage_events

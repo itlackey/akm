@@ -477,7 +477,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
 
   // ── Migration 008 — body_embeddings ─────────────────────────────────────────
   //
-  // cacheHash-keyed body-embedding cache (WS-3a). Stores the embedding of the
+  // cacheHash-keyed body-embedding cache. Stores the embedding of the
   // case-preserving stripped body so the dedup pre-pass and the consolidation
   // clustering step share one computed vector per unique body, eliminating
   // redundant embedding calls across runs.
@@ -517,7 +517,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
   //
   // Three independently-stored, independently-decayable sub-scores:
   //   encoding_salience  — intrinsic importance (Gap 1; v1 = type-weight stub).
-  //   outcome_salience   — differential usefulness (WS-2; 0 until that lands).
+  //   outcome_salience   — differential usefulness (0 until the outcome loop writes it).
   //   retrieval_salience — frequency × recency (the decayable term).
   //
   // Plus the scalar projection for ranking:
@@ -818,21 +818,19 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_improve_runs_strategy_started ON improve_runs(strategy, started_at);
     `,
   },
-  // ── Migration 018 — drop dead-lane schema (Chunk 7, WI-7.3) ──────────────────
+  // ── Migration 018 — drop dead-lane schema ──────────────────
   //
   // Drops the on-disk schema for three lanes deleted by the 0.9.0 bundle-adapter
   // refactor. Append-only: migrations 007/010/014 above are left verbatim; this
   // migration only removes what they created.
   //
   //   - recombine_hypotheses (+ its last-seen index) — the whole-corpus
-  //     cross-episodic synthesis pass (migration 014) was deleted in Chunk 7
-  //     WI-7.1 (R28).
+  //     cross-episodic synthesis pass (migration 014) was deleted.
   //   - consolidation_judged — the judged-state cache (#581, migration 007) was
-  //     deleted in Chunk 7 WI-7.3 (plan §5). This is a LIVE behavior change:
-  //     every consolidate run now re-judges unchanged memories (more LLM calls)
-  //     instead of skipping them — see the chunk-7 ledger.
+  //     deleted. Every consolidate run re-judges unchanged memories (more LLM
+  //     calls) instead of skipping them.
   //   - asset_outcome.review_pressure (+ its DESC index) — the review-pressure
-  //     lane (#613, migration 010) was deleted in Chunk 7 WI-7.2 (R21); this
+  //     lane (#613, migration 010) was deleted; this
   //     migration finishes the column/index drop the code-side deletion left
   //     pending. `retrieval_count`/`outcome_score` and their index are untouched.
   {
@@ -848,7 +846,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
     `,
   },
 
-  // ── Migration 019 — proposal input fingerprints (Chunk 6, WI-6.4) ────────────
+  // ── Migration 019 — proposal input fingerprints ────────────
   //
   // Durable store for the §23.6 input fingerprints that replace the
   // dedup/cooldown content-hash machinery (plan §4.5): one row per processed

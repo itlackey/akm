@@ -37,7 +37,7 @@
  * keeps that exact narrowness: {@link dangerousEnvKeyDiagnostics} runs only when
  * the path's basename ends in `.env`. NOT widened.
  *
- * ── Cycle-safety (chunk-2 ratchet, baseline 18) ──
+ * ── Cycle-safety ──
  *
  * Imported ONLY by `akm-adapter.ts` (no inbound `src/` edge) → can never join a
  * cycle. It VALUE-imports the one `compileWorkflowSource` frontend and the pure

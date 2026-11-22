@@ -204,11 +204,11 @@ export interface ImproveRunSummaryRow {
  * (`started_at >= since`). Rows are returned newest-first (`ORDER BY
  * started_at DESC`).
  *
- * Owns the SQL formerly inlined in commands/health.ts (`loadImproveRunRows`).
+ * Owns the SQL behind commands/health.ts (`loadImproveRunRows`).
  * The `dry_run = 0` filter is first-class so dry-run probes never pollute
  * productivity audits.
  *
- * Connection-lifetime rule (WS5): `.all()` fully materializes the result set
+ * Connection-lifetime rule: `.all()` fully materializes the result set
  * into a plain array before returning — no live cursor escapes the caller's
  * `openStateDatabase` scope.
  */

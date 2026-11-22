@@ -23,12 +23,11 @@
  *
  * Two deliberate non-round-trip fields:
  *   - `filename` — dropped by `indexDocumentFromEntry` (no IndexDocument home),
- *     recovered here as `basename(doc.path)`. The old pipeline set it to
- *     `basename(file)` in `applyPostContributorFields`, and `doc.path` IS that
- *     file, so the value is identical.
+ *     recovered here as `basename(doc.path)`. `applyPostContributorFields`
+ *     sets it to `basename(file)`, and `doc.path` IS that file, so the value is
+ *     identical.
  *   - `fileSize` — never set by `recognize`; it is attached at PERSIST time (`withFileSize`). It is therefore
- *     intentionally absent here and added by the persist layer, exactly as
- *     before.
+ *     intentionally absent here and added by the persist layer.
  *
  * Pure, type-only imports (no cycle participation).
  */
@@ -48,19 +47,19 @@ import {
 /**
  * Reconstruct the `IndexDocument` an `IndexDocument` was mapped from. First-class
  * IndexDocument members and the `documentJson`-carried extras are both restored;
- * every field is set only when present, matching the old pipeline's
- * "assign-only-when-defined" assembly so the reconstruction deep-equals it.
+ * every field is set only when present, following an
+ * "assign-only-when-defined" assembly so the reconstruction deep-equals the original.
  */
 export function indexDocumentToStashEntry(doc: IndexDocument): IndexDocument {
   const dj = (doc.documentJson ?? {}) as Record<string, unknown>;
 
   const entry: IndexDocument = {
     name: doc.name,
-    // `type` is a required member of the merged IndexDocument (M-core-1), so no
+    // `type` is a required member of IndexDocument, so no
     // `?? ""` fallback is needed — `recognize` always sets it.
     type: doc.type,
     // Dropped by indexDocumentFromEntry — recovered from the read path (= the
-    // basename the old pipeline stored). Always present on a recognized doc.
+    // basename the indexer stores). Always present on a recognized doc.
     filename: path.basename(doc.path ?? ""),
   };
 

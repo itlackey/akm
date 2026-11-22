@@ -43,7 +43,7 @@ export class OpencodeHarness implements AkmHarness {
   readonly setupDetectionDir = ".config/opencode";
   readonly build = opencodeBuilder.build;
   readonly profile = { bin: OPENCODE_BIN, args: [] };
-  // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
+  // ── Workflow-engine descriptor ────────────
   // Session-id env marker for run attribution.
   readonly identityEnv = ["OPENCODE_SESSION_ID"] as const;
   readonly sessionLogProvider = (): SessionLogHarness => new OpenCodeProvider();

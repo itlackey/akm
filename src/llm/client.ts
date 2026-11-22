@@ -30,7 +30,7 @@ const ERROR_BODY_MAX_LEN = 200;
 const JSON_SCHEMA_RESPONSE_NAME = "akm_response";
 
 /**
- * Re-exported from src/core/redaction.ts, where it now lives so every HTTP
+ * Re-exported from src/core/redaction.ts, where it lives so every HTTP
  * transport can apply the same hardening — the embeddings client needs it too.
  */
 export { redactErrorBody } from "../core/redaction";

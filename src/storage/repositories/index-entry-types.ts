@@ -19,7 +19,7 @@ import type { IndexDocument } from "../../indexer/passes/metadata";
 
 /**
  * Durable bundle-adapter identity attached to every current `entries` row.
- * `item_ref` is the canonical `<bundle>//<concept-id>` stored spelling (§1.3).
+ * `item_ref` is the canonical `<bundle>//<concept-id>` stored spelling.
  */
 export interface EntryProvenance {
   itemRef: string;
@@ -37,7 +37,7 @@ export interface DbIndexedEntry {
   /** Canonical durable ref from `entries.item_ref`. */
   itemRef: string;
   /**
-   * Chunk-5 flip (Checkpoint A): the durable `concept_id`/`bundle_id` provenance
+   * The durable `concept_id`/`bundle_id` provenance
    * columns, surfaced from the `entries` row so state.db readers can reconstruct
    * the fully-qualified `<bundle>//<concept-id>` key with no extra query.
    * Undefined provenance marks an invalid indexed row.
