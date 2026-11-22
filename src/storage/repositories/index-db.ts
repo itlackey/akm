@@ -38,12 +38,10 @@ export interface WithIndexDbOptions {
  * withWorkflowRunsRepo}): it opens the index
  * database bound to {@link StorageLocations.indexDb}, runs `fn` against the live
  * {@link Database}, and closes the connection exactly once when `fn` returns —
- * even if `fn` throws. Callers no longer hand-roll `open / try / finally / close`
- * around `index.db`, and the dead `existingDb?` caller-owns ownership flag
- * (search.ts / show.ts) is eliminated: every former call site passed
- * `undefined`, so the connection was always opened and always closed here.
+ * even if `fn` throws. Callers do not hand-roll `open / try / finally / close`
+ * around `index.db`: the connection is always opened and closed here.
  *
- * ## Connection-lifetime contract (WS5)
+ * ## Connection-lifetime contract
  *
  * `fn` MUST fully materialise any result set (`.all()` / `.get()` into plain
  * values or array copies) and return plain values BEFORE it returns. It MUST

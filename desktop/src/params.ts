@@ -7,7 +7,7 @@ import { defineParams } from "@sveltejs/kit/params";
 const oneOf = (values: string[]) => (value: string) => (values.includes(value) ? value : undefined);
 
 export const params = defineParams({
-  libraryView: oneOf(["search", "asset", "files", "edit", "new", "new-sensitive", "compare", "map"]),
+  libraryView: oneOf(["search", "asset", "files", "edit", "new-sensitive", "compare", "map"]),
   activityView: oneOf(["overview", "improve", "history", "replay"]),
   projectSub: oneOf(["edit", "assets", "asset"]),
   settingsSection: oneOf(["bundles", "connections", "config", "software"]),

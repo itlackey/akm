@@ -12,6 +12,7 @@ import {
   hasRegistryUrlCredentials,
   registryEntryForOutput,
 } from "../core/registry-url";
+import { stderr } from "../core/stdio";
 import { warn } from "../core/warn";
 
 export const registryCommand = defineGroupCommand({
@@ -21,7 +22,7 @@ export const registryCommand = defineGroupCommand({
       meta: { name: "list", description: "List configured registries" },
       async run() {
         const config = loadUserConfig();
-        // R-066 #5: mirror the shared config↔default-fallback helper instead
+        // mirror the shared config↔default-fallback helper instead
         // of re-deriving it inline.
         output("registry-list", { registries: getEffectiveRegistries(config).map(registryEntryForOutput) });
       },
@@ -32,7 +33,10 @@ export const registryCommand = defineGroupCommand({
         url: { type: "positional", description: "Registry index URL", required: true },
         name: { type: "string", description: "Human-friendly name for the registry" },
         provider: { type: "string", description: "Provider type (e.g. static-index, skills-sh)" },
-        options: { type: "string", description: "Provider-specific options as JSON." },
+        options: {
+          type: "string",
+          description: "Deprecated: the value is stored in config and nothing reads it (accepted through 0.10)",
+        },
         "allow-insecure-transport": {
           type: "boolean",
           description: "Allow a plain HTTP registry URL (otherwise rejected)",
@@ -118,7 +122,7 @@ export const registryCommand = defineGroupCommand({
           yes: args.yes === true,
         });
         if (!confirmed) {
-          process.stderr.write("Aborted.\n");
+          stderr().write("Aborted.\n");
           return;
         }
         let removed: RegistryConfigEntry | undefined;

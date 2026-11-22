@@ -4,14 +4,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { stdout } from "../core/stdio";
 
 /**
  * The single stdout writer for result documents.
  *
  * WHY NOT `console.log`: on Bun, once `process.stdout` has been materialized
- * as a Node-compat stream — which this CLI does unconditionally, since
- * `--help`/`hints` write through it and `src/output/context.ts` reads
- * `isTTY` — `console.log(bigString)` issues a SINGLE `write(2)` against a
+ * as a Node-compat stream — which writing a result through it does —
+ * `console.log(bigString)` issues a SINGLE `write(2)` against a
  * non-blocking fd 1 and silently discards whatever the kernel refused. A pipe
  * accepts at most one buffer (65,536 bytes on Linux), so `akm show … |
  * python3` lost everything past 64 KiB while `--output <file>` wrote the
@@ -24,7 +24,7 @@ import path from "node:path";
  * `tests/integration/output-baseline.test.ts` pins the bytes either way.
  */
 export function writeStdout(document: string): void {
-  process.stdout.write(stdoutText(document));
+  stdout().write(stdoutText(document));
 }
 
 /** The exact bytes {@link writeStdout} writes for `document`; in-process callers return this instead of writing. */

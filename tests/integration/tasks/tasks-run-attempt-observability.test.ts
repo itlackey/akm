@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shouldBypassConfigStartup } from "../../../src/cli";
+import { createParsedInvocation } from "../../../src/cli/invocation";
 import { computeTaskWindowRates } from "../../../src/commands/health/windows";
 import { buildTaskRunId, openLogsDatabase, queryTaskLogs } from "../../../src/core/logs-db";
 import { openStateDatabase } from "../../../src/core/state-db";
@@ -15,7 +16,7 @@ import type { SpawnFn } from "../../../src/core/subprocess";
 import {
   decodeTaskHistoryMetadata,
   finalizeTaskHistoryAttempt,
-  getTaskHistoryRuns,
+  queryTaskHistory,
   reserveTaskHistoryAttempt,
 } from "../../../src/storage/repositories/task-history-repository";
 import { recordTaskAttemptFailure, reserveTaskAttempt } from "../../../src/tasks/run/attempt-lifecycle";
@@ -74,7 +75,7 @@ async function captureThrown(run: () => Promise<unknown>): Promise<unknown> {
 function assertNoAttempt(taskId: string): void {
   const stateDb = openStateDatabase();
   try {
-    expect(getTaskHistoryRuns(stateDb, taskId)).toEqual([]);
+    expect(queryTaskHistory(stateDb, { taskId })).toEqual([]);
   } finally {
     stateDb.close();
   }
@@ -95,9 +96,9 @@ function assertRecordedDispatchFailure(input: {
   expectedAttempts?: number;
 }): void {
   const stateDb = openStateDatabase();
-  let rows: ReturnType<typeof getTaskHistoryRuns>;
+  let rows: ReturnType<typeof queryTaskHistory>;
   try {
-    rows = getTaskHistoryRuns(stateDb, input.taskId);
+    rows = queryTaskHistory(stateDb, { taskId: input.taskId });
   } finally {
     stateDb.close();
   }
@@ -127,20 +128,24 @@ const successfulSpawn: SpawnFn = () => ({
 
 describe("tasks run attempt observability", () => {
   test("bypasses startup config only for task run with an id", () => {
-    expect(shouldBypassConfigStartup(["bun", "cli.ts", "task", "run", "nightly"])).toBe(true);
+    expect(shouldBypassConfigStartup(createParsedInvocation(["bun", "cli.ts", "task", "run", "nightly"]))).toBe(true);
     expect(
-      shouldBypassConfigStartup(["bun", "cli.ts", "--format", "json", "task", "run", "nightly", "--scheduled"]),
+      shouldBypassConfigStartup(
+        createParsedInvocation(["bun", "cli.ts", "--format", "json", "task", "run", "nightly", "--scheduled"]),
+      ),
     ).toBe(true);
-    expect(shouldBypassConfigStartup(["bun", "cli.ts", "task", "run", "--format", "md", "nightly"])).toBe(true);
-    expect(shouldBypassConfigStartup(["bun", "cli.ts", "task", "run"])).toBe(false);
-    expect(shouldBypassConfigStartup(["bun", "cli.ts", "task", "list"])).toBe(false);
+    expect(
+      shouldBypassConfigStartup(createParsedInvocation(["bun", "cli.ts", "task", "run", "--format", "md", "nightly"])),
+    ).toBe(true);
+    expect(shouldBypassConfigStartup(createParsedInvocation(["bun", "cli.ts", "task", "run"]))).toBe(false);
+    expect(shouldBypassConfigStartup(createParsedInvocation(["bun", "cli.ts", "task", "list"]))).toBe(false);
   });
 
   for (const [label, config, code] of [
     ["malformed", '{"configVersion":', "INVALID_CONFIG_FILE"],
     ["schema-invalid", '{"configVersion":"0.9.0","bundles":{"primary":{"path":42}}}', "INVALID_CONFIG_FILE"],
   ] as const) {
-    test(`${label} config fails before task-history or log mutation`, async () => {
+    test(`${label} config records a scheduled activation failure`, async () => {
       writeRawConfig(config);
       writeTask("config-preflight", "version: 4\nrun: echo safe\n");
 
@@ -150,7 +155,15 @@ describe("tasks run attempt observability", () => {
 
       expect(result.code).toBe(78);
       expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code });
-      assertNoAttempt("config-preflight");
+      expect(readTaskHistory({ id: "config-preflight" })).toMatchObject([
+        {
+          id: "config-preflight",
+          status: "failed",
+          trigger: "schedule",
+          target: { kind: "unknown" },
+          detail: { reason: "task_load_failed", error: code },
+        },
+      ]);
     });
   }
 
@@ -177,6 +190,74 @@ describe("tasks run attempt observability", () => {
       expect(result.code).toBe(status);
       expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code });
       assertNoAttempt(taskId);
+    }
+  });
+
+  test("scheduled source resolution and parsing failures replace stale success in history and health", async () => {
+    writeTask("missing-after-success", "version: 4\nrun: echo success\n");
+    await runTask("missing-after-success", { bundleDir: storage.stashDir, spawnFn: successfulSpawn });
+    fs.unlinkSync(path.join(tasksDir, "missing-after-success.yml"));
+    writeTask("invalid-scheduled", "version: 4\nrun: [unterminated\n");
+    writeTask("unresolved-scheduled", "version: 4\nuses: scripts/does-not-exist\n");
+    for (const [taskId, code] of [
+      ["missing-after-success", "ASSET_NOT_FOUND"],
+      ["invalid-scheduled", "TASK_SOURCE_INVALID"],
+      ["unresolved-scheduled", "ASSET_NOT_FOUND"],
+    ]) {
+      const result = await runCliCapture(["task", "run", taskId!, "--scheduled"]);
+      expect(result.code).not.toBe(0);
+      expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code });
+      const [latest] = readTaskHistory({ id: taskId, limit: 10 });
+      expect(latest).toMatchObject({
+        id: taskId,
+        status: "failed",
+        trigger: "schedule",
+        target: { kind: "unknown" },
+        detail: { reason: "task_load_failed", error: code },
+      });
+      expect(Date.parse(latest!.finishedAt)).toBeGreaterThanOrEqual(Date.parse(latest!.startedAt));
+      expect(fs.readFileSync(latest!.log, "utf8")).toContain(`reason=task_load_failed code=${code}`);
+      const logsDb = openLogsDatabase();
+      try {
+        expect(queryTaskLogs(logsDb, { taskId }).some((row) => row.line.includes(`code=${code}`))).toBe(true);
+      } finally {
+        logsDb.close();
+      }
+    }
+    const stateDb = openStateDatabase();
+    try {
+      const rows = queryTaskHistory(stateDb, { taskId: "missing-after-success" });
+      expect(rows.map((row) => row.status)).toEqual(["failed", "completed"]);
+      expect(computeTaskWindowRates(rows).taskFailRate).toBe(0.5);
+    } finally {
+      stateDb.close();
+    }
+  });
+
+  test("a scheduled standalone task keeps its nested runtime identity when preparation fails", async () => {
+    const root = path.join(storage.root, "standalone");
+    fs.mkdirSync(path.join(root, "nested"), { recursive: true });
+    fs.writeFileSync(path.join(root, "nested/nightly.yml"), "version: 4\nrun: [unterminated\n");
+    await expect(
+      runTask("nested/nightly", { bundleDir: root, adapterId: "akm-task", scheduled: true, logDir }),
+    ).rejects.toMatchObject({ code: "TASK_SOURCE_INVALID" });
+    expect(readTaskHistory({ id: "nested/nightly" })).toMatchObject([
+      {
+        id: "nested/nightly",
+        status: "failed",
+        target: { kind: "unknown" },
+        trigger: "schedule",
+        detail: { reason: "task_load_failed", error: "TASK_SOURCE_INVALID" },
+      },
+    ]);
+  });
+
+  test("interactive invalid source and explain remain non-mutating", async () => {
+    writeTask("invalid-preview", "version: 4\nrun: [unterminated\n");
+    for (const command of ["run", "explain"]) {
+      const result = await runCliCapture(["task", command, "invalid-preview"]);
+      expect(result.code).not.toBe(0);
+      assertNoAttempt("invalid-preview");
     }
   });
 
@@ -238,7 +319,7 @@ describe("tasks run attempt observability", () => {
         }),
       ).toBe(false);
 
-      const [row] = getTaskHistoryRuns(stateDb, "single-finalizer");
+      const [row] = queryTaskHistory(stateDb, { taskId: "single-finalizer" });
       expect(row).toMatchObject({
         status: "completed",
         completed_at: firstCompletedAt,
@@ -270,9 +351,9 @@ describe("tasks run attempt observability", () => {
     ]);
 
     const stateDb = openStateDatabase();
-    let rows: ReturnType<typeof getTaskHistoryRuns>;
+    let rows: ReturnType<typeof queryTaskHistory>;
     try {
-      rows = getTaskHistoryRuns(stateDb, "same-millisecond");
+      rows = queryTaskHistory(stateDb, { taskId: "same-millisecond" });
     } finally {
       stateDb.close();
     }
@@ -337,15 +418,22 @@ describe("tasks run attempt observability", () => {
     expect(readTaskHistory({ id: "best-effort-log" })[0]?.status).toBe("completed");
   });
 
-  test("JSON CLI preflight errors stay intact when durable paths are unavailable", async () => {
+  test.each([
+    false,
+    true,
+  ])("JSON CLI preflight errors stay intact when durable paths are unavailable (scheduled=%p)", async (scheduled) => {
     const blockedDataDir = path.join(storage.root, "blocked-data-dir");
     fs.writeFileSync(blockedDataDir, "not a directory");
     const result = await withEnv({ AKM_DATA_DIR: blockedDataDir }, () =>
-      runCliCapture(["task", "run", "missing-json-error"]),
+      runCliCapture(["task", "run", "missing-json-error", ...(scheduled ? ["--scheduled"] : [])]),
     );
 
     expect(result.code).toBe(1);
-    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code: "ASSET_NOT_FOUND" });
+    if (scheduled) expect(result.stderr).toContain("task history: failed to record history");
+    expect(JSON.parse(result.stderr.slice(result.stderr.indexOf("{\n")))).toMatchObject({
+      ok: false,
+      code: "ASSET_NOT_FOUND",
+    });
   });
 });
 
@@ -365,7 +453,7 @@ describe("a failure before the task ran records how it was triggered", () => {
     });
     const stateDb = openStateDatabase();
     try {
-      const row = getTaskHistoryRuns(stateDb, "pre-run-failure")[0];
+      const row = queryTaskHistory(stateDb, { taskId: "pre-run-failure" })[0];
       expect(decodeTaskHistoryMetadata(row?.metadata_json ?? "{}").trigger).toBe(trigger);
     } finally {
       stateDb.close();
@@ -377,13 +465,13 @@ describe("abandoned task attempts", () => {
   function statusOf(taskId: string): string | undefined {
     const stateDb = openStateDatabase();
     try {
-      return getTaskHistoryRuns(stateDb, taskId)[0]?.status;
+      return queryTaskHistory(stateDb, { taskId })[0]?.status;
     } finally {
       stateDb.close();
     }
   }
 
-  function seedActive(taskId: string, startedAt: string, owner?: Record<string, unknown>): void {
+  function seedActive(taskId: string, startedAt: string, owner?: Record<string, unknown>, rawMetadata?: string): void {
     const stateDb = openStateDatabase();
     try {
       reserveTaskHistoryAttempt(stateDb, {
@@ -395,7 +483,9 @@ describe("abandoned task attempts", () => {
         log_path: null,
         target_kind: null,
         target_ref: null,
-        metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 0, detail: null, ...(owner ? { owner } : {}) }),
+        metadata_json:
+          rawMetadata ??
+          JSON.stringify({ metadataVersion: 2, durationMs: 0, detail: null, ...(owner ? { owner } : {}) }),
       });
     } finally {
       stateDb.close();
@@ -419,9 +509,9 @@ describe("abandoned task attempts", () => {
     const [shown] = readTaskHistory({ id: "crashed" });
     expect(shown?.status).toBe("interrupted");
     const stateDb = openStateDatabase();
-    const rows = getTaskHistoryRuns(stateDb, "crashed");
+    const rows = queryTaskHistory(stateDb, { taskId: "crashed" });
     stateDb.close();
-    const rates = computeTaskWindowRates(rows, Date.now);
+    const rates = computeTaskWindowRates(rows);
     expect(rates.taskFailRate).toBe(0);
     expect(rates.stuckActiveRuns).toBe(0);
   });
@@ -450,5 +540,22 @@ describe("abandoned task attempts", () => {
     reconcileAbandonedExecutionState();
     expect(statusOf("pre-boot")).toBe("interrupted");
     expect(statusOf("post-boot")).toBe("active");
+  });
+
+  test("an attempt whose metadata cannot be read is interrupted when it predates this boot, and says why", () => {
+    seedActive("unreadable-pre-boot", "2001-01-01T00:00:00.000Z", undefined, "not json");
+    seedActive("unreadable-post-boot", new Date().toISOString(), undefined, "not json");
+    reconcileAbandonedExecutionState();
+    expect(statusOf("unreadable-pre-boot")).toBe("interrupted");
+    expect(statusOf("unreadable-post-boot")).toBe("active");
+    const stateDb = openStateDatabase();
+    try {
+      const row = queryTaskHistory(stateDb, { taskId: "unreadable-pre-boot" })[0];
+      expect(decodeTaskHistoryMetadata(row?.metadata_json ?? "{}").detail?.error).toContain(
+        "its metadata cannot be read",
+      );
+    } finally {
+      stateDb.close();
+    }
   });
 });

@@ -27,13 +27,13 @@
         {
           "file": "env/dangerous.env",
           "issue": "dangerous-env-key",
-          "detail": "Env key `PATH` can be used to hijack process execution when injected via `akm env run`. Review this file before running `akm env run` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on the previous line)",
+          "detail": "Env key `PATH` can be used to hijack process execution when injected via `akm exec --env`. Review this file before running `akm exec --env` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on the previous line)",
           "fixed": false
         },
         {
           "file": "env/dangerous.env",
           "issue": "dangerous-env-key",
-          "detail": "Env key `NODE_OPTIONS` can be used to hijack process execution when injected via `akm env run`. Review this file before running `akm env run` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on the previous line)",
+          "detail": "Env key `NODE_OPTIONS` can be used to hijack process execution when injected via `akm exec --env`. Review this file before running `akm exec --env` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on the previous line)",
           "fixed": false
         }
       ],

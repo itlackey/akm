@@ -3,9 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * CLI surface for `akm proposal extract` (formerly the top-level `akm
- * extract`, moved under the `proposal` group in the 0.9 CLI overhaul, S8 —
- * see src/commands/proposal/proposal-cli.ts for its registration).
+ * CLI surface for `akm proposal extract` (see
+ * src/commands/proposal/proposal-cli.ts for its registration).
  *
  * Examples:
  *   akm proposal extract --type claude --session-id <id>
@@ -73,7 +72,7 @@ export const extractCommand = defineJsonCommand({
     timeout: { type: "string", description: "Per-session timeout as a duration (30s, 2m) or milliseconds" },
     "timeout-ms": {
       type: "string",
-      description: "Per-session LLM timeout in ms. Default: the engine's own timeout.",
+      description: "Deprecated: use `--timeout`. Per-session LLM timeout in ms. Default: the engine's own timeout.",
     },
     ...SELECTION_ARGS,
     ...RETIRED_ENGINE_ARG,

@@ -32,7 +32,7 @@ akm doctor info
 akm search "test"
 
 # 7. Install agent guidance
-akm hints --detail brief >> AGENTS.md
+akm hints >> AGENTS.md
 
 echo "akm setup complete"
 ```
@@ -41,7 +41,7 @@ echo "akm setup complete"
 
 **Install.** The standalone binary (step 1) is runtime-free. The npm package
 (`npm install -g akm-cli`, or one-shot via `npx akm-cli <command>`) requires
-Node.js >= 22; a working Bun >= 1.0 is optional and preferred for execution
+Node.js >= 22.15; a working Bun >= 1.0 is optional and preferred for execution
 after Node starts the package launcher.
 
 **Setup.** `akm setup --yes` takes the detected default for every question:
@@ -86,7 +86,7 @@ indexing.
 `indexStats.entryCount` and `semanticSearch.status`; `akm search "<query>"`
 confirms retrieval actually returns results.
 
-**Install agent guidance.** `akm hints --detail brief >> AGENTS.md` appends the
+**Install agent guidance.** `akm hints >> AGENTS.md` appends the
 canonical usage block agents need to discover and use the library. Run this
 after indexing so the guidance matches the installed version.
 

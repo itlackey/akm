@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The synchronous `recognizeMatch` arbitration — akm 0.9.0 Chunk 5, milestone
- * M-b, relocated here from `adapters/akm-adapter.ts` so it is a cycle-free LEAF
+ * The synchronous `recognizeMatch` arbitration — a cycle-free LEAF (not in
+ * `adapters/akm-adapter.ts`)
  * that BOTH the `akm` adapter AND the indexer metadata pass can import without
  * either importing the other.
  *
@@ -28,10 +28,9 @@ import { directoryMatcher, extensionMatcher, parentDirHintMatcher, smartMdMatche
 
 /**
  * The four builtin matchers, in registration order. The array index IS the
- * registration index `runMatchers` uses for tie-breaking. (The `wiki` matcher
- * was removed in chunk 4 — the wiki asset-type is retired; LLM Wiki content is
- * served by the first-class `llm-wiki` adapter, not the akm adapter. The old
- * YAML workflow-program matcher is also gone: Markdown workflow sources are
+ * registration index `runMatchers` uses for tie-breaking. (There is no `wiki` matcher — the wiki asset-type is retired; LLM Wiki content is
+ * served by the first-class `llm-wiki` adapter, not the akm adapter. There is no
+ * YAML workflow-program matcher: Markdown workflow sources are
  * path-owned by residence under `workflows/`, with Markdown frontmatter as an
  * additional signal.)
  */

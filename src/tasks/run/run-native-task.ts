@@ -14,18 +14,26 @@
  */
 
 import path from "node:path";
+import { spawnFailure } from "../../commands/env/injection";
 import { assertNever } from "../../core/assert";
 import type { TaskLogLineInput } from "../../core/logs-db";
 import { childProcessEnv } from "../../core/paths";
-import { runManagedSubprocess, type SpawnFn, streamCaptureFailure } from "../../core/subprocess";
+import {
+  type ManagedSubprocessResult,
+  runManagedSubprocess,
+  type SpawnFn,
+  streamCaptureFailure,
+} from "../../core/subprocess";
 import { cleanupFrozenScript, frozenScriptCommand, materializeFrozenScript } from "../frozen-script";
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskV3Script, PreparedTaskV3Shell } from "../prepare/prepared-execution";
+import { type ScriptOrigin, scriptOrigin } from "../prepare/script-capture";
 import { resolveAkmInvocation } from "../resolve-akm-bin";
 import { finishAttempt } from "./attempt-lifecycle";
+import { taskEventSource } from "./provenance";
 import { DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } from "./run-workflow-task";
-import { appendHistory } from "./task-history";
-import { persistRunLog, streamLines } from "./task-log";
+import { appendHistory, taskBundle } from "./task-history";
+import { appendStreamLines, type ProcessFailure, persistRunLog, processFailure, scrubTaskOutput } from "./task-log";
 import type { TaskRunResult, TaskRunStatus } from "./task-result";
 
 /**
@@ -171,6 +179,9 @@ export async function runNativeTask(input: {
   const dbLines: TaskLogLineInput[] = [{ line: header }];
 
   let exitCode: number | null = null;
+  let spawned: ManagedSubprocessResult | undefined;
+  let spawnError: Error | undefined;
+  let scriptSource: ScriptOrigin | undefined;
 
   // #956: the task runner's OWN process (`akm task run`, launched by cron /
   // launchd / schtasks, or forwarded a SIGTERM by the published launcher)
@@ -194,6 +205,7 @@ export async function runNativeTask(input: {
     if (task.kind === "script") {
       materialized = materializeFrozenScript(task);
       cmd = frozenScriptCommand(task, materialized.file);
+      scriptSource = scriptOrigin({ ref: task.sourceRef, bytes: Buffer.from(task.bytesBase64, "base64") });
     }
     // Managed spawn (src/core/subprocess.ts): process-GROUP kill so a timeout
     // reaps the whole command tree (no orphans), and a SIGINT→SIGTERM→SIGKILL
@@ -210,7 +222,7 @@ export async function runNativeTask(input: {
       env: {
         ...childProcessEnv(),
         ...task.environment,
-        AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE ?? provenance.eventSource,
+        AKM_EVENT_SOURCE: taskEventSource(process.env, provenance),
       },
       // cmd.exe's `/S /C` reads its tail as one hand-quoted command line, not
       // standard argv — shellCommand() already built and quoted it for that.
@@ -224,16 +236,31 @@ export async function runNativeTask(input: {
       ...(input.clearTimeoutFn ? { clearTimeoutFn: input.clearTimeoutFn } : {}),
     });
     // A synchronous spawn throw / exit rejection surfaces as spawn_error below.
-    if (result.spawnError) throw result.spawnError;
+    if (result.spawnError)
+      throw scriptSource ? spawnFailure(cmd[0] as string, result.spawnError, scriptSource) : result.spawnError;
 
-    const { stdout, stderr, timedOut } = result;
-    exitCode = result.exitCode ?? (timedOut ? 143 : 1);
+    spawned = result;
+  } catch (e) {
+    spawnError = e instanceof Error ? e : new Error(String(e));
+    const msg = spawnError.message;
+    logLines.push(`spawn_error=${msg}`);
+    dbLines.push({ level: "error", line: `spawn_error=${msg}` });
+    exitCode = 1;
+  } finally {
+    process.off("SIGTERM", onSigterm);
+    process.off("SIGINT", onSigint);
+    if (materialized) cleanupFrozenScript(materialized);
+  }
 
+  let failure: ProcessFailure | undefined;
+  if (spawned) {
+    const { stdout, stderr, timedOut } = spawned;
+    exitCode = spawned.exitCode ?? (timedOut ? 143 : 1);
     // A pipe that errored or stopped draining yields EMPTY output that is
     // otherwise indistinguishable from a command that printed nothing — the
     // log reads like a clean success. Say so instead, the way the workflow
     // (exec-unit.ts) and agent (agent/spawn.ts) capture paths already do.
-    const captureFailure = streamCaptureFailure(result.stdoutRead, result.stderrRead);
+    const captureFailure = streamCaptureFailure(spawned.stdoutRead, spawned.stderrRead);
     if (captureFailure) {
       const line = `output_capture_incomplete=${captureFailure}`;
       logLines.push(line);
@@ -249,22 +276,17 @@ export async function runNativeTask(input: {
     if (stdout) {
       logLines.push("--- stdout ---");
       logLines.push(stdout);
-      dbLines.push(...streamLines(stdout, "stdout", "info"));
+      appendStreamLines(dbLines, stdout, "stdout", "info");
     }
     if (stderr) {
       logLines.push("--- stderr ---");
       logLines.push(stderr);
-      dbLines.push(...streamLines(stderr, "stderr", "error"));
+      appendStreamLines(dbLines, stderr, "stderr", "error");
     }
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    logLines.push(`spawn_error=${msg}`);
-    dbLines.push({ level: "error", line: `spawn_error=${msg}` });
-    exitCode = 1;
-  } finally {
-    process.off("SIGTERM", onSigterm);
-    process.off("SIGINT", onSigint);
-    if (materialized) cleanupFrozenScript(materialized);
+    if (exitCode !== 0)
+      failure = processFailure({ ...spawned, exitCode, timeoutMs, stderr: scrubTaskOutput(task, stderr) });
+  } else if (spawnError) {
+    failure = processFailure({ exitCode: null, spawnError, stderr: "" });
   }
 
   const finishedAt = finishAttempt(startedAt, now());
@@ -286,8 +308,9 @@ export async function runNativeTask(input: {
     finishedAt: finishedAt.toISOString(),
     durationMs: finishedAt.getTime() - startedAt.getTime(),
     log: logPath,
+    ...taskBundle(task.taskRef),
     target: task.kind === "shell" ? { kind: "shell", cmd } : { kind: "script", cmd },
-    detail: { exitCode },
+    detail: failure ? { exitCode, reason: failure.reason, error: scrubTaskOutput(task, failure.error) } : { exitCode },
   };
   appendHistory(result, historyReserved, provenance.scheduled);
   return result;

@@ -1,0 +1,562 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
+import type { AkmConfig } from "../../src/core/config/config";
+import {
+  bundlesToSourceEntries,
+  loadUserConfig,
+  mutateConfig,
+  normalizeConfigFile,
+  resetConfigCache,
+  resolveConfiguredSources,
+  saveConfig,
+  unknownConfigKeyPaths,
+  updateConfig,
+} from "../../src/core/config/config";
+import { validateConfigShape } from "../../src/core/config/config-schema";
+import { configSet } from "../../src/core/config/config-walker";
+import { getConfigPath } from "../../src/core/paths";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
+
+beforeEach(() => resetConfigCache());
+afterEach(() => resetConfigCache());
+
+function writeConfig(value: unknown): void {
+  const configPath = getConfigPath();
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(value));
+}
+
+function captureWarnings(run: () => void): string[] {
+  const warnings: string[] = [];
+  _resetWarnOnceForTests();
+  _setWarnSinkForTests((level, args) => {
+    if (level === "warn") warnings.push(args.map(String).join(" "));
+  });
+  try {
+    run();
+  } finally {
+    _setWarnSinkForTests(undefined);
+  }
+  return warnings;
+}
+
+describe("0.9 config contract", () => {
+  test("a config without configVersion loads silently as 0.9.0 and is not rewritten", () => {
+    writeConfig({ engines: {} });
+    const warnings = captureWarnings(() => {
+      expect(loadUserConfig().configVersion).toBe("0.9.0");
+    });
+    expect(warnings.some((w) => w.includes("configVersion"))).toBe(false);
+    expect(Object.hasOwn(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")), "configVersion")).toBe(false);
+  });
+
+  test("any other configVersion is named once and read as 0.9.0, older or newer, without rewriting the file", () => {
+    for (const version of ["0.8.0", "99.0.0", 1]) {
+      resetConfigCache();
+      writeConfig({ configVersion: version, engines: {} });
+      const warnings = captureWarnings(() => {
+        expect(loadUserConfig().configVersion).toBe("0.9.0");
+        resetConfigCache();
+        loadUserConfig();
+      });
+      const named = warnings.filter((w) => w.includes(`configVersion ${JSON.stringify(version)}`));
+      expect(named).toHaveLength(1);
+      expect(named[0]).toContain("reads it as 0.9.0");
+      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).configVersion).toBe(version);
+    }
+  });
+
+  test("output.format html is named once, ignored for the default, and the rest of the config still loads", () => {
+    writeConfig({ output: { format: "html", detail: "full" }, semanticSearchMode: "off" });
+    const warnings = captureWarnings(() => {
+      const config = loadUserConfig();
+      expect(config.output?.format).toBe("json");
+      expect(config.output?.detail).toBe("full");
+      expect(config.semanticSearchMode).toBe("off");
+      resetConfigCache();
+      loadUserConfig();
+    });
+    const named = warnings.filter((w) => w.includes('output.format "html"'));
+    expect(named).toHaveLength(1);
+    expect(named[0]).toContain("AKM Desktop");
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).output.format).toBe("html");
+  });
+
+  test("akm migrate apply's config step writes configVersion 0.9.0 back", () => {
+    writeConfig({ configVersion: "0.8.0", engines: {} });
+    const preview = normalizeConfigFile(getConfigPath(), { apply: false });
+    expect(preview).toMatchObject({ changed: true, applied: false });
+    expect(preview.keys).toContain("configVersion");
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).configVersion).toBe("0.8.0");
+
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).configVersion).toBe("0.9.0");
+    expect(normalizeConfigFile(getConfigPath(), { apply: false }).changed).toBe(false);
+  });
+
+  test("loads a config with retired profile vocabulary and a literal connection apiKey, never reading the key", () => {
+    writeConfig({
+      configVersion: "0.9.0" as const,
+      profiles: { llm: {} },
+      connections: {
+        fast: { endpoint: "https://example.test/v1", models: { fast: "test" }, apiKey: "not-symbolic" },
+      },
+    });
+    const warnings = captureWarnings(() => {
+      expect(loadUserConfig().connections?.fast?.apiKey).toBe("not-symbolic");
+    });
+    expect(warnings.some((w) => w.includes("Unknown config key") && w.includes("profiles"))).toBe(true);
+    expect(warnings.some((w) => w.includes("literal apiKey"))).toBe(true);
+  });
+
+  test("accepts a $VAR connection key and retains it on save", () => {
+    const config = {
+      configVersion: "0.9.0" as const,
+      semanticSearchMode: "auto" as const,
+      connections: {
+        fast: { endpoint: "https://example.test/v1", models: { fast: "test" }, apiKey: `\${FAST_API_KEY}` },
+      },
+    };
+    saveConfig(config);
+    expect(loadUserConfig().connections?.fast?.apiKey).toBe(`\${FAST_API_KEY}`);
+  });
+
+  test("accepts a ${ref} git credential without the literal-key warning", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      bundles: { private: { git: "https://git.example.com/private/repo.git", credential: "${team//secrets/gitea}" } },
+    });
+    const warnings = captureWarnings(() => {
+      const config = loadUserConfig();
+      expect(config.bundles?.private?.credential).toBe("${team//secrets/gitea}");
+    });
+    expect(warnings).toEqual([]);
+  });
+
+  test("secret://<name> is retired: read as ${secrets/<name>} with one warning per key, rewritten only by akm migrate apply", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      bundles: {
+        private: { git: "https://git.example.com/private/repo.git", credential: "secret://team//secrets/gitea" },
+        other: { git: "https://git.example.com/other/repo.git", credential: "secret://other-key" },
+      },
+    });
+
+    const warnings = captureWarnings(() => {
+      const config = loadUserConfig();
+      expect(config.bundles?.private?.credential).toBe("${team//secrets/gitea}");
+      expect(config.bundles?.other?.credential).toBe("${secrets/other-key}");
+      loadUserConfig();
+    });
+    const named = warnings.filter((w) => w.includes("secret://"));
+    expect(named).toHaveLength(2);
+    expect(named.some((w) => w.includes("bundles.private.credential"))).toBe(true);
+    expect(named.some((w) => w.includes("bundles.other.credential"))).toBe(true);
+
+    // Reading never rewrites the file.
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toContain("secret://other-key");
+
+    const preview = normalizeConfigFile(getConfigPath(), { apply: false });
+    expect(preview).toMatchObject({ changed: true, applied: false });
+    expect(preview.keys).toEqual(expect.arrayContaining(["bundles"]));
+
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    const onDisk = fs.readFileSync(getConfigPath(), "utf8");
+    expect(onDisk).not.toContain("secret://");
+    expect(JSON.parse(onDisk).bundles.private.credential).toBe("${team//secrets/gitea}");
+    expect(JSON.parse(onDisk).bundles.other.credential).toBe("${secrets/other-key}");
+    expect(normalizeConfigFile(getConfigPath(), { apply: false }).changed).toBe(false);
+  });
+
+  test("an improve process or judgment may name a connection or harness that is not configured: it is resolved when used", () => {
+    expect(
+      validateConfigShape({
+        configVersion: "0.9.0",
+        improve: {
+          strategies: {
+            custom: {
+              processes: { reflect: { connection: "missing" }, triage: { judgment: { harness: "missing" } } },
+            },
+          },
+        },
+      }).ok,
+    ).toBe(true);
+  });
+
+  test("permits only $VAR connection apiKey values through config set", () => {
+    const current = { configVersion: "0.9.0", connections: { fast: { endpoint: "https://example.test/v1" } } };
+    expect(configSet(current, "connections.fast.apiKey", "$FAST_API_KEY")).toMatchObject({
+      connections: { fast: { apiKey: "$FAST_API_KEY" } },
+    });
+    expect(() => configSet(current, "connections.fast.apiKey", "literal-secret")).toThrow();
+  });
+
+  test("tolerates retired improve process selectors like any unknown key", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      improve: { strategies: { default: { processes: { reflect: { profile: "fast", mode: "llm" } } } } },
+    });
+    expect(() => loadUserConfig()).not.toThrow();
+  });
+
+  test("item 3: incrementalSince and neighborsPerChanged (retired consolidate keys) — one warning, survive a load and an ordinary write, dropped only by akm migrate apply", () => {
+    const consolidatePath = ["improve", "strategies", "default", "processes", "consolidate"];
+    writeConfig({
+      configVersion: "0.9.0",
+      improve: {
+        strategies: {
+          default: { processes: { consolidate: { incrementalSince: "24h", neighborsPerChanged: 3, limit: 5 } } },
+        },
+      },
+    });
+
+    // One warning apiece, no error — and not hidden by a catchall (unlike
+    // index.<passName> — consolidate is a plain .passthrough() object, so the
+    // generic unknown-key sweep sees straight through to these two fixed
+    // field names). Load and warning-capture happen in the SAME call:
+    // loadUserConfig() caches, so a second call would silently skip the warn.
+    let config!: ReturnType<typeof loadUserConfig>;
+    const warnings = captureWarnings(() => {
+      expect(() => {
+        config = loadUserConfig();
+      }).not.toThrow();
+    });
+    const unknown = unknownConfigKeyPaths(config as unknown as Record<string, unknown>).map((p) => p.join("."));
+    expect(unknown).toContain([...consolidatePath, "incrementalSince"].join("."));
+    expect(unknown).toContain([...consolidatePath, "neighborsPerChanged"].join("."));
+    const keyWarnings = warnings.filter((w) => /unknown config key/i.test(w));
+    expect(keyWarnings).toHaveLength(2);
+    expect(
+      keyWarnings.some((w) => w.includes('"improve.strategies.default.processes.consolidate.incrementalSince"')),
+    ).toBe(true);
+    expect(
+      keyWarnings.some((w) => w.includes('"improve.strategies.default.processes.consolidate.neighborsPerChanged"')),
+    ).toBe(true);
+
+    // Survives an ordinary config write: updateConfig reads the current file
+    // (retired keys and all), merges an unrelated change, and writes it back.
+    updateConfig({ improve: { strategies: { default: { processes: { consolidate: { limit: 7 } } } } } });
+    const afterWrite = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    const consolidateOnDisk = afterWrite.improve.strategies.default.processes.consolidate;
+    expect(consolidateOnDisk.incrementalSince).toBe("24h");
+    expect(consolidateOnDisk.neighborsPerChanged).toBe(3);
+    expect(consolidateOnDisk.limit).toBe(7);
+
+    // Only `akm migrate apply` drops it. Preview alone changes nothing on disk.
+    const preview = normalizeConfigFile(getConfigPath(), { apply: false });
+    expect(preview.changed).toBe(true);
+    expect(
+      preview.keys.some((k) => k === "improve") ||
+        preview.keys.includes("improve.strategies.default.processes.consolidate.incrementalSince"),
+    ).toBe(true);
+    expect(
+      JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).improve.strategies.default.processes.consolidate
+        .incrementalSince,
+    ).toBe("24h");
+
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    const afterApply = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).improve.strategies.default.processes
+      .consolidate;
+    expect(afterApply.incrementalSince).toBeUndefined();
+    expect(afterApply.neighborsPerChanged).toBeUndefined();
+    expect(afterApply.limit).toBe(7); // the still-valid key is untouched
+  });
+
+  test("validates improve.strategy against the built-in and configured strategies", () => {
+    const base = { configVersion: "0.9.0" };
+    expect(validateConfigShape({ ...base, improve: { strategy: "missing" } }).ok).toBe(false);
+    expect(validateConfigShape({ ...base, improve: { strategy: "consolidate" } }).ok).toBe(true);
+    // Removed in 0.10 (#1130): config load must not fail; resolution refuses it, naming `default`.
+    expect(validateConfigShape({ ...base, improve: { strategy: "thorough" } }).ok).toBe(true);
+  });
+
+  test("accepts a bundles + defaultBundle config (0.9.0 shape, spec §10.1 / D-R5)", () => {
+    const ok = validateConfigShape({
+      configVersion: "0.9.0",
+      bundles: {
+        primary: { path: "/home/u/akm", writable: true },
+        catalog: { git: "https://example.test/catalog.git" },
+        docs: { website: { url: "https://example.test/docs/", maxPages: 50 } },
+      },
+      defaultBundle: "primary",
+    });
+    expect(ok.ok).toBe(true);
+  });
+
+  test("rejects coercion-shaped website options at the config boundary", () => {
+    for (const options of [
+      { maxPages: "25" },
+      { maxDepth: false },
+      { respectRobots: null },
+      { respectRobots: "false" },
+      { crawlTimeoutMs: "300" },
+      { crawlTimeoutMs: false },
+      { crawlTimeoutMs: -1 },
+    ]) {
+      expect(
+        validateConfigShape({
+          configVersion: "0.9.0",
+          bundles: { docs: { website: { url: "https://example.test/docs/", ...options } } },
+          defaultBundle: "docs",
+        }).ok,
+      ).toBe(false);
+    }
+  });
+
+  test("rejects a half-migrated config carrying bundles alongside the retired source keys", () => {
+    for (const legacy of [{ stashDir: "/s" }, { sources: [] }, { installed: [] }]) {
+      const res = validateConfigShape({
+        configVersion: "0.9.0",
+        bundles: { primary: { path: "/s" } },
+        defaultBundle: "primary",
+        ...legacy,
+      });
+      expect(res.ok).toBe(false);
+    }
+  });
+
+  test("still rejects removed bundle-option runtime compatibility settings", () => {
+    expect(
+      validateConfigShape({
+        configVersion: "0.9.0",
+        bundles: { primary: { path: "/s", options: { pushOnCommit: true } } },
+      }).ok,
+    ).toBe(false);
+  });
+
+  test("ignores retired top-level writable and index.stalenessDetection instead of failing config load", () => {
+    expect(validateConfigShape({ configVersion: "0.9.0", writable: true }).ok).toBe(true);
+    expect(validateConfigShape({ configVersion: "0.9.0", index: { stalenessDetection: { enabled: true } } }).ok).toBe(
+      true,
+    );
+  });
+
+  test("old hint-only keys load and are named once by the unknown-key warning (#1091)", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      connections: { main: { endpoint: "https://example.test/v1", models: { fast: "test" } } },
+      llm: "x",
+      agent: "y",
+      index: {
+        stalenessDetection: { enabled: true },
+        memory: { connection: "main", endpoint: "https://example.test" },
+      },
+      improve: {
+        strategies: {
+          mine: { processes: { feedbackDistillation: { enabled: true }, reflect: { excludeRefPrefixes: ["raw"] } } },
+        },
+      },
+    });
+
+    const warnings = captureWarnings(() => {
+      expect(loadUserConfig().connections?.main?.endpoint).toBe("https://example.test/v1");
+    });
+    for (const key of [
+      "llm",
+      "agent",
+      "index.stalenessDetection",
+      "index.memory.endpoint",
+      "improve.strategies.mine.processes.feedbackDistillation",
+      "improve.strategies.mine.processes.reflect.excludeRefPrefixes",
+    ]) {
+      const named = warnings.filter((w) => w.includes(`Unknown config key "${key}"`));
+      expect(named).toHaveLength(1);
+    }
+  });
+
+  test("index.metadataEnhance is retired: a single warning, an ordinary write keeps it, only akm migrate apply drops it", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      connections: { index: { endpoint: "https://example.test/v1", models: { fast: "test" } } },
+      index: { metadataEnhance: { enabled: true }, connection: "index" },
+    });
+
+    const warnings = captureWarnings(() => {
+      expect(loadUserConfig().index?.connection).toBe("index");
+    });
+    const named = warnings.filter((w) => w.includes("index.metadataEnhance"));
+    expect(named).toHaveLength(1);
+    expect(named[0]).toContain(`remove it from ${getConfigPath()}`);
+
+    // An unrelated ordinary write (`akm config set`, the adapter-detection
+    // persist `akm index` does) is not the cleanup path — it must not
+    // silently strip the retired key.
+    mutateConfig((current) => ({ ...current, archiveRetentionDays: 30 }));
+    const afterOrdinaryWrite = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(afterOrdinaryWrite.index.metadataEnhance).toEqual({ enabled: true });
+    expect(afterOrdinaryWrite.archiveRetentionDays).toBe(30);
+
+    // Only an explicit `akm migrate apply` removes it.
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    const afterMigrateApply = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(afterMigrateApply.index.metadataEnhance).toBeUndefined();
+    expect(afterMigrateApply.index.connection).toBe("index");
+  });
+
+  test("feedback.allowedFailureModes is retired: a config that sets it still loads with one warning, and only akm migrate apply drops it", () => {
+    writeConfig({ configVersion: "0.9.0", feedback: { requireReason: false, allowedFailureModes: ["incorrect"] } });
+
+    const warnings = captureWarnings(() => {
+      expect(loadUserConfig().feedback?.requireReason).toBe(false);
+    });
+    const named = warnings.filter((w) => w.includes("feedback.allowedFailureModes"));
+    expect(named).toHaveLength(1);
+    expect(named[0]).toContain(`remove it from ${getConfigPath()}`);
+
+    // An ordinary write keeps it; only `akm migrate apply` removes it.
+    mutateConfig((current) => ({ ...current, archiveRetentionDays: 30 }));
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).feedback.allowedFailureModes).toEqual(["incorrect"]);
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).feedback).toEqual({ requireReason: false });
+  });
+
+  test("the improve knobs removed in 0.10 (#1131, #1129) still load, with one warning apiece, and only akm migrate apply drops them", () => {
+    const removed = [
+      "improve.salience.outcomeWeightEnabled",
+      "improve.salience.salienceThreshold",
+      "improve.strategies.default.processes.consolidate.antiCollapse",
+      "improve.strategies.default.processes.consolidate.p90ChunkSecondsDefault",
+      "improve.strategies.default.processes.consolidate.minPoolSize",
+      "improve.strategies.default.processes.distill.fidelityCheck",
+      "improve.strategies.default.processes.reflect.lowValueFilter",
+    ];
+    writeConfig({
+      configVersion: "0.9.0",
+      improve: {
+        salience: { outcomeWeightEnabled: false, salienceThreshold: 0.8 },
+        strategies: {
+          default: {
+            processes: {
+              consolidate: {
+                antiCollapse: { enabled: false },
+                p90ChunkSecondsDefault: 10,
+                minPoolSize: 500,
+                limit: 7,
+              },
+              distill: { fidelityCheck: { enabled: true } },
+              reflect: { lowValueFilter: { enabled: true } },
+            },
+          },
+        },
+      },
+    });
+
+    const warnings = captureWarnings(() => {
+      const config = loadUserConfig();
+      expect(config.improve?.strategies?.default?.processes?.consolidate?.limit).toBe(7);
+    });
+    for (const dotted of removed) {
+      expect(warnings.filter((w) => w.includes(`"${dotted}"`))).toHaveLength(1);
+    }
+
+    // An ordinary write keeps them; only `akm migrate apply` drops them.
+    mutateConfig((current) => ({ ...current, archiveRetentionDays: 30 }));
+    const read = () => JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).improve;
+    expect(read().salience.outcomeWeightEnabled).toBe(false);
+    expect(read().strategies.default.processes.consolidate.minPoolSize).toBe(500);
+
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    const after = read();
+    expect(after.salience).toEqual({});
+    expect(after.strategies.default.processes.consolidate).toEqual({ limit: 7 });
+    expect(after.strategies.default.processes.distill).toEqual({});
+    expect(after.strategies.default.processes.reflect).toEqual({});
+  });
+
+  test("rejects a bundle key that is not a legal slug and a non-source or multi-source entry", () => {
+    // Illegal slug key (contains ':').
+    expect(validateConfigShape({ configVersion: "0.9.0", bundles: { "github:owner/repo": { path: "/s" } } }).ok).toBe(
+      false,
+    );
+    // Zero source descriptors.
+    expect(validateConfigShape({ configVersion: "0.9.0", bundles: { a: { writable: true } } }).ok).toBe(false);
+    // Two source descriptors.
+    expect(
+      validateConfigShape({ configVersion: "0.9.0", bundles: { a: { path: "/s", git: "https://x.test/y.git" } } }).ok,
+    ).toBe(false);
+  });
+
+  test("a map key that breaks its naming rule is reported with that rule", () => {
+    const result = validateConfigShape({
+      configVersion: "0.9.0",
+      bundles: { "a:b": { path: "/s" } },
+      improve: { strategies: { Bad: {} } },
+    });
+    expect(result.errors).toEqual([
+      { path: "bundles.a:b", message: "bundle key must be a legal slug (no '/', ':', '.', '#', or whitespace)" },
+      {
+        path: "improve.strategies.Bad",
+        message: "names must be lowercase kebab-case and must not begin with reserved akm-",
+      },
+    ]);
+  });
+
+  test("resolveConfiguredSources consumes bundles: defaultBundle first, then map insertion order (D-R4/D-R5)", () => {
+    const config = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "auto",
+      bundles: {
+        catalog: { git: "https://example.test/catalog.git" },
+        primary: { path: "/home/u/akm", writable: true },
+        docs: { website: { url: "https://example.test/docs/", maxPages: 25 } },
+      },
+      defaultBundle: "primary",
+    } as unknown as AkmConfig;
+
+    // defaultBundle first, then remaining keys in insertion order.
+    expect(bundlesToSourceEntries(config)?.map((e) => e.name)).toEqual(["primary", "catalog", "docs"]);
+
+    const resolved = resolveConfiguredSources(config);
+    expect(resolved.map((s) => s.name)).toEqual(["primary", "catalog", "docs"]);
+    expect(resolved[0]).toMatchObject({ name: "primary", primary: true, writable: true });
+    expect(resolved[0]!.source).toEqual({ type: "filesystem", path: "/home/u/akm" });
+    expect(resolved[1]!.source).toEqual({ type: "git", url: "https://example.test/catalog.git" });
+    expect(resolved[2]!.source).toMatchObject({ type: "website", url: "https://example.test/docs/", maxPages: 25 });
+  });
+
+  test("rejects defaultBundle that names no bundle", () => {
+    expect(
+      validateConfigShape({ configVersion: "0.9.0", bundles: { a: { path: "/s" } }, defaultBundle: "missing" }).ok,
+    ).toBe(false);
+  });
+
+  test("ignores a stray top-level bindings block instead of failing config load", () => {
+    expect(validateConfigShape({ configVersion: "0.9.0", bindings: { release: { export: "a//x" } } }).ok).toBe(true);
+  });
+
+  test("ignores the retired top-level modelAliases table instead of failing config load", () => {
+    expect(validateConfigShape({ configVersion: "0.9.0", modelAliases: { deep: { pi: "model-b" } } }).ok).toBe(true);
+  });
+});
+
+describe("config set: JSON for string-or-array keys", () => {
+  const filters = (config: Record<string, unknown>, key: string) =>
+    (config.projects as { x: { filters?: Record<string, unknown>; from?: unknown } }).x.filters?.[key];
+
+  test("a JSON array is stored as an array, not a string", () => {
+    const set = configSet({}, "projects.x.filters.project", '["x","y"]');
+    expect(filters(set, "project")).toEqual(["x", "y"]);
+    expect((configSet({}, "projects.x.from", '["a","b"]').projects as { x: { from: unknown } }).x.from).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  test("a plain value stays a string", () => {
+    expect(filters(configSet({}, "projects.x.filters.project", "x"), "project")).toBe("x");
+  });
+
+  test("malformed JSON that starts like an array is rejected with the JSON hint", () => {
+    try {
+      configSet({}, "projects.x.filters.project", '["x"');
+      throw new Error("expected a throw");
+    } catch (err) {
+      expect((err as { code?: string }).code).toBe("INVALID_JSON_CONFIG_VALUE");
+    }
+  });
+});

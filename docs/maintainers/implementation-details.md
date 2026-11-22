@@ -8,7 +8,7 @@ CLI commands or compatibility promises.
 
 - Check the public command inventory against `main.subCommands` in `src/cli.ts` and each group's `subCommands`.
 - `scripts/build-registry-index.ts` builds registry indexes; it is maintainer tooling outside the public CLI.
-- `scripts/rekey-asset-ref.ts` re-keys earned signal from an old ref to a new one. Normal rename remains delete/create, with a new identity.
+- `scripts/rekey-asset-ref.ts` re-keys earned signal from an old ref to a new one by hand. A plain rename needs it no longer: `akm index` pairs a vanished entry with the new file of the same content and re-keys its history (`src/indexer/ref-moves.ts`); the script is for a move that also changed the content.
 - In 0.10, `akm-migrate` ships inside the `akm-cli` package alongside `akm`, with no separate package. `task-to-v4.ts` and `task-source-v3-frozen.ts` live under `scripts/akm-migrate/migrate/`, outside `src/`. The standalone executable is deprecated for 0.11; callers should use `akm migrate status` / `apply`.
 - `BundleAdapter.placeNew()` was removed in 0.10 because nothing called it. Writes use AKM's fixed type-to-directory table. Supporting writes into a non-AKM adapter layout would need placement support again ([#1163](https://github.com/itlackey/akm/issues/1163)).
 
@@ -23,6 +23,6 @@ on their names alone; inspect their current readers before changing launchers,
 attribution, or test fixtures. Their presence here does not assert that every
 variable is still read by every release.
 
-`AKM_STATE_DIR` was also in that list. It is a live 0.10 location override and is
-now listed with the other deprecated path overrides in the stability policy, so
-an installation using it has an explicit 0.11 migration path.
+`AKM_STATE_DIR` is not one of them: with `AKM_CONFIG_DIR`, `AKM_DATA_DIR` and
+`AKM_CACHE_DIR` it is a Stable location override (see
+[STABILITY.md](../../STABILITY.md#environment-overrides)).

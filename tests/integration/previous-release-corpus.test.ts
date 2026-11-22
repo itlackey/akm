@@ -87,7 +87,7 @@
  *     which recognizes the row from inside its own sentinel and reconciles
  *     it instead of treating it as absent and colliding with the
  *     still-present artifact. (The `--scheduler-context` rows themselves are
- *     covered in `tests/tasks-sync.test.ts` and the upgrade rehearsal.)
+ *     covered in `tests/integration/tasks-sync.test.ts` and the upgrade rehearsal.)
  */
 
 import { Database } from "bun:sqlite";
@@ -141,6 +141,7 @@ import {
   writeSandboxConfig,
 } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
+import { parseV4TaskSource } from "../_helpers/task-source";
 
 const FIXTURES_DIR = path.join(import.meta.dir, "..", "fixtures", "previous-release-corpus");
 
@@ -153,7 +154,7 @@ function migrateLegacyTask(filePath: string, yaml: string) {
   const v4 = planTaskToV4File(input);
   expect(v4.status).toBe("changed");
   if (v4.status !== "changed") throw new Error(`expected migration to v4: ${v4.reason}`);
-  return parseTaskSource({ yaml: v4.after.toString("utf8"), filePath });
+  return parseV4TaskSource({ yaml: v4.after.toString("utf8"), filePath });
 }
 
 describe("previous-release corpus — upgrade must not break reads", () => {
@@ -415,7 +416,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
       expect(v4.status).toBe("changed");
       if (v4.status !== "changed") throw new Error(`expected migration to v4: ${v4.reason}`);
       expect(v4.reason).toBe("source-enablement-removed");
-      const migrated = parseTaskSource({ yaml: v4.after.toString("utf8"), filePath });
+      const migrated = parseV4TaskSource({ yaml: v4.after.toString("utf8"), filePath });
       expect(migrated.version).toBe(4);
       expect(migrated.v4.schedule.length).toBeGreaterThan(0);
       expect(migrated.v4.target.kind).toBe("run");
@@ -1113,7 +1114,7 @@ describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () 
 
   test("OpenPalm's `uses:`/`with:` task source v4 file (builtin command target) parses without throwing", () => {
     const filePath = path.join(OPENPALM_DIR, "reddit-leads-ingest.yml");
-    const result = parseTaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
+    const result = parseV4TaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
     expect(result.version).toBe(4);
     expect(result.v4.target.kind).toBe("uses");
     expect(result.v4.execution.timeout).toBe(120000);
@@ -1122,7 +1123,7 @@ describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () 
 
   test("OpenPalm's `run:`/`shell:` task source v4 file (scheduled) parses without throwing", () => {
     const filePath = path.join(OPENPALM_DIR, "discord-wiki-articles-ingest.yml");
-    const result = parseTaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
+    const result = parseV4TaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
     expect(result.version).toBe(4);
     expect(result.v4.target.kind).toBe("run");
     expect(result.v4.execution.timeout).toBe(300000);
@@ -1130,7 +1131,7 @@ describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () 
 
   test("OpenPalm's `uses:` task source v4 file with no `timeout:` and no top-level `enabled:` parses without throwing", () => {
     const filePath = path.join(OPENPALM_DIR, "health-report.yml");
-    const result = parseTaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
+    const result = parseV4TaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
     expect(result.version).toBe(4);
     expect(result.v4.target.kind).toBe("uses");
     expect(result.v4.execution.timeout).toBeUndefined();
@@ -1138,7 +1139,7 @@ describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () 
 
   test("OpenPalm's manual (unscheduled) `run:`/`shell:` task source v4 file parses without throwing", () => {
     const filePath = path.join(OPENPALM_DIR, "manual-reindex.yml");
-    const result = parseTaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
+    const result = parseV4TaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
     expect(result.version).toBe(4);
     expect(result.v4.target.kind).toBe("run");
     expect(result.v4.manualOnly).toBe(true);
@@ -1225,11 +1226,16 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
       expect(result.failures).toEqual([]);
       // The crontab now carries a current row for the same task, not a
       // second, colliding one: the sandbox stash is configured nowhere, so the
-      // row names it inline.
+      // row names it inline (with the sandbox's non-default directories after it).
       expect((exec.current().match(/# akm:task ping BEGIN/g) ?? []).length).toBe(1);
-      expect(exec.current()).toContain(
-        `AKM_BUNDLE_DIR=${path.resolve(stash.dir)} /usr/local/bin/akm task run ping --bundle ${defaultBundle} --scheduled`,
-      );
+      const row =
+        exec
+          .current()
+          .split("\n")
+          .find((line) => line.includes(" task run ping ")) ?? "";
+      expect(row.startsWith(`*/15 * * * * AKM_BUNDLE_DIR=${path.resolve(stash.dir)} `)).toBe(true);
+      expect(row).toContain(` AKM_CONFIG_DIR=${path.join(process.env.XDG_CONFIG_HOME as string, "akm")} `);
+      expect(row).toContain(` /usr/local/bin/akm task run ping --bundle ${defaultBundle} --scheduled`);
       expect(exec.current()).not.toContain("--scheduler-context");
     } finally {
       stash.cleanup();

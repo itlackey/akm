@@ -3,20 +3,17 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm search`, `akm curate`, and `akm show` command family. Extracted verbatim
- * from src/cli.ts (WS6) so the God Module shrinks; the `main.subCommands.search`,
- * `.curate`, and `.show` keys and every command's args/output shape are
- * byte-identical. The three commands form a clean cluster: they share the
- * usage-event provenance and the `parseScopeFilterFlags`
- * search-source parsers. `show` takes a ref and applies no filter. Handlers whose body is a plain
- * `runWithJsonErrors(async () => { … })` are migrated to `defineJsonCommand`,
- * which emits the same JSON envelope (stdout/stderr/exit-code) as the inline
- * form.
+ * `akm search`, `akm curate`, and `akm show` command family. The three
+ * commands share the usage-event provenance and the `parseScopeFilterFlags`
+ * search-source parsers. `show` takes a ref and applies no filter. Handlers
+ * whose body is a plain `runWithJsonErrors(async () => { … })` are
+ * `defineJsonCommand`s, which emit the JSON envelope (stdout/stderr/exit-code).
  */
 
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg, PROJECT_ARG, parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
+import { setResolvedUsageAssetType } from "../../cli/usage";
 import type { ScopeFilters } from "../../core/adapter/types";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseMetaRef } from "../../core/asset/stash-meta";
@@ -34,7 +31,7 @@ import { akmCurate, type CuratePackResult, type CurateResponse, packCuratedHits 
 import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 
-const scopeFilterArg = {
+export const scopeFilterArg = {
   type: "string",
   description:
     "Frontmatter key=value filter (repeatable); a repeated key matches any value, different keys must all match",
@@ -60,7 +57,7 @@ export const searchCommand = defineJsonCommand({
     },
     type: {
       type: "string",
-      description: "Asset type, exact match (e.g. skill, memory, knowledge, workflow); default: any",
+      description: "Asset type, exact match (e.g. skill, memory, knowledge, task); default: any",
     },
     limit: { type: "string", description: "Maximum number of results" },
     from: {
@@ -76,7 +73,7 @@ export const searchCommand = defineJsonCommand({
     ...PROJECT_ARG,
     "include-proposed": {
       type: "boolean",
-      description: 'Include entries with quality:"proposed"',
+      description: 'Deprecated: use `--include quality=proposed`. Include entries with quality:"proposed"',
       default: false,
     },
     belief: { ...beliefArg, default: "current" },
@@ -90,13 +87,13 @@ export const searchCommand = defineJsonCommand({
     },
     "include-sessions": {
       type: "boolean",
-      description: "Include session assets",
+      description: "Deprecated: use `--include type=session`. Include session assets",
       default: false,
     },
     "by-usage": {
       type: "boolean",
       description:
-        "List the assets shown in the project (any project with --project none), most shown first, instead of searching; the query is ignored and no usage is recorded",
+        "Deprecated: use `akm doctor metrics assets`. List the assets shown in the project (any project with --project none), most shown first, instead of searching; the query is ignored and no usage is recorded",
       default: false,
     },
   },
@@ -164,13 +161,16 @@ export const doctorMetricsAssetsCommand = defineJsonCommand({
 });
 
 /** The value a project's writes carry as `project`: what its rules and usage are matched against. */
-function stampedProject(project: ResolvedProject | undefined): string | undefined {
+export function stampedProject(project: ResolvedProject | undefined): string | undefined {
   const value = project?.write.metadata.project;
   return value === undefined ? undefined : String(value);
 }
 
 /** The project a search or curate runs under; a `project` filter in force has already decided eligibility. */
-function projectContext(project: ResolvedProject | undefined, filters: ScopeFilters | undefined): ProjectContext {
+export function projectContext(
+  project: ResolvedProject | undefined,
+  filters: ScopeFilters | undefined,
+): ProjectContext {
   return {
     name: stampedProject(project),
     ...(filters && Object.hasOwn(filters, "project") ? { byFilter: true } : {}),
@@ -182,7 +182,7 @@ function projectContext(project: ResolvedProject | undefined, filters: ScopeFilt
  * project's value for that kind, and a kind neither gave stays at today's default.
  * `view` is the project as applied: the same effective values, for the response to report.
  */
-function withProjectDefaults(
+export function withProjectDefaults(
   project: ResolvedProject | undefined,
   explicit: { source?: string | string[]; filters?: ScopeFilters; prefer?: ScopeFilters; include?: IncludeSelectors },
 ) {
@@ -200,7 +200,7 @@ function withProjectDefaults(
 }
 
 /** `--from` is repeatable; citty keeps only the last value, so read every occurrence from argv. */
-function fromValues(parsed: unknown): string | string[] | undefined {
+export function fromValues(parsed: unknown): string | string[] | undefined {
   const all = parseAllFlagValues("--from");
   return all.length > 1 ? all : (parsed as string | undefined);
 }
@@ -228,7 +228,7 @@ export const curateCommand = defineJsonCommand({
     query: { type: "positional", description: "Task or prompt to curate assets for", required: false },
     type: {
       type: "string",
-      description: "Asset type, exact match (e.g. skill, memory, knowledge, workflow); default: any",
+      description: "Asset type, exact match (e.g. skill, memory, knowledge, task); default: any",
     },
     limit: { type: "string", description: "Maximum number of curated results", default: "4" },
     from: {
@@ -250,7 +250,7 @@ export const curateCommand = defineJsonCommand({
     pack: {
       type: "string",
       description:
-        "Pack the hits' full content into one blob within this token budget, e.g. --pack 4000 (registry hits are never packed)",
+        "Deprecated: use `--max-tokens`. Pack the hits' full content into one blob within this token budget, e.g. --pack 4000 (registry hits are never packed)",
     },
   },
   async run({ args }) {
@@ -394,7 +394,7 @@ export const showCommand = defineJsonCommand({
     },
     context: {
       type: "string",
-      description: "Fragment presentation: exact (default) or lead (adds the document lead)",
+      description: "Deprecated: use `--lead`. Fragment presentation: exact (default) or lead (adds the document lead)",
     },
     "max-tokens": {
       type: "string",
@@ -402,7 +402,8 @@ export const showCommand = defineJsonCommand({
     },
     "max-chars": {
       type: "string",
-      description: "Context budget in characters (needs --context lead; not with --max-tokens)",
+      description:
+        "Deprecated: use `--max-tokens`. Context budget in characters (needs --context lead; not with --max-tokens)",
     },
     project: {
       type: "string",
@@ -423,7 +424,7 @@ export const showCommand = defineJsonCommand({
     if (!parseMetaRef(args.ref)) parseBundleRef(args.ref);
     rejectExtraShowPositionals(args._, args.ref);
     const invocation = getParsedInvocation();
-    // F6/R-021 — `show` deliberately does NOT inherit `output.detail` from
+    // `show` deliberately does NOT inherit `output.detail` from
     // config the way `search`/`curate` do via `getOutputMode().detail`
     // (which merges an explicit `--detail` flag with the config default,
     // "brief" out of the box). A bare `akm show <ref>` must always return
@@ -473,6 +474,7 @@ export const showCommand = defineJsonCommand({
       eventSource: resolveUsageEventSource(),
       project: stampedProject(resolveProject(loadConfig(), { project: getStringArg(args, "project") })),
     });
+    setResolvedUsageAssetType(result.type);
     output("show", result);
   },
 });

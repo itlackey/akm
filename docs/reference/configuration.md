@@ -129,6 +129,14 @@ warning (the final fields are checked, whichever layer brought it).
 A transient failure (an HTTP 5xx, a dropped connection) is retried once, within
 what is left of the call's timeout. A 4xx is not.
 
+A reply that stops at the output limit (`finish_reason: "length"`) or has no
+`content` is a failed call (`parse_error`), not an answer: the error says the reply was
+cut at the output limit, or had no content, and names the model and endpoint (and
+`reasoning_content` when the reply held some). Reasoning is never returned as the
+answer, so a provider that puts its answer in `reasoning_content` fails until its
+reasoning parser is set up to fill `content`. The call's usage event records
+`outcome: "error"`, `errorCode: "parse_error"` and the `finishReason`.
+
 ### Settings a call asks for
 
 A command, agent, workflow step or task can run against any endpoint, so it asks
@@ -230,7 +238,7 @@ bindings.
 
 What asks for a harness decides how akm runs it.
 
-**Agent work** (`akm run` on an agent or command ref, `akm proposal new`, agent tasks and workflow agent steps) runs your program the way you would run it yourself. It gets your environment as it is, with nothing filtered out, and your configuration, plugins, settings and logins as they are. akm sets only its own variables for the run: the directories this akm resolved (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR`, and `AKM_BUNDLE_DIR` when you set one), plus the absolute `AKM_CONFIG_FILE` when a file was selected, so a program that runs `akm` uses the same installation, and, when a task runs it, `AKM_EVENT_SOURCE` (unless already set), so the akm commands the program runs count as machine use, not yours. A workflow unit's or task's own `env:` bindings are set over them. A run given a directory (`--cwd`, a harness's `workspace`) starts there, and `PWD` names it too, as your shell sets it when you `cd` there; OpenCode takes its directory from `PWD`. On the command line, after your `args` as you wrote them, akm adds the model or agent the asset or flag names, the agent asset's persona where the program takes one there, and what the program needs to run without a person at the terminal: its print or exec mode and its approve-all switch where it asks before acting. Codex runs with the sandbox your Codex configuration sets, or the one your `args` name; model work runs it with `--sandbox read-only` (below). The prompt goes on standard input where the program reads it there and on the command line where it does not; standard output is the reply. `akm agent` with no `--prompt` starts the program interactively instead. What akm scrubs from the output it captures is in [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) and, for a workflow, [Workflow Schema](workflow-schema.md#the-childs-environment).
+**Agent work** (`akm run` on an agent or command ref, `akm proposal new`, agent tasks and workflow agent steps) runs your program the way you would run it yourself. It gets your environment as it is, with nothing filtered out, and your configuration, plugins, settings and logins as they are. akm sets only its own variables for the run: the directories this akm resolved (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR`, and `AKM_BUNDLE_DIR` when you set one), plus the absolute `AKM_CONFIG_FILE` when a file was selected, so a program that runs `akm` uses the same installation, and, when a task runs it, `AKM_EVENT_SOURCE` (unless already set), so the akm commands the program runs count as machine use, not yours. A workflow unit's or task's own `env:` bindings are set over them. A run given a directory (`--cwd`, a harness's `workspace`) starts there, and `PWD` names it too, as your shell sets it when you `cd` there; OpenCode takes its directory from `PWD`. On the command line, after your `args` as you wrote them, akm adds the model or agent the asset or flag names, the agent asset's persona where the program takes one there, and what the program needs to run without a person at the terminal: its print or exec mode and its approve-all switch where it asks before acting. Codex runs with the sandbox your Codex configuration sets, or the one your `args` name; model work runs it with `--sandbox read-only` (below). The prompt goes on standard input where the program reads it there and on the command line where it does not; standard output is the reply. A run that exits 0 with nothing but whitespace there gave no reply, and fails with `parse_error`, as a run on akm's own runtime does. `akm agent` with no `--prompt` starts the program interactively instead. What akm scrubs from the output it captures is in [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) and, for a workflow, [Workflow Schema](workflow-schema.md#the-childs-environment).
 
 **Model work** (see [Where each process runs](#where-each-process-runs)) is akm's own process, so akm sets the call up as it needs it. The program has the same environment. akm runs it in a scratch directory that it creates for the call and removes after it, stamps the akm commands it runs `improve`, and runs no native agent of yours. Where the program can be restricted, akm also limits its tools. The "Restricted model work" column of the table says on which platforms:
 
@@ -238,7 +246,7 @@ What asks for a harness decides how akm runs it.
 - Codex runs with `--sandbox read-only`.
 - OpenCode 2 runs as the `akm-model-work` agent, which akm passes inline with the run, merged into your `OPENCODE_CONFIG_CONTENT` and keeping the rest of it; akm reads that variable as OpenCode does, as JSONC (comments and trailing commas), with its `{env:NAME}` references replaced as OpenCode replaces them when the content reads only that way (a reference written outside a string, such as a number), and leaves it out, with one warning, when it is not valid JSONC holding an object. akm writes it in OpenCode 2's native `agents` map, which OpenCode reads over the legacy `agent` map, so an entry of that name in your config, in either map, inline or in a file, does not change it (a same-named entry in your inline `agent` map is left out). Its tools are limited to reading and searching: every tool is denied except `read`, `glob` and `grep`, and `akm_search`, `akm_show` and `akm_curate` when you have the akm OpenCode plugin installed. A tool that a plugin of yours adds is denied too. OpenCode's built-in browser plugin is left out of the run (`-opencode.browser` after your `plugins`): model work denies the browser anyway, and from OpenCode 2.2.0 the plugin's own rules would keep the `skill` tool listed. The limit is on tools: your plugins' own setup and hooks still run in the session. The run is `--standalone`, one process that ends with it, with no background service left behind, and `--title akm`, which names the session and spares the second model request that would generate a title. The agent has a one-line system prompt of its own (`system`), which replaces OpenCode's coding-agent prompt.
 - On Claude Code, Codex and OpenCode, `args` do not apply to model work, except a `--model` they name.
-- OpenCode 1 runs as the same `akm-model-work` agent, with the same one-line system prompt (`prompt`) and `--title akm`, defined in the `agent` map of your `OPENCODE_CONFIG_CONTENT` (OpenCode 1 reads that map, not `agents`), so it sends neither OpenCode's coding-agent prompt nor a title request. Its tools are limited as on OpenCode 2, by the agent's `permission` map: every tool is denied except `read`, `glob` and `grep`, and `akm_search`, `akm_show` and `akm_curate` when you have the akm OpenCode plugin installed. OpenCode 1 refuses a call to a denied tool as well as leaving it out of the tool list (measured on 1.18.25: a built-in tool, a plugin's tool and an MCP server's tool, all denied, were not run), and the model gets neither the `skill` tool nor OpenCode's listing of every skill it finds (your Claude Code skills included). A same-named entry in a config file of yours is merged with akm's, which is set inline over it.
+- OpenCode 1 (Deprecated, removed in 0.11) runs as the same `akm-model-work` agent, with the same one-line system prompt (`prompt`) and `--title akm`, defined in the `agent` map of your `OPENCODE_CONFIG_CONTENT` (OpenCode 1 reads that map, not `agents`), so it sends neither OpenCode's coding-agent prompt nor a title request. Its tools are limited as on OpenCode 2, by the agent's `permission` map: every tool is denied except `read`, `glob` and `grep`, and `akm_search`, `akm_show` and `akm_curate` when you have the akm OpenCode plugin installed. OpenCode 1 refuses a call to a denied tool as well as leaving it out of the tool list (measured on 1.18.25: a built-in tool, a plugin's tool and an MCP server's tool, all denied, were not run), and the model gets neither the `skill` tool nor OpenCode's listing of every skill it finds (your Claude Code skills included). A same-named entry in a config file of yours is merged with akm's, which is set inline over it.
 - Every other platform cannot be restricted: the run is unrestricted, in the scratch directory, and akm reports that. The other platforms get the agent-work command line, `args` included.
 - OpenCode model work sets `OPENCODE_DISABLE_FREE_MODELS=1`, which OpenCode 2.1.2 and later honor: a call with no usable provider fails instead of sending the prompt to OpenCode's hosted free model, and so does a call whose model (named, or your OpenCode's default) is one of its free ones. Agent work does not set it: your OpenCode's models are as you would get running it by hand.
 
@@ -246,16 +254,20 @@ Where model work is restricted, its tools cannot change the library, so what it 
 
 **History.** A harness run leaves a session in the program's own history, and `akm proposal extract` and improve read that history like any other. The exceptions are the model-work sessions akm marked: Claude Code keeps no transcript of them, and OpenCode records them under the `akm-model-work` agent, which the reader skips. OpenCode 1 records the agent on the session too, from the release that added that column (May 2026), and the reader skips them the same way. Codex cannot be marked, so its model-work sessions are read like any other. akm's own runtime (below) keeps its sessions in `<akm data dir>/opencode-runtime/data/opencode/opencode.db`, read the same way.
 
-**Stopping.** When akm stops a run (a timeout, an abort or a signal to akm) it sends the program's process group SIGINT, as Ctrl-C would. If anything in the group still runs after 5 seconds, or as soon as the program itself has exited and left members behind, it sends SIGTERM, and 5 seconds after that SIGKILL if anything still runs. Workflow `exec` units and task commands are stopped the same way. Windows has no process groups, and a signal sent to a process there ends it at once. A program that records how a run ended acts on the SIGINT: OpenCode 2 marks its session interrupted and releases it, and only a run that had to be terminated or killed stays suspended in your OpenCode history, where your own OpenCode's background service may resume it when it next starts (up to ten attempts, OpenCode's own policy). Through OpenCode 2's background service (measured on 2.1.4 and 2.2.0) the interrupt ends the `opencode` command and the service's turn alike: the service abandons the turn's model request and marks the session interrupted, and keeps running itself.
+**Failure.** A harness that exits non-zero is a failed run (`non_zero_exit`), and its error ends with the program's own reason: the last non-empty line it wrote, with terminal escapes removed and cut at 300 characters, from standard output for Claude Code (print mode) and from standard error for Codex, OpenCode 2, Gemini, Aider, Amazon Q, Copilot, OpenHands and pi (`agent CLI "codex" exited with code 1: Invalid API key`). OpenCode 1 and akm's own runtime give no such line; OpenCode 1's reason comes from its event stream (see below). A prompt too long for the command line fails saying so, with its size. An empty or blank `--prompt` is a usage error.
 
-**OpenCode.** The `opencode` platform runs your installed OpenCode, either major version, as `opencode run`; the reply is its standard output. Agent work is that command with the prompt on stdin, your `args` as written, `--model` when akm names a model and `--agent` when the asset names an agent. Your OpenCode owns its configuration, logins, token refresh and sessions: akm reads, copies and embeds nothing of yours.
+**Stopping.** When akm stops a run (a timeout, an abort or a signal to akm) it sends the program's process group SIGINT, as Ctrl-C would. If anything in the group still runs after 5 seconds, or as soon as the program itself has exited and left members behind, it sends SIGTERM, and 5 seconds after that SIGKILL if anything still runs. Workflow `exec` units and task commands are stopped the same way. A program that exits on its own while a captured run still has processes in its group (a server it started with `&` or `nohup`) is treated alike: akm gives the output 2 seconds to finish, stops what is left with the same SIGINT, SIGTERM, SIGKILL steps, and returns the program's own result and the output read. A process that must outlive the run starts its own session and redirects its output (`setsid server >server.log 2>&1 &`); either alone fails. Windows has no process groups, and a signal sent to a process there ends it at once. A program that records how a run ended acts on the SIGINT: OpenCode 2 marks its session interrupted and releases it, and only a run that had to be terminated or killed stays suspended in your OpenCode history, where your own OpenCode's background service may resume it when it next starts (up to ten attempts, OpenCode's own policy). Through OpenCode 2's background service (measured on 2.1.4 and 2.2.0) the interrupt ends the `opencode` command and the service's turn alike: the service abandons the turn's model request and marks the session interrupted, and keeps running itself.
+
+**OpenCode.** The `opencode` platform runs your installed OpenCode as `opencode run`; the reply is its standard output. OpenCode 2 is the supported major. **OpenCode 1 is Deprecated and removed in 0.11:** a run on it prints one `[deprecated]` line on stderr per process (silenced by `--quiet`, for scheduled runs, and in an akm that a task, improve or audit started, which `akm doctor`'s `opencode-major` advisory covers), and `akm doctor` warns while a configured harness is OpenCode 1. Agent work is that command with the prompt on stdin, your `args` as written after `run` (akm writes `run` itself, so an `args` of `["--standalone"]` runs `opencode run --standalone`, and an authored leading `run` is not doubled), `--model` when akm names a model and `--agent` when the asset names an agent. Your OpenCode owns its configuration, logins, token refresh and sessions: akm reads, copies and embeds nothing of yours. akm runs `opencode --version` once per process, for agent work and model work alike, to tell the majors apart; a binary whose version it cannot read is run as OpenCode 1, with one warning.
+- On OpenCode 1 akm adds `--format json` (an authored `--format` is replaced) and reads the event stream, because OpenCode 1 exits 0 when its turn ends on a refused tool call. The reply is the same text; with `--thinking` the `Thinking:` lines are not in it. A turn that ended unfinished (a refused tool call, a last step that is not a finished one, no finished step) fails with `parse_error`, and a provider error OpenCode reports in the stream is in the failure's `error`. The run carries a `sessionId`. OpenCode's error message and its failed-tool lines are in `error` rather than on stderr; its `! permission requested ... auto-rejecting` line stays on stderr.
 - OpenCode 2 runs agent work through its own background service, which stays up after the command. Add `--standalone` to the harness's `args` for a run that is one process.
 - A model name is OpenCode's `provider/model`, from the request, else the `--model` in the harness's `args`; without one, your OpenCode's default decides.
 
 Nobody can answer an akm run. OpenCode's headless `run` cancels every question
 and rejects every permission request that would ask, and the model carries on
 without it; that holds for akm's own runtime and for the `opencode` harness
-alike.
+alike. A run whose turn then ends with no reply has failed (`parse_error`),
+though OpenCode exits 0.
 
 ### Without a harness
 
@@ -517,6 +529,8 @@ layer: it says which processes run, never where.
 calls use: for each kind of work, the connection or harness and the model.
 
 ## Workflows
+
+Workflows are Deprecated and removed in 0.11 (see [STABILITY.md](../../STABILITY.md)); their settings are read through 0.10.
 
 `workflow.maxConcurrency` is the ceiling on units a workflow run executes at
 once. An explicit value is clamped to `1..64`. When absent, akm derives it once
@@ -902,12 +916,13 @@ the key is ignored, and enables nothing; `akm migrate apply` drops it.
 
 ## Usage
 
-`usage` configures the local-only CLI usage counts (see
+`usage` configures the local-only CLI usage counts and the daily usage report (see
 [Data and Telemetry](data-and-telemetry.md#cli-usage-counts)):
 
 | Key | Purpose |
 | --- | --- |
 | `usage.capture` | Whether akm records counts of its own commands in `metrics.db`. **Defaults to `true`**; `false` turns the recording off. Read from the config file itself (the one `--config` or `AKM_CONFIG_FILE` selects) before the rest of the config loads, so a missing or broken file leaves it on. `--read-only` records nothing either way. |
+| `usage.report` | Whether akm sends its [daily usage report](data-and-telemetry.md#daily-usage-report) (the CLI's and AKM Desktop's). **Defaults to `true`**; `false` sends nothing. Read from the effective config, so `false` in a config you `extends` turns it off unless a nearer layer sets it to `true`. A config that cannot be loaded sends nothing. The CLI also sends nothing under `--read-only` or when `usage.capture` is `false`. |
 
 ## Bundles and write target
 
@@ -1037,7 +1052,7 @@ it. Scheduling lives in the tasks subsystem (`akm task`).
 
 ## Experimental opt-ins
 
-`experimental` holds explicit opt-ins for behavior outside the 0.9
+`experimental` holds explicit opt-ins for behavior outside the
 stability contract (see [STABILITY.md](../../STABILITY.md) for full
 classification). Every key defaults to **off**; an absent `experimental`
 section, an absent key, and an explicit `false` all read identically as off.
@@ -1045,11 +1060,16 @@ section, an absent key, and an explicit `false` all read identically as off.
 ```jsonc
 {
   "experimental": {
-    "improveAutonomy": false
+    "improveAutonomy": false,
+    "exec": false
   }
 }
 ```
 
+- **`experimental.exec`** — turns on [`akm exec`](cli.md#exec), which runs any
+  command with env assets and secrets injected. Off by default: `akm exec`
+  refuses and runs nothing. `akm run --env` and `--secret` are not gated, nor are
+  the `exec:` and `prompt:` steps of a [version 5 task](tasks.md#task-source-v5-experimental).
 - **`experimental.improveAutonomy`** — gates only the autonomous
   `memoryInference`, `triagePromote` (a promote with triage judgment on; a
   deterministic-only promote runs without it), and `memoryCleanup` lanes. `akm improve`
@@ -1094,7 +1114,7 @@ the file, so the strategy engine sees the one shape it always read. The old
 - The key adds no behavior by itself. An absent `experimental.learning` leaves
   every default as it was, and it does not gate `experimental.improveAutonomy`.
 
-Owner decisions on the classification of each learning control (2026-11-12):
+Classification of each learning control:
 
 | Control | Decision |
 | --- | --- |
@@ -1272,15 +1292,18 @@ akm config diff fleet//config/shared.json
 | --- | --- |
 | `AKM_CONFIG_FILE` | Select a config file; `--config` wins. Children inherit its absolute path, including native rows written by `task sync`. Credentials and `models.json` stay in the default config directory. An empty value is warned about once and ignored. Does not change data, state, cache, or bundle locations. |
 | `AKM_CONFIG_DIR` | Override the user config directory (or set `XDG_CONFIG_HOME`); used when no file selector is set |
-| `AKM_BUNDLE_DIR` | Override the bundle directory |
+| `AKM_BUNDLE_DIR` | Deprecated, stays retired in 0.11: register the bundle and select `defaultBundle`. Overrides the bundle directory |
 | `AKM_DATA_DIR` | Override the data directory — `index.db`, durable `state.db`, and `akm.lock` (or set `XDG_DATA_HOME`) |
 | `AKM_CACHE_DIR` | Override the cache directory — regenerable caches (or set `XDG_CACHE_HOME`) |
 | `AKM_STATE_DIR` | Override the state directory — the scheduler lock and, per bundle, `akm improve`'s whole-run lock (or set `XDG_STATE_HOME`) |
 | `AKM_SQLITE_JOURNAL_MODE` | Deprecated, no replacement; removed in 0.11. SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE` |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror; replaces `registry.npmjs.org` for npm bundle resolution |
-| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm doctor info` and the `egress-endpoints` health advisory still show the configured list (prefix an entry with `<provider>::` to choose a provider) |
-| `AKM_VERBOSE` | Truthy value enables the same diagnostics as `--verbose` |
-| `AKM_DEBUG` | `1` prints a stack trace on unexpected internal errors |
+| `AKM_REGISTRY_URL` | Deprecated; migrate the selection to config. Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm doctor info` and the `egress-endpoints` health advisory still show the configured list (prefix an entry with `<provider>::` to choose a provider) |
+| `AKM_VERBOSE` | Deprecated: use `--verbose`. A truthy value enables the same diagnostics |
+| `AKM_DEBUG` | Deprecated: use `--verbose`. `1` prints a stack trace on unexpected internal errors |
+| `AKM_UPGRADE_SKIP_CHECKSUM` | Deprecated, removed in 0.11: use `akm upgrade --skip-checksum` |
+| `AKM_EVENT_SOURCE` | `user`, `agent`, `task`, `improve` or `audit` marks the provenance of the commands a process runs (usage events and CLI usage counts); akm sets it for the programs it runs for a task. Anything else means `unknown` |
+| `AKM_TASK_STATE` | Experimental. Path of the JSON state file of a version 5 task run; akm sets it for a step it runs as a process and does not read it |
 
 `AKM_SQLITE_JOURNAL_MODE` is Deprecated, has no replacement and is removed in
 0.11. AKM uses WAL and, on its own, falls back to `DELETE` when the data

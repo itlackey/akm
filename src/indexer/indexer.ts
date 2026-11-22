@@ -8,13 +8,13 @@ import type { BundleAdapter } from "../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../core/adapter/detect-adapter";
 import { adapterForId } from "../core/adapter/registry";
 import type { BundleComponent } from "../core/adapter/types";
-import { compareCodePoints, isHttpUrl, safeRealpath } from "../core/common";
+import { compareCodePoints, isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
 import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
 import { withStateDb } from "../core/state-db";
-import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
+import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { localEmbeddingRuntime } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
@@ -62,13 +62,14 @@ import {
   getEntryCount,
   getIndexedBundleIdsByDir,
   getIndexedDirPathsByBundleId,
+  getStoredEntriesInDirectory,
   relinkUsageEvents,
   upsertEntry,
 } from "../storage/repositories/index-entries-repository";
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
 import { rebuildFtsIfTotalsStale } from "../storage/repositories/index-fts-repository";
 import { storeLayout } from "../storage/repositories/index-layout-repository";
-import { clearStaleCacheEntries } from "../storage/repositories/index-llm-cache-repository";
+import { clearStaleCacheEntries, rekeyLlmCache } from "../storage/repositories/index-llm-cache-repository";
 import {
   deleteIndexDirState,
   deleteMeta,
@@ -85,7 +86,7 @@ import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo, vacuumIfReclaimable } from "
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
-import { type LegacyRefMove, legacyRefMove, rekeyLegacyEntry, rewriteLegacyStateRefs } from "./legacy-refs";
+import { legacyRefMove, rekeyLegacyEntry } from "./legacy-refs";
 import {
   type AdapterConceptOwner,
   type ConceptOwnerMatch,
@@ -110,11 +111,22 @@ import {
   type StashFile,
   withFileSize,
 } from "./passes/metadata";
+import {
+  type MovePairing,
+  type NewEntry,
+  pairMovedFiles,
+  type RefMove,
+  rekeyStateRefs,
+  repointEntry,
+  type StoredEntry,
+} from "./ref-moves";
 import { drainDirDocuments } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
 import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
 import type { FileContext } from "./walk/file-context";
 import {
+  INCOMPLETE_SOURCES_META_KEY,
+  type IncompleteIndexSource,
   type IndexVerification,
   type RemovedIndexSource,
   SEMANTIC_SEARCH_META_KEY,
@@ -123,6 +135,11 @@ import {
 import { walkStashFlatWithStatus } from "./walk/walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
+
+/** `--clean` did not run: removing rows for files that cannot be listed would delete rows for files that exist. */
+interface IndexCleanSkipped {
+  skipped: { reason: "incomplete-scan"; sources: IncompleteIndexSource[] };
+}
 
 export interface IndexCleanResult {
   /** Number of entries checked for disk presence. */
@@ -145,6 +162,8 @@ export interface IndexResponse {
   directoriesSkipped: number;
   /** False when any configured source could not be scanned and LKG rows were preserved. */
   scanComplete: boolean;
+  /** Each source that could not be scanned completely; empty when every source was. */
+  incompleteSources: IncompleteIndexSource[];
   warnings?: string[];
   verification: IndexVerification;
   /** Timing counters in milliseconds */
@@ -160,15 +179,27 @@ export interface IndexResponse {
     sourceCacheMs: number;
     endToEndMs: number;
   };
-  /** Present when --clean was passed: stale-entry purge results. */
-  clean?: IndexCleanResult;
+  /** Present when --clean was passed: stale-entry purge results, or why the purge did not run. */
+  clean?: IndexCleanResult | IndexCleanSkipped;
+  /**
+   * Present when files were renamed or moved since the last run: each moved asset's old and new ref (its history
+   * went with it), and the number of vanished files whose identical-content matches could not be paired and were
+   * indexed as new.
+   */
+  moves?: IndexMoves;
   /**
    * Present when this run auto-detected a bundle's adapter and persisted it
    * to config.json (`bundles.<id>.components.<component>.adapter`) — a
-   * maintenance-command config write that would otherwise be invisible
-   * (R-056). Keyed by bundle id, valued by the detected adapter id.
+   * maintenance-command config write that would otherwise be invisible.
+   * Keyed by bundle id, valued by the detected adapter id.
    */
   configUpdated?: { detectedAdapters: Record<string, string> };
+}
+
+/** Files renamed or moved on disk that the index paired with their old entry (same content), and how many it could not. */
+export interface IndexMoves {
+  moved: Array<{ from: string; to: string }>;
+  unpaired: number;
 }
 
 export interface IndexProgressEvent {
@@ -181,7 +212,7 @@ export interface IndexProgressEvent {
 export interface IndexOptions {
   /**
    * The stash directory to index. Resolved once at each command boundary
-   * (WI-9.10 CLI-wide sweep) and threaded in — the indexer no longer reads the
+   * and threaded in — the indexer does not read the
    * ambient stash-dir resolver. Every caller (source add, wiki, workflow,
    * setup, improve, tests) already passes it.
    */
@@ -226,7 +257,7 @@ export interface IndexOptions {
    * pre-run index) rather than by an explicit `akm index`.
    *
    * Only affects DISCLOSURE, never behavior. The adapter-detection config
-   * write (R-056) is always reported in the result envelope, but its stderr
+   * write is always reported in the result envelope, but its stderr
    * notice is suppressed for implicit runs: a read command's stderr carries
    * its JSON error envelope, so an extra human-readable line there makes the
    * envelope unparseable for callers doing `JSON.parse(stderr)` — and would
@@ -374,6 +405,7 @@ function finalizeIndex(args: {
   db: Database;
   sources: SearchSource[];
   scanComplete: boolean;
+  incompleteSources: IncompleteIndexSource[];
   signal: AbortSignal | undefined;
   onProgress: (event: IndexProgressEvent) => void;
 }): { tFtsEnd: number } {
@@ -416,6 +448,8 @@ function finalizeIndex(args: {
     setMeta(db, "builtAt", new Date().toISOString());
     setMeta(db, "sourceOwners", JSON.stringify(sourceOwners(sources)));
   }
+  // The sources the index holds last-known-good rows for: what `akm doctor` reads. Empty once every source scanned.
+  setMeta(db, INCOMPLETE_SOURCES_META_KEY, JSON.stringify(args.incompleteSources));
 
   return { tFtsEnd };
 }
@@ -591,8 +625,7 @@ function isReadableDirectory(root: string): boolean {
  * Detect an adapter for every resolvable source that does not declare one, and
  * persist each detection into `config.json`.
  *
- * R-056: this config write previously had zero disclosure — it appeared in no
- * result, on no stream, and in no doc. The returned `persistedAdapters` records
+ * This config write is disclosed: the returned `persistedAdapters` records
  * exactly which bundle→adapter pairs the mutate callback actually applied, so
  * the caller can surface them in the result envelope; a stderr notice is
  * emitted here. The map is cleared at the top of every callback invocation
@@ -652,14 +685,14 @@ function detectAndPersistBundleAdapters(
 }
 
 async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
-  // R-022: `dryRun` only ever gated the `--clean` stale-entry removal pass
+  // `dryRun` only gates the `--clean` stale-entry removal pass
   // (see `runCleanPass` below) — every other phase (walk, embeddings, FTS,
-  // the adapter-detection config write) ran for real regardless, so
-  // `akm index --dry-run` alone silently performed a full,
+  // the adapter-detection config write) runs for real regardless, so
+  // `akm index --dry-run` alone would silently perform a full,
   // real index. The flag's own docs (`IndexOptions.dryRun` above, and the
-  // CLI help in stash-cli.ts) already scope it to `--clean`; reject the
-  // combination that was never implemented instead of quietly doing
-  // something other than what "dry run" promised. Checked before the writer
+  // CLI help in stash-cli.ts) scope it to `--clean`; reject the
+  // unsupported combination instead of quietly doing
+  // something other than what "dry run" promises. Checked before the writer
   // lease is even requested so a bad invocation fails instantly.
   if (options?.dryRun === true && options?.clean !== true) {
     const { UsageError } = await import("../core/errors.js");
@@ -752,15 +785,17 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     throwIfAborted(signal);
     const tWalkStart = Date.now();
     // Walk every source and pre-generate all metadata outside any transaction…
-    const { dirRecords, scannedDirs, skippedDirs, generatedCount, warnings, complete } = await scanSourceDirs(
-      db,
-      sources,
-      isIncremental,
-      builtAtMs,
-      removedSources.length > 0,
-      onProgress,
-      !clean,
-    );
+    const { dirRecords, scannedDirs, skippedDirs, generatedCount, warnings, complete, incompleteSources } =
+      await scanSourceDirs(
+        db,
+        sources,
+        isIncremental,
+        builtAtMs,
+        removedSources.length > 0,
+        config,
+        onProgress,
+        !clean,
+      );
     // …then write it in one transaction: `item_ref = <bundle>//<conceptId>`
     // plus canonical component/adapter provenance per source root.
     const bundleByRoot = buildIndexedSourceOwners(sources);
@@ -768,7 +803,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     const unresolvedBundleIds = new Set(
       sources.flatMap((source) => (source.unresolved ? [bundleByRoot.get(path.resolve(source.path))?.bundleId] : [])),
     );
-    persistDirRecords(db, dirRecords, warnings, bundleByRoot, embeddingInputCap(config), {
+    const moves = persistDirRecords(db, dirRecords, warnings, bundleByRoot, embeddingInputCap(config), {
       stashDir,
       sourceDirs,
       unresolvedBundleIds,
@@ -792,9 +827,8 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     }
     const tWalkEnd = Date.now();
 
-    // Metadata enhancement (the LLM pass that used to run here) is retired
-    // (RS-D, 0.9.17-alpha.9) — see CHANGELOG. `timing.llmMs` stays (always
-    // ~0 now) so the JSON shape is unchanged.
+    // There is no LLM metadata-enhancement pass. `timing.llmMs` stays (always
+    // ~0) so the JSON shape is unchanged.
     const tLlmEnd = Date.now();
 
     if (complete) applyRemovedSources(db, sources, removedSources, isIncremental);
@@ -802,7 +836,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     // Reconcile explicit missing-file cleanup before embeddings, totals, or
     // verification describe this generation. Dry-run intentionally leaves
     // the generation unchanged while still returning the previewed refs.
-    let cleanResult: IndexCleanResult | undefined;
+    let cleanResult: IndexCleanResult | IndexCleanSkipped | undefined;
     const cleanStart = Date.now();
     if (clean) {
       onProgress({
@@ -813,7 +847,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
         cleanResult = runCleanPass(db, dryRun);
       } else {
         warn("[index] --clean skipped because one or more configured sources were not scanned completely.");
-        cleanResult = { checked: 0, removed: 0, removedRefs: [], dryRun };
+        cleanResult = { skipped: { reason: "incomplete-scan", sources: incompleteSources } };
       }
     }
     const cleanEnd = Date.now();
@@ -840,6 +874,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       db,
       sources,
       scanComplete: complete,
+      incompleteSources,
       signal,
       onProgress,
     });
@@ -884,11 +919,13 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       directoriesScanned: scannedDirs,
       directoriesSkipped: skippedDirs,
       scanComplete: complete,
+      incompleteSources,
       ...(warnings.length > 0 ? { warnings } : {}),
       ...(Object.keys(persistedAdapters).length > 0 ? { configUpdated: { detectedAdapters: persistedAdapters } } : {}),
       verification,
       timing,
       ...(cleanResult !== undefined ? { clean: cleanResult } : {}),
+      ...(moves ? { moves } : {}),
     };
   } finally {
     closeDatabase(db);
@@ -912,7 +949,7 @@ type DirRecord = {
   /** Walked-set fingerprint taken at scan time (#900); persisted as-is for scanned and unchanged dirs. */
   fingerprint?: DirFingerprint;
   /**
-   * F4a M-core-2: `doc.hash` keyed by recognized-file absolute path, produced by
+   * `doc.hash` keyed by recognized-file absolute path, produced by
    * the per-dir document drain. Read by the persist layer to populate
    * `content_hash`. Absent on skipped dirs (nothing drained).
    */
@@ -948,6 +985,12 @@ type SourceScanPlan = {
   dirGroups: Map<string, FileContext[]>;
   removals: Array<DirRecord & { reason: DirScanReason }>;
   walkComplete: boolean;
+  /** When the scan of this source is incomplete: the error that stopped it. */
+  incompleteReason?: string;
+  /** For a source that did not resolve: its real directory, or `unknown`. */
+  incompletePath?: string;
+  /** Content the source's adapter skips that the `akm` adapter would index. */
+  adapterSkip?: AdapterSkip;
 };
 
 type SourceScanResult = {
@@ -957,6 +1000,7 @@ type SourceScanResult = {
   generatedCount: number;
   warnings: string[];
   complete: boolean;
+  incompleteSources: IncompleteIndexSource[];
 };
 
 function removalsFirst(records: DirRecord[]): DirRecord[] {
@@ -1000,24 +1044,25 @@ function sourceSnapshotRemovals(
 }
 
 /**
- * Warn ONCE per process (#908) when the chosen adapter for a component
- * entirely skips a top-level directory that holds files the `akm` adapter —
- * the format-neutral superset — would have indexed. `detectAdapterId` now
- * corrects this for AUTO-DETECTION (a mixed layout detects as `akm`); this
- * covers the case detection cannot see, an EXPLICITLY configured narrow
- * adapter (`components.<name>.adapter: "agent-skills"`, say) sitting next to
- * ordinary akm content. One line for the whole process — not one per bundle,
- * not one per directory — naming the count and the directories is enough to
- * point an operator at the fix.
+ * What the chosen adapter for a component entirely skips (#908): top-level directories that hold files the `akm`
+ * adapter, the format-neutral superset, would have indexed. `detectAdapterId` corrects this for AUTO-DETECTION (a
+ * mixed layout detects as `akm`); this covers what detection cannot see, an EXPLICITLY configured narrow adapter
+ * (`components.<name>.adapter: "agent-skills"`, say) sitting next to ordinary akm content.
  */
-function warnIfAdapterSkipsAkmContent(
+interface AdapterSkip {
+  adapter: string;
+  count: number;
+  dirs: string[];
+}
+
+function adapterSkippedAkmContent(
   component: BundleComponent,
   files: readonly FileContext[],
   adapter: BundleAdapter,
-): void {
-  if (adapter.id === "akm") return;
+): AdapterSkip | undefined {
+  if (adapter.id === "akm") return undefined;
   const akm = adapterForId("akm");
-  if (!akm) return;
+  if (!akm) return undefined;
 
   const byTopDir = new Map<string, FileContext[]>();
   for (const file of files) {
@@ -1029,8 +1074,8 @@ function warnIfAdapterSkipsAkmContent(
   }
 
   const akmComponent: BundleComponent = { ...component, adapter: "akm" };
-  let skippedCount = 0;
-  const skippedDirs: string[] = [];
+  let count = 0;
+  const dirs: string[] = [];
   for (const [dir, dirFiles] of byTopDir) {
     const chosenRecognizesAny = dirFiles.some((file) => {
       try {
@@ -1048,16 +1093,51 @@ function warnIfAdapterSkipsAkmContent(
       }
     });
     if (akmCandidates.length === 0) continue; // akm would drop it too — not a shadowing case
-    skippedCount += akmCandidates.length;
-    skippedDirs.push(dir);
+    count += akmCandidates.length;
+    dirs.push(dir);
   }
-  if (skippedCount === 0) return;
-  skippedDirs.sort();
-  warnOnce(
-    "adapter-skip-akm-content",
-    `${adapter.id} adapter skipped ${skippedCount} file${skippedCount === 1 ? "" : "s"} in ` +
-      `${skippedDirs.map((dir) => `${dir}/`).join(", ")} — set components.<name>.adapter to "akm" to index them`,
-  );
+  return count === 0 ? undefined : { adapter: adapter.id, count, dirs: dirs.sort() };
+}
+
+/** `index_meta` key holding each bundle's {@link AdapterSkip}, so a skip is reported once, and again only when it changes. */
+const ADAPTER_SKIPS_META_KEY = "adapterSkips";
+
+/** The component's name in its bundle's config; `main` is the implicit one every bundle has. */
+function configuredComponentName(config: AkmConfig, bundleId: string): string {
+  return Object.keys(config.bundles?.[bundleId]?.components ?? {})[0] ?? "main";
+}
+
+/**
+ * Warn about each bundle whose skipped content differs from what the last index recorded, then record this run's
+ * skips. A configured bundle that was not scanned this run keeps its record.
+ */
+function reportAdapterSkips(db: Database, config: AkmConfig, plans: readonly SourceScanPlan[]): void {
+  let previous: Record<string, AdapterSkip> = {};
+  try {
+    previous = JSON.parse(getMeta(db, ADAPTER_SKIPS_META_KEY) ?? "{}") as Record<string, AdapterSkip>;
+  } catch (error) {
+    warn(`[index] the recorded adapter skips cannot be read (${toErrorMessage(error)}); each skip is reported again.`);
+    previous = {};
+  }
+  // A removed bundle takes its record with it.
+  const configured = new Set(plans.map((plan) => plan.component.id));
+  const next = Object.fromEntries(Object.entries(previous).filter(([id]) => configured.has(id)));
+  for (const plan of plans) {
+    if (!plan.adapter || !plan.walkComplete) continue;
+    const id = plan.component.id;
+    if (!plan.adapterSkip) {
+      delete next[id];
+      continue;
+    }
+    next[id] = plan.adapterSkip;
+    if (JSON.stringify(previous[id]) === JSON.stringify(plan.adapterSkip)) continue;
+    const { adapter, count, dirs } = plan.adapterSkip;
+    warn(
+      `[index] bundle "${id}": ${adapter} adapter skipped ${count} file${count === 1 ? "" : "s"} in ` +
+        `${dirs.map((dir) => `${dir}/`).join(", ")} — set bundles.${id}.components.${configuredComponentName(config, id)}.adapter to "akm" to index them`,
+    );
+  }
+  if (JSON.stringify(next) !== JSON.stringify(previous)) setMeta(db, ADAPTER_SKIPS_META_KEY, JSON.stringify(next));
 }
 
 function buildSourceScanPlans(
@@ -1082,6 +1162,8 @@ function buildSourceScanPlans(
         dirGroups: new Map(),
         removals: [],
         walkComplete: false,
+        incompleteReason: sourceAdded.unresolved.reason,
+        incompletePath: sourceAdded.unresolved.path ?? "unknown",
       };
     }
     const adapter = adapterForId(component.adapter);
@@ -1089,7 +1171,7 @@ function buildSourceScanPlans(
       includeAllDirectories: adapter?.walkMode === "all-directories",
     });
     const dirGroups = groupFileContextsByDir(walked.files);
-    if (adapter) warnIfAdapterSkipsAkmContent(component, walked.files, adapter);
+    const adapterSkip = adapter ? adapterSkippedAkmContent(component, walked.files, adapter) : undefined;
     return {
       currentStashDir,
       component,
@@ -1097,6 +1179,8 @@ function buildSourceScanPlans(
       dirGroups,
       removals: [],
       walkComplete: walked.complete,
+      ...(walked.incompleteReason ? { incompleteReason: walked.incompleteReason } : {}),
+      ...(adapterSkip ? { adapterSkip } : {}),
     };
   });
 
@@ -1177,7 +1261,7 @@ function buildSourceScanPlans(
  * {@link persistDirRecords} later writes.
  *
  * The per-dir document drain (`drainDirDocuments` × the component's dispatched
- * `adapter.recognize`, F4a M-core-2) is synchronous, but the walk still runs
+ * `adapter.recognize`) is synchronous, but the walk still runs
  * outside `db.transaction()` so the persist pass can be a single synchronous
  * transaction.
  */
@@ -1187,6 +1271,7 @@ async function scanSourceDirs(
   isIncremental: boolean,
   builtAtMs: number,
   hadRemovedSources: boolean,
+  config: AkmConfig,
   onProgress?: (event: IndexProgressEvent) => void,
   reconcileMissingDirs = true,
 ): Promise<SourceScanResult> {
@@ -1194,8 +1279,10 @@ async function scanSourceDirs(
   let skippedDirs = 0;
   let generatedCount = 0;
   const warnings: string[] = [];
+  const incompleteSources: IncompleteIndexSource[] = [];
   const seenPaths = new Set<string>();
   const { plans, handoffDirs } = buildSourceScanPlans(db, allSourceEntries, isIncremental, reconcileMissingDirs);
+  reportAdapterSkips(db, config, plans);
 
   const dirRecords: DirRecord[] = [];
   let processedDirs = 0;
@@ -1242,15 +1329,30 @@ async function scanSourceDirs(
 
     if (!walkComplete) {
       for (const dirPath of dirGroups.keys()) seenPaths.add(path.resolve(dirPath));
-      warn(`[index] source "${component.id}" was not scanned completely; preserving its last-known-good rows.`);
+      const reason = plan.incompleteReason ?? "the scan did not complete";
+      incompleteSources.push({
+        bundle: component.id,
+        component: configuredComponentName(config, component.id),
+        path: plan.incompletePath ?? currentStashDir,
+        reason,
+      });
+      warn(
+        `[index] source "${component.id}" was not scanned completely; preserving its last-known-good rows. ${reason}`,
+      );
       continue;
     }
 
-    // Owner ruling 2026-07-21: dispatch each component's DETECTED adapter (§4).
+    // Dispatch each component's DETECTED adapter.
     // An unknown adapter id has no `adapterForId` match → skip the whole
     // component with a warning (one bundle = one component = one adapter).
     if (!adapter) {
       for (const dirPath of dirGroups.keys()) seenPaths.add(path.resolve(dirPath));
+      incompleteSources.push({
+        bundle: component.id,
+        component: configuredComponentName(config, component.id),
+        path: currentStashDir,
+        reason: `unknown adapter id "${component.adapter}"`,
+      });
       warn(`Skipping component "${component.id}": unknown adapter id "${component.adapter}".`);
       continue;
     }
@@ -1266,8 +1368,7 @@ async function scanSourceDirs(
     }
 
     for (const [dirPath, ctxs] of dirGroups) {
-      // Adapter-owned filtering (owner ruling 2026-07-21): the drain no longer
-      // pre-filters with AKM-stash policy — each adapter's `recognize` claims or
+      // Adapter-owned filtering: the drain does not pre-filter with AKM-stash policy — each adapter's `recognize` claims or
       // abstains on its own bundle's walked files. The core walk keeps only the
       // universal hygiene `walkStashFlat` already applies (.git/dot-dirs/etc.).
       const indexableFiles = ctxs.map((ctx) => ctx.absPath);
@@ -1305,7 +1406,7 @@ async function scanSourceDirs(
         continue;
       }
 
-      // F4a M-core-2 (the flip): drain the dir's `IndexDocument` stream via the
+      // Drain the dir's `IndexDocument` stream via the
       // component's dispatched `adapter.recognize` (broken workflows dropped-with-
       // warning at the drain layer) and reconstruct the durable `IndexDocument`s.
       drainObserverForTests?.(dirPath, ctxs.length);
@@ -1373,6 +1474,7 @@ async function scanSourceDirs(
     generatedCount,
     warnings,
     complete: plans.every((plan) => plan.walkComplete && plan.adapter !== undefined),
+    incompleteSources,
   };
 }
 
@@ -1446,10 +1548,35 @@ function persistDirRecords(
   bundleByRoot: ReadonlyMap<string, { bundleId: string; componentId: string; adapterId: string }>,
   maxInputTokens: number,
   library: { stashDir: string; sourceDirs: string[]; unresolvedBundleIds: ReadonlySet<string | undefined> },
-): void {
+): IndexMoves | undefined {
   const deletedEntries = new Map<number, DeletedEntry>();
-  const legacyMoves: LegacyRefMove[] = [];
+  const legacyMoves: RefMove[] = [];
   const findPersisted = db.prepare("SELECT id, content_hash, file_path, adapter_id FROM entries WHERE item_ref = ?");
+  // Files renamed or moved on disk since the last run: each vanished entry whose content is now at another path.
+  let pairing: MovePairing = { pairs: [], unpaired: [] };
+  const movedRefs = new Set<string>();
+
+  const pairMoves = (): MovePairing => {
+    const stored: StoredEntry[] = [];
+    const fresh: NewEntry[] = [];
+    for (const record of dirRecords) {
+      const bundle = bundleByRoot.get(path.resolve(record.currentStashDir));
+      if (record.skip || !bundle) continue;
+      const kept = new Set<string>();
+      for (const entry of record.remove ? [] : (record.stash?.entries ?? [])) {
+        const found = identifyEntry(record.dirPath, bundle, entry, record.conceptIdByFile);
+        if ("problem" in found) continue;
+        kept.add(found.provenance.itemRef);
+        const contentHash = record.hashByFile?.get(found.entryPath);
+        if (contentHash !== undefined && !findPersisted.get(found.provenance.itemRef))
+          fresh.push({ filePath: found.entryPath, provenance: found.provenance, contentHash });
+      }
+      stored.push(
+        ...getStoredEntriesInDirectory(db, record.dirPath, bundle.bundleId).filter((row) => !kept.has(row.itemRef)),
+      );
+    }
+    return pairMovedFiles(stored, fresh);
+  };
 
   const persist = (): void => {
     // Entries are about to describe another library: the old watermark is not theirs, and neither are rows outside
@@ -1463,6 +1590,12 @@ function persistDirRecords(
     }
     setMeta(db, "stashDir", safeRealpath(library.stashDir));
     setMeta(db, "stashDirs", JSON.stringify(library.sourceDirs));
+    pairing = pairMoves();
+    for (const pair of pairing.pairs) {
+      repointEntry(db, pair.id, pair.entry);
+      rekeyLlmCache(db, pair.oldFilePath, pair.entry.filePath);
+      movedRefs.add(pair.entry.provenance.itemRef);
+    }
     for (const {
       dirPath,
       currentStashDir,
@@ -1528,23 +1661,15 @@ function persistDirRecords(
       if (stash) {
         const sourceRoot = `${path.resolve(currentStashDir)}${path.sep}`;
         for (const entry of stash.entries) {
-          const entryPath = entry.filename ? path.join(dirPath, entry.filename) : null;
-          if (!entryPath) {
-            warn(`Skipping entry with no resolvable path in ${dirPath}`);
+          const found = identifyEntry(dirPath, bundle, entry, conceptIdByFile);
+          if ("problem" in found) {
+            warn(found.problem);
             continue;
           }
-
-          const adapterConceptId = conceptIdByFile?.get(entryPath);
-          if (!adapterConceptId) {
-            warn(`Skipping entry without adapter-owned concept identity: ${entryPath}`);
-            continue;
-          }
+          const { entryPath, provenance } = found;
           // content_hash = doc.hash from the drain, keyed by the recognized
           // file's path. A missing hash preserves the existing value on upsert.
           const contentHash = hashByFile?.get(entryPath);
-          // Adapter-owned concept identity is path-based and cannot be replaced
-          // by presentation fields such as type/title.
-          const provenance = deriveEntryProvenance(bundle, entry.type, entry.name, adapterConceptId);
 
           // Two files of one source can claim one ref (a skill's references/a.md and
           // knowledge/skills/x/references/a.md are both knowledge/skills/x/references/a). The file with
@@ -1573,7 +1698,9 @@ function persistDirRecords(
           persistedRows++;
 
           const previous = sameVariant ? holder : undefined;
+          const moved = movedRefs.has(provenance.itemRef);
           const unchanged =
+            !moved &&
             previous !== undefined &&
             contentHash !== undefined &&
             previous.content_hash === contentHash &&
@@ -1588,7 +1715,7 @@ function persistDirRecords(
             rekeyLegacyEntry(db, legacy, provenance.conceptId, entryPath);
             legacyMoves.push(legacy);
           }
-          upsertEntry(db, entryPath, withFileSize(entry, entryPath), provenance, contentHash, maxInputTokens);
+          upsertEntry(db, entryPath, withFileSize(entry, entryPath), provenance, contentHash, maxInputTokens, moved);
         }
       }
 
@@ -1634,11 +1761,40 @@ function persistDirRecords(
   deleteUsageEventsForEntries(
     [...deletedEntries.values()].filter((entry) => refStillIndexed.get(entry.itemRef) == null),
   );
+  const movedAssets = pairing.pairs.map((pair) => ({ from: pair.oldItemRef, to: pair.entry.provenance.itemRef }));
   try {
-    rewriteLegacyStateRefs(legacyMoves);
+    rekeyStateRefs([...legacyMoves, ...movedAssets.map(({ from, to }) => ({ oldItemRef: from, newItemRef: to }))]);
   } catch (error) {
-    warn(`[index] could not carry over the history of ${legacyMoves.length} re-keyed asset(s): ${String(error)}`);
+    warnings.push(
+      `[index] could not carry over the history of ${legacyMoves.length + movedAssets.length} re-keyed asset(s): ${String(error)}`,
+    );
   }
+  // Each move is recorded on the asset's new ref, which later moves re-key with the rest of its history.
+  for (const { from, to } of movedAssets) appendEvent({ eventType: "moved", ref: to, metadata: { from } });
+  if (pairing.unpaired.length > 0) {
+    warnings.push(
+      `[index] ${pairing.unpaired.length} moved file(s) not paired: other files with identical content appeared, so ` +
+        `each is indexed as a new asset and its history stays with the old ref (${pairing.unpaired.map((entry) => entry.itemRef).join(", ")}).`,
+    );
+  }
+  return movedAssets.length > 0 || pairing.unpaired.length > 0
+    ? { moved: movedAssets, unpaired: pairing.unpaired.length }
+    : undefined;
+}
+
+/** The path and durable identity of a drained entry, or why it has none. */
+function identifyEntry(
+  dirPath: string,
+  bundle: { bundleId: string; componentId: string; adapterId: string },
+  entry: IndexDocument,
+  conceptIdByFile: Map<string, string> | undefined,
+): { entryPath: string; provenance: EntryProvenance } | { problem: string } {
+  const entryPath = entry.filename ? path.join(dirPath, entry.filename) : null;
+  if (!entryPath) return { problem: `Skipping entry with no resolvable path in ${dirPath}` };
+  const adapterConceptId = conceptIdByFile?.get(entryPath);
+  if (!adapterConceptId) return { problem: `Skipping entry without adapter-owned concept identity: ${entryPath}` };
+  // Adapter-owned concept identity is path-based and cannot be replaced by presentation fields such as type/title.
+  return { entryPath, provenance: deriveEntryProvenance(bundle, entry.type, entry.name, adapterConceptId) };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -1967,8 +2123,8 @@ export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntr
   const EMA_DECAY = 0.7;
   const scoped = onlyEntryId !== undefined;
 
-  // Purge stale usage events (90-day retention). usage_events lives in state.db
-  // (Chunk-8 WI-8.3); its table is created by state migration 020.
+  // Purge stale usage events (90-day retention). usage_events lives in state.db;
+  // its table is created by state migration 020.
   if (!scoped) purgeOldUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS);
 
   // Aggregate explicit user demand per `entry_ref` from state.db's usage_events

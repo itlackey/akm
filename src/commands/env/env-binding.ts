@@ -22,6 +22,7 @@ import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { substituteRefTokens } from "../../core/ref-token";
 import { readValue } from "../../core/secret-value";
+import { stderr } from "../../core/stdio";
 import { warnOnce } from "../../core/warn";
 import { loadEnv } from "./env";
 
@@ -61,6 +62,8 @@ export interface ResolveEnvBindingOptions {
   except?: string[];
   /** Callback for non-fatal warnings (defaults to stderr). */
   warn?: (message: string) => void;
+  /** Check that every `${ref}` is owned by a bundle, without reading a secret or recording an access. */
+  locateOnly?: boolean;
 }
 
 /**
@@ -69,7 +72,7 @@ export interface ResolveEnvBindingOptions {
  * `env_access` audit event.
  */
 export function resolveEnvBinding(target: string, options: ResolveEnvBindingOptions = {}): ResolvedEnvBinding {
-  const warn = options.warn ?? ((message: string) => process.stderr.write(`warning: ${message}\n`));
+  const warn = options.warn ?? ((message: string) => stderr().write(`warning: ${message}\n`));
   const { conceptId, absPath, source, bundleId } = resolveEnvPath(target);
   const envRef = makeEnvRef(conceptId, source);
 
@@ -119,7 +122,11 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
     values: substituted,
     missing,
     secretValues,
-  } = substituteRefTokens(envValues, resolveRefToken, isInstalledBundle);
+  } = substituteRefTokens(
+    envValues,
+    options.locateOnly ? (ref) => (resolveRefOwner(ref) ? { kind: "path", path: "" } : undefined) : resolveRefToken,
+    isInstalledBundle,
+  );
   if (missing.length > 0) {
     throw new NotFoundError(
       `Env "${envRef}" references asset(s) that no bundle owns: ${missing.join(", ")}. Nothing was injected.`,
@@ -132,7 +139,7 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
   const keys = Object.keys(envValues);
 
   // Audit trail: keys only, never values.
-  appendEvent({ eventType: "env_access", ref: envRef, metadata: { keys } });
+  if (!options.locateOnly) appendEvent({ eventType: "env_access", ref: envRef, metadata: { keys } });
 
   return { ref: envRef, values: envValues, keys, secretValues };
 }

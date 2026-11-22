@@ -1,0 +1,719 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * WI-7.7 — focused unit coverage for the per-ref improve-loop pass extracted
+ * from `runImproveLoopStage` (R31 decomposition, testability requirement).
+ *
+ * `processImproveLoopRef` is driven directly with injected `reflectFn` /
+ * `distillFn` seams — no LLM, no index.db — and its returned {@link LoopRefTally}
+ * is asserted instead of shared mutable loop state. `prepareImproveLoopEnv`
+ * pins the derived guards the orchestrator hands every pass.
+ */
+
+import { afterEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
+import { akmDistill, deriveLessonRef } from "../../../../src/commands/improve/distill";
+import type { AkmImproveOptions, ImproveLoopState } from "../../../../src/commands/improve/improve-run-types";
+import {
+  type ImproveLoopEnv,
+  prepareImproveLoopEnv,
+  processImproveLoopRef,
+} from "../../../../src/commands/improve/loop-stages";
+import type { Proposal } from "../../../../src/commands/proposal/repository";
+import { typeForStashDir } from "../../../../src/core/asset/asset-placement";
+import type { AkmConfig } from "../../../../src/core/config/config";
+import { UsageError } from "../../../../src/core/errors";
+import { appendEvent, readEvents } from "../../../../src/core/events";
+import type { AkmReflectResult, ImproveEligibleRef } from "../../../../src/core/improve-types";
+import { openStateDatabase } from "../../../../src/core/state-db";
+import type { RunnerSpec } from "../../../../src/integrations/agent/runner";
+import { getImproveLedgerRow } from "../../../../src/storage/repositories/improve-ledger-repository";
+import { testLlmRunner } from "../../../_helpers/llm-runner";
+import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../../../_helpers/sandbox";
+
+const disposers: Array<{ cleanup: () => void }> = [];
+
+afterEach(() => {
+  for (const d of disposers.splice(0)) d.cleanup();
+});
+
+function freshSandbox(): { stashDir: string; eventsDbPath: string } {
+  const dataSb = sandboxXdgDataHome();
+  disposers.push(dataSb);
+  const stash: SandboxedDir = makeStashDir();
+  disposers.push(stash);
+  return { stashDir: stash.dir, eventsDbPath: `${dataSb.dir}/akm/state.db` };
+}
+
+function eligibleRef(ref: string): ImproveEligibleRef {
+  return { ref, type: typeForStashDir(ref.split("/")[0] ?? "") ?? "", reason: "scope-type" };
+}
+
+function reflectOk(ref: string): AkmReflectResult {
+  return {
+    schemaVersion: 2,
+    ok: true,
+    proposal: { id: "prop-1", confidence: 0.9 } as unknown as Proposal,
+    ref,
+    engine: "test-engine",
+    durationMs: 5,
+  };
+}
+
+function reflectFail(reason: string, error = `${reason} error`): AkmReflectResult {
+  return { schemaVersion: 2, ok: false, reason: reason as never, error, exitCode: null };
+}
+
+function distillQueued(ref: string, proposalKind: "lesson" | "knowledge") {
+  return {
+    schemaVersion: 1 as const,
+    ok: true,
+    outcome: "queued" as const,
+    inputRef: ref,
+    proposalRef: deriveLessonRef(ref),
+    proposalKind,
+    proposal: { id: "dp-1", confidence: 0.8 } as unknown as Proposal,
+  };
+}
+
+/** Build a minimal `ImproveLoopEnv` around injected verb seams. */
+function makeEnv(overrides: Partial<ImproveLoopEnv> & { stashDir: string }): ImproveLoopEnv {
+  const options: AkmImproveOptions = { stashDir: overrides.stashDir, config: {} as AkmConfig };
+  return {
+    scope: { mode: "all" },
+    options,
+    reflectFn: () => {
+      throw new Error("reflectFn not expected in this scenario");
+    },
+    distillFn: () => {
+      throw new Error("distillFn not expected in this scenario");
+    },
+    distillCooledRefs: new Set(),
+    distillOnlyRefSet: new Set(),
+    recentErrors: {},
+    improveProfile: {},
+    resolvedPlan: {
+      processes: { reflect: { runner: null }, distill: { runner: null } },
+    } as unknown as ImproveLoopEnv["resolvedPlan"],
+    skipDistillDueToRequirePlannedRefs: false,
+    remainingBudgetMs: () => 60_000,
+    distillSourceRun: "distill-1",
+    ...overrides,
+  };
+}
+
+describe("processImproveLoopRef — reflect half", () => {
+  test("successful reflect records a `reflect` action and no error pushes", async () => {
+    const { stashDir } = freshSandbox();
+    const seen: unknown[] = [];
+    const env = makeEnv({
+      stashDir,
+      reflectFn: (args) => {
+        seen.push(args);
+        return Promise.resolve(reflectOk("knowledge/guide.md"));
+      },
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
+
+    // The distill half always records its type-filter skip for knowledge refs
+    // (default distill allowedTypes is ["memory"]) — same as the inline loop did.
+    expect(tally.actions.map((a) => a.mode)).toEqual(["reflect", "distill-skipped"]);
+    expect(tally.recentErrorPushes).toEqual([]);
+    expect(tally.reflectsWithErrorContext).toBe(0);
+    expect(tally.memoryRefsForInference).toEqual([]);
+    // knowledge: refs are not distill candidates — the distill half is silent.
+    expect(seen).toHaveLength(1);
+  });
+
+  test.each([
+    ["content_policy_reject", "reflect-guard-rejected", true],
+    ["unsupported_type", "reflect-skipped", false],
+    ["no_change", "reflect-skipped", false],
+    ["quality_rejected", "reflect-guard-rejected", false],
+    ["agent_error", "reflect-failed", true],
+  ] as const)("reflect failure reason %s → mode %s (error push: %p)", async (reason, mode, pushed) => {
+    const { stashDir } = freshSandbox();
+    const env = makeEnv({ stashDir, reflectFn: () => Promise.resolve(reflectFail(reason)) });
+
+    const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual([mode, "distill-skipped"]);
+    expect(tally.recentErrorPushes).toEqual(pushed ? [{ originator: "reflect", message: `${reason} error` }] : []);
+  });
+
+  test.each([
+    ["a thrown runtime error", new Error("model server unreachable")],
+    ["a persistence failure", new Error("SQLITE_FULL: database or disk is full")],
+  ])("%s is recorded as an error action, not a rejection", async (_label, thrown) => {
+    const { stashDir } = freshSandbox();
+    const env = makeEnv({ stashDir, reflectFn: () => Promise.reject(thrown) });
+
+    const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
+
+    expect(tally.actions).toEqual([
+      { ref: "knowledge/guide.md", mode: "error", result: { ok: false, error: thrown.message } },
+    ]);
+  });
+
+  test("recent reflect errors are injected as avoidPatterns and tallied", async () => {
+    const { stashDir } = freshSandbox();
+    let receivedAvoid: string[] | undefined;
+    const env = makeEnv({
+      stashDir,
+      recentErrors: { reflect: ["boom 1", "boom 2"], "schema-repair": ["cross-task noise"] },
+      reflectFn: (args) => {
+        receivedAvoid = (args as { avoidPatterns?: string[] }).avoidPatterns;
+        return Promise.resolve(reflectOk("knowledge/guide.md"));
+      },
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
+
+    // O-5 / #378: only reflect-originator errors reach the prompt.
+    expect(receivedAvoid).toEqual(["boom 1", "boom 2"]);
+    expect(tally.reflectsWithErrorContext).toBe(1);
+  });
+
+  test("the profile's defectFilter reaches reflect", async () => {
+    const { stashDir } = freshSandbox();
+    const defectFilter = { placeholders: ["DRAFT"], frontmatterKeys: [] };
+    let received: unknown;
+    const env = makeEnv({
+      stashDir,
+      improveProfile: { processes: { reflect: { defectFilter } } },
+      reflectFn: (args) => {
+        received = args.defectFilter;
+        return Promise.resolve(reflectOk("knowledge/guide.md"));
+      },
+    });
+
+    await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
+
+    expect(received).toEqual(defectFilter);
+  });
+
+  test("profile type-filter records reflect-skipped without invoking the seam", async () => {
+    const { stashDir } = freshSandbox();
+    const env = makeEnv({
+      stashDir,
+      improveProfile: { processes: { reflect: { allowedTypes: ["memory"] } } } as ImproveLoopEnv["improveProfile"],
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["reflect-skipped", "distill-skipped"]);
+    expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "type-filter" });
+    expect(tally.actions[1]!.result).toEqual({ ok: true, reason: "type-filter" });
+  });
+
+  test(".derived memory refs skip reflect with the B6 synthetic action", async () => {
+    const { stashDir } = freshSandbox();
+    const env = makeEnv({ stashDir });
+
+    const tally = await processImproveLoopRef(eligibleRef("memories/note.derived"), env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
+    expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "derived-memory-reflect-skipped" });
+  });
+});
+
+/** The improve-ledger row the loop recorded for `ref` under `source`, if any. */
+function ledgerRow(stashDir: string, ref: string, source: string) {
+  const db = openStateDatabase();
+  try {
+    return getImproveLedgerRow(db, stashDir, ref, source);
+  } finally {
+    db.close();
+  }
+}
+
+describe("processImproveLoopRef — reflect outcomes land in the improve ledger", () => {
+  test("a no-op reflect records `unchanged` (a revisit window) and pushes no error", async () => {
+    const { stashDir } = freshSandbox();
+    const env = makeEnv({ stashDir, reflectFn: () => Promise.resolve(reflectFail("no_change")) });
+
+    const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
+
+    expect(tally.actions[0]!.mode).toBe("reflect-skipped");
+    expect(tally.recentErrorPushes).toEqual([]);
+    expect(ledgerRow(stashDir, "knowledge/guide.md", "reflect")).toMatchObject({ outcome: "unchanged" });
+  });
+
+  test("a transient reflect failure records nothing; a guard rejection records `failed`; a quality rejection is left to reflect itself", async () => {
+    const { stashDir } = freshSandbox();
+    const failing = makeEnv({ stashDir, reflectFn: () => Promise.resolve(reflectFail("parse_error")) });
+    await processImproveLoopRef(eligibleRef("knowledge/failing.md"), failing);
+    expect(ledgerRow(stashDir, "knowledge/failing.md", "reflect")).toBeUndefined();
+
+    const guarded = makeEnv({ stashDir, reflectFn: () => Promise.resolve(reflectFail("content_policy_reject")) });
+    await processImproveLoopRef(eligibleRef("knowledge/guarded.md"), guarded);
+    expect(ledgerRow(stashDir, "knowledge/guarded.md", "reflect")).toMatchObject({
+      outcome: "failed",
+      nextEligibleAt: null,
+    });
+
+    const judged = makeEnv({ stashDir, reflectFn: () => Promise.resolve(reflectFail("quality_rejected")) });
+    await processImproveLoopRef(eligibleRef("knowledge/judged.md"), judged);
+    expect(ledgerRow(stashDir, "knowledge/judged.md", "reflect")).toBeUndefined();
+  });
+
+  test("the row is keyed by the candidate's item_ref when it has one", async () => {
+    const { stashDir } = freshSandbox();
+    const env = makeEnv({ stashDir, reflectFn: () => Promise.resolve(reflectFail("no_change")) });
+
+    await processImproveLoopRef({ ...eligibleRef("knowledge/guide.md"), itemRef: "stash//knowledge/guide.md" }, env);
+
+    expect(ledgerRow(stashDir, "stash//knowledge/guide.md", "reflect")).toMatchObject({ outcome: "unchanged" });
+    expect(ledgerRow(stashDir, "knowledge/guide.md", "reflect")).toBeUndefined();
+  });
+
+  test("a dry run records nothing", async () => {
+    const { stashDir } = freshSandbox();
+    const env = makeEnv({
+      stashDir,
+      options: { stashDir, dryRun: true, config: {} as AkmConfig },
+      reflectFn: () => Promise.resolve(reflectFail("no_change")),
+    });
+
+    await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
+
+    expect(ledgerRow(stashDir, "knowledge/guide.md", "reflect")).toBeUndefined();
+  });
+});
+
+describe("processImproveLoopRef — distill half", () => {
+  const memoryRef = "memories/finding-1";
+
+  function distillOnlyEnv(overrides: Partial<ImproveLoopEnv> & { stashDir: string }): ImproveLoopEnv {
+    // distill-only refs skip the reflect call entirely (Bug D2), isolating the
+    // distill half; the ref bears a feedback signal so the weak-signal gate is open.
+    return makeEnv({
+      distillOnlyRefSet: new Set([memoryRef]),
+      ...overrides,
+    });
+  }
+
+  test("queued lesson proposal records `distill` and queues the memory for inference", async () => {
+    const { stashDir } = freshSandbox();
+    const env = distillOnlyEnv({ stashDir, distillFn: () => Promise.resolve(distillQueued(memoryRef, "lesson")) });
+
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+    expect(tally.memoryRefsForInference).toEqual([memoryRef]);
+  });
+
+  test("promotion to knowledge does NOT queue the memory for inference", async () => {
+    const { stashDir } = freshSandbox();
+    const env = distillOnlyEnv({ stashDir, distillFn: () => Promise.resolve(distillQueued(memoryRef, "knowledge")) });
+
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+    expect(tally.memoryRefsForInference).toEqual([]);
+  });
+
+  test("a skipped distill records `unchanged`; a transport failure records nothing", async () => {
+    const { stashDir } = freshSandbox();
+    const skipped = distillOnlyEnv({
+      stashDir,
+      distillFn: () =>
+        Promise.resolve({
+          schemaVersion: 1 as const,
+          ok: true,
+          outcome: "skipped" as const,
+          inputRef: memoryRef,
+          proposalRef: deriveLessonRef(memoryRef),
+          skipReason: "input_too_short",
+        }),
+    });
+    await processImproveLoopRef(eligibleRef(memoryRef), skipped);
+    expect(ledgerRow(stashDir, memoryRef, "distill")).toMatchObject({
+      outcome: "unchanged",
+      detail: "input_too_short",
+    });
+
+    const failedRef = "memories/finding-2";
+    const transport = makeEnv({
+      stashDir,
+      distillOnlyRefSet: new Set([failedRef]),
+      distillFn: () =>
+        Promise.resolve({
+          schemaVersion: 1 as const,
+          ok: false,
+          outcome: "llm_failed" as const,
+          inputRef: failedRef,
+          proposalRef: deriveLessonRef(failedRef),
+        }),
+    });
+    await processImproveLoopRef(eligibleRef(failedRef), transport);
+    expect(ledgerRow(stashDir, failedRef, "distill")).toBeUndefined();
+  });
+
+  // The lesson derived from the memory already exists: distill skips it, which the loop records the same way.
+  test("a lesson that already exists is left in the ledger as unchanged, with its reason", async () => {
+    const { stashDir } = freshSandbox();
+    fs.mkdirSync(path.join(stashDir, "lessons"), { recursive: true });
+    fs.writeFileSync(
+      path.join(stashDir, "lessons", "memory-finding-1-lesson.md"),
+      "---\ndescription: Prefer ripgrep over grep on large repos\nwhen_to_use: Searching a large repo\n---\n\nUse rg.\n",
+    );
+    const runner: RunnerSpec = testLlmRunner(
+      { endpoint: "http://fake.invalid/v1/chat/completions", model: "test-model" },
+      "default",
+    );
+    const env = distillOnlyEnv({
+      stashDir,
+      improveProfile: { processes: { distill: { enabled: true } } } as ImproveLoopEnv["improveProfile"],
+      resolvedPlan: {
+        processes: { reflect: { runner: null }, distill: { runner } },
+      } as unknown as ImproveLoopEnv["resolvedPlan"],
+      distillFn: (args) =>
+        akmDistill({
+          ...args,
+          stashDir,
+          chat: async () => {
+            throw new Error("the writer must not be called for a lesson that exists");
+          },
+          lookupFn: async () => null,
+        }),
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+    expect(tally.actions[0]!.result).toMatchObject({ outcome: "skipped", skipReason: "lesson_exists" });
+    expect(ledgerRow(stashDir, memoryRef, "distill")).toMatchObject({ outcome: "unchanged", detail: "lesson_exists" });
+  });
+
+  test("every distill call of the stage pass carries the stage's run token (B10-31)", async () => {
+    const { stashDir } = freshSandbox();
+    const tokens: Array<string | undefined> = [];
+    const env = distillOnlyEnv({
+      stashDir,
+      distillSourceRun: "distill-1700000000000",
+      distillFn: (args) => {
+        tokens.push(args.sourceRun);
+        return Promise.resolve(distillQueued(memoryRef, "lesson"));
+      },
+    });
+
+    await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(tokens).toEqual(["distill-1700000000000"]);
+  });
+
+  test("requirePlannedRefs guard skips distill-only refs", async () => {
+    const { stashDir } = freshSandbox();
+    const env = distillOnlyEnv({ stashDir, skipDistillDueToRequirePlannedRefs: true });
+
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
+    expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "require_planned_refs" });
+  });
+
+  test("B7: a UsageError from distill is recorded as a validation_failed distill action", async () => {
+    const { stashDir } = freshSandbox();
+    const env = distillOnlyEnv({
+      stashDir,
+      distillFn: () => Promise.reject(new UsageError("frontmatter invalid")),
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+    expect(tally.actions[0]!.result).toMatchObject({ ok: false, outcome: "validation_failed" });
+    expect(ledgerRow(stashDir, memoryRef, "distill")).toMatchObject({
+      outcome: "failed",
+      detail: "frontmatter invalid",
+    });
+  });
+
+  test("a non-Usage error from distill is recorded as a generic error action", async () => {
+    const { stashDir } = freshSandbox();
+    const env = distillOnlyEnv({ stashDir, distillFn: () => Promise.reject(new Error("engine crashed")) });
+
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["error"]);
+    expect(tally.actions[0]!.result).toEqual({ ok: false, error: "engine crashed" });
+  });
+});
+
+describe("processImproveLoopRef — a memory flagged wrong and not edited since", () => {
+  const memoryRef = "memories/flagged-1";
+  const DAY_MS = 24 * 3_600_000;
+  const REASON = "flagged wrong since its last edit";
+
+  /**
+   * A memory file last written `editedAgoMs` ago and one feedback event per
+   * `feedback` entry (`agoMs` before now), with the candidate that names the file.
+   */
+  function flaggedMemory(
+    sandbox: { stashDir: string; eventsDbPath: string },
+    editedAgoMs: number,
+    feedback: Array<{ signal: "negative" | "positive"; agoMs: number }>,
+  ) {
+    const filePath = path.join(sandbox.stashDir, "memories", "flagged-1.md");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, "---\ndescription: Server ports\n---\nThe default port is 8000.\n");
+    const editedAt = new Date(Date.now() - editedAgoMs);
+    fs.utimesSync(filePath, editedAt, editedAt);
+    for (const { signal, agoMs } of feedback) {
+      appendEvent(
+        { eventType: "feedback", ref: memoryRef, metadata: { signal, reason: "the default port is 4096" } },
+        { dbPath: sandbox.eventsDbPath, now: () => Date.now() - agoMs },
+      );
+    }
+    return { ...eligibleRef(memoryRef), filePath };
+  }
+
+  /** A loop env that distils `memoryRef` (a feedback-bearing, distill-only ref) unless the gate stops it. */
+  function distillingEnv(
+    sandbox: { stashDir: string; eventsDbPath: string },
+    overrides: Partial<ImproveLoopEnv> = {},
+  ): ImproveLoopEnv {
+    return makeEnv({
+      stashDir: sandbox.stashDir,
+      eventsCtx: { dbPath: sandbox.eventsDbPath },
+      distillOnlyRefSet: new Set([memoryRef]),
+      distillFn: () => Promise.resolve(distillQueued(memoryRef, "lesson")),
+      ...overrides,
+    });
+  }
+
+  test("distill is skipped, reported as a skip and left in the ledger; reflect still runs", async () => {
+    const sandbox = freshSandbox();
+    const candidate = flaggedMemory(sandbox, 3 * DAY_MS, [{ signal: "negative", agoMs: DAY_MS }]);
+    const env = makeEnv({
+      stashDir: sandbox.stashDir,
+      eventsCtx: { dbPath: sandbox.eventsDbPath },
+      reflectFn: () => Promise.resolve(reflectOk(memoryRef)),
+      // distillFn is left as the default: it throws if the gate lets the ref through.
+    });
+
+    const tally = await processImproveLoopRef(candidate, env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["reflect", "distill-skipped"]);
+    expect(tally.actions[1]!.result).toEqual({ ok: true, reason: REASON });
+    expect(tally.memoryRefsForInference).toEqual([]);
+    expect(ledgerRow(sandbox.stashDir, memoryRef, "distill")).toMatchObject({ outcome: "unchanged", detail: REASON });
+    expect(
+      readEvents({ type: "improve_skipped", ref: memoryRef }, { dbPath: sandbox.eventsDbPath }).events.map(
+        (e) => e.metadata,
+      ),
+    ).toEqual([{ reason: "distill_flagged_wrong" }]);
+  });
+
+  test("a distill-only ref is skipped the same way", async () => {
+    const sandbox = freshSandbox();
+    const candidate = flaggedMemory(sandbox, 3 * DAY_MS, [{ signal: "negative", agoMs: DAY_MS }]);
+    const env = distillingEnv(sandbox, { distillFn: () => Promise.reject(new Error("distilled a flagged memory")) });
+
+    const tally = await processImproveLoopRef(candidate, env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
+    expect(tally.actions[0]!.result).toEqual({ ok: true, reason: REASON });
+  });
+
+  test("a memory edited after the flag is distilled", async () => {
+    const sandbox = freshSandbox();
+    const candidate = flaggedMemory(sandbox, DAY_MS, [{ signal: "negative", agoMs: 3 * DAY_MS }]);
+
+    const tally = await processImproveLoopRef(candidate, distillingEnv(sandbox));
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+    expect(ledgerRow(sandbox.stashDir, memoryRef, "distill")).toBeUndefined();
+  });
+
+  test("positive feedback after the edit does not flag a memory", async () => {
+    const sandbox = freshSandbox();
+    const candidate = flaggedMemory(sandbox, 3 * DAY_MS, [{ signal: "positive", agoMs: DAY_MS }]);
+
+    const tally = await processImproveLoopRef(candidate, distillingEnv(sandbox));
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+  });
+
+  test("a flag older than the 30-day feedback window does not hold a memory back", async () => {
+    const sandbox = freshSandbox();
+    const candidate = flaggedMemory(sandbox, 60 * DAY_MS, [{ signal: "negative", agoMs: 40 * DAY_MS }]);
+
+    const tally = await processImproveLoopRef(candidate, distillingEnv(sandbox));
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+  });
+
+  test("an explicit --scope ref is distilled anyway", async () => {
+    const sandbox = freshSandbox();
+    const candidate = flaggedMemory(sandbox, 3 * DAY_MS, [{ signal: "negative", agoMs: DAY_MS }]);
+    const env = distillingEnv(sandbox, { scope: { mode: "ref", value: memoryRef } });
+
+    const tally = await processImproveLoopRef(candidate, env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+  });
+});
+
+describe("processImproveLoopRef — a memory marked deprecated or superseded", () => {
+  const memoryRef = "memories/retired-1";
+  const REASON = "marked deprecated or superseded";
+
+  function memoryWithState(sandbox: { stashDir: string }, beliefState?: string) {
+    const filePath = path.join(sandbox.stashDir, "memories", "retired-1.md");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const state = beliefState ? `beliefState: ${beliefState}\n` : "";
+    fs.writeFileSync(filePath, `---\ndescription: Old ports\n${state}---\nThe default port was 8000.\n`);
+    return { ...eligibleRef(memoryRef), filePath };
+  }
+
+  function distillingEnv(sandbox: { stashDir: string; eventsDbPath: string }, overrides: Partial<ImproveLoopEnv> = {}) {
+    return makeEnv({
+      stashDir: sandbox.stashDir,
+      eventsCtx: { dbPath: sandbox.eventsDbPath },
+      distillOnlyRefSet: new Set([memoryRef]),
+      distillFn: () => Promise.resolve(distillQueued(memoryRef, "lesson")),
+      ...overrides,
+    });
+  }
+
+  for (const state of ["deprecated", "superseded"]) {
+    test(`a ${state} memory is skipped, reported as a skip and left in the ledger`, async () => {
+      const sandbox = freshSandbox();
+      const candidate = memoryWithState(sandbox, state);
+      const env = distillingEnv(sandbox, { distillFn: () => Promise.reject(new Error("distilled a retired memory")) });
+
+      const tally = await processImproveLoopRef(candidate, env);
+
+      expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
+      expect(tally.actions[0]!.result).toEqual({ ok: true, reason: REASON });
+      expect(ledgerRow(sandbox.stashDir, memoryRef, "distill")).toMatchObject({ outcome: "unchanged", detail: REASON });
+      expect(
+        readEvents({ type: "improve_skipped", ref: memoryRef }, { dbPath: sandbox.eventsDbPath }).events.map(
+          (e) => e.metadata,
+        ),
+      ).toEqual([{ reason: "distill_deprecated_or_superseded" }]);
+    });
+  }
+
+  for (const state of [undefined, "active", "asserted", "contradicted"]) {
+    test(`a memory with beliefState ${state ?? "unset"} is distilled`, async () => {
+      const sandbox = freshSandbox();
+      const tally = await processImproveLoopRef(memoryWithState(sandbox, state), distillingEnv(sandbox));
+
+      expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+    });
+  }
+
+  test("an explicit --scope ref is distilled anyway", async () => {
+    const sandbox = freshSandbox();
+    const env = distillingEnv(sandbox, { scope: { mode: "ref", value: memoryRef } });
+
+    const tally = await processImproveLoopRef(memoryWithState(sandbox, "deprecated"), env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+  });
+});
+
+describe("processImproveLoopRef — a memory with bare or no recent feedback", () => {
+  const memoryRef = "memories/praised-1";
+
+  function distillingEnv(sandbox: { stashDir: string; eventsDbPath: string }) {
+    return makeEnv({
+      stashDir: sandbox.stashDir,
+      eventsCtx: { dbPath: sandbox.eventsDbPath },
+      distillOnlyRefSet: new Set([memoryRef]),
+      distillFn: () => Promise.resolve(distillQueued(memoryRef, "lesson")),
+    });
+  }
+
+  test("a memory whose only feedback is a bare positive reaches distill", async () => {
+    const sandbox = freshSandbox();
+    appendEvent(
+      { eventType: "feedback", ref: memoryRef, metadata: { signal: "positive" } },
+      { dbPath: sandbox.eventsDbPath },
+    );
+
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), distillingEnv(sandbox));
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+  });
+
+  test("a memory with no recent feedback, planned by the proactive lane, reaches distill", async () => {
+    const sandbox = freshSandbox();
+    const env = makeEnv({
+      stashDir: sandbox.stashDir,
+      eventsCtx: { dbPath: sandbox.eventsDbPath },
+      reflectFn: () => Promise.resolve(reflectFail("no_change")),
+      distillFn: () => Promise.resolve(distillQueued(memoryRef, "lesson")),
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(tally.actions.map((a) => a.mode)).toContain("distill");
+  });
+});
+
+describe("prepareImproveLoopEnv — derived guards", () => {
+  function runCtx(overrides: Partial<ImproveLoopState>): ImproveLoopState {
+    const stashDir = (overrides.options as { stashDir?: string } | undefined)?.stashDir;
+    return {
+      eventsCtx: {},
+      primaryStashDir: stashDir,
+      scope: { mode: "all" },
+      options: { config: {} as AkmConfig },
+      reflectFn: () => Promise.reject(new Error("unused")),
+      distillFn: () => Promise.reject(new Error("unused")),
+      loopRefs: [],
+      actions: [],
+      distillCooledRefs: new Set(),
+      distillOnlyRefs: [],
+      recentErrors: {},
+      startMs: Date.now(),
+      budgetMs: 60_000,
+      improveProfile: {},
+      resolvedPlan: {
+        processes: { reflect: { runner: null }, distill: { runner: null } },
+      } as unknown as ImproveLoopState["resolvedPlan"],
+      ...overrides,
+    };
+  }
+
+  test("requirePlannedRefs trips only when every loop ref is distill-only", () => {
+    const { stashDir } = freshSandbox();
+    const profile = {
+      processes: { distill: { requirePlannedRefs: true } },
+    } as ImproveLoopState["improveProfile"];
+    const base = {
+      options: { stashDir, config: {} as AkmConfig },
+      improveProfile: profile,
+      distillOnlyRefs: [eligibleRef("memories/a")],
+    };
+
+    const allCooled = prepareImproveLoopEnv(runCtx({ ...base, loopRefs: [eligibleRef("memories/a")] }));
+    expect(allCooled.skipDistillDueToRequirePlannedRefs).toBe(true);
+
+    const withReflectEligible = prepareImproveLoopEnv(
+      runCtx({ ...base, loopRefs: [eligibleRef("memories/a"), eligibleRef("knowledge/fresh.md")] }),
+    );
+    expect(withReflectEligible.skipDistillDueToRequirePlannedRefs).toBe(false);
+
+    // Flag unset → guard never trips, even when all refs are distill-only.
+    const flagUnset = prepareImproveLoopEnv(
+      runCtx({ ...base, improveProfile: {}, loopRefs: [eligibleRef("memories/a")] }),
+    );
+    expect(flagUnset.skipDistillDueToRequirePlannedRefs).toBe(false);
+  });
+
+  test("distillOnlyRefSet mirrors distillOnlyRefs", () => {
+    const env = prepareImproveLoopEnv(
+      runCtx({ distillOnlyRefs: [eligibleRef("memories/a"), eligibleRef("memories/b")] }),
+    );
+    expect([...env.distillOnlyRefSet].sort()).toEqual(["memories/a", "memories/b"]);
+  });
+});

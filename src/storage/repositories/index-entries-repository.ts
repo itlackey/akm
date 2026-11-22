@@ -65,7 +65,8 @@ function embeddedInput(entry: IndexDocument, maxInputTokens: number): string {
  * The entry's vector is deleted when the text it is embedded from changes,
  * that is when the search text cut to `maxInputTokens` (the embedding cap,
  * `embedding.maxInputTokens`) differs from the cut of the stored document. A
- * change past the cut rewrites the keyword rows and keeps the vector.
+ * change past the cut rewrites the keyword rows and keeps the vector. A caller that knows the content is the
+ * same file (a moved file) passes `keepVector`: the vector stays whatever the search text now says.
  */
 export function upsertEntry(
   db: Database,
@@ -74,6 +75,7 @@ export function upsertEntry(
   provenance: EntryProvenance,
   contentHash?: string,
   maxInputTokens: number = DEFAULT_MAX_INPUT_TOKENS,
+  keepVector = false,
 ): number {
   // Hot path during indexing — cache prepared statements per database
   // connection so we don't pay the SQL parse/compile cost on every call.
@@ -108,7 +110,7 @@ export function upsertEntry(
     ) as { id: number } | undefined;
     if (!result) throw new Error("upsertEntry: item_ref not found after upsert");
 
-    if (previous?.id === result.id && vectorStale) deleteEntryVectors(db, result.id);
+    if (previous?.id === result.id && vectorStale && !keepVector) deleteEntryVectors(db, result.id);
     replaceFtsEntry(
       db,
       result.id,
@@ -378,8 +380,8 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
     } else deleteFtsEntries(db, [row.id]);
   })();
 
-  // Re-point usage history at the new ref. Chunk-8 WI-8.3: usage_events lives in
-  // state.db now, so this is a SEPARATE cross-DB transaction (best-effort — the
+  // Re-point usage history at the new ref. usage_events lives in
+  // state.db, so this is a SEPARATE cross-DB transaction (best-effort — the
   // rename itself already committed above; on failure the next full index's
   // relinkUsageEvents re-attaches by ref). See the docstring for the spellings
   // and the live-asset-wins collision policy.
@@ -442,6 +444,20 @@ function selectRowsInDirectory<T extends { file_path: string }>(
   }
   const rows = db.prepare(sql).all(...params) as T[];
   return rows.filter((row) => path.dirname(row.file_path) === resolvedDir);
+}
+
+/** The entries stored for the files directly in one directory of a bundle, with each file's content hash. */
+export function getStoredEntriesInDirectory(
+  db: Database,
+  dirPath: string,
+  bundleId: string,
+): Array<{ id: number; itemRef: string; filePath: string; contentHash: string | null }> {
+  return selectRowsInDirectory<{ id: number; item_ref: string; file_path: string; content_hash: string | null }>(
+    db,
+    dirPath,
+    "id, item_ref, file_path, content_hash",
+    bundleId,
+  ).map((row) => ({ id: row.id, itemRef: row.item_ref, filePath: row.file_path, contentHash: row.content_hash }));
 }
 
 function rowsInDirectory(db: Database, dirPath: string, bundleId?: string): Array<{ id: number; item_ref: string }> {
@@ -554,7 +570,7 @@ export function renameEntriesBundleId(db: Database, oldBundleId: string, newBund
  * Diff-persist orphan delete: remove every entry under `dirPath` whose durable
  * `item_ref` is not in `keepRefs`.
  *
- * Replaces the old per-dir `deleteEntriesByDir` + full re-insert: the caller
+ * Unlike a per-dir delete + full re-insert, the caller
  * upserts the current file set first (ON CONFLICT preserving `entries.id`, so
  * embeddings / utility / usage stay attached to unchanged rows), then calls this
  * to prune only the departed rows. The net row-state for the directory is identical
@@ -798,7 +814,7 @@ export function getEntryCount(db: Database): number {
 /**
  * Per-asset-type entry counts (keyed by `type`, e.g. "skill",
  * "knowledge", "memory"). Used by `akm info` to break down the aggregate
- * `indexStats.entryCount` (R-057).
+ * `indexStats.entryCount`.
  */
 export function getEntryCountByType(db: Database): Record<string, number> {
   const rows = db.prepare("SELECT type, COUNT(*) AS cnt FROM entries GROUP BY type").all() as Array<{
@@ -943,7 +959,7 @@ export function getIndexedBundleIdsByDir(db: Database, dirPath: string): string[
  * Resolve a single `entries.id` by exact `file_path` (the canonical on-disk
  * path), or `undefined` if no row matches.
  *
- * Lifted verbatim (WS5) from the inline `SELECT id FROM entries WHERE
+ * Lifted verbatim from the inline `SELECT id FROM entries WHERE
  * file_path = ? LIMIT 1` in commands/search.ts so all `entries` SQL lives in
  * this module. The result is a plain number materialised before return —
  * nothing lazy crosses a connection boundary.
@@ -975,7 +991,7 @@ export function getIndexedFilePaths(db: Database): Set<string> {
  * Resolve a single `entries.file_path` by primary key, or `undefined` if no
  * row matches.
  *
- * Lifted verbatim (WS5) from the inline `SELECT file_path FROM entries WHERE
+ * Lifted verbatim from the inline `SELECT file_path FROM entries WHERE
  * id = ?` in commands/feedback-cli.ts. Unlike {@link getEntryById}, this does
  * NOT parse `document_json`, so a row with corrupt JSON still yields its path —
  * preserving feedback-cli's pre-extraction behaviour byte-for-byte.
@@ -1000,7 +1016,7 @@ export function getEntryByRef(db: Database, ref: string): { id: number } | null 
  * A snapshot of every `item_ref` currently in `entries`, for batched liveness
  * checks against many candidate refs — one query instead of one
  * `getEntryByRef` round trip per candidate (the orphan-state GC pass,
- * `loop-stages.ts` `runOrphanStateGcPass`/`isStateRefLive`, used to probe each
+ * `loop-stages.ts` `runOrphanStateGcPass`/`isStateRefLive`, would otherwise probe each
  * pending row individually). `conceptIds` holds the part of each `item_ref`
  * after its bundle prefix, for the bare-conceptId suffix match
  * `findEntryIdByBundleRef` does when a ref carries no bundle — bundle slugs
@@ -1070,8 +1086,8 @@ function resolveUsageEventEntryId(db: Database, ref: string): number | undefined
  * After a full rebuild, entry IDs change. This restores each event's link
  * using the stable `entry_ref` column so usage history survives a reindex.
  *
- * Cross-DB (Chunk-8 WI-8.3): `usage_events` lives in `stateDb` while `entries`
- * lives in `indexDb`. The stale-id null-out (formerly a single-DB
+ * Cross-DB: `usage_events` lives in `stateDb` while `entries`
+ * lives in `indexDb`. The stale-id null-out (not a single-DB
  * `NOT IN (SELECT id FROM entries)`) is done in two bounded passes — the set of
  * distinct linked entry_ids in usage_events is small — and the re-resolution
  * reads `entries` from `indexDb`.

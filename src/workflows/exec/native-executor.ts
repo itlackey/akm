@@ -735,7 +735,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
     // A failed dispatch-row insert means NOTHING dispatched (the row is the
     // dispatch's precondition) — fail the unit with the real cause instead of
     // letting the throw escape into the scheduler, where a swallowed worker
-    // error is indistinguishable from "never claimed" and used to be
+    // error is indistinguishable from "never claimed" and would be
     // misreported as an aborted, never-dispatched unit.
     return {
       unitId: request.unitId,
@@ -941,11 +941,9 @@ async function dispatchUnit(
         // NOTE: `validation_error` is deliberately outside PROGRAM_RETRY_REASONS,
         // so no `retry.on:` can name it and a schema-violating unit is not
         // re-run — see "fails with `validation_error` and is NOT re-run" in
-        // tests/integration/workflows/exec-unit.test.ts. A sweep finding
-        // proposed mapping it onto `llm_invalid_json` (which the parser accepts
-        // but this path never emits) to make such failures retryable; that is a
-        // behaviour change against an intentional design, not a bug fix, so it
-        // is left alone. Reconciling the vocabulary is a 0.9.2 decision.
+        // tests/integration/workflows/exec-unit.test.ts. It is intentionally not
+        // mapped onto `llm_invalid_json` (which the parser accepts but this path
+        // never emits).
         failureReason: structured.reason,
         error: structured.errors.join("; "),
         text: structured.raw,

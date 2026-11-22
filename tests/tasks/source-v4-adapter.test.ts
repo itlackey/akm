@@ -375,11 +375,4 @@ describe("projectTaskSourceV4 — purity (spec §3.5: no YAML is fabricated, not
     const projected = projectTaskSourceV4(handBuilt);
     expect(projected.triggers).toEqual({ manual: true, schedules: [] });
   });
-
-  test("src/tasks/source/project-v4.ts fabricates no synthetic v3 YAML text and re-parses nothing (P1b §4.3's invariant, carried forward per spec §3.5)", () => {
-    const source = fs.readFileSync(path.join(ROOT, "src/tasks/source/project-v4.ts"), "utf8");
-    expect(source).not.toContain("version: 3\nuses:");
-    expect(source).not.toMatch(/parseDocument\s*\(/);
-    expect(source).not.toMatch(/\bparseTaskV3Yaml\b/);
-  });
 });

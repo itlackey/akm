@@ -61,7 +61,7 @@ Registries are stored in the `registries` array of `config.json`:
 | `name` | string | none | Label |
 | `enabled` | boolean | `true` | Set `false` to keep the entry but skip it when searching |
 | `provider` | string | `static-index` | `static-index` or `skills-sh` |
-| `options` | object | none | Provider-specific options |
+| `options` | object | none | Deprecated, removed in 0.11: stored from `registry add --options`, but nothing reads it |
 
 A registry URL with a username or password is dropped with a warning, and the
 built-in providers send no credentials; host the index at a credential-free
@@ -137,16 +137,9 @@ What `bundle add` does:
    for authors who want to review their own bundle.
 3. Finds the bundle root: the package root when it looks like a bundle in any
    layout akm recognizes (see [Bundle types](bundle-types.md)), otherwise the
-   shallowest nested directory that does. If the package's `package.json` has
-   an `akm.include` array, only those paths are copied.
+   shallowest nested directory that does.
 4. Saves the source to `bundles` in `config.json`, records the resolved version
    and revision in `akm.lock` under the data directory, and re-indexes.
-
-```jsonc
-{ "akm": { "include": ["scripts", "skills", "commands"] } }   // package.json
-```
-
-`include` paths are relative to the package root.
 
 ### Managing installed bundles
 
@@ -171,7 +164,7 @@ akm import "npm:@scope/my-bundle//scripts/deploy.sh" --asset-ref --dest ./projec
 
 `--dest` copies into a directory instead of a bundle; the type directory is
 appended, so the last example writes `./project/.claude/scripts/deploy.sh`. If
-the origin in the ref is not installed, `clone` fetches it to the cache and
+the origin in the ref is not installed, `import --asset-ref` fetches it to the cache and
 extracts the one asset without adding the package as a bundle.
 
 A short ref such as `scripts/deploy.sh` resolves against the default bundle
@@ -246,7 +239,6 @@ registry/
     1.2.3/                 # resolved version, reused across installs
       artifact.tar.gz      # downloaded archive
       extracted/           # extracted contents
-      selected/            # subset from akm.include, if any
 ```
 
 The version directory is the resolved version for `npm` and `git` sources, or a

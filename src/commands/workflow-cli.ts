@@ -10,11 +10,12 @@
  * with `akm lint --type workflows`.
  */
 
-import { getStringArg, parseTimeoutValue } from "../cli/parse-args";
+import { getStringArg, parseNonNegativeIntFlag, parseTimeoutValue } from "../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output, outputWithExitCode } from "../cli/shared";
 import { armAbortDeadline } from "../core/abort-deadline";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
 import { NotFoundError, TransientError, type TransientErrorCode, UsageError } from "../core/errors";
+import { stdout } from "../core/stdio";
 import { warn } from "../core/warn";
 import { assertWorkflowMarkdownName, createWorkflowAsset, getWorkflowTemplate } from "../workflows/authoring/authoring";
 import type { WorkflowParameterFlag } from "../workflows/ir/params";
@@ -151,7 +152,7 @@ const workflowCreateCommand = defineJsonCommand({
       // Raw document, not an envelope — the retired `workflow template` was
       // format-exempt for the same reason: `--print > starter.md` must yield
       // a usable starter file, not `{ok,template,kind}` JSON.
-      process.stdout.write(getWorkflowTemplate());
+      stdout().write(getWorkflowTemplate());
       return;
     }
     const result = createWorkflowAsset({
@@ -211,7 +212,7 @@ export const workflowRunCommand = defineJsonCommand({
     const { findLiveLockedRunOfRef, runWorkflowSteps } = await import("../workflows/exec/run-workflow.js");
     const parameterFlags = parseWorkflowParameterFlags(rawArgs, args.target);
     const maxSteps = parseIntegerFlag(getStringArg(args, "max-steps"), "--max-steps", 1);
-    const maxRetries = parseIntegerFlag(getStringArg(args, "max-retries"), "--max-retries", 0);
+    const maxRetries = parseNonNegativeIntFlag(getStringArg(args, "max-retries"), "--max-retries");
     const timeoutMs = parseWorkflowTimeout(getStringArg(args, "timeout"));
     const skipIfLocked = args["skip-if-locked"];
     const controller = new AbortController();
@@ -372,17 +373,11 @@ export function parseWorkflowParameterFlags(rawArgs: readonly string[], target: 
   return flags;
 }
 
-function parseIntegerFlag(
-  raw: string | undefined,
-  name: string,
-  minimum: number,
-  maximum?: number,
-): number | undefined {
+function parseIntegerFlag(raw: string | undefined, name: string, minimum: number): number | undefined {
   if (raw === undefined) return undefined;
   const value = Number.parseInt(raw, 10);
-  if (!/^\d+$/.test(raw) || value < minimum || (maximum !== undefined && value > maximum)) {
-    const range = maximum === undefined ? `at least ${minimum}` : `from ${minimum} through ${maximum}`;
-    throw new UsageError(`${name} must be an integer ${range}, got "${raw}".`, "INVALID_FLAG_VALUE");
+  if (!/^\d+$/.test(raw) || value < minimum) {
+    throw new UsageError(`${name} must be an integer at least ${minimum}, got "${raw}".`, "INVALID_FLAG_VALUE");
   }
   return value;
 }
@@ -418,17 +413,8 @@ const workflowPlanCommand = defineJsonCommand({
     ref: { type: "positional", description: "Workflow ref (workflows/<name>)", required: true },
   },
   async run({ args }) {
-    // json-by-default, like every other verb (#903). This used to default to
-    // the human summary, which cost ~60 lines of branch: `args.format` cannot
-    // detect "no format named" (citty parses per level, so a global
-    // pre-subcommand `--format json` is eaten by the ROOT command and the leaf
-    // reads undefined), so it had to route through `getParsedInvocation()`,
-    // then fold in a persisted `output.format`, and then still leave a
-    // resolved "json" on the text branch because that is indistinguishable
-    // from "nothing configured". The last compromise meant an explicit
-    // `--format json` silently did nothing for anyone whose config already
-    // resolved to json. `--format text` still renders the summary through the
-    // registered formatter; it is just no longer the unmarked default.
+    // json by default, like every other verb. `--format text` renders the
+    // summary through the registered formatter.
     await runWorkflowPlan(args.ref);
   },
 });
@@ -464,7 +450,8 @@ const workflowResumeCommand = defineJsonCommand({
 export const workflowCommand = defineGroupCommand({
   meta: {
     name: "workflow",
-    description: "Experimental: author, inspect, and execute step-by-step workflow assets",
+    description:
+      "Deprecated, removed in 0.11: author, inspect, and execute step-by-step workflow assets; tasks take over their ordered steps",
   },
   subCommands: {
     status: workflowStatusCommand,
@@ -476,8 +463,6 @@ export const workflowCommand = defineGroupCommand({
     plan: workflowPlanCommand,
   },
   // Bare `akm workflow` runs `akm workflow list` (see insertBareListSubcommand in
-  // src/cli.ts). This group was previously
-  // hand-rolled on `defineCommand` with its own `hasWorkflowSubcommand` guard,
-  // which duplicated the subcommand names in a second hand-maintained set;
-  // `defineGroupCommand` derives the guard from `subCommands` directly.
+  // src/cli.ts). `defineGroupCommand` derives the bare-group guard from
+  // `subCommands`.
 });

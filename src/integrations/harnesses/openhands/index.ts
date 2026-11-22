@@ -24,6 +24,10 @@ export class OpenhandsHarness implements AkmHarness {
   build({ bin, args }: HarnessSpawn, req: AgentDispatchRequest): BuiltCommand {
     const argv = [bin, ...args];
     if (req.prompt !== undefined) argv.push("--headless", `--task=${req.prompt}`);
-    return { argv, ...(req.model ? { env: { [MODEL_ENV]: req.model } } : {}) };
+    return {
+      argv,
+      ...(req.model ? { env: { [MODEL_ENV]: req.model } } : {}),
+      ...(req.prompt !== undefined ? { failureStream: "stderr" as const } : {}),
+    };
   }
 }

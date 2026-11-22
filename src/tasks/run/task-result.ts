@@ -27,10 +27,11 @@ import type { SpawnFn } from "../../core/subprocess";
 import type { InputFlag } from "../../execution/input-contract";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
-import type { TaskHistoryStep } from "../../storage/repositories/task-history-repository";
+import type { TaskHistoryRun, TaskHistoryStep } from "../../storage/repositories/task-history-repository";
 import type { runWorkflowSteps } from "../../workflows/exec/run-workflow";
 import type { ExecutionProvenanceContext, TaskInvocation } from "../model/invocation";
 import type { PreparedTaskV3Script, PreparedTaskV3Shell } from "../prepare/prepared-execution";
+import type { TaskV5Start } from "../v5/flags";
 
 /** `active` and `interrupted` occur only on stored history rows: an attempt in flight, and one whose owner is gone with no finish recorded. */
 export type TaskRunStatus = "completed" | "blocked" | "failed" | "active" | "interrupted";
@@ -57,6 +58,12 @@ export interface TaskRunResult {
     | { kind: "unknown" };
   /** Per-step record of a `steps:` task run (Experimental). */
   steps?: TaskHistoryStep[];
+  /** The task's result, as `akm run` gives it back: the last step's, after secret values are removed. Version 5 tasks only. */
+  result?: unknown;
+  /** The version 5 run this is an attempt of. */
+  run?: TaskHistoryRun;
+  /** The bundle the task was read from; absent on rows written before it was recorded. */
+  bundle?: string;
   /** Workflow run id (for workflow targets) or agent reason/error (for command targets). */
   detail?: { runId?: string; reason?: string; error?: string; exitCode?: number | null };
   /** Whether the OS scheduler or a person/script started the run; read back from task history, absent when not recorded. */
@@ -68,8 +75,8 @@ export interface TaskRunResult {
 export interface RunTaskOptions {
   /**
    * The bundle directory the task asset resolves against. Resolved once at
-   * the `akm task run` command boundary (WI-9.10 CLI-wide sweep) and threaded
-   * in — this runner no longer reads the ambient stash-dir resolver.
+   * the `akm task run` command boundary and threaded
+   * in — this runner does not read the ambient stash-dir resolver.
    *
    * The option key is `bundleDir`; a `stashDir`-only options object does not
    * resolve the task.
@@ -111,15 +118,15 @@ export interface RunTaskOptions {
   /** Runs after immutable preparation/history reservation and before native dispatch (tests). */
   beforeNativeDispatch?: (task: PreparedTaskV3Shell | PreparedTaskV3Script) => void;
   /**
-   * Raw, exact-name `akm task run` input flags captured by `tasks-cli.ts`'s Stage
-   * 1 (`parseTaskInputFlags`). `load-task.ts`'s Stage 2 materializes these
+   * Reads the raw, exact-name `akm task run` input flags, once the task's declared value inputs are known: Stage 1
+   * (`parseTaskInputFlags`, in `tasks-cli.ts`). `load-task.ts`'s Stage 2 materializes these
    * against the task's contract (task source v4: its `inputs:` declarations;
    * v3: the empty contract, so ANY flag on a v3 task is `UNKNOWN_FLAG`) and attaches
    * the result to the constructed `TaskInvocation.inputs`. Optional — a caller
    * that passes none is unaffected. Validation only: nothing
    * downstream of `loadPreparedTask` reads this back.
    */
-  inputFlags?: readonly InputFlag[];
+  inputFlags?: (valueInputs: ReadonlySet<string>) => readonly InputFlag[];
   /**
    * TEST-ONLY. Runs once, with the `TaskInvocation` Stage 2 constructs,
    * before dispatch — never read by production code. `TaskInvocation`
@@ -131,6 +138,13 @@ export interface RunTaskOptions {
    * against the real constructed value rather than a bespoke side channel.
    */
   captureTaskInvocation?: (invocation: TaskInvocation) => void;
+  /**
+   * Version 5 tasks: reads what the start gave (flags, inputs, `--resume`, `--skip-if-locked`), called once the task
+   * is known to be version 5. Absent: the start has `inputFlags` as its inputs and no flags.
+   */
+  start?: (valueInputs: ReadonlySet<string>) => TaskV5Start;
+  /** Version 5 tasks (tests): the environment akm runs in, which clean steps take what they keep and `inherit:` from. Default: this process's. */
+  hostEnv?: NodeJS.ProcessEnv;
   /**
    * Experimental, steps tasks: how a `task:` step resolves and runs another
    * task. `check` fails before any step runs; the CLI layer supplies both, since

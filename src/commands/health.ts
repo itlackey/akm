@@ -4,11 +4,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { daysToMs, resolveStashDir } from "../core/common";
+import { daysToMs, resolveStashDir, toErrorMessage } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
-import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../core/paths";
+import { getConfigPath, getDataDir, getStateDbPathInDataDir } from "../core/paths";
 import {
   classifyStateDbError,
   isStateDbCorruption,
@@ -23,7 +23,6 @@ import { probeLlmEndpoint } from "../llm/client";
 import { type Database, openDatabase } from "../storage/database";
 import { insertEvent } from "../storage/repositories/events-repository";
 import { getExtractOutcomeCountsSince } from "../storage/repositories/extract-sessions-repository";
-import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries } from "../storage/repositories/index-entries-repository";
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
 import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
@@ -42,11 +41,14 @@ import { collectConfigSkewAdvisory } from "./health/config-skew";
 import { runConnectionsAndHarnessesCheck } from "./health/connections-and-harnesses-check";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
 import { collectEgressAdvisory, type EgressConfigView } from "./health/egress";
-import { emptyImproveMetrics, roundRate } from "./health/improve-metrics";
-import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "./health/llm-usage";
+import { roundOrNull, type TaskRunCounts } from "./health/improve-metrics";
+import { collectIndexSourcesCheck } from "./health/index-sources";
+import { readLlmUsageAggregate } from "./health/llm-usage";
+import { collectOpencodeMajorAdvisory } from "./health/opencode-major";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
+import { readHealthIndex } from "./health/read-index";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
-import { readSemanticSearchState } from "./health/semantic-search-check";
+import { readSemanticSearchHealth } from "./health/semantic-search-check";
 import { buildTypeDirectoryAdvisory } from "./health/type-directory-check";
 import {
   type AkmHealthResult,
@@ -66,10 +68,11 @@ import {
   computeTaskWindowRates,
   resolveWindowCompare,
 } from "./health/windows";
+import { collectWorkflowFilesAdvisory } from "./health/workflow-files";
 
 export interface AkmHealthOptions {
   since?: string;
-  /** Row grouping. `run` emits one row per improve_runs entry (was `--detail per-run`). */
+  /** Row grouping. `run` emits one row per improve_runs entry. */
   groupBy?: "run";
   windowCompare?: string;
   windows?: WindowSpec[];
@@ -228,12 +231,13 @@ interface TaskHistoryPhase {
   probe: ReturnType<typeof probeStateDbRoundTrip>;
   stateDbIntegrity: ReturnType<typeof runStateDbIntegrityCheck>;
   stateDbFreelist: ReturnType<typeof getStateDbFreelistInfo>;
-  taskRowCount: number;
   stuckActiveRuns: number;
   stuckActiveTasks: { taskId: string; ageMs: number }[];
-  taskFailRate: number;
+  unverifiedActiveTasks: { taskId: string; ageMs: number }[];
+  taskRuns: TaskRunCounts;
+  taskFailRate: number | null;
   worstTaskFailRate: { taskId: string; rate: number; rows: number } | null;
-  agentFailureRate: number;
+  agentFailureRate: number | null;
   agentFailureReasonCounts: Record<string, number>;
 }
 
@@ -309,14 +313,9 @@ function gatherTaskHistoryPhase(
   const stateDbIntegrity = runStateDbIntegrityCheck(stateDbPath);
   const stateDbFreelist = getStateDbFreelistInfo(stateDbPath);
 
-  // A marked "command" row or a legacy (unmarked) "prompt"
-  // row is the agent/LLM arm; an unmarked "command" row is the legacy
-  // native shell/script arm and must not be counted here (see
-  // isAgentTaskHistoryRow's header comment, referenced from
-  // computeTaskWindowRates, for the full mapping).
   const taskRows = queryTaskHistory(db, { since });
   // Still-active runs must not age out of the historical reporting window.
-  const rates = computeTaskWindowRates(taskRows, now, queryTaskHistory(db, { status: "active" }));
+  const rates = computeTaskWindowRates(taskRows, queryTaskHistory(db, { status: "active" }));
 
   return {
     tableNames,
@@ -324,9 +323,10 @@ function gatherTaskHistoryPhase(
     probe,
     stateDbIntegrity,
     stateDbFreelist,
-    taskRowCount: taskRows.length,
     stuckActiveRuns: rates.stuckActiveRuns,
     stuckActiveTasks: dedupeStuckActiveTasks(rates.stuckActiveRows, now),
+    unverifiedActiveTasks: dedupeStuckActiveTasks(rates.unverifiedActiveRows, now),
+    taskRuns: rates.taskRuns,
     taskFailRate: rates.taskFailRate,
     worstTaskFailRate: computeWorstTaskFailRate(taskRows),
     agentFailureRate: rates.agentFailureRate,
@@ -431,6 +431,23 @@ function gatherAncillaryAdvisories(
     // Non-fatal.
   }
 
+  const workflowFiles = collectWorkflowFilesAdvisory(options.stashDir);
+  if (workflowFiles) advisories.push(workflowFiles);
+
+  try {
+    const opencodeMajor = collectOpencodeMajorAdvisory(Boolean(options.probe));
+    if (opencodeMajor) advisories.push(opencodeMajor);
+  } catch (error) {
+    advisories.push({
+      name: "opencode-major",
+      kind: "deterministic",
+      confidence: "high",
+      status: "unknown",
+      reason: "blocked",
+      message: `Could not look for OpenCode 1 harnesses: ${toErrorMessage(error)}`,
+    });
+  }
+
   // #896: report the data dir's total size and its largest top-level
   // subdirectory, so a disk-usage blowup (e.g. unpruned migration snapshot
   // backups, #897) is self-diagnosing instead of requiring `du` archaeology.
@@ -466,10 +483,7 @@ function gatherAncillaryAdvisories(
  * mirrors {@link detectIndexStateGenerationMismatch}'s best-effort shape.
  */
 function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult | undefined {
-  let indexDb: ReturnType<typeof openReadonlyExistingDatabase>;
-  try {
-    indexDb = openReadonlyExistingDatabase(getDbPath());
-    if (!indexDb) return undefined;
+  const read = readHealthIndex((indexDb) => {
     // Directory intent is read only from inside the component root that owns the entry.
     // Both spellings of each root: indexed paths may be realpaths (a symlinked
     // stash, macOS /var -> /private/var) while config holds the configured path.
@@ -491,17 +505,8 @@ function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult 
     return buildTypeDirectoryAdvisory(entries, undefined, (absPath) =>
       absPath.startsWith(stashRoot) ? path.relative(stashRoot, absPath) : absPath,
     );
-  } catch {
-    return undefined;
-  } finally {
-    if (indexDb) {
-      try {
-        closeDatabase(indexDb);
-      } catch {
-        // Best-effort advisory: a close failure must not abort health.
-      }
-    }
-  }
+  });
+  return "value" in read ? read.value : undefined;
 }
 
 /**
@@ -518,11 +523,7 @@ function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult 
  * diagnostics and must not make the state health path throw.
  */
 function detectIndexStateGenerationMismatch(stateDb: Database): HealthCheckResult | undefined {
-  let indexDb: Database | undefined;
-  try {
-    indexDb = openReadonlyExistingDatabase(getDbPath());
-    if (!indexDb) return undefined;
-
+  const read = readHealthIndex((indexDb): HealthCheckResult | undefined => {
     const byId = indexDb.prepare<{ item_ref: string | null }>("SELECT item_ref FROM entries WHERE id = ?");
     const rows = stateDb
       .prepare<{ entry_id: number; entry_ref: string }>(
@@ -549,17 +550,8 @@ function detectIndexStateGenerationMismatch(stateDb: Database): HealthCheckResul
         "Stop concurrent writers and run 'akm index --full' to relink state to the current index.",
       evidence: { mismatches, sample },
     };
-  } catch {
-    return undefined;
-  } finally {
-    if (indexDb) {
-      try {
-        closeDatabase(indexDb);
-      } catch {
-        // Best-effort advisory: a close failure must not abort health.
-      }
-    }
-  }
+  });
+  return "value" in read ? read.value : undefined;
 }
 
 interface WindowComparePhaseResult {
@@ -592,7 +584,7 @@ function resolveWindowComparePhase(
     windowResults = windowSpecs.map((spec) => {
       const winSince = parseHealthSince(spec.since);
       const winUntil = spec.until ? parseHealthSince(spec.until) : new Date(now()).toISOString();
-      const bundle = buildWindowMetrics(db, stateDbPath, winSince, winUntil, now, options.readOnly === true);
+      const bundle = buildWindowMetrics(db, stateDbPath, winSince, winUntil, options.readOnly === true);
       return {
         name: spec.name,
         since: winSince,
@@ -640,14 +632,15 @@ function degradedStateDbReport(hardCheck: HealthCheckResult, options: AkmHealthO
     since: parseHealthSince(options.since),
     hardChecks: [hardCheck],
     advisories: [],
+    // state.db could not be read: nothing was measured.
     metrics: {
-      taskFailRate: 0,
-      agentFailureRate: 0,
-      agentFailureReasonCounts: {},
-      stuckActiveRuns: 0,
-      llmUsage: emptyLlmUsageAggregate(),
+      taskFailRate: null,
+      agentFailureRate: null,
+      agentFailureReasonCounts: null,
+      stuckActiveRuns: null,
+      llmUsage: null,
     },
-    improve: emptyImproveMetrics(),
+    improve: null,
   };
 }
 
@@ -808,10 +801,12 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       stateDbIntegrity: taskHistory.stateDbIntegrity,
       stateDbFreelist: taskHistory.stateDbFreelist,
       stateDbMigrations: { applied: opened.applied, ...(opened.backupPath ? { backupPath: opened.backupPath } : {}) },
-      taskRowCount: taskHistory.taskRowCount,
       taskFailRate: taskHistory.taskFailRate,
       stuckActiveRuns: taskHistory.stuckActiveRuns,
       stuckActiveTasks: taskHistory.stuckActiveTasks,
+      unverifiedActiveTasks: taskHistory.unverifiedActiveTasks,
+      taskRuns: taskHistory.taskRuns,
+      indexSources: collectIndexSourcesCheck(),
       worstTaskFailRate: taskHistory.worstTaskFailRate,
       agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       sessionExtractionLedger,
@@ -819,7 +814,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       autoAccept: improveSummary.autoAccept,
       improveOutcomes: outcomes,
       connectionsAndHarnesses,
-      semanticSearch: readSemanticSearchState(gatherSemanticSearchMode()),
+      semanticSearch: readSemanticSearchHealth(gatherSemanticSearchMode()),
       versionDrift,
       schedulerBinaryDrift,
     };
@@ -830,8 +825,8 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     }
 
     const metrics: HealthMetrics = {
-      taskFailRate: roundRate(taskHistory.taskFailRate),
-      agentFailureRate: roundRate(taskHistory.agentFailureRate),
+      taskFailRate: roundOrNull(taskHistory.taskFailRate),
+      agentFailureRate: roundOrNull(taskHistory.agentFailureRate),
       agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       stuckActiveRuns: taskHistory.stuckActiveRuns,
       llmUsage,

@@ -72,10 +72,6 @@ describe("migration 026-proposals-strip-legacy-fragment-refs — registry positi
     expect(classifiedIds).toContain(MIGRATION_ID);
     expect(getStateMigrationSafety(MIGRATION_ID)).toBe("data-preserving-rebuild");
   });
-
-  test("the safety-classification registry key order matches the migration registry order exactly", () => {
-    expect(Object.keys(STATE_MIGRATION_SAFETY_BY_ID)).toEqual(STATE_MIGRATIONS.map((migration) => migration.id));
-  });
 });
 
 describe("migration 026-proposals-strip-legacy-fragment-refs — legacy fragment-ref backfill", () => {

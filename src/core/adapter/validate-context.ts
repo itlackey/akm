@@ -13,18 +13,13 @@
  * "one core overlay implementation, not one per adapter" (the interface's own
  * words) — so every `validate()` caller shares identical overlay semantics
  * rather than each hand-rolling its own (as every adapter's own test suite has
- * done up to now, see e.g. `tests/core/adapter/okf-adapter.test.ts`'s
+ * done up to now, see e.g. `tests/integration/core/adapter/okf-adapter.test.ts`'s
  * `overlayCtx`/`diskCtx`).
  *
- * The two production callers wired onto this factory:
- *   - `akm lint`'s non-akm adapter dispatch (`commands/lint/index.ts`) — a
- *     plain sweep with NO pending changes, so the overlay is empty and every
- *     read falls straight through to disk.
- *   - the proposal promotion preflight (`commands/proposal/repository.ts`
- *     `preflightProposalPromotion`) — the one proposal's own `changes` are the
- *     overlay, so `validate()` sees the bundle AS IT WOULD LOOK the instant
- *     after the transaction commits, without that transaction ever touching
- *     disk.
+ * The production caller of this factory is `akm lint`'s non-akm adapter dispatch
+ * (`commands/lint/index.ts`): a plain sweep with NO pending changes, so the overlay
+ * is empty and every read falls straight through to disk. It also hands the context
+ * the run's `sources` and `config`, which the base checks read.
  *
  * ── resolveRef ──
  *
@@ -48,8 +43,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { filesForRef } from "../asset/asset-placement";
 import { toPosix } from "../common";
+import type { AkmConfig } from "../config/config-types";
 import type { FileChange } from "../file-change";
-import type { ValidateContext } from "./types";
+import type { BundleSourceRef, ValidateContext } from "./types";
 
 /** `null` = the overlay DELETES this path (never satisfies a read/exists check). */
 type OverlayValue = string | null;
@@ -141,8 +137,12 @@ function stripBundlePrefix(ref: string): string {
 export interface ValidateContextOptions {
   /** The primary root `changes` paths are relative to (a component's root, or a lint sweep's stash root). */
   root: string;
-  /** Additional stash roots consulted (disk only) for cross-bundle ref existence — mirrors `akmLint`'s `extraStashRoots`. */
-  extraRoots?: readonly string[];
+  /** The configured bundles; the roots other than `root` are consulted (disk only) for cross-bundle ref existence. */
+  sources?: readonly BundleSourceRef[];
+  /** The settings of the run. */
+  config?: AkmConfig;
+  /** How the recorded `moved` events are read. */
+  readMoves?: ValidateContext["readMoves"];
   /** Pending changes to overlay onto the snapshot. Empty (or omitted) for a plain sweep with nothing pending. */
   changes?: readonly FileChange[];
 }
@@ -155,7 +155,8 @@ export interface ValidateContextOptions {
  */
 export function createValidateContext(options: ValidateContextOptions): ValidateContext {
   const root = options.root;
-  const extraRoots = options.extraRoots ?? [];
+  const sources = options.sources ?? [];
+  const extraRoots = sources.map((source) => source.path).filter((sourcePath) => sourcePath !== root);
   const overlay = buildOverlay(root, options.changes ?? []);
 
   async function readFile(p: string): Promise<string | Uint8Array | null> {
@@ -208,5 +209,5 @@ export function createValidateContext(options: ValidateContextOptions): Validate
     return { exists: false };
   }
 
-  return { readFile, list, resolveRef };
+  return { sources, config: options.config, readMoves: options.readMoves, readFile, list, resolveRef };
 }

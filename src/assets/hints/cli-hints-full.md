@@ -1,6 +1,6 @@
 # akm CLI — Full Reference
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, env files, secrets, lessons, and memories via `akm`. Search your sources first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, tasks, env files, secrets, lessons, and memories via `akm`. Search your sources first before writing something from scratch.
 
 ## Search
 
@@ -8,14 +8,14 @@ You have access to a searchable library of scripts, skills, commands, agents, kn
 akm search "<query>"                          # Search local sources (or the project's `from`)
 akm curate "<task>"                          # Curate the best matches for a task
 akm curate "<task>" --max-tokens <tokens>      # Return the hits' content as one token-budgeted bundle
-akm search "<query>" --type workflow          # Filter by asset type
+akm search "<query>" --type skill             # Filter by asset type
 akm search "<query>" --from all                # Also search registries
 akm search "<query>" --from registry           # Search registries only
 akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
 akm search "memories/projectA/"               # Enumerate a subtree (conceptId prefix; trailing slash required)
 akm search "knowledge/"                       # List every knowledge item
-akm search "" --type rule --limit 200 --detail normal   # List the project's rules (read each with akm show)
+akm rules                                     # The rules that apply here, in full (project's first, then shared)
 akm doctor metrics assets --detail normal      # Assets shown most in the project
 akm search "team-catalog//"                   # List every item in one bundle
 ```
@@ -46,7 +46,7 @@ Combine search + follow-up hints into a dense summary for a task or prompt.
 ```sh
 akm curate "plan a release"                   # Pick top matches across asset types
 akm curate "deploy a Bun app" --limit 3       # Keep the summary shorter
-akm curate "review architecture" --type workflow # Restrict to one asset type
+akm curate "review architecture" --type skill # Restrict to one asset type
 akm curate "plan a release" --max-tokens 4000 # Pack the hits' content into one blob of at most 4000 tokens
 ```
 
@@ -62,7 +62,6 @@ akm show scripts/deploy.sh                    # Show script (returns run command
 akm show skills/code-review                   # Show skill (returns full content)
 akm show commands/release                     # Show command (returns template)
 akm show agents/architect                     # Show agent (returns system prompt)
-akm show workflows/ship-release               # Show a workflow (Deprecated; removed in 0.11)
 akm show knowledge/guide                      # Whole document, plus its `toc`
 akm show knowledge/guide --outline             # Outline only: `toc` (level, text, slug, startLine), no body
 akm show knowledge/guide#auth                 # Just the "Auth" section
@@ -76,7 +75,7 @@ akm show knowledge/my-doc                     # Show materialized local content
 | command | `template`, `description`, `parameters` |
 | agent | `prompt`, `description`, `modelHint` |
 | knowledge | `content` (whole document, or one section via `#fragment`); `toc` (each heading's `slug`) on a whole document |
-| workflow | `workflowTitle`, `workflowParameters`, `steps` |
+| workflow (Deprecated) | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` (recalled context) |
 | env | `keys` (key names only — values and comment text never returned) |
 | secret | `name` only (the whole file is the value — never returned) |
@@ -119,8 +118,7 @@ exact fix with `--replace "<exact current text>" --with "<corrected text>"
 A note that is outdated can be marked with `--outdated`, or
 `--superseded-by <ref>` when another note replaces it.
 `--positive` records that an asset helped (it raises its ranking) and does not
-trigger a rewrite; improve no longer rewrites assets from positive signals or on
-a proactive cadence. An akm command that fails says nothing about the asset;
+trigger a rewrite. An akm command that fails says nothing about the asset;
 don't record it as feedback.
 
 ## LLM Wiki bundles
@@ -159,8 +157,9 @@ akm env create env/prod                           # Create an empty env file
 akm env create env/prod --from-file ./.env        # Ingest an existing .env
 akm env list                                  # List all env files across bundles with key names
 akm show env/prod                             # Inspect key names (never values or comments)
-akm env run env/prod -- ./deploy.sh           # Run a command with the whole .env injected (the safe path)
-akm env run env/prod -- $SHELL                # Open an interactive shell with values injected
+akm exec --env env/prod -- ./deploy.sh        # Run a command with the whole .env injected (Experimental: needs experimental.exec true)
+akm exec --env env/prod -- $SHELL             # Open an interactive shell with values injected
+akm run <ref> --env env/prod                  # Run an akm asset with it injected (repeatable)
 akm env export env/prod --out ./env.sh        # Write a sourceable script to a file (mode 0600)
 akm env path env/prod --quiet                 # Print the raw file path (for Docker `_FILE` / `--env-file`)
 akm env remove env/prod                       # Delete the env file
@@ -175,7 +174,8 @@ the value; only the name is ever surfaced.
 ```sh
 printf '%s' "$TOKEN" | akm secret set secrets/deploy-token  # Store a single value
 akm secret list                                             # List secrets (names only)
-akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0  # Inject into one env var
+akm exec --secret secrets/deploy-token:GITHUB_TOKEN -- gh release create v1.0.0  # Inject into one env var
+akm run <ref> --secret secrets/deploy-token:GITHUB_TOKEN   # The same for an akm asset; scrubbed from captured output
 ```
 
 ## Workflows (Deprecated)
@@ -327,9 +327,8 @@ akm lint --fail-on-flagged                    # Exit non-zero when summary.flagg
 akm upgrade                                   # Upgrade akm using its install method, then update installed harness plugins
 akm upgrade --check                           # Report pending CLI and plugin updates, changing nothing
 akm upgrade --channel next                   # Follow prereleases (@next); OpenCode needs "akm-opencode@next" (or "akm-opencode-v2@next" on OpenCode 2) in its plugin list
-akm help migrate 0.6.0                        # Print migration notes for a release (or: latest)
 akm help bundle                               # Print options and subcommands for one command
-akm hints --detail full                       # Print this complete agent guide (plain akm hints prints the short one)
+akm hints --detail full                       # Print this complete agent guide (Deprecated, removed in 0.11; plain akm hints prints the short one)
 akm completions                               # Print bash completion script
 akm completions --install                     # Install completions
 ```
@@ -339,7 +338,7 @@ akm completions --install                     # Install completions
 embeddings, sources, and registries. Use `setup` for first-time onboarding,
 `bundle create` when you just need a bare bundle.
 
-## Proposals & Improvement (0.8.0+)
+## Proposals & Improvement
 
 ```sh
 akm improve <ref>                                       # Propose improvement for an asset
@@ -380,27 +379,28 @@ akm doctor explain <ref>                       # Read-only: declared inputs, tar
 akm search --type task                         # Enumerate task assets
 ```
 
-Task files use task source v4 (`version: 4`). Experimental: `steps:` runs ordered steps (`run:`, `prompt:` or `task:`; `AKM_PARAMS`/`AKM_STEPS`; `akm run <task> --resume`), see docs/reference/tasks.md. There is no `akm:` options bag
-or `on:` block — every control (`schedule`, `timeout`, `connection`, `harness`, `model`,
-`redact`, `maxSteps`, `maxRetries`, …) is a top-level key now. Typed
+Task files use task source v4 (`version: 4`). Experimental: `steps:` runs ordered steps (`run:`, `prompt:` or `task:`; `AKM_PARAMS`/`AKM_STEPS`; `akm run <task> --resume`), and task source v5 (`version: 5-beta.1`, a list of akm commands; `akm migrate apply <task-file>` converts a file), see docs/reference/tasks.md. Every control (`schedule`, `timeout`, `connection`, `harness`, `model`,
+`redact`, `maxSteps`, `maxRetries`, …) is a top-level key. Typed
 `inputs:` declarations and a bounded `output:` schema work like a
-workflow's (`output:` replaces v3's `akm.outputSchema`). Task source never
+workflow's. Task source never
 controls activation: use `akm task enable` / `disable`, which update the
 host-local config allow-list and sync. To remove one, delete the YAML and run
 `akm doctor scheduler sync` — the scheduler entry is unbound. Top-level
 `timeout:` may be `null` (disable the invocation timer) or a duration/number
-overriding the selected connection's or harness's timeout. Preview old task-v2/v3
-conversion with `akm migrate apply --dry-run`.
+overriding the selected connection's or harness's timeout. Preview a task-file
+conversion with `akm migrate status <task-file>`.
 
 ## Agent Dispatch
 
 ```sh
-akm agent --prompt "summarize open proposals"   # Run an agent on your default harness (else akm's own runtime over your connection)
 akm run agents/architect --prompt "..."         # Embody a bundle agent asset (system prompt, model)
+akm run agents/architect --model reasoning --prompt "..." # Model override (alias fast|balanced|reasoning, or an exact name)
+akm run agents/architect --harness claude --prompt "..."  # Run on a named harness (or --connection <name>)
 akm run commands/release                       # Reusable-command dispatch
-akm agent --model reasoning --prompt "..."      # Model override (alias fast|balanced|reasoning, or an exact name)
-akm agent --harness claude --prompt "..."       # Run on a named harness (or --connection <name>)
+akm exec --prompt "summarize open proposals"    # A prompt on your default agent, no asset (Experimental: needs experimental.exec true)
 ```
+
+`akm agent` and `akm command` are Deprecated and removed in 0.11; use `akm run <ref>`.
 
 ## Health, Info, and the Event Log
 
@@ -480,7 +480,7 @@ envelope is the preferred signal for agents parsing output programmatically;
 the exit code is the preferred signal for shell scripts. Passthrough surfaces
 below preserve the child's own streams and status instead.
 
-`env run`, `secret run`, and `migrate` are process passthroughs and preserve
+`exec`, `env run`, `secret run`, and `migrate` are process passthroughs and preserve
 the spawned process's exact status. `akm run` on a task preserves configuration failures
 as exit 78; successful task results exit 0 and other failures exit 1, while a
 command child's exact status remains in `result.detail.exitCode`. `agent` maps

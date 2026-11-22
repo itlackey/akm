@@ -77,7 +77,7 @@ describe("embedded task registry", () => {
   });
 
   // A scheduled improve run stops at planning (exit 78) when nothing it needs is configured, with no flag
-  // asking for it (tests/commands/improve/improve-planning-stops.test.ts), so the templates carry none.
+  // asking for it (tests/integration/commands/improve/improve-planning-stops.test.ts), so the templates carry none.
   test("no scheduled improve template carries the retired preflight flags", () => {
     const scheduledImproveTasks = listEmbeddedTasks().filter(
       (t) => t.label === "core/improve" || t.label.startsWith("improve/"),

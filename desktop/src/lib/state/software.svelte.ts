@@ -5,6 +5,7 @@
 import { api } from "../client";
 import type { HostHarness, HostSnapshot } from "../setup-model";
 import { snapshotFeed, waitUntilIdle } from "../software-model";
+import type { PluginEntry } from "../upgrade-outcome";
 
 export type Harness = HostHarness & { path?: string };
 /** Desktop's own update state, from the main process (electron-updater); absent in the web process. */
@@ -26,21 +27,20 @@ interface UpgradeView {
   currentVersion?: string;
   updateAvailable?: boolean;
   installMethod?: string;
-  channel?: string;
-  currentChannel?: string;
-  /** Each harness plugin akm found: the channel it follows and what the run did with it. */
-  plugins?: Array<{
-    harness: string;
-    channel?: string;
-    channelMismatch?: boolean;
-    outcome?: string;
-    reason?: string;
-  }>;
+  /** The channel this check was made for, and the one akm reports the installed CLI follows. */
+  channel?: "latest" | "next";
+  currentChannel?: "latest" | "next";
+  /** Each harness plugin akm found: the channel it follows and what the run did, or under `--check` would do, with it. */
+  plugins?: PluginEntry[];
 }
 export interface SoftwareSnapshot {
   engine: string;
-  /** The saved Desktop choices that Software offers; absent means the default derived from the engine's stage. */
-  preferences?: { updateChannel?: "stable" | "prerelease"; pluginChannel?: "latest" | "next" };
+  /** The saved Desktop choices that Software offers, or `unreadable` when the file holding them could not be read. */
+  preferences?: {
+    updateChannel?: "stable" | "prerelease";
+    pluginChannel?: "latest" | "next";
+    unreadable?: { file: string; error: string };
+  };
   desktop: {
     version?: string;
     update?: UpdateState;

@@ -75,22 +75,6 @@ describe("env path", () => {
     expect(stdout.trim()).toBe("");
   });
 
-  test("prints the absolute env path on stdout (with a stderr unsafe-source warning)", async () => {
-    const stashDir = makeStash();
-    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
-    const envPath = path.join(stashDir, "env", "myenv.env");
-    fs.writeFileSync(envPath, "FOO=bar\n", "utf8");
-
-    const { stdout, stderr, status } = await runCli(["env", "path", "env/myenv"], {
-      AKM_BUNDLE_DIR: stashDir,
-    });
-
-    expect(status).toBe(0);
-    expect(stdout.trim()).toBe(envPath);
-    // The path is on stdout uncontaminated; the warning steers to `env run`.
-    expect(stderr).toContain("akm env run");
-  });
-
   // B3/B4 (W1-F): a first attempt at this fix routed `env path` through
   // `output()` so `--format` "worked" — but the CLI's default format is
   // `json`, so a bare `akm env path <ref>` (exactly how `$(akm env path
@@ -176,7 +160,7 @@ describe("env run", () => {
     expect(status).toBe(2);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
-    expect(parsed.error).toContain("akm secret run");
+    expect(parsed.error).toContain("akm run --secret");
   });
 
   test("--only and --except together is rejected", async () => {

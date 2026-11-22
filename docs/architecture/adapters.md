@@ -42,7 +42,7 @@ claude             -- root CLAUDE.md + commands/|agents/|skills/
 opencode           -- opencode.json(c), or root AGENTS.md + a tool dir
 dotenv             -- every top-level dir is env/ and/or secrets/
 akm-workflow       -- a top-level .md with explicit type: workflow
-akm-task           -- a top-level task source .yml (v4, or a v2/v3 file awaiting migration)
+akm-task           -- a top-level task source .yml (v4 or v5, or a v2/v3 file awaiting migration)
 llm-wiki           -- root schema.md + pages/
 akm                -- .stash marker, or 2+ native subdirs, or fallback
 okf                -- root index.md, or any .md with frontmatter type
@@ -185,8 +185,8 @@ does not add it.
 ## Task adapter
 
 The native and standalone `akm-task` paths delegate to the authoritative task
-source parser, `parseTaskSource`, which accepts only `version: 4` (task
-source v4). A task source v4 document declares exactly one executable
+source parser, `parseTaskSource`, which accepts `version: 4` (task
+source v4) and `version: 5-beta.1` (the Experimental task source v5). A task source v4 document declares exactly one executable
 selector (`uses` or `run`), but its scheduling is optional — a document with
 no `schedule:` is valid and runnable manually. A `version: 3` or `version: 2`
 document is not read: it raises `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming
@@ -215,6 +215,21 @@ they actually work:
   holds files but no `SKILL.md` anywhere within three levels is flagged. A
   package's own resource dirs (`pdf-processing/reference/`) are part of the
   item, not candidate packages, and are never considered.
+- **The base checks have one implementation.** `unquoted-colon`,
+  `missing-updated`, `stale-path`, `missing-ref` and `redacted-content` are
+  `runBaseChecks` (`src/commands/lint/base-linter.ts`), and `ruleApplies`
+  (`src/core/asset/lint-text.ts`) decides whether a rule applies to a file
+  (the skill and LLM Wiki exemptions, the bundle's `lint.skip`, an adapter's
+  own exclusions). The `akm lint` sweep and every adapter's `validate` call
+  them; `createBaseChecker` (`adapters/shared.ts`) is the adapter's way in. It
+  reads refs from disk, the other bundles from `ValidateContext.sources` and the
+  settings from `ValidateContext.config` (the run's own; it reads the config
+  itself only when the context carries none), so a pending change in the context
+  does not satisfy a ref, and it never writes. The per-type checks are one table,
+  `perTypeChecks` (`adapters/akm-lint.ts`), keyed by akm type and read by the
+  sweep and by `validate`; the one exception is the skill folder check, which
+  has a directory walk for the sweep and `skillDirectoryDiagnostics` for
+  `validate`. Add a rule or an exemption there, not in an adapter.
 - **`claude`/`opencode` share one codec** (`tool-dir-shared.ts`) and differ
   only in instruction filename and adapter/component ids. Both accept only
   the canonical plural tool directories.

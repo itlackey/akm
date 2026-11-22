@@ -4,11 +4,15 @@
 
 /** Observability read models: the overview, the week's pulse, health, retrieval and impact trends, task history. */
 
+import fs from "node:fs";
 import os from "node:os";
+import { reportUsageIfDue } from "../cli/usage-report";
 import { akmHealth, parseHealthSince } from "../commands/health";
 import { buildTasks } from "../commands/metrics/collect";
 import { akmMetrics, metricsWindow, readUsageRows } from "../commands/metrics/metrics-cli";
 import { NotFoundError, UsageError } from "../core/errors";
+import { buildTaskRunId, getLogsDbPath, queryTaskLogs } from "../core/logs-db";
+import { openDatabase } from "../storage/database";
 import {
   getImproveRunById,
   type ImproveRunRow,
@@ -20,11 +24,14 @@ import {
   type TaskHistoryRow,
 } from "../storage/repositories/task-history-repository";
 import { WorkflowRunsRepository } from "../storage/repositories/workflow-runs-repository";
+import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 import { pkgVersion } from "../version";
 import { listWorkflowRunSummaries, readWorkflowStatus } from "../workflows/runtime/runs";
-import { pChart, weekOf, weekRange } from "./derive";
+import { pChart, weekRange } from "./derive";
 import { filledActivity, retrievalSeries } from "./metrics";
-import { clampLimit, section, withReadonlyStateDb } from "./readers";
+import { isUserEvent } from "./misses";
+import { clampLimit, section, stateDbUnavailable, withReadonlyStateDb } from "./readers";
+import { weekDays } from "./stats";
 
 export { improveImpact } from "./impact";
 export { overviewPulse as pulse } from "./pulse";
@@ -42,6 +49,11 @@ export function meta() {
     hostname: os.hostname(),
     runtime: process.versions.bun ? "bun" : "node",
   };
+}
+
+/** The Desktop daily usage report, once at server start: sent at most once a UTC day, never throws, `true` when sent. */
+export function reportUsage(): Promise<boolean> {
+  return reportUsageIfDue({ surface: "desktop" });
 }
 
 const IMPROVE_ERRORS_SHOWN = 20;
@@ -163,6 +175,8 @@ export async function overview(input: { probe?: boolean; metricsSince?: string }
       null,
     ),
   );
+  if (stateReads === null && !errors.state)
+    errors.state = `The state database is ${stateDbUnavailable().reason === "absent" ? "absent" : "behind on migrations"}.`;
   return {
     health,
     metrics: metrics
@@ -211,6 +225,9 @@ export function taskHistory(input: { taskId?: string; since?: string; limit?: nu
           startedAt: row.started_at,
           durationMs: metadata?.durationMs ?? null,
           trigger: metadata?.trigger ?? null,
+          targetKind: row.target_kind ?? null,
+          targetRef: row.target_ref ?? null,
+          engine: metadata?.engine ?? null,
           detail: metadata?.detail ?? null,
           // A steps task (Experimental): each step without its stored result, which can be large.
           steps: metadata?.steps?.map(({ result: _result, ...step }) => step) ?? null,
@@ -222,26 +239,62 @@ export function taskHistory(input: { taskId?: string; since?: string; limit?: nu
   );
 }
 
+/** Most log lines one run's output returns; a longer log says it was cut. */
+const LOG_LINES_MAX = 500;
+
+/**
+ * One task run's recorded output, as `logs.db` holds it (`taskId` and `startedAt` as `taskHistory` lists them), oldest
+ * line first. Read-only: a missing `logs.db` is `available: false`, and nothing is created or migrated.
+ */
+export function taskRunLog(input: { taskId?: string; startedAt?: string }) {
+  const taskId = (input.taskId ?? "").trim();
+  const startedAt = (input.startedAt ?? "").trim();
+  if (!taskId || !startedAt)
+    throw new UsageError("A taskId and the run's startedAt are required.", "MISSING_REQUIRED_ARGUMENT");
+  const dbPath = getLogsDbPath();
+  if (!fs.existsSync(dbPath)) return { available: false as const, reason: "absent" as const };
+  const db = openDatabase(dbPath, { readonly: true, create: false });
+  try {
+    applyReadonlyPragmas(db);
+    const rows = queryTaskLogs(db, { runId: buildTaskRunId(taskId, startedAt), limit: LOG_LINES_MAX + 1 });
+    return {
+      available: true as const,
+      truncated: rows.length > LOG_LINES_MAX,
+      lines: rows.slice(0, LOG_LINES_MAX).map(({ stream, level, line }) => ({ stream, level, line })),
+    };
+  } finally {
+    db.close();
+  }
+}
+
 /** The per-day search series over a longer window than the Overview's, for the Improve impact trend. */
 export function retrievalTrend(input: { since?: string } = {}) {
   const window = metricsWindow(input.since || "90d");
-  const series = retrievalSeries(
-    withReadonlyStateDb((db) => readUsageRows(db, window), []),
-    window,
-  );
+  const rows = withReadonlyStateDb((db) => readUsageRows(db, window), null);
+  if (!rows) return stateDbUnavailable();
+  const series = retrievalSeries(rows, window);
   // The same days by ISO week, for a p-chart of the share that found nothing.
   const first = series.daily[0]?.date;
   const weeks = first ? weekRange(first, window.until.slice(0, 10)) : [];
+  const byDate = new Map(series.daily.map((d) => [d.date, d]));
   const perWeek = weeks.map((week) => {
-    const days = series.daily.filter((d) => weekOf(d.date) === week);
+    const days = weekDays(week).map((date) => byDate.get(date));
     return {
       week,
-      x: days.reduce((sum, d) => sum + d.zeroResults, 0),
-      n: days.reduce((sum, d) => sum + d.searches, 0),
+      x: days.reduce((sum, d) => sum + (d?.zeroResults ?? 0), 0),
+      n: days.reduce((sum, d) => sum + (d?.searches ?? 0), 0),
+      // A day akm has no row for (before the first recorded day) or marks partial makes the week partial.
+      partial: days.some((d) => d === undefined || d.partial === true),
     };
   });
   const chart = pChart(perWeek);
-  return { ...series, weekly: chart.points, centre: chart.centre };
+  return {
+    available: true as const,
+    ...series,
+    weekly: chart.points,
+    centre: chart.centre,
+    enoughHistory: chart.enough,
+  };
 }
 
 /** Most runs or events one window read returns; a longer window says it was cut. */
@@ -398,7 +451,12 @@ export function events(input: { since?: string; until?: string } = {}) {
       // One row past the cap says "truncated"; the cut keeps the newest rows, listed oldest first.
       const rows = readUsageRows(db, window, { allSources: true, newest: WINDOW_ROWS_MAX + 1 });
       const kept = rows.length > WINDOW_ROWS_MAX ? rows.slice(1) : rows;
-      return { available: true, window, truncated: rows.length > WINDOW_ROWS_MAX, events: kept };
+      return {
+        available: true,
+        window,
+        truncated: rows.length > WINDOW_ROWS_MAX,
+        events: kept.map((row) => ({ ...row, byPerson: isUserEvent(row) })),
+      };
     },
     { available: false, window, truncated: false, events: [] },
   );

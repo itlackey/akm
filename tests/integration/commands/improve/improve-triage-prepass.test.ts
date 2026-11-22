@@ -514,7 +514,7 @@ describe("akm improve — triage pre-pass", () => {
         config: triageEnabledConfig(true),
         reindexFn: async (options) => {
           callOrder.push("index");
-          return buildIndex(options, "try");
+          return buildIndex(options);
         },
         drainProposalsFn: (async () => {
           callOrder.push("triage");

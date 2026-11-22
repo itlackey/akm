@@ -7,14 +7,35 @@
 import { setConfigValue } from "../commands/config-cli";
 import { assembleInfo } from "../commands/sources/info";
 import { akmListSources } from "../commands/sources/installed-stashes";
+import { akmSync } from "../commands/sources/sync";
 import { loadConfig, mutateConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { getDbPath } from "../core/paths";
+import { inspectWriteTarget } from "../core/write-source";
+import { deriveSemanticProviderFingerprint } from "../indexer/materialize-embeddings";
+import { effectiveEmbedding } from "../llm/embedders/connection";
+import { parseRegistryRef } from "../registry/resolve";
+import { STARTER_SOURCE } from "../setup/registry-stash-loader";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
+import { getEmbeddableEntryCount } from "../storage/repositories/index-entries-repository";
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { runCli } from "./cli-child";
 import { readBundleGitStatus } from "./git-read";
+import { interactive } from "./lease";
 import { configSource, preserveUnrelatedConfig, tryStashDir, workingStashDir } from "./readers";
+
+/**
+ * One name for where a bundle comes from, parsed by the code `bundle add` uses: the same repository or package gives
+ * the same identity however its address is written. Null for a folder, a website, or an address that does not parse.
+ */
+function sourceIdentity(source: { kind: string; locator: string }): string | null {
+  if (source.kind !== "git" && source.kind !== "npm") return null;
+  try {
+    return parseRegistryRef(source.locator).id;
+  } catch {
+    return null;
+  }
+}
 
 export async function list() {
   const config = loadConfig();
@@ -25,8 +46,11 @@ export async function list() {
       kind: source.kind,
       default: source.default,
       source: source.source,
+      identity: sourceIdentity(source.source),
       path: source.path ?? null,
       writable: source.writable,
+      // Whether akm would accept a write to this bundle now, and the sentence why not: the write path's own checks.
+      writeBlocker: inspectWriteTarget(config, source.name).blocker,
       enabled: config.bundles?.[source.name]?.enabled !== false,
       writableSetting: config.bundles?.[source.name]?.writable,
       components: source.components.map((component) => ({
@@ -50,11 +74,14 @@ export async function list() {
 
   const info = assembleInfo();
   let embeddingCount: number | null = null;
+  let embeddableCount = 0;
   try {
     const db = openReadonlyExistingDatabase(getDbPath());
     if (db) {
       try {
-        embeddingCount = getEmbeddingCount(db);
+        // The same two counts akm's own readiness test compares: the current model's vectors, the embeddable entries.
+        embeddingCount = getEmbeddingCount(db, deriveSemanticProviderFingerprint(effectiveEmbedding(config)));
+        embeddableCount = getEmbeddableEntryCount(db);
       } finally {
         closeDatabase(db);
       }
@@ -62,10 +89,13 @@ export async function list() {
   } catch {
     // An index without an embeddings table (older layout) has none.
   }
-  const entryCount = info.indexStats.entryCount;
+  const { entryCount } = info.indexStats;
   return {
     defaultBundle: config.defaultBundle ?? null,
     defaultWriteTarget: config.defaultWriteTarget ?? null,
+    // Where a write goes when no bundle is named, and why none does (`name: null`) or why it would be refused.
+    writeTarget: inspectWriteTarget(config),
+    starter: { source: STARTER_SOURCE, identity: sourceIdentity({ kind: "git", locator: STARTER_SOURCE }) },
     bundles: cards,
     workingStash,
     index: {
@@ -74,7 +104,8 @@ export async function list() {
       lastBuiltAt: info.indexStats.lastBuiltAt,
       hasEmbeddings: info.indexStats.hasEmbeddings,
       embeddingCount,
-      embeddingCoverage: embeddingCount !== null && entryCount > 0 ? Math.min(1, embeddingCount / entryCount) : null,
+      embeddingCoverage:
+        embeddingCount !== null && embeddableCount > 0 ? Math.min(1, embeddingCount / embeddableCount) : null,
       semanticSearch: info.semanticSearch,
       ...(info.indexStats.unavailable ? { unavailable: info.indexStats.unavailable } : {}),
       ...(info.indexStats.unreadable ? { unreadable: info.indexStats.unreadable } : {}),
@@ -122,6 +153,19 @@ export async function update(input: { bundle: string }) {
   return runCli(["bundle", "update", "--", configured(name(input.bundle, "bundle"))]);
 }
 
+/**
+ * `akm index`: the incremental build. It pairs a file renamed or moved on disk with the asset it was and carries the
+ * asset's history to the new ref (`moves` in the result), which the write-path index refresh does not do.
+ */
+export async function index() {
+  return (await runCli(["index"])) as {
+    totalEntries: number;
+    mode: string;
+    warnings?: string[];
+    moves?: { moved: Array<{ from: string; to: string }>; unpaired: number };
+  };
+}
+
 /** A dry run returns the plan and writes nothing. */
 export async function rename(input: { bundle: string; name: string; dryRun?: boolean }) {
   if (input.dryRun !== true) preserveUnrelatedConfig();
@@ -167,4 +211,17 @@ export function setSettings(input: {
     return updated;
   });
   return { saved: result.written };
+}
+
+/**
+ * `akm sync` for one bundle: commit every unignored change inside it, and push when it is writable with a remote. Says what it
+ * did: the commit, whether it was pushed, or why nothing was committed (`reason`).
+ */
+export async function commit(input: { bundle: string; message?: string; push?: boolean }) {
+  const bundle = configured(name(input.bundle, "bundle"));
+  const message = typeof input.message === "string" && input.message.trim() ? input.message.trim() : undefined;
+  return interactive("ui-bundle-commit", async () => ({
+    bundle,
+    ...akmSync({ name: bundle, message, push: input.push }),
+  }));
 }

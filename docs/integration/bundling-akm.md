@@ -23,11 +23,10 @@ Everything below is detail in service of those three lines.
 
 ```sh
 akm migrate status        # read-only: what would change
-akm migrate apply --dry-run
 akm migrate apply
 ```
 
-In order, every run applies (or, under `status`/`--dry-run`, plans):
+In order, every run applies (or, under `status`, plans):
 
 1. **config.json in its current shape** (`configFile`): unknown keys dropped,
    `configVersion` set, and the `engines` / `defaults` form converted to
@@ -59,6 +58,9 @@ In order, every run applies (or, under `status`/`--dry-run`, plans):
    `WORK/x`), in frontmatter and body, rewritten under one backup directory per
    run. An old spelling that is now another file's ref is listed in `shadowed`
    and left as written.
+   The ref scan and rewrite is `src/core/asset/ref-rewrite.ts`, the same code
+   `akm lint --fix` uses to rewrite links to a ref that `akm index` recorded as
+   moved.
 6. **Bundle policy** (`bundlePolicy`): in each writable bundle, `lint_skip:`
    frontmatter is stripped from the assets, and a `.gitignore` carrying the old
    `# akm: intentionally track env and secrets` marker adds
@@ -128,7 +130,7 @@ same step names):
   everything it *can*, then reports `blocked` and exits non-zero.
 
 A pending `state.db` migration needs no human decision, so it is never
-`blocked`: under `akm migrate status` or `apply --dry-run` it reads as
+`blocked`: under `akm migrate status` it reads as
 `ready` (the run would change `state.db`) and is listed in
 `stateMigrations.pending`; a real `apply` always applies it.
 
@@ -136,8 +138,10 @@ Key fields:
 
 | Field | Meaning |
 | --- | --- |
-| `stateMigrations` | `{ pending: string[] }` under `status`/`--dry-run`; `{ applied: string[], safetyCopyPath?: string }` after a real `apply`. `safetyCopyPath` is present only when a historical-destructive migration ran — see below. |
+| `stateMigrations` | `{ pending: string[] }` under `status`; `{ applied: string[], safetyCopyPath?: string }` after a real `apply`. `safetyCopyPath` is present only when a historical-destructive migration ran — see below. |
 | `taskFiles` | `changed`/`skipped`/`blocked` counts and a `files[]` array with each file's `status` and `reason`. |
+| `taskFilesV5` | Present when files were named (`status <file>...`, `apply <file>...`): one entry per named task or workflow file with `filePath`, `status` (`converted`, `skipped`, `blocked`), `reason`, `notes[]` (what version 5 does not keep, to change by hand), `taskFile` (the task a workflow file becomes) and, when blocked, `detail` and `guidance`. `taskFilesV5BackupPath` is the backup directory after a real apply. |
+| `workflowFiles` | Present when workflow files remain in enabled, writable bundles: `bundles[]` (`bundle`: the bundle's root, `files[]`) and `message`, the line `akm doctor` prints for its `workflow-files` advisory. Reported only: a workflow file is converted when it is named, and it does not change `status`. |
 | `assetEngineKeys` | `changed`/`skipped` counts and a `files[]` array with each rewritten file's `rewrites` (`at`, `from`, `to`). |
 | `assetContentRefs` | `changed`/`skipped` file counts, `refs` (old-spelling refs found), a `files[]` array with each file's `refs`, and `shadowed[]` (`bundleId`, `from`, `to`): old spellings another file holds as its ref, not rewritten; and `reconcile[]`, present after an apply that rewrote files inside a git checkout: the checkout path and how to review, commit or restore the edits. Only asset files, `index.md` and wiki `schema.md` are rewritten. |
 | `bundlePolicy` | `changed` (files to rewrite plus bundles whose config gains the skip), `bundles[]` (`bundleId`, `stripped`: assets whose `lint_skip` is removed, `skipTrackedSecrets`), and `notes[]`: a bundle with the marker and no config entry. After a real apply: `applied`, and `backupPath` when files were rewritten. |
@@ -184,8 +188,8 @@ Its result carries the same plan under `migration`:
 
 ```json
 {
-  "currentVersion": "0.9.8",
-  "newVersion": "0.9.9",
+  "currentVersion": "0.10.261122",
+  "newVersion": "0.10.261130",
   "upgraded": false,
   "installMethod": "package-local",
   "message": "akm runs as a dependency of the package at /opt/myapp; upgrade that package to move akm.",

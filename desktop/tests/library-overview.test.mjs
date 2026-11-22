@@ -6,7 +6,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildOverview,
+  clusterPlace,
   DAY,
+  flatPlace,
   groupFacts,
   groupJoins,
   groupsOf,
@@ -16,6 +18,7 @@ import {
   RECENT_DAYS,
   relations,
   tally,
+  unplaced,
   useClass,
 } from "../src/lib/library-overview.ts";
 
@@ -30,6 +33,7 @@ const payload = {
   bundles: ["wiki", "notes"],
   beliefs: ["superseded"],
   use: { since: ago(90), source: "user" },
+  feedback: { since: ago(90), source: "user" },
   kinds: ["xref", "contradicted_by"],
   nodes: {
     ref: [
@@ -63,23 +67,58 @@ test("use: read lately, read only earlier, unread but recently edited, unread an
   assert.equal(useClass(ago(RECENT_DAYS + 1), null, now), "earlier");
   assert.equal(useClass(null, ago(OLD_DAYS - 1), now), "new");
   assert.equal(useClass(null, ago(OLD_DAYS + 1), now), "unread");
-  assert.equal(useClass(null, null, now), "unread");
+  // akm reports no edit time (the file could not be read): not new, not old, so not classed.
+  assert.equal(useClass(null, null, now), null);
   const o = buildOverview(payload, now);
-  assert.deepEqual(o.use, ["recent", "unread", "earlier", "new", "unread", "recent", "unread"]);
+  assert.deepEqual(o.use, ["recent", "unread", "earlier", "new", "unread", "recent", null]);
+  assert.equal(groupFacts(o, [3, 4, 5, 6]).useUnclassed, 1);
+  assert.deepEqual(groupFacts(o, [3, 4, 5, 6]).use, { recent: 1, earlier: 0, new: 1, unread: 1 });
   assert.deepEqual(
     tally([3, 4, 5], (i) => o.use[i], ["recent", "earlier", "new", "unread"]),
     { recent: 1, earlier: 0, new: 1, unread: 1 },
   );
-  // No usage history: use is unknown, not "unread".
-  const none = buildOverview({ ...payload, note: "Use counts are zero: no usage history is available." }, now);
+  // akm could not read the usage store (`use: null`): use is unknown, not "unread", whatever the note says.
+  const none = buildOverview({ ...payload, use: null, note: "Usage is not available." }, now);
   assert.equal(none.useKnown, false);
   assert.ok(none.use.every((u) => u === null));
+  // The note is prose for the person: its wording never decides whether use is known.
+  assert.equal(buildOverview({ ...payload, note: "No usage history was lost." }, now).useKnown, true);
 });
 
 test("problems: outdated by belief or by the link it declares, more negative than positive feedback, near-duplicates", () => {
   const o = buildOverview(payload, now);
   assert.deepEqual(o.problems, [[], ["outdated"], [], ["negative", "duplicate"], ["outdated"], ["duplicate"], []]);
   assert.deepEqual(o.duplicates, [{ a: 3, b: 5, cosine: 0.98 }]);
+});
+
+test("feedback and near-duplicates akm could not report are unknown, not none", () => {
+  const known = buildOverview(payload, now);
+  assert.equal(known.feedbackKnown, true);
+  assert.equal(known.duplicatesKnown, true);
+  // akm sends feedback: null with every count zero when the state store cannot be read, and duplicates: null when no layout is stored.
+  const unknown = buildOverview(
+    {
+      ...payload,
+      feedback: null,
+      duplicates: null,
+      groups: null,
+      nodes: { ...payload.nodes, negative: [0, 0, 0, 5, 0, 0, 0], positive: [0, 0, 0, 0, 0, 0, 0] },
+    },
+    now,
+  );
+  assert.equal(unknown.feedbackKnown, false);
+  assert.equal(unknown.duplicatesKnown, false);
+  // Feedback counts that akm did not measure never make an asset "disliked", and no pair is invented.
+  assert.ok(unknown.problems.every((p) => !p.includes("negative") && !p.includes("duplicate")));
+  assert.deepEqual(unknown.duplicates, []);
+});
+
+test("assets with no group by meaning are counted, so the 3D map can say how many it leaves out", () => {
+  const groups = { count: 1, group: [0, 0, -1, 0, -1, 0, 0], x: [], y: [], z: [] };
+  const o = buildOverview({ ...payload, groups }, now);
+  assert.equal(unplaced(o, [0, 1, 2, 3, 4, 5, 6]), 2);
+  assert.equal(unplaced(o, [0, 1, 3]), 0);
+  assert.equal(unplaced(buildOverview(payload, now), [0, 1]), 2);
 });
 
 test("the overview carries links by kind name, edit times and feedback counts", () => {
@@ -282,14 +321,44 @@ test("group joins: links and near-duplicates across groups, or only the given li
   assert.deepEqual(groupJoins(o, 1, OUTDATED_LINKS), []);
 });
 
-test("depth in a group: read lately in front, read earlier ahead of the middle, never read and outdated behind", () => {
+test("the overview keeps akm's place for each asset, and the same places in one plane", () => {
   const o = buildOverview(placed, now);
-  const z = (i) => o.place[i * 3 + 2];
-  // a read lately, c read earlier, b superseded.
-  assert.ok(z(0) > z(2) && z(2) > z(1));
-  // f read lately; d never read (edited lately); e contradicted.
-  assert.ok(z(5) > z(3) && z(3) > z(4));
-  assert.ok(z(3) < 10 && z(5) > 10);
-  // x and y stay akm's.
-  assert.deepEqual([o.place[3 * 3], o.place[3 * 3 + 1]], [50, 0]);
+  assert.deepEqual([...o.place.subarray(9, 12)], [50, 0, 10]);
+  const flat = flatPlace(o);
+  for (let i = 0; i < o.count; i++)
+    assert.deepEqual([...flat.subarray(i * 3, i * 3 + 3)], [o.place[i * 3], o.place[i * 3 + 1], 0]);
+});
+
+test("gathered by its groups, each group is a cluster of its assets that overlaps no other, in the plane and in space", () => {
+  const o = buildOverview(placed, now);
+  for (const dims of [2, 3]) {
+    const put = clusterPlace(o, dims);
+    const at = (i) => [put[i * 3], put[i * 3 + 1], put[i * 3 + 2]];
+    const far = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    const groups = new Map();
+    for (let i = 0; i < o.count; i++) {
+      if (dims === 2) assert.equal(put[i * 3 + 2], 0);
+      if (o.group[i] >= 0) groups.set(o.group[i], [...(groups.get(o.group[i]) ?? []), i]);
+    }
+    // No two assets share a spot, and an asset is nearer every asset of its own group than any asset of another.
+    for (let a = 0; a < o.count; a++)
+      for (let b = a + 1; b < o.count; b++) if (o.group[a] >= 0 && o.group[b] >= 0) assert.ok(far(at(a), at(b)) > 1);
+    for (const [g, list] of groups) {
+      const reach = Math.max(...list.flatMap((a) => list.map((b) => far(at(a), at(b)))));
+      for (const [other, others] of groups)
+        if (other !== g) for (const a of list) for (const b of others) assert.ok(far(at(a), at(b)) > reach);
+    }
+    // The layout is the same every time.
+    assert.deepEqual([...clusterPlace(o, dims)], [...put]);
+  }
+});
+
+test("an outdated asset says why, and names what replaced or contradicts it; every asset has its link count", () => {
+  const o = buildOverview(payload, now);
+  // b is recorded as superseded; e declares that f contradicts it.
+  assert.deepEqual(o.outdatedWhy[1], [{ why: "superseded", by: -1 }]);
+  assert.deepEqual(o.outdatedWhy[4], [{ why: "contradicted", by: 5 }]);
+  assert.deepEqual(o.outdatedWhy[0], []);
+  // a→b, b→c, c→d, e→f; g has none.
+  assert.deepEqual(o.degree, [1, 2, 2, 1, 1, 1, 0]);
 });

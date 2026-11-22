@@ -75,6 +75,8 @@ export interface ImproveHealthMetrics {
     pairsJudged: number;
     /** Pair-pass pairs that did not settle (transport, parse, cancelled); retried next run. */
     failedPairs: number;
+    /** Valid retirement decisions held by the same-run guard; null when an applicable older result lacks a valid count. */
+    deferredPairs: number | null;
     durationMs: number;
   };
   memoryInference: {

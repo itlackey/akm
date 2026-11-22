@@ -612,7 +612,7 @@ describe("task source v4 — version router (spec §3.4, D2-N2's exact routing t
       expect(error.message).toBe(
         `TASK_SCHEMA_VERSION_UNSUPPORTED: Task at ${filePath} uses task schema version ${version}; this release reads only version 4. Run \`akm migrate apply\` to convert it.`,
       );
-      expect(error.hint()).toContain("akm migrate apply --dry-run");
+      expect(error.hint()).toContain("akm migrate status");
       expect(warnCalls).toEqual([]);
     });
 
@@ -635,7 +635,7 @@ describe("task source v4 — version router (spec §3.4, D2-N2's exact routing t
       const yaml = "version: 4\nuses: commands/review\nschedule:\n  - cron: '0 4 * * *'\n";
       const result = parseTaskSource({ yaml, filePath: "/bundle/tasks/z.yml" });
       expect(result.version).toBe(4);
-      expect(result.v4.schedule).toHaveLength(1);
+      expect(result.schedule).toHaveLength(1);
       expect(warnCalls).toHaveLength(0);
     });
   });
@@ -1097,9 +1097,13 @@ describe("task source v4 — top-level execution controls", () => {
   test("timeout accepts a common duration string and rejects a value beyond EXECUTION_MAX_TIMEOUT_MS, at the TOP-LEVEL field path (not akm.timeout)", () => {
     const ok = parseTaskSourceV4Document(v4Doc({ uses: "commands/review", timeout: "20m" }), { filePath: "/x.yml" });
     expect(ok.execution.timeout).toBe("20m");
-    // Asset timeout: keeps the shared grammar; the wider --timeout CLI grammar does not apply.
+    // One grammar for every timeout: the seconds unit is taken, as `--timeout` takes it.
+    expect(
+      parseTaskSourceV4Document(v4Doc({ uses: "commands/review", timeout: "30s" }), { filePath: "/x.yml" }).execution
+        .timeout,
+    ).toBe("30s");
     expect(() =>
-      parseTaskSourceV4Document(v4Doc({ uses: "commands/review", timeout: "30s" }), { filePath: "/x.yml" }),
+      parseTaskSourceV4Document(v4Doc({ uses: "commands/review", timeout: "soon" }), { filePath: "/x.yml" }),
     ).toThrow(/timeout/i);
     const error = expectTaskSourceInvalid(
       () =>

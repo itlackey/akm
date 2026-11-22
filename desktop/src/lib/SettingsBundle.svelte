@@ -223,7 +223,9 @@
         {#each counts as [name, count]}<li>{name} <strong>{count}</strong></li>{/each}
       </ul>{:else}<p class="muted">No indexed assets.</p>{/if}
     <h4>Git status</h4>
-    {#if bundle.git}<dl class="bundle-facts">
+    {#if bundle.git?.error}<p class="notice notice-warn" role="alert">
+        Git could not be read: {bundle.git.error}
+      </p>{:else if bundle.git}<dl class="bundle-facts">
         <dt>Branch</dt>
         <dd>{bundle.git.branch ?? "Detached HEAD"}</dd>
         <dt>Upstream</dt>
@@ -233,7 +235,13 @@
             : `${bundle.git.upstream} · ${bundle.git.ahead} ahead / ${bundle.git.behind} behind`}
         </dd>
         <dt>Uncommitted</dt>
-        <dd>{bundle.git.dirtyPaths ? `${bundle.git.dirtyPaths} paths` : "Clean"}</dd>
+        <dd>
+          {bundle.git.uncommitted === null || bundle.git.uncommitted === undefined
+            ? "Unknown: akm could not list the changes"
+            : bundle.git.uncommitted === 0
+              ? "Clean"
+              : `${bundle.git.uncommitted} ${bundle.git.uncommitted === 1 ? "file" : "files"}`}
+        </dd>
         <dt>Last commit</dt>
         <dd>
           {#if bundle.git.lastCommit}<code>{bundle.git.lastCommit.sha.slice(0, 8)}</code> · {date(

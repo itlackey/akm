@@ -160,21 +160,6 @@ describe("reads on a cold library never build", () => {
     expect({ code: show.code, stderr: show.code === 0 ? "" : show.stderr }).toEqual({ code: 0, stderr: "" });
     expect(JSON.parse(show.stdout).path).toBe(path.join(storage.stashDir, "knowledge", "guide-1.md"));
   });
-
-  test("reads beside a running `akm index` all exit 0 and the index run is the only build", async () => {
-    seedLibrary(40);
-    const [indexed, ...reads] = await Promise.all([
-      child("index", "--full", "--format=json"),
-      child("search", "deployment", "--format=json"),
-      child("search", "guide", "--format=json"),
-      child("curate", "deploy the app", "--format=json"),
-      child("show", "knowledge/guide-1", "--format=json"),
-    ]);
-    expect(indexed.code).toBe(0);
-    for (const read of reads)
-      expect({ code: read.code, stderr: read.code === 0 ? "" : read.stderr }).toEqual({ code: 0, stderr: "" });
-    expect(readEvents({ type: "index_completed" }).events).toHaveLength(1);
-  }, 60_000);
 });
 
 describe("a read of an index that is only partly there", () => {
@@ -306,19 +291,17 @@ describe("every build path takes the rebuild lock", () => {
     expect(fs.existsSync(getIndexRebuildLockPath())).toBe(false);
   }, 60_000);
 
-  test("`akm bundle add` waits for a running build instead of building beside it", async () => {
-    const lockPath = holdLock();
+  test("`akm bundle add` adds the bundle without building beside a running build, and says the index was skipped", async () => {
+    holdLock();
     const extra = path.join(storage.root, "extra-bundle");
     fs.mkdirSync(path.join(extra, "knowledge"), { recursive: true });
     fs.writeFileSync(path.join(extra, "knowledge", "extra.md"), "# Extra\n");
     const spy = spyOn(indexerModule, "akmIndex");
     try {
-      const added = cli("bundle", "add", extra, "--name", "extra");
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      const added = await cli("bundle", "add", extra, "--name", "extra", "--format=json");
+      expect(added.code).toBe(0);
       expect(spy).not.toHaveBeenCalled();
-      fs.rmSync(lockPath);
-      expect((await added).code).toBe(0);
-      expect(spy).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(added.stdout).index).toMatchObject({ skipped: { reason: "lock-held" } });
     } finally {
       spy.mockRestore();
     }

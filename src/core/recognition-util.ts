@@ -4,7 +4,7 @@
 
 /**
  * The util home for recognition/grammar constants shared across the asset,
- * indexer, and workflow layers (chunk 1, D1-4).
+ * indexer, and workflow layers.
  *
  * INVARIANT (D1-5, cycle-safety): this module MUST import NOTHING from
  * `src/` (no relative `./`/`../` imports into the tree). All four symbols
@@ -21,6 +21,7 @@ export const SCRIPT_EXTENSIONS = new Set([
   ".sh",
   ".ts",
   ".js",
+  ".mjs",
   ".ps1",
   ".cmd",
   ".bat",
@@ -63,12 +64,12 @@ export function canonicalizeWorkflowName(name: string): string {
 /** Structural marker suffix for a derived (inferred) memory's canonical name. */
 export const DERIVED_SUFFIX = ".derived";
 
-// ── Known-type taxonomy (chunk 1.5, D1.5-4) ─────────────────────────────────
+// ── Known-type taxonomy ─────────────────────────────────
 //
 // `KNOWN_TYPES` replaces the deleted `common.ts` closed asset-type union.
 // It is a HINT/exhaustiveness tuple, NOT a validation gate: unknown/foreign
 // `type` strings are still valid `IndexDocument`/`IndexDocument`/`AssetRef` DATA
-// (plan §2.3/§15.4) — this tuple only anchors compile-time completeness for
+// — this tuple only anchors compile-time completeness for
 // AKM's OWN presentation/ranking tables (`Record<KnownType, X>` fails to
 // compile if a key is missing). A plain `as const` literal tuple adds no
 // import, so it lives here without breaking the D1-5 import-free invariant.
@@ -116,13 +117,12 @@ export function isKnownType(type: string): type is KnownType {
 }
 
 /**
- * Type keys deliberately REMOVED from AKM (chunk 1.5, D1.5-6 — the key
- * correctness call in the open-token change). The open type token accepts
+ * Type keys deliberately REMOVED from AKM. The open type token accepts
  * any non-empty string as valid ref/entry DATA except this set: silently
  * re-admitting a retired type as an ordinary "foreign" type would defeat the
  * guard that removed it in the first place.
  *
- *   - `vault` — removed in 0.9.0 in favor of `env`/`secret`; carries its own
+ *   - `vault` — removed in favor of `env`/`secret`; carries its own
  *     migration-hint `UsageError` in `asset-ref.ts` (checked before this
  *     set) and interacts with the dangerous-env-key lint
  *     (`commands/lint/env-key-rules.ts`) — vaults must never be silently

@@ -14,10 +14,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import { akmIndex } from "../../src/indexer/indexer";
+import { akmIndex, type IndexCleanResult, type IndexResponse } from "../../src/indexer/indexer";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getAllEntries } from "../../src/storage/repositories/index-entries-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+
+/** The `--clean` purge result; fails when the purge was skipped. */
+function purge(result: IndexResponse | undefined): IndexCleanResult {
+  const clean = result?.clean;
+  if (!clean || "skipped" in clean) throw new Error("--clean did not run");
+  return clean;
+}
 
 let storage: IsolatedAkmStorage;
 
@@ -49,11 +56,11 @@ test("akmIndex --clean with no missing files: removed is 0, checked matches entr
   const result = await akmIndex({ stashDir, clean: true });
 
   expect(result.clean).toBeDefined();
-  expect(result.clean?.dryRun).toBe(false);
-  expect(result.clean?.removed).toBe(0);
-  expect(result.clean?.removedRefs).toEqual([]);
+  expect(purge(result).dryRun).toBe(false);
+  expect(purge(result).removed).toBe(0);
+  expect(purge(result).removedRefs).toEqual([]);
   // checked should equal the number of entries in the DB (both files still exist)
-  expect(result.clean?.checked).toBe(result.totalEntries);
+  expect(purge(result).checked).toBe(result.totalEntries);
 });
 
 test("akmIndex --clean with a missing file: entry deleted from DB, removedRefs populated", async () => {
@@ -76,11 +83,11 @@ test("akmIndex --clean with a missing file: entry deleted from DB, removedRefs p
   const result = await akmIndex({ stashDir, clean: true });
 
   expect(result.clean).toBeDefined();
-  expect(result.clean?.dryRun).toBe(false);
-  expect(result.clean?.removed).toBe(1);
-  expect(result.clean?.removedRefs).toHaveLength(1);
+  expect(purge(result).dryRun).toBe(false);
+  expect(purge(result).removed).toBe(1);
+  expect(purge(result).removedRefs).toHaveLength(1);
   // The removed canonical ref must identify the deploy entry.
-  expect(result.clean?.removedRefs[0]).toContain("deploy");
+  expect(purge(result).removedRefs[0]).toContain("deploy");
 
   // Verify the entry is actually gone and the returned total describes the
   // same post-clean generation as the database.
@@ -114,12 +121,12 @@ test("akmIndex --clean --dry-run with missing file: removed is 0, ref listed, en
   const result = await akmIndex({ stashDir, clean: true, dryRun: true });
 
   expect(result.clean).toBeDefined();
-  expect(result.clean?.dryRun).toBe(true);
+  expect(purge(result).dryRun).toBe(true);
   // removed must be 0 in dry-run
-  expect(result.clean?.removed).toBe(0);
+  expect(purge(result).removed).toBe(0);
   // But the ref IS reported
-  expect(result.clean?.removedRefs).toHaveLength(1);
-  expect(result.clean?.removedRefs[0]).toContain("deploy");
+  expect(purge(result).removedRefs).toHaveLength(1);
+  expect(purge(result).removedRefs[0]).toContain("deploy");
 
   // Crucially: the entry must still exist in the database
   const db = openIndexDatabase();

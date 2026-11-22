@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Proposal diff renderers — extracted verbatim from `repository.ts`
- * (Chunk 6 WI-6.6 decompose). Pure string functions with no repository
+ * Proposal diff renderers. Pure string functions with no repository
  * dependency; `diffProposal` (repository.ts) is the only production caller.
  */
 

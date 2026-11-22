@@ -7,8 +7,9 @@ import type { OkfProvenance } from "../core/adapter/types";
 import type { MarkdownTocEntry } from "../core/asset/markdown";
 import type { IncludeSelectors } from "../core/include";
 import type { ProjectView } from "../core/projects";
+import type { SkippedIndexReport } from "../indexer/index-build";
 import type { ScopeFilters } from "../indexer/passes/metadata";
-import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
+import type { SemanticSearchStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
 import type { WorkflowExec as ProgramExecCore } from "../workflows/plan";
 
@@ -302,13 +303,16 @@ export interface AddResponse {
   config: {
     sourceCount: number;
   };
-  index: {
-    mode: "full" | "incremental";
-    totalEntries: number;
-    directoriesScanned: number;
-    directoriesSkipped: number;
-    warnings?: string[];
-  };
+  /** The build's summary, or why no build ran (another build held the lock; the next build indexes this change). */
+  index:
+    | {
+        mode: "full" | "incremental";
+        totalEntries: number;
+        directoriesScanned: number;
+        directoriesSkipped: number;
+        warnings?: string[];
+      }
+    | { skipped: SkippedIndexReport };
 }
 
 export interface SourceInstallStatus extends InstalledBundle {
@@ -386,12 +390,15 @@ export interface RemoveResponse {
   config: {
     sourceCount: number;
   };
-  index: {
-    mode: "full" | "incremental";
-    totalEntries: number;
-    directoriesScanned: number;
-    directoriesSkipped: number;
-  };
+  /** The build's summary, or why no build ran (another build held the lock; the next build indexes this change). */
+  index:
+    | {
+        mode: "full" | "incremental";
+        totalEntries: number;
+        directoriesScanned: number;
+        directoriesSkipped: number;
+      }
+    | { skipped: SkippedIndexReport };
 }
 
 export interface UpdateResultItem {
@@ -427,8 +434,8 @@ export interface UpdatePlainSyncedItem {
  * A configured source this update call did NOT process, with a human-
  * readable reason. Exists so `akm update --all` accounts for every configured
  * source instead of silently omitting the ones it cannot or does not sync
- * — e.g. website sources (`--all` re-crawl not yet implemented) and
- * filesystem sources (no remote to sync).
+ * — e.g. filesystem sources (no remote to sync) and a source whose sync
+ * failed.
  */
 export interface UpdateSkippedItem {
   id: string;
@@ -453,24 +460,29 @@ export interface UpdateResponse {
   config: {
     sourceCount: number;
   };
-  index: {
-    mode: "full" | "incremental";
-    totalEntries: number;
-    directoriesScanned: number;
-    directoriesSkipped: number;
-    /** False when the run preserved LKG rows because at least one source scan was incomplete. */
-    scanComplete?: boolean;
-    /**
-     * Semantic-search state after this update's embedding pass (#954). A
-     * managed/plain-source update runs the embedding phase AFTER its atomic
-     * content/lock/index/state commit, on its own connection — a failing
-     * pass (provider down) still reports the update `processed`/successful,
-     * with this field the only sign semantic search fell behind
-     * (`"blocked"`), exactly like a plain `akm index` whose embedding phase
-     * failed.
-     */
-    semanticStatus?: "disabled" | SemanticSearchRuntimeStatus;
-  };
+  /** The build's summary, or why no build ran (another build held the lock; the next build indexes this change). */
+  index:
+    | {
+        mode: "full" | "incremental";
+        totalEntries: number;
+        directoriesScanned: number;
+        directoriesSkipped: number;
+        /** False when the run preserved LKG rows because at least one source scan was incomplete. */
+        scanComplete?: boolean;
+        /**
+         * Semantic-search state after this update's embedding pass (#954). A
+         * managed/plain-source update runs the embedding phase AFTER its atomic
+         * content/lock/index/state commit, on its own connection — a failing
+         * pass (provider down) still reports the update `processed`/successful,
+         * with this field the only sign semantic search fell behind
+         * (`"blocked"`), exactly like a plain `akm index` whose embedding phase
+         * failed.
+         */
+        semanticStatus?: SemanticSearchStatus;
+        /** When no embedding pass ran and the index could not be read: why `semanticStatus` is `unknown`. */
+        semanticReason?: string;
+      }
+    | { skipped: SkippedIndexReport };
 }
 
 /**
@@ -563,7 +575,7 @@ export type PluginHarness = "claude-code" | "codex" | "opencode" | "opencode-v2"
 /**
  * What `akm upgrade` did (or, under `--check`, would do) for one harness's akm
  * plugin. `pending` and `unknown` appear only in a `--check` result: `pending` is an
- * exact comparison, `unknown` means the answer needs a fetch `--check` does not do.
+ * exact comparison (`to` is the version the update installs), `unknown` means the marketplace could not be read.
  */
 export interface PluginUpgradeEntry {
   harness: PluginHarness;
@@ -666,8 +678,10 @@ export interface InfoResponse {
   searchModes: string[];
   semanticSearch: {
     mode: "off" | "auto";
-    /** Read live from the index at call time — never a cached verdict. */
-    status: "disabled" | "pending" | "ready-js";
+    /** What the index recorded at its last run, read at call time — never a cached verdict. `unknown` when the index cannot be read. */
+    status: SemanticSearchStatus;
+    /** For `unknown`: why the index could not be read. */
+    reason?: string;
   };
   registries: Array<{ url: string; name?: string; provider?: string; enabled?: boolean }>;
   /**

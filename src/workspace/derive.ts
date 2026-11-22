@@ -70,6 +70,8 @@ export interface PChartPoint {
   week: string;
   x: number;
   n: number;
+  /** True when akm has the week's data for only part of its days (a window that opens or ends inside it). */
+  partial: boolean;
   rate: number | null;
   lower: number | null;
   upper: number | null;
@@ -77,21 +79,31 @@ export interface PChartPoint {
   signal: boolean;
 }
 
+/** Whole weeks with observations a usual range needs before it is claimed. */
+export const MIN_USUAL_WEEKS = 4;
+
 /**
  * Weekly proportions with p-chart control limits (centre ± 3 standard errors at each week's own n). A week with no
- * observations has no rate and no limits. The centre is the pooled share over every week.
+ * observations has no rate and no limits. The centre is the pooled share over the whole weeks only, and only when
+ * there are `MIN_USUAL_WEEKS` of them with observations: otherwise there is no usual (`enough` is false, the centre
+ * and every limit are null). A partial week has its rate and no limits.
  */
-export function pChart(weeks: Array<{ week: string; x: number; n: number }>): {
+export function pChart(weeks: Array<{ week: string; x: number; n: number; partial: boolean }>): {
   centre: number | null;
+  enough: boolean;
   points: PChartPoint[];
 } {
-  const totalN = weeks.reduce((sum, w) => sum + w.n, 0);
-  const centre = totalN > 0 ? weeks.reduce((sum, w) => sum + w.x, 0) / totalN : null;
+  const whole = weeks.filter((w) => !w.partial && w.n > 0);
+  const enough = whole.length >= MIN_USUAL_WEEKS;
+  const totalN = whole.reduce((sum, w) => sum + w.n, 0);
+  const centre = enough ? whole.reduce((sum, w) => sum + w.x, 0) / totalN : null;
   return {
     centre,
+    enough,
     points: weeks.map((w) => {
-      if (centre === null || w.n === 0) return { ...w, rate: null, lower: null, upper: null, signal: false };
+      if (w.n === 0) return { ...w, rate: null, lower: null, upper: null, signal: false };
       const rate = w.x / w.n;
+      if (centre === null || w.partial) return { ...w, rate, lower: null, upper: null, signal: false };
       const margin = 3 * Math.sqrt((centre * (1 - centre)) / w.n);
       const lower = Math.max(0, centre - margin);
       const upper = Math.min(1, centre + margin);

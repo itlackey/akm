@@ -45,9 +45,12 @@ export type ConfigErrorCode =
   // A connection or harness was named (a flag, an asset, a config key) that is not configured: never replaced by a default.
   | "SELECTION_NOT_CONFIGURED"
   | "INVALID_CONFIG_FILE"
+  // A git bundle's checkout holds uncommitted paths or commits that are not on its upstream, and the
+  // command would replace or delete the checkout. The work is the person's: akm names it and stops.
+  | "SOURCE_HAS_LOCAL_WORK"
   | "UNKNOWN_IMPROVE_STRATEGY"
   // Refused stashDir that would clobber a sensitive system path or the user's
-  // home directory (#473). Triggered by `akm bundle create`/`akm setup` when the
+  // home directory Triggered by `akm bundle create`/`akm setup` when the
   // explicit `--dir` argument resolves to e.g. `/`, `$HOME`, `~/.config`,
   // `/etc`, etc.
   | "UNSAFE_STASH_DIR"
@@ -98,9 +101,9 @@ export type UsageErrorCode =
   // usage error instead of citty's raw usage-banner + console.error path.
   | "UNKNOWN_COMMAND"
   // A flag the resolved command does not declare. citty (node:util parseArgs,
-  // strict: false) silently ignores these, so a typo used to parse
-  // "successfully" and exit 0 — a `--fail-on-flaged`
-  // in CI meant the gate never fired.
+  // strict: false) silently ignores these, so without this error a typo
+  // parses "successfully" and exits 0 — a `--fail-on-flaged`
+  // in CI would mean the gate never fires.
   | "UNKNOWN_FLAG"
   // A workflow step authors with: on a target that cannot bind it: a
   // tasks/<ref> target that declares no inputs: at all, or a commands/<ref> or
@@ -131,8 +134,7 @@ export type UsageErrorCode =
 
 /**
  * Stable, machine-readable codes for TransientError — a retryable-shortly
- * signal distinct from every UsageError code (#948 addendum, dev-team field
- * review 2026-09-09): schedulers classify exit 2 as "fix the command line",
+ * signal distinct from every UsageError code (#948): schedulers classify exit 2 as "fix the command line",
  * but these two conditions mean "try again in a few seconds", a different
  * contract a cron wrapper or scheduler can branch on.
  */
@@ -148,7 +150,7 @@ export type TransientErrorCode =
   // corruption/unrelated failure. The original driver error survives as
   // `cause`.
   | "STATE_DB_CONTENDED"
-  // Field follow-up to #956 (dev-team field review 2026-09-10): a
+  // A
   // concurrent `akm index` (or any other writer touching index.db — source
   // add/update) can make a
   // rebuild's write hit the same contention-shaped SQLite condition
@@ -161,13 +163,12 @@ export type TransientErrorCode =
   // escaping the walk, index, or embedding phase. The original driver error
   // survives as `cause`.
   | "INDEX_DB_CONTENDED"
-  // Field follow-up to #948 (dev-team field review 2026-09-10): the
+  // The
   // `akm improve` whole-run lock (`commands/improve/locks.ts`) is ordinary
   // contention between two legitimate `improve` invocations — the same
-  // "config error is not the right label for a timing collision" shape #956
-  // fixed for the index rebuild lock and the maintenance-start barrier. It
-  // previously threw `ConfigError("INVALID_CONFIG_FILE")`, surfacing as
-  // exit 78 and telling a supervisor to stop retrying a normal lock
+  // "config error is not the right label for a timing collision" shape, as
+  // for the index rebuild lock and the maintenance-start barrier. A config
+  // error would exit 78 and tell a supervisor to stop retrying a normal lock
   // collision. Thrown from `tryAcquireImproveLockUnlocked` when the lock is
   // held by a live PID and `--skip-if-locked` was not passed.
   | "IMPROVE_LOCK_HELD"
@@ -195,6 +196,7 @@ export type NotFoundErrorCode =
   | "WORKFLOW_NOT_FOUND"
   | "PROPOSAL_NOT_FOUND"
   | "FILE_NOT_FOUND"
+  | "COMMAND_NOT_EXECUTABLE"
   | "IMPROVE_RUN_NOT_FOUND"
   // The registry answered, but not with the thing asked for: HTTP 404/410, or
   // metadata that names no such version, dist-tag, or default branch.
@@ -288,7 +290,8 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   // Points at the two verbs that inspect a workflow source without executing it.
   WORKFLOW_SOURCE_INVALID:
     "Run `akm lint` to see the failing source location, or `akm doctor explain <ref>` to compile it without writing.",
-  INPUT_BINDING_INVALID: "Check the step's with: keys against the target's declared inputs.",
+  INPUT_BINDING_INVALID:
+    "Check the values against the task's declared inputs (`akm show tasks/<name>` lists them); for a step's with: keys, check them against the target's declared inputs.",
   TASK_TARGET_UNSUPPORTED:
     "Task definitions support command, script, workflow, and shell (run:) targets; akm/command is layered by callers.",
 };
@@ -298,8 +301,7 @@ const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
   RUN_LEASE_HELD: "Wait for the akm process driving this run (the named pid) to finish, then retry.",
   STATE_DB_CONTENDED:
     "Another akm process is writing state.db right now. Wait a few seconds and retry; commands that support --skip-if-locked can skip instead of failing.",
-  INDEX_DB_CONTENDED:
-    "Another akm process is writing index.db; retry shortly, or pass --skip-if-locked on scheduled runs.",
+  INDEX_DB_CONTENDED: "Another akm process is writing index.db; retry shortly.",
   IMPROVE_LOCK_HELD:
     "Another akm improve run holds the whole-run lock right now. Wait for it to finish and retry, or pass --skip-if-locked on scheduled runs.",
   LOCKFILE_CONTENDED: "Another akm process is updating its bundle lockfile right now. Wait a few seconds and retry.",
@@ -321,6 +323,7 @@ const NOT_FOUND_HINTS: Partial<Record<NotFoundErrorCode, string>> = {
   // for a mistyped id, which points at the wrong thing entirely.
   PROPOSAL_NOT_FOUND: "Run `akm proposal list` to see pending proposals and their ids.",
   FILE_NOT_FOUND: "Check the path exists and is readable.",
+  COMMAND_NOT_EXECUTABLE: "Add execute permission (`chmod +x <program>`) or run it through an interpreter.",
   IMPROVE_RUN_NOT_FOUND:
     "Run `akm improve` first, or `akm doctor metrics improve --since 30d` to see recent run ids in `runIds`.",
   REGISTRY_NOT_FOUND:
@@ -399,8 +402,8 @@ export class UsageError extends AkmError {
 /**
  * Raised when a condition is ordinary, retryable contention rather than a
  * bad command line or a genuine failure — another akm process holds a lock
- * or is writing state.db right now. Distinct from `UsageError` (#948
- * addendum, dev-team field review 2026-09-09): schedulers classify exit 2 as
+ * or is writing state.db right now. Distinct from `UsageError` (#948):
+ * schedulers classify exit 2 as
  * "fix the command line", so contention needs its own exit code (75,
  * sysexits EX_TEMPFAIL) a cron wrapper can branch on to retry instead of
  * alerting.

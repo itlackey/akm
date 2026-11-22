@@ -20,11 +20,15 @@
  */
 
 import os from "node:os";
-import { AkmError, rethrowIfTestIsolationError } from "../../core/errors";
-import { processIdentity } from "../../core/file-lock";
+import path from "node:path";
+import { AkmError, rethrowIfTestIsolationError, TransientError } from "../../core/errors";
+import { type LockOwnership, processIdentity } from "../../core/file-lock";
+import { getStateDir } from "../../core/paths";
+import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
 import { withStateDb } from "../../core/state-db";
-import { reserveTaskHistoryAttempt } from "../../storage/repositories/task-history-repository";
-import { validateTaskId } from "../task-id";
+import { warn } from "../../core/warn";
+import { reserveTaskHistoryAttempt, type TaskHistoryRun } from "../../storage/repositories/task-history-repository";
+import { validateTaskConceptId } from "../task-id";
 import { appendHistory } from "./task-history";
 import { persistRunLog, resolveTaskLogPath } from "./task-log";
 import type { TaskAttemptFailureReason, TaskRunResult } from "./task-result";
@@ -36,8 +40,73 @@ interface ReservedTaskAttempt {
   historyReserved: boolean;
 }
 
-/** Reserve a collision-free identity through state.db's existing unique index. */
-export function reserveTaskAttempt(taskId: string, requestedStartedAt: Date): ReservedTaskAttempt {
+/** Where a version 5 task keeps what it can resume: the state of each run, and the folder it works in. */
+export function runsFolder(taskId: string): string {
+  return path.join(getStateDir(), "runs", encodeURIComponent(taskId));
+}
+
+export const runRecordPath = (taskId: string, runId: string): string =>
+  path.join(runsFolder(taskId), `${runId}.state.json`);
+
+/** The lock file of a task that runs one at a time, by its qualified ref (`bundle//tasks/<name>`). */
+export function taskRunLockPath(ref: string): string {
+  return path.join(getStateDir(), "locks", `task-${encodeURIComponent(ref)}.lock`);
+}
+
+/**
+ * Take the lock of a task that runs one at a time. A start that finds it held throws `RUN_LEASE_HELD`, or, when `skip`
+ * says so, warns and returns the skipped start.
+ */
+export function acquireTaskRunLock(
+  id: string,
+  ref: string,
+  options: { skip: boolean; at: Date },
+): { ownership: LockOwnership } | { skipped: TaskRunResult } {
+  const acquired = tryAcquireRunLock(taskRunLockPath(ref), { label: "task" });
+  if (acquired.state === "acquired") return { ownership: acquired.ownership };
+  const message = `Task ${id} is still running (PID ${formatLockHolderPid(acquired.holder)}, started ${acquired.holder.startedAt}); not starting another run.`;
+  if (!options.skip) throw new TransientError(message, "RUN_LEASE_HELD");
+  warn(message);
+  return { skipped: skippedActiveRun(id, options.at) };
+}
+
+/** An abort controller that akm's own SIGTERM or SIGINT aborts, which stops the running step's whole process group. */
+export function abortOnTermination(): { abort: AbortController; stop: () => void } {
+  const abort = new AbortController();
+  const onSignal = (signal: NodeJS.Signals) => abort.abort(new Error(`task runner received ${signal}`));
+  const onSigterm = () => onSignal("SIGTERM");
+  const onSigint = () => onSignal("SIGINT");
+  process.once("SIGTERM", onSigterm);
+  process.once("SIGINT", onSigint);
+  return {
+    abort,
+    stop: () => {
+      process.off("SIGTERM", onSigterm);
+      process.off("SIGINT", onSigint);
+    },
+  };
+}
+
+/** A scheduled run that found the previous one alive: "active" maps to exit 0 and writes no history row. */
+export function skippedActiveRun(id: string, at: Date): TaskRunResult {
+  return {
+    id,
+    status: "active",
+    startedAt: at.toISOString(),
+    finishedAt: at.toISOString(),
+    durationMs: 0,
+    log: "",
+    target: { kind: "steps" },
+    detail: { reason: "previous_run_active" },
+  };
+}
+
+/** Reserve a collision-free identity through state.db's existing unique index. `run` is the version 5 run the attempt belongs to. */
+export function reserveTaskAttempt(
+  taskId: string,
+  requestedStartedAt: Date,
+  run?: TaskHistoryRun,
+): ReservedTaskAttempt {
   try {
     return withStateDb((db) => {
       for (let offsetMs = 0; ; offsetMs++) {
@@ -55,6 +124,7 @@ export function reserveTaskAttempt(taskId: string, requestedStartedAt: Date): Re
             metadataVersion: 2,
             durationMs: 0,
             detail: null,
+            ...(run ? { run } : {}),
             owner: { pid: process.pid, host: os.hostname(), ...processIdentity(process.pid) },
           }),
         });
@@ -79,10 +149,8 @@ export function finishAttempt(startedAt: Date, observedFinishedAt: Date): Date {
  * usage failures, never an unclassified internal error that might leak
  * implementation detail.
  *
- * Every code here is reachable from the post-reservation dispatch catch: the
- * only caller of `recordTaskAttemptFailure` inside the runner is the
- * post-reservation catch in run-task.ts; task-source parsing happens BEFORE
- * reservation (load-task.ts), so the direct parse path never reaches it.
+ * Scheduled activations record preparation failures as well as dispatch failures.
+ * Interactive preparation stays non-mutating.
  * `TASK_SOURCE_INVALID`, `COMPOSITION_INVALID`, `TARGET_REF_INVALID` and
  * `INPUT_BINDING_INVALID` reach it through the WORKFLOW arm: a workflow task
  * whose plan freezes a `tasks/<ref>` step raises `TASK_SOURCE_INVALID` (via
@@ -103,6 +171,11 @@ const SAFE_TASK_ATTEMPT_ERROR_CODES = new Set([
   "STASH_DIR_NOT_A_DIRECTORY",
   "STASH_DIR_UNREADABLE",
   "LLM_NOT_CONFIGURED",
+  "AGENT_NOT_CONFIGURED",
+  "SELECTION_NOT_CONFIGURED",
+  "SECRET_REFERENCE_UNRESOLVED",
+  "RESOURCE_ALREADY_EXISTS",
+  "UNKNOWN_FLAG",
   "INVALID_CONFIG_FILE",
   "TEST_ISOLATION_MISSING",
   "INVALID_FLAG_VALUE",
@@ -136,10 +209,12 @@ export function recordTaskAttemptFailure(input: {
   historyReserved?: boolean;
   /** Whether the OS scheduler started the run; stored as the row's `trigger`. */
   scheduled?: boolean;
+  /** The bundle the task was to be read from. */
+  bundle?: string;
 }): void {
   let taskId = input.taskId;
   try {
-    validateTaskId(taskId);
+    validateTaskConceptId(taskId);
   } catch {
     taskId = INVALID_TASK_ATTEMPT_ID;
   }
@@ -161,6 +236,7 @@ export function recordTaskAttemptFailure(input: {
     durationMs: Math.max(0, finishedAt.getTime() - attempt.startedAt.getTime()),
     log: logPath,
     target: { kind: "unknown" },
+    ...(input.bundle ? { bundle: input.bundle } : {}),
     detail: { reason: input.reason, error: errorCode },
   };
 

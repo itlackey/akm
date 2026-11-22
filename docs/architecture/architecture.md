@@ -31,7 +31,7 @@ written are in [Core Principles](akm-core-principles.md).
   to pick an asset and its `ref` at every detail level (a registry hit
   carries `installRef` instead); `show` returns the payload; `--detail agent`
   results also carry `path` and `editable`. Pinned by
-  `tests/output-shapes-unit.test.ts` and `tests/output-baseline.test.ts`.
+  `tests/output-shapes-unit.test.ts` and `tests/integration/output-baseline-in-process.test.ts`.
 - **Every token earns its place.** Default output is lean: `--detail brief`
   lists only what is needed to choose the next asset, and `normal`, `full`
   and `agent` widen or reshape it. `show` returns what a consumer needs to
@@ -45,13 +45,13 @@ written are in [Core Principles](akm-core-principles.md).
   identity. An agent passes the ref `search` returned to `show` and never
   parses or builds one. Pinned by `tests/asset-ref.test.ts`,
   `tests/resolve-ref.test.ts` and
-  `tests/contracts/ref-resolver-contract.test.ts`.
+  `tests/integration/contracts/ref-resolver-contract.test.ts`.
 - **Execution happens only through named surfaces.** Workflow runs, tasks,
-  agent and command dispatch, `env run` and `secret run`, the improve and
+  agent and command dispatch, `akm exec`, the improve and
   proposal processes, index passes, and fetcher modules in the working
   bundle's `scripts/wiki-fetchers/` directory during website sync. `search`
-  and `show` execute nothing; a script runs only as a task or workflow
-  target. Held by review.
+  and `show` execute nothing; a script runs only through `akm run`, a task
+  step or a workflow target. Held by review.
 - **Improvement is proposal-first.** Proposals are the unit of change: reflect,
   distill, extract and consolidate only emit proposals. Three lanes act
   without a person, and only with `experimental.improveAutonomy` on: memory
@@ -83,7 +83,7 @@ written are in [Core Principles](akm-core-principles.md).
   for its stored key), so a credential is not frozen: dispatch materializes the
   current key, for the frozen endpoint only, and only if the runner was frozen
   eligible for one (`storedKey: false` marks a connection an `extends` base
-  alone defines). Pinned by `tests/workflows/child-plan-immutability.test.ts`
+  alone defines). Pinned by `tests/integration/workflows/child-plan-immutability.test.ts`
   and `tests/workflows/immutable-execution-v4-red.test.ts`.
 - **Host authority is local and never inferred.** Inherited config shares
   portable policy only. A disabled bundle (`enabled: false`) is inert across
@@ -96,8 +96,8 @@ written are in [Core Principles](akm-core-principles.md).
   takes the akm-written rows already in the native scheduler as the choice;
   see [Configuration](../reference/configuration.md#scheduler-activation)).
   Anything else that would need a new trust decision is reported, never
-  invented. Pinned by `tests/config.test.ts` and
-  `tests/source-source.test.ts`.
+  invented. Pinned by `tests/integration/config.test.ts` and
+  `tests/integration/source-source.test.ts`.
 - **An unsafe override names one risk.** `--allow-insecure-transport` allows
   plain HTTP and nothing else, and there is no combined bypass. Pinned for the
   flag by `tests/integration/registry/registry-network-boundary.test.ts`; the
@@ -593,7 +593,7 @@ A config in the older `engines` form is converted to `connections` and
 `harnesses` by one pure function (`src/core/config/convert-engines.ts`), in
 memory on every load and permanently by `akm migrate apply`.
 
-Task source v4 execution and durable workflow dispatch use this runtime
+Task execution and durable workflow dispatch use this runtime
 boundary. Markdown workflows compile through source IR v1; new starts freeze
 `irVersion: 8`, which records a connection or harness where earlier versions
 recorded an engine. A stored plan that decodes runs whatever release froze it
@@ -603,7 +603,8 @@ which includes every earlier plan with a command step, is marked abandoned and
 refused, naming the upgrade. AKM does not support full GitHub Actions semantics
 or arbitrary remote action execution.
 
-Tasks are `tasks/<name>.yml` documents in task source v4 (`parseTaskSource`).
+Tasks are `tasks/<name>.yml` documents in task source v4 or the Experimental
+task source v5, `version: 5-beta.1` (`parseTaskSource`).
 Version 2 and 3 files are not read at runtime: they are refused with a message
 naming `akm migrate apply`, which converts them. Historical task-run metadata
 remains readable.

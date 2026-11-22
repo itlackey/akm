@@ -6,8 +6,7 @@
  * Dotted-path getter/setter/unsetter for AKM config objects, driven by the
  * Zod schema in `./config-schema.ts`.
  *
- * Replaces the per-key switch statement that used to live in
- * `src/commands/config-cli.ts`. Adding a new config field is now zero lines
+ * Adding a new config field is zero lines
  * of CLI code — the schema describes how to get/set/unset, and this walker
  * does the rest.
  *
@@ -25,7 +24,6 @@ import { z } from "zod";
 import { isRecord } from "../common";
 import { UsageError } from "../errors";
 import { hasRegistryUrlCredentials, REGISTRY_CREDENTIALS_UNSUPPORTED } from "../registry-url";
-import { warnOnce } from "../warn";
 import { AkmConfigBaseSchema, type AkmConfigShape, listTopLevelConfigKeys } from "./config-schema";
 import { deepMergeConfig } from "./deep-merge";
 import { isEnvReference, OpaqueFieldSchema } from "./schema/primitives";
@@ -213,21 +211,12 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
   rejectLiteralApiKeyInWholeObjectSet(path, raw, dotted);
 
   const schema = resolveSchemaAt(path, config, raw);
-  const isUnknownKey = !schema;
-  if (isUnknownKey) {
-    warnOnce(
-      `config-set:unknown-key:${dotted}`,
-      `"${dotted}" is not a known config key; storing it anyway. Run \`akm config get ${dotted}\` to confirm it round-trips as expected.`,
-    );
+  if (!schema) {
+    throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint());
   }
 
   const judgmentObjectPath = isTriageJudgmentPath(path);
-  const value =
-    judgmentObjectPath && raw === "null"
-      ? undefined
-      : isUnknownKey
-        ? bestEffortJsonValue(raw)
-        : coerceForSchema(schema as z.ZodTypeAny, raw, dotted);
+  const value = judgmentObjectPath && raw === "null" ? undefined : coerceForSchema(schema, raw, dotted);
 
   if (path[0] === "registries") rejectRegistryCredentialValue(value, dotted);
 
@@ -246,7 +235,7 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
   // mismatches, out-of-range numbers, schema-level shape errors (writable
   // npm/website sources via .superRefine, strict-mode unknown keys in nested
   // objects, etc.) BEFORE we apply the patch.
-  const parsed = isUnknownKey ? { success: true as const, data: value } : (schema as z.ZodTypeAny).safeParse(candidate);
+  const parsed = schema.safeParse(candidate);
   if (!parsed.success) {
     const lines = parsed.error.issues
       .map((i) => {
@@ -302,9 +291,9 @@ export function configUnset(config: Record<string, unknown>, dotted: string): Re
   if (path.length === 1 && path[0] === "configVersion") {
     throw new UsageError("configVersion cannot be removed through config unset.", "INVALID_FLAG_VALUE");
   }
-  // Validate the path resolves to a real schema field (so typos don't no-op).
-  const schema = resolveSchemaAt(path, config);
-  if (!schema) {
+  // A path the schema does not know is removable only when the file holds it (a key an older akm wrote); otherwise a
+  // typo would no-op.
+  if (!resolveSchemaAt(path, config) && !holdsPath(config, path)) {
     throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint());
   }
   return unsetPath(config, path);
@@ -374,14 +363,6 @@ function rejectRegistryCredentialValue(value: unknown, dotted: string): void {
         REGISTRY_CREDENTIALS_UNSUPPORTED,
       );
     }
-  }
-}
-
-function bestEffortJsonValue(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return raw;
   }
 }
 
@@ -495,6 +476,15 @@ function setPath(config: Record<string, unknown>, path: Path, value: unknown): R
       : {};
   next[head] = setPath(child, rest, value);
   return next;
+}
+
+function holdsPath(config: Record<string, unknown>, path: Path): boolean {
+  let cursor: unknown = config;
+  for (const segment of path) {
+    if (!isRecord(cursor) || !(segment in cursor)) return false;
+    cursor = cursor[segment];
+  }
+  return true;
 }
 
 function unsetPath(config: Record<string, unknown>, path: Path): Record<string, unknown> {

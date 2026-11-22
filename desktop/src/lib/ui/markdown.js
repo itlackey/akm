@@ -229,20 +229,3 @@ export function markdown(source, context = {}) {
   flushList();
   return context.quoteDepth ? html`${blocks}` : html`<div class="md">${blocks}</div>`;
 }
-
-/**
- * Split leading `---` frontmatter from `content`: { fields: [[key, value]], body, startLine }, where
- * `startLine` is the 1-based source line the body starts on (pass it to {@link markdown}).
- */
-export function splitFrontmatter(content) {
-  const text = String(content ?? "").replace(/\r\n?/g, "\n");
-  const m = /^---\n([\s\S]*?)\n---[ \t]*(?:\n|$)/.exec(text);
-  if (!m) return { fields: [], body: text, startLine: 1 };
-  const fields = [];
-  for (const line of m[1].split("\n")) {
-    const kv = /^([A-Za-z0-9_.-]+):\s*(.*)$/.exec(line);
-    if (kv) fields.push([kv[1], kv[2]]);
-    else if (fields.length > 0 && line.trim() !== "") fields[fields.length - 1][1] += `\n${line}`;
-  }
-  return { fields, body: text.slice(m[0].length), startLine: m[0].split("\n").length };
-}

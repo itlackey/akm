@@ -53,6 +53,7 @@ import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-w
 import { agentRuntime } from "../src/integrations/agent/runtime";
 import { HARNESS_REGISTRY } from "../src/integrations/harnesses";
 import { _setOpencodeVersionProbeForTests } from "../src/integrations/harnesses/opencode/version";
+import { _resetEndpointSupportTrackersForTests } from "../src/llm/client";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { resetAllSeams } from "./_helpers/seams";
 
@@ -121,6 +122,18 @@ function installSuiteWideSandbox(): void {
   // also runs and restores their own snapshot of the prior value (which
   // is this sandbox path, not the developer's real $HOME).
   process.env.HOME = home;
+  // `crontab -l` would read the developer's real crontab (in `akm doctor`'s scheduler report, in any run of the CLI).
+  // A `crontab` that holds a table of the sandbox comes first on PATH, in-process and for every spawned run;
+  // a test that sets its own PATH (a fake crontab of its own) replaces it.
+  const bin = path.join(suiteSandboxRoot, "bin");
+  const store = path.join(suiteSandboxRoot, "crontab.txt");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(
+    path.join(bin, "crontab"),
+    `#!/bin/sh\ncase "$1" in -l) [ -f "${store}" ] && cat "${store}" || { echo "no crontab" >&2; exit 1; };; -) cat > "${store}";; esac\n`,
+    { mode: 0o755 },
+  );
+  process.env.PATH = `${bin}${path.delimiter}${process.env.PATH ?? ""}`;
   process.env.XDG_CONFIG_HOME = path.join(suiteSandboxRoot, "xdg-config");
   process.env.XDG_CACHE_HOME = path.join(suiteSandboxRoot, "xdg-cache");
   process.env.XDG_DATA_HOME = path.join(suiteSandboxRoot, "xdg-data");
@@ -358,6 +371,8 @@ function resetSingletons(): void {
   resetConfigCache();
   clearEmbeddingCache();
   resetLocalEmbedder();
+  // A test that warmed an endpoint to reject json_schema must not frame later tests' replies in this process.
+  _resetEndpointSupportTrackersForTests();
   _setAssetMutationLeaseSyncTimingForTests(undefined);
   _setOpencodeVersionProbeForTests(undefined);
   refuseRealOpencode();

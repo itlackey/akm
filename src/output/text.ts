@@ -17,10 +17,7 @@
  * falls back to `renderGenericText`'s flat `key=value` rendering of the
  * shaped envelope (`src/output/generic-render.ts` — NOT `renderGenericMarkdown`;
  * markdown syntax is markup, not plain text, so `text` gets its own generic
- * renderer rather than reusing `md`'s). NOT YAML either: this comment (and
- * the one on `formatPlain` below) used to say the fallback was YAML, but it
- * never was — the fallback was pretty-printed JSON until it became a generic
- * renderer.
+ * renderer rather than reusing `md`'s). The fallback is not YAML.
  *
  * Pure functions — no IO.
  */
@@ -54,6 +51,7 @@ import { getTextFormatterHandler, registerTextFormatters, type TextFormatterEntr
 import { registryCommandFormatters } from "./text/registry-commands";
 import { rememberFormatters } from "./text/remember";
 import { removeFormatters } from "./text/remove";
+import { rulesFormatters } from "./text/rules";
 import { searchFormatters } from "./text/search";
 import { showFormatters } from "./text/show";
 import { syncFormatters } from "./text/sync";
@@ -75,6 +73,7 @@ const BUILT_IN_TEXT_FORMATTERS: TextFormatterEntry[] = [
   ...showFormatters,
   ...searchFormatters,
   ...curateFormatters,
+  ...rulesFormatters,
   ...workflowFormatters,
   ...listFormatters,
   ...addFormatters,

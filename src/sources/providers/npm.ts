@@ -6,9 +6,8 @@
  * Npm-source stash provider.
  *
  * `sync()` resolves the npm package tarball, downloads it, verifies its
- * integrity, extracts it securely (via `extractTarGzSecure`), detects the
- * stash root inside the package, and applies any nested `akm.include`
- * (package.json) configuration. Cache hits short-circuit the fetch.
+ * integrity, extracts it securely (via `extractTarGzSecure`), and detects the
+ * stash root inside the package. Cache hits short-circuit the fetch.
  */
 
 import fs from "node:fs";
@@ -20,14 +19,7 @@ import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolv
 import type { ParsedNpmRef } from "../../registry/types";
 import type { SourceProvider } from "../provider";
 import type { SourceLockData, SyncOptions } from "./install-types";
-import {
-  applyAkmIncludeConfig,
-  buildInstallCacheDir,
-  computeFileHash,
-  detectStashRoot,
-  downloadArchive,
-  isDirectory,
-} from "./provider-utils";
+import { buildInstallCacheDir, computeFileHash, detectStashRoot, downloadArchive, isDirectory } from "./provider-utils";
 import { extractTarGzSecure, verifyArchiveIntegrity } from "./tar-utils";
 
 /**
@@ -50,8 +42,8 @@ class NpmSourceProvider implements SourceProvider {
     this.name = config.name ?? config.url ?? "npm";
   }
 
+  /** A recorded npm package has no directory of its own: its extracted content is the lock's `localRoot`. */
   path(): string {
-    if (this.#config.path) return this.#config.path;
     throw new ConfigError(
       `npm source "${this.name}" has no resolved content path — run \`akm bundle update\` to sync it before indexing.`,
     );
@@ -78,7 +70,6 @@ function npmRefFromConfig(config: SourceConfigEntry): string {
  *   - resolving the artifact URL and integrity from the npm registry
  *   - reuse cached extraction when present
  *   - download, verify, extract securely, then detect the stash root
- *   - honour `akm.include` (package.json) filters
  */
 export async function syncNpmRef(ref: string, options?: SyncOptions): Promise<SourceLockData> {
   const parsed = parseRegistryRef(ref);
@@ -130,8 +121,6 @@ async function doSyncNpm(parsed: ParsedNpmRef, options?: SyncOptions): Promise<S
   fs.mkdirSync(cacheDir, { recursive: true });
 
   let integrity: string;
-  let provisionalBundleRoot: string;
-  let installRoot: string;
   let stashRoot: string;
   try {
     await downloadArchive(resolved.artifactUrl, archivePath);
@@ -139,17 +128,9 @@ async function doSyncNpm(parsed: ParsedNpmRef, options?: SyncOptions): Promise<S
     integrity = await computeFileHash(archivePath);
     extractTarGzSecure(archivePath, extractedDir);
 
-    const detectedProvisionalBundleRoot = detectStashRoot(extractedDir);
-    if (!detectedProvisionalBundleRoot) {
-      throw new UsageError(`Unable to detect a stash root in extracted npm package: ${resolved.ref}`);
-    }
-    provisionalBundleRoot = detectedProvisionalBundleRoot;
-    installRoot = applyAkmIncludeConfig(provisionalBundleRoot, cacheDir, extractedDir) ?? provisionalBundleRoot;
-    const detectedStashRoot = detectStashRoot(installRoot);
+    const detectedStashRoot = detectStashRoot(extractedDir);
     if (!detectedStashRoot) {
-      throw new UsageError(
-        `Unable to detect a stash root after applying akm.include (package.json) configuration for npm package: ${resolved.ref}`,
-      );
+      throw new UsageError(`Unable to detect a stash root in extracted npm package: ${resolved.ref}`);
     }
     stashRoot = detectedStashRoot;
   } catch (err) {

@@ -53,6 +53,7 @@ async function seedProjects() {
       beta: { from: "stash", filters: { project: ["beta", ""] } },
       gone: { from: ["nope", "off", "stash"] },
       open: {},
+      sealed: { write: { bundle: "off" } },
     },
   });
   resetConfigCache();
@@ -107,7 +108,7 @@ describe("assets.projectOverview", () => {
       project: { name: "alpha", from: ["stash", "team"], filters: { project: "alpha" }, prefer: { project: "alpha" } },
       fromImplicit: false,
       preferImplicit: false,
-      writeBundle: { name: "stash", implicit: true, usable: true },
+      writeBundle: { name: "stash", implicit: true, writeBlocker: null },
     });
     expect(alpha.bundles).toMatchObject([
       {
@@ -123,6 +124,13 @@ describe("assets.projectOverview", () => {
     ]);
     const found = await out(assets.search({ q: "", project: "alpha", limit: 200 }));
     expect(alpha.bundles.reduce((sum: number, bundle: Json) => sum + bundle.eligible.count, 0)).toBe(found.hits.length);
+  });
+
+  test("the write bundle carries akm's sentence when it would refuse a write, not a guess from its flags", async () => {
+    await seedProjects();
+    const sealed = await out(assets.projectOverview({ project: "sealed" }));
+    expect(sealed.writeBundle).toMatchObject({ name: "off", implicit: false });
+    expect(sealed.writeBundle.writeBlocker).toEqual(expect.stringContaining("off"));
   });
 
   test("a project without from reads every local bundle; a missing or disabled bundle is reported, not counted", async () => {

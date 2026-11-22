@@ -14,7 +14,7 @@
  *
  * The rest of the SPEC-5 surface (frontmatter demotion, xref folding,
  * validation, read-only sources, help meta, writeSupersededEdge unit) is
- * pinned in tests/commands/remember-import-supersedes.test.ts.
+ * pinned in tests/integration/commands/remember-import-supersedes.test.ts.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

@@ -8,7 +8,7 @@
  * The `wiki` ASSET-TYPE is retired, but the LLM Wiki structure stays first-class
  * as its OWN adapter: a `BundleAdapter` carrying the native wiki semantics
  * (probe = schema.md + pages/, wiki-page recognition, links) that the retired
- * `src/wiki/` module used to own.
+ * `src/wiki/` module owned.
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/llm-wiki/` + goldens
@@ -47,12 +47,12 @@
  * (a `raw/` source not cited by any page's `sources:`), `missing-description`
  * (a page with no description), and `broken-source` (a page `sources:` entry
  * with no matching raw file). Broken xrefs are TOLERATED (warning, non-blocking).
- * The shared `runBaseValidateChecks` (unquoted-colon / missing-updated
- * / stale-path / missing-ref) is NOT run: wiki files never carry an `updated`
+ * The shared base checks (`createBaseChecker`: unquoted-colon / missing-updated
+ * / stale-path / missing-ref) are NOT run: wiki files never carry an `updated`
  * field, so `missing-updated` would fire on every page/reserved file and
  * contradict the lint golden's clean result — the native checks are the wiki's
  * complete validation surface. The `orphan` issue CODE is APPROVED but the
- * recorded chunk-4 behavior (lint golden edgeCases) is to emit `broken-xref`
+ * recorded behavior (lint golden edgeCases) is to emit `broken-xref`
  * only (the actionable finding) and surface `orphan` after the xref is fixed —
  * so no `orphan` finding is emitted here.
  *
@@ -69,11 +69,11 @@
  * participants with this file present.
  */
 
-import fs from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../asset/frontmatter";
+import { LLM_WIKI_PAGES_DIR, looksLikeLlmWikiRoot } from "../../asset/llm-wiki-root";
 import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
@@ -95,8 +95,6 @@ const RESERVED_ROOT_FILES = new Set(["schema.md", "index.md", "log.md"]);
 
 /** Content subdirectory holding immutable ingested sources. */
 const RAW_SUBDIR = "raw";
-/** Content subdirectory holding agent-authored pages. */
-const PAGES_SUBDIR = "pages";
 
 /** POSIX-normalize separators. */
 /** conceptId = component-root-relative path minus `.md`. */
@@ -264,7 +262,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
 
   const head = firstSegment(relPath);
   const isRaw = head === RAW_SUBDIR && relPath.includes("/");
-  const isPage = head === PAGES_SUBDIR && relPath.includes("/");
+  const isPage = head === LLM_WIKI_PAGES_DIR && relPath.includes("/");
   // Only `raw/` sources and `pages/` pages are wiki assets. Everything else
   // (root README, stray root `.md`, other dirs) is abstained on.
   if (!isRaw && !isPage) return null;
@@ -323,7 +321,7 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
     if (isReservedRootFile(relPath)) continue; // reserved files are not concepts — no page checks
     const head = firstSegment(relPath);
     const isRaw = head === RAW_SUBDIR && relPath.includes("/");
-    const isPage = head === PAGES_SUBDIR && relPath.includes("/");
+    const isPage = head === LLM_WIKI_PAGES_DIR && relPath.includes("/");
     if (!isRaw && !isPage) continue;
     items.push({
       relPath,
@@ -421,15 +419,8 @@ export const llmWikiAdapter: BundleAdapter = {
     return ["."];
   },
 
-  /** Install-time probe (§1.2): a root is an LLM Wiki when it has a root `schema.md` AND a `pages/` directory. */
-  looksLikeRoot(root: string): boolean {
-    try {
-      if (!fs.existsSync(path.join(root, "schema.md"))) return false;
-      return fs.statSync(path.join(root, PAGES_SUBDIR)).isDirectory();
-    } catch {
-      return false;
-    }
-  },
+  /** Install-time probe: a root is an LLM Wiki when it has a root `schema.md` AND a `pages/` directory. */
+  looksLikeRoot: looksLikeLlmWikiRoot,
 };
 
 // Exported pure helpers for the conformance test.

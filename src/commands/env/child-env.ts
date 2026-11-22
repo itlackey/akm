@@ -2,6 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { akmLocations, withoutLauncherVars } from "../../core/paths";
+
 /**
  * What `env run --clean` / `secret run --clean` keeps of the parent environment. The user typed
  * the flag to get a minimal one; without the last eight names Windows cannot create the process.
@@ -54,12 +56,15 @@ export function buildChildEnv(
   parentEnv: NodeJS.ProcessEnv,
   options: ChildEnvOptions,
 ): Record<string, string | undefined> {
-  const base: Record<string, string | undefined> = options.clean ? {} : { ...parentEnv };
+  const base: Record<string, string | undefined> = options.clean ? {} : { ...withoutLauncherVars(parentEnv) };
 
   if (options.clean) {
     for (const key of CLEAN_ENV_ALLOWLIST) {
       if (parentEnv[key] !== undefined) base[key] = parentEnv[key];
     }
+    // The child that runs `akm` must find this installation; AKM_BUNDLE_DIR is a retired selector, not a location to keep.
+    const { AKM_BUNDLE_DIR: _bundleDir, ...locations } = akmLocations();
+    Object.assign(base, locations);
   }
 
   for (const key of options.inherit) {
@@ -67,4 +72,13 @@ export function buildChildEnv(
   }
 
   return base;
+}
+
+/** The child environment for `--clean` and `--inherit <VAR,...>`; `--inherit` alone starts clean. */
+export function childEnvFromFlags(
+  parentEnv: NodeJS.ProcessEnv,
+  flags: { clean: boolean; inherit: string | undefined },
+): Record<string, string | undefined> {
+  const inherit = (flags.inherit ?? "").split(/[,\s]+/).filter(Boolean);
+  return buildChildEnv(parentEnv, { clean: flags.clean || flags.inherit !== undefined, inherit });
 }

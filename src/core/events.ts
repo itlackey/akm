@@ -117,13 +117,10 @@ export type EventType =
   /** Owning LLM telemetry sink marker — carries `{expectedTerminalRecords}`. */
   | "llm_usage_summary"
   /**
-   * Retired (0.9.17-alpha.9, R5): the per-run forgetting-safety rank-change
-   * report (plan §WS-1 step 7). No longer emitted — the 30-day event window
-   * showed no pick the signal-delta lane or retrieval scope would not also
-   * have made, and its purpose moved into the retirement continuity check
-   * (`checkRetirementContinuity` in consolidate/continuity-check.ts, now
-   * driven by search rank, not salience rank). Kept here only so old rows
-   * still decode. Metadata was `{stashSize, totalChanged, forgettingCandidates, topDrops}`.
+   * Retired: the per-run forgetting-safety rank-change report. Never emitted;
+   * the retirement continuity check (`checkRetirementContinuity` in
+   * consolidate/continuity-check.ts, driven by search rank) covers its
+   * purpose. Kept here only so old rows still decode. Metadata was `{stashSize, totalChanged, forgettingCandidates, topDrops}`.
    */
   | "improve_salience_rank_change"
   /**
@@ -147,6 +144,11 @@ export type EventType =
   | "index_db_vacuumed"
   /** Emitted once when an `akm index` run finishes. Metadata: `{mode, totalMs, walkMs, llmMs, embedMs, ftsMs, finalizeMs}`. */
   | "index_completed"
+  /**
+   * Emitted by `akm index` for a file renamed or moved on disk that it paired with its old entry (same content): `ref` is
+   * the asset's current ref and metadata `{from}` the ref it had. A later move re-keys `ref` with the rest of the history.
+   */
+  | "moved"
   /**
    * #733 — emitted by `runOrphanStateGcPass` (the orphan-state GC maintenance
    * pass) when a run has something to report: any `asset_salience` /
@@ -297,9 +299,8 @@ export interface ReadEventsOptions {
   includeTags?: string[];
   /**
    * Filter to events whose `metadata.runId` matches (the `workflow_*` event
-   * family's run-scoping field). 0.9.0 CLI overhaul (S5): `akm workflow
-   * watch <run-id>` is dropped; this is the replacement for its run-scoped
-   * filter on the general `akm log` leaf.
+   * family's run-scoping field). Backs the run-scoped filter on the
+   * general `akm log` command.
    */
   runId?: string;
   /**

@@ -33,7 +33,7 @@ function launcherFixture(root: string): { launcher: string; output: string } {
   const launcher = path.join(dist, "akm");
   const output = path.join(root, "launcher-output.json");
   fs.mkdirSync(dist, { recursive: true });
-  fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
+  fs.copyFileSync(path.resolve("scripts/node-runtime/akm.mjs"), launcher);
   fs.writeFileSync(
     path.join(dist, "cli.js"),
     [

@@ -28,7 +28,7 @@ import { parseTaskSource } from "./source/parse-task-source";
 
 /** Directory holding the bundled task template categories. */
 const TASKS_ASSETS_DIR = path.join(getDirname(import.meta.url), "../assets/tasks");
-/** Templates setup offers but ships disabled (`category/id`). None ship disabled since catchup was removed (#1130). */
+/** Templates setup offers but ships disabled (`category/id`). None ship disabled. */
 const DEFAULT_DISABLED_TASKS = new Set<string>();
 
 export interface EmbeddedTask {
@@ -97,6 +97,7 @@ export function listEmbeddedTasks(): EmbeddedTask[] {
       }
       // Setup defaults are trusted application metadata, not bundle-authored
       // task data. Task source can describe a schedule but cannot activate it.
+      if (parsed.version !== 4) continue;
       const task = parsed.v4;
       const [firstSchedule] = task.schedule;
       if (task.target.kind !== "run" || !firstSchedule) continue;

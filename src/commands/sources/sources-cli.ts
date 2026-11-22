@@ -5,25 +5,16 @@
 /**
  * Source-management CLI commands — `akm upgrade/sync/clone`.
  *
- * Extracted verbatim from src/cli.ts (WS6). Each `main.subCommands.<key>`
- * registration line stays byte-identical; the args/output shape of every
- * subcommand is unchanged. The `runSyncBody` git-commit/push body is used
- * ONLY by this cluster, so it moves with it.
+ * The `runSyncBody` git-commit/push body is used only by this cluster.
  *
- * Leaf handlers whose body is a plain `runWithJsonErrors(async () => { … })`
- * are migrated to `defineJsonCommand`, which emits the same JSON envelope
- * (stdout/stderr/exit-code) as the inline form. `sync` keeps `defineCommand`
- * because its `run` delegates to `runSyncBody` (which owns the
- * `runWithJsonErrors` wrapper) rather than wrapping inline.
+ * Leaf handlers are `defineJsonCommand`s, which emit the JSON envelope
+ * (stdout/stderr/exit-code). `sync` keeps `defineCommand` because its `run`
+ * delegates to `runSyncBody` (which owns the `runWithJsonErrors` wrapper)
+ * rather than wrapping inline.
  *
- * 0.9.0 CLI overhaul (S3): top-level `history` was dropped; its
- * `--accept-rate-by-source` metric was folded into `akm health --report`
- * (src/commands/health/accept-rate.ts).
- *
- * 0.9 CLI overhaul (S7): `list`/`remove`/`update` moved out of this cluster
- * into the new `akm bundle` group (src/commands/sources/bundle-cli.ts) — no
- * top-level `list`/`remove`/`update` remains. Root `sync` and this file's
- * `clone`/`upgrade` stay top-level (the shipped `core/sync.yml` task calls
+ * Bundle `list`/`remove`/`update` live in the `akm bundle` group
+ * (src/commands/sources/bundle-cli.ts). Root `sync` and this file's
+ * `clone`/`upgrade` are top-level (the shipped `core/sync.yml` task calls
  * `akm sync` directly).
  */
 import { defineCommand } from "citty";
@@ -35,13 +26,11 @@ import {
   outputWithExitCode,
   runWithJsonErrors,
 } from "../../cli/shared";
-import { loadConfig } from "../../core/config/config";
-import { appendEvent } from "../../core/events";
-import { resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
 import { pkgVersion } from "../../version";
 import { runUpgrade } from "./plugin-upgrade";
 import { checkForUpdate, performUpgrade } from "./self-update";
 import { akmClone } from "./source-clone";
+import { akmSync } from "./sync";
 
 export const upgradeCommand = defineJsonCommand({
   meta: {
@@ -75,7 +64,7 @@ export const upgradeCommand = defineJsonCommand({
     },
     next: {
       type: "boolean",
-      description: "Install the newest prerelease (the @next npm tag)",
+      description: "Deprecated: use `--channel next`. Install the newest prerelease (the @next npm tag)",
       default: false,
     },
   },
@@ -104,30 +93,13 @@ export const upgradeCommand = defineJsonCommand({
   },
 });
 
-// `sync` body, standalone so the git-commit/push logic stays in one place.
+// `sync` body: the output wrapper around `akmSync`, which the workspace's bundle commit runs too.
 async function runSyncBody(args: { name?: string; message?: string; push?: boolean }): Promise<void> {
   await runWithJsonErrors(async () => {
     // The optional `name` positional is safe to trust: the global output flags
     // are declared on the command (GLOBAL_OUTPUT_ARGS), so `akm sync --format
     // json` parses `json` as the flag's value, never as a stash name.
-    const effectiveName = args.name;
-
-    let writable: boolean | undefined;
-    if (effectiveName === undefined) {
-      // Primary stash — honour the configured default bundle's writable flag.
-      writable = resolveWritableOverride(loadConfig());
-    }
-
-    const result = saveGitStash(effectiveName, args.message, writable, { push: args.push !== false });
-    appendEvent({
-      eventType: "sync",
-      metadata: {
-        name: effectiveName ?? null,
-        message: args.message ?? null,
-        ok: (result as { ok?: boolean }).ok !== false,
-      },
-    });
-    output("sync", result);
+    output("sync", akmSync(args));
   });
 }
 
@@ -166,7 +138,8 @@ export const syncCommand = defineCommand({
 export const cloneCommand = defineJsonCommand({
   meta: {
     name: "clone",
-    description: "Clone an asset from any source into a managed bundle or an unmanaged custom destination",
+    description:
+      "Deprecated, removed in 0.11: use `akm import <ref> --asset-ref`. Clone an asset from any source into a managed bundle or an unmanaged custom destination",
   },
   args: {
     ref: { type: "positional", description: "Asset ref (e.g. npm:@scope/pkg//scripts/deploy.sh)", required: true },

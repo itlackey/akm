@@ -49,9 +49,8 @@ const ctx: ValidateContext = {
 };
 
 describe("agent-skills adapter — metadata", () => {
-  test("id / version", () => {
+  test("id", () => {
     expect(agentSkillsAdapter.id).toBe("agent-skills");
-    expect(agentSkillsAdapter.version).toBe("0.9.0");
   });
 });
 

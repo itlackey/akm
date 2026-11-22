@@ -59,6 +59,11 @@ const DEPRECATIONS: readonly Deprecation[] = [
     path: ["workflow", sub],
     note: WORKFLOWS_NOTE,
   })),
+  { path: ["env", "run"], use: "a script asset under scripts/, run with `akm run --env <ref> scripts/<file>`" },
+  {
+    path: ["secret", "run"],
+    use: "a script asset under scripts/, run with `akm run --secret <ref>:<VAR> scripts/<file>`",
+  },
   { path: ["agent"], needsRef: true, use: "`akm run <ref>`" },
   { path: ["command", "run"], use: "`akm run <ref>`" },
   { path: ["command"], needsRef: true, use: "`akm run <ref>`" },
@@ -78,7 +83,7 @@ const DEPRECATIONS: readonly Deprecation[] = [
   { path: ["show"], flag: "--context", value: "lead", use: "`--lead`" },
   { path: ["show"], flag: "--max-chars", use: "`--max-tokens`" },
   { path: ["lint"], flag: "--auto-fix", use: "`--fix`" },
-  { path: ["migrate", "apply"], flag: "--dry-run", use: "`akm migrate status`" },
+  { path: ["migrate", "apply"], flag: "--dry-run", use: "`akm migrate status [<file>...]`" },
   {
     path: ["hints"],
     flag: "--detail",
@@ -101,7 +106,6 @@ const DEPRECATIONS: readonly Deprecation[] = [
   ...[
     ["bundle", "add"],
     ["bundle", "update"],
-    ["env", "run"],
   ].map((path) => ({
     path,
     flag: "--allow-dangerous-env-keys",
@@ -208,9 +212,23 @@ export function warnWorkflowUse(what: string, env: NodeJS.ProcessEnv = process.e
   );
 }
 
+/**
+ * The notice for a run on OpenCode 1, which only the binary's version reveals. Same rules as
+ * `warnWorkflowUse`: one line per process, silenced by `--quiet`, and not printed for scheduled or internal runs.
+ */
+export function warnOpencode1Use(bin: string, version: string, env: NodeJS.ProcessEnv = process.env): void {
+  if (deprecationNoticesSuppressed((flag) => getParsedInvocation().hasFlag(flag), env)) return;
+  warnOnce("deprecated-use", opencode1DeprecationNotice(bin, version));
+}
+
+/** The OpenCode 1 notice text, shared by the run notice and `akm doctor`'s `opencode-major` advisory. */
+export function opencode1DeprecationNotice(bin: string, version: string): string {
+  return `[deprecated] OpenCode 1 (${bin} ${version}) is deprecated and is removed in 0.11: install OpenCode 2, or set the harness's bin to an OpenCode 2 binary. See STABILITY.md.`;
+}
+
 function positionalsOf(invocation: ParsedInvocation, leafArgs: ArgsDef | undefined): string[] {
   try {
-    return parseArgs([...invocation.userArgs], leafArgs ?? {})._.map(String);
+    return parseArgs([...invocation.ownArgs], leafArgs ?? {})._.map(String);
   } catch {
     return [];
   }

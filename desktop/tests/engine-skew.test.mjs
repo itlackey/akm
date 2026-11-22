@@ -8,10 +8,9 @@ import {
   classifyEngineSkew,
   compareVersions,
   holdReason,
-  hostUpgradeOutrunsDesktop,
   sameReleaseLine,
   skewAdvice,
-  stableSwitch,
+  updateHeld,
 } from "../src/lib/engine-skew.ts";
 
 test("versions order by number, and a stage release is older than its stable release", () => {
@@ -37,11 +36,15 @@ test("the host CLI is the same as, older than, newer than or unknown against Des
   assert.equal(classifyEngineSkew("0.10.261105", "dev"), "unknown");
 });
 
-test("a host upgrade is held back only when the latest release is newer than Desktop's engine", () => {
-  assert.equal(hostUpgradeOutrunsDesktop("0.10.261105", "0.10.261106"), true);
-  assert.equal(hostUpgradeOutrunsDesktop("0.10.261105", "0.10.261105"), false);
-  assert.equal(hostUpgradeOutrunsDesktop("0.10.261105", "0.10.261104"), false);
-  assert.equal(hostUpgradeOutrunsDesktop("0.10.261105", undefined), false);
+test("Update is held only when akm's plan moves the CLI itself past Desktop's engine", () => {
+  const engine = "0.10.261105";
+  assert.equal(updateHeld(engine, { updateAvailable: true, latestVersion: "0.10.261106" }), true);
+  assert.equal(updateHeld(engine, { updateAvailable: true, latestVersion: "0.10.261105" }), false);
+  assert.equal(updateHeld(engine, { updateAvailable: true, latestVersion: "0.10.261104" }), false);
+  // The CLI is already on the newest release, which is past the engine: only plugins would change, so nothing is held.
+  assert.equal(updateHeld(engine, { updateAvailable: false, latestVersion: "0.10.261131-beta" }), false);
+  assert.equal(updateHeld(engine, { updateAvailable: true, latestVersion: undefined }), false);
+  assert.equal(updateHeld(engine, undefined), false);
 });
 
 test("a patch difference inside one release line is told apart from a different line (#1609-11)", () => {
@@ -67,26 +70,16 @@ test("a compatible patch difference is informational, an incompatible line names
   assert.equal(skewAdvice("0.10.261117", undefined).kind, "none");
 });
 
-test("a release newer than the engine is held with its reason, and one the Desktop channel will not offer says so (#1609-11)", () => {
-  assert.equal(holdReason("0.10.261117", "0.10.261110", "stable"), undefined);
-  assert.equal(holdReason("0.10.261117", undefined, "stable"), undefined);
-  const offered = holdReason("0.10.261117", "0.10.261201", "stable");
-  assert.match(offered, /newer than the AKM built into this app\. The CLI and its plugins are updated together/);
-  assert.match(offered, /no plugins-only update/);
-  assert.ok(!offered.includes("stable releases only"));
-  const hidden = holdReason("0.10.261117", "0.11.261201-beta.1", "stable");
-  assert.match(hidden, /follows stable releases only, so it will not be offered to Desktop/);
-  assert.ok(!holdReason("0.10.261117", "0.11.261201-beta.1", "prerelease").includes("stable releases only"));
-});
-
-test("switching a prerelease CLI to stable is offered only when stable is not older than it (#1609)", () => {
-  assert.equal(stableSwitch("0.11.261201-beta.1", "0.10.261117"), "downgrade");
-  assert.equal(stableSwitch("0.10.261110-beta.1", "0.10.261117"), "offer", "an older prerelease is not a downgrade");
-  assert.equal(stableSwitch("0.10.261117-rc.1", "0.10.261117"), "offer");
-  assert.equal(stableSwitch("0.11.261201-beta.1", undefined), "unknown");
-  assert.equal(
-    stableSwitch("0.11.261201-beta.1", "0.11.261202-beta.1"),
-    "unknown",
-    "a prerelease is not a stable target",
+test("the hold says the rule and names the release the CLI would move to", () => {
+  const plan = (latestVersion, updateAvailable = true) => ({ latestVersion, updateAvailable });
+  assert.equal(holdReason("0.10.261117", plan("0.10.261110")), undefined);
+  assert.equal(holdReason("0.10.261117", plan("0.10.261201", false)), undefined);
+  assert.equal(holdReason("0.10.261117", undefined), undefined);
+  const reason = holdReason("0.10.261117", plan("0.11.261201-beta.1"));
+  assert.match(
+    reason,
+    /Update would move the CLI to 0\.11\.261201-beta\.1, newer than the AKM built into this app \(0\.10\.261117\)\./,
   );
+  assert.match(reason, /plugins update with the CLI, so Update is held/);
+  assert.ok(!reason.includes("stable releases only"));
 });

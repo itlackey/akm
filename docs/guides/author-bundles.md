@@ -174,25 +174,34 @@ cover only what changes when you're the one publishing.
    `akm bundle add github:your-username/my-bundle#v1.0.0`. An unpinned add
    tracks the default branch; a `#ref` pins that tag, branch or commit.
 
+A bundle is a directory, and akm indexes everything it recognizes under it. If
+the repository also holds code, keep the bundle in its own directory: akm uses
+the repository root when it looks like a bundle, and otherwise the shallowest
+directory that has two or more of akm's type directories (`skills/`,
+`knowledge/`, …) or a `.stash` directory. A repository root that has a type
+directory of its own (a `scripts/` is the common one) is normally taken as the
+bundle, and the whole repository is indexed; your users can then
+[index only the subdirectory](bundles.md#akm-bundle-add) with
+`components.main.root`.
+
 ### Sharing on npm
 
 1. Add a `package.json` with `"akm-stash"` in `keywords`.
 2. If your repo contains files that shouldn't ship (source, tests, CI
-   config), use `akm.include` to declare which paths to publish:
+   config), use npm's `files` field to declare which paths to publish:
 
    ```json
    {
      "name": "@your-scope/my-bundle",
      "version": "1.0.0",
      "keywords": ["akm-stash"],
-     "akm": { "include": ["scripts", "skills", "knowledge", ".meta"] }
+     "files": ["scripts", "skills", "knowledge", ".meta"]
    }
    ```
 
-   Paths are relative to `package.json`; only listed directories/files are
-   copied into the install cache, and `.git` is always excluded. Include
-   `.meta` explicitly, since dot-directories are easy to leave out of a
-   published tarball.
+   akm installs what is in the published tarball and has no filter of its
+   own. Include `.meta` explicitly, since dot-directories are easy to leave
+   out of a published tarball.
 
 3. `npm publish --access public`.
 4. Others can now install it: `akm bundle add @your-scope/my-bundle`.
@@ -237,12 +246,12 @@ push happens.
 
 If your bundle includes env files under `env/`, `akm lint` reports any that set
 a variable name that changes how a process starts when the file is loaded with
-`akm env run`: 41 names, including `LD_PRELOAD`, `PATH`,
+`akm run --env`: 41 names, including `LD_PRELOAD`, `PATH`,
 `DYLD_INSERT_LIBRARIES` and `NODE_OPTIONS`, plus the `BASH_FUNC_*` and
 `GIT_CONFIG_*` prefixes. The finding is `dangerous-env-key`, a non-blocking
 warning. It is advice for you as the author, not a gate: installing a bundle is
 the user's trust decision, so `akm bundle add`, `akm bundle update`,
-`akm env run`, `akm secret run` and workflow `env:` bindings never scan, prompt
+`akm exec`, `akm run` and workflow `env:` bindings never scan, prompt
 for or block these keys, whichever bundle the file comes from. If your bundle
 needs one of these keys (for example, a `PATH` override for a hermetic
 toolchain), say why in your `README.md`, or leave its value out of the shipped
@@ -259,8 +268,8 @@ by ref.
 
 `rules/` holds the short rules an agent should follow for a project: a Markdown file
 per topic, nested folders allowed, each a bullet list of imperative, checkable lines.
-Rules are standing context: the AKM agent plugins load the applicable ones at session
-start and after compaction, so keep them to a handful of lines.
+Rules are standing context: the AKM agent plugins load the applicable ones (`akm rules`) at
+session start and after compaction, so keep them to a handful of lines.
 
 ```markdown
 ---
@@ -282,16 +291,17 @@ or when it has none (shared); with no project in force only shared rules apply. 
 project's rules are never returned while a project is selected. If the project's own `filters`
 constrain `project`, that filter decides instead. Only the bundle's top-level `rules/` folder
 holds rules. After adding `rules/` to a bundle that already has files there, run
-`akm index --full` so they are retyped.
+`akm index --full` so search retypes them; `akm rules` reads the files and needs no index.
 
-To list the rules that apply: `akm search "" --type rule --limit 200 --detail normal`
-(rules only, honouring the project; exactly 200 results means the list was cut), then
-`akm show <ref>` to read one. `akm search "rules/"` is a plain path listing that also
-returns other files and stops at 20.
-
-Rules are ordinary search hits and follow the same `--from`, `--filter` and
-disabled-bundle selection as every asset. Agents without a plugin list them with the
-command above.
+`akm rules` prints the rules that apply, in full: the project's first, then shared ones. It
+reads the files, so a new rule applies at once and no index is needed. A rule is an
+instruction the agent obeys, so only the bundles you named supply them: with a project, its
+`from` list, else the default bundle and the project's `write.bundle`; with no project, the
+default bundle. A bundle you installed from a registry or a git URL supplies rules only if it
+is the default bundle or you list it in the project's `from`. A rule with `quality: proposed`
+does not load until it is accepted. The plugins run `akm rules` at session start and after
+compaction; an agent without a plugin runs it too. In search and curate, rules are still
+ordinary hits that follow `--from`, `--filter` and disabled-bundle selection.
 
 ## Bundle Structure Tips
 

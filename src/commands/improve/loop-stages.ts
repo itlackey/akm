@@ -84,6 +84,8 @@ export interface ImproveLoopEnv {
   /** `distill.requirePlannedRefs` with no reflect-eligible ref in the loop: distill-only refs skip. */
   skipDistillDueToRequirePlannedRefs: boolean;
   remainingBudgetMs: () => number;
+  /** The run token every distill proposal of this stage pass carries. */
+  distillSourceRun: string;
 }
 
 export function prepareImproveLoopEnv(args: ImproveLoopState): ImproveLoopEnv {
@@ -104,6 +106,7 @@ export function prepareImproveLoopEnv(args: ImproveLoopState): ImproveLoopEnv {
     budgetSignal: args.budgetSignal,
     skipDistillDueToRequirePlannedRefs: requirePlannedRefs && args.loopRefs.every((r) => distillOnlyRefSet.has(r.ref)),
     remainingBudgetMs: () => Math.max(0, args.budgetMs - (Date.now() - args.startMs)),
+    distillSourceRun: `distill-${Date.now()}`,
   };
 }
 
@@ -243,8 +246,8 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
           : "reflect-failed",
     result,
   });
-  // A quality rejection recorded itself, and the judge's text is no lesson for
-  // the next prompt; skips revisit on the `unchanged` cadence. A transient
+  // A quality rejection recorded itself for that input, not the shared recent
+  // errors sent to other refs; skips revisit on the `unchanged` cadence. A transient
   // failure (transport, parse, timeout, budget abort, crash) is not a verdict
   // on the asset and writes no row, like distill: a `failed` row would advance
   // the ledger cursor and consume the feedback that planned the ref. Only a
@@ -293,17 +296,17 @@ async function runLoopDistillPass(
     return recordSkip(tally, planned.ref, "require_planned_refs");
   }
   const explicitRefScope = env.scope.mode === "ref";
-  // The ledger holds cooled refs; an explicit `--scope` ref overrides it.
+  // The ledger holds cooled refs; an explicit scope ref overrides it.
   if (!isDistillCandidateRef(planned)) return;
   if (env.distillCooledRefs.has(planned.ref) && !explicitRefScope) return;
   // A memory flagged wrong and not edited since is no source for a lesson. The attempt goes in the
-  // ledger so the ref waits for newer feedback; an explicit `--scope` ref still runs.
+  // ledger so the ref waits for newer feedback; an explicit scope ref still runs.
   if (!explicitRefScope && isFlaggedSinceLastEdit(planned, env.eventsCtx)) {
     recordLoopAttempt(planned, env, "distill", "unchanged", FLAGGED_WRONG_REASON);
     return recordSkip(tally, planned.ref, FLAGGED_WRONG_REASON, { env, reason: "distill_flagged_wrong" });
   }
   // A memory marked deprecated or superseded is no longer true, so it gives no lesson. The ledger holds it; an
-  // explicit `--scope` ref still runs.
+  // explicit scope ref still runs.
   if (!explicitRefScope && isDeprecatedOrSuperseded(planned)) {
     recordLoopAttempt(planned, env, "distill", "unchanged", DEPRECATED_REASON);
     return recordSkip(tally, planned.ref, DEPRECATED_REASON, { env, reason: "distill_deprecated_or_superseded" });
@@ -319,6 +322,7 @@ async function runLoopDistillPass(
       config: options.config,
       llmRunner: resolvedPlan.processes.distill.runner,
       ...(resolvedPlan.run ? { run: resolvedPlan.run } : {}),
+      sourceRun: env.distillSourceRun,
       signal: env.budgetSignal,
       eventsCtx: env.eventsCtx,
       ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),

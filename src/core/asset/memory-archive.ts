@@ -19,7 +19,7 @@
  * so ref resolution can answer "archived" instead of "missing". Resolution
  * stays non-destructive — pruning never rewrites an unrelated memory's
  * frontmatter, and the contradiction an edge records is preserved rather than
- * erased (the concern #884 raised against a bare edge-scrub).
+ * erased.
  *
  * A ref whose target has NO tombstone and no file is genuinely dangling — it
  * was removed by something other than prune (a hand `git rm`, an older

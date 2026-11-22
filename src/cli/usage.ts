@@ -5,10 +5,13 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { stashDirNames } from "../core/asset/asset-placement";
 import { peekConfigValue } from "../core/config/peek";
 import { getDataDir } from "../core/paths";
-import { isKnownType } from "../core/recognition-util";
+import { isKnownType, KNOWN_TYPES } from "../core/recognition-util";
 import { hasSignalOwner, observeSignal } from "../core/signal-observers";
+import { isTerminal } from "../core/stdio";
+import { DETAIL_VALUES, OUTPUT_FORMATS } from "../output/context";
 import { type Database, openDatabase } from "../storage/database";
 import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 import { resolveAgentIdentity } from "../workflows/runtime/agent-identity";
@@ -42,20 +45,14 @@ export interface InvocationUsage {
 // Enum-like string flags are not enums in citty. Keep this finite allowlist
 // independent of user data and never infer safety from the supplied value.
 const SAFE_VALUES: Record<string, readonly string[]> = {
-  format: ["json", "jsonl", "yaml", "text", "md"],
-  detail: ["agent", "brief", "normal", "full"],
-  type: ["skill", "agent", "command", "script", "knowledge", "workflow", "env", "secret", "memory", "lesson"],
+  format: OUTPUT_FORMATS,
+  detail: DETAIL_VALUES,
+  type: [...KNOWN_TYPES, "any", ...stashDirNames()],
 };
 
-/** Scan declared identities only. Unknown spellings can themselves contain secrets. */
-export function describeUsage(root: UsageCommand, raw: readonly string[]): InvocationUsage {
-  const boundary = raw.indexOf("--");
-  const own = boundary < 0 ? raw : raw.slice(0, boundary);
-  const result: InvocationUsage = {
-    command: [],
-    arguments: [],
-    childArgumentCount: boundary < 0 ? 0 : raw.length - boundary - 1,
-  };
+/** Scan declared identities only. Unknown spellings can themselves contain secrets. `own` is the invocation's own tokens. */
+export function describeUsage(root: UsageCommand, own: readonly string[], childArgumentCount = 0): InvocationUsage {
+  const result: InvocationUsage = { command: [], arguments: [], childArgumentCount };
   const definitions: Record<string, ArgDefinition> = {
     help: { type: "boolean", alias: "h" },
     version: { type: "boolean", alias: "v" },
@@ -205,13 +202,28 @@ export function describeUsage(root: UsageCommand, raw: readonly string[]): Invoc
   return result;
 }
 
+/** What an outcome calls an exit code. Any other code is "failure", and a signal is "cancelled". */
+export const EXIT_CATEGORIES: Readonly<Record<number, string>> = {
+  0: "success",
+  1: "general",
+  2: "usage",
+  4: "health-warning",
+  70: "internal",
+  75: "transient",
+  78: "config",
+};
+
 export const CLI_USAGE_SOURCES: ReadonlySet<string> = new Set(["user", "agent", "task", "improve", "audit", "unknown"]);
 
-/** An explicit `AKM_EVENT_SOURCE` wins; otherwise a detected agent harness is "agent", else "unknown". */
-export function resolveCliUsageSource(env: NodeJS.ProcessEnv): string {
+/**
+ * An explicit `AKM_EVENT_SOURCE` wins; otherwise a detected agent harness is "agent", a terminal with no harness
+ * (`terminal`) is "user", and anything else (a pipe, a script, a harness akm does not know) is "unknown".
+ */
+export function resolveCliUsageSource(env: NodeJS.ProcessEnv, terminal = false): string {
   const explicit = env.AKM_EVENT_SOURCE ?? "";
   if (CLI_USAGE_SOURCES.has(explicit)) return explicit;
-  return resolveAgentIdentity(env).harness ? "agent" : "unknown";
+  if (resolveAgentIdentity(env).harness) return "agent";
+  return terminal ? "user" : "unknown";
 }
 
 const RETENTION_MS = 30 * 86400_000;
@@ -222,7 +234,7 @@ function usagePath(): string {
 // `schema_migrations` ledger, so they use their own `cli_usage_` names and a
 // version in `cli_usage_meta` (never PRAGMA user_version or schema_migrations).
 const USAGE_SCHEMA = 1;
-function openUsage(filename: string): Database {
+export function openUsage(filename: string = usagePath()): Database {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
   const db = openDatabase(filename);
   try {
@@ -259,7 +271,25 @@ function captureDisabledByConfig(): boolean {
   return peekConfigValue(["usage", "capture"]) === false;
 }
 
-export function startUsage(root: UsageCommand, raw: readonly string[], version: string): () => void {
+function readOnlyRequested(usage: InvocationUsage): boolean {
+  return usage.arguments.some((a) => a.name === "read-only" && a.explicit && a.value === true);
+}
+
+/** Whether this invocation records no counts (`--read-only` or `usage.capture: false`), so there is nothing to report. */
+export function usageCaptureOff(root: UsageCommand, own: readonly string[]): boolean {
+  try {
+    return readOnlyRequested(describeUsage(root, own)) || captureDisabledByConfig();
+  } catch {
+    return true;
+  }
+}
+
+export function startUsage(
+  root: UsageCommand,
+  own: readonly string[],
+  childArgumentCount: number,
+  version: string,
+): () => void {
   const started = Date.now();
   const id = randomUUID();
   let done = false;
@@ -271,14 +301,14 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
   let selectedExecutor: UsageCommand | undefined;
   let dimensions: Record<string, unknown> = {};
   let data: Record<string, unknown> = {};
-  const source = resolveCliUsageSource(process.env);
+  const source = resolveCliUsageSource(process.env, Boolean(isTerminal(0) || isTerminal(1)));
   const harness = resolveAgentIdentity(process.env).harness;
   const harnessField = harness ? { harness } : {};
   try {
-    const usage = describeUsage(root, raw);
+    const usage = describeUsage(root, own, childArgumentCount);
     // `--read-only` promises no writes, and the config key turns capture off.
     // Either way nothing is opened, written or finalized.
-    if (usage.arguments.some((a) => a.name === "read-only" && a.explicit && a.value === true)) return () => {};
+    if (readOnlyRequested(usage)) return () => {};
     if (captureDisabledByConfig()) return () => {};
     filename = usagePath();
     const db = openUsage(filename);
@@ -317,7 +347,7 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
   const checkpoint = (db: Database): string => {
     if (resolvedAssetType === undefined) return key!;
     const usage = selectedExecutor
-      ? describeUsage({ ...root, subCommands: { ...root.subCommands, run: selectedExecutor } }, raw)
+      ? describeUsage({ ...root, subCommands: { ...root.subCommands, run: selectedExecutor } }, own, childArgumentCount)
       : undefined;
     const nextDimensions = usage ? { ...dimensions, ...usage } : dimensions;
     const nextData = usage ? { ...data, ...usage } : data;
@@ -360,19 +390,7 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
     if (!stored) return;
     const duration = Math.max(0, Date.now() - started);
     const exitCode = signal ? (signal === "SIGINT" ? 130 : 143) : Number(process.exitCode ?? 0);
-    const category = signal
-      ? "cancelled"
-      : ((
-          {
-            0: "success",
-            1: "general",
-            2: "usage",
-            4: "health-warning",
-            70: "internal",
-            75: "transient",
-            78: "config",
-          } as Record<number, string>
-        )[exitCode] ?? "failure");
+    const category = signal ? "cancelled" : (EXIT_CATEGORIES[exitCode] ?? "failure");
     try {
       const db = openUsage(filename!);
       try {
@@ -448,6 +466,8 @@ export interface UsageFilter {
   until?: string;
   version?: string;
   source?: string;
+  /** Skip the retained per-invocation rows and read the durable aggregates only. */
+  aggregatesOnly?: boolean;
 }
 export function readUsage(filter: UsageFilter = {}) {
   const gaps = [
@@ -466,6 +486,11 @@ export function readUsage(filter: UsageFilter = {}) {
     gaps,
     aggregates: [] as Record<string, unknown>[],
     details: [] as Record<string, unknown>[],
+    /**
+     * The daily usage report's own rows (src/cli/usage-report.ts), per surface: `last_day` (the day it last tried),
+     * `through` (the last day whose counts the server accepted), `last_outcome` and `last_detail`.
+     */
+    report: {} as Record<string, Record<string, string>>,
   };
   if (!fs.existsSync(usagePath())) {
     gaps.push("Usage storage is absent: this is unmeasured, not zero usage.");
@@ -494,27 +519,39 @@ export function readUsage(filter: UsageFilter = {}) {
           | { value: string }
           | undefined
       )?.value ?? null;
+    for (const { key, value } of db
+      .prepare("SELECT key,value FROM cli_usage_meta WHERE key LIKE 'report.%' ORDER BY key")
+      .all() as Array<{ key: string; value: string }>) {
+      const [, surface, field] = key.split(".");
+      if (!surface || !field) continue;
+      empty.report[surface] ??= {};
+      empty.report[surface][field] = value;
+    }
     const selected = (dimensions: Record<string, unknown>) =>
       (!filter.since || String(dimensions.day) >= filter.since.slice(0, 10)) &&
       (!filter.until || String(dimensions.day) <= filter.until.slice(0, 10)) &&
       (!filter.version || dimensions.version === filter.version) &&
       (!filter.source || dimensions.source === filter.source);
+    // The instance id leaves this store only as the daily usage report's install id (src/cli/usage-report.ts): no
+    // command prints it, so what is read here carries it nowhere: not in a row, and not in an aggregate's key.
     for (const row of db.prepare("SELECT * FROM cli_usage_aggregates ORDER BY key").all() as Array<
       Record<string, unknown>
     >) {
-      const dimensions = JSON.parse(String(row.dimensions)) as Record<string, unknown>;
+      const { instance: _instance, ...dimensions } = JSON.parse(String(row.dimensions)) as Record<string, unknown>;
       if (selected(dimensions))
         empty.aggregates.push({
           ...row,
+          key: JSON.stringify(dimensions),
           dimensions,
           outcomes: JSON.parse(String(row.outcomes)),
           unfinished: Number(row.attempts) - Number(row.completed),
         });
     }
-    for (const row of db.prepare("SELECT * FROM cli_usage_invocations ORDER BY ts,id").all() as Array<
-      Record<string, unknown>
-    >) {
-      const data = JSON.parse(String(row.data)) as Record<string, unknown>;
+    const detailRows = filter.aggregatesOnly
+      ? []
+      : db.prepare("SELECT * FROM cli_usage_invocations ORDER BY ts,id").all();
+    for (const row of detailRows as Array<Record<string, unknown>>) {
+      const { instance: _instance, ...data } = JSON.parse(String(row.data)) as Record<string, unknown>;
       if (selected({ ...data, day: String(data.ts).slice(0, 10) }))
         empty.details.push({
           ...data,

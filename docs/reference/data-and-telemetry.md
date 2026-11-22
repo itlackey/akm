@@ -1,10 +1,11 @@
 # Data and Telemetry
 
-akm keeps your data on your machine. It sends no analytics or crash reports.
-It records [local-only counts of its own commands](#cli-usage-counts), which
-never leave your machine. It makes network requests only to the endpoints you configure or the commands
-you run, listed below. This page covers what akm sends, and what it stores and
-where.
+akm keeps your data on your machine. It sends no crash reports. It records
+[local-only counts of its own commands](#cli-usage-counts) and, at most once a
+day per surface, sends an [anonymous usage report](#daily-usage-report) built
+from them. Apart from that report it makes network requests only to the
+endpoints you configure or the commands you run, listed below. This page covers
+what akm sends, and what it stores and where.
 
 ## Network destinations
 
@@ -43,8 +44,10 @@ where.
 - **`akm doctor`**, unless you pass `--no-probe`, sends a reachability probe to
   each connection's endpoint, runs each harness's `--version`, calls
   `api.github.com` to compare your version with the latest release, and runs
-  `git ls-remote --symref` against the remote of an installed Claude plugin
-  marketplace clone.
+  a blobless, no-checkout `git clone` of the channel's branch of the
+  Claude and Codex plugin marketplace source the harness registered, to read the
+  catalog and plugin manifest (`akm upgrade --check` makes the same read); a
+  marketplace pinned to a tag is not read.
 - **`akm sync`** and the syncs `akm improve` runs before and after a run fetch
   from and push bundle content to the git remote you configured.
 - **`akm improve` dead-link checks** send `HEAD` requests to the URLs found in
@@ -92,7 +95,7 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 | `backups/asset-content-refs/` | Copies of the markdown and YAML files `akm migrate apply` rewrote to the current ref spelling. `akm backups prune` removes the old ones. |
 | `backups/asset-engine-keys/` | Copies of commands, agents, workflows and task sources made by `akm migrate apply` before it rewrites their `engine:` key. |
 | `migrate/engine-targets.json` | The connection or harness each old engine name became, kept by `akm migrate apply` until every `engine:` key is rewritten. |
-| `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --type opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces). Recreated on next use; deleting it loses the runtime's session history. |
+| `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --sessions opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces). Recreated on next use; deleting it loses the runtime's session history. |
 
 If akm cannot read this directory, commands fail with `DATA_DIR_UNREADABLE`
 (exit 78) naming the path; `akm doctor` still runs and reports it.
@@ -128,8 +131,8 @@ instead of reporting success for feedback it could not store.
 
 ### Bundle directory
 
-`~/akm/` by default; override with `AKM_BUNDLE_DIR`, or configure `bundles` and
-`defaultBundle` in `config.json`. This holds your asset files and is not
+`~/akm/` by default; configure `bundles` and `defaultBundle` in `config.json`
+(`AKM_BUNDLE_DIR` still overrides it, Deprecated). This holds your asset files and is not
 regenerable. akm also writes into it:
 
 | Path | Contents |
@@ -145,9 +148,10 @@ regenerable. akm also writes into it:
   decisions, improve and workflow activity, and LLM call usage (model, outcome,
   duration, token counts). Each event has a type, timestamp, optional asset ref
   and a small metadata payload; search events include the query text and the
-  refs returned. `akm env run`, a workflow unit's `env:` binding and
-  `akm secret run` record the names of the keys injected, not their values.
-- **Usage records**: queries, search impressions, show/curate engagement and
+  refs returned. `--env` and `--secret` (`akm exec`, `akm run`) and a workflow unit's `env:`
+  binding record the names of the keys injected, not their values.
+- **Usage records**: queries, search impressions, show/curate engagement, rule loads
+  (`akm rules`: the refs and characters loaded) and
   feedback. They feed utility scores and `akm doctor metrics`, and the feedback recorded
   as the user adjusts search ranking. Each record is stamped with its source
   (`user`, `improve`, `task`, `audit` or `unknown`); only `user` records count.
@@ -177,7 +181,7 @@ Event types, for `akm doctor log --type <type>`:
 
 - Bundles and assets: `add`, `remove`, `update`, `remember`, `import`
 - Retrieval and sync: `search`, `curate`, `show`, `select`, `feedback`, `sync`,
-  `stash_synced`, `index_completed`, `index_db_vacuumed`, `env_access`,
+  `stash_synced`, `moved`, `index_completed`, `index_db_vacuumed`, `env_access`,
   `secret_access`
 - Proposals: `promoted`, `rejected`, `proposal_reopened`, `proposal_reverted`,
   `proposal_expired`, `proposal_expiration_pass`, `proposal_orphan_purge`,
@@ -186,7 +190,7 @@ Event types, for `akm doctor log --type <type>`:
   `improve_skipped`, `improve_lock_recovered`, `improve_review_needed`,
   `reflect_invoked`, `reflect_completed`, `improve_reflect_outcome`,
   `propose_invoked`, `distill_invoked`, `extract_invoked`, `extract_triaged`,
-  `schema_repair_invoked`, `proactive_selected`, `events_purged`,
+  `schema_repair_invoked`, `proactive_selected`, `improve_salience_rank_change` (no longer emitted; old rows only), `events_purged`,
   `improve_runs_purged`, `asset_state_gc`, `state_db_vacuumed`,
   `task_logs_purged`, `task_log_files_purged`, `run_log_files_purged`
 - Workflows: `workflow_started`, `workflow_step_completed`,
@@ -201,16 +205,21 @@ are purged on `akm index`. Read these with `akm doctor log`, `akm doctor metrics
 
 ## CLI usage counts
 
-akm records how its own commands are used, on your machine only. Nothing is
-sent anywhere, and it is outside learning, feedback and ranking.
+akm records how its own commands are used, on your machine. The counts are
+outside learning, feedback and ranking; the only thing sent from them is the
+[daily usage report](#daily-usage-report), as counts.
 
 - **Where:** the `cli_usage_*` tables of `metrics.db` in the data directory.
 - **What is recorded** for every command, including `--help`, `--version` and
   failed attempts: the command path, the flags that were used (their names and,
   for a few enumerated flags such as `--format` or `--detail`, a safe value),
   whether each flag was typed or a default, the akm version, the event source
-  (`user`, `agent`, `task`, `improve`, `audit` or `unknown`), the outcome, exit
-  code and duration, a UTC day, and a random instance UUID created on first use.
+  (`agent` inside a detected agent harness, `user` at a terminal with none,
+  `task`, `improve` or `audit` for akm's own runs, else `unknown`), the agent
+  harness when one is detected, the type of the asset `akm show` or `akm run`
+  resolved (when it is one of akm's own types), the outcome, exit code and
+  duration, a UTC day, and a random instance UUID created on first use, which
+  no command prints.
 - **What is not recorded:** queries, notes, URLs, refs, paths, filter values,
   secret values, and the arguments passed to a child program. Boolean flags are
   stored as true or false; every other flag value is stored as `[redacted]`.
@@ -223,6 +232,79 @@ sent anywhere, and it is outside learning, feedback and ranking.
   that invocation.
 - It never changes a command's output or exit code: an unwritable, locked or
   corrupt `metrics.db` is skipped silently.
+
+## Daily usage report
+
+On by default. Once a day each, the CLI and AKM Desktop send a report to a
+privately hosted service run by the akm maintainers. It holds no personal
+information. It shows which parts of akm are used, so the unused ones can be
+dropped.
+
+**What can be in it.** Apart from the system fields below, every value in a
+report is a number. Every name in it (an event's name, a count's name) is built
+from akm's own definitions: its commands, the flags it declares and their fixed
+lists of choices, the agent harnesses it knows, its asset types. Anything you
+or a bundle named is counted as `other` or `[unknown]`, or left out: a custom
+asset type, a task's own input flag, a harness akm does not know, a command that
+does not exist. Nothing is read from an argument's value, a ref, a path, a
+bundle's name or a file.
+
+- **When:** after a command finishes (one command a day pays for it, within a
+  1.5 second limit) or, for Desktop, in the background when its server starts.
+  Nothing is ever printed or changed in a command's result. A fresh data
+  directory sends nothing until its next UTC day. A failed send is not retried
+  that day; the next day's CLI report counts the days a failed one missed.
+- **Install id:** the random instance UUID of `metrics.db` (see
+  [CLI usage counts](#cli-usage-counts)), sent as the session id of every event,
+  so that the reports of one install count as one install. It is derived from
+  nothing on the machine, and the CLI and Desktop of one data directory share
+  it. It goes to the report and nowhere else: no command prints it, including
+  `akm doctor metrics usage --export`. Deleting `metrics.db` makes a new one.
+- **Daily event (`cli_daily`, `desktop_daily`):**
+  - What is set up, from the config, as counts and 0-or-1 switches: `bundles`
+    (enabled bundles), `bundles_git`, `bundles_website`, `bundles_npm`,
+    `registries` (akm's own defaults included), `connections`, `harnesses`,
+    `projects`, `tasks_enabled`, `semantic_search`, `improve` and `exec`.
+  - Library sizes: `assets` (indexed assets), `assets_<type>` for each of akm's
+    own asset types (skill, command, and so on) and `assets_other` for every
+    other type. They are left out when there is no readable index; the report
+    never builds or changes the index.
+  - From the CLI only, totals for the period: `period_days` (the complete UTC
+    days after the last one the server accepted, up to yesterday; `0` for the
+    first report), `commands`, `failures`, `src_<source>` for each event source
+    and `h_<harness>` for each agent harness that ran akm.
+- **Command events (CLI only):** one for each command that ran in the period,
+  named as it was typed: `akm search`, `akm task run`, `akm health`. A command
+  that does not exist is `akm [unknown]`. Each carries `period_days`, `count`,
+  `failures`, `duration_ms` (the total), `src_<source>` and `h_<harness>` as
+  above (`h_other` for a harness akm does not know), and:
+  - `flag_<name>`: the runs in which a flag akm declares was typed. For
+    `--format`, `--detail`, `--type` (akm's own types only) and flags with a
+    fixed list of choices, also `flag_<name>_<choice>`. No other value is sent.
+  - `out_<category>`: the runs that did not succeed, by akm's outcome category
+    (`usage`, `config`, `general`, `internal`, `transient`, `health-warning`,
+    `failure`, `cancelled`).
+  - `type_<asset type>`: the runs of `akm show` and `akm run` by the type of
+    asset they resolved (`type_other` for a type that is not akm's own).
+- **System fields, on every event:** `osName` (Linux, macOS or Windows),
+  `osVersion` (the numbers of the release only), `locale` (language, script and
+  region only), `engineName` and `engineVersion` (`bun` or `node`), `appVersion`
+  (the akm version), `sdkVersion` (`akm@<version>`), `isDebug: false`, the
+  install id as the session id, and the time the report was sent.
+- **Never sent:** queries, refs, paths, bundle names, argument values, secrets,
+  the host or user name, or any asset content.
+- **What the service keeps:** the events, and the country, region and city it
+  derives from the request's IP address. It does not store the IP address; it
+  stores a one-day id hashed from it with a salt it changes daily.
+- **Seeing what happened:** `akm doctor metrics usage` shows, under `report`,
+  each surface's last try (`last_day`), the last day whose counts the server
+  accepted (`through`), and what the last try came to (`last_outcome`: `sent`,
+  `rejected` or `failed`, with `last_detail`).
+- **Turning it off:** `akm config set usage.report false` (the config key
+  `usage.report`), or the **Usage reports** switch in AKM Desktop's settings. The switch follows
+  `extends`: `false` in a base config turns it off unless a nearer layer sets it
+  to `true`, and a config that cannot be loaded sends nothing. `--read-only` and `usage.capture: false` also send nothing from
+  the CLI. Runs in CI (the `CI` variable) or under `bun test` never send.
 
 ## Inspect and clear
 
@@ -247,7 +329,7 @@ the config, data, state and cache directories.
 | Variable | Effect |
 | --- | --- |
 | `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Override the config, data, state and cache directories |
-| `AKM_BUNDLE_DIR` | Default bundle directory (`~/akm/`) |
+| `AKM_BUNDLE_DIR` | Deprecated: register the bundle and select `defaultBundle`. Default bundle directory (`~/akm/`) |
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` | XDG bases; akm appends `/akm` |
 | `AKM_SQLITE_JOURNAL_MODE` | Deprecated, no replacement; removed in 0.11. SQLite journal mode: `WAL` (default), `DELETE` or `TRUNCATE`. akm falls back from WAL to `DELETE` on its own when the data directory is on a detected network filesystem (NFS, SMB/CIFS, 9p, CephFS, FUSE such as sshfs or virtiofs); detection works on Linux only, so a data directory on a network filesystem on macOS or Windows is unsupported. In containers that are thrown away, keep SQLite on local disk and use snapshots. |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror. Replaces `registry.npmjs.org` for npm bundle resolution. |

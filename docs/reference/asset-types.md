@@ -20,7 +20,7 @@ the bundle directory layout, and the metadata every asset carries.
   knowledge).
 - `type` is not part of an asset's ref — the placement subdirectory carries
   that signal. See [Refs](refs.md).
-- Ten additional *bundle formats* beyond akm's own (Claude Code and OpenCode
+- Eleven additional *bundle formats* beyond akm's own (Claude Code and OpenCode
   tool directories, OKF, LLM wikis, and more) are recognized, indexed, and
   validated in place by their own adapters — see
   [Bundle Types](bundle-types.md) for the full type-by-type table (purpose,
@@ -162,8 +162,8 @@ For script assets, akm resolves execution hints in this order:
 ## Storage
 
 - `env` and `secret` assets hold values that akm never prints: `list` shows
-  key names or secret names. Values reach a process through `akm env run` and
-  `akm secret run`, a workflow unit's `env:` bindings and `${ref}` tokens, or a
+  key names or secret names. Values reach a process through `akm exec` and `akm run`
+  (`--env`, `--secret`), a workflow unit's `env:` bindings and `${ref}` tokens, or a
   0600 file written by `akm env export --out`. See
   [Env and secrets](env-and-secrets.md).
 - All asset content is plain files inside the bundle directory. The search

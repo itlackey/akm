@@ -7,7 +7,7 @@
 // starts OpenCode on a file being read. Unsupported and corrupt files are
 // reported, never presented as empty. OpenCode 2 files are written by OpenCode
 // itself, through akm's runtime; the OpenCode 1 layout is covered in
-// tests/session-logs-providers.test.ts.
+// tests/integration/session-logs-providers.test.ts.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";

@@ -5,7 +5,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { placementTypes } from "../core/asset/asset-placement";
+import { documentTypes, placementTypes } from "../core/asset/asset-placement";
+import { DETAIL_VALUES, OUTPUT_FORMATS } from "../output/context";
 
 // biome-ignore lint/suspicious/noExplicitAny: citty command tree uses dynamic shapes
 type AnyCmd = Record<string, any>;
@@ -21,13 +22,12 @@ type AnyCmd = Record<string, any>;
  * `paths` (global — the rule applies wherever the flag appears).
  *
  * `--from` does NOT: it's a closed `local|registry|all` enum on
- * `search`/`curate` (src/commands/read/search-cli.ts, renamed from `--source`
- * in the 0.9 CLI overhaul, S8), but a free-form existing-file path on
+ * `search`/`curate` (src/commands/read/search-cli.ts), but a free-form existing-file path on
  * `workflow create` (src/commands/workflow-cli.ts). `FLAG_VALUES` is a flat
  * `Record` keyed by flag NAME ONLY, so without scoping `akm workflow create
  * --from <TAB>` would wrongly suggest `local registry all` — search's enum,
  * tagged onto every occurrence of the flag name regardless of which command
- * it belonged to (R-052a). Scoping the rule to `paths` keeps the suggestion
+ * it belonged to. Scoping the rule to `paths` keeps the suggestion
  * where it's actually correct; every other command path with that flag gets
  * no suggestion (falls through to bash's default filename completion)
  * rather than an incorrect one.
@@ -39,9 +39,9 @@ interface FlagValueRule {
 }
 
 const FLAG_VALUES: Record<string, FlagValueRule[]> = {
-  "--format": [{ values: ["json", "jsonl", "yaml", "text", "md"] }],
-  "--detail": [{ values: ["brief", "normal", "full", "agent"] }],
-  "--type": [{ values: () => [...placementTypes(), "any"] }],
+  "--format": [{ values: [...OUTPUT_FORMATS] }],
+  "--detail": [{ values: [...DETAIL_VALUES] }],
+  "--type": [{ paths: ["akm lint"], values: () => documentTypes() }, { values: () => [...placementTypes(), "any"] }],
   "--shell": [{ values: ["bash"] }],
   "--from": [{ paths: ["akm search", "akm curate"], values: ["local", "registry", "all"] }],
 };
@@ -52,8 +52,7 @@ function resolveRuleValues(rule: FlagValueRule): string[] {
 
 /**
  * Build the `${prev}`-case body for one flag. When the flag has no
- * path-scoped rules, every command shares one value set (unchanged from
- * before R-052a). When it does (currently only `--from`), nest a
+ * path-scoped rules, every command shares one value set (the same for every command). When it does (currently only `--from`), nest a
  * `${cmd_path}` match inside the flag's case so the suggestion depends on
  * which command is being completed — with a `*)` fallback to any
  * unscoped/global rule declared alongside the scoped ones, or no suggestion
@@ -100,7 +99,7 @@ function walkCommandTree(cmd: AnyCmd, parentPath = ""): CommandInfo[] {
   const currentPath = parentPath ? `${parentPath} ${name}` : name;
   const result: CommandInfo[] = [];
 
-  // `meta.hidden` (e.g. `migrate`, S11) is excluded from completion the same
+  // `meta.hidden` (e.g. `migrate`) is excluded from completion the same
   // way citty's own `renderUsage` excludes it from a rendered COMMANDS list —
   // a hidden command still runs, it just isn't suggested.
   const visibleSubEntries = Object.entries((cmd.subCommands ?? {}) as Record<string, AnyCmd>).filter(

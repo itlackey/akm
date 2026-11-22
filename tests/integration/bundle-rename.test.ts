@@ -58,7 +58,7 @@ import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { seedWorkflowRun } from "../_helpers/workflow";
 
-/** In-memory `crontab -l`/`crontab -` stand-in, same shape as tests/tasks-sync.test.ts. */
+/** In-memory `crontab -l`/`crontab -` stand-in, same shape as tests/integration/tasks-sync.test.ts. */
 function memoryExec(initial = ""): CronExec & { current: () => string } {
   let store = initial;
   return {

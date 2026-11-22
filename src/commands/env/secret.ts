@@ -21,9 +21,8 @@
  *     process env as `VAR=<value>` (see `readValue` in `core/secret-value.ts`).
  *
  * `akm secret path <ref>` (print the file path for the Docker `/run/secrets` +
- * `_FILE` convention) was removed in 0.9.0. A ref's file still lives at
- * `<stash>/secrets/<name>`. `akm secret remove` was removed with it and is back
- * (0.10), resolving its target as `akm env remove` does.
+ * `_FILE` convention) does not exist. A ref's file still lives at
+ * `<stash>/secrets/<name>`. `akm secret remove` resolves its target as `akm env remove` does.
  *
  * Values are stored as raw bytes (no quoting, multi-line allowed), unlike env
  * values which forbid literal newlines; they are read back trimmed (`core/secret-value.ts`).

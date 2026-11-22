@@ -41,7 +41,7 @@ beforeEach(() => {
   // does not fire when searchRegistry's static-index provider tries to open
   // the DB cache. Without these the guard throws TEST_ISOLATION_MISSING,
   // which surfaces as a warning + zero hits — see
-  // tests/test-isolation-no-swallow.test.ts.
+  // tests/integration/test-isolation-no-swallow.test.ts.
   storage = withIsolatedAkmStorage({ AKM_REGISTRY_URL: undefined });
 });
 

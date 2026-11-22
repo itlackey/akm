@@ -5,7 +5,7 @@ import { HEALTH_CHECKS, type HealthCheckContext } from "../src/commands/health/c
 // hides a single consistently-failing task inside a large, mostly-healthy
 // population. It now also warns when the worst single task_id (with enough
 // rows to be a real signal) crosses the same threshold. The check is a pure
-// projection of ctx.taskFailRate / ctx.taskRowCount / ctx.worstTaskFailRate,
+// projection of ctx.taskFailRate / ctx.taskRuns.runs / ctx.worstTaskFailRate,
 // so we drive it directly with synthetic inputs (the task_id grouping itself
 // is covered end-to-end in tests/integration/health-task-fail-rate.test.ts).
 
@@ -19,9 +19,9 @@ function run(
   if (!check) throw new Error("task-fail-rate check not registered");
   return check.run({
     taskFailRate,
-    taskRowCount,
     since: "2026-01-01T00:00:00.000Z",
     worstTaskFailRate,
+    taskRuns: { runs: taskRowCount, tasks: 1, scheduled: taskRowCount, manual: 0, unrecorded: 0 },
   } as unknown as HealthCheckContext);
 }
 
@@ -53,9 +53,10 @@ describe("task-fail-rate check worst-single-task signal (item 6)", () => {
     expect(r.message).toContain('task "flaky-task" fails 50.0%');
   });
 
-  test("no signal when no cron tasks ran, regardless of worstTaskFailRate", () => {
+  test("no signal when no task ran, regardless of worstTaskFailRate", () => {
     const r = run(0, 0, null);
-    expect(r.status).toBe("pass");
-    expect(r.message).toContain("No cron tasks ran");
+    expect(r.status).toBe("unknown");
+    expect(r.reason).toBe("idle");
+    expect(r.message).toContain("No task runs");
   });
 });

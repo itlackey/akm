@@ -366,7 +366,8 @@ describe("buildDistillPrompt", () => {
     expect(prompt).toContain("Previously rejected proposals");
     expect(prompt).toContain("Too vague, missing concrete examples");
     expect(prompt).toContain("Duplicate of existing lesson");
-    expect(prompt).toContain("MUST differ meaningfully");
+    expect(prompt).toContain("Avoid repeating the same mistake");
+    expect(prompt).toContain("If the evidence has changed, judge the lesson against the current source and feedback");
   });
 
   test("omits rejected proposals section when none provided", () => {

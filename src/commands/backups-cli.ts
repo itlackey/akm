@@ -8,6 +8,7 @@ import { confirmDestructive } from "../cli/confirm";
 import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
 import { UsageError } from "../core/errors";
 import { getDataDir } from "../core/paths";
+import { stderr } from "../core/stdio";
 import { DURATION_UNITS, parseDuration } from "../core/time";
 import { sizeOfPath } from "./health/data-dir-usage";
 
@@ -124,7 +125,7 @@ const backupsPruneCommand = defineJsonCommand({
       { yes: args.yes === true },
     );
     if (!confirmed) {
-      process.stderr.write("Aborted.\n");
+      stderr().write("Aborted.\n");
       return;
     }
     output("backups-prune", pruneBackups(options));

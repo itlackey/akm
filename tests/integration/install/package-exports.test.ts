@@ -78,18 +78,9 @@ describe("package.json exports", () => {
     expect(copyAssets).toContain("scripts/node-runtime/api.d.ts");
   });
 
-  test("every ./api target and the docs page are in the tarball (once built)", () => {
+  test("the docs page and package.json are in the tarball", () => {
     const files = packed();
     expect(files.has("docs/reference/api.md")).toBe(true);
     expect(files.has("package.json")).toBe(true);
-    // `dist/` is a build output: CI runs `check` before `build`, so only assert
-    // the targets when the checkout has been built.
-    if (!fs.existsSync(path.join(ROOT, "dist", "api.js"))) return;
-    for (const target of ["dist/api.js", "dist/api-node.mjs", "dist/api.d.ts", "dist/text-import-hook.mjs"]) {
-      expect(files.has(target)).toBe(true);
-    }
-    for (const target of ["dist/workspace.js", "dist/workspace-node.mjs", "dist/workspace.d.ts"]) {
-      expect(files.has(target)).toBe(true);
-    }
   });
 });

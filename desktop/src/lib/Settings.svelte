@@ -102,12 +102,8 @@
       ...names.map((name) => [name, name] as [string, string]),
     ];
     const target = config?.automaticWriteTarget;
-    const unavailableWrites = (listing?.bundles ?? bundles)
-      .filter(
-        (bundle) =>
-          !bundle.enabled || !bundle.writable || !bundle.components.some((component) => component.adapter === "akm"),
-      )
-      .map((bundle) => bundle.name);
+    const blockers = new Map((listing?.bundles ?? bundles).map((bundle) => [bundle.name, bundle.writeBlocker]));
+    const unavailableWrites = [...blockers].filter(([, blocker]) => blocker !== null).map(([name]) => name);
     const groups: SettingsGroup[] = [
       {
         id: "search-settings",
@@ -144,9 +140,9 @@
             label: "Default write target",
             kind: "select",
             disabledOptions: unavailableWrites,
-            hint: unavailableWrites.includes(String(config?.config.defaultWriteTarget ?? ""))
-              ? "The configured target cannot accept writes. Choose an enabled writable bundle."
-              : "New content needs an enabled, writable AKM bundle.",
+            hint:
+              blockers.get(String(config?.config.defaultWriteTarget ?? "")) ??
+              "New content needs a bundle that accepts writes.",
             options: [
               [
                 "",
@@ -171,6 +167,20 @@
             label: "Require a reason with positive feedback too",
             kind: "boolean",
             hint: "Negative feedback always requires a reason.",
+          },
+        ],
+      },
+      {
+        id: "usage-report-settings",
+        title: "Usage reports",
+        description:
+          "Whether AKM sends its daily usage report: counts of what is used and set up, under a random install id, never content or names.",
+        fields: [
+          {
+            key: "usage.report",
+            label: "Send a daily usage report",
+            kind: "boolean",
+            hint: "At most once a day each from the CLI and Desktop. Applies to both.",
           },
         ],
       },
@@ -373,9 +383,11 @@
             <h3>Working stash</h3>
             <p class="mono wrap">{listing.workingStash.path}</p>
             <p>
-              {listing.workingStash.git
-                ? `Branch ${listing.workingStash.git.branch ?? "detached HEAD"} · ${listing.workingStash.git.dirtyPaths} uncommitted paths`
-                : "Not a Git repository."}
+              {listing.workingStash.git?.error
+                ? `Git could not be read: ${listing.workingStash.git.error}`
+                : listing.workingStash.git
+                  ? `Branch ${listing.workingStash.git.branch ?? "detached HEAD"} · ${listing.workingStash.git.uncommitted === null ? "uncommitted files unknown" : `${listing.workingStash.git.uncommitted} uncommitted ${listing.workingStash.git.uncommitted === 1 ? "file" : "files"}`}`
+                  : "Not a Git repository."}
             </p>
           </article>{/if}{#each listing?.bundles ?? [] as bundle (bundle.name)}<SettingsBundleCard
             {bundle}
@@ -447,7 +459,7 @@
               <dd>
                 {listing.index.embeddingCount === null
                   ? "Not measured"
-                  : `${listing.index.embeddingCount} recorded`}{listing.index.embeddingCoverage === null
+                  : `${listing.index.embeddingCount} for the current model`}{listing.index.embeddingCoverage === null
                   ? ""
                   : ` · ${Math.round(listing.index.embeddingCoverage * 100)}% coverage`}
               </dd>

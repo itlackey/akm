@@ -16,20 +16,6 @@
  */
 
 import type * as clack from "@clack/prompts";
-import {
-  cancel as realCancel,
-  confirm as realConfirm,
-  intro as realIntro,
-  isCancel as realIsCancel,
-  log as realLog,
-  multiselect as realMultiselect,
-  note as realNote,
-  outro as realOutro,
-  password as realPassword,
-  select as realSelect,
-  spinner as realSpinner,
-  text as realText,
-} from "@clack/prompts";
 
 type Clack = typeof clack;
 
@@ -66,31 +52,33 @@ export function _setClackForTests(fake?: ClackFakeForTests): void {
   clackFake = fake;
 }
 
-const realFns = {
-  intro: realIntro,
-  outro: realOutro,
-  cancel: realCancel,
-  confirm: realConfirm,
-  select: realSelect,
-  multiselect: realMultiselect,
-  text: realText,
-  password: realPassword,
-  spinner: realSpinner,
-  note: realNote,
-  isCancel: realIsCancel,
-} as const;
+// @clack/prompts reads process.stdout and process.stderr when it is loaded, which on Bun makes an inherited
+// pipe non-blocking. A command that prompts loads it first with loadPrompts(); a command that never prompts
+// never loads it. A dynamic import is the one form every bundler keeps out of startup.
+let realClack: Clack | undefined;
+
+/** Load the prompt library. Every command that prompts, or shows a spinner, awaits this first. */
+export async function loadPrompts(): Promise<void> {
+  realClack ??= (await import("@clack/prompts")) as Clack;
+}
+
+/** The loaded library; a prompt used before `loadPrompts()` is a programming error, reported as one. */
+function real(): Clack {
+  if (!realClack) throw new Error("A prompt was used before loadPrompts().");
+  return realClack;
+}
 
 /** Delegator with the real export's exact type; reads the fake at call time. */
-function bind<K extends keyof typeof realFns>(name: K): Clack[K] {
+function bind<K extends keyof Clack & keyof ClackFakeForTests>(name: K): Clack[K] {
   return ((...args: unknown[]) => {
-    const impl = (clackFake?.[name] ?? realFns[name]) as (...a: unknown[]) => unknown;
+    const impl = (clackFake?.[name] ?? real()[name]) as (...a: unknown[]) => unknown;
     return impl(...args);
   }) as Clack[K];
 }
 
 function bindLog<K extends keyof Clack["log"]>(name: K): Clack["log"][K] {
   return ((...args: unknown[]) => {
-    const impl = (clackFake?.log?.[name] ?? realLog[name]) as (...a: unknown[]) => unknown;
+    const impl = (clackFake?.log?.[name] ?? real().log[name]) as (...a: unknown[]) => unknown;
     return impl(...args);
   }) as Clack["log"][K];
 }

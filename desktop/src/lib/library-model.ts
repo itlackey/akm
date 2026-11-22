@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { ApiError, assetSource, title } from "./client";
+import type { FileActions } from "./library-files-model";
 import type { Asset, AssetDetail, AssetSummary, Json } from "./types";
 export interface SearchHit extends AssetSummary {
   score?: number;
@@ -17,6 +18,10 @@ export interface SearchResult {
 }
 export interface AssetRead extends Omit<AssetDetail, "feedback"> {
   location?: { bundle: string; path: string; parent: string } | null;
+  /** What akm accepts doing to the asset's file; null when it has none in a bundle. */
+  actions?: FileActions | null;
+  /** Where the body starts in the text the asset is read from. */
+  bodyStart?: number;
   headings?: Array<{ text: string; slug: string; line: number; level?: number }>;
   feedback?: {
     counts: { positive?: number; negative?: number };

@@ -30,7 +30,7 @@
  * index.db, and touches the network.
  *
  * The two cases above spawn `bun src/cli.ts` directly, which never involves
- * the published launcher (`scripts/node-runtime/akm`) — the layer the field
+ * the published launcher (`scripts/node-runtime/akm.mjs`) — the layer the field
  * actually ran under (`timeout 30 akm improve ...`), and whose own signal
  * forwarding (see its #956 comments) was the thing in question. The two
  * "through the launcher" cases below stage a real copy of that launcher next
@@ -46,6 +46,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isProcessAlive } from "../../../../src/core/common";
 import { saveConfig } from "../../../../src/core/config/config";
+import { getRunLogDir } from "../../../../src/core/paths";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
@@ -178,7 +179,7 @@ function configureSlowPrepassFastEngine(embedPort: number, chatPort: number): vo
 /**
  * Stages a real copy of the published launcher plus a one-line `cli.js`
  * sibling that imports the repo's real entrypoint, so the launcher's own
- * `spawn(command, [entry, ...argv])` (scripts/node-runtime/akm:148-152) runs
+ * `spawn(command, [entry, ...argv])` (scripts/node-runtime/akm.mjs:148-152) runs
  * the real CLI under Bun instead of the fake fixture used by
  * launcher-signal-forwarding.test.ts. The shim writes its own pid to
  * `pidFile` before importing, so the test can later confirm that pid — the
@@ -189,7 +190,7 @@ function stageRealCliLauncher(root: string): { launcherPath: string; pidFile: st
   const launcherPath = path.join(dist, "akm");
   const pidFile = path.join(root, "child-pid.txt");
   fs.mkdirSync(dist, { recursive: true });
-  fs.copyFileSync(path.join(repoRoot, "scripts/node-runtime/akm"), launcherPath);
+  fs.copyFileSync(path.join(repoRoot, "scripts/node-runtime/akm.mjs"), launcherPath);
   const cliEntryUrl = pathToFileURL(path.join(repoRoot, "src/cli.ts")).href;
   fs.writeFileSync(
     path.join(dist, "cli.js"),
@@ -244,6 +245,14 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
       // field's multi-minute hang.
       expect(elapsedMs).toBeLessThan(20_000);
       expect(stderr).toContain("Still waiting for the first model response");
+      // The heartbeat is progress: the run log files it as info, not as a warning.
+      const logDir = getRunLogDir("improve");
+      const log = fs
+        .readdirSync(logDir)
+        .map((name) => fs.readFileSync(path.join(logDir, name), "utf8"))
+        .join("\n");
+      expect(log).toContain("[INFO] [improve] Still waiting for the first model response");
+      expect(log).not.toContain("[WARN] [improve] Still waiting for the first model response");
     } finally {
       child?.kill("SIGKILL");
       server.stop(true);
@@ -313,7 +322,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
       const elapsedMs = Date.now() - signalledAt;
 
       // The launcher resolves its own exit only after its child's `exit`
-      // event fires (scripts/node-runtime/akm:180-204), so a real forwarded
+      // event fires (scripts/node-runtime/akm.mjs:180-204), so a real forwarded
       // SIGTERM makes the launcher report the same 143 SIGNAL_TABLE code the
       // direct-spawn case above sees, not a launcher-of-its-own signal.
       expect(code).toBe(143);

@@ -3,9 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm secret` command family. Extracted verbatim from src/cli.ts (WS6) so the
- * God Module shrinks; the `main.subCommands.secret` key and every subcommand's
- * args/output shape are byte-identical. The ref-resolution helpers
+ * `akm secret` command family. The ref-resolution helpers
  * (parseSecretRef / makeSecretRef / resolveSecretPath) live in src/core/env-secret-ref.ts so env + secret share one
  * copy.
  *
@@ -14,7 +12,7 @@
  * are NEVER written to stdout or structured output. The only value-use path is
  * `akm secret run` (injected into a child env var).
  *
- * `secret path` was REMOVED in 0.9.0 (R-027 / D-49) and `secret remove` with it: an
+ * There is no `secret path`: an
  * audit found `path` resolved the ref through the read-side, all-sources
  * resolver while `remove` resolved it through the write-target resolver, so the
  * two could silently name different files when a ref existed in more than one
@@ -23,12 +21,11 @@
  * only, and `--bundle` picks the bundle.
  */
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
-import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
+import { defineGroupCommand, defineJsonCommand, output, reportChildExit } from "../../cli/shared";
 import { refForFile } from "../../core/asset/asset-placement";
 import { loadConfig } from "../../core/config/config";
 import {
@@ -38,12 +35,14 @@ import {
   sensitiveMarkerPath,
   withEnvSecretWrite,
 } from "../../core/env-secret-ref";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { isTerminal, stderr } from "../../core/stdio";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { isFileOrFileSymlink } from "../../indexer/walk/walker";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
+import { runProgram } from "./injection";
 
 function parseKeyListFlag(raw: string | undefined): string[] | undefined {
   if (raw === undefined) return undefined;
@@ -139,8 +138,8 @@ const secretSetCommand = defineJsonCommand({
       }
       value = Buffer.from(envVal, "utf8");
     } else {
-      if (process.stdin.isTTY) {
-        process.stderr.write(`Enter value for secret "${name}" (Ctrl-D when done):\n`);
+      if (isTerminal(0)) {
+        stderr().write(`Enter value for secret "${name}" (Ctrl-D when done):\n`);
       }
       const stdinBuf = await readStdin();
       // Strip a single trailing newline so `echo "$TOKEN" | akm secret set`
@@ -158,7 +157,7 @@ const secretRunCommand = defineJsonCommand({
   meta: {
     name: "run",
     description:
-      "Run a command with a secret's value injected into an env var: `akm secret run <ref> <VAR> -- <command>`. The value is set as $VAR in the child process only. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
+      "Deprecated; put the command in a script asset under scripts/, run with `akm run --secret <ref>:<VAR> scripts/<file>`; removed in 0.11. Run a command with a secret's value injected into an env var: `akm secret run <ref> <VAR> -- <command>`. The value is set as $VAR in the child process only. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
   },
   args: {
     ref: { type: "positional", description: "Secret ref", required: true },
@@ -204,35 +203,12 @@ const secretRunCommand = defineJsonCommand({
       metadata: { var: varName },
     });
 
-    const result = spawnSync(command[0] as string, command.slice(1), {
-      stdio: "inherit",
-      env: mergedEnv,
-    });
-    if (result.error) {
-      const err = result.error as NodeJS.ErrnoException;
-      if (err.code === "ENOENT") {
-        throw new NotFoundError(
-          `Command not found: ${command[0]}`,
-          "FILE_NOT_FOUND",
-          `Install '${command[0]}' or add its directory to PATH before invoking 'akm secret run'.`,
-        );
-      }
-      if (err.code === "EACCES") {
-        throw new ConfigError(
-          `Command not executable: ${command[0]}`,
-          "STASH_DIR_UNREADABLE",
-          `Add execute permission ('chmod +x ${command[0]}') or invoke via an interpreter.`,
-        );
-      }
-      throw err;
-    }
-    // R-067: was `process.exit(result.status ?? 0)`, unconditional even on
-    // the success path — it skipped the `finally { disposeLlmUsageSink(); }`
-    // cleanup in src/cli.ts's `runCommand`.
-    // Setting `process.exitCode` and returning still exits with the child's
-    // exact status once the event loop drains, but lets cleanup run first —
-    // same pattern `emitJsonError` (src/cli/shared.ts) already established.
-    process.exitCode = result.status ?? 0;
+    const result = await runProgram({ argv: command, env: mergedEnv, capture: false });
+    // Set `process.exitCode` and return rather than calling `process.exit`, which
+    // would skip the `finally { disposeLlmUsageSink(); }` cleanup in src/cli.ts's
+    // `runCommand`. The process still exits with the child's exact status once the
+    // event loop drains, the pattern `emitJsonError` (src/cli/shared.ts) uses.
+    reportChildExit(result.exitCode ?? 0);
     return;
   },
 });
@@ -254,7 +230,7 @@ const secretRemoveCommand = defineJsonCommand({
       yes: args.yes === true,
     });
     if (!confirmed) {
-      process.stderr.write("Aborted.\n");
+      stderr().write("Aborted.\n");
       return;
     }
     if (!fs.existsSync(absPath)) {
@@ -277,7 +253,7 @@ export const secretCommand = defineGroupCommand({
     name: "secret",
     description:
       "Manage secrets — one standalone sensitive value per file (an API token, a PEM private key, a TLS cert).\n\n" +
-      "Names are visible; the file contents are the value and never appear in structured output. For a group of related configuration loaded together, use `akm env`. A secret's file lives at `<bundle>/secrets/<name>` (`akm bundle list` shows bundle roots); consume its value without writing it anywhere via `akm secret run <ref> <VAR> -- <command>`.",
+      "Names are visible; the file contents are the value and never appear in structured output. For a group of related configuration loaded together, use `akm env`. A secret's file lives at `<bundle>/secrets/<name>` (`akm bundle list` shows bundle roots); consume its value without writing it anywhere by putting the command in a script asset and running it with `akm run --secret <ref>:<VAR> scripts/<file>`.",
   },
   subCommands: {
     list: secretListCommand,

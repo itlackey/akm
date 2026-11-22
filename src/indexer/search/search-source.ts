@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isWithin, relativeToRoot, resolveStashDir, safeRealpath } from "../../core/common";
+import { isWithin, relativeToRoot, resolveStashDir, safeRealpath, toErrorMessage } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import {
   bundleComponentConfig,
@@ -36,8 +36,8 @@ export interface SearchSource {
   type?: SourceConfigEntry["type"];
   /** Adapter selected for this bundle component. Index preflight fills and persists missing ownership. */
   adapterId?: string;
-  /** Configured source whose provider/path could not be resolved this run. */
-  unresolved?: boolean;
+  /** Set when the source's provider/path could not be resolved this run: why, and its real directory when it has one. */
+  unresolved?: { reason: string; path?: string };
 }
 
 // ── Resolution ──────────────────────────────────────────────────────────────
@@ -96,7 +96,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     writable: boolean,
     type: SourceConfigEntry["type"],
     adapterId?: string,
-    unresolved = false,
+    unresolved?: { reason: string; path?: string },
     isDefault = false,
   ) => {
     const resolved = path.resolve(dir);
@@ -116,7 +116,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
         existing.writable = writable;
         existing.adapterId = adapterId;
       }
-      if (existing && unresolved) existing.unresolved = true;
+      if (existing && unresolved) existing.unresolved = unresolved;
       return;
     }
     seen.add(identity);
@@ -130,7 +130,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       writable,
       type,
       ...(adapterId ? { adapterId } : {}),
-      ...(unresolved ? { unresolved: true } : {}),
+      ...(unresolved ? { unresolved } : {}),
     });
   };
 
@@ -141,8 +141,8 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
   for (const entry of configuredEntries) {
     if (entry.enabled === false) continue;
     const component = bundleComponentConfig(config.bundles?.[entry.name ?? ""]);
-    const contentRoot = resolveEntryContentDir(entry);
-    if (contentRoot == null) {
+    const resolvedContent = resolveEntryContent(entry);
+    if ("error" in resolvedContent) {
       const unresolvedPath = path.join(
         getUnresolvedSourcesDir(implicitStash ?? process.cwd()),
         entry.name ?? entry.type,
@@ -153,11 +153,12 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
         component?.writable ?? resolveWritable(entry),
         entry.type,
         component?.adapter,
-        true,
+        { reason: resolvedContent.error },
         entry.name === config.defaultBundle,
       );
       continue;
     }
+    const contentRoot = resolvedContent.dir;
     const dir = path.resolve(contentRoot, component?.root ?? ".");
     if (!isWithin(dir, contentRoot)) {
       warn(`Warning: component root "${component?.root}" escapes bundle "${entry.name}"; skipping source.`);
@@ -168,7 +169,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
         component?.writable ?? resolveWritable(entry),
         entry.type,
         component?.adapter,
-        true,
+        { reason: `component root "${component?.root}" escapes bundle "${entry.name}"`, path: dir },
         entry.name === config.defaultBundle,
       );
       continue;
@@ -179,7 +180,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       component?.writable ?? resolveWritable(entry),
       entry.type,
       component?.adapter,
-      false,
+      undefined,
       entry.name === config.defaultBundle,
     );
   }
@@ -188,9 +189,8 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
 }
 
 /**
- * Resolve the content directory the indexer should walk for a given config
- * entry. Returns `undefined` if the entry has no walkable content
- * so the caller can skip it.
+ * The content directory the indexer should walk for a config entry: `{ dir }`, or `{ error }` with the
+ * provider's own reason there is none, so the caller can skip the entry and say why.
  *
  * Single source of truth: each provider owns its own path. We instantiate the
  * registered {@link import("../../sources/provider").SourceProvider} for the entry
@@ -201,8 +201,8 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
  * That convention is part of the akm content layout, not a provider concern,
  * so it stays here.
  */
-export function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
-  // §10.2 (WI-8.5) desired/resolved split: a git/npm bundle's desired config
+export function resolveEntryContent(entry: SourceConfigEntry): { dir: string } | { error: string } {
+  // §10.2 desired/resolved split: a git/npm bundle's desired config
   // carries only the source LOCATOR, not the materialized cache root — the
   // resolved root lives in the lock (`localRoot`). Resolve from there first via
   // the SHARED lock-first resolver (the same one write-source consults, so reads
@@ -212,43 +212,30 @@ export function resolveEntryContentDir(entry: SourceConfigEntry): string | undef
   // lock entry exists (for example while a configured source is being
   // materialized for the first time).
   const localRoot = lockContentRootFor(entry.name, entry.type);
-  if (localRoot != null) return localRoot;
+  if (localRoot != null) return { dir: localRoot };
 
   const factory = resolveSourceProviderFactory(entry.type);
-  if (!factory) return undefined;
+  if (!factory) return { error: `no source provider is registered for type "${entry.type}"` };
 
   let provider: import("../../sources/provider").SourceProvider;
   try {
     provider = factory(entry);
   } catch (err) {
-    warn(
-      `Warning: failed to construct ${entry.type} source provider for "${entry.name ?? entry.url ?? entry.path}": ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-    return undefined;
+    return { error: toErrorMessage(err) };
   }
 
   let dir: string;
   try {
     dir = provider.path();
   } catch (err) {
-    warn(
-      `Warning: failed to resolve ${entry.type} source path for "${entry.name ?? entry.url ?? entry.path}": ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-    return undefined;
+    return { error: toErrorMessage(err) };
   }
 
   // Git providers expose the cloned repo root as their path. The akm content
   // layout puts indexable files under `<repo>/content/`, so the walker needs
   // that subdirectory. This is a content-layout convention, not a provider
   // capability — keep it here.
-  if (entry.type === "git") {
-    return resolveGitContentRoot(dir);
-  }
-  return dir;
+  return { dir: entry.type === "git" ? resolveGitContentRoot(dir) : dir };
 }
 
 /**
@@ -367,7 +354,7 @@ export async function ensureSourceCaches(
   // provider and call `sync()`. Every cache-backed kind (git, website, npm)
   // refreshes the same way — a bad source warns and is skipped without
   // aborting the others. The git content/-subdir layout convention stays in
-  // resolveEntryContentDir. Provider projection comes only from `bundles`.
+  // resolveEntryContent. Provider projection comes only from `bundles`.
   //
   // DISTINCTION (deliberately NOT lock-first): refresh derives the PROVIDER's
   // own cache path to git-pull/re-materialize INTO — that derived path is where
@@ -477,15 +464,11 @@ function isMaterializedDir(dir: string): boolean {
  * source whose content lives at its lock `localRoot` counts as materialized.
  */
 function warnIfSourceUnavailableForRead(entry: SourceConfigEntry, providerName: string): void {
-  let dir: string | undefined;
-  try {
-    dir = resolveEntryContentDir(entry);
-  } catch {
-    dir = undefined;
-  }
-  if (dir && isMaterializedDir(dir)) return;
+  const resolved = resolveEntryContent(entry);
+  if ("dir" in resolved && isMaterializedDir(resolved.dir)) return;
+  const why = "error" in resolved ? ` (${resolved.error})` : "";
   warn(
-    `Warning: source "${providerName}" is not materialized locally; skipping it for this read. ` +
+    `Warning: source "${providerName}" is not materialized locally${why}; skipping it for this read. ` +
       "Run `akm index` (or `akm bundle update`) to fetch it.",
   );
 }

@@ -6,7 +6,7 @@
  * Secret `path` removal (D-49) and `run` validation (in-process).
  *
  *   - `secret path` was REMOVED from the CLI in 0.9.0 (R-027 / D-49), with
- *     `secret remove` (back in 0.10, see tests/secret.test.ts): an audit found
+ *     `secret remove` (back in 0.10, see tests/integration/secret.test.ts): an audit found
  *     `path` resolved a ref through the read-side, all-sources resolver while
  *     `remove` resolved it through the write-target resolver. The regression
  *     test below proves the removed spelling fails LOUDLY —

@@ -16,12 +16,13 @@ import path from "node:path";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { readLockfile } from "../../src/integrations/lockfile";
 import { runCliCapture } from "../_helpers/cli";
+import { type GitDaemon, startGitDaemon } from "../_helpers/git-daemon";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage, withTTY } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 let originDir: string;
 let cleanupOrigin: () => void;
-let daemon: ReturnType<typeof Bun.spawn> | undefined;
+let daemon: GitDaemon | undefined;
 let REMOTE_URL = "";
 /** A stored `$VAR` credential reference, resolved from the environment at sync time. */
 const CREDENTIAL_REF = "$AKM_1296_TOKEN";
@@ -51,33 +52,12 @@ beforeEach(() => {
   git(["-C", seed, "commit", "-m", "seed"]);
   git(["clone", "--bare", seed, originDir]);
 
-  // Serve the bare repo over git:// on loopback. It must be a separate process:
-  // akm's synchronous git calls would deadlock an in-process server.
-  const probe = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
-  const port = probe.port;
-  probe.stop(true);
-  daemon = Bun.spawn(
-    [
-      "git",
-      "daemon",
-      "--reuseaddr",
-      "--listen=127.0.0.1",
-      `--port=${port}`,
-      `--base-path=${sandbox.dir}`,
-      "--export-all",
-      sandbox.dir,
-    ],
-    { stdout: "ignore", stderr: "ignore" },
-  );
-  REMOTE_URL = `git://127.0.0.1:${port}/knowledge.git`;
-  for (let attempt = 0; attempt < 50; attempt++) {
-    if (spawnSync("git", ["ls-remote", REMOTE_URL]).status === 0) break;
-    Bun.sleepSync(100);
-  }
+  daemon = startGitDaemon(sandbox.dir, "knowledge.git");
+  REMOTE_URL = `${daemon.baseUrl}/knowledge.git`;
 });
 
 afterEach(() => {
-  daemon?.kill();
+  daemon?.stop();
   cleanupOrigin();
   storage.cleanup();
 });
@@ -209,10 +189,122 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
     expect(fs.readFileSync(note, "utf8")).toBe(edited);
     expect(fs.existsSync(path.join(root, "knowledge", "new.md"))).toBe(true);
     expect(git(["-C", root, "rev-parse", "HEAD"]).trim()).toBe(revision);
+    expect(git(["-C", root, "rev-parse", "@{upstream}"]).trim()).toBe(revision);
+    expect(git(["-C", root, "rev-list", "--left-right", "--count", "HEAD...@{upstream}"]).trim()).toBe("0\t0");
     expect(installed().lock?.resolvedRevision).toBe(revision);
     const shown = await withTTY(false, () => runCliCapture(["show", "shared//knowledge/new.md"]));
     expect(shown.code, shown.stderr).toBe(0);
     expect(shown.stdout).toContain("# New");
+  }, 60_000);
+
+  test("bundle update with an explicit branch still works without configured tracking", async () => {
+    await promote();
+    const root = installed().lock?.localRoot as string;
+    git(["-C", root, "branch", "--unset-upstream"]);
+    const revision = pushUpstream({ "knowledge/new.md": "new\n" });
+
+    const result = await update();
+    expect(result.code, result.stderr).toBe(0);
+    expect(git(["-C", root, "rev-parse", "HEAD"]).trim()).toBe(revision);
+    expect(git(["-C", root, "for-each-ref", "--format=%(upstream)", "refs/heads/main"]).trim()).toBe("");
+  }, 60_000);
+
+  test("bundle update preserves a local-ahead HEAD and the independently fetched upstream tip", async () => {
+    await promote();
+    const root = installed().lock?.localRoot as string;
+    const upstream = git(["-C", root, "rev-parse", "@{upstream}"]).trim();
+    git(["-C", root, "config", "user.name", "akm-test"]);
+    git(["-C", root, "config", "user.email", "akm@test"]);
+    git(["-C", root, "config", "commit.gpgsign", "false"]);
+    fs.writeFileSync(path.join(root, "knowledge", "local.md"), "local commit\n");
+    git(["-C", root, "add", "knowledge/local.md"]);
+    git(["-C", root, "commit", "-m", "local"]);
+    const localHead = git(["-C", root, "rev-parse", "HEAD"]).trim();
+
+    const result = await update();
+    expect(result.code, result.stderr).toBe(0);
+    expect(git(["-C", root, "rev-parse", "HEAD"]).trim()).toBe(localHead);
+    expect(git(["-C", root, "rev-parse", "@{upstream}"]).trim()).toBe(upstream);
+    expect(git(["-C", root, "rev-list", "--left-right", "--count", "HEAD...@{upstream}"]).trim()).toBe("1\t0");
+  }, 60_000);
+
+  test("bundle update refreshes upstream even when local-ahead HEAD and its lock did not change", async () => {
+    await promote();
+    const root = installed().lock?.localRoot as string;
+    git(["-C", root, "config", "user.name", "akm-test"]);
+    git(["-C", root, "config", "user.email", "akm@test"]);
+    git(["-C", root, "config", "commit.gpgsign", "false"]);
+    fs.writeFileSync(path.join(root, "knowledge", "local.md"), "first local commit\n");
+    git(["-C", root, "add", "knowledge/local.md"]);
+    git(["-C", root, "commit", "-m", "first local"]);
+    const upstream = git(["-C", root, "rev-parse", "HEAD"]).trim();
+    fs.appendFileSync(path.join(root, "knowledge", "local.md"), "second local commit\n");
+    git(["-C", root, "commit", "-am", "second local"]);
+    const head = git(["-C", root, "rev-parse", "HEAD"]).trim();
+    const first = await update();
+    expect(first.code, first.stderr).toBe(0);
+    expect(installed().lock?.resolvedRevision).toBe(head);
+    git(["-C", root, "push", originDir, `${upstream}:refs/heads/main`]);
+
+    const result = await update();
+    expect(result.code, result.stderr).toBe(0);
+    expect(git(["-C", root, "rev-parse", "HEAD"]).trim()).toBe(head);
+    expect(git(["-C", root, "rev-parse", "@{upstream}"]).trim()).toBe(upstream);
+    expect(git(["-C", root, "rev-list", "--left-right", "--count", "HEAD...@{upstream}"]).trim()).toBe("1\t0");
+  }, 60_000);
+
+  test.each([
+    "staging",
+    "publication",
+  ])("bundle update preserves a live upstream tracking change during %s", async (phase) => {
+    await promote();
+    const root = installed().lock?.localRoot as string;
+    const head = git(["-C", root, "rev-parse", "HEAD"]).trim();
+    const lockedBefore = installed().lock?.resolvedRevision;
+    pushUpstream({ "knowledge/new.md": "new\n" });
+    const concurrentTip = git([
+      "-C",
+      root,
+      "-c",
+      "user.name=akm-test",
+      "-c",
+      "user.email=akm@test",
+      "commit-tree",
+      `${head}^{tree}`,
+      "-p",
+      head,
+      "-m",
+      "concurrent tracking writer",
+    ]).trim();
+    const realGit = Bun.which("git") as string;
+    const wrapperDir = path.join(path.dirname(originDir), "git-tracking-wrapper");
+    fs.mkdirSync(wrapperDir, { recursive: true });
+    const wrapper = path.join(wrapperDir, "git");
+    const trigger =
+      phase === "staging" ? '*".akm-update-stage-"*"fetch --prune --tags"*' : `*"-C ${root} fetch --no-tags"*`;
+    fs.writeFileSync(
+      wrapper,
+      `#!/bin/sh
+case "$*" in
+  ${trigger}) ${JSON.stringify(realGit)} -C ${JSON.stringify(root)} update-ref refs/remotes/origin/main ${concurrentTip} ;;
+esac
+exec ${JSON.stringify(realGit)} "$@"
+`,
+    );
+    fs.chmodSync(wrapper, 0o755);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${wrapperDir}${path.delimiter}${previousPath ?? ""}`;
+    let result: Awaited<ReturnType<typeof update>>;
+    try {
+      result = await update();
+    } finally {
+      process.env.PATH = previousPath;
+    }
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("update-ref failed");
+    expect(git(["-C", root, "rev-parse", "HEAD"]).trim()).toBe(head);
+    expect(git(["-C", root, "rev-parse", "@{upstream}"]).trim()).toBe(concurrentTip);
+    expect(installed().lock?.resolvedRevision).toBe(lockedBefore);
   }, 60_000);
 
   test("bundle update refuses safely when a live edit overlapping the update lands between staging and publication", async () => {
@@ -251,6 +343,7 @@ exec ${JSON.stringify(realGit)} "$@"
     expect(result.stderr).toContain(root);
     expect(fs.readFileSync(note, "utf8")).toBe("RACED LOCAL EDIT\n");
     expect(git(["-C", root, "rev-parse", "HEAD"]).trim()).toBe(head);
+    expect(git(["-C", root, "rev-parse", "@{upstream}"]).trim()).toBe(head);
     expect(installed().lock?.resolvedRevision).toBe(lockedBefore);
   }, 60_000);
 

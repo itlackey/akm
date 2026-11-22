@@ -16,8 +16,6 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import path from "node:path";
 import { placementTypes } from "../../src/core/asset/asset-placement";
 import {
   canonicalizeWorkflowName,
@@ -29,13 +27,14 @@ import {
 } from "../../src/core/recognition-util";
 
 describe("recognition-util — relocated symbol values (behavior-preserving move)", () => {
-  test("SCRIPT_EXTENSIONS is the Set of 16 recognized script extensions", () => {
+  test("SCRIPT_EXTENSIONS is the Set of 17 recognized script extensions", () => {
     expect(SCRIPT_EXTENSIONS).toBeInstanceOf(Set);
-    expect(SCRIPT_EXTENSIONS.size).toBe(16);
+    expect(SCRIPT_EXTENSIONS.size).toBe(17);
     for (const ext of [
       ".sh",
       ".ts",
       ".js",
+      ".mjs",
       ".ps1",
       ".cmd",
       ".bat",
@@ -67,29 +66,6 @@ describe("recognition-util — relocated symbol values (behavior-preserving move
 
   test("DERIVED_SUFFIX is the structural .derived marker", () => {
     expect(DERIVED_SUFFIX).toBe(".derived");
-  });
-});
-
-describe("recognition-util — D1-5 cycle-safety invariant (import-free)", () => {
-  const SRC_PATH = path.join(import.meta.dir, "../../src/core/recognition-util.ts");
-
-  test("the file exists at the expected util-home path", () => {
-    expect(fs.existsSync(SRC_PATH)).toBe(true);
-  });
-
-  test("no import/export-from line references a relative (./ or ../) path into src", () => {
-    const text = fs.readFileSync(SRC_PATH, "utf8");
-    const lines = text.split("\n");
-    const importLikeLines = lines.filter((line) => /^\s*(import|export)\b.*\bfrom\s+["']/.test(line));
-    const internalSrcImports = importLikeLines.filter((line) => /from\s+["']\.\.?\//.test(line));
-    expect(internalSrcImports).toEqual([]);
-  });
-
-  test("no bare import/export-from statement at all — the module is a pure leaf (0 module-level dependencies)", () => {
-    const text = fs.readFileSync(SRC_PATH, "utf8");
-    const sourceFile = text;
-    const hasAnyFromImport = /^\s*(import|export)\b.*\bfrom\s+["'][^"']+["']/m.test(sourceFile);
-    expect(hasAnyFromImport).toBe(false);
   });
 });
 

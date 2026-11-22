@@ -76,7 +76,7 @@ function displayScalar(value: unknown): string {
  * survive untouched — every renderer below applies this filter only to the
  * top-level `Object.entries` loop over the envelope, never recursively.
  */
-const ENVELOPE_META_KEYS = new Set(["shape", "schemaVersion"]);
+export const ENVELOPE_META_KEYS = new Set(["shape", "schemaVersion"]);
 
 // ── Markdown ─────────────────────────────────────────────────────────────────
 
@@ -115,6 +115,24 @@ function markdownValue(value: unknown, depth: number): string[] {
 }
 
 /**
+ * `value` with every null replaced by "unknown", for results whose null means "not known" (`akm health`: a rate with
+ * nothing to measure, a metric of a state.db that could not be read), so a renderer never prints it as empty or "null".
+ */
+export function nullAsUnknown(value: unknown): unknown {
+  if (value === null) return "unknown";
+  if (Array.isArray(value)) return value.map(nullAsUnknown);
+  if (typeof value === "object" && value !== undefined) {
+    return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, nullAsUnknown(nested)]));
+  }
+  return value;
+}
+
+/** One top-level field of an envelope as a `## key` section; the lines `renderGenericMarkdown` prints for it. */
+export function markdownSection(key: string, value: unknown): string[] {
+  return [`## ${key}`, "", ...markdownValue(value, 3), ""];
+}
+
+/**
  * Render a shaped envelope as Markdown. `command` titles the document so a
  * rendered file identifies itself once detached from the invocation.
  */
@@ -123,7 +141,7 @@ export function renderGenericMarkdown(command: string, value: unknown): string {
     value !== null && typeof value === "object" && !Array.isArray(value)
       ? Object.entries(value)
           .filter(([key]) => !ENVELOPE_META_KEYS.has(key)) // transport metadata, not a result
-          .flatMap(([key, nested]) => [`## ${key}`, "", ...markdownValue(nested, 3), ""])
+          .flatMap(([key, nested]) => markdownSection(key, nested))
       : markdownValue(value, 2);
   const lines = [`# ${command}`, "", ...body];
   const rendered = lines

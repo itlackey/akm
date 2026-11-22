@@ -402,9 +402,9 @@ export function deriveExtractCandidateRef(
   if (candidate.type === "memory" || candidate.type === "lesson") {
     const folder = projectName ?? sourceRef.projectHint?.split(/[\\/]/).filter(Boolean).at(-1);
     const scope = folder ? canonicalSegment(folder) : "";
-    return `${candidate.type === "memory" ? "memories" : "lessons"}/${scope ? `${scope}/` : ""}${leaf}`;
+    return conceptIdFromTypeName(candidate.type, `${scope ? `${scope}/` : ""}${leaf}`);
   }
-  return `knowledge/${leaf}`;
+  return conceptIdFromTypeName("knowledge", leaf);
 }
 
 function resolveExtractStandards(stashDir: string): string {
@@ -1394,7 +1394,7 @@ export interface CountNewExtractCandidatesOptions {
   stateDb?: Database;
   /** Explicit state.db path (used only without `stateDb`). */
   stateDbPath?: string;
-  /** Active improve profile, so the discovery window honors `--profile`. */
+  /** Active improve profile, so the discovery window honors the improve profile. */
   improveProfile?: ImproveProfileConfig;
   /** Planning only: never creates state.db; without a borrowed handle every session counts as new. */
   readOnly?: boolean;

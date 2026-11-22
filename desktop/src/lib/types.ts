@@ -43,23 +43,30 @@ export interface Bundle {
   name: string;
   enabled: boolean;
   writable: boolean;
+  /** The sentence akm's write path would refuse with, or null when a write to this bundle would be accepted. */
+  writeBlocker: string | null;
   default?: boolean;
   source?: { kind: string; locator: string };
+  /** akm's one name for where the bundle comes from; equal for the same repository however its address is written. Null for a folder or website. */
+  identity: string | null;
   path?: string;
   kind: string;
   itemCount?: number;
   byType?: Record<string, number>;
   components: Array<{ adapter: string; [key: string]: Json | undefined }>;
-  git?: Json;
+  /** akm's Git facts for a bundle whose root is a repository; `uncommitted` is what a commit would take now (null: akm could not list it). */
+  git?: ({ uncommitted?: number | null; error?: string } & { [key: string]: Json | undefined }) | null;
   settingsSource?: string;
 }
 export interface Source {
   ref?: string;
+  bundle?: string;
+  file?: string;
   revision: string;
   content: string;
   type?: string;
-  markdown?: boolean /** False in a bundle akm does not write to (an installed one): view only. */;
-  writable?: boolean;
+  /** What akm accepts doing to the file: Edit is offered when `edit` is allowed, with akm's sentence when it is not. */
+  actions: import("./library-files-model").FileActions;
 }
 export interface TextDiff {
   before: string | null;
@@ -76,10 +83,11 @@ export interface Commit {
   paths?: string[];
   pathCount?: number;
   author?: string;
-  origin?: string;
 }
 export interface History {
   available: boolean;
+  /** Why git could not be read; `commits` is then empty because nothing was read. */
+  error?: string;
   commits: Commit[];
   diff?: TextDiff;
 }
@@ -121,4 +129,31 @@ export interface Configuration {
   path: string;
   entries: Array<{ path: string; value: Json; source: string | null }>;
   [key: string]: unknown;
+}
+/** What akm reads of a file's frontmatter (`documents.frontmatter`) and the keys it knows for the file's type. */
+export interface FrontmatterRead {
+  type: string | null;
+  present: boolean;
+  /** A Markdown file, which akm reads frontmatter from. */
+  markdown: boolean;
+  /** Where the body starts in the text. */
+  bodyStart: number;
+  entries: Array<{ key: string; value: Json; known: boolean }>;
+  error?: { reason: string; line?: number };
+  keys: Array<{
+    key: string;
+    required: boolean;
+    kind: "text" | "list" | "flag" | "map";
+    values?: string[];
+    hint: string;
+    stamped?: boolean;
+  }>;
+}
+/** What akm says of text before it is saved (`documents.check`). */
+export interface TextCheck {
+  type: string | null;
+  findings: Array<{ issue: string; detail: string; line?: number; ref?: string }>;
+  warnings: Array<{ issue: string; detail: string; line?: number; ref?: string }>;
+  readable: boolean;
+  unreadable?: { reason: string; line?: number };
 }

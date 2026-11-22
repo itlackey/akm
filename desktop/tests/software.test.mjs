@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
 import { HostTools, hostEnvironment, runHost, summarizeUpgrade } from "../src/lib/server/features/host-tools.ts";
-import { upgradeOutcomeText } from "../src/lib/upgrade-outcome.ts";
+import { planIsFor, planText, upgradeOutcomeText } from "../src/lib/upgrade-outcome.ts";
 
 const temporary = [];
 after(() => Promise.all(temporary.map((dir) => rm(dir, { recursive: true, force: true }))));
@@ -48,6 +48,7 @@ async function hostFixture({
   installerVersion,
   latestVersion = "0.10.261105",
   checkFails = false,
+  currentChannel = "latest",
   upgradeResult,
   marketplace = false,
   extra,
@@ -110,6 +111,7 @@ async function hostFixture({
           currentVersion: "0.10.261104",
           latestVersion,
           updateAvailable: true,
+          currentChannel,
           plugins: [],
           migration: { status: "current" },
         });
@@ -172,26 +174,28 @@ test("host checks are read-only and upgrades invoke the existing CLI, not the bu
   assert.throws(() => f.manager.start("install-cli"), /already running/);
   await f.manager.pending;
   assert.ok(
-    f.calls.some((call) => call.file === "/fixture/bin/akm" && call.args.join(" ") === "upgrade --format json"),
+    f.calls.some(
+      (call) => call.file === "/fixture/bin/akm" && call.args.join(" ") === "upgrade --channel latest --format json",
+    ),
   );
-  assert.ok(!f.calls.some((call) => call.args.includes("--allow-downgrade") || call.args.includes("--channel")));
+  assert.ok(!f.calls.some((call) => call.args.includes("--allow-downgrade") || call.args.includes("--next")));
   assert.match(f.manager.snapshot().receipt, /bundled desktop engine is unchanged/);
   assert.deepEqual(
     summarizeUpgrade({ latestVersion: "1.0.0", credentials: "secret", migration: { files: ["private"] } }),
     { latestVersion: "1.0.0" },
   );
-  // Which plugin follows which channel, and what the run did with it, is kept; the entries' messages (other than the
-  // reason a plugin was deferred or failed) and backups are not.
+  // Which plugin follows which channel, what the run did or would do with it, and its message are kept; the entries'
+  // backups are not.
   assert.deepEqual(
     summarizeUpgrade({
       plugins: [
-        { harness: "claude-code", channel: "next", channelMismatch: true, message: "private", backups: ["x"] },
+        { harness: "claude-code", channel: "latest", outcome: "pending", from: "0.10.1", to: "0.10.2", backups: ["x"] },
         { harness: "codex", outcome: "skipped" },
       ],
     }),
     {
       plugins: [
-        { harness: "claude-code", channel: "next", channelMismatch: true },
+        { harness: "claude-code", channel: "latest", outcome: "pending", from: "0.10.1", to: "0.10.2" },
         { harness: "codex", outcome: "skipped" },
       ],
     },
@@ -203,25 +207,35 @@ test("host checks are read-only and upgrades invoke the existing CLI, not the bu
   );
 });
 
-test("a stable CLI with plugins on next and OpenCode on another channel reads as the CLI's plugin lines do", () => {
+test("each entry of akm's plan reads in words from akm's fields alone: the plan, the stays, the not-checked and the deferred", () => {
   const { plugins } = summarizeUpgrade({
     plugins: [
-      { harness: "claude-code", outcome: "current", channel: "next", channelMismatch: true },
-      { harness: "codex", outcome: "updated", channel: "next", channelMismatch: true },
       {
-        harness: "opencode",
-        outcome: "skipped",
-        channel: "next",
-        channelMismatch: true,
-        message: "left alone; engine skew: bundled akm-cli v0.9.20 is older",
+        harness: "claude-code",
+        outcome: "pending",
+        channel: "latest",
+        targetChannel: "next",
+        from: "0.10.261130",
+        to: "0.10.261131-beta",
+        message: "would configure channel latest → next",
       },
+      { harness: "codex", outcome: "current", channel: "next", from: "0.10.261131-beta", to: "0.10.261131-beta" },
+      { harness: "opencode", outcome: "deferred", channel: "latest", message: "OpenCode is running" },
+      { harness: "opencode-v2", outcome: "unknown", channel: "next" },
+      { harness: "codex", outcome: "unknown", channel: "latest", message: "the newest release could not be read" },
     ],
   });
-  assert.deepEqual(plugins.map(upgradeOutcomeText), [
-    "Claude Code plugin current within its configured channel [channel next; differs from CLI]",
-    "Codex plugin updated [channel next; differs from CLI]",
-    "OpenCode plugin skipped [channel next; differs from CLI] (left alone; engine skew: bundled akm-cli v0.9.20 is older)",
+  assert.deepEqual(plugins.map(planText), [
+    "Update installs 0.10.261131-beta (would configure channel latest → next).",
+    "Up to date.",
+    "Deferred. Close the harness, then update again (OpenCode is running).",
+    "Not checked; Update refreshes it.",
+    "Not checked (the newest release could not be read).",
   ]);
+  assert.equal(
+    upgradeOutcomeText(plugins[0]),
+    "Claude Code plugin, on the stable channel: Update installs 0.10.261131-beta (would configure channel latest → next).",
+  );
 });
 
 test("missing CLI uses official user-local installer and verifies the result", async () => {
@@ -286,7 +300,11 @@ test("all three harnesses use standard native installation commands and verify a
   f.manager.start("install-plugin", "codex");
   await f.manager.pending;
   assert.match(f.manager.snapshot().error, /already present/);
-  assert.ok(f.calls.slice(count).every((call) => call.args.includes("--version") || call.args.includes("list")));
+  assert.ok(
+    f.calls
+      .slice(count)
+      .every((call) => call.args.includes("--version") || call.args.includes("list") || call.args.includes("--check")),
+  );
 });
 
 // OpenCode 2 is the same `opencode` program; its major picks the v2 plugin and there is no separate row for it (F2).
@@ -424,25 +442,47 @@ test("the CLI upgrade asks akm for its target right before it runs and refuses o
   ok.manager.start("upgrade-cli", undefined, undefined, { within });
   await ok.manager.pending;
   const order = ok.calls.filter((call) => call.args[0] === "upgrade").map((call) => call.args.join(" "));
-  assert.deepEqual(order.slice(0, 2), ["upgrade --check --format json", "upgrade --format json"]);
+  assert.deepEqual(order.slice(0, 3), [
+    "upgrade --check --format json",
+    "upgrade --check --channel latest --format json",
+    "upgrade --channel latest --format json",
+  ]);
   assert.equal(ok.manager.snapshot().error, undefined);
   // The target appeared since the last check: refused, and the mutating command never ran.
   const newer = await hostFixture({ latestVersion: "0.10.261201" });
   newer.manager.start("upgrade-cli", undefined, undefined, { within });
   await newer.manager.pending;
   assert.match(newer.manager.snapshot().error, /Update AKM Desktop first/);
-  assert.ok(!newer.calls.some((call) => call.args.join(" ") === "upgrade --format json"));
+  assert.ok(!newer.calls.some((call) => call.args.join(" ") === "upgrade --channel latest --format json"));
   // The check itself failed: unverifiable, so refused with guidance and nothing changed.
   const offline = await hostFixture({ checkFails: true });
-  offline.manager.start("upgrade-cli", undefined, undefined, { within });
+  offline.manager.start("upgrade-cli", undefined, "latest", { within });
   await offline.manager.pending;
   assert.match(offline.manager.snapshot().error, /nothing was changed/);
-  assert.ok(!offline.calls.some((call) => call.args.join(" ") === "upgrade --format json"));
+  assert.ok(!offline.calls.some((call) => call.args.join(" ") === "upgrade --channel latest --format json"));
   // A target that is not a version cannot be verified either.
   const odd = await hostFixture({ latestVersion: "soon" });
   odd.manager.start("upgrade-cli", undefined, undefined, { within: () => undefined });
   await odd.manager.pending;
   assert.match(odd.manager.snapshot().error, /could not be verified/);
+  // The CLI is already on a release past the engine and stays: only plugins would change, so nothing is held.
+  const there = await hostFixture({
+    extra: (args) =>
+      args.includes("--check")
+        ? JSON.stringify({
+            currentVersion: "0.10.261201",
+            latestVersion: "0.10.261201",
+            updateAvailable: false,
+            currentChannel: "latest",
+            plugins: [],
+            migration: { status: "current" },
+          })
+        : undefined,
+  });
+  there.manager.start("upgrade-cli", undefined, undefined, { within });
+  await there.manager.pending;
+  assert.equal(there.manager.snapshot().error, undefined);
+  assert.ok(there.calls.some((call) => call.args.join(" ") === "upgrade --channel latest --format json"));
 });
 
 test("a nonzero upgrade keeps akm's redacted result and shows the version actually installed (#1609-6)", async () => {
@@ -471,6 +511,43 @@ test("a nonzero upgrade keeps akm's redacted result and shows the version actual
   assert.ok(!shown.includes("TOKEN-SENTINEL") && !shown.includes("/home/secret"), "no raw payloads");
 });
 
+test("a nonzero upgrade with no failed step shows what akm reported as not done", async () => {
+  const f = await hostFixture({
+    upgradeResult: {
+      exit: true,
+      body: {
+        currentVersion: "0.10.261104",
+        newVersion: "0.10.261104",
+        upgraded: false,
+        message: "akm v0.10.261104 is already the latest version",
+        migration: { status: "current" },
+        plugins: [
+          { harness: "claude-code", outcome: "current", channel: "next" },
+          { harness: "opencode", outcome: "deferred", channel: "next", message: "OpenCode is running" },
+        ],
+      },
+    },
+  });
+  f.manager.start("upgrade-cli");
+  await f.manager.pending;
+  const snapshot = f.manager.snapshot();
+  assert.equal(
+    snapshot.error,
+    "AKM's upgrade exited with an error. akm reported: akm v0.10.261104 is already the latest version; " +
+      "the opencode plugin was deferred (OpenCode is running). The versions shown are what is installed now.",
+  );
+  assert.equal(snapshot.action.upgrade.plugins[1].outcome, "deferred");
+});
+
+test("a nonzero upgrade that reports nothing unfinished says akm gave no reason", async () => {
+  const f = await hostFixture({
+    upgradeResult: { exit: true, body: { currentVersion: "0.10.261104", upgraded: true, plugins: [] } },
+  });
+  f.manager.start("upgrade-cli");
+  await f.manager.pending;
+  assert.match(f.manager.snapshot().error, /exited with an error and reported no reason/);
+});
+
 test("deferred plugins keep their reasons, apart from the check that follows (#1609-7)", async () => {
   const f = await hostFixture({
     upgradeResult: {
@@ -488,7 +565,11 @@ test("deferred plugins keep their reasons, apart from the check that follows (#1
   assert.deepEqual(snapshot.action.upgrade.plugins, [
     { harness: "opencode", outcome: "deferred", reason: "OpenCode is running" },
   ]);
-  assert.equal(snapshot.command, "akm upgrade --format json", "the check does not replace the action's command");
+  assert.equal(
+    snapshot.command,
+    "akm upgrade --channel latest --format json",
+    "the check does not replace the action's command",
+  );
   assert.match(snapshot.receipt, /upgrade completed/);
   // The follow-up check fails after the action went through: a partial outcome, the receipt stays.
   const g = await hostFixture({
@@ -503,7 +584,7 @@ test("deferred plugins keep their reasons, apart from the check that follows (#1
   snapshot = g.manager.snapshot();
   assert.match(snapshot.receipt, /upgrade completed/);
   assert.match(snapshot.error, /change completed, but checking the result afterwards failed/);
-  assert.equal(snapshot.command, "akm upgrade --format json");
+  assert.equal(snapshot.command, "akm upgrade --channel latest --format json");
 });
 
 test("a timed-out parent and its descendants are ended, and no overlapping retry starts until a check (#1609-9)", async (t) => {
@@ -572,19 +653,112 @@ test("a prerelease choice is not silently dropped when akm-plugins already exist
   assert.ok(fresh.calls.some((call) => call.args.includes("itlackey/akm-plugins@next")));
 });
 
-test("the prerelease choice reaches the check and the upgrade, and an explicit channel switch uses akm's own flag (#1609-5)", async () => {
+test("Check and Update run akm's one plan for the chosen channel: --check --channel, then --channel, never --next", async () => {
+  for (const channel of ["latest", "next"]) {
+    const f = await hostFixture();
+    f.manager.start("check", undefined, channel);
+    await f.manager.pending;
+    f.manager.start("upgrade-cli", undefined, channel);
+    await f.manager.pending;
+    const upgrades = f.calls.filter((call) => call.args[0] === "upgrade").map((call) => call.args.join(" "));
+    assert.deepEqual(upgrades, [
+      `upgrade --check --channel ${channel} --format json`,
+      `upgrade --channel ${channel} --format json`,
+      `upgrade --check --channel ${channel} --format json`,
+    ]);
+    assert.ok(!f.calls.some((call) => call.args.includes("--next") || call.args.includes("--quiet")));
+    assert.equal(f.manager.snapshot().command, `akm upgrade --channel ${channel} --format json`);
+  }
   const f = await hostFixture();
+  assert.throws(() => f.manager.start("upgrade-cli", undefined, "beta"), /Invalid software action/);
+});
+
+test("with no saved choice the channel is the one akm reports the CLI follows, learned by a check that names none", async () => {
+  const calls = (f) => f.calls.filter((call) => call.args[0] === "upgrade").map((call) => call.args.join(" "));
+  const f = await hostFixture({ currentChannel: "next" });
+  f.manager.start("check");
+  await f.manager.pending;
+  assert.deepEqual(calls(f), ["upgrade --check --format json", "upgrade --check --channel next --format json"]);
+  f.calls.length = 0;
+  f.manager.start("upgrade-cli");
+  await f.manager.pending;
+  assert.deepEqual(calls(f), [
+    "upgrade --check --format json",
+    "upgrade --channel next --format json",
+    "upgrade --check --channel next --format json",
+  ]);
+  // A stable CLI is followed the same way.
+  const stable = await hostFixture({ currentChannel: "latest" });
+  stable.manager.start("check");
+  await stable.manager.pending;
+  assert.deepEqual(calls(stable), ["upgrade --check --format json", "upgrade --check --channel latest --format json"]);
+  // No host CLI: there is nothing to ask and nothing to install a plugin into, so no akm command runs.
+  const bare = await hostFixture({ absent: true });
+  bare.manager.start("install-plugin", "claude");
+  await bare.manager.pending;
+  assert.match(bare.manager.snapshot().error, /Install AKM and the harness first/);
+  assert.deepEqual(calls(bare), []);
+  // Installing the CLI makes it a host CLI to ask, so the check that follows uses the channel akm reports for it.
+  bare.manager.start("install-cli");
+  await bare.manager.pending;
+  assert.deepEqual(calls(bare), ["upgrade --check --format json", "upgrade --check --channel latest --format json"]);
+  // A CLI that does not say which channel it follows leaves nothing to choose from.
+  const silent = await hostFixture({ extra: (args) => (args[0] === "upgrade" ? "{}" : undefined) });
+  silent.manager.start("check");
+  await silent.manager.pending;
+  assert.match(silent.manager.snapshot().error, /did not report which channel the CLI follows/);
+});
+
+test("a prerelease CLI with Claude and Codex on stable and the channel on Prerelease: the plan shows both moving, and Update runs --channel next", async () => {
+  let updated = false;
+  const entry = (harness, from) => ({
+    harness,
+    channel: updated ? "next" : "latest",
+    targetChannel: "next",
+    ...(updated
+      ? { outcome: "current", from: "0.10.261131-beta", to: "0.10.261131-beta" }
+      : { outcome: "pending", from, to: "0.10.261131-beta", message: "would configure channel latest → next" }),
+  });
+  const f = await hostFixture({
+    extra: (args) => {
+      if (args[0] !== "upgrade") return undefined;
+      if (!args.includes("--check")) updated = true;
+      const body = {
+        currentVersion: "0.10.261131-beta",
+        latestVersion: "0.10.261131-beta",
+        updateAvailable: false,
+        currentChannel: "next",
+        channel: "next",
+        targetChannel: "next",
+        plugins: [entry("claude-code", "0.10.261130"), entry("codex", "0.10.261130")],
+        migration: { status: "current" },
+      };
+      return JSON.stringify(body);
+    },
+  });
   f.manager.start("check", undefined, "next");
   await f.manager.pending;
-  f.manager.start("upgrade-cli", undefined, "next");
+  const plan = f.manager.snapshot().upgrade;
+  assert.deepEqual(
+    plan.plugins.map((item) => [item.harness, item.channel, item.outcome, item.from, item.to]),
+    [
+      ["claude-code", "latest", "pending", "0.10.261130", "0.10.261131-beta"],
+      ["codex", "latest", "pending", "0.10.261130", "0.10.261131-beta"],
+    ],
+  );
+  assert.equal(plan.updateAvailable, false, "the CLI itself stays");
+  f.manager.start("upgrade-cli", undefined, "next", { within: (version) => version <= "0.10.261105" });
   await f.manager.pending;
-  f.manager.start("switch-channel", undefined, "next");
-  await f.manager.pending;
-  const upgrades = f.calls.filter((call) => call.args[0] === "upgrade").map((call) => call.args.join(" "));
-  assert.ok(upgrades.includes("upgrade --check --next --quiet --format json"));
-  assert.ok(upgrades.includes("upgrade --next --quiet --format json"));
-  assert.ok(upgrades.includes("upgrade --channel next --format json"));
-  assert.match(f.manager.snapshot().receipt, /switched the CLI and installed plugins to the prerelease channel/);
+  const done = f.manager.snapshot();
+  assert.equal(done.error, undefined, "a CLI that stays holds nothing, though its release is past the engine");
+  assert.ok(f.calls.some((call) => call.args.join(" ") === "upgrade --channel next --format json"));
+  assert.deepEqual(
+    done.upgrade.plugins.map((item) => [item.channel, item.outcome]),
+    [
+      ["next", "current"],
+      ["next", "current"],
+    ],
+  );
 });
 
 test("a CLI that does not run is repaired only with consent and only where Desktop installed it (#1609-12)", async () => {
@@ -609,7 +783,7 @@ test("a CLI that does not run is repaired only with consent and only where Deskt
         throw new Error("exec format error");
       }
       if (path.basename(file) === "bash") repaired = true;
-      return "{}";
+      return args[0] === "upgrade" ? JSON.stringify({ currentChannel: "latest" }) : "{}";
     },
   });
   // An earlier check reported a standalone binary; before that Desktop does not claim the file.
@@ -681,25 +855,16 @@ test("a link in the install directory is another installer's: never Desktop's to
   assert.equal(regular.manager.state.cliManaged, true);
 });
 
-test("a switch checks the target channel afterwards, a timed-out check is not unsettled, output over the cap is, and a new check clears the old action (#1609)", async () => {
+test("an Update checks the chosen channel afterwards, a timed-out check is not unsettled, output over the cap is, and a new check clears the old action (#1609)", async () => {
   const f = await hostFixture();
-  f.manager.start("switch-channel", undefined, "latest");
+  f.manager.start("upgrade-cli", undefined, "next");
   await f.manager.pending;
   assert.equal(f.manager.snapshot().error, undefined);
   const last = f.calls
     .filter((call) => call.args[0] === "upgrade")
     .at(-1)
     .args.join(" ");
-  assert.equal(last, "upgrade --check --format json");
-  f.manager.start("switch-channel", undefined, "next");
-  await f.manager.pending;
-  assert.equal(
-    f.calls
-      .filter((call) => call.args[0] === "upgrade")
-      .at(-1)
-      .args.join(" "),
-    "upgrade --check --next --quiet --format json",
-  );
+  assert.equal(last, "upgrade --check --channel next --format json");
   assert.ok(f.manager.snapshot().action);
   f.manager.start("check");
   assert.equal(f.manager.snapshot().action, undefined, "the earlier action's outcome lines go when a new check starts");
@@ -742,4 +907,10 @@ test("output over the cap stops the command and leaves its action unsettled like
     }),
     (error) => error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" && error.killed === true,
   );
+});
+
+test("akm's plan describes a channel only when it was made for that channel", () => {
+  assert.equal(planIsFor({ channel: "next" }, "next"), true);
+  assert.equal(planIsFor({ channel: "latest" }, "next"), false);
+  assert.equal(planIsFor(undefined, "next"), false);
 });

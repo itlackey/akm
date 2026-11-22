@@ -30,6 +30,7 @@ import { configGet, configSet, configUnset, unknownKeyHint } from "../core/confi
 import { isEnvReference } from "../core/config/schema/primitives";
 import { UsageError } from "../core/errors";
 import { getConfigPath } from "../core/paths";
+import { isInferredSecretName } from "../core/redaction";
 import { formatRegistryUrl } from "../core/registry-url";
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -74,21 +75,28 @@ export function assertUnsettable(key: string): void {
 }
 
 export function listConfig(config: AkmConfig): Record<string, unknown> {
-  // Sources live in `bundles` (spread from config); the
-  // retired top-level `sources[]` array is no longer surfaced.
+  // Sources live in `bundles` (spread from config); there is no top-level
+  // `sources[]` array.
   return redactConfigValue({ ...DEFAULT_CONFIG, ...config }) as Record<string, unknown>;
 }
 
+/** A key whose string value is a credential: a name akm infers as secret, or an HTTP credential header. */
+function isCredentialKey(key: string): boolean {
+  return isInferredSecretName(key.replace(/-/g, "_")) || /^(?:proxy-)?authorization$/i.test(key);
+}
+
+/** A credential's value is never shown; an environment reference to it is (it names where the value lives). */
 function redactConfigValue(value: unknown, path: string[] = []): unknown {
-  if (path.at(-1) === "apiKey" && typeof value === "string" && !isEnvReference(value)) return undefined;
+  const key = path.at(-1);
+  if (typeof value === "string" && key !== undefined && isCredentialKey(key) && !isEnvReference(value))
+    return undefined;
   if (typeof value === "string" && isRegistryUrlPath(path)) return formatRegistryUrl(value);
   if (Array.isArray(value)) return value.map((child, index) => redactConfigValue(child, [...path, String(index)]));
   if (!value || typeof value !== "object") return value;
   const result: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (key !== "apiKey" || (typeof child === "string" && isEnvReference(child))) {
-      result[key] = redactConfigValue(child, [...path, key]);
-    }
+  for (const [name, child] of Object.entries(value as Record<string, unknown>)) {
+    const redacted = redactConfigValue(child, [...path, name]);
+    if (redacted !== undefined || child === undefined) result[name] = redacted;
   }
   return result;
 }
@@ -162,15 +170,11 @@ export function akmConfigDiff(ref: string): { rows: ConfigDiffRow[] } {
 }
 
 // ── `akm config` command surface ────────────────────────────────────────────
-// Extracted verbatim from src/cli.ts (WS6). The `main.subCommands.config` key
-// and every config subcommand's args/output shape are byte-identical. Leaf
-// handlers whose body is a plain `runWithJsonErrors(() => { … })` are
-// migrated to `defineJsonCommand`, which emits the same JSON envelope
-// (stdout/stderr/exit-code) as the inline form.
+// Leaf handlers are `defineJsonCommand`s, which emit the JSON envelope
+// (stdout/stderr/exit-code).
 //
-// `akm config enable|disable` (a hardcoded alias for toggling the skills.sh
-// registry) was removed in 0.9.0 (C4). Use `akm registry add|remove`, the
-// general mechanism, instead.
+// There is no `akm config enable|disable`: add or remove a registry with
+// `akm registry add|remove`.
 
 export const configCommand = defineGroupCommand({
   meta: { name: "config", description: "Show and manage configuration" },

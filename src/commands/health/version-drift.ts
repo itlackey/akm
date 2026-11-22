@@ -29,9 +29,8 @@
  * (never a false `warn`).
  */
 
-import { isPrerelease } from "../../registry/semver";
 import { pkgVersion } from "../../version";
-import { checkForUpdate } from "../sources/self-update";
+import { checkForUpdate, installedChannel } from "../sources/self-update";
 import type { HealthCheckResult } from "./types";
 
 /**
@@ -71,15 +70,14 @@ export async function collectVersionDriftAdvisory(
       name: "cli-version",
       kind: "deterministic",
       status: "unknown",
+      reason: "not-probed",
       confidence: "high",
       message: `akm v${cliVersion} is installed. Version-drift was not probed.`,
       evidence: { installedVersion: cliVersion },
     };
   }
   try {
-    // Prerelease installs follow next; the remedy must request that same channel explicitly.
-    const channel = isPrerelease(cliVersion) ? "next" : "latest";
-    const command = channel === "next" ? "akm upgrade --channel next" : "akm upgrade";
+    const channel = installedChannel(cliVersion);
     const result = await (deps.checkForUpdate ?? checkForUpdate)(
       cliVersion,
       { timeout: CLI_VERSION_CHECK_TIMEOUT_MS, retries: 0 },
@@ -91,7 +89,7 @@ export async function collectVersionDriftAdvisory(
       status: result.updateAvailable ? "warn" : "pass",
       confidence: "high",
       message: result.updateAvailable
-        ? `akm v${cliVersion} is installed; v${result.latestVersion} is available — run '${command}'.`
+        ? `akm v${cliVersion} is installed; v${result.latestVersion} is available — run 'akm upgrade'.`
         : `akm v${cliVersion} is installed and up to date.`,
       evidence: { installedVersion: cliVersion, latestVersion: result.latestVersion },
     };
@@ -102,6 +100,7 @@ export async function collectVersionDriftAdvisory(
       name: "cli-version",
       kind: "deterministic",
       status: "unknown",
+      reason: "blocked",
       confidence: "high",
       message: `akm v${cliVersion} is installed; the update check could not reach the release source.`,
       evidence: {

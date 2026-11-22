@@ -458,7 +458,7 @@ export async function runValidationAndRepairPass(args: {
         startMs: args.startMs,
         budgetMs: args.budgetMs,
         llmRunner: runner,
-        // The resolved source path, not the raw `--stash-dir` flag.
+        // The resolved source path.
         stashDir: args.primaryStashDir,
         findFilePath: findAssetFilePath,
       }),
@@ -606,7 +606,12 @@ export async function runImprovePreparationStage(args: ImprovePreparationStageAr
   let lintSummary: { fixed: number; flagged: number } | undefined;
   if (primaryStashDir) {
     try {
-      const lintResult = await akmLint({ fix: false, dir: primaryStashDir });
+      const lintResult = await akmLint({
+        fix: false,
+        dir: primaryStashDir,
+        // The moves are read through the run's own connection: a dry run's is its private snapshot of state.db.
+        readMoves: () => readEvents({ type: "moved" }, eventsCtx).events,
+      });
       lintSummary = { fixed: lintResult.summary.fixed, flagged: lintResult.summary.flagged };
     } catch {
       // lint never blocks improve
@@ -813,7 +818,7 @@ export function buildSnapshotManifest(args: {
  *  - noFeedbackPool: no recent feedback and no reflect window, left to the
  *    proactive-maintenance lane;
  *  - fullySkippedCount: feedback on record but nothing new, or a live window.
- * An explicit `--scope <ref>` bypasses every gate.
+ * An explicit scope ref bypasses every gate.
  */
 export function partitionBySignalDelta(args: {
   scope: ImproveScope;

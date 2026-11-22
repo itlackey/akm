@@ -145,16 +145,25 @@ function isCheckoutLauncher(file: string): boolean {
   return fs.existsSync(path.join(packageRoot, ".git"));
 }
 
-/** `npm root --global` for the npm that ships with `nodePath`; `akm upgrade` uses it to detect a global install. */
-export function resolveNpmGlobalRoot(nodePath: string, env: NodeJS.ProcessEnv): string | undefined {
-  const npmCli = resolveAssociatedNpmCli(nodePath);
-  if (!npmCli) return undefined;
-  const result = spawnSync(absoluteInvocationPath(nodePath), [npmCli, "root", "--global"], {
+/**
+ * `npm root --global`, which `akm upgrade` uses to detect a global install:
+ * from the npm that ships with `nodePath`, else from the `npm` on PATH, the
+ * one `npm install -g` would run.
+ */
+export function resolveNpmGlobalRoot(nodePath: string | undefined, env: NodeJS.ProcessEnv): string | undefined {
+  const npmCli = nodePath ? resolveAssociatedNpmCli(nodePath) : undefined;
+  const [command, args] =
+    nodePath && npmCli
+      ? [absoluteInvocationPath(nodePath), [npmCli]]
+      : [process.platform === "win32" ? "npm.cmd" : "npm", []];
+  const result = spawnSync(command, [...args, "root", "--global"], {
     encoding: "utf8",
     env,
     stdio: ["ignore", "pipe", "ignore"],
     timeout: 5_000,
     windowsHide: true,
+    // A `.cmd` shim only runs through a shell.
+    shell: command === "npm.cmd",
   });
   if (result.status !== 0) return undefined;
   const lines = result.stdout.trim().split(/\r?\n/);

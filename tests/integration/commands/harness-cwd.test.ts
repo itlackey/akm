@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { runCliCapture } from "../../_helpers/cli";
 import { harnessCalls, writeFakeHarness } from "../../_helpers/engine-stubs";
+import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -27,6 +28,8 @@ let bins: SandboxedDir;
 let work: SandboxedDir;
 
 beforeEach(() => {
+  // The fake prints plain text, which only an OpenCode 2 run takes as its reply.
+  fakeOpencodeMajor(2);
   storage = withIsolatedAkmStorage();
   bins = makeSandboxDir("akm-harness-cwd-bin");
   work = makeSandboxDir("akm-harness-cwd-work");
@@ -49,5 +52,17 @@ describe("an opencode harness run with --cwd", () => {
     const [call] = harnessCalls(bin);
     expect(fs.realpathSync(call?.cwd ?? "")).toBe(fs.realpathSync(work.dir));
     expect(call?.env.PWD).toBe(work.dir);
+  });
+
+  test("a --cwd folder that does not exist is made, nested, and kept", async () => {
+    const bin = writeFakeHarness(bins.dir, "opencode", ["done"]);
+    writeSandboxConfig({ harnesses: { oc: { platform: "opencode", bin } } });
+    const nested = `${work.dir}/a/b`;
+
+    const result = await runCliCapture(["agent", "--prompt", "work", "--harness", "oc", "--cwd", nested]);
+
+    expect(result.code).toBe(0);
+    expect(fs.statSync(nested).isDirectory()).toBe(true);
+    expect(fs.realpathSync(harnessCalls(bin)[0]?.cwd ?? "")).toBe(fs.realpathSync(nested));
   });
 });

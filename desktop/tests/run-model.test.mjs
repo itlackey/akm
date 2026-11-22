@@ -4,14 +4,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  improveAroundTask,
-  improveOutcome,
-  outcomeCounts,
-  statusOutcome,
-  tasksAroundImprove,
-  workflowFacts,
-} from "../src/lib/run-model.ts";
+import { improveOutcome, outcomeCounts, statusOutcome, workflowFacts } from "../src/lib/run-model.ts";
 
 const minute = 60_000;
 const at = (offset) => new Date(Date.parse("2026-11-12T12:00:00.000Z") + offset * minute).toISOString();
@@ -30,23 +23,6 @@ test("a run with no recorded end is unknown, never completed", () => {
     terminated: 0,
     unknown: 2,
   });
-});
-
-test("improve runs and scheduled task runs are matched by start time within five minutes, and only for improve tasks", () => {
-  const run = { id: "r1", startedAt: at(0) };
-  const task = (taskId, offset) => ({ taskId, startedAt: at(offset), status: "failed" });
-  const near = task("akm-improve-frequent", -4);
-  assert.deepEqual(
-    tasksAroundImprove(run, [near, task("akm-improve-frequent", 6), task("nightly-digest", 0), task("improve", 5)]).map(
-      (row) => row.taskId,
-    ),
-    ["akm-improve-frequent", "improve"],
-  );
-  assert.deepEqual(
-    improveAroundTask(near, [run, { id: "far", startedAt: at(-30) }]).map((row) => row.id),
-    ["r1"],
-  );
-  assert.deepEqual(improveAroundTask(task("nightly-digest", 0), [run]), []);
 });
 
 const attempt = (n, status, tokens, failureReason, from, to) => ({
@@ -109,5 +85,8 @@ test("a run that failed with no failed attempt says so, and an old unit with no 
   const facts = workflowFacts(trace("failed", [unit("a", null, "completed", [])]));
   assert.equal(facts.failedWithoutFailedUnit, true);
   assert.deepEqual(facts.engines, [{ engine: "Not recorded", attempts: 1, failed: 0, tokens: 0, unreported: 1 }]);
+  // No attempt reported tokens: the totals say none were reported rather than summing them to a reported zero.
+  assert.equal(facts.tokens, 0);
+  assert.equal(facts.unreported, 1);
   assert.equal(workflowFacts(trace("completed", [])).failedWithoutFailedUnit, false);
 });

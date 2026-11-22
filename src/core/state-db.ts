@@ -326,7 +326,7 @@ export function withStateDbTelemetry(fn: (db: Database) => void, busyTimeoutMs =
  * The `IN (...)` predicate is built from parameter placeholders so table names
  * are bound, never interpolated.
  *
- * Connection-lifetime rule (WS5): `.all()` materializes a plain array before
+ * Connection-lifetime rule: `.all()` materializes a plain array before
  * returning.
  */
 export function listExistingTableNames(db: Database, names: readonly string[]): Array<{ name: string }> {

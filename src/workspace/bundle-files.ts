@@ -5,10 +5,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isWithin, relativeToRoot, safeRealpath } from "../core/common";
+import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
+import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAssetRefsForFiles } from "../storage/repositories/index-entries-repository";
+import { bundleWriteBlockers, fileActions, placeVerdict } from "./file-actions";
+import { newFileVerdict } from "./new-file";
 
 export interface BundleFileLocation {
   bundle: string;
@@ -30,7 +34,11 @@ export function bundleFileLocation(filePath: string): BundleFileLocation | null 
   };
 }
 
-/** One directory, not a recursive walk or an index refresh. File contents are never read here. */
+/**
+ * One directory, not a recursive walk or an index refresh. Each entry says what akm accepts doing to it (`actions`) and
+ * why not. A file's contents are not listed; the first bytes of a file that is neither protected nor managed are probed
+ * to tell text from binary, and a protected file is never opened.
+ */
 export function listBundleFiles(bundle: string, relative = "", showHidden = false) {
   if (!bundle) throw new UsageError("Choose a registered bundle.", "MISSING_REQUIRED_ARGUMENT");
   const source = resolveSourceEntries().find((entry) => entry.registryId === bundle);
@@ -65,10 +73,18 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
           unavailable = "Link target is unavailable.";
         }
       }
+      // Size (a file's) and modified time, from the file the entry resolves to; absent when it cannot be read.
+      let stat: fs.Stats | undefined;
+      try {
+        stat = fs.statSync(absolute);
+      } catch {
+        stat = undefined;
+      }
       return {
         name: entry.name,
         path: portable(path.relative(source.path, absolute)),
         kind,
+        ...(stat ? { modified: stat.mtime.toISOString(), ...(stat.isFile() ? { size: stat.size } : {}) } : {}),
         // Keep the displayed alias, but look up the file under this bundle's indexed root.
         absolute: path.join(source.path, path.relative(physicalRoot, safeRealpath(absolute))),
         ...(entry.isSymbolicLink() ? { symlink: true } : {}),
@@ -101,14 +117,38 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
     /* Files remain browsable when the derived index needs repair. */
   }
   const current = portable(path.relative(source.path, target));
+  const writeBlockers = bundleWriteBlockers(loadConfig(), bundle);
   return {
     bundle,
     path: current,
     parent: current ? portable(path.dirname(current)).replace(/^\.$/, "") : null,
     indexAvailable,
+    // Whether a new file may be made in this folder, and the type its place gives it (null: none).
+    newFile: newFileVerdict(current, writeBlockers),
+    // Whether a folder may be made here, or a file or folder moved in: plain file operations, which need only a place akm
+    // does not manage or protect and a bundle that is not read-only.
+    place: placeVerdict(current, writeBlockers),
     entries: rows.map(({ absolute, ...row }) => {
       const assets = refs.get(absolute) ?? [];
-      return { ...row, assets };
+      const isProtected =
+        row.kind === "file" && protectedTypeOf(portable(path.relative(source.path, absolute))) !== undefined;
+      return {
+        ...row,
+        assets,
+        protected: isProtected,
+        actions: fileActions(
+          {
+            bundle,
+            relative: row.path,
+            kind: row.kind,
+            absolute: row.unavailable ? undefined : path.join(target, row.name),
+            unavailable: row.unavailable,
+            protected: isProtected,
+            assets,
+          },
+          writeBlockers,
+        ),
+      };
     }),
   };
 }

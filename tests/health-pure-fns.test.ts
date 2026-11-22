@@ -37,9 +37,14 @@ describe("readNumericPath", () => {
     expect(readNumericPath({ a: 1 }, "a.b")).toBe(0);
   });
 
-  test("returns 0 for null root and for non-finite values", () => {
-    expect(readNumericPath(null, "a")).toBe(0);
+  test("returns 0 for a non-finite value", () => {
     expect(readNumericPath({ a: Number.NaN }, "a")).toBe(0);
+  });
+
+  test("an unknown (null) value, or an unknown parent, is null, never 0", () => {
+    expect(readNumericPath({ a: null }, "a")).toBeNull();
+    expect(readNumericPath({ a: null }, "a.b")).toBeNull();
+    expect(readNumericPath(null, "a")).toBeNull();
   });
 });
 
@@ -55,6 +60,18 @@ describe("computeDeltas", () => {
   test("reports +inf when the baseline is zero", () => {
     const out = computeDeltas(mk(0), mk(4));
     expect(out["improve.actions.reflect.failed"]).toEqual({ from: 0, to: 4, pctChange: "+inf" });
+  });
+
+  test("a metric unknown in either window has an unknown change, not a number", () => {
+    const unknown = { metrics: { llmUsage: null } } as unknown as WindowResult;
+    const known = { metrics: { llmUsage: { calls: 3 } } } as unknown as WindowResult;
+    for (const [first, last] of [
+      [unknown, known],
+      [known, unknown],
+    ] as const) {
+      const entry = computeDeltas(first, last)["metrics.llmUsage.calls"];
+      expect(entry?.pctChange).toBe("unknown");
+    }
   });
 
   test("skips paths that are zero in both windows", () => {

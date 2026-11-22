@@ -92,8 +92,41 @@ describe("syncMirroredRepo: ahead with nothing to fast-forward is a no-op", () =
     git(["commit", "-m", "upstream commit"], seed);
     git(["push", "origin", "main"], seed);
 
-    await expect(ensureGitMirror(repo, cachePaths, { writable: true, force: true })).rejects.toThrow(
-      /unpushed commits/,
-    );
+    await expect(ensureGitMirror(repo, cachePaths, { writable: true, force: true })).rejects.toThrow(/commits not on/);
+  });
+
+  test("a read-only refresh refuses to clone over a checkout holding a local commit, and keeps it", async () => {
+    const root = makeTempDir();
+    const remote = path.join(root, "remote.git");
+    git(["init", "--bare", remote]);
+    git(["init", "-b", "main", path.join(root, "seed")]);
+    const seed = path.join(root, "seed");
+    git(["config", "user.name", "AKM Test"], seed);
+    git(["config", "user.email", "akm@example.test"], seed);
+    fs.writeFileSync(path.join(seed, "seed.md"), "seed\n", "utf8");
+    git(["add", "."], seed);
+    git(["commit", "-m", "seed"], seed);
+    git(["remote", "add", "origin", remote], seed);
+    git(["push", "-u", "origin", "main"], seed);
+    git(["symbolic-ref", "HEAD", "refs/heads/main"], remote);
+
+    const cacheRoot = makeTempDir("akm-git-readonly-cache-");
+    const repo: ParsedRepoUrl = { cloneUrl: remote, ref: null, canonicalUrl: remote };
+    const cachePaths = getCachePaths(repo.canonicalUrl, cacheRoot);
+    await ensureGitMirror(repo, cachePaths, { writable: true, force: true });
+
+    const { repoDir } = cachePaths;
+    git(["config", "user.name", "AKM Test"], repoDir);
+    git(["config", "user.email", "akm@example.test"], repoDir);
+    fs.writeFileSync(path.join(repoDir, "local-only.md"), "local commit\n", "utf8");
+    git(["add", "."], repoDir);
+    git(["commit", "-m", "local only, never pushed"], repoDir);
+
+    await expect(ensureGitMirror(repo, cachePaths, { writable: false, force: true })).rejects.toMatchObject({
+      code: "SOURCE_HAS_LOCAL_WORK",
+    });
+
+    expect(fs.existsSync(path.join(repoDir, "local-only.md"))).toBe(true);
+    expect(git(["log", "-1", "--format=%s"], repoDir)).toBe("local only, never pushed");
   });
 });

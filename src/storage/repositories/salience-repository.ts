@@ -138,7 +138,7 @@ export function getAssetSalience(db: Database, ref: string): AssetSalienceRow | 
 /**
  * Increment `consecutive_no_ops` for an asset. Called after a no-op reflect/distill.
  * Has NO effect on `rank_score` — the plasticity counter only dampens consolidation
- * selection, not retrieval ranking. See plan §WS-1 step 8.
+ * selection, not retrieval ranking.
  *
  * Invariant: recordNoOp must never originate rank_score semantics. If the asset has
  * no salience row yet (persistence's best-effort try/catch may have swallowed an

@@ -71,6 +71,11 @@ Every agent harness registers once in `HARNESS_REGISTRY`
 a harness. Runtime-specific APIs (`bun:sqlite`, `Bun.*`) are reached only
 through `src/storage/database.ts` and `src/runtime.ts`.
 
+Report facts from the component that owns them. A valid decision deferred by a
+safety rule is not an execution failure, and an older record that did not
+capture a count cannot establish zero. Lifecycle cleanup calls the existing
+owner of the resource it releases.
+
 Why: a policy copied into three places drifts into three policies, and
 the drift is invisible until a user hits the one that differs.
 
@@ -221,7 +226,7 @@ index readers); the host owns transport authentication. It is the
 seam for local hosts: its operations own all akm policy and a host owns only its
 transport and its own features. The
 `exports` map lists `./api`, `./workspace`, `./package.json` and `./dist/*`. Bun is the
-preferred runtime and the toolchain. Node 22 is the floor (`engines.node`):
+preferred runtime and the toolchain. Node 22.15 is the floor (`engines.node`):
 the npm package bootstraps through Node, and its launcher falls back to Node
 when no usable Bun is on `PATH`. Anything that would become another API for
 other programs is a separate decision, not an incidental export.

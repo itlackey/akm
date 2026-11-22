@@ -1,0 +1,778 @@
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { akmShowUnified as akmShow, showByRef, showLocal } from "../../../src/commands/read/show";
+import { saveConfig } from "../../../src/core/config/config";
+import { NotFoundError } from "../../../src/core/errors";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
+import { akmIndex } from "../../../src/indexer/indexer";
+
+import { seedLockEntries } from "../../_helpers/lockfile";
+import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../../_helpers/sandbox";
+
+const createdTmpDirs: string[] = [];
+const testSymlink = process.platform === "win32" ? test.skip : test;
+
+function createTmpDir(prefix = "akm-show-"): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  createdTmpDirs.push(dir);
+  return dir;
+}
+
+function writeFile(filePath: string, content = "") {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content);
+}
+
+afterAll(() => {
+  for (const dir of createdTmpDirs) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+let stashDir = "";
+let envCleanup: Cleanup = () => {};
+
+beforeEach(() => {
+  const cacheResult = sandboxXdgCacheHome();
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  stashDir = stashResult.dir;
+  envCleanup = stashResult.cleanup;
+});
+
+afterEach(() => {
+  envCleanup();
+  envCleanup = () => {};
+  stashDir = "";
+});
+
+// ── Stash .meta/ convention ──────────────────────────────────────────────────
+
+describe("akmShow stash .meta convention", () => {
+  test("direct-reads .meta/index.md from the working stash for `meta`", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    writeFile(path.join(stashDir, ".meta", "index.md"), "# Stash orientation\nStart at skills/foo.");
+
+    const result = await akmShow({ ref: "meta" });
+    expect(result.type).toBe("meta");
+    expect(result.name).toBe("index");
+    expect(result.content).toContain("Stash orientation");
+    expect(result.path).toBe(path.join(stashDir, ".meta", "index.md"));
+  });
+
+  test("resolves a named meta doc via `meta:<name>`", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    writeFile(path.join(stashDir, ".meta", "about.md"), "# About\nThe stash.");
+
+    const result = await akmShow({ ref: "meta:about" });
+    expect(result.type).toBe("meta");
+    expect(result.name).toBe("about");
+    expect(result.content).toContain("The stash.");
+  });
+
+  testSymlink("never reads a meta symlink outside the working stash", async () => {
+    const outsideDir = createTmpDir("akm-show-meta-outside-");
+    const outsidePath = path.join(outsideDir, "secret.md");
+    writeFile(outsidePath, "OUTSIDE_META_SECRET");
+    fs.mkdirSync(path.join(stashDir, ".meta"), { recursive: true });
+    fs.symlinkSync(outsidePath, path.join(stashDir, ".meta", "about.md"));
+    saveConfig({ semanticSearchMode: "off" });
+
+    await expect(akmShow({ ref: "meta:about" })).rejects.toThrow(/symlink|outside|escape/i);
+  });
+
+  test("throws a maintainer-actionable error when the doc is absent", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    await expect(akmShow({ ref: "meta:missing" })).rejects.toThrow(/\.meta\/missing/);
+  });
+});
+
+describe("akmShow legacy colon refs", () => {
+  test("a colon ref is an ordinary not-found, with no migration tip", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    await expect(akmShow({ ref: "knowledge:print/some-doc" })).rejects.toThrow(NotFoundError);
+    await expect(akmShow({ ref: "knowledge:print/some-doc" })).rejects.not.toThrow(/slash form/);
+  });
+});
+
+// ── Installed ref with missing asset ─────────────────────────────────────────
+
+describe("akmShow installed ref", () => {
+  test("throws with add guidance when origin is not installed", async () => {
+    const installedStashRoot = createTmpDir("akm-show-installed-root-");
+    // Create the type subdirectory so it is a valid stash root, but do NOT
+    // create the actual asset file.
+    fs.mkdirSync(path.join(installedStashRoot, "scripts"), { recursive: true });
+
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { "test-pkg": { npm: "test-pkg" } },
+    });
+    seedLockEntries([
+      {
+        id: "test-pkg",
+        source: "npm",
+        ref: "test-pkg",
+        localRoot: installedStashRoot,
+        installedAt: new Date().toISOString(),
+      },
+    ]);
+
+    // Use an origin that is NOT installed so resolveSourcesForOrigin returns
+    // empty, triggering the add-guidance error path.
+    await expect(akmShow({ ref: "other-pkg//scripts/missing.sh" })).rejects.toThrow(/akm bundle add/);
+  });
+
+  test("resolves installed-stash style nested agent refs", async () => {
+    const installedStashRoot = createTmpDir("akm-show-installed-agent-");
+    writeFile(
+      path.join(installedStashRoot, "tools", "agents", "svelte-file-editor.md"),
+      ["---", "name: svelte-file-editor", "description: Svelte editor", "---", "Use Svelte tools."].join("\n"),
+    );
+
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { "ai-tools": { git: "github:sveltejs/ai-tools", registryId: "github:sveltejs/ai-tools" } },
+    });
+    seedLockEntries([
+      {
+        id: "ai-tools",
+        source: "github",
+        ref: "github:sveltejs/ai-tools",
+        localRoot: installedStashRoot,
+        installedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const result = await akmShow({ ref: "ai-tools//agents/tools/agents/svelte-file-editor" });
+
+    expect(result.type).toBe("agent");
+    expect(result.origin).toBe("ai-tools");
+    expect(result.path).toContain(path.join("tools", "agents", "svelte-file-editor.md"));
+    expect(result.prompt).toContain("Use Svelte tools.");
+  });
+
+  test("resolves installed-stash style nested skill refs", async () => {
+    const installedStashRoot = createTmpDir("akm-show-installed-skill-");
+    writeFile(
+      path.join(installedStashRoot, "tools", "skills", "svelte-code-writer", "SKILL.md"),
+      ["---", "name: svelte-code-writer", "description: Svelte writer", "---", "# Svelte writer"].join("\n"),
+    );
+
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { "ai-tools": { git: "github:sveltejs/ai-tools", registryId: "github:sveltejs/ai-tools" } },
+    });
+    seedLockEntries([
+      {
+        id: "ai-tools",
+        source: "github",
+        ref: "github:sveltejs/ai-tools",
+        localRoot: installedStashRoot,
+        installedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const result = await akmShow({ ref: "ai-tools//skills/tools/skills/svelte-code-writer" });
+
+    expect(result.type).toBe("skill");
+    expect(result.origin).toBe("ai-tools");
+    expect(result.path).toContain(path.join("tools", "skills", "svelte-code-writer", "SKILL.md"));
+    expect(result.content).toContain("# Svelte writer");
+  });
+});
+
+describe("akmShow sensitive fragments", () => {
+  test("ignores a secret fragment with a warning; the render path itself never reads the secret body", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    const secretPath = path.join(stashDir, "secrets", "leak");
+    const secretBody = "# token\nDO_NOT_PRINT\n";
+    writeFile(secretPath, secretBody);
+
+    const readFileSync = fs.readFileSync.bind(fs);
+    let secretBodyReads = 0;
+    spyOn(fs, "readFileSync").mockImplementation(((filePath: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+      if (typeof filePath !== "number" && path.resolve(String(filePath)) === path.resolve(secretPath)) {
+        secretBodyReads++;
+      }
+      return Reflect.apply(readFileSync, fs, [filePath, ...args]);
+    }) as typeof fs.readFileSync);
+
+    const warnings: unknown[][] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args);
+    });
+    let result: Awaited<ReturnType<typeof akmShow>>;
+    try {
+      result = await akmShow({ ref: "secrets/leak#token" });
+    } finally {
+      _setWarnSinkForTests(undefined);
+      _resetWarnOnceForTests();
+    }
+
+    expect(result.type).toBe("secret");
+    expect(result.content).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("DO_NOT_PRINT");
+    expect(secretBodyReads).toBeLessThanOrEqual(1);
+    expect(
+      warnings.some(
+        (args) =>
+          args.some((a) => String(a).includes('Fragment "#token"')) && args.some((a) => String(a).includes("secret")),
+      ),
+    ).toBe(true);
+  });
+
+  test("ignores an env fragment with a warning, reading only key names, never values", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    const envPath = path.join(stashDir, "env", "prod.env");
+    writeFile(envPath, "# token\nAPI_KEY=DO_NOT_PRINT\n");
+
+    const warnings: unknown[][] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args);
+    });
+    let result: Awaited<ReturnType<typeof akmShow>>;
+    try {
+      result = await akmShow({ ref: "env/prod#token" });
+    } finally {
+      _setWarnSinkForTests(undefined);
+      _resetWarnOnceForTests();
+    }
+
+    expect(result.type).toBe("env");
+    expect(result.keys).toEqual(["API_KEY"]);
+    expect(JSON.stringify(result)).not.toContain("DO_NOT_PRINT");
+    expect(
+      warnings.some(
+        (args) =>
+          args.some((a) => String(a).includes('Fragment "#token"')) && args.some((a) => String(a).includes("env")),
+      ),
+    ).toBe(true);
+  });
+});
+
+// ── Agents resolve from every bundle (#1237) ─────────────────────────────────
+
+describe("akmShow agents across bundles", () => {
+  const AGENT_MD = ["---", "name: helper", "description: A helper agent", "---", "Do the thing."].join("\n");
+
+  test("own-stash agent resolves without an origin", async () => {
+    writeFile(path.join(stashDir, "agents", "helper.md"), AGENT_MD);
+    const result = await akmShow({ ref: "agents/helper" });
+    expect(result.type).toBe("agent");
+    // Own stash → no registry origin.
+    expect(result.origin ?? null).toBeNull();
+  });
+
+  test("registry-installed bundle agent resolves with its origin", async () => {
+    const installedStashRoot = createTmpDir("akm-show-tp-agent-");
+    writeFile(path.join(installedStashRoot, "tools", "agents", "helper.md"), AGENT_MD);
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { pack: { git: "github:evil/pack", registryId: "github:evil/pack" } },
+    });
+    seedLockEntries([
+      {
+        id: "pack",
+        source: "github",
+        ref: "github:evil/pack",
+        localRoot: installedStashRoot,
+        installedAt: new Date().toISOString(),
+      },
+    ]);
+    const result = await akmShow({ ref: "pack//agents/tools/agents/helper" });
+    expect(result.type).toBe("agent");
+    expect(result.origin).toBe("pack");
+  });
+
+  test("a --writable installed pack resolves its agent", async () => {
+    const installedStashRoot = createTmpDir("akm-show-writable-pack-");
+    writeFile(path.join(installedStashRoot, "tools", "agents", "helper.md"), AGENT_MD);
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { pack: { git: "git:contrib/pack", writable: true, registryId: "git:contrib/pack" } },
+    });
+    seedLockEntries([
+      {
+        id: "pack",
+        source: "git",
+        ref: "git:contrib/pack",
+        localRoot: installedStashRoot,
+        installedAt: new Date().toISOString(),
+      },
+    ]);
+    const result = await akmShow({ ref: "pack//agents/tools/agents/helper" });
+    expect(result.type).toBe("agent");
+  });
+
+  test("a read against a cold git bundle (no cache, no lock) never clones: the primary stash still resolves (spec §14.3)", async () => {
+    // Query time must never touch the network (spec §14.3 / D11). A configured
+    // git bundle with NO materialized cache AND NO lock localRoot is UNAVAILABLE
+    // for the read, while the primary stash still resolves. The hostile
+    // `git:contrib/pack` URL would hang for 120s on any read that cloned —
+    // completing under the tight test timeout proves no `git clone`/`ssh
+    // git-upload-pack` subprocess was spawned.
+    // A resolvable asset in the PRIMARY stash proves "everything else resolves".
+    writeFile(path.join(stashDir, "agents", "local.md"), AGENT_MD);
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { remote: { git: "git:contrib/pack" } },
+    });
+    // Deliberately NO lock entry for "remote" — the cache is cold.
+
+    const result = await akmShow({ ref: "agents/local" });
+    expect(result.type).toBe("agent");
+  }, 5000);
+
+  test("a configured secondary source resolves its agent", async () => {
+    const thirdPartyDir = createTmpDir("akm-show-secondary-src-");
+    writeFile(path.join(thirdPartyDir, "agents", "helper.md"), AGENT_MD);
+    // No `name` — the setup-wizard "add a source and leave the name blank" shape.
+    saveConfig({ semanticSearchMode: "off", bundles: { "third-party": { path: thirdPartyDir } } });
+
+    const result = await akmShow({ ref: "agents/helper" });
+    expect(result.type).toBe("agent");
+    expect(result.editable).toBe(true);
+  });
+
+  test("a source NESTED inside the primary stash resolves its agent", async () => {
+    const nestedDir = path.join(stashDir, "vendor");
+    writeFile(path.join(nestedDir, "agents", "helper.md"), AGENT_MD);
+    saveConfig({ semanticSearchMode: "off", bundles: { vendor: { path: nestedDir } } });
+
+    const result = await akmShow({ ref: "agents/vendor/agents/helper" });
+    expect(result.type).toBe("agent");
+  });
+});
+
+// ── Search path resolution ───────────────────────────────────────────────────
+
+describe("akmShow search path", () => {
+  test("resolves from search path directories", async () => {
+    const searchPathDir = createTmpDir("akm-show-searchpath-");
+    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+
+    saveConfig({ semanticSearchMode: "off", bundles: { searchpath: { path: searchPathDir } } });
+
+    const result = await akmShow({ ref: "scripts/deploy.sh" });
+
+    expect(result.type).toBe("script");
+    expect(result.name).toBe("deploy.sh");
+    expect(result.path).toContain(searchPathDir);
+  });
+});
+
+describe("akmShow stale indexed paths", () => {
+  test("converts only indexed-path disappearance into actionable not-found errors", async () => {
+    const file = path.join(stashDir, "knowledge", "gone.md");
+    writeFile(file, "# Gone\n");
+    saveConfig({ semanticSearchMode: "off" });
+    await akmIndex({ stashDir, full: true });
+    await akmShow({ ref: "knowledge/gone", skipLogging: true });
+    fs.rmSync(file);
+
+    for (const read of [() => showLocal({ ref: "knowledge/gone" }), () => showByRef("knowledge/gone")]) {
+      try {
+        await read();
+        throw new Error("expected stale indexed path to fail");
+      } catch (error) {
+        expect(error).toBeInstanceOf(NotFoundError);
+        expect((error as NotFoundError).hint()).toContain("akm index");
+      }
+    }
+  });
+});
+
+// ── editability flags ────────────────────────────────────────────────────────
+
+describe("akmShow editability", () => {
+  test("working stash asset has editable true", async () => {
+    writeFile(path.join(stashDir, "scripts", "local.sh"), "#!/usr/bin/env bash\necho local\n");
+
+    saveConfig({ semanticSearchMode: "off" });
+
+    const result = await akmShow({ ref: "scripts/local.sh" });
+
+    expect(result.type).toBe("script");
+    expect(result.origin).toBeNull();
+    expect(result.action).toContain("Execute the run command");
+    expect(result.editable).toBe(true);
+    expect(result.editHint).toBeUndefined();
+  });
+
+  test("search path asset has editable true", async () => {
+    const searchPathDir = createTmpDir("akm-show-searchpath-editable-");
+    writeFile(path.join(searchPathDir, "scripts", "remote.sh"), "#!/usr/bin/env bash\necho remote\n");
+
+    saveConfig({ semanticSearchMode: "off", bundles: { searchpath: { path: searchPathDir } } });
+
+    const result = await akmShow({ ref: "scripts/remote.sh" });
+
+    expect(result.type).toBe("script");
+    // #37: a configured search-path source is a named bundle, so its assets now
+    // carry that bundle key as their origin (was null under the old unnamed
+    // filesystem-source shape). Editability is unchanged — a real on-disk path.
+    expect(result.origin).toBe("searchpath");
+    expect(result.editable).toBe(true);
+    expect(result.editHint).toBeUndefined();
+  });
+
+  test("installed (cache-managed) asset has editable false with editHint", async () => {
+    const installedStashRoot = createTmpDir("akm-show-installed-resolve-");
+    writeFile(path.join(installedStashRoot, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { "installed-pkg": { npm: "installed-pkg" } },
+    });
+    seedLockEntries([
+      {
+        id: "installed-pkg",
+        source: "npm",
+        ref: "npm:installed-pkg",
+        localRoot: installedStashRoot,
+        installedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const result = await akmShow({ ref: "scripts/deploy.sh" });
+
+    expect(result.type).toBe("script");
+    expect(result.origin).toBe("installed-pkg");
+    expect(result.editable).toBe(false);
+    expect(result.editHint).toContain("akm import");
+    expect(result.editHint).toContain("scripts/deploy.sh");
+  });
+});
+
+// ── Content-based classification via new renderer pipeline ─────────────────
+
+describe("akmShow content-based classification", () => {
+  test("model alone in commands/ stays a command (directory wins over weak agent signal)", async () => {
+    // model is shared frontmatter (OpenCode convention). In commands/,
+    // the directory matcher (specificity 10) beats the model-only agent
+    // signal (specificity 8), so this stays a command.
+    writeFile(
+      path.join(stashDir, "commands", "deploy.md"),
+      ["---", "model: gpt-4", "description: Deploy command", "---", "Deploy $ARGUMENTS."].join("\n"),
+    );
+
+    saveConfig({ semanticSearchMode: "off" });
+
+    const result = await akmShow({ ref: "commands/deploy.md" });
+
+    expect(result.type).toBe("command");
+    expect(result.template).toBe("Deploy $ARGUMENTS.");
+    expect(result.modelHint).toBe("gpt-4");
+    expect(result.parameters).toEqual(["ARGUMENTS"]);
+  });
+
+  test("command in commands/ directory extracts OpenCode-style frontmatter", async () => {
+    writeFile(
+      path.join(stashDir, "commands", "deploy.md"),
+      [
+        "---",
+        "description: Deploy to production",
+        "model: claude-sonnet-4-20250514",
+        "agent: build",
+        "---",
+        "Deploy $ARGUMENTS to production.",
+      ].join("\n"),
+    );
+
+    saveConfig({ semanticSearchMode: "off" });
+
+    const result = await akmShow({ ref: "commands/deploy.md" });
+
+    expect(result.type).toBe("command");
+    expect(result.template).toBe("Deploy $ARGUMENTS to production.");
+    expect(result.description).toBe("Deploy to production");
+    expect(result.modelHint).toBe("claude-sonnet-4-20250514");
+    expect(result.agent).toBe("build");
+    expect(result.parameters).toEqual(["ARGUMENTS"]);
+  });
+
+  test("command parameter extraction includes positional placeholders", async () => {
+    writeFile(
+      path.join(stashDir, "commands", "positional.md"),
+      ["---", "description: Positional args", "---", "Run release $1 with notes from $2 and flag $9."].join("\n"),
+    );
+
+    saveConfig({ semanticSearchMode: "off" });
+
+    const result = await akmShow({ ref: "commands/positional.md" });
+
+    expect(result.type).toBe("command");
+    expect(result.parameters).toEqual(["$1", "$2", "$9"]);
+  });
+
+  test("command parameter extraction includes named placeholders", async () => {
+    writeFile(
+      path.join(stashDir, "commands", "named.md"),
+      ["---", "description: Named args", "---", "Deploy {{env}} with {{version}} using {{env}} again."].join("\n"),
+    );
+
+    saveConfig({ semanticSearchMode: "off" });
+
+    const result = await akmShow({ ref: "commands/named.md" });
+
+    expect(result.type).toBe("command");
+    expect(result.parameters).toEqual(["env", "version"]);
+  });
+
+  test("a script's run hint is the akm run command for its ref", async () => {
+    writeFile(path.join(stashDir, "scripts", "build.sh"), "#!/usr/bin/env bash\necho build\n");
+
+    saveConfig({ semanticSearchMode: "off" });
+
+    const result = await akmShow({ ref: "scripts/build.sh" });
+
+    expect(result.type).toBe("script");
+    expect(result.run).toBe("akm run scripts/build.sh");
+  });
+
+  test("$ARGUMENTS in an untyped directory still discovers a command", async () => {
+    writeFile(
+      path.join(stashDir, "loose", "deploy-cmd.md"),
+      ["---", "description: Deploy helper", "---", "Deploy $ARGUMENTS to staging."].join("\n"),
+    );
+
+    saveConfig({ semanticSearchMode: "off" });
+
+    const result = await akmShow({ ref: "commands/loose/deploy-cmd" });
+
+    expect(result.type).toBe("command");
+    expect(result.template).toBe("Deploy $ARGUMENTS to staging.");
+    expect(result.description).toBe("Deploy helper");
+  });
+
+  for (const [dir, type] of [
+    ["knowledge", "knowledge"],
+    ["memories", "memory"],
+  ] as const) {
+    test(`$ARGUMENTS documentation under ${dir}/ keeps its ref and presentation`, async () => {
+      writeFile(path.join(stashDir, dir, "placeholder-guide.md"), "This guide explains `$ARGUMENTS`.\n");
+      saveConfig({ semanticSearchMode: "off" });
+
+      const result = await akmShow({ ref: `${dir}/placeholder-guide` });
+
+      expect(result.type).toBe(type);
+      expect(result.content).toContain("This guide explains `$ARGUMENTS`.");
+      expect(result.template).toBeUndefined();
+      expect(result.parameters).toBeUndefined();
+    });
+  }
+
+  test("agent frontmatter classifies .md as command even outside commands/", async () => {
+    // agent frontmatter (specificity 18) beats agents/ directory hint (15).
+    // The indexer classifies this as a command based on content.
+    writeFile(
+      path.join(stashDir, "agents", "build-cmd.md"),
+      ["---", "agent: build", "description: Build dispatch", "---", "Build the project."].join("\n"),
+    );
+
+    saveConfig({ semanticSearchMode: "off" });
+
+    const result = await akmShow({ ref: "commands/agents/build-cmd" });
+
+    expect(result.type).toBe("command");
+    expect(result.template).toBe("Build the project.");
+    expect(result.agent).toBe("build");
+  });
+});
+
+// ── Markdown fragments (the only section selector — D2) ──────────────────────
+
+describe("akmShow markdown fragments", () => {
+  const GUIDE = ["# Intro", "Welcome.", "", "## Setup", "Install things.", "", "## Usage", "Use things."].join("\n");
+
+  beforeEach(() => {
+    writeFile(path.join(stashDir, "knowledge", "guide.md"), GUIDE);
+    saveConfig({ semanticSearchMode: "off" });
+  });
+
+  test("no fragment returns the whole item", async () => {
+    const result = await akmShow({ ref: "knowledge/guide.md" });
+    expect(result.content).toBe(GUIDE);
+  });
+
+  test("#slug returns just that section", async () => {
+    const result = await akmShow({ ref: "knowledge/guide.md#setup" });
+    expect(result.content).toBe("## Setup\nInstall things.\n");
+  });
+
+  test("an unmatched fragment lists the available slugs", async () => {
+    await expect(akmShow({ ref: "knowledge/guide.md#nope" })).rejects.toThrow(
+      /Available fragments: #intro, #setup, #usage/,
+    );
+  });
+
+  test("an unmatched fragment's hint points at the outline", async () => {
+    const error = await akmShow({ ref: "knowledge/guide.md#nope" }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(NotFoundError);
+    expect((error as NotFoundError).hint()).toContain("akm show <ref> --outline");
+  });
+
+  test("the knowledge action points large documents at the outline, then one section", async () => {
+    const result = await akmShow({ ref: "knowledge/guide.md" });
+    expect(result.action).toContain("akm show <ref> --outline");
+    expect(result.action).toContain("`toc`");
+    expect(result.action).toContain("akm show <ref>#<slug>");
+  });
+});
+
+describe("akmShow markdown toc", () => {
+  const DOC = [
+    "---",
+    "description: Notes doc",
+    "---",
+    "# Guide",
+    "Intro.",
+    "",
+    "## Notes",
+    "First notes.",
+    "",
+    "## Notes",
+    "Second notes.",
+    "",
+    "## Notes 1",
+    "Third notes.",
+    "",
+    "### Deep",
+    "Deeper.",
+    "",
+    "## !!!",
+    "Unsluggable.",
+    "",
+    "```md",
+    "## Not a heading",
+    "```",
+  ].join("\n");
+
+  beforeEach(() => {
+    writeFile(path.join(stashDir, "knowledge", "notes.md"), DOC);
+    saveConfig({ semanticSearchMode: "off" });
+  });
+
+  test("a whole document lists its headings with the slug that selects each, duplicates suffixed", async () => {
+    const result = await akmShow({ ref: "knowledge/notes", skipLogging: true });
+    expect(result.content).toBe(DOC);
+    expect(result.toc).toEqual([
+      { level: 1, text: "Guide", slug: "guide", startLine: 4 },
+      { level: 2, text: "Notes", slug: "notes", startLine: 7 },
+      { level: 2, text: "Notes", slug: "notes-1", startLine: 10 },
+      { level: 2, text: "Notes 1", slug: "notes-1-1", startLine: 13 },
+      { level: 3, text: "Deep", slug: "deep", startLine: 16 },
+    ]);
+  });
+
+  test("every toc slug round-trips to the section starting at its line", async () => {
+    const lines = DOC.split("\n");
+    const { toc } = await akmShow({ ref: "knowledge/notes", skipLogging: true });
+    expect(toc?.length).toBeGreaterThan(0);
+    for (const heading of toc ?? []) {
+      const section = await akmShow({ ref: `knowledge/notes#${heading.slug}`, skipLogging: true });
+      expect(section.content?.split("\n")[0]).toBe(lines[heading.startLine - 1]);
+    }
+    expect((await akmShow({ ref: "knowledge/notes#notes-1", skipLogging: true })).content).toBe(
+      "## Notes\nSecond notes.\n",
+    );
+  });
+
+  test("the toc follows the file, not the index, so a heading added since indexing still resolves", async () => {
+    await akmShow({ ref: "knowledge/notes", skipLogging: true });
+    writeFile(path.join(stashDir, "knowledge", "notes.md"), `${DOC}\n\n## Added Later\nNew.\n`);
+
+    // readOnly skips the index refresh, so the indexed entry still predates the edit.
+    const { toc } = await akmShow({ ref: "knowledge/notes", readOnly: true });
+    const added = toc?.find((heading) => heading.text === "Added Later");
+    expect(added?.slug).toBe("added-later");
+    const section = await akmShow({ ref: `knowledge/notes#${added?.slug}`, readOnly: true });
+    expect(section.content).toBe("## Added Later\nNew.\n");
+  });
+
+  test("brief is the outline without the body", async () => {
+    const brief = await akmShow({ ref: "knowledge/notes", detail: "brief", skipLogging: true });
+    expect(brief.toc?.map((heading) => heading.slug)).toEqual(["guide", "notes", "notes-1", "notes-1-1", "deep"]);
+    expect(brief).not.toHaveProperty("content");
+  });
+
+  test("a fragment show carries no toc", async () => {
+    const section = await akmShow({ ref: "knowledge/notes#deep", skipLogging: true });
+    expect(section.content).toBe("### Deep\nDeeper.\n");
+    expect(section).not.toHaveProperty("toc");
+  });
+
+  test("other markdown assets carry it too", async () => {
+    writeFile(
+      path.join(stashDir, "skills", "deploy", "SKILL.md"),
+      "---\ndescription: Deploy\n---\n# Deploy\n\n## Steps\nGo.\n",
+    );
+    const result = await akmShow({ ref: "skills/deploy", skipLogging: true });
+    expect(result.toc).toEqual([
+      { level: 1, text: "Deploy", slug: "deploy", startLine: 4 },
+      { level: 2, text: "Steps", slug: "steps", startLine: 6 },
+    ]);
+  });
+
+  test("a document with no headings and a non-markdown asset carry no toc", async () => {
+    writeFile(path.join(stashDir, "knowledge", "plain.md"), "Just text.\n");
+    writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/bin/sh\n# Not a heading\necho hi\n");
+
+    expect(await akmShow({ ref: "knowledge/plain", skipLogging: true })).not.toHaveProperty("toc");
+    expect(await akmShow({ ref: "knowledge/plain", detail: "brief", skipLogging: true })).not.toHaveProperty("toc");
+    expect(await akmShow({ ref: "scripts/deploy.sh", skipLogging: true })).not.toHaveProperty("toc");
+    expect(await akmShow({ ref: "scripts/deploy.sh", detail: "brief", skipLogging: true })).not.toHaveProperty("toc");
+  });
+});
+
+// ── Derived memory children ──────────────────────────────────────────────────
+
+describe("akmShow memory with a .derived.md child", () => {
+  test("the memory, a section of it, and its derived child all show", async () => {
+    const parent = path.join(stashDir, "memories", "ops", "gate.md");
+    const child = path.join(stashDir, "memories", "ops", "gate.derived.md");
+    writeFile(parent, "---\ndescription: Parent\n---\n# Gate\n\n## Checks\nParent body.\n");
+    writeFile(child, "---\ninferred: true\nsource: memories/ops/gate\n---\nDerived body.\n");
+    saveConfig({ semanticSearchMode: "off" });
+
+    const shown = await akmShow({ ref: "memories/ops/gate", skipLogging: true });
+    expect(shown.path).toBe(parent);
+    expect(shown.content).toContain("Parent body.");
+
+    const section = await akmShow({ ref: "memories/ops/gate#checks", skipLogging: true });
+    expect(section.content).toBe("## Checks\nParent body.\n");
+
+    const derived = await akmShow({ ref: "memories/ops/gate.derived", skipLogging: true });
+    expect(derived.path).toBe(child);
+    expect(derived.content).toContain("Derived body.");
+  });
+});
+
+// F6/R-021: direct unit coverage for `input.detail === "brief"` /
+// `buildBriefResponse` on `akmShowUnified` itself — previously ZERO test in
+// the suite exercised this path (the CLI-layer resolution that feeds it is
+// covered separately in tests/integration/commands/show-argv.test.ts).
+describe("akmShow detail levels", () => {
+  test("detail: 'brief' strips content/template/prompt but keeps identity + edit fields", async () => {
+    writeFile(
+      path.join(stashDir, "commands", "release.md"),
+      "---\ndescription: Release\n---\nRun release {{version}}\n",
+    );
+    saveConfig({ semanticSearchMode: "off" });
+
+    const full = await akmShow({ ref: "commands/release.md" });
+    expect(full.template).toBe("Run release {{version}}\n");
+
+    const brief = await akmShow({ ref: "commands/release.md", detail: "brief" });
+    expect(brief.type).toBe("command");
+    expect(brief.name).toBe("release");
+    expect(brief.description).toBe("Release");
+    expect(brief.editable).toBe(true);
+    expect(brief).not.toHaveProperty("template");
+    expect(brief).not.toHaveProperty("content");
+    expect(brief).not.toHaveProperty("related");
+  });
+});

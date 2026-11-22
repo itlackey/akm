@@ -20,10 +20,10 @@ one explicitly. AKM recognizes 12 formats.
 | `claude` | `CLAUDE.md` as `instruction`; `commands/`, `agents/`, `skills/<name>/SKILL.md` as their matching types | Root `CLAUDE.md` plus at least one of `commands/`, `agents/`, `skills/` | Read-only | Point AKM at an existing Claude Code `.claude` tool directory |
 | `opencode` | Same shape as `claude`, rooted on `AGENTS.md` | `opencode.json`/`opencode.jsonc`, or root `AGENTS.md` plus a canonical plural tool directory | Read-only | Point AKM at an existing OpenCode `.opencode` tool directory |
 | `dotenv` | `env` entries as key names only (never values); `secret` entries as file names only (never content) | Every top-level directory is `env/` and/or `secrets/`, with at least one present | Writable, narrowly — `akm env create`/`env remove`/`secret set`/`secret remove` only | A standalone env/secrets-only bundle |
-| `akm-workflow` | Workflow steps, name, description, tags | A top-level `.md` file with explicit `type: workflow` frontmatter | Writable — `akm workflow create` only | A standalone workflow bundle, one workflow per file |
+| `akm-workflow` | Workflow steps, name, description, tags | A top-level `.md` file with explicit `type: workflow` frontmatter | Writable — `akm workflow create` only | A standalone workflow bundle, one workflow per file. Deprecated with workflows; removed in 0.11 |
 | `akm-task` | Task source v4 (`version: 4`) `.yml` sources as type `task`, including local schedules/manual triggers and the exact authored YAML | A top-level `.yml` file accepted by the task source v4 parser (`version: 4`, one `uses`/`run` executable selector, optional top-level `schedule:`) | Read-only | A standalone scheduled-task bundle; `.yaml` is rejected |
 | `llm-wiki` | `raw/` sources as `wiki-source`; `pages/` as their `pageKind` (default `note`), with resolved cross-reference links | Root `schema.md` plus a `pages/` directory | Read-only (author by writing directly into `pages/`; AKM indexes and serves the result) | [Karpathy's LLM-wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — agent-authored reference wikis |
-| `akm` (native) | AKM's own 14 native asset types — see [Asset Types](asset-types.md) | A `.stash` marker directory, or two-plus native subdirectories, or the fallback when nothing else matches | Fully writable — every AKM-native write command | Your working bundle, and any bundle authored as AKM's own format |
+| `akm` (native) | AKM's own 15 native asset types — see [Asset Types](asset-types.md) | A `.stash` marker directory, or two-plus native subdirectories, or the fallback when nothing else matches | Fully writable — every AKM-native write command | Your working bundle, and any bundle authored as AKM's own format |
 | `okf` | Frontmatter `type` (defaults to `knowledge`); name, description, tags, links, body | A root `index.md`, or any `.md` file anywhere carrying a non-empty frontmatter `type` | Read-only | The [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) — the portable baseline every markdown-based format here is a superset of |
 | `generic-files` | Files classified by extension: scripts, markdown/text as `document`, everything else as `file` | None — only claimed via an explicit `components.<id>.adapter: "generic-files"` config override | Read-only | A catch-all for a directory that doesn't match any other format |
 | `code-project` | One document per eligible file of a coding repository: source as `source` (language as a tag), Markdown/text as `doc`, a few named config files (`package.json`, `tsconfig*.json`, `Dockerfile`, ...) as `config`. Refs are the file's bundle-relative path, extension included | None — only claimed via an explicit `--adapter code-project` / `components.<id>.adapter: "code-project"` | Read-only | A source repository. A fixed allowlist skips binaries, lockfiles, `.env*`, keys, `*.min.js` and generated or vendored directories; `.gitignore` applies in a git repository (so an ignored `secrets/` is never indexed). If the embedding endpoint is remote, indexed source code is sent to it |
@@ -47,11 +47,11 @@ bounded `output:` schema, and OPTIONAL scheduling). A `version: 3` or
 `version: 2` document is no longer read by `src` at all — it fails to load
 with `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming `akm migrate` as the path
 forward. An `akm-task` source is `.yml` only; `.yaml` is diagnosed but never
-indexed, scheduled, or executed. See [Tasks](tasks.md).
+indexed, scheduled, or executed. The Experimental `version: 5-beta.1` source is described in [Tasks](tasks.md#task-source-v5-experimental). See [Tasks](tasks.md).
 
 ## Workflow formats
 
-Workflow sources are `.md` and compile to source IR. Task sources are `.yml`
+Workflow sources are Deprecated (removed in 0.11). They are `.md` and compile to source IR. Task sources are `.yml`
 only, authored as task source v4. See
 [Tasks](tasks.md) and [Workflow Schema](workflow-schema.md).
 
@@ -67,7 +67,7 @@ formats are writable today and why.
 
 ## See also
 
-- [Asset Types](asset-types.md) — the 14 native asset types AKM's own format recognizes
+- [Asset Types](asset-types.md) — the 15 native asset types AKM's own format recognizes
 - [Adapters](../architecture/adapters.md) — how AKM picks a format, the write-path internals, and current caveats
 - [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) — how translated native agents and commands are executed
 - [Concepts](../guides/concepts.md) — the retrieval loop these formats feed

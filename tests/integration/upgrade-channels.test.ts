@@ -152,7 +152,8 @@ afterEach(() => cleanup());
     ).toBe(true);
     expect(read("claude/settings.json")).toBe(originalClaude);
     expect(read("codex/config.toml")).toBe(originalCodex);
-    expect(read("calls.jsonl")).not.toContain('"clone"');
+    expect(read("calls.jsonl")).not.toContain('"update"');
+    expect(read("calls.jsonl")).not.toContain('"upgrade"');
   });
 
   test("--check --channel next reports the same shape as --check --next, plus the target channel", async () => {
@@ -169,6 +170,119 @@ afterEach(() => cleanup());
     expect(Object.keys(rest).sort()).toEqual(Object.keys(viaNext.result).sort());
     expect(rest.channel).toBe(viaNext.result.channel);
     expect(rest.plugins.map((p) => p.harness)).toEqual(viaNext.result.plugins.map((p) => p.harness));
+  });
+
+  describe("--check reports the plugin updates the channel in force would make", () => {
+    const check = (channel: "latest" | "next", current = "0.10.3-beta") =>
+      withEnv(env, () => runUpgrade({ ...opts, check: true, channel }, current, deps(current, current)));
+    const plan = (run: Awaited<ReturnType<typeof check>>, harness: string) =>
+      run.result.plugins.find((p) => p.harness === harness);
+
+    test("a prerelease CLI with Claude and Codex on stable: both would move to the prerelease build", async () => {
+      const run = await check("next");
+      for (const harness of ["claude-code", "codex"])
+        expect(plan(run, harness)).toMatchObject({
+          outcome: "pending",
+          from: "0.10.1",
+          to: "0.10.3-beta",
+          channel: "latest",
+          targetChannel: "next",
+          channelMismatch: true,
+        });
+      expect(read("claude/settings.json")).toBe(originalClaude);
+      expect(read("codex/config.toml")).toBe(originalCodex);
+      expect(read("calls.jsonl")).not.toContain('"update"');
+      expect(read("calls.jsonl")).not.toContain('"upgrade"');
+    });
+
+    test("the stable channel's newest build is the target on stable", async () => {
+      const run = await check("latest", "0.10.1");
+      expect(plan(run, "claude-code")).toMatchObject({ outcome: "pending", from: "0.10.1", to: "0.10.2" });
+    });
+
+    test("a plugin already at the channel's newest build is current, and a newer one stays", async () => {
+      state({ claudeVersion: "0.10.3-beta", codexVersion: "0.10.9" });
+      const run = await check("next");
+      expect(plan(run, "claude-code")).toMatchObject({ outcome: "current", from: "0.10.3-beta", to: "0.10.3-beta" });
+      expect(plan(run, "codex")).toMatchObject({
+        outcome: "current",
+        from: "0.10.9",
+        message: "codex stays at 0.10.9; next has nothing newer",
+      });
+    });
+
+    test("a marketplace that cannot be read: a switch leaves the plugin where it is, as the real switch does; a plain check says unknown", async () => {
+      state({ remote: "down" });
+      const run = await check("next");
+      for (const harness of ["claude-code", "codex"])
+        expect(plan(run, harness)).toMatchObject({ outcome: "current", from: "0.10.1", to: "0.10.1" });
+      expect(plan(run, "codex")?.message).toContain("stays at 0.10.1; could not read the next build's version");
+      const plain = await withEnv(env, () => runUpgrade({ ...opts, check: true }, "0.10.1", deps("0.10.1", "0.10.1")));
+      for (const harness of ["claude-code", "codex"])
+        expect(plan(plain, harness)).toMatchObject({ outcome: "unknown", from: "0.10.1" });
+      expect(plan(plain, "codex")?.message).toContain("the latest build could not be read");
+    });
+
+    test("the plan reads the marketplace each harness registered, and the real switch installs what the plan said", async () => {
+      const planned = await check("next", "0.10.1");
+      const clones = () =>
+        read("calls.jsonl")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line))
+          .filter((call) => call.command === "git" && call.args[0] === "clone")
+          .map((call) => call.args.at(-2));
+      expect(clones()).toEqual(["https://example.test/plugins.git", "https://example.test/plugins.git"]);
+      expect(read("calls.jsonl")).not.toContain("itlackey");
+      const real = await withEnv(env, () =>
+        runUpgrade({ ...opts, channel: "next" }, "0.10.1", deps("0.10.1", "0.10.3-beta")),
+      );
+      for (const harness of ["claude-code", "codex"])
+        expect(real.result.plugins.find((p) => p.harness === harness)).toMatchObject({
+          outcome: "updated",
+          from: plan(planned, harness)?.from,
+          to: plan(planned, harness)?.to,
+        });
+    });
+  });
+
+  test("--channel on an installation that already follows it changes nothing on disk and reports what a plain upgrade does", async () => {
+    const followNext = () => {
+      const known = JSON.parse(read("claude/plugins/known_marketplaces.json"));
+      known["akm-plugins"].source.ref = "next";
+      write("claude/plugins/known_marketplaces.json", JSON.stringify(known));
+      const settings = JSON.parse(originalClaude);
+      settings.extraKnownMarketplaces["akm-plugins"].source.ref = "next";
+      write("claude/settings.json", JSON.stringify(settings, null, 2));
+      write("codex/config.toml", originalCodex.replace('source_type = "git"', 'source_type = "git"\nref = "next"'));
+      write("config/opencode/opencode.jsonc", '{"plugin": [["akm-opencode@next", {"keep": true}]]}');
+      write(
+        "cache/opencode/packages/akm-opencode@next/node_modules/akm-opencode/package.json",
+        '{"version":"0.10.3-beta"}',
+      );
+      state({ claudeVersion: "0.10.3-beta", codexVersion: "0.10.3-beta" });
+    };
+    followNext();
+    const files = [
+      "claude/settings.json",
+      "claude/plugins/known_marketplaces.json",
+      "codex/config.toml",
+      "config/opencode/opencode.jsonc",
+    ];
+    const before = files.map(read);
+    const entries = (run: Awaited<ReturnType<typeof runUpgrade>>) =>
+      run.result.plugins.map(({ harness, outcome, from, to }) => ({ harness, outcome, from, to }));
+    const plain = await withEnv(env, () =>
+      runUpgrade({ ...opts, next: true }, "0.10.3-beta", deps("0.10.3-beta", "0.10.3-beta")),
+    );
+    const switched = await withEnv(env, () =>
+      runUpgrade({ ...opts, channel: "next" }, "0.10.3-beta", deps("0.10.3-beta", "0.10.3-beta")),
+    );
+    expect(switched.mode === "upgrade" && switched.failed).toBe(false);
+    expect(files.map(read)).toEqual(before);
+    expect(fs.readdirSync(root, { recursive: true }).filter((name) => String(name).endsWith(".bak"))).toEqual([]);
+    expect(entries(switched)).toEqual(entries(plain));
+    for (const entry of switched.result.plugins) expect(entry.backups).toBeUndefined();
   });
 
   test("a channel whose newest akm is older keeps the installed akm and still switches; --allow-downgrade moves back", async () => {
@@ -381,6 +495,29 @@ afterEach(() => cleanup());
     ).toEqual(["user", "project", "local"]);
   });
 
+  test("a running OpenCode already on the channel defers its plugin and the upgrade succeeds", async () => {
+    await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", deps()));
+    state({ versions: { latest: "0.10.2", next: "0.10.4-beta" }, openCodeRunning: true });
+    const run = await withEnv(env, () =>
+      runUpgrade({ ...opts, channel: "next" }, "0.10.3-beta", deps("0.10.3-beta", "0.10.4-beta")),
+    );
+    expect(run.result.plugins.find((p) => p.harness === "opencode")).toMatchObject({
+      outcome: "deferred",
+      channel: "next",
+    });
+    expect(run.mode === "upgrade" && run.failed).toBe(false);
+  });
+
+  test("a running OpenCode still on the other channel leaves the coordinated switch incomplete", async () => {
+    state({ openCodeRunning: true });
+    const run = await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", deps()));
+    expect(run.result.plugins.find((p) => p.harness === "opencode")).toMatchObject({
+      outcome: "deferred",
+      channel: "latest",
+    });
+    expect(run.mode === "upgrade" && run.failed).toBe(true);
+  });
+
   test("an unavailable installed OpenCode makes the coordinated switch incomplete", async () => {
     fs.unlinkSync(file("bin/opencode"));
     const run = await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", deps()));
@@ -428,11 +565,91 @@ afterEach(() => cleanup());
     expect(dependency.calls).toHaveLength(0);
     expect(read("claude/settings.json")).toBe(originalClaude);
     expect(read("codex/config.toml")).toBe(originalCodex);
-    const checked = await withEnv(env, () =>
-      runUpgrade({ ...opts, check: true, channel: "next" }, "0.10.1", dependency),
-    );
-    expect(checked.result.plugins.some((plugin) => plugin.outcome === "failed" && plugin.channel === "unknown")).toBe(
-      true,
-    );
+    // The check runs the same preflight, so it refuses with the same error and writes nothing.
+    await expect(
+      withEnv(env, () => runUpgrade({ ...opts, check: true, channel: "next" }, "0.10.1", dependency)),
+    ).rejects.toThrow("Could not inventory");
+    expect(read("claude/settings.json")).toBe(originalClaude);
+    expect(read("codex/config.toml")).toBe(originalCodex);
   });
 });
+
+(process.platform === "win32" ? describe.skip : describe)("a channel edit that cannot be made", () => {
+  test("check and run refuse with the same message and change nothing", async () => {
+    write("codex/config.toml", '[marketplaces."akm-plugins"]\nsource = "https://example.test/plugins.git"\n');
+    const broken = read("codex/config.toml");
+    const dependency = deps();
+    const refused = async (check: boolean) =>
+      withEnv(env, () => runUpgrade({ ...opts, check, channel: "next" }, "0.10.1", dependency)).then(
+        () => undefined,
+        (error: Error) => error.message,
+      );
+    const checkMessage = await refused(true);
+    const runMessage = await refused(false);
+    expect(checkMessage).toContain("no Git source whose channel can be switched");
+    expect(checkMessage).toBe(runMessage);
+    expect(dependency.calls).toHaveLength(0);
+    expect(read("codex/config.toml")).toBe(broken);
+  });
+});
+
+(process.platform === "win32" ? describe.skip : describe)(
+  "a plain upgrade follows the channel the installed akm is on",
+  () => {
+    const tags = { latest: "0.10.261129", next: "0.10.261130-beta.7" };
+    function registry(current: string, published: { latest: string; next?: string } = tags) {
+      const asked: { channel: string; exact?: boolean }[] = [];
+      const calls: unknown[] = [];
+      return {
+        asked,
+        calls,
+        checkForUpdate: async (_version, channel, exact) => {
+          asked.push({ channel, exact });
+          const latestVersion = channel === "next" && published.next ? published.next : published.latest;
+          const updateAvailable = Bun.semver.order(current, latestVersion) < 0;
+          return { currentVersion: current, latestVersion, updateAvailable, installMethod: "bun" as const };
+        },
+        performUpgrade: async (check, options) => {
+          calls.push(options);
+          const installs = check.updateAvailable || options?.force === true;
+          const newVersion = installs ? (options?.targetVersion ?? check.latestVersion) : current;
+          return {
+            currentVersion: current,
+            newVersion,
+            upgraded: installs && newVersion !== current,
+            installMethod: "bun",
+            message: installs ? "installed" : `akm v${current} is already the latest version`,
+            migration: { status: "current" },
+          };
+        },
+      } satisfies UpgradeRunDependencies & { asked: unknown[]; calls: unknown[] };
+    }
+
+    test("a host on next checks next and installs the newer prerelease, not latest", async () => {
+      const dependency = registry("0.10.261130-beta.6");
+      const run = await withEnv(env, () => runUpgrade(opts, "0.10.261130-beta.6", dependency));
+      expect(dependency.asked).toEqual([{ channel: "next", exact: false }]);
+      expect(dependency.calls).toEqual([{ force: false, skipPostUpgrade: true, targetVersion: "0.10.261130-beta.7" }]);
+      expect(run.result.channel).toBe("next");
+      expect((run.result as { newVersion?: string }).newVersion).toBe("0.10.261130-beta.7");
+    });
+
+    test("an offered version older than the installed one is never installed or reported as the latest", async () => {
+      for (const force of [false, true]) {
+        const dependency = registry("0.10.261130-beta.7", { latest: tags.latest });
+        const run = await withEnv(env, () => runUpgrade({ ...opts, force }, "0.10.261130-beta.7", dependency));
+        expect(dependency.calls).toEqual([{ force, skipPostUpgrade: true, targetVersion: "0.10.261130-beta.7" }]);
+        expect((run.result as { newVersion?: string }).newVersion).toBe("0.10.261130-beta.7");
+        expect((run.result as { message?: string }).message).toBe(
+          "akm stays at 0.10.261130-beta.7; next has nothing newer",
+        );
+      }
+    });
+
+    test("a host on latest still checks latest", async () => {
+      const dependency = registry("0.10.261128");
+      await withEnv(env, () => runUpgrade({ ...opts, check: true }, "0.10.261128", dependency));
+      expect(dependency.asked).toEqual([{ channel: "latest", exact: false }]);
+    });
+  },
+);

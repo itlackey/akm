@@ -49,15 +49,11 @@ const usageCommand = defineJsonCommand({
       ...(args.source ? { source: args.source } : {}),
     });
     const aggregates = report.aggregates;
-    const commands: Record<
-      string,
-      { attempts: number; completed: number; failures: number; durationMs: number; instances: Set<string> }
-    > = {};
+    const commands: Record<string, { attempts: number; completed: number; failures: number; durationMs: number }> = {};
     const argumentsUsed: Record<string, number> = {};
     for (const row of aggregates) {
       const dimensions = row.dimensions as {
         command: string[];
-        instance: string;
         arguments: Array<{ name: string; explicit: boolean }>;
       };
       const name = dimensions.command.join(" ") || "[root]";
@@ -66,14 +62,12 @@ const usageCommand = defineJsonCommand({
         completed: 0,
         failures: 0,
         durationMs: 0,
-        instances: new Set(),
       };
       const command = commands[name]!;
       command.attempts += Number(row.attempts);
       command.completed += Number(row.completed);
       command.failures += Number(row.failures);
       command.durationMs += Number(row.duration_ms);
-      command.instances.add(dimensions.instance);
       for (const argument of dimensions.arguments.filter((arg) => arg.explicit)) {
         const identity = `${name}:${argument.name}`;
         argumentsUsed[identity] = (argumentsUsed[identity] ?? 0) + Number(row.attempts);
@@ -85,7 +79,6 @@ const usageCommand = defineJsonCommand({
       commands: Object.entries(commands).map(([command, row]) => ({
         command,
         ...row,
-        instances: row.instances.size,
         meanDurationMs: row.completed ? row.durationMs / row.completed : null,
       })),
       arguments: argumentsUsed,

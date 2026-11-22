@@ -18,7 +18,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { akmAdapter } from "../core/adapter/adapters/akm-adapter";
+import { adapterForId } from "../core/adapter/registry";
 import { loadConfig } from "../core/config/config";
 import { isDataDirUnreadableError, TransientError } from "../core/errors";
 import { isPathAbsent } from "../core/path-access";
@@ -32,6 +32,7 @@ import { deriveEntryProvenance, deriveInstallations } from "./installations";
 import { embeddingInputCap, generateEmbeddingsForDb, publishTargetedEmbeddingMeta } from "./materialize-embeddings";
 import { type IndexDocument, withFileSize } from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
+import { resolveSourceEntries } from "./search/search-source";
 import { buildFileContext } from "./walk/file-context";
 import { walkedFiles } from "./walk/walker";
 
@@ -85,10 +86,19 @@ export async function indexWrittenAssets(
 
     // Generate metadata BEFORE opening the DB so the write window stays
     // short. One drain call per file keeps the entry↔path pairing exact and
-    // reuses the full-index recognize engine (F4a M-core-2 item 5): broken
+    // reuses the full-index recognize engine: broken
     // workflows drop, valid workflow docs are cached for the side-table upsert.
+    // The bundle's own adapter recognizes what was written: a named bundle's configured one, the akm adapter otherwise.
+    const adapterId = options.bundleId
+      ? resolveSourceEntries(undefined, loadConfig()).find((entry) => entry.registryId === options.bundleId)?.adapterId
+      : undefined;
     const component = deriveInstallations([
-      { path: stashDir, writable: true, ...(options.bundleId ? { registryId: options.bundleId } : {}) },
+      {
+        path: stashDir,
+        writable: true,
+        ...(options.bundleId ? { registryId: options.bundleId } : {}),
+        ...(adapterId ? { adapterId } : {}),
+      },
     ])[0]?.components[0];
     if (!component) throw new Error(`Could not derive bundle provenance for ${stashDir}`);
     const pairs: Array<{ file: string; entry: IndexDocument; conceptId: string; contentHash?: string }> = [];
@@ -108,12 +118,9 @@ export async function indexWrittenAssets(
         }
       }
       const ctx = buildFileContext(stashDir, file);
-      // Hardcoded `akmAdapter` on purpose (owner ruling 2026-07-21): this
-      // write-path fast path only ever runs for assets a first-class akm
-      // mutation command just wrote into a managed akm source, so the akm
-      // adapter is always the right recognizer here — no per-component
-      // dispatch needed.
-      const drained = drainDirDocuments(akmAdapter, component, [ctx]);
+      const adapter = adapterForId(component.adapter);
+      if (!adapter) throw new Error(`Unknown adapter "${component.adapter}" for ${stashDir}`);
+      const drained = drainDirDocuments(adapter, component, [ctx]);
       for (const rejectedPath of drained.rejectedPaths) unindexable.add(rejectedPath);
       for (const conceptId of drained.rejectedConceptIds) rejectedConceptIds.add(conceptId);
       const entry = drained.entries[0];
@@ -160,7 +167,7 @@ export async function indexWrittenAssets(
         mutated ||= unindexableEntryIds.size > 0;
         for (const { file, entry, conceptId, contentHash } of pairs) {
           const entryWithSize = withFileSize(entry, file);
-          // Real provenance (F4a M-core-2 item 5): populate item_ref/content_hash
+          // Real provenance: populate item_ref/content_hash
           // via the SAME derivation the full-index writer uses, so a write-path
           // row is never a NULL-item_ref straggler.
           const provenance = deriveEntryProvenance(

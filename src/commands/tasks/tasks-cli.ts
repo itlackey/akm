@@ -3,25 +3,17 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm task` command family. Extracted verbatim from src/cli.ts (WS6) so the
- * God Module shrinks; the `main.subCommands.task` key and every subcommand's
- * args/output shape are byte-identical. Handlers whose body is a plain
- * `runWithJsonErrors(...) + output(...)` are migrated to `defineJsonCommand`,
- * which emits the same JSON envelope (stdout/stderr/exit-code) as the inline
- * form. `task run` keeps a plain `defineCommand` because it forwards the
- * task's own exit code via `process.exitCode` (F4: not `process.exit()` —
- * that would skip pending cleanup).
+ * `akm task` command family. Handlers whose body is a plain
+ * `runWithJsonErrors(...) + output(...)` are `defineJsonCommand`s, which emit
+ * the JSON envelope (stdout/stderr/exit-code). `task run` keeps a plain
+ * `defineCommand` because it forwards the task's own exit code via
+ * `process.exitCode` (not `process.exit()`, which would skip pending cleanup).
  *
- * 0.9 CLI overhaul (S6): the group was renamed from the plural `tasks` to the
- * singular `task` — hard break, no alias. `init` was dropped: the default improve-schedule task set now ships as embedded
- * templates under src/assets/tasks/improve/ (see src/tasks/embedded.ts),
- * seeded through the interactive `akm setup` task-review step instead of a
- * separate CLI command. `enable`/`disable` mutate the host-local scheduler
- * allow-list, never the task source. Every subcommand shares one `--bundle <bundle>`
- * axis (S8.4 ratified `task add`'s `--target` → `--bundle`; a later Gate-1
- * fix reverted it to match `import`/`proposal accept`, splitting the
- * write-target axis three-vs-one against `remember`/`clone`/`improve` — the
- * final review re-applied the ratified rename here).
+ * The default improve-schedule task set ships as embedded templates under
+ * src/assets/tasks/improve/ (see src/tasks/embedded.ts), seeded through the
+ * interactive `akm setup` task-review step. `enable`/`disable` mutate the
+ * host-local scheduler allow-list, never the task source. Every subcommand
+ * shares one `--bundle <bundle>` axis.
  */
 
 import { defineCommand } from "citty";
@@ -37,9 +29,12 @@ import {
   outputWithExitCode,
   runWithJsonErrors,
 } from "../../cli/shared";
+import { assertKnownFlags, type FlagScanCommand, scanRoot } from "../../cli/unknown-flags";
 import { UsageError } from "../../core/errors";
 import type { InputFlag } from "../../execution/input-contract";
+import type { RunTaskOptions } from "../../tasks/run/task-result";
 import { TASK_RUN_BOOLEAN_FLAGS, TASK_RUN_VALUE_FLAGS } from "../../tasks/task-run-reserved-flags";
+import { parseStartFlags, type TaskV5Start, taskIdInStart } from "../../tasks/v5/flags";
 import { akmTaskExplain } from "./explain";
 import {
   akmTasksAdd,
@@ -77,8 +72,7 @@ const bundleArg = {
  * rejecter and the scanner can never disagree about what a token names.
  */
 function hasFlagNamed(name: string): boolean {
-  for (const token of getParsedInvocation().argv) {
-    if (token === "--") return false;
+  for (const token of getParsedInvocation().ownArgs) {
     if (!token.startsWith("--")) continue;
     const body = token.slice(2);
     const equalsAt = body.indexOf("=");
@@ -190,8 +184,65 @@ export function parseTaskInputFlags(rawArgs: readonly string[], id: string): Inp
   return flags;
 }
 
+/**
+ * Join each flag naming a declared value input to its value (`--who -x` becomes `--who=-x`), the one spelling
+ * {@link parseTaskInputFlags} cannot mistake for a flag. The unknown-flag scan and the binder both read the result,
+ * so neither takes `-x` for a flag of its own.
+ */
+function inlineInputValues(tokens: readonly string[], valueInputs: ReadonlySet<string>): string[] {
+  const joined: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] as string;
+    const next = tokens[index + 1];
+    if (token.startsWith("--") && valueInputs.has(token.slice(2)) && next !== undefined) {
+      joined.push(`${token}=${next}`);
+      index += 1;
+    } else {
+      joined.push(token);
+    }
+  }
+  return joined;
+}
+
+/** What a start of a version 5 task gave: its start flags, and its input flags as a version 4 task's are read. */
+function readV5Start(rawArgs: readonly string[], id: string): TaskV5Start {
+  const { rest, ...start } = parseStartFlags(rawArgs);
+  return { ...start, inputs: parseTaskInputFlags(rest, id) };
+}
+
+/**
+ * The one reader of a task's input tokens, run once the task's declared value inputs are known: each declared value
+ * input is joined to its value (`--who -x` is `--who=-x`), and the tokens are checked as the command at `path` checks
+ * its flags. `akm run`, `akm task run`, `akm task explain` and `akm doctor explain` all read through it.
+ */
+function readTaskInputTokens(
+  command: { path: readonly string[]; schema: FlagScanCommand },
+  rawArgs: readonly string[],
+  valueInputs: ReadonlySet<string>,
+): string[] {
+  const joined = inlineInputValues(rawArgs, valueInputs);
+  assertKnownFlags(scanRoot(command.path, command.schema), [...command.path, ...joined]);
+  return joined;
+}
+
+/** What a task command hands the task layer to read its input flags and start flags once the task is known. */
+function taskInputReaders(
+  command: { path: readonly string[]; schema: FlagScanCommand },
+  rawArgs: readonly string[],
+  id: string,
+): Pick<RunTaskOptions, "inputFlags" | "start"> {
+  return {
+    inputFlags: (valueInputs) => parseTaskInputFlags(readTaskInputTokens(command, rawArgs, valueInputs), id),
+    start: (valueInputs) => readV5Start(readTaskInputTokens(command, rawArgs, valueInputs), id),
+  };
+}
+
 const tasksAddCommand = defineJsonCommand({
-  meta: { name: "add", description: "Register a new scheduled task and install it in the OS scheduler" },
+  meta: {
+    name: "add",
+    description:
+      "Deprecated, removed in 0.11: use `akm import <file> --type task`. Register a new scheduled task and install it in the OS scheduler",
+  },
   args: {
     id: { type: "positional", description: "Task id (used as filename and scheduler entry)", required: true },
     schedule: { type: "string", description: 'Cron-style schedule, e.g. "0 9 * * *" or "@daily"', required: true },
@@ -212,7 +263,10 @@ const tasksAddCommand = defineJsonCommand({
       type: "string",
       description: "Timeout as a duration (30s, 2m) or milliseconds, for prompt or command targets",
     },
-    "timeout-ms": { type: "string", description: "Positive timeout in milliseconds for prompt or command targets" },
+    "timeout-ms": {
+      type: "string",
+      description: "Deprecated: use `--timeout`. Positive timeout in milliseconds for prompt or command targets",
+    },
     params: { type: "string", description: "Workflow params as a JSON object" },
     name: { type: "string", description: "Human-readable name for the task" },
     "when-to-use": { type: "string", description: "Guidance on when this task runs or should be used" },
@@ -262,7 +316,8 @@ const { config: _configFileArg, ...taskRunGlobalArgs } = GLOBAL_OUTPUT_ARGS;
 export const tasksRunCommand = defineCommand({
   meta: {
     name: "run",
-    description: "Execute a task now (this is what cron / launchd / schtasks invoke at the scheduled time)",
+    description:
+      "Deprecated, removed in 0.11: use `akm run <qualified-task-ref>`. Execute a task now (this is what cron / launchd / schtasks invoke at the scheduled time)",
   },
   // Raw defineCommand (it forwards the task's exit code), so the global output
   // flags are declared here or `--format md nightly` loses the task id.
@@ -274,18 +329,17 @@ export const tasksRunCommand = defineCommand({
   },
   async run({ args, rawArgs }) {
     await runWithJsonErrors(async () => {
-      const inputFlags = parseTaskInputFlags(rawArgs, args.id);
-      const envelope = await akmTasksRun(args.id, {
+      const id = taskIdInStart(rawArgs) ?? args.id;
+      const envelope = await akmTasksRun(id, {
         scheduled: args.scheduled === true,
         ...(args.bundle !== undefined ? { target: args.bundle } : {}),
-        inputFlags,
+        ...taskInputReaders({ path: ["task", "run"], schema: tasksRunCommand as FlagScanCommand }, rawArgs, id),
       });
       output("task-run", envelope);
-      // F4: was `process.exit(envelope.exitCode)`, terminating synchronously
-      // and skipping any pending cleanup (this command forwards a run task's
-      // own exit code, so it can be any value, not just 0/1). output() has
-      // already run and this is the last statement, so process.exitCode +
-      // the implicit return is equivalent without the synchronous cutoff.
+      // Set `process.exitCode` rather than calling `process.exit`, which would
+      // skip pending cleanup (this command forwards a run task's own exit code,
+      // so it can be any value, not just 0/1). output() has already run and
+      // this is the last statement.
       if (envelope.exitCode !== 0) process.exitCode = envelope.exitCode;
     });
   },
@@ -315,9 +369,8 @@ const tasksDisableCommand = defineJsonCommand({
 
 /**
  * #911: `task run <id>` and `task explain <ref>` take the id positionally, so
- * `task history <id>` is the natural thing to write — and it used to be
- * accepted and silently discarded, answering with every task's newest rows.
- * A positional id now means the same as `--id`; giving both with different
+ * `task history <id>` is the natural thing to write — so a positional id
+ * means the same as `--id`; giving both with different
  * values is a usage error rather than a silent pick.
  */
 export function resolveTaskHistoryId(positional: string | undefined, flag: string | undefined): string | undefined {
@@ -331,7 +384,10 @@ export function resolveTaskHistoryId(positional: string | undefined, flag: strin
 }
 
 const tasksHistoryCommand = defineJsonCommand({
-  meta: { name: "history", description: "Show recent task run history" },
+  meta: {
+    name: "history",
+    description: "Deprecated, removed in 0.11: use `akm doctor log --task <id>`. Show recent task run history",
+  },
   args: {
     task: { type: "positional", description: "Task id to filter to (same as --id)", required: false },
     id: { type: "string", description: "Filter to one task id" },
@@ -398,7 +454,8 @@ export async function runTaskSync(args: { bundle?: string; rebind?: boolean; "dr
 const tasksSyncCommand = defineJsonCommand({
   meta: {
     name: "sync",
-    description: "Reconcile enabled task/workflow schedules with the OS scheduler, one row at a time",
+    description:
+      "Deprecated, removed in 0.11: use `akm doctor scheduler sync`. Reconcile enabled task/workflow schedules with the OS scheduler, one row at a time",
   },
   args: taskSyncArgs,
   async run({ args }) {
@@ -412,22 +469,21 @@ const tasksSyncCommand = defineJsonCommand({
 export async function runTaskExplain(
   args: { ref: string; bundle?: string },
   rawArgs: readonly string[],
+  command: { path: readonly string[]; schema: FlagScanCommand },
 ): Promise<void> {
   // `--scheduled` must be rejected BEFORE the shared scanner below ever
   // sees it — the scanner treats it as `task run`'s own reserved flag
   // (silently skipped, never surfaced as unknown) rather than explain's,
   // since it has no way to know which command called it (F7 fix).
   rejectExplainScheduledFlag();
-  // Stage 1 (capture): the SAME exact-name flag scanner `akm task run`
-  // uses (`parseTaskInputFlags` above) — `explain` never declares
-  // `--scheduled`, but reusing the identical scanner is deliberate: one
-  // implementation of "which argv tokens are task input flags", not two.
-  const inputFlags = parseTaskInputFlags(rawArgs, args.ref);
-  const result = await akmTaskExplain(args.ref, {
+  const ref = taskIdInStart(rawArgs) ?? args.ref;
+  const result = await akmTaskExplain(ref, {
     ...(args.bundle !== undefined ? { target: args.bundle } : {}),
-    inputFlags,
+    ...taskInputReaders(command, rawArgs, ref),
   });
-  output("task-explain", result);
+  // A schedule entry the start check refuses fails the preview, as it fails `doctor scheduler sync`.
+  const refused = (result.schedule as readonly { error?: string }[]).some((entry) => entry.error !== undefined);
+  outputWithExitCode("task-explain", result, refused ? EXIT_CODES.GENERAL : undefined);
 }
 
 const tasksExplainCommand = defineJsonCommand({
@@ -435,7 +491,7 @@ const tasksExplainCommand = defineJsonCommand({
   meta: {
     name: "explain",
     description:
-      "Print a task's source, declared inputs (with provenance), resolved target, execution settings, and " +
+      "Deprecated, removed in 0.11: use `akm doctor explain <ref>`. Print a task's source, declared inputs (with provenance), resolved target, execution settings, and " +
       "schedule bindings — read-only and secret-free; never spawns anything",
   },
   args: {
@@ -443,14 +499,15 @@ const tasksExplainCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args, rawArgs }) {
-    await runTaskExplain(args, rawArgs);
+    await runTaskExplain(args, rawArgs, { path: ["task", "explain"], schema: tasksExplainCommand as FlagScanCommand });
   },
 });
 
 const tasksDoctorCommand = defineJsonCommand({
   meta: {
     name: "doctor",
-    description: "Report the active scheduler backend, akm bin path, log dir, and supported schedule subset",
+    description:
+      "Deprecated, removed in 0.11: use `akm doctor`. Report the active scheduler backend, akm bin path, log dir, and supported schedule subset",
   },
   args: {},
   async run() {
@@ -500,7 +557,7 @@ const tasksPruneCommand = defineJsonCommand({
   meta: {
     name: "prune",
     description:
-      "Remove installed scheduler entries `sync` can never reclaim because they no longer resolve to a live " +
+      "Deprecated, removed in 0.11: use `akm doctor scheduler sync --prune`. Remove installed scheduler entries `sync` can never reclaim because they no longer resolve to a live " +
       "bundle (the bundle directory a row names is gone, or an older row's --scheduler-context descriptor " +
       "cannot be read). Defaults to a dry-run preview — zero scheduler writes. Requires --yes to remove anything; " +
       "--id narrows removal to specific binding ids (comma-separated).",
@@ -515,7 +572,7 @@ export const taskCommand = defineGroupCommand({
   meta: {
     name: "task",
     description:
-      "Schedule recurring commands, prompts, and workflows through the OS scheduler (cron / launchd / schtasks)",
+      "Enable or disable scheduled tasks on this host (cron / launchd / schtasks). The add, run, sync, prune, doctor, history and explain subcommands are Deprecated and removed in 0.11; each help names its replacement",
   },
   subCommands: {
     add: tasksAddCommand,
@@ -532,6 +589,5 @@ export const taskCommand = defineGroupCommand({
   // individual tasks is the generic `akm show <bundle//tasks/id>`; listing is
   // `akm search --type task`.
   // No `defaultRun`: bare `akm task` is a usage error (exit 2), the canonical
-  // bare-group behavior — owner ruling 12. Run `akm task doctor` for what the
-  // bare form used to run.
+  // bare-group behavior — owner ruling 12.
 });

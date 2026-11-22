@@ -5,25 +5,27 @@
 /** What improve proposed for one asset, how it was decided, and how the asset has been used since. */
 
 import { metricsWindow, readUsageRows } from "../commands/metrics/metrics-cli";
+import { resolveStashDir } from "../core/common";
 import { UsageError } from "../core/errors";
 import { listStateProposals } from "../storage/repositories/proposals-repository";
 import { classifyOutcome, decidedAt, weekOf, weekRange } from "./derive";
-import { tryStashDir, withReadonlyStateDb } from "./readers";
+import { stateDbUnavailable, withReadonlyStateDb } from "./readers";
 
 const DAY = 86_400_000;
 
 export function assetImprove(input: { ref: string }) {
   const ref = input.ref?.trim();
   if (!ref) throw new UsageError("Give the asset's ref: <bundle>//<type>/<name>.", "MISSING_REQUIRED_ARGUMENT");
-  const stashDir = tryStashDir();
   const window = metricsWindow("90d");
-  const { proposals, mine } = withReadonlyStateDb(
+  const state = withReadonlyStateDb(
     (db) => ({
-      proposals: stashDir ? listStateProposals(db, { stashDir, ref, withContent: false }) : [],
+      proposals: listStateProposals(db, { stashDir: resolveStashDir(), ref, withContent: false }),
       mine: readUsageRows(db, window).filter((row) => row.ref === ref),
     }),
-    { proposals: [], mine: [] },
+    null,
   );
+  if (!state) return stateDbUnavailable();
+  const { proposals, mine } = state;
   const now = Date.now();
   const weeks = weekRange(
     new Date(now - 90 * DAY).toISOString().slice(0, 10),
@@ -39,6 +41,7 @@ export function assetImprove(input: { ref: string }) {
     };
   });
   return {
+    available: true as const,
     proposals: proposals
       .map((p) => ({
         id: p.id,

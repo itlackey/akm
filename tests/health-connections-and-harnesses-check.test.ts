@@ -203,6 +203,7 @@ describe("runConnectionsAndHarnessesCheck", () => {
   test("nothing configured is unknown, and says how to get started", async () => {
     const result = await runConnectionsAndHarnessesCheck({ loadConfig: () => cfg() });
     expect(result.status).toBe("unknown");
+    expect(result.reason).toBe("off");
     expect(result.message).toContain("akm setup");
     expect(rowsOf(result).every((row) => row.type === "process" && row.kind === null)).toBe(true);
   });
@@ -276,6 +277,7 @@ describe("runConnectionsAndHarnessesCheck", () => {
   test("an empty installation is unknown and a disabled process is not a problem", async () => {
     const empty = await runConnectionsAndHarnessesCheck({ loadConfig: () => cfg() });
     expect(empty.status).toBe("unknown");
+    expect(empty.reason).toBe("off");
     const off = await runConnectionsAndHarnessesCheck({
       loadConfig: () =>
         cfg({

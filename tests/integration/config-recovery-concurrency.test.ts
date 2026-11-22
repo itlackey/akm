@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { shouldBypassConfigStartup } from "../../src/cli";
+import { createParsedInvocation } from "../../src/cli/invocation";
 import { getConfigPath } from "../../src/core/paths";
 import { assertSetupConfigPreflight, runSetupWithDefaults } from "../../src/setup/setup";
 import { runCliCapture } from "../_helpers/cli";
@@ -39,14 +40,20 @@ describe("raw recovery startup", () => {
       ["bun", "cli.ts", "setup"],
       ["bun", "cli.ts", "workflow", "--help"],
     ]) {
-      expect(shouldBypassConfigStartup(args)).toBe(true);
+      expect(shouldBypassConfigStartup(createParsedInvocation(args))).toBe(true);
     }
   });
 
   test("help and version config bypass ignores child flags after `--`", () => {
-    expect(shouldBypassConfigStartup(["bun", "cli.ts", "env", "run", "env/prod", "--", "tool", "--help"])).toBe(false);
     expect(
-      shouldBypassConfigStartup(["bun", "cli.ts", "secret", "run", "secrets/token", "TOKEN", "--", "tool", "-v"]),
+      shouldBypassConfigStartup(
+        createParsedInvocation(["bun", "cli.ts", "env", "run", "env/prod", "--", "tool", "--help"]),
+      ),
+    ).toBe(false);
+    expect(
+      shouldBypassConfigStartup(
+        createParsedInvocation(["bun", "cli.ts", "secret", "run", "secrets/token", "TOKEN", "--", "tool", "-v"]),
+      ),
     ).toBe(false);
   });
 
@@ -118,14 +125,14 @@ describe("raw recovery startup", () => {
     // actual process exit code before pinning.
     expect(exitCode, stderr).toBe(1);
     const result = JSON.parse(stdout);
-    // The reported plan is re-inspected AFTER apply: the good file converged
-    // straight to task source v4 in one pass ("skipped", already v4), and
-    // `applied: 1` confirms it was rewritten this run. The bad file is still
-    // "blocked".
+    // The good file converged straight to task source v4 in one pass and is
+    // reported as changed (`applied: 1` confirms it was rewritten this run);
+    // the bad file is still "blocked", and status and blockers are the files'
+    // state after the apply.
     expect(result).toMatchObject({
       status: "blocked",
       applied: 1,
-      taskFiles: { changed: 0, skipped: 1, blocked: 1 },
+      taskFiles: { changed: 1, skipped: 0, blocked: 1 },
     });
     // The good file was migrated all the way to v4 despite the blocked
     // sibling (matched via regex, not a literal contiguous substring, so this

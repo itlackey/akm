@@ -72,3 +72,53 @@ test("protected file UI masks, shows, hides and clears values on navigation with
   await page.getByRole("button", { name: "Hide", exact: true }).click();
   assert.deepEqual(errors, []);
 });
+
+test("a file in a nested secrets folder is named a protected file akm manages only at the top level, with no value", async (t) => {
+  const app = await fixture();
+  t.after(() => app.stop());
+  await fs.mkdir(path.join(app.root, "personal/projects/x/secrets"), { recursive: true });
+  await fs.writeFile(path.join(app.root, "personal/projects/x/secrets/token"), secret);
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+  await page.goto(app.url);
+  await go(
+    page,
+    `/library/files?${new URLSearchParams({ bundle: "personal", path: "projects/x/secrets", file: "projects/x/secrets/token", open: "1" })}`,
+  );
+  await expect(page.getByRole("alert")).toContainText(
+    "protected secret file that akm manages only at the top level of a bundle",
+  );
+  assert.ok(!(await page.content()).includes("synthetic-password"));
+  await expect(page.getByRole("textbox")).toHaveCount(0);
+});
+
+test("in a read-only bundle the protected view shows Edit and Delete disabled, with the sentence akm gives", async (t) => {
+  const app = await launchFixture({
+    configureFixture: async (fixture) => {
+      await fs.mkdir(path.join(fixture.root, "vendor/env"));
+      await fs.writeFile(path.join(fixture.root, "vendor/env/ro.env"), env);
+    },
+  });
+  t.after(() => app.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+  await page.goto(app.url);
+  const reason = (
+    await app.call(`/api/desktop/sensitive?${new URLSearchParams({ bundle: "vendor", file: "env/ro.env" })}`)
+  ).body.data.actions.edit.reason;
+  assert.ok(reason);
+  await go(
+    page,
+    `/library/files?${new URLSearchParams({ bundle: "vendor", path: "env", file: "env/ro.env", open: "1" })}`,
+  );
+  for (const name of ["Edit", "Delete…"]) {
+    const control = page.getByRole("button", { name, exact: true });
+    await expect(control).toHaveAttribute("aria-disabled", "true");
+    await control.click({ force: true });
+  }
+  await expect(page.getByText(reason)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Delete file" })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "File contents", exact: true })).toHaveCount(0);
+});

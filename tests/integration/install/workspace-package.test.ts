@@ -19,7 +19,19 @@ test.skipIf(process.env.AKM_WORKSPACE_PACKAGE_TESTS !== "1")(
         execFileSync(bin, args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000 });
       const packed = JSON.parse(
         run("npm", ["pack", "--json", "--ignore-scripts", "--pack-destination", scratch], ROOT),
-      ) as Array<{ filename: string }>;
+      ) as Array<{ filename: string; files: Array<{ path: string }> }>;
+      const packedPaths = new Set(packed[0]!.files.map((file) => file.path));
+      for (const target of [
+        "dist/api.js",
+        "dist/api-node.mjs",
+        "dist/api.d.ts",
+        "dist/text-import-hook.mjs",
+        "dist/workspace.js",
+        "dist/workspace-node.mjs",
+        "dist/workspace.d.ts",
+      ]) {
+        expect(packedPaths.has(target)).toBe(true);
+      }
       const tarball = path.join(scratch, packed[0]!.filename);
       const installed = path.join(scratch, "node_modules", "akm-cli");
       fs.mkdirSync(installed, { recursive: true });

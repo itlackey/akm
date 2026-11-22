@@ -39,7 +39,7 @@ afterEach(() => {
 
 /**
  * Garbles page bytes past the SQLite header (first 100 bytes), same recipe
- * as tests/index-corruption-recovery.test.ts: `openDatabase()` still succeeds
+ * as tests/integration/index-corruption-recovery.test.ts: `openDatabase()` still succeeds
  * (the header is intact), but any real page read trips SQLITE_CORRUPT —
  * matching what integrity_check is meant to catch.
  */
@@ -66,7 +66,7 @@ describe("runStateDbIntegrityCheck (R0)", () => {
 
     // WAL mode leaves real data in the `-wal` file, not state.db itself —
     // garbling only the main file would corrupt bytes SQLite never reads.
-    // Checkpoint first, matching tests/index-corruption-recovery.test.ts.
+    // Checkpoint first, matching tests/integration/index-corruption-recovery.test.ts.
     const checkpointDb = openDatabase(dbPath);
     checkpointDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     checkpointDb.close();
@@ -141,14 +141,19 @@ describe("getStateDbFreelistInfo (R0)", () => {
       // A big-enough, later-deleted payload so the freed pages dominate the
       // fixed schema/index overhead of a fresh state.db.
       const bigMetadata = { blob: "x".repeat(2000) };
+      // One transaction for the rows and one for the deletes: a commit apiece costs a disk sync each.
+      db.exec("BEGIN");
       for (let i = 0; i < 3000; i++) {
         ids.push(
           insertEventStrict(db, { eventType: "reflect_invoked", ts, ref: `lessons/note-${i}`, metadata: bigMetadata }),
         );
       }
+      db.exec("COMMIT");
+      db.exec("BEGIN");
       for (const id of ids) {
         db.prepare("DELETE FROM events WHERE id = ?").run(id);
       }
+      db.exec("COMMIT");
     } finally {
       db.close();
     }
@@ -191,14 +196,19 @@ describe("vacuumIfReclaimable on state.db (R0)", () => {
       // A big-enough, later-deleted payload so the freed pages dominate the
       // fixed schema/index overhead of a fresh state.db.
       const bigMetadata = { blob: "x".repeat(2000) };
+      // One transaction for the rows and one for the deletes: a commit apiece costs a disk sync each.
+      db.exec("BEGIN");
       for (let i = 0; i < 3000; i++) {
         ids.push(
           insertEventStrict(db, { eventType: "reflect_invoked", ts, ref: `lessons/note-${i}`, metadata: bigMetadata }),
         );
       }
+      db.exec("COMMIT");
+      db.exec("BEGIN");
       for (const id of ids) {
         db.prepare("DELETE FROM events WHERE id = ?").run(id);
       }
+      db.exec("COMMIT");
       const before = getStateDbFreelistInfo(dbPath);
       expect(before.ratio).toBeGreaterThan(STATE_DB_FREELIST_WARN_RATIO);
 
@@ -231,14 +241,19 @@ describe("vacuumIfReclaimable on state.db (R0)", () => {
       const ts = new Date().toISOString();
       const ids: number[] = [];
       const bigMetadata = { blob: "x".repeat(2000) };
+      // One transaction for the rows and one for the deletes: a commit apiece costs a disk sync each.
+      db.exec("BEGIN");
       for (let i = 0; i < 3000; i++) {
         ids.push(
           insertEventStrict(db, { eventType: "reflect_invoked", ts, ref: `lessons/note-${i}`, metadata: bigMetadata }),
         );
       }
+      db.exec("COMMIT");
+      db.exec("BEGIN");
       for (const id of ids) {
         db.prepare("DELETE FROM events WHERE id = ?").run(id);
       }
+      db.exec("COMMIT");
       const before = getStateDbFreelistInfo(dbPath);
       expect(before.ratio).toBeGreaterThan(STATE_DB_FREELIST_WARN_RATIO);
 
@@ -261,14 +276,19 @@ describe("vacuumIfReclaimable on state.db (R0)", () => {
       const ts = new Date().toISOString();
       const ids: number[] = [];
       const bigMetadata = { blob: "x".repeat(2000) };
+      // One transaction for the rows and one for the deletes: a commit apiece costs a disk sync each.
+      db.exec("BEGIN");
       for (let i = 0; i < 3000; i++) {
         ids.push(
           insertEventStrict(db, { eventType: "reflect_invoked", ts, ref: `lessons/note-${i}`, metadata: bigMetadata }),
         );
       }
+      db.exec("COMMIT");
+      db.exec("BEGIN");
       for (const id of ids) {
         db.prepare("DELETE FROM events WHERE id = ?").run(id);
       }
+      db.exec("COMMIT");
       const before = getStateDbFreelistInfo(dbPath);
       expect(before.ratio).toBeGreaterThan(STATE_DB_FREELIST_WARN_RATIO);
 

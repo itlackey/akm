@@ -9,27 +9,34 @@ import { akmRelated } from "../commands/read/related";
 import { akmSearch, narrowSourcesToName, normalizeScopeFilters, parseBeliefFilterMode } from "../commands/read/search";
 import { akmShowUnified } from "../commands/read/show";
 import { parseBundleRef } from "../core/asset/asset-ref";
+import { readFrontmatter } from "../core/asset/frontmatter-edit";
 import { parseMarkdownToc, uniqueHeadingSlugs } from "../core/asset/markdown";
 import { markdownLinkTargets } from "../core/asset/markdown-link-targets";
 import { loadConfig } from "../core/config/config";
+import { defaultExcludedTypes } from "../core/config/schema/search";
 import { resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
 import { type IncludeSelectors, includedTypes, includesProposed } from "../core/include";
 import { projectView, resolveProject } from "../core/projects";
+import { inspectWriteTarget } from "../core/write-source";
 import { readUsableIndex } from "../indexer/index-readiness";
 import type { ScopeFilters } from "../indexer/passes/metadata";
 import { resolveReadSources } from "../indexer/read-preflight";
 import { countBrowseEntries } from "../indexer/search/db-search";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
+import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
 import { countFeedbackBySignal, listFeedbackEventRows } from "../storage/repositories/metrics-repository";
 import { assetImprove } from "./asset-improve";
 import { bundleFileLocation, listBundleFiles } from "./bundle-files";
+import { bundleWriteBlockers, fileActions } from "./file-actions";
 import { readFileRevision, readRecentCommits } from "./git-read";
-import { automaticWriteTarget, capSide, clampLimit, DIFF_SIDE_MAX_CHARS, withReadonlyStateDb } from "./readers";
+import { capSide, clampLimit, DIFF_SIDE_MAX_CHARS, durableRefForPath, withReadonlyStateDb } from "./readers";
 
+export { copyEntry } from "./copy-entry";
 export { graph } from "./graph";
 export { searchMisses } from "./misses";
+export { movedLinks, updateMovedLinks } from "./moved-links";
 
 export interface SearchInput {
   q: string;
@@ -109,26 +116,21 @@ export function projectOverview(input: { project: string }) {
               db,
               readable,
               project.filters,
-              (config.search?.defaultExcludeTypes ?? ["session"]).filter(
-                (type) => !includedTypes(project.include).includes(type),
-              ),
+              defaultExcludedTypes(config).filter((type) => !includedTypes(project.include).includes(type)),
               includesProposed(project.include),
             ),
           undefined,
         )
       : undefined;
-  const writeName = project.write.bundle ?? config.defaultWriteTarget ?? automaticWriteTarget(config)?.name ?? null;
-  const writeSource = writeName === null ? undefined : local.find((source) => source.registryId === writeName);
+  // Where akm would write for this project, and the sentence its write path refuses with (null when it would accept a
+  // write); a write bundle that does not resolve is shown by the name it was given.
+  const write = inspectWriteTarget(config, project.write.bundle);
+  const writeName = write.name ?? project.write.bundle ?? null;
   return {
     project: { ...projectView(project), write: project.write },
     fromImplicit: project.from === undefined,
     preferImplicit: config.projects?.[name]?.prefer === undefined,
-    // `usable`: the bundle is enabled and accepts writes. Null when no write bundle resolves.
-    writeBundle: {
-      name: writeName,
-      implicit: project.write.bundle === undefined,
-      usable: writeName === null ? null : writeSource?.writable === true,
-    },
+    writeBundle: { name: writeName, implicit: project.write.bundle === undefined, writeBlocker: write.blocker },
     bundles: selected.map(({ name: bundle, source }) => {
       const entry = Object.hasOwn(config.bundles ?? {}, bundle) ? config.bundles?.[bundle] : undefined;
       const found = source ? counts?.[readable.indexOf(source)] : undefined;
@@ -144,14 +146,6 @@ export function projectOverview(input: { project: string }) {
       };
     }),
   };
-}
-
-/** The durable `bundle//conceptId` of the indexed asset at `filePath`, the key feedback rows use. */
-function durableRefForPath(filePath: string): string | null {
-  return readUsableIndex((db) => {
-    const id = getEntryIdByFilePath(db, filePath);
-    return id === undefined ? null : getItemRefById(db, id);
-  }, null);
 }
 
 function feedbackFor(durableRef: string | null) {
@@ -189,6 +183,8 @@ export async function show(input: { ref: string }) {
   const shown = await akmShowUnified({ ref, readOnly: true });
   const durableRef = shown.path ? durableRefForPath(shown.path) : null;
   const content = shown.content ?? "";
+  // Where the body starts in the text an asset is read from (content, a command's template, an agent's prompt).
+  const bodyStart = readFrontmatter(shown.content || shown.template || shown.prompt || "").bodyStart;
   const headings = parseMarkdownToc(content).headings;
   const slugs = uniqueHeadingSlugs(headings);
   const links: Record<string, string> = {};
@@ -211,12 +207,29 @@ export async function show(input: { ref: string }) {
       }
     }, undefined);
   }
+  const location = shown.path ? bundleFileLocation(shown.path) : null;
   return {
     redacted: false,
     durableRef,
     bundle: durableRef ? parseBundleRef(durableRef).bundle : null,
     asset: shown,
-    location: shown.path ? bundleFileLocation(shown.path) : null,
+    location,
+    bodyStart,
+    // What akm accepts doing to this asset's file, and why not: the verdicts the file listing gives the same entry.
+    actions:
+      location && shown.path
+        ? fileActions(
+            {
+              bundle: location.bundle,
+              relative: location.path,
+              kind: "file",
+              absolute: shown.path,
+              protected: protectedTypeOf(location.path) !== undefined,
+              assets: durableRef ? [{ ref: durableRef, type: shown.type }] : [],
+            },
+            bundleWriteBlockers(loadConfig(), location.bundle),
+          )
+        : null,
     feedback: feedbackFor(durableRef),
     feedbackRequireReason: loadConfig().feedback?.requireReason !== false,
     links,
@@ -231,7 +244,8 @@ export async function history(input: { ref: string; revision?: string; limit?: n
   if (!source) return { available: false, commits: [] };
   const file = path.relative(source.path, selected.asset.path).split(path.sep).join("/");
   if (file.startsWith("../") || path.isAbsolute(file)) throw new UsageError("Asset path is outside its bundle.");
-  const commits = await readRecentCommits(source.path, clampLimit(input.limit, 30), file);
+  const read = await readRecentCommits(source.path, clampLimit(input.limit, 30), file);
+  const commits = read?.commits ?? null;
   const revision = input.revision;
   if (revision && !commits?.some((commit) => commit.sha === revision))
     throw new UsageError("Choose a revision from this asset's history.");
@@ -241,6 +255,7 @@ export async function history(input: { ref: string; revision?: string; limit?: n
   return {
     available: commits !== null,
     commits: commits ?? [],
+    ...(read?.error ? { error: read.error } : {}),
     ...(diff
       ? {
           diff: {

@@ -9,7 +9,7 @@
  * an external `npm` binary and mutates a (temporary, isolated) global-install
  * layout, so it belongs in the integration target — not the unit target,
  * which must stay hermetic and host-independent. The rest of
- * `tests/package-install.test.ts`'s coverage is pure unit-level logic (string
+ * `tests/integration/package-install.test.ts`'s coverage is pure unit-level logic (string
  * building, rollback bookkeeping via injected fakes) and stays there
  * unchanged; only this test — and the imports it alone needed — moved here.
  * Cost is small (~1.9s solo), so this is a placement/correctness fix, not a

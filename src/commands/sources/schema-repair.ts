@@ -259,6 +259,7 @@ export async function runSchemaRepairPass(
       const proposalResult = createProposal(stashDir, {
         ref: failure.ref,
         source: SCHEMA_REPAIR_SOURCE,
+        sourceRun: `schema-repair-${startMs}`,
         // Key the ledger row by the ref this pass reads it back under.
         attemptedRefs: [failure.ref],
         payload: {

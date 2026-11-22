@@ -25,6 +25,8 @@ export interface SyncOptions {
   writable?: boolean;
   /** Existing writable content root to update in place without changing its durable path. */
   writableRoot?: string;
+  /** The live checkout's content root, named in messages when `writableRoot` is a staging copy of it. */
+  displayRoot?: string;
   /** Leave uncommitted changes to git's own fast-forward protection instead of refusing a dirty worktree. */
   allowLocalChanges?: boolean;
   /** Configured component roots that must still exist in the fetched revision. */

@@ -244,6 +244,8 @@ export interface WorkflowPlan {
   // ── compile-only (never stored) ──
   readonly defaults?: Omit<WorkflowUnitSettings, "retry" | "output" | "env">;
   readonly description?: string;
+  readonly whenToUse?: string;
+  readonly tags?: string[];
   /** Markdown prose before the first step section. */
   readonly preamble?: string;
 }

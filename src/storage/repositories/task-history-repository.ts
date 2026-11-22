@@ -3,10 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Repository for the state.db `task_history` table (per-task run ledger,
- * replaces the old per-task JSONL files). Extracted verbatim from
- * core/state-db.ts — queries unchanged, only relocated behind the repository
- * boundary. Re-exported by core/state-db.ts so existing importers resolve.
+ * Repository for the state.db `task_history` table (per-task run ledger).
+ * Re-exported by core/state-db.ts.
  *
  * @module task-history-repository
  */
@@ -22,21 +20,27 @@ export type TaskHistoryDetail = {
   exitCode?: number | null;
 };
 
+/** Which run of a version 5 task a row is an attempt of, and the step of another run that started it. */
+export interface TaskHistoryRun {
+  id: string;
+  parent?: { task: string; run: string; step: string };
+}
+
 /** Experimental: one step of a `steps:` task run, as recorded in `metadata_json`. */
 export interface TaskHistoryStep {
   name: string;
-  kind: "run" | "prompt" | "task";
+  kind: "run" | "prompt" | "task" | "exec";
   status: "completed" | "failed" | "skipped" | "reused";
   durationMs: number;
   attempts: number;
-  /** First line(s) of the result, scrubbed and clipped. */
-  summary?: string;
   /** Why the step failed. */
   reason?: string;
   /** The bounded result; kept only on a failed run, so `--resume` can reuse it. */
   result?: string;
   /** When a `task:` step's own run started (its own history row). */
   startedAt?: string;
+  /** Set for a step that dispatched an agent: the engine that ran it, and why it failed when it did. Absent on a row written before it was recorded. */
+  agent?: { engine: string; reason?: string };
 }
 
 export interface TaskHistoryMetadata {
@@ -48,6 +52,10 @@ export interface TaskHistoryMetadata {
   steps?: TaskHistoryStep[];
   /** Whether the OS scheduler (`schedule`) or a person or script (`manual`) started the run; absent when not recorded. */
   trigger?: "schedule" | "manual";
+  /** The version 5 run this row is an attempt of; absent for every other task. */
+  run?: TaskHistoryRun;
+  /** The bundle the task was read from; absent on rows written before it was recorded. */
+  bundle?: string;
   /** The process that reserved the attempt; present only while the row is `active`. Absent on rows reserved before it was recorded. */
   owner?: TaskHistoryOwner;
 }
@@ -81,10 +89,9 @@ function validateDetail(value: unknown): asserts value is TaskHistoryDetail | nu
  * Decode the task-history metadata shape.
  *
  * Read-time compatibility shim (mirrors proposals-repository's
- * `storedToChanges`): `metadataVersion` was added in a later release. 58% of
- * a real install's `task_history` rows (8,596/14,801) predate the field
- * entirely, and 88 more carry additive fields (`profile`, `repairReason`)
- * written by prior releases. An absent `metadataVersion` is a LEGACY row, not
+ * `storedToChanges`): `metadataVersion` was added after rows already existed, so
+ * older `task_history` rows lack the field, and some carry additive fields
+ * (`profile`, `repairReason`) written by prior releases. An absent `metadataVersion` is a LEGACY row, not
  * corruption — decode what's present (defaulting the absent `detail` key to
  * `null`) instead of throwing. Unknown keys are ignored rather than
  * hard-rejected, so the next additive field never regresses this again;
@@ -120,6 +127,8 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
   const trigger = parsed.trigger === "schedule" || parsed.trigger === "manual" ? parsed.trigger : undefined;
   validateDetail(detail);
   const steps = decodeSteps(parsed.steps);
+  const run = decodeRun(parsed.run);
+  const bundle = typeof parsed.bundle === "string" ? parsed.bundle : undefined;
   const owner = decodeOwner(parsed.owner);
   const cleanDetail: TaskHistoryDetail | null = detail
     ? {
@@ -136,7 +145,26 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
     ...(engine !== undefined ? { engine } : {}),
     ...(steps !== undefined ? { steps } : {}),
     ...(trigger !== undefined ? { trigger } : {}),
+    ...(run !== undefined ? { run } : {}),
+    ...(bundle !== undefined ? { bundle } : {}),
     ...(owner !== undefined ? { owner } : {}),
+  };
+}
+
+/** Tolerant: a malformed `run` is dropped, never a reason to reject the row. */
+function decodeRun(value: unknown): TaskHistoryRun | undefined {
+  if (!isRecord(value) || typeof value.id !== "string") return undefined;
+  const parent = value.parent;
+  const named =
+    isRecord(parent) &&
+    typeof parent.task === "string" &&
+    typeof parent.run === "string" &&
+    typeof parent.step === "string";
+  return {
+    id: value.id,
+    ...(named
+      ? { parent: { task: parent.task as string, run: parent.run as string, step: parent.step as string } }
+      : {}),
   };
 }
 
@@ -152,7 +180,7 @@ function decodeOwner(value: unknown): TaskHistoryOwner | undefined {
 }
 
 const STEP_STATUSES = new Set(["completed", "failed", "skipped", "reused"]);
-const STEP_KINDS = new Set(["run", "prompt", "task"]);
+const STEP_KINDS = new Set(["run", "prompt", "task", "exec"]);
 
 /** Tolerant: a malformed `steps` value is dropped, never a reason to reject the row. */
 function decodeSteps(value: unknown): TaskHistoryStep[] | undefined {
@@ -167,10 +195,17 @@ function decodeSteps(value: unknown): TaskHistoryStep[] | undefined {
       status: entry.status as TaskHistoryStep["status"],
       durationMs: typeof entry.durationMs === "number" ? entry.durationMs : 0,
       attempts: typeof entry.attempts === "number" ? entry.attempts : 1,
-      ...(typeof entry.summary === "string" ? { summary: entry.summary } : {}),
       ...(typeof entry.reason === "string" ? { reason: entry.reason } : {}),
       ...(typeof entry.result === "string" ? { result: entry.result } : {}),
       ...(typeof entry.startedAt === "string" ? { startedAt: entry.startedAt } : {}),
+      ...(isRecord(entry.agent) && typeof entry.agent.engine === "string"
+        ? {
+            agent: {
+              engine: entry.agent.engine,
+              ...(typeof entry.agent.reason === "string" ? { reason: entry.agent.reason } : {}),
+            },
+          }
+        : {}),
     });
   }
   return steps;
@@ -245,13 +280,16 @@ export function finalizeTaskHistoryAttempt(db: Database, row: TaskHistoryRow): b
   return Number(result.changes) === 1;
 }
 
-/** Mark a still-`active` attempt `interrupted`: its owner is provably gone and it never recorded a finish. */
-export function markTaskHistoryAttemptInterrupted(db: Database, id: number): boolean {
+/**
+ * Mark a still-`active` attempt `interrupted`: its owner is provably gone and it never recorded a finish.
+ * `metadata_json` replaces the row's when given: the step the run was at, and why it ended.
+ */
+export function markTaskHistoryAttemptInterrupted(db: Database, id: number, metadataJson?: string): boolean {
   const result = db
     .prepare(
-      "UPDATE task_history SET status = 'interrupted' WHERE id = ? AND status = 'active' AND completed_at IS NULL",
+      "UPDATE task_history SET status = 'interrupted', metadata_json = COALESCE(?, metadata_json) WHERE id = ? AND status = 'active' AND completed_at IS NULL",
     )
-    .run(id);
+    .run(metadataJson ?? null, id);
   return Number(result.changes) === 1;
 }
 
@@ -291,41 +329,14 @@ export function upsertTaskHistory(db: Database, row: TaskHistoryRow): void {
 }
 
 /**
- * Look up a task history row by task_id. Returns undefined when not found.
- */
-/**
- * Return the most recent run for a given task_id, or undefined if no runs exist.
- */
-export function getTaskHistory(db: Database, taskId: string): TaskHistoryRow | undefined {
-  return db
-    .prepare(
-      `SELECT id, task_id, status, started_at, completed_at, failed_at, log_path,
-              target_kind, target_ref, metadata_json
-       FROM task_history WHERE task_id = ? ORDER BY started_at DESC, id DESC LIMIT 1`,
-    )
-    .get(taskId) as TaskHistoryRow | undefined;
-}
-
-/**
- * Return all runs for a given task_id, newest first.
- */
-export function getTaskHistoryRuns(db: Database, taskId: string, limit = 50): TaskHistoryRow[] {
-  return db
-    .prepare(
-      `SELECT id, task_id, status, started_at, completed_at, failed_at, log_path,
-              target_kind, target_ref, metadata_json
-       FROM task_history WHERE task_id = ? ORDER BY started_at DESC, id DESC LIMIT ?`,
-    )
-    .all(taskId, limit) as TaskHistoryRow[];
-}
-
-/**
  * Query task history rows by started_at range and/or status.
  */
 export function queryTaskHistory(
   db: Database,
   options: {
     taskId?: string;
+    /** Only rows of this bundle: those that recorded it, and those that recorded none (rows written before it was recorded, whose bundle is not known). */
+    bundle?: string;
     since?: string;
     until?: string;
     status?: string;
@@ -339,6 +350,10 @@ export function queryTaskHistory(
   if (options.taskId) {
     conditions.push("task_id = ?");
     params.push(options.taskId);
+  }
+  if (options.bundle) {
+    conditions.push("(json_extract(metadata_json, '$.bundle') = ? OR json_extract(metadata_json, '$.bundle') IS NULL)");
+    params.push(options.bundle);
   }
   if (options.since) {
     conditions.push("started_at >= ?");
@@ -388,11 +403,11 @@ export interface TaskIntervalRow {
  * predicate is fixed because the only caller (commands/health.ts
  * `loadTaskIntervals`) builds wall-time intervals for the improve cron task.
  *
- * Owns the SQL formerly inlined in commands/health.ts. Note the bound is
+ * Owns the SQL behind commands/health.ts. Note the bound is
  * EXCLUSIVE on the upper end (`started_at < ?`) — callers pass an already
  * widened window; this helper does not widen.
  *
- * Connection-lifetime rule (WS5): `.all()` materializes a plain array before
+ * Connection-lifetime rule: `.all()` materializes a plain array before
  * returning.
  */
 export function queryCompletedTaskIntervals(db: Database, since: string, until?: string): TaskIntervalRow[] {

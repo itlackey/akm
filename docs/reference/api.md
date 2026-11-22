@@ -120,15 +120,17 @@ are ignored) and returns plain JSON-safe data without a CLI envelope; failures r
 
 | Namespace | Operations |
 | --- | --- |
-| `assets` | `search`, `projectOverview`, `searchMisses`, `show`, `history`, `related`, `improvement`, `bundleFiles` |
-| `documents` | `readSource`, `save`, `createKnowledge`, `copy`, `retire` |
+| `assets` | `search`, `projectOverview`, `searchMisses`, `show`, `history`, `related`, `improvement`, `graph`, `bundleFiles`, `copyEntry`, `movedLinks`, `updateMovedLinks` |
+| `documents` | `readSource`, `save`, `createKnowledge`, `createFile`, `check`, `frontmatter`, `applyFrontmatter`, `copy`, `retire` |
 | `proposals` | `list`, `get`, `recentChanges`, `accept`, `reject`, `revert`, `reopen`, `acceptMany`, `rejectMany` |
-| `bundles` | `list`, `add`, `remove`, `update`, `rename`, `setSettings` |
+| `bundles` | `list`, `add`, `remove`, `update`, `index`, `rename`, `setSettings`, `commit` |
 | `config` | `get`, `change`, `changeProjects`, `saveConnection`, `removeConnection`, `saveEmbedding` |
 | `feedback` | `record` |
 | `setup` | `detect`, `apply` (first-run setup: the library, and the agent programs akm may use; `akm bundle create`, `akm setup --yes --harness`) |
 | `sensitive` | `describe`, `readValue`, `save`, `remove` (env files and secrets; only `readValue` returns a value) |
-| `activity` | `overview`, `pulse`, `health`, `retrievalTrend`, `improveImpact`, `improveRun`, `taskHistory`, `meta` |
+| `activity` | `overview`, `pulse`, `health`, `retrievalTrend`, `improveImpact`, `improveRun`, `taskHistory`, `taskRunLog`, `taskRuns`, `workflowRuns`, `workflowRun`, `events`, `reportUsage`, `meta` |
+| `tasks` | `list`, `enable`, `disable` |
+| `backups` | `prune` |
 
 Also exported: `AkmError`, `UsageError`, `NotFoundError`, `ConfigError`, `TransientError`, the
 `AkmErrorKind` type, `CONFLICT_CODES`, `scrubUrlCredentials` and `indexWrittenAssets(bundleRoot,
@@ -189,7 +191,7 @@ and imports the public namespace under genuine Node and Bun. Every fixture
 has isolated HOME/XDG/AKM paths before import; it exercises reads, subprocess
 creation, conditional save/conflict, feedback/proposal revert, configuration,
 env/secret writes, managed clone and manual retire/revert without a live bundle or model endpoint.
-Set `AKM_TEST_NODE_BIN` to a real Node >=22 executable if `node` on PATH is
+Set `AKM_TEST_NODE_BIN` to a real Node >=22.15 executable if `node` on PATH is
 a Bun compatibility shim. The test is skipped unless
 `AKM_WORKSPACE_PACKAGE_TESTS=1` (the target sets it); it fails on a missing
 build and runs after building in CI.

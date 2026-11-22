@@ -47,9 +47,8 @@ const ctx: ValidateContext = {
 };
 
 describe("opencode adapter — metadata", () => {
-  test("id / version / extensions", () => {
+  test("id / extensions", () => {
     expect(opencodeAdapter.id).toBe("opencode");
-    expect(opencodeAdapter.version).toBe("0.9.0");
     expect(opencodeAdapter.extensions).toEqual([".md"]);
   });
 });

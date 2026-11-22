@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { consumeConfigFileFlag, type FlagScanCommand } from "../../src/cli/unknown-flags";
+import { createParsedInvocation } from "../../src/cli/invocation";
+import { consumeConfigFileFlag as consume, type FlagScanCommand } from "../../src/cli/unknown-flags";
 import { parseTaskInputFlags } from "../../src/commands/tasks/tasks-cli";
 import { parseWorkflowParameterFlags } from "../../src/commands/workflow-cli";
+
+const consumeConfigFileFlag = (root: FlagScanCommand, args: readonly string[]) =>
+  consume(root, createParsedInvocation(["bun", "cli.ts", ...args]));
 
 const root: FlagScanCommand = {
   args: { config: { type: "string" }, quiet: { type: "boolean", alias: "q" } },

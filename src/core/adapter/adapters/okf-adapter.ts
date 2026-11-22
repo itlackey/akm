@@ -45,7 +45,7 @@ import type {
   OkfVerifiedEntry,
   ValidateContext,
 } from "../types";
-import { hashContent, nonEmptyString, RESERVED_FILES, readTags, runBaseValidateChecks } from "./shared";
+import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
 /** v0.2 frontmatter keys consumed into first-class fields below (§0.1) — excluded from the generic `documentJson` extras fold alongside the v0.1 five, so nothing is duplicated between a first-class field and the opaque extras bag. */
 const CONSUMED_FRONTMATTER_KEYS = [
@@ -269,6 +269,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
 
 async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
+  const { check } = createBaseChecker(c.root, ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
@@ -277,15 +278,11 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
     const relPath = toPosix(change.path);
     const fileName = relPath.split("/").pop() ?? relPath;
     const reserved = isReservedFileName(fileName);
-    const parsed = parseFrontmatter(raw);
+    const parsed = parseForValidate(raw);
 
     // Base checks shared with native AKM formats. OKF's timestamp is optional,
-    // so the AKM-specific freshness diagnostic is removed unconditionally.
-    const base = await runBaseValidateChecks(relPath, parsed, c.root, ctx);
-    for (const diag of base) {
-      if (diag.issue === "missing-updated") continue;
-      diagnostics.push(diag);
-    }
+    // so the AKM-specific freshness rule does not apply.
+    diagnostics.push(...check(relPath, parsed, ["missing-updated"]));
 
     if (reserved) continue; // reserved files are not concepts — no type / link checks
 

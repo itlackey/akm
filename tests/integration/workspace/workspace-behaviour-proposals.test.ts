@@ -50,8 +50,7 @@ describe("proposal writes", () => {
 
     expect(commitCount()).toBe(before + 1);
     expect(lastSubject()).toBe(`akm accept: reflect ${id.slice(0, 8)} stash//lessons/rg`);
-    expect(result.commit).toMatchObject({ subject: lastSubject() });
-    expect(result.commit.sha).toBe(git(ctx.storage.stashDir, ["rev-parse", "HEAD"]).trim());
+    expect(result.commit).toEqual({ committed: true, sha: git(ctx.storage.stashDir, ["rev-parse", "HEAD"]).trim() });
 
     expect((await out(proposals.get({ id }))).proposal.status).toBe("accepted");
     expect((await out(proposals.list({ status: "pending" }))).totalCount).toBe(0);
@@ -103,8 +102,46 @@ describe("proposal writes", () => {
 
     expect(commitCount()).toBe(before + 1);
     expect(lastSubject()).toBe("akm proposal accept: 3 accepted (reflect 3)");
-    expect(result.commit).toMatchObject({ subject: lastSubject() });
+    const head = git(ctx.storage.stashDir, ["rev-parse", "HEAD"]).trim();
+    expect(result.results.filter((r: Json) => r.ok).map((r: Json) => r.commit)).toEqual(
+      Array(3).fill({ committed: true, sha: head }),
+    );
+    expect(result.results[1].commit).toBeUndefined();
     expect((await out(proposals.list({ status: "pending" }))).totalCount).toBe(0);
+  });
+
+  describe("an accept reports what its commit came to, as the accept made it", () => {
+    test("a bundle that is not a Git repository", async () => {
+      await seed();
+      const id = propose("lessons/rg");
+      fs.rmSync(path.join(ctx.storage.stashDir, ".git"), { recursive: true, force: true });
+      expect((await out(proposals.accept({ id }))).commit).toEqual({ committed: false, reason: "not-git" });
+    });
+
+    test("every written path ignored by .gitignore", async () => {
+      await seed();
+      const id = propose("lessons/rg");
+      fs.writeFileSync(path.join(ctx.storage.stashDir, ".gitignore"), "lessons/\n");
+      expect((await out(proposals.accept({ id }))).commit).toEqual({ committed: false, reason: "ignored" });
+    });
+
+    test("a commit that git refuses is failed, with the error, and the accept stands", async () => {
+      await seed();
+      const id = propose("lessons/rg");
+      const objects = path.join(ctx.storage.stashDir, ".git", "objects");
+      const before = commitCount();
+      git(ctx.storage.stashDir, ["config", "core.hooksPath", "/nonexistent"]);
+      fs.chmodSync(objects, 0o555);
+      try {
+        const result = await out(proposals.accept({ id }));
+        expect(result.commit).toMatchObject({ committed: false, reason: "failed" });
+        expect(result.commit.error).toEqual(expect.any(String));
+        expect(result.proposal.status).toBe("accepted");
+        expect(commitCount()).toBe(before);
+      } finally {
+        fs.chmodSync(objects, 0o755);
+      }
+    });
   });
 
   test("batch input is bounded: 1 to 200 ids, strings only", async () => {
@@ -115,7 +152,7 @@ describe("proposal writes", () => {
     }
     await expectUsage(() => accept(Array.from({ length: 201 }, (_, i) => `id-${i}`)));
     const full = await out(accept(Array.from({ length: 200 }, (_, i) => `id-${i}`)));
-    expect(full).toMatchObject({ accepted: 0, failed: 200, commit: null });
+    expect(full).toMatchObject({ accepted: 0, failed: 200 });
   });
 
   test("reject records the reason and leaves the asset and the repository alone", async () => {

@@ -276,18 +276,18 @@ Unique index `idx_task_history_run` on `(task_id, started_at)`; indexes on
 
 #### `usage_events`
 
-Search, show, curate, and feedback telemetry. It lives in `state.db` so
+Search, show, curate, feedback, and rules telemetry. It lives in `state.db` so
 rebuilding `index.db` does not discard it.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
-| `event_type` | TEXT NOT NULL | `search`, `show`, `curate`, `feedback` |
+| `event_type` | TEXT NOT NULL | `search`, `show`, `curate`, `feedback`, `rules` |
 | `query` | TEXT | The search or curate query; NULL for show and feedback |
 | `entry_id` | INTEGER | `index.db` entry id; re-linked after a rebuild. Null at write time on search, curate and nested command/persona read events, which record only `entry_ref`; the next index fills it from `entry_ref`. Utility scores aggregate by `entry_ref`. Deleting an entry also deletes its events that carry no `entry_id` yet, matched by `entry_ref` |
 | `entry_ref` | TEXT | Stable ref string |
 | `signal` | TEXT | `positive` or `negative` for feedback |
-| `metadata` | TEXT | JSON. A `show` event carries `project` (the project in force when it ran; absent on events recorded before project attribution and when none applied), which `akm doctor metrics assets` counts by |
+| `metadata` | TEXT | JSON. A `show` event carries `project` (the project in force when it ran; absent on events recorded before project attribution and when none applied), which `akm doctor metrics assets` counts by. A `rules` event (one per `akm rules` call, no `entry_ref`) carries `project`, `bundles`, `refs` (durable refs) and `chars` |
 | `source` | TEXT NOT NULL DEFAULT 'user' | `user`, `improve`, `task`, `audit`, `unknown` (`AKM_EVENT_SOURCE` sets it for child processes) |
 | `created_at` | TEXT NOT NULL | |
 
@@ -402,7 +402,7 @@ A bundle recognized by the `llm-wiki` adapter (a root with `schema.md` and
 |---|---|
 | `$DATA/akm.lock.lck` | Sentinel that serializes writes to `akm.lock`. |
 | `$DATA/index.db.write.lock` | Asset-mutation lease: serializes writes to authored content (`remember`, `import`, source updates, proposal apply). Reclaimed only when the holder PID is dead (`src/indexer/index-writer-lock.ts`). |
-| `$DATA/index.rebuild.lock` | Taken by every index build (`akm index`, `setup`, `bundle add`/`update`/`remove`, `improve`'s pre-run index). A plain `akm index` that finds it held waits for the build (10 minutes at most); `akm index --skip-if-locked` and `improve` skip instead. Reads never take it. Reclaimed only when the holder PID is dead (`src/indexer/index-rebuild-lock.ts`, `src/indexer/index-build.ts`). |
+| `$DATA/index.rebuild.lock` | Taken by every index build (`akm index`, `setup`, `bundle add`/`update`/`remove`, `improve`'s pre-run index). Any command that finds it held skips its index build and carries on (`akm index` exits 0 with `skipped`). Reads never take it. Reclaimed only when the holder PID is dead (`src/indexer/index-rebuild-lock.ts`, `src/indexer/index-build.ts`). |
 | `$STATE/locks/<stash>/improve.lock` | One `akm improve` run per bundle. JSON `{ pid, startedAt, lockId }`. A lock is reclaimed only when its holder PID is dead; it does not expire by age (`src/commands/improve/locks.ts`, `src/core/run-lock.ts`). |
 | `$STATE/locks/scheduler.lock` | Serializes scheduler mutations (`withSchedulerLock`, `src/tasks/scheduler-lock.ts`). |
 | `$DATA/workflow-run-locks/<run-id>.lock` | One engine per workflow run; same PID-liveness reclaim (`workflowRunLockPath`, `src/workflows/exec/run-workflow.ts`). |

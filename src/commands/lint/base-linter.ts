@@ -27,9 +27,9 @@
 //   - non-existent refs
 //   - script paths with explicit extensions
 //
-// As of 0.9 the path mapping in `refToRelPath` is DERIVED FROM THE PLACEMENT
+// The path mapping in `refToRelPath` is DERIVED FROM THE PLACEMENT
 // SPECS (`assetPathForName` in `src/core/asset/asset-placement.ts`) rather than
-// hand-encoded, so it can no longer drift from the placement layer. `env`/
+// hand-encoded, so it cannot drift from the placement layer. `env`/
 // `secret`, `script`, and `task` refs are path-resolved.
 // ----------------------------------------------------------------------------
 
@@ -50,14 +50,16 @@ import {
   spliceFrontmatterLine,
 } from "../../core/asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../core/asset/frontmatter-lint";
-import { isSkillPath } from "../../core/asset/lint-text";
+import { ruleApplies } from "../../core/asset/lint-text";
 import { isArchivedRelPath } from "../../core/asset/memory-archive";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { findStalePaths } from "../../core/asset/stale-path";
 import { localDateStamp } from "../../core/common";
 import { containsRedactedContent, REDACTED_CONTENT_MARKER } from "../../core/content-safety";
 import { DERIVED_SUFFIX } from "../../core/recognition-util";
+import { DECLARED_REF_FRONTMATTER_KEYS, declaredLinkTarget } from "../../indexer/links/declared-links";
 import { findFenceRegions } from "./markdown-insertion";
+import { rewriteMovedLinks } from "./moved-refs";
 import type { LintContext, LintIssue } from "./types";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -147,10 +149,6 @@ function fixUnquotedColon(raw: string): string | null {
   return null;
 }
 
-function checkMissingUpdated(relPath: string, data: Record<string, unknown>, frontmatterText: string | null): boolean {
-  return frontmatterText !== null && !("updated" in data) && !isSkillPath(relPath);
-}
-
 function fixMissingUpdated(raw: string, mtime: Date): string {
   return spliceFrontmatterLine(raw, `updated: ${localDateStamp(mtime)}`) ?? raw;
 }
@@ -222,7 +220,7 @@ export function refExistsInAnyStash(relPath: string, refType: string, refName: s
   for (const root of stashRoots) {
     if (resolveRefPathInStash(relPath, refType, refName, root) !== null) return true;
   }
-  // #884: an asset `analyzeMemoryCleanup` pruned, or (alpha.9) a consolidate
+  // #884: an asset `analyzeMemoryCleanup` pruned, or a consolidate
   // pair-pass `retire` proposal or a promotion's source memory retired, was
   // ARCHIVED, not deleted — its bytes and identity live on under
   // `.akm/memory-cleanup/archive`. Inbound refs to it are satisfied, not
@@ -258,8 +256,7 @@ function refPathCandidates(refType: string, typeDir: string, refName: string): s
  * resolves once archived.
  *
  * Originally memory-only (#884: only `.derived` memories were ever pruned).
- * 0.9.17-alpha.9 generalized `archiveCleanupCandidate` to any memory,
- * knowledge or lesson file (a consolidate pair-pass `retire` proposal, or an
+ * `archiveCleanupCandidate` also archives any memory, knowledge or lesson file (a consolidate pair-pass `retire` proposal, or an
  * accepted promotion's source memory), so this must check every type, not
  * just `memory` — otherwise an xref to a retired knowledge or lesson asset
  * reports `missing-ref` even though it resolves fine through the tombstone.
@@ -332,12 +329,17 @@ function localRefMissingRelPath(refType: string, refName: string, allRoots: stri
 }
 
 /**
- * 0.9.0 grammar recognition: fully-qualified `bundle//conceptId` body-refs
+ * Grammar recognition: fully-qualified `bundle//conceptId` body-refs
  * (`BUNDLE_REF_RE`, the anchored prose form). The conceptId is
  * is checked on disk by {@link classifyConceptRef}; a conceptId whose leading
  * segment names no known stash-subdir is not a local asset ref and is skipped (foreign-adapter / cross-bundle prose).
  */
-function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: string; resolvedRelPath: string }> {
+function scanBundleRefs(
+  scanBody: string,
+  allRoots: string[],
+  movedConcepts: MovedConcepts,
+  bundleRoots: ReadonlyMap<string, string>,
+): Array<{ ref: string; resolvedRelPath: string }> {
   const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
   const re = new RegExp(BUNDLE_REF_RE.source, BUNDLE_REF_RE.flags);
   let match: RegExpExecArray | null;
@@ -347,10 +349,26 @@ function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: stri
     if (token.includes("$(") || token.includes("${") || token.includes("::")) continue;
     const boundary = token.indexOf("//");
     if (boundary < 0) continue;
-    const found = classifyConceptRef(token.slice(boundary + 2), allRoots);
+    const found = classifyConceptRef(
+      token.slice(boundary + 2),
+      rootsOfBundle(token.slice(0, boundary), allRoots, bundleRoots),
+      movedConcepts,
+    );
     if (found !== null) missing.push({ ref: token, resolvedRelPath: found });
   }
   return missing;
+}
+
+/** The concept ids some recorded move left; asked only of a ref that did not resolve. */
+type MovedConcepts = { has(concept: string): boolean };
+
+const NO_CONCEPTS: MovedConcepts = new Set<string>();
+const NO_BUNDLES: ReadonlyMap<string, string> = new Map();
+
+/** A qualified ref is checked in the bundle it names; a bundle the config does not name is checked as an unqualified ref is. */
+function rootsOfBundle(bundle: string, allRoots: string[], bundleRoots: ReadonlyMap<string, string>): string[] {
+  const root = bundleRoots.get(bundle);
+  return root === undefined ? allRoots : [root];
 }
 
 /**
@@ -362,12 +380,30 @@ function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: stri
  * stash folder is foreign-adapter / cross-bundle prose and is skipped. Drops a
  * trailing `#fragment` (export selector) before mapping.
  */
-function classifyConceptRef(rawConceptId: string, allRoots: string[]): string | null {
+function classifyConceptRef(
+  rawConceptId: string,
+  allRoots: string[],
+  movedConcepts: MovedConcepts = NO_CONCEPTS,
+  declared = false,
+): string | null {
   const conceptId = rawConceptId.split("#", 1)[0]!;
   const legacy = legacyTypeSlugParts(conceptId);
   if (legacy !== undefined) return localRefMissingRelPath(legacy.type, legacy.name, allRoots);
   const slash = conceptId.indexOf("/");
-  if (slash <= 0 || !stashDirNames().includes(conceptId.slice(0, slash))) return null;
+  if (slash <= 0 || !stashDirNames().includes(conceptId.slice(0, slash))) {
+    // What an asset declares as a ref is one wherever it points: it must exist as a file of that concept id.
+    if (declared) {
+      const files = [`${conceptId}.md`, ...filesForRef("", conceptId)];
+      const found = allRoots.some((root) =>
+        files.some((file) => fs.existsSync(path.join(root, file)) || isArchivedRelPath(file, root)),
+      );
+      return found ? null : `${conceptId}.md`;
+    }
+    // A path ref outside the type folders is checked only when the index recorded a move away from it.
+    const gone =
+      !allRoots.some((root) => fs.existsSync(path.join(root, `${conceptId}.md`))) && movedConcepts.has(conceptId);
+    return gone ? `${conceptId}.md` : null;
+  }
   if (isNonRefName(conceptId.slice(slash + 1))) return null;
   const spellings = [conceptId, conceptId.slice(slash + 1)];
   // A memory's `<name>.derived.md` child also reaches an edge to its parent (#882).
@@ -385,8 +421,8 @@ function classifyConceptRef(rawConceptId: string, allRoots: string[]): string | 
 
 /**
  * Read-only fallback for the retired `type:slug` xref grammar (see
- * resolve-ref.ts Q-02 — the write boundary no longer emits or accepts it).
- * Stash content written before that retirement still carries it in frontmatter
+ * resolve-ref.ts — the write boundary neither emits nor accepts it).
+ * Older stash content may still carry it in frontmatter
  * `xrefs:` lists, and the conceptId check returns
  * `null` for it, so without this it was silently skipped rather than
  * validated (#882). `refToRelPath`/`refExistsInAnyStash` already key off a bare
@@ -405,7 +441,7 @@ function legacyTypeSlugParts(rawConceptId: string): { type: string; name: string
 /**
  * Returns an array of {ref, resolvedRelPath} for every local AKM ref in the
  * PROSE body that does not resolve to a real file under any of the provided
- * stash roots. Recognizes the 0.9.0 fully-qualified `bundle//conceptId` grammar
+ * stash roots. Recognizes the fully-qualified `bundle//conceptId` grammar
  * ({@link scanBundleRefs}). Bare short conceptIds are NOT refs in prose (D-R3) —
  * those are recognized only in the ref-list channels
  * ({@link checkMissingRefsInList}).
@@ -414,11 +450,13 @@ function checkMissingRefs(
   body: string,
   stashRoot: string,
   extraStashRoots: string[] = [],
+  movedConcepts: MovedConcepts = NO_CONCEPTS,
+  bundleRoots: ReadonlyMap<string, string> = NO_BUNDLES,
 ): Array<{ ref: string; resolvedRelPath: string }> {
   const allRoots = [stashRoot, ...extraStashRoots];
   // C1: Strip fenced code blocks so example refs inside ``` are not flagged.
   const scanBody = stripFencedBlocks(body);
-  return dedupeMissing(scanBundleRefs(scanBody, allRoots));
+  return dedupeMissing(scanBundleRefs(scanBody, allRoots, movedConcepts, bundleRoots));
 }
 
 /**
@@ -426,15 +464,18 @@ function checkMissingRefs(
  * `xrefs:` / `supersededBy:` / `contradictedBy:`) where EACH value is a whole
  * ref, not prose. Unlike the body scan, a bare short conceptId (`memories/foo`)
  * IS a ref here (the value's whole purpose is to name one asset), so the flipped
- * short-conceptId frontmatter the 0.9.0 output emits is no longer invisible.
+ * short-conceptId frontmatter the current output emits is no longer invisible.
  * Recognizes, per value:
  *   - fully-qualified `bundle//conceptId`;
  *   - bare short `conceptId` (`<stash-subdir>/<name>`).
  */
 function checkMissingRefsInList(
   values: string[],
+  ownerRelPath: string,
   stashRoot: string,
   extraStashRoots: string[] = [],
+  movedConcepts: MovedConcepts = NO_CONCEPTS,
+  bundleRoots: ReadonlyMap<string, string> = NO_BUNDLES,
 ): Array<{ ref: string; resolvedRelPath: string }> {
   const allRoots = [stashRoot, ...extraStashRoots];
   const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
@@ -442,19 +483,20 @@ function checkMissingRefsInList(
     const value = raw.trim();
     if (!value || value.includes("$(") || value.includes("${") || value.includes("::")) continue;
     const boundary = value.indexOf("//");
-    if (boundary >= 0) {
-      // Qualified: `bundle//conceptId` (0.9.0). A colon in the tail marks a
-      // legacy/remote `origin//type:name` — not the new grammar, so skip it.
-      const tail = value.slice(boundary + 2);
-      if (tail.includes(":")) continue;
-      const rel = classifyConceptRef(tail, allRoots);
-      if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
-      continue;
-    }
-    // Un-prefixed: a 0.9.0 short `conceptId`. (Post-Chunk-8 the durable
-    // frontmatter xref channel is conceptId-spelled — the legacy `type:name`
-    // ref-list arm is retired.)
-    const rel = classifyConceptRef(value, allRoots);
+    // A colon in the tail of a qualified value marks a legacy/remote `origin//type:name`, not the grammar.
+    if (boundary >= 0 && value.slice(boundary + 2).includes(":")) continue;
+    // The retired `type:slug` spelling is read as it always was; every other value is a ref as the index reads it.
+    const target: { bundle?: string; conceptId: string } | undefined =
+      boundary < 0 && legacyTypeSlugParts(value) !== undefined
+        ? { conceptId: value }
+        : declaredLinkTarget(value, ownerRelPath.replace(/\\/g, "/").replace(/\.md$/i, ""));
+    if (target === undefined) continue;
+    const rel = classifyConceptRef(
+      target.conceptId,
+      target.bundle === undefined ? allRoots : rootsOfBundle(target.bundle, allRoots, bundleRoots),
+      movedConcepts,
+      true,
+    );
     if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
   }
   return dedupeMissing(missing);
@@ -477,21 +519,7 @@ function dedupeMissing(
 // ── frontmatter refs ─────────────────────────────────────────────────────────
 
 /**
- * Frontmatter keys that carry cross-reference lists per the stash
- * organization conventions: `xrefs:` (provenance / associative links),
- * `supersededBy:` and `contradictedBy:` (belief-state correction links).
- * The missing-ref check validates each of these in ADDITION to the body /
- * `refs:` scan — they are the channel the conventions mandate, and a rename
- * would otherwise dangle them silently.
- *
- * `sources:` is deliberately excluded (non-wiki `sources:` was rejected as a
- * typed channel; wiki `sources:` is checked by lintWiki). `evidenceSources:` is
- * excluded because it can point at merged-away or pruned assets.
- */
-const XREF_FRONTMATTER_KEYS = ["xrefs", "supersededBy", "contradictedBy"] as const;
-
-/**
- * The belief-graph subset of {@link XREF_FRONTMATTER_KEYS} — the only channels
+ * The belief-graph subset of {@link DECLARED_REF_FRONTMATTER_KEYS} — the only channels
  * `--prune-dangling-edges` will repair (#884). Typed as `readonly string[]` so
  * `.includes` accepts any xref key without a cast.
  */
@@ -626,11 +654,9 @@ function parseInnerFrontmatterBlock(body: string): Record<string, unknown> | nul
  * The cross-type checks every asset linter runs first: `unquoted-colon`,
  * `missing-updated`, `stale-path`, and `missing-ref`.
  *
- * akm 0.9.0 chunk-3 (plan §12): this was the `BaseLinter.runBaseChecks`
- * protected method every per-type linter class inherited. Those classes are
- * gone — the format-generic checks live here as ONE shared function (this), and
- * the per-`type` extra rules moved to the `akm` adapter's `validate`
- * (`core/adapter/adapters/akm-lint.ts`). The live `akmLint` command
+ * The format-generic checks live here as ONE shared function, and the
+ * per-`type` extra rules live in the `akm` adapter's `validate`
+ * (`core/adapter/adapters/akm-lint.ts`). The `akmLint` command
  * (`commands/lint/index.ts`) calls this directly, then appends the adapter's
  * per-type findings.
  *
@@ -639,8 +665,8 @@ function parseInnerFrontmatterBlock(body: string): Record<string, unknown> | nul
  * `ctx.raw` is updated in place so a caller can re-parse the post-fix content.
  * A failed flush (read-only file, full disk) DOWNGRADES the optimistic
  * `fixed: true` findings this call made to `fixed: "failed"` rather than
- * throwing — an uncaught throw here used to kill the whole sweep and hide
- * which earlier files had already been rewritten (issue #761).
+ * throwing — an uncaught throw here would kill the whole sweep and hide
+ * which earlier files had already been rewritten.
  */
 export function runBaseChecks(ctx: LintContext): LintIssue[] {
   const issues: LintIssue[] = [];
@@ -649,8 +675,8 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
   /** Findings whose `fixed: true` is only true once the flush below succeeds. */
   const pendingFixes: LintIssue[] = [];
 
-  const lintSkip = ctx.lintSkip ?? [];
-  const shouldRun = (issueType: string) => !lintSkip.includes(issueType);
+  const shouldRun = (rule: string) =>
+    ruleApplies(rule, { relPath: ctx.relPath, llmWiki: ctx.llmWiki, skip: ctx.lintSkip });
 
   if (shouldRun("redacted-content") && containsRedactedContent(stripQuotedExamples(currentRaw))) {
     issues.push({
@@ -698,7 +724,7 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
   } // end shouldRun("unquoted-colon")
 
   // ── 2. missing-updated ─────────────────────────────────────────────────
-  if (shouldRun("missing-updated") && checkMissingUpdated(ctx.relPath, ctx.data, ctx.frontmatter)) {
+  if (shouldRun("missing-updated") && ctx.frontmatter !== null && !("updated" in ctx.data)) {
     if (ctx.fix) {
       let mtime: Date;
       try {
@@ -729,8 +755,8 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
   /**
    * Flush accumulated mutations to disk. Called after the fixable checks above
    * AND again at the very end, because the `missing-ref` section below can also
-   * mutate (`--prune-dangling-edges`, #884) and used to run PAST this point —
-   * its edits were computed and then silently dropped.
+   * mutate (`--prune-dangling-edges`, #884) and runs after the first flush —
+   * its edits must not be silently dropped.
    *
    * Mirrors the two stub-delete call sites in `commands/lint/index.ts`
    * (`appendMemoryStubIssue`/`appendWorkflowStubIssue`), which already report
@@ -812,21 +838,65 @@ function runMissingRefChecks(
   // refs that were valid at capture time but later removed from the
   // stash.
   if (!shouldRun("missing-ref")) return { issues, raw, modified };
+  const allRoots = [ctx.stashRoot, ...(ctx.extraStashRoots ?? [])];
+  const moves = ctx.moves;
+  const movedConcepts: MovedConcepts = moves ? { has: (concept) => moves.concepts.has(concept) } : NO_CONCEPTS;
+  const bundleRoots = ctx.bundleRoots ?? NO_BUNDLES;
+  // Links to an asset the index recorded as moved: reported with the new ref, and rewritten under `--fix`.
+  const movedLinks = new Map<string, string>();
+  const movedFinding = (ref: string, where: string): LintIssue | undefined => {
+    const moved = ctx.moves?.target(ref);
+    const concept = moved?.to.slice(moved.to.indexOf("//") + 2);
+    if (
+      !moved ||
+      concept === undefined ||
+      classifyConceptRef(
+        concept,
+        rootsOfBundle(moved.to.slice(0, moved.to.indexOf("//")), allRoots, bundleRoots),
+        new Set([concept]),
+      ) !== null
+    )
+      return undefined;
+    const issue: LintIssue = {
+      file: ctx.relPath,
+      issue: "missing-ref",
+      detail: `missing ref: ${ref} (${where}moved to ${moved.to})`,
+      fixed: false,
+      movedFrom: ref,
+      movedTo: moved.to,
+    };
+    if (ctx.fix || ctx.fixMovedRefs) {
+      movedLinks.set(ref.split("#", 1)[0] as string, moved.spelled);
+      issue.fixed = true;
+      issue.detail = `moved ref updated: ${ref} -> ${moved.spelled}`;
+      pendingFixes.push(issue);
+    }
+    return issue;
+  };
   {
     const explicitRefs = extractFrontmatterRefs(ctx.data, ctx.body);
     // An explicit `refs:` array is a REF LIST (each value is a whole ref —
     // short conceptIds included); a bare body is PROSE (anchored refs only).
     const missingRefs =
       explicitRefs !== null
-        ? checkMissingRefsInList(explicitRefs, ctx.stashRoot, ctx.extraStashRoots)
-        : checkMissingRefs(ctx.body, ctx.stashRoot, ctx.extraStashRoots);
+        ? checkMissingRefsInList(
+            explicitRefs,
+            ctx.relPath,
+            ctx.stashRoot,
+            ctx.extraStashRoots,
+            movedConcepts,
+            bundleRoots,
+          )
+        : checkMissingRefs(ctx.body, ctx.stashRoot, ctx.extraStashRoots, movedConcepts, bundleRoots);
     for (const { ref, resolvedRelPath } of missingRefs) {
-      issues.push({
-        file: ctx.relPath,
-        issue: "missing-ref",
-        detail: `missing ref: ${ref} (resolved to ${resolvedRelPath})`,
-        fixed: false,
-      });
+      issues.push(
+        movedFinding(ref, "") ?? {
+          file: ctx.relPath,
+          issue: "missing-ref",
+          detail: `missing ref: ${ref} (resolved to ${resolvedRelPath})`,
+          fixed: false,
+        },
+      );
     }
 
     // Frontmatter xref channels (xrefs / supersededBy / contradictedBy).
@@ -850,7 +920,7 @@ function runMissingRefChecks(
     // without `refs:` land in the skip branch with empty ctx.data, so
     // nothing is lost for them either.
     if (ctx.frontmatter !== null || explicitRefs !== null) {
-      for (const key of XREF_FRONTMATTER_KEYS) {
+      for (const key of DECLARED_REF_FRONTMATTER_KEYS) {
         const values = readRefStringOrArray(ctx.data?.[key]);
         if (values === null) continue;
 
@@ -893,7 +963,18 @@ function runMissingRefChecks(
           }
         }
 
-        const missingXrefs = checkMissingRefsInList(values, ctx.stashRoot, ctx.extraStashRoots);
+        const allMissingXrefs = checkMissingRefsInList(
+          values,
+          ctx.relPath,
+          ctx.stashRoot,
+          ctx.extraStashRoots,
+          movedConcepts,
+          bundleRoots,
+        );
+        // A moved ref is a link to update, never a dangling edge to drop.
+        const movedXrefs = allMissingXrefs.flatMap(({ ref }) => movedFinding(ref, `frontmatter ${key}; `) ?? []);
+        issues.push(...movedXrefs);
+        const missingXrefs = allMissingXrefs.filter(({ ref }) => !movedXrefs.some((issue) => issue.movedFrom === ref));
 
         // #884 opt-in repair. Scoped to the BELIEF channels only: an edge whose
         // target has neither a file nor a prune tombstone asserts a
@@ -931,6 +1012,18 @@ function runMissingRefChecks(
             fixed: false,
           });
         }
+      }
+    }
+  }
+  if (movedLinks.size > 0) {
+    const rewritten = rewriteMovedLinks(currentRaw, movedLinks);
+    if (rewritten !== currentRaw) {
+      currentRaw = rewritten;
+      modified = true;
+    } else {
+      for (const issue of issues.filter((found) => found.movedTo !== undefined && found.fixed === true)) {
+        issue.fixed = "failed";
+        issue.detail = `${issue.detail} — could not find the link in the file to rewrite`;
       }
     }
   }
