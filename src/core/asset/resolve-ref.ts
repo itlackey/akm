@@ -3,10 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Ref RESOLUTION layer — akm 0.9.0 Chunk-5 flip, stage F1 (ref-grammar decision
- * D-R1 / D-R4).
+ * Ref RESOLUTION layer.
  *
- * The 0.9.0 ref abstraction is `parse → resolve → serialize`:
+ * The ref abstraction is `parse → resolve → serialize`:
  *   - parse     — `parseBundleRef` (`asset-ref.ts`), pure syntax, no I/O.
  *   - resolve   — {@link resolveRef} (this module): turn a maybe-short
  *                 {@link BundleRef} into a fully-qualified {@link ResolvedRef}

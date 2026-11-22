@@ -212,7 +212,7 @@ export interface IndexProgressEvent {
 export interface IndexOptions {
   /**
    * The stash directory to index. Resolved once at each command boundary
-   * (WI-9.10 CLI-wide sweep) and threaded in — the indexer no longer reads the
+   * and threaded in — the indexer does not read the
    * ambient stash-dir resolver. Every caller (source add, wiki, workflow,
    * setup, improve, tests) already passes it.
    */
@@ -625,8 +625,7 @@ function isReadableDirectory(root: string): boolean {
  * Detect an adapter for every resolvable source that does not declare one, and
  * persist each detection into `config.json`.
  *
- * R-056: this config write previously had zero disclosure — it appeared in no
- * result, on no stream, and in no doc. The returned `persistedAdapters` records
+ * This config write is disclosed: the returned `persistedAdapters` records
  * exactly which bundle→adapter pairs the mutate callback actually applied, so
  * the caller can surface them in the result envelope; a stderr notice is
  * emitted here. The map is cleared at the top of every callback invocation
@@ -828,9 +827,8 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     }
     const tWalkEnd = Date.now();
 
-    // Metadata enhancement (the LLM pass that used to run here) is retired
-    // (RS-D, 0.9.17-alpha.9) — see CHANGELOG. `timing.llmMs` stays (always
-    // ~0 now) so the JSON shape is unchanged.
+    // There is no LLM metadata-enhancement pass. `timing.llmMs` stays (always
+    // ~0) so the JSON shape is unchanged.
     const tLlmEnd = Date.now();
 
     if (complete) applyRemovedSources(db, sources, removedSources, isIncremental);
@@ -1370,8 +1368,7 @@ async function scanSourceDirs(
     }
 
     for (const [dirPath, ctxs] of dirGroups) {
-      // Adapter-owned filtering (owner ruling 2026-07-21): the drain no longer
-      // pre-filters with AKM-stash policy — each adapter's `recognize` claims or
+      // Adapter-owned filtering: the drain does not pre-filter with AKM-stash policy — each adapter's `recognize` claims or
       // abstains on its own bundle's walked files. The core walk keeps only the
       // universal hygiene `walkStashFlat` already applies (.git/dot-dirs/etc.).
       const indexableFiles = ctxs.map((ctx) => ctx.absPath);

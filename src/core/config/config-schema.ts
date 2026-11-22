@@ -16,9 +16,7 @@
  *
  * Two responsibilities:
  * 1. **Validate + transform** the raw JSON-parsed config object into the runtime
- *    `AkmConfig` shape consumed by the rest of the codebase. Replaces the
- *    ~1.4k LOC of legacy per-shape parsers (parseLlmConfig, parseEmbeddingConfig,
- *    parseIndexConfig, etc.) — see `loadConfig` in `./config.ts`.
+ *    `AkmConfig` shape consumed by the rest of the codebase. See `loadConfig` in `./config.ts`.
  * 2. **Reject hard-errored values** (openviking source type, legacy
  *    `stashes[]` key) at load time via `superRefine`.
  *
@@ -241,10 +239,10 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       message: "strategy does not name a built-in or configured improve strategy",
     });
   }
-  // #464.a: defaultWriteTarget must name a configured source. 0.9.0 (spec
-  // §10.1): sources are `bundles` keys, so it must name a bundle. With no
-  // bundles configured, error out instead of silently accepting (no implicit
-  // "first writable" fallback — see locked decision 3).
+  // defaultWriteTarget must name a configured source. Sources are `bundles`
+  // keys, so it must name a bundle. With no bundles configured, error out
+  // instead of silently accepting (there is no implicit "first writable"
+  // fallback).
   if (config.defaultWriteTarget !== undefined) {
     const knownNames = Object.keys(config.bundles ?? {});
     if (knownNames.length === 0) {

@@ -64,11 +64,10 @@ export interface DrainedDir {
 /**
  * Drain one directory's recognized documents into durable entries.
  *
- * `fileContexts` are the dir's walked files (the drain no longer pre-filters —
- * adapter-owned filtering, owner ruling 2026-07-21). `adapter.recognize` returns
+ * `fileContexts` are the dir's walked files (the drain does not pre-filter —
+ * filtering is adapter-owned). `adapter.recognize` returns
  * `null` for a file it abstains on (no matcher claims it, an OKF reserved file,
- * or an AKM sensitive/infra file) — silently skipped, the same contract the
- * legacy flat-walk pass's "no matcher claims the file" case had.
+ * or an AKM sensitive/infra file) — silently skipped.
  */
 export function drainDirDocuments(
   adapter: BundleAdapter,

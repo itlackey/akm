@@ -67,8 +67,7 @@ export interface BundleComponent {
 
 // ── Durable entry sub-shapes ────────────────────────────────────────────────
 //
-// akm 0.9.0 Chunk 5 F4a M-core-1 (type-merge): these IndexDocument sub-shapes move
-// HERE from `indexer/passes/metadata.ts` so the merged {@link IndexDocument}
+// These IndexDocument sub-shapes live HERE, not in `indexer/passes/metadata.ts`, so the merged {@link IndexDocument}
 // (below) can reference them WITHOUT closing a `metadata.ts ↔ types.ts` import
 // cycle (the cycle ratchet counts type-only edges). They are the durable field
 // shapes per the M1 decision — the durable truth. `metadata.ts` re-exports them
@@ -180,7 +179,7 @@ export interface IndexDocument {
    * Asset quality marker. Four values are well-known:
    * `"generated"` and `"curated"` are included in default search;
    * `"enriched"` marks entries the now-retired LLM metadata-enhancement pass
-   * (0.9.17-alpha.9) rewrote (also included in default search; nothing sets
+   * rewrote (also included in default search; nothing sets
    * it anymore); `"proposed"` is excluded from default search and surfaced
    * only with `--include-proposed`. Unknown string values parse with a
    * one-time `console.warn` and remain searchable (treated as
@@ -308,7 +307,7 @@ export interface IndexDocument {
   provenance?: OkfProvenance;
   /** OKF v0.2 lifecycle ← frontmatter `status`. Upstream defaults absence to "stable"; left `undefined` here (not defaulted) so callers can distinguish "undeclared" from "explicitly stable." */
   lifecycleStatus?: "draft" | "stable" | "deprecated";
-  /** OKF v0.2 lifecycle ← frontmatter `stale_after` (nominally `YYYY-MM-DD`, read verbatim/untyped). Read-only in 0.9.0 — no re-verification or trust-tier ranking is driven off it (0.9.x improve-tuning track). */
+  /** OKF v0.2 lifecycle ← frontmatter `stale_after` (nominally `YYYY-MM-DD`, read verbatim/untyped). Read-only — no re-verification or trust-tier ranking is driven off it. */
   staleAfter?: string;
   /** ← frontmatter `okf_version`. Upstream declares this only on the bundle-root reserved structural listing file (itself never indexed as a concept, §5); read defensively from ANY concept's frontmatter, best-effort (conformance Rule 9 — an unknown/foreign value is never rejected). */
   okfVersion?: string;

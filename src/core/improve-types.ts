@@ -26,13 +26,13 @@ export type MemoryBeliefState = "active" | "asserted" | "deprecated" | "supersed
 
 export interface MemoryPruneCandidate {
   ref: string;
-  /** Absent for a retire-proposal-caused archive (alpha.9): it has no `.derived` family to key by. */
+  /** Absent for a retire-proposal-caused archive: it has no `.derived` family to key by. */
   parentRef?: string;
   reason: MemoryPruneReason | RetireArchiveReason;
   survivorRef?: string;
-  /** Retire-proposal path only (alpha.9): the proposal that caused this archive. */
+  /** Retire-proposal path only: the proposal that caused this archive. */
   proposalId?: string;
-  /** Retire-proposal path only (alpha.9): refs that supersede/replace the retired asset. */
+  /** Retire-proposal path only: refs that supersede/replace the retired asset. */
   successorRefs?: string[];
 }
 
@@ -111,12 +111,12 @@ export interface ArchivedMemoryCleanupRecord {
   archivedPath: string;
   auditPath: string;
   archivedAt: string;
-  /** Retire-proposal path only (alpha.9): the proposal that caused this archive. */
+  /** Retire-proposal path only: the proposal that caused this archive. */
   proposalId?: string;
-  /** Retire-proposal path only (alpha.9): refs that supersede/replace the retired asset. */
+  /** Retire-proposal path only: refs that supersede/replace the retired asset. */
   successorRefs?: string[];
   /**
-   * Retire-proposal path only (alpha.9): same instant as `archivedAt`, named
+   * Retire-proposal path only same instant as `archivedAt`, named
    * per the plan so the (later) purge sweep can key its 30-day grace off one
    * stable field name without caring whether an archive came from memory
    * cleanup or a retire proposal.
@@ -156,7 +156,7 @@ export interface ImproveEligibleRef {
 export type ImprovePlanLane = EligibilitySource | "distill-only";
 
 export interface ImprovePlanGate {
-  /** `retrieval` is absent from plans stored before 0.9.17-alpha.7 (#986). */
+  /** `retrieval` is absent from plans stored by older releases. */
   name: "profile" | "cleanup" | "validation" | "retrieval" | "signal" | "disk" | "limit";
   removed: number;
   reason: string;
@@ -431,7 +431,7 @@ export interface ConsolidateResult {
    * tidy.
    */
   perfTelemetry?: ConsolidatePerfTelemetry;
-  /** The pair pass's own report (alpha.9); absent when consolidate is disabled. */
+  /** The pair pass's own report; absent when consolidate is disabled. */
   pairPass?: ConsolidatePairPassResult;
 }
 
@@ -445,7 +445,7 @@ export type ConsolidatePairJudgeLabel =
   | "unrelated";
 
 /**
- * The pair pass's per-run report (alpha.9): initiators found, pairs judged,
+ * The pair pass's per-run report: initiators found, pairs judged,
  * label counts and the retire proposals minted — the fields the brief's
  * MEASURE step reports (refs and counts only, never asset text).
  */
@@ -1010,7 +1010,7 @@ export interface AkmImproveResult {
    */
   reflectGuardRejectedActions?: number;
   /**
-   * Total proposals that hit the (deleted, 0.9.0) confidence gate but failed
+   * Total proposals that hit the removed confidence gate but failed
    * validation. Always 0/omitted for new runs; kept for historical rows.
    */
   gateAutoAcceptFailedCount?: number;

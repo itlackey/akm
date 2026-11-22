@@ -5,10 +5,9 @@
 /**
  * Shared row/result/option TYPES for the `index.db` storage repositories.
  *
- * A LEAF types module (WI-5a): the `index.db` repos and the indexer passes that
+ * A LEAF types module: the `index.db` repos and the indexer passes that
  * feed them both import these shapes from here instead of reaching across the
- * storage↔indexer boundary into `db.ts` — which is what used to pin the
- * `db.ts` / `entry-mapper.ts` / `schema.ts` trio inside the import cycle.
+ * storage↔indexer boundary into `db.ts`; keeping them here avoids an import cycle.
  *
  * `IndexDocument` is the sole cross-layer type dependency and it is intentionally
  * imported type-only from the indexer metadata pass (its rename/relocation is a

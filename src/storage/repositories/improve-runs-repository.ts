@@ -10,7 +10,7 @@
  * resolve.
  *
  * The `improve_gate_thresholds` per-phase auto-tune store (migration 012)
- * lost its readers with the 0.9.0 confidence-gate deletion; migration 028
+ * has no readers since the confidence gate was removed; migration 028
  * drops the table.
  *
  * @module improve-runs-repository
@@ -110,8 +110,8 @@ export function computeImproveRunMetrics(result: ImproveResultEnvelope): Improve
 
   const autoAcceptedCount = result.triage?.promoted ?? 0;
 
-  // C1 (13-bus-factor): distill-skipped rows are folded into the bounded
-  // `distillSkipped` aggregate and no longer live in `actions`. Add the
+  // Distill-skipped rows are folded into the bounded `distillSkipped`
+  // aggregate and do not live in `actions`. Add the
   // aggregate total to the skipped + total-actions counters so metrics_json
   // keeps aggregate metrics aligned with the logical action count.
   const distillSkippedTotal = result.distillSkipped?.total ?? 0;

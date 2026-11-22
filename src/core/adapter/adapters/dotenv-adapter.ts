@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `dotenv` adapter — akm 0.9.0 format-family work item (#46).
+ * The `dotenv` adapter.
  *
  * A metadata-only env/secret bundle. REDACTION IS
  * A HARD CONTRACT keyed on the ADAPTER, never on the open `type` value (a
@@ -75,9 +75,9 @@ function classify(relPath: string): DotenvType | null {
  * `secrets/<name>`.
  *
  * The flag documents itself as excluding the asset from BOTH `env list` output
- * and the search index. Indexing filters are adapter-owned (the walk no longer
- * pre-filters), and the akm adapter abstains on the marker — but this adapter
- * only skipped files whose OWN name ended in `.sensitive`. A dotenv bundle is a
+ * and the search index. Indexing filters are adapter-owned (the walk does not
+ * pre-filter), and the akm adapter abstains on the marker; this adapter must
+ * do the same, not only skip files whose OWN name ends in `.sensitive`. A dotenv bundle is a
  * legal env/secret write target, so a marked `env/prod.env` there was still
  * indexed with every KEY NAME as a hint and a marked secret still indexed by
  * name, while `env list` / `secret list` correctly hid them. The two surfaces

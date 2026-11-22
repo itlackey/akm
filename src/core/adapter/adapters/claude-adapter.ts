@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `claude` tool-directory adapter — akm 0.9.0 format-family work item (#46).
+ * The `claude` tool-directory adapter.
  *
  * Recognizes a Claude Code `.claude` layout (real-world:
  * https://code.claude.com/docs/en/claude-directory): a root `CLAUDE.md` →

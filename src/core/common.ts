@@ -395,15 +395,13 @@ export function isWithin(candidate: string, root: string): boolean {
  * read-only installed-source/registry-index copies that lint (and `--fix`)
  * must never touch.
  *
- * This is the single source of truth for that exclusion — it replaces what
- * used to be three independent unanchored substring checks
- * (`posixPath.includes("/.cache/") || posixPath.includes("/registry/")`).
- * That check matched ANY path merely containing the literal text `.cache` or
- * `registry` anywhere in it — a normal XDG `~/.cache/...` user bundle, or a
- * CI workspace checked out under a `.cache`-named directory, tripped it and
- * silently got zero lint findings. Using {@link isWithin} (realpath +
- * containment, not a string search) fixes that while still excluding the
- * real cache content the check was meant to skip.
+ * This is the single source of truth for that exclusion — it is anchored,
+ * unlike an unanchored substring check, which would match ANY path merely
+ * containing the literal text `.cache` or `registry` — a normal XDG
+ * `~/.cache/...` user bundle, or a CI workspace checked out under a
+ * `.cache`-named directory, would silently get zero lint findings. It uses
+ * {@link isWithin} (realpath + containment, not a string search), which still
+ * excludes the real cache content.
  */
 export function isAkmRegistryCachePath(filePath: string): boolean {
   return isWithin(filePath, getRegistryCacheDir()) || isWithin(filePath, getRegistryIndexCacheDir());

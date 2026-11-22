@@ -117,13 +117,12 @@ export function isKnownType(type: string): type is KnownType {
 }
 
 /**
- * Type keys deliberately REMOVED from AKM (chunk 1.5, D1.5-6 — the key
- * correctness call in the open-token change). The open type token accepts
+ * Type keys deliberately REMOVED from AKM. The open type token accepts
  * any non-empty string as valid ref/entry DATA except this set: silently
  * re-admitting a retired type as an ordinary "foreign" type would defeat the
  * guard that removed it in the first place.
  *
- *   - `vault` — removed in 0.9.0 in favor of `env`/`secret`; carries its own
+ *   - `vault` — removed in favor of `env`/`secret`; carries its own
  *     migration-hint `UsageError` in `asset-ref.ts` (checked before this
  *     set) and interacts with the dangerous-env-key lint
  *     (`commands/lint/env-key-rules.ts`) — vaults must never be silently

@@ -6,14 +6,15 @@
  * The task source version router.
  *
  * Runs the bounded YAML front end ONCE (`readBoundedTaskSourceYaml`), reads
- * `root.version`, and dispatches into `parseTaskSourceV4Document`. The
- * runtime reads only task source v4 (#987):
+ * `root.version`, and dispatches into `parseTaskSourceV4Document` or, for the
+ * Experimental `5-beta.<n>`, `parseTaskSourceV5Document`. The runtime reads
+ * only task source v4 and v5:
  *
  *   | root `version`        | outcome                                                        |
  *   |------------------------|-----------------------------------------------------------------|
  *   | `4`                    | `parseTaskSourceV4Document` — the current grammar               |
  *   | a string `5-beta.<n>`   | `parseTaskSourceV5Document` — task source version 5; a build reads only its own beta (`TASK_SOURCE_V5_VERSION`), any other `5-beta.*` is `TASK_SCHEMA_VERSION_UNSUPPORTED` naming the one it reads |
- *   | `4`, some `schedule[]` entry carries `enabled` (0.9.15's grammar) | `TASK_SOURCE_INVALID` naming `akm migrate apply`, which removes the key |
+ *   | `4`, some `schedule[]` entry carries `enabled` (the 0.9.15 grammar) | `TASK_SOURCE_INVALID` naming `akm migrate apply`, which removes the key |
  *   | `2` or `3`             | `TASK_SCHEMA_VERSION_UNSUPPORTED` naming `akm migrate apply`, which converts the file |
  *   | any other number       | `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming the migrator          |
  *   | absent / not a number  | `parseTaskSourceV4Document` — its own `TASK_SOURCE_INVALID` "version is required and must be 4" / "must be exactly 4" wording |
@@ -22,7 +23,7 @@
  * document, or a v4 document carrying the retired `schedule[].enabled`, is
  * converted: it rewrites the file once, under a backup. Nothing here converts
  * in memory. Every caller reports the refusal for that one file — `akm task
- * sync` keeps reconciling every other task (#867).
+ * sync` keeps reconciling every other task.
  *
  * A missing or non-numeric `version:` is a MALFORMED v4 document, not a
  * legacy one — it routes into the v4 parser so the field error names the
@@ -75,7 +76,7 @@ export function peekTaskSourceVersion(root: unknown): number | undefined {
 }
 
 const TASK_MIGRATE_HINT =
-  "Run `akm migrate apply --dry-run` to preview the task-v3 to task-source-v4 conversion, then run `akm migrate apply`.";
+  "Run `akm migrate status` to preview the task-v3 to task-source-v4 conversion, then run `akm migrate apply`.";
 
 /** A v2/v3 document: `akm migrate apply` converts it; this release reads only v4. */
 function legacyVersionError(filePath: string, version: number): UsageError {

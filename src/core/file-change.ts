@@ -7,9 +7,7 @@
  *
  * One `FileChange` describes one file mutation; a `Proposal` carries
  * `changes: FileChange[]` (multi-file capable — consolidate ops ride the same
- * envelope once the unified transaction lands), and ONE core transaction
- * applies a whole batch atomically (Chunk 6 WI-6.3 collapses the three legacy
- * journal engines onto it).
+ * envelope), and ONE core transaction applies a whole batch atomically.
  *
  * Deliberately dependency-free: this module is imported by the proposal
  * repository (commands layer), the storage row mappers, and the transaction

@@ -434,8 +434,8 @@ export interface UpdatePlainSyncedItem {
  * A configured source this update call did NOT process, with a human-
  * readable reason. Exists so `akm update --all` accounts for every configured
  * source instead of silently omitting the ones it cannot or does not sync
- * — e.g. website sources (`--all` re-crawl not yet implemented) and
- * filesystem sources (no remote to sync).
+ * — e.g. filesystem sources (no remote to sync) and a source whose sync
+ * failed.
  */
 export interface UpdateSkippedItem {
   id: string;

@@ -163,7 +163,7 @@ function nullableTimeout(value: unknown, path: string): string | number | null {
   return timeout;
 }
 
-/** Adapter helper for the common frontmatter fields fixed by the 0.9.2 design. */
+/** Adapter helper for the common frontmatter fields shared by execution sources. */
 export function executionDefaultsFromFrontmatter(
   data: Readonly<Record<string, unknown>>,
   options: {

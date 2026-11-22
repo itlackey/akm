@@ -155,9 +155,9 @@ function collectSuppressedKeys(raw: string): Set<string> {
  * Reads the overlay `raw`, not disk.
  *
  * The emitted `Ref:` comes from `conceptIdForStashFile` — the one place that
- * spells a diagnostic ref the way `akm show` accepts it. It used to be
- * hand-built as `env:<base>` / `secret:<base>`, a colon grammar the 0.9.0 ref
- * parser rejects outright — a dead-end ref on a *security* finding.
+ * spells a diagnostic ref the way `akm show` accepts it. A hand-built
+ * `env:<base>` / `secret:<base>` would use a colon grammar the ref parser
+ * rejects — a dead-end ref on a *security* finding.
  */
 export function dangerousEnvKeyDiagnostics(type: string | undefined, relPath: string, raw: string): Diagnostic[] {
   if (type !== "env" && type !== "secret") return [];
@@ -419,9 +419,8 @@ export function workflowStructureDiagnostics(
 
 /**
  * The `Diagnostic.line` fragment for a line-anchored workflow finding. Every
- * `WorkflowError` carries a 1-indexed `line`; this used to be DROPPED here, so
- * an author linting a 300-line workflow got a message with no location while
- * the same error rendered as `path:line — message` on the `workflow create`
+ * `WorkflowError` carries a 1-indexed `line`; keeping it gives an author linting a
+ * 300-line workflow a location, as the same error has on the `workflow create`
  * path. Spread (`...lineOf(err)`) rather than assigned, so a nonsense line
  * never materializes the optional key on a whole-file finding.
  */

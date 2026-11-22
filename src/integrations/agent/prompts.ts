@@ -49,9 +49,8 @@ export interface AgentProposalPayload {
   frontmatter?: Record<string, unknown>;
   /**
    * Optional self-reported confidence score in `[0, 1]` (Advantage D6a / Phase
-   * 6A). Persisted on the proposal for reviewers and the triage judge — it no
-   * longer drives any automated accept path (the improve confidence gate died
-   * in 0.9.0). Out-of-range / non-finite values are clamped or dropped
+   * 6A). Persisted on the proposal for reviewers and the triage judge — it
+   * does not drive any automated accept path. Out-of-range / non-finite values are clamped or dropped
    * downstream in `createProposal`.
    */
   confidence?: number;

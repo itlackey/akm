@@ -4,8 +4,7 @@
 
 /**
  * `indexDocumentToStashEntry` — the inverse of the `akm` adapter's
- * `indexDocumentFromEntry` (`adapters/akm-adapter.ts`). akm 0.9.0 Chunk 5,
- * milestone F4a (M2 groundwork).
+ * `indexDocumentFromEntry` (`adapters/akm-adapter.ts`).
  *
  * The indexer drains a single `IndexDocument` stream (`drainDirDocuments` × the
  * dispatched adapter's `recognize`) and persists its canonical projection in
@@ -27,8 +26,7 @@
  *     recovered here as `basename(doc.path)`. The old pipeline set it to
  *     `basename(file)` in `applyPostContributorFields`, and `doc.path` IS that
  *     file, so the value is identical.
- *   - `fileSize` — never set by `recognize` NOR by the legacy flat-walk pass;
- *     both pipelines attach it at PERSIST time (`withFileSize`). It is therefore
+ *   - `fileSize` — never set by `recognize`; it is attached at PERSIST time (`withFileSize`). It is therefore
  *     intentionally absent here and added by the persist layer, exactly as
  *     before.
  *

@@ -221,7 +221,7 @@ export function lockContentRootFor(bundleId: string | undefined, type: string): 
 }
 
 function writeLockfileUnlocked(entries: LockfileEntry[]): void {
-  // Always write to $DATA — never to the legacy $CONFIG location.
+  // Always write to $DATA — never to $CONFIG.
   const lockfilePath = getLockfilePath();
   const dir = path.dirname(lockfilePath);
   fs.mkdirSync(dir, { recursive: true });

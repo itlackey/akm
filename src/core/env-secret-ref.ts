@@ -241,11 +241,9 @@ export function resolveSecretPath(ref: string): {
 // ── Write-target resolution (env/secret mutations) ───────────────────────────
 //
 // READS (`env run`/`show`/`path`, `secret run`) ask the one ref-to-file walk
-// (`resolveConceptOwner`) above. (`secret path` used this same read-side
-// resolver too, until it was REMOVED from the CLI in 0.9.0 — R-027 / D-49 — with
-// `secret remove`, which resolved through the WRITE-target path below, so the two
-// could silently name different files for the same ref. `secret remove` is back
-// in 0.10, shaped like `env remove`: write-target resolution only.) WRITES route
+// (`resolveConceptOwner`) above. `secret remove`, like `env remove`, uses
+// write-target resolution only, so a read and a remove cannot name different
+// files for the same ref. WRITES route
 // through the canonical `resolveWriteTarget` selection every other write command
 // (remember/import/tasks/knowledge) shares: explicit `--bundle` wins, else
 // `defaultWriteTarget`, else the working stash, and the chosen source must be

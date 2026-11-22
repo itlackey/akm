@@ -92,8 +92,8 @@ export function openExistingDatabase(dbPath?: string): Database {
   // they serve an older layout as-is and refuse a newer one (see checkIndexLayout).
   //
   // "Existing" is load-bearing: a missing file throws instead of being
-  // created. Create-on-open used to leave a schema-less index.db behind (a
-  // fire-and-forget telemetry read was enough), which every later opener then
+  // created. Create-on-open would leave a schema-less index.db behind (a
+  // fire-and-forget telemetry read would be enough), which every later opener then
   // saw as an existing-but-broken index ("no such table: entries") — the
   // curate→proposal file-order failure pinned by
   // tests/storage/open-existing-database-no-create.test.ts. `create: false`

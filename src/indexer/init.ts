@@ -16,16 +16,14 @@
  *  1. Built-in renderers — `registerBuiltinRenderers()` (`output/renderers.ts`),
  *     which value-imports the workflow renderers from `workflows/renderer.ts`.
  *
- * Recognition is no longer registry-driven: the chunk-3 cutover replaced the
- * `registerBuiltinMatchers()`/`runMatchers()` competition with the akm adapter's
- * synchronous `recognizeMatch()` (`core/adapter/adapters/akm-adapter.ts`), so no
- * matcher registration happens here. Index-time metadata is likewise no longer
+ * Recognition is not registry-driven: the akm adapter's synchronous
+ * `recognizeMatch()` (`core/adapter/adapters/akm-adapter.ts`) does it, so no
+ * matcher registration happens here. Index-time metadata is likewise not
  * registry-driven: the `akm` adapter's synchronous `foldRecognizedMetadata`
  * (`core/adapter/adapters/akm-metadata.ts`) computes it inline during recognize.
  *
- * Timing is preserved: this stays a *lazy* gate. It is awaited from the same
- * accessor call sites the old gate was awaited from, so no startup work is
- * forced eagerly. The shared promise makes concurrent and repeat calls safe —
+ * This is a *lazy* gate, awaited from the accessor call sites, so no startup
+ * work is forced eagerly. The shared promise makes concurrent and repeat calls safe —
  * the registrations run at most once per process.
  */
 
