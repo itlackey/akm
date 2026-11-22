@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `website-snapshot` adapter — akm 0.9.0 format-family work item (#46).
+ * The `website-snapshot` adapter.
  *
  * A READ-ONLY (Mode A) view over a materialized crawl snapshot written by
  * `src/sources/snapshot-fetchers/website-ingest.ts`. The on-disk

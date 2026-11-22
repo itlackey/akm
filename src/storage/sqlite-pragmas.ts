@@ -6,10 +6,9 @@
  * Shared SQLite PRAGMA application + journal-mode resolution (#628).
  *
  * Every AKM SQLite opener applies the same opening PRAGMAs: a journal mode, a
- * 30 s busy_timeout, and (for most) foreign_keys = ON. Historically each opener
- * hard-coded `PRAGMA journal_mode = WAL`. WAL is impossible on network
+ * 30 s busy_timeout, and (for most) foreign_keys = ON. WAL is impossible on network
  * filesystems (NFS/SMB) because its `-shm` shared-memory wal-index cannot be
- * mmap'd over a network mount, so AKM could not run with its data dir on a
+ * mmap'd over a network mount, so a hard-coded WAL could not run with the data dir on a
  * network share.
  *
  * This module centralises that PRAGMA block behind {@link applyStandardPragmas}

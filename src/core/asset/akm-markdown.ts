@@ -32,8 +32,7 @@ import { parseFrontmatterBlock, replaceFrontmatterLine, spliceFrontmatterLine } 
  * comments, wrapping, quoting, key order, line endings, the body — is kept as
  * written. The edited text is parsed back to confirm it holds exactly the
  * intended mapping; when it does not (a `type` value that spans several lines,
- * a flow-style `{…}` block), the document is re-serialized instead, as it
- * always used to be. A document with no frontmatter block gets a new one;
+ * a flow-style `{…}` block), the document is re-serialized instead. A document with no frontmatter block gets a new one;
  * malformed YAML throws. An inserted or re-serialized block uses CRLF when
  * every line break in the document is CRLF, and LF otherwise.
  */

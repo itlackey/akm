@@ -16,7 +16,7 @@
  * SQLITE_CORRUPT path in `index-connection.ts`. A layout newer than this
  * release's is refused, naming the upgrade ({@link newerIndexLayoutError}).
  * The one exception is the LLM entity graph (`graph_meta`, `graph_files`,
- * `graph_file_*`), retired in 0.9.17-alpha.9: those tables are dropped
+ * `graph_file_*`), retired: those tables are dropped
  * unconditionally below (index.db is a regenerable cache, and declared links
  * — `asset_links` — now back `akm show`'s `links` field, which replaced the
  * graph's `related` list).
@@ -99,8 +99,7 @@ const REGISTRY_INDEX_CACHE_DDL = `
  * Recreate only the tables keyed by `entries.id` — their ids are about to be
  * re-minted, so the rows would dangle anyway. The LLM enrichment cache
  * (keyed by ref) is kept. The LLM entity-graph tables are unconditionally
- * dropped elsewhere in this file regardless of this recreation (retired
- * 0.9.17-alpha.9), not kept. The next index run re-walks every source.
+ * dropped elsewhere in this file regardless of this recreation (retired), not kept. The next index run re-walks every source.
  */
 function ensureEntriesLayout(db: Database): void {
   if (!tableExists(db, "entries")) return;
@@ -286,9 +285,9 @@ function applySchema(db: Database): void {
   db.exec("DROP TABLE IF EXISTS utility_scores_scoped");
   db.exec("DROP TABLE IF EXISTS graph_extraction_queue");
 
-  // The LLM entity graph, retired in 0.9.17-alpha.9: declared links
+  // The LLM entity graph, retired: declared links
   // (`asset_links`) now back `akm show`'s `links` field (which replaced the
-  // graph's `related` list) and curate's support refs (#935), and the
+  // graph's `related` list) and curate's support refs, and the
   // navigation eval measured vector kNN beating the graph's `related` list
   // by 0.157 P@5. `graph_files` stands in for the whole set — all four
   // tables are only ever created and dropped together. Gated on it (rather
@@ -394,7 +393,7 @@ function applySchema(db: Database): void {
      CREATE INDEX IF NOT EXISTS idx_llm_cache_updated
        ON llm_enrichment_cache(updated_at);
   `);
-  // Metadata-enhance retired (RS-D, 0.9.17-alpha.9): its rows were the only
+  // Metadata-enhance is retired: its rows were the only
   // ones keyed by the default empty cache_variant (memory inference writes
   // `memory-inference-v2`), so this is safe to run unconditionally on every
   // writable open. The table

@@ -40,7 +40,7 @@ export interface TaskInvocation {
   readonly taskRef: string;
   readonly caller: TaskInvocationCaller;
   readonly overrides?: TaskInvocationOverrides;
-  /** Literal input bindings materialized from `akm task run` input flags (P2a §4.4). Validated only — not yet delivered (§0). */
+  /** Literal input bindings materialized from `akm task run` input flags Validated only — not yet delivered. */
   readonly inputs?: readonly TaskInputBinding[];
 }
 

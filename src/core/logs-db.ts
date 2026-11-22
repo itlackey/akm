@@ -245,7 +245,7 @@ export interface QueryTaskLogsOptions {
 /**
  * Read log lines matching the filter, in emission order (ascending id).
  *
- * Connection-lifetime rule (WS5): `.all()` materializes a plain array before
+ * Connection-lifetime rule: `.all()` materializes a plain array before
  * returning.
  */
 export function queryTaskLogs(db: Database, options: QueryTaskLogsOptions = {}): TaskLogRow[] {

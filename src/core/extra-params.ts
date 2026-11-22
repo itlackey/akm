@@ -57,8 +57,7 @@ const EXTRA_PARAMS_NO_FIELD_REMEDY: Readonly<Record<string, string>> = {
 function protectedKeyRemedy(normalized: string): string | undefined {
   const field = LEGACY_EXTRA_PARAMS_FIELD[normalized];
   if (field) {
-    const note = normalized === "reasoningeffort" ? " (moved to a first-class field in 0.9.2)" : "";
-    return `set ${field} instead${note}`;
+    return `set ${field} instead`;
   }
   return EXTRA_PARAMS_NO_FIELD_REMEDY[normalized];
 }

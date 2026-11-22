@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Platform detection leaf (chunk-8 WI-8.6, DoD 11). Imports NOTHING so both
+ * Platform detection leaf. Imports NOTHING so both
  * `common.ts` and `paths.ts` can depend on it — extracting IS_WINDOWS here
  * broke the `common.ts ↔ paths.ts` import cycle (paths needed only this
  * constant from common).

@@ -39,7 +39,7 @@ const COMMON_FIELDS = [
   "lintSummary",
   "memoryIndexHealth",
   "coverageGaps",
-  // R10: no longer written (the write-only eval-cases path was removed),
+  // No longer written (the write-only eval-cases path was removed),
   // but kept in the allow-list so `decodeImproveResult` still reads
   // improve-result envelopes a prior release wrote with this field.
   "evalCasesWritten",
@@ -47,7 +47,7 @@ const COMMON_FIELDS = [
   "deadUrlCoverage",
   "reflectsWithErrorContext",
   "memoryInference",
-  // 0.9.17-alpha.9: no longer written (the LLM entity-graph extraction that
+  // No longer written (the LLM entity-graph extraction that
   // wrote these was retired), kept readable for the same reason as
   // `evalCasesWritten` above.
   "graphExtraction",
@@ -138,7 +138,7 @@ function validateConsolidationPlan(value: unknown): void {
     ]),
   );
   if (!isRecord(value.configured)) fail("plan.consolidation.configured must be an object");
-  // `minPoolSize` is no longer written (the minimum-pool guard was removed in 0.10, #1131); runs an
+  // `minPoolSize` is no longer written (the minimum-pool guard was removed); runs an
   // older release persisted still carry it, ignored.
   requireExactFields(value.configured, new Set(["enabled", "minPoolSize", "limit", "maxChunkSize"]));
   if (value.configured.enabled !== undefined && typeof value.configured.enabled !== "boolean") {
@@ -184,7 +184,7 @@ function validateProactivePlan(value: unknown): void {
     new Set(["configured", "effective", "candidatePool", "dueTotal", "neverReflected", "selected", "selectedRefs"]),
   );
   if (!isRecord(value.configured)) fail("plan.proactive.configured must be an object");
-  // `limit` is no longer written (the `proactiveMaintenance.limit` alias of `maxPerRun` was removed in 0.10, #1091);
+  // `limit` is no longer written (the `proactiveMaintenance.limit` alias of `maxPerRun` was removed);
   // runs an older release stored may carry it.
   requireExactFields(value.configured, new Set(["dueDays", "maxPerRun", "limit"]));
   for (const field of ["dueDays", "maxPerRun", "limit"] as const) {
@@ -223,9 +223,9 @@ function validateProcessRoutingRows(value: unknown): void {
       !(
         canonicalNames.includes(row.process) ||
         row.process === "triage.judgment" ||
-        // 0.9.17-alpha.9: "graphExtraction" is no longer a process a fresh
-        // plan can route (the LLM entity-graph extraction it named was
-        // retired), but every pre-alpha.9 run recorded one here — kept
+        // "graphExtraction" is no longer a process a fresh plan can route
+        // (the LLM entity-graph extraction it named was retired), but older
+        // runs recorded one here — kept
         // readable, same as `stageNames`' "graph-extraction" above and
         // `graphExtraction` in COMMON_FIELDS, so a historical run still
         // decodes for `akm health` instead of failing this row outright.
@@ -330,7 +330,7 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   }
 
   const gateNames = new Set(["profile", "cleanup", "validation", "signal", "disk", "limit"]);
-  // Plans stored before 0.9.17-alpha.7 (#986) have no retrieval gate.
+  // Plans stored by older releases have no retrieval gate.
   const optionalGateNames = new Set(["retrieval"]);
   if (!Array.isArray(value.gates)) fail("plan.gates must be an array");
   const gateRemovedByName = new Map<string, number>();
@@ -414,8 +414,8 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   if (value.proactive !== undefined) validateProactivePlan(value.proactive);
   validateConsolidationPlan(value.consolidation);
 
-  // "graph-extraction" is no longer a stage a fresh plan can name — retired
-  // 0.9.17-alpha.9 — but stays here so a historical envelope that captured a
+  // "graph-extraction" is no longer a stage a fresh plan can name — retired —
+  // but stays here so a historical envelope that captured a
   // dry-run plan before the retirement still decodes.
   const stageNames = new Set(["consolidation", "extract", "graph-extraction", "memory-inference"]);
   if (!Array.isArray(value.stages)) fail("plan.stages must be an array");
@@ -428,7 +428,7 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
     }
   }
   if (!isRecord(value.triage)) fail("plan.triage must be an object");
-  // `maxDiffLines` is no longer written (the triage config key was dropped before 0.10, #1091); runs an older
+  // `maxDiffLines` is no longer written (the triage config key was dropped); runs an older
   // release stored may carry it.
   requireExactFields(value.triage, new Set(["enabled", "configuredMode", "mode", "maxAcceptsPerRun", "maxDiffLines"]));
   if (typeof value.triage.enabled !== "boolean") fail("plan.triage.enabled must be a boolean");

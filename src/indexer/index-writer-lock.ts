@@ -8,17 +8,12 @@
  * writers cannot both pass a git exact-path preflight check before either
  * commits.
  *
- * This module previously also gated full index REBUILDS behind the same
- * lease with a 12-hour age-based stale-reclaim window (#872). That guard was
- * removed: the index is a regenerable cache, concurrent rebuilds only waste
- * work rather than corrupt anything, and a live-but-wedged holder passed the
- * PID-liveness check forever, so only the 12h clock could ever free it —
- * which cost one real install a half-day indexing outage. Index rebuilds no
- * longer take any lease.
+ * Index REBUILDS take no lease: the index is a regenerable cache, and
+ * concurrent rebuilds only waste work rather than corrupt anything.
  *
- * What remains here guards actual data loss (a lost or conflicting git
- * commit), so core principle 1's data-loss exemption keeps it — but with the same
- * fix applied: no age-based stale-reclaim. A holder is only ever reclaimed
+ * This lease guards actual data loss (a lost or conflicting git commit), so
+ * core principle 1's data-loss exemption keeps it. It has no age-based
+ * stale-reclaim, which a live-but-wedged holder would defeat. A holder is only ever reclaimed
  * once its PID is verifiably dead; a live-but-wedged holder makes an
  * acquisition attempt wait (bounded by `maxWaitMs`) or fail, never silently
  * override a lease someone might still be using.
@@ -219,9 +214,9 @@ export function withAssetMutationLeaseSync<T>(purpose: string, run: () => T): T 
       lease = tryAcquireAssetMutationLease(lockPath, purpose);
       if (!lease) {
         const waitedMs = Date.now() - startedAt;
-        // #956: the sync path used to wait up to 10 minutes with zero
-        // progress feedback. Mirror the async path's 15s onWait cadence, but
-        // actually warn by default — no caller wires onWait on this path.
+        // The sync path can wait up to 10 minutes, so give progress feedback:
+        // mirror the async path's 15s onWait cadence, but warn by default —
+        // no caller wires onWait on this path.
         // Announce before the timeout check: a starved iteration that
         // overshoots maxWaitMs must still have reported the wait.
         if (waitedMs - lastWaitNoticeMs >= waitNoticeIntervalMs) {

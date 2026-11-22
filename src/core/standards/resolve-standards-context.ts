@@ -5,8 +5,7 @@
 /**
  * Dispatch resolver for the standards prompt seam.
  *
- * The wiki `schema.md` injection (former "Feature A") was collapsed in chunk 4
- * with the wiki asset-type death (plan §11 Chunk 4): LLM Wiki content is served
+ * There is no wiki `schema.md` injection: the wiki asset-type is retired and LLM Wiki content is served
  * by the `llm-wiki` adapter, which owns its own `schema.md` contract. What
  * remains is **stash standards**: for any write target, return the concatenated
  * `category: convention`/`meta` fact bodies plus the per-type SOFT conventions

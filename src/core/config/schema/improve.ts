@@ -15,7 +15,7 @@ import { engineName, LlmInvocationOverridesSchema, nonEmptyString, nonNegativeNu
 
 const ImproveSalienceSchema = z.object({}).passthrough();
 
-// #733 — orphan-GC pass (Workstream C, lean by design: one config gate).
+// Orphan-GC pass (lean by design: one config gate).
 // The pass ALWAYS runs and ALWAYS reports counts (via the `asset_state_gc`
 // event); this gate controls ONLY whether it actually deletes rows whose
 // `missing_since` has been past the grace window (`STATE_GC_GRACE_MS`, 7
@@ -24,9 +24,9 @@ const ImproveStateGcSchema = z
   .object({
     /**
      * Actually DELETE `asset_salience` / `asset_outcome` rows once they have
-     * been unresolvable for longer than the grace window. Default false for
-     * 0.9.0: live data (the event's `pending` counts) proves the report
-     * clean before deletion is turned on.
+     * been unresolvable for longer than the grace window. Default false: the
+     * event's `pending` counts show what a delete would remove. Deprecated;
+     * removed in 0.11 (see STABILITY.md).
      */
     collect: z.boolean().optional(),
   })

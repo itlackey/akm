@@ -127,7 +127,7 @@ export function inheritedConnectionsOf(config: AkmConfig): ReadonlySet<string> {
 }
 
 /**
- * {@link inheritedConnectionsOf} the config as it is now on this host, loaded here when the cache holds
+ * {@link inheritedConnectionsOf} the config as it is on this host, loaded here when the cache holds
  * nothing: for a caller with no config in hand.
  */
 export function isInheritedConnection(name: string): boolean {
@@ -445,8 +445,8 @@ function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePat
  * loading, is named once by
  * the unknown-key warning, and is dropped only by `akm migrate apply`.
  * `index.graph` (the LLM entity-graph extraction pass) and
- * `index.metadataEnhance` (LLM metadata enrichment) were retired in
- * 0.9.17-alpha.9; `index.stalenessDetection` before them.
+ * `index.metadataEnhance` (LLM metadata enrichment) are retired, as is
+ * `index.stalenessDetection`.
  */
 const RETIRED_CATCHALL_KEY_PATHS = new Set(["index.graph", "index.metadataEnhance", "index.stalenessDetection"]);
 
@@ -597,9 +597,9 @@ function collectExtendsLayers(localRaw: Record<string, unknown>, configPath: str
  * when it itself declares one. Keeping it (rather than stripping it) lets
  * `akm config set`/`unset` round-trip the directive: `mutateConfig` reads the
  * effective config as `current` for the mutation, but writes back only the
- * fields `pruneUnchangedInheritedFields` finds changed-or-already-local (#945
- * finding — the effective object used to be baked into the local file
- * verbatim, duplicating every inherited field into it). That pruning keys off
+ * fields `pruneUnchangedInheritedFields` finds changed-or-already-local (the
+ * effective object is never written verbatim, which would duplicate every
+ * inherited field into the local file). That pruning keys off
  * which fields are present in `current`/`next`, so `extends` has to still be
  * one of them or it would silently vanish from disk on the very next
  * `config set`.
@@ -1324,7 +1324,7 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     // `improve.strategies["graph-refresh"]` is schema-valid (any name is a
     // legal custom-strategy key), so it never reaches the unknown-key sweep
     // above. It can only be a leftover override of the deleted graph-refresh
-    // built-in (0.9.17-alpha.9) — resolveImproveStrategy now refuses that
+    // built-in — resolveImproveStrategy now refuses that
     // name unconditionally, so the override can never apply again. Drop it
     // the same way any other retired key is dropped: only by `akm migrate
     // apply`, never by an ordinary write.
@@ -1466,7 +1466,7 @@ export async function mutateConfigWithPrecommit<T>(
 }
 
 /**
- * The source identity 0.9.16 bound a scheduler grant to: the configured
+ * The source identity a scheduler grant is bound to: the configured
  * bundle's source id, or the implicit `AKM_BUNDLE_DIR` stash's. `undefined`
  * when the bundle is not active on this host.
  */
@@ -1550,8 +1550,8 @@ export function resolveSecret(value: string | undefined, resolveFromStore?: Secr
       const name = (braced ?? bare) as string;
       const resolved = process.env[name];
       if (!resolved) {
-        // #953: an unset/empty $VAR used to substitute silently, so a gateway
-        // that enforces auth on inference (e.g. Bifrost) failed every call with
+        // An unset/empty $VAR would otherwise substitute silently, and a gateway
+        // that enforces auth on inference (e.g. Bifrost) would fail every call with
         // an opaque 401 instead of a diagnosable warning naming the variable.
         warnOnce(
           `config:empty-env-var:${name}`,

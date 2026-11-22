@@ -50,7 +50,7 @@ export type ConfigErrorCode =
   | "SOURCE_HAS_LOCAL_WORK"
   | "UNKNOWN_IMPROVE_STRATEGY"
   // Refused stashDir that would clobber a sensitive system path or the user's
-  // home directory (#473). Triggered by `akm bundle create`/`akm setup` when the
+  // home directory Triggered by `akm bundle create`/`akm setup` when the
   // explicit `--dir` argument resolves to e.g. `/`, `$HOME`, `~/.config`,
   // `/etc`, etc.
   | "UNSAFE_STASH_DIR"
@@ -101,9 +101,9 @@ export type UsageErrorCode =
   // usage error instead of citty's raw usage-banner + console.error path.
   | "UNKNOWN_COMMAND"
   // A flag the resolved command does not declare. citty (node:util parseArgs,
-  // strict: false) silently ignores these, so a typo used to parse
-  // "successfully" and exit 0 — a `--fail-on-flaged`
-  // in CI meant the gate never fired.
+  // strict: false) silently ignores these, so without this error a typo
+  // parses "successfully" and exits 0 — a `--fail-on-flaged`
+  // in CI would mean the gate never fires.
   | "UNKNOWN_FLAG"
   // A workflow step authors with: on a target that cannot bind it: a
   // tasks/<ref> target that declares no inputs: at all, or a commands/<ref> or
@@ -134,8 +134,7 @@ export type UsageErrorCode =
 
 /**
  * Stable, machine-readable codes for TransientError — a retryable-shortly
- * signal distinct from every UsageError code (#948 addendum, dev-team field
- * review 2026-09-09): schedulers classify exit 2 as "fix the command line",
+ * signal distinct from every UsageError code (#948): schedulers classify exit 2 as "fix the command line",
  * but these two conditions mean "try again in a few seconds", a different
  * contract a cron wrapper or scheduler can branch on.
  */
@@ -151,7 +150,7 @@ export type TransientErrorCode =
   // corruption/unrelated failure. The original driver error survives as
   // `cause`.
   | "STATE_DB_CONTENDED"
-  // Field follow-up to #956 (dev-team field review 2026-09-10): a
+  // A
   // concurrent `akm index` (or any other writer touching index.db — source
   // add/update) can make a
   // rebuild's write hit the same contention-shaped SQLite condition
@@ -164,13 +163,12 @@ export type TransientErrorCode =
   // escaping the walk, index, or embedding phase. The original driver error
   // survives as `cause`.
   | "INDEX_DB_CONTENDED"
-  // Field follow-up to #948 (dev-team field review 2026-09-10): the
+  // The
   // `akm improve` whole-run lock (`commands/improve/locks.ts`) is ordinary
   // contention between two legitimate `improve` invocations — the same
-  // "config error is not the right label for a timing collision" shape #956
-  // fixed for the index rebuild lock and the maintenance-start barrier. It
-  // previously threw `ConfigError("INVALID_CONFIG_FILE")`, surfacing as
-  // exit 78 and telling a supervisor to stop retrying a normal lock
+  // "config error is not the right label for a timing collision" shape, as
+  // for the index rebuild lock and the maintenance-start barrier. A config
+  // error would exit 78 and tell a supervisor to stop retrying a normal lock
   // collision. Thrown from `tryAcquireImproveLockUnlocked` when the lock is
   // held by a live PID and `--skip-if-locked` was not passed.
   | "IMPROVE_LOCK_HELD"
@@ -404,8 +402,8 @@ export class UsageError extends AkmError {
 /**
  * Raised when a condition is ordinary, retryable contention rather than a
  * bad command line or a genuine failure — another akm process holds a lock
- * or is writing state.db right now. Distinct from `UsageError` (#948
- * addendum, dev-team field review 2026-09-09): schedulers classify exit 2 as
+ * or is writing state.db right now. Distinct from `UsageError` (#948):
+ * schedulers classify exit 2 as
  * "fix the command line", so contention needs its own exit code (75,
  * sysexits EX_TEMPFAIL) a cron wrapper can branch on to retry instead of
  * alerting.
