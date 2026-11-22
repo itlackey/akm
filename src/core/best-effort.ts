@@ -6,7 +6,7 @@
  * `bestEffort` — a single chokepoint for the project's many intentionally
  * silent error swallows (`} catch { /* nothing *\/ }`).
  *
- Bare `try/catch {}` blocks hide errors with no way to opt into
+ * Bare `try/catch {}` blocks hide errors with no way to opt into
  * visibility. This helper centralizes that pattern:
  *
  *   - It runs `fn`. On success it returns the result.
