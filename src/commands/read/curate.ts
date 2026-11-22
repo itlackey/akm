@@ -76,7 +76,8 @@ export type CuratedStashItem = {
   type: string;
   name: string;
   ref: string;
-  path: string;
+  /** The file that holds the asset. Absent when no file does. */
+  path?: string;
   editable: boolean;
   editHint?: string;
   description?: string;

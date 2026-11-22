@@ -104,6 +104,21 @@ describe("secret manager bundles", () => {
     });
   });
 
+  test("no output prints a path for an entry the store keeps: no file holds it", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, vaults: VAULT }, async () => {
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+
+      const search = await akm("search", "token", "--type", "secret");
+      const hits = search.json.hits as Array<Record<string, unknown>>;
+      expect(hits).toHaveLength(2);
+      for (const hit of hits) expect(hit).not.toHaveProperty("path");
+
+      const shown = await akm("show", "keyring//secrets/wifi");
+      expect(shown.code).toBe(0);
+      expect(shown.json).not.toHaveProperty("path");
+    });
+  });
+
   test("an entry that left the store leaves the index on the next build", async () => {
     await withFakeSecretStores({ keyrings: KEYRING }, async () => {
       await akmIndex({ stashDir: storage.stashDir, full: true });
@@ -324,7 +339,8 @@ describe("secret manager bundles in the workspace API", () => {
         type: "secret",
         name: "deploy-token",
         bundle: "vault",
-        path: path.join(storage.cacheDir, "akm", "index", "bundles", "vault", "secrets", "deploy-token"),
+        // The store keeps the secret: no file holds it, so there is no path.
+        path: null,
         actions: { edit: { allowed: true }, delete: { allowed: true } },
         revision: sha("vault-value"),
         location: { bundle: "vault", path: "secrets/deploy-token", parent: "secrets" },

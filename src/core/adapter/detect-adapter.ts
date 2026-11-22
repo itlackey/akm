@@ -4,8 +4,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { DirectoryAdapterBase } from "./directory-adapter";
 import { adapterForId, getAdapters } from "./registry";
-import type { BundleComponent } from "./types";
+import type { Bundle } from "./types";
 
 /**
  * Tool-dir-shaped adapters (#908): their install-time probe recognizes only a
@@ -44,8 +45,8 @@ function hasExtraAkmContent(root: string, winnerId: string): boolean {
   if (akm?.looksLikeRoot?.(root) !== true) return false;
 
   const winner = adapterForId(winnerId);
-  const stubComponent: BundleComponent = { id: "detect", adapter: winnerId, root, writable: false };
-  const ownedDirs = new Set(winner?.directoryList?.(stubComponent) ?? []);
+  const stubBundle: Bundle = { id: "detect", root, writable: false };
+  const ownedDirs = new Set(winner instanceof DirectoryAdapterBase ? winner.directoryList(stubBundle) : []);
 
   let entries: fs.Dirent[];
   try {

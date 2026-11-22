@@ -54,11 +54,11 @@ import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { BundleAdapter } from "../bundle-adapter";
+import type { AdapterReadCandidate, AssetEntry } from "../bundle-adapter";
+import { DirectoryAdapterBase } from "../directory-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { skillDirectoryDiagnostics } from "./akm-lint";
-import { directoryAdapter } from "./directory-assets";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
 /** The canonical (plural) subdir spellings writes normalize to (open-question-6). */
@@ -130,7 +130,7 @@ function classify(relPath: string, layout: ToolDirLayout): ToolDirClassification
 }
 
 /** recognize() for a tool-dir adapter: derive the open `type`, project the OKF-shaped fields. */
-export function recognizeToolDir(layout: ToolDirLayout, c: BundleComponent, file: FileContext): IndexDocument | null {
+export function recognizeToolDir(layout: ToolDirLayout, c: Bundle, file: FileContext): IndexDocument | null {
   const cls = classify(file.relPath, layout);
   if (cls === null) return null;
 
@@ -164,7 +164,7 @@ export function recognizeToolDir(layout: ToolDirLayout, c: BundleComponent, file
 }
 
 /** List native read spellings. */
-export function readCandidatesToolDir(layout: ToolDirLayout, c: BundleComponent, conceptId: string) {
+export function readCandidatesToolDir(layout: ToolDirLayout, c: Bundle, conceptId: string): AdapterReadCandidate[] {
   const posix = toPosix(conceptId);
   if (posix === layout.instructionConceptId) {
     return [{ path: path.join(c.root, layout.instructionFile), conceptId: posix }];
@@ -211,7 +211,7 @@ function nameOrSignalDiagnostics(
 /** validate() for a tool-dir adapter — see file header for the leniency contract. */
 export async function validateToolDir(
   layout: ToolDirLayout,
-  c: BundleComponent,
+  c: Bundle,
   changes: FileChange[],
   ctx: ValidateContext,
 ): Promise<Diagnostic[]> {
@@ -246,8 +246,8 @@ export async function validateToolDir(
 /** Translate a native Claude/OpenCode command or agent without exposing raw frontmatter. */
 export function renderToolDirExecutionSource(
   layout: ToolDirLayout,
-  c: BundleComponent,
-  file: FileContext,
+  c: Bundle,
+  file: AssetEntry,
 ): AdapterRenderedExecutionSource | null {
   const cls = classify(file.relPath, layout);
   if (cls?.type !== "command" && cls?.type !== "agent") return null;
@@ -268,17 +268,39 @@ export function renderToolDirExecutionSource(
   });
 }
 
-/** Build the concrete `BundleAdapter` from a layout + a `looksLikeRoot` probe (claude/opencode share everything else). */
-export function makeToolDirAdapter(layout: ToolDirLayout, looksLikeRoot: (root: string) => boolean): BundleAdapter {
-  return directoryAdapter({
-    id: layout.adapterId,
-    version: "0.9.0",
-    extensions: [".md"],
-    recognize: (c, file) => recognizeToolDir(layout, c, file),
-    renderExecutionSource: (c, file) => renderToolDirExecutionSource(layout, c, file),
-    validate: (c, changes, ctx) => validateToolDir(layout, c, changes, ctx),
-    readCandidates: (c, conceptId) => readCandidatesToolDir(layout, c, conceptId),
-    directoryList: () => [CANONICAL_COMMAND_DIR, CANONICAL_AGENT_DIR, CANONICAL_SKILL_DIR],
-    looksLikeRoot,
-  });
+/** What claude and opencode share: everything but the layout and the install-time probe. */
+export abstract class ToolDirAdapterBase extends DirectoryAdapterBase {
+  readonly id: string;
+  readonly version = "0.9.0";
+  override readonly extensions = [".md"];
+
+  constructor(private readonly layout: ToolDirLayout) {
+    super();
+    this.id = layout.adapterId;
+  }
+
+  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
+    return recognizeToolDir(this.layout, b, file);
+  }
+
+  override renderExecutionSource(b: Bundle, entry: AssetEntry): AdapterRenderedExecutionSource | null {
+    return renderToolDirExecutionSource(this.layout, b, entry);
+  }
+
+  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    return validateToolDir(this.layout, b, changes, ctx);
+  }
+
+  readCandidates(b: Bundle, conceptId: string): AdapterReadCandidate[] {
+    return readCandidatesToolDir(this.layout, b, conceptId);
+  }
+
+  override directoryList(): string[] {
+    return [CANONICAL_COMMAND_DIR, CANONICAL_AGENT_DIR, CANONICAL_SKILL_DIR];
+  }
+
+  /** A skill's folder holds its `SKILL.md` and the resources that belong to it. */
+  protected override packageDir(file: FileContext): string | undefined {
+    return file.fileName === SKILL_MANIFEST ? file.parentDirAbs : undefined;
+  }
 }

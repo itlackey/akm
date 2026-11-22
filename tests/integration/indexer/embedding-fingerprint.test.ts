@@ -89,7 +89,7 @@ describe("generateEmbeddingsForDb: per-row embedding model", () => {
       const name = `memory-${i}`;
       const entry = { name, type: "memories", filename: `${name}.md` };
       const provenance = deriveEntryProvenance(
-        { bundleId: installation.id, componentId: component.id, adapterId: component.adapter },
+        { bundleId: installation.id, componentId: component.id, adapterId: installation.adapterId },
         "memories",
         name,
       );

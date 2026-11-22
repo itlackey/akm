@@ -14,7 +14,7 @@ import {
 } from "../../core/adapter/adapters/akm-lint";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
-import type { Diagnostic } from "../../core/adapter/types";
+import type { Bundle, Diagnostic } from "../../core/adapter/types";
 import { createValidateContext } from "../../core/adapter/validate-context";
 import {
   documentFormatForStashDir,
@@ -202,49 +202,6 @@ function resolveWorkflowLintOwnership(stashRoot: string, files: readonly string[
 // `.yml` sources while preserving the pinned Markdown findings/`--fix` bytes.
 
 /**
- * Case-insensitive SUFFIX match against an adapter's declared `extensions`
- * hint. Deliberately NOT `path.extname()`: Node's `extname(".env")` is `""`
- * (a leading-dot-only basename has no "extension" by that definition), which
- * would silently skip every bare `env/.env` file — exactly the shape
- * `dotenvAdapter`'s own `classify()` (and the akm adapter's env recognition)
- * match by plain `endsWith`, not `path.extname`. A suffix match is also a
- * strict superset of the `path.extname` behavior for a normal `name.ext`
- * file, so nothing that matched before stops matching.
- */
-function matchesAdapterExtension(fileName: string, extensions: readonly string[]): boolean {
-  const lower = fileName.toLowerCase();
-  return extensions.some((candidate) => lower.endsWith(candidate.toLowerCase()));
-}
-
-/** Walk the whole bundle tree, collecting every file whose extension the adapter recognizes (skip `.git`, symlinks, cache/registry copies). */
-function collectAdapterFiles(root: string, extensions: readonly string[]): string[] {
-  if (!fs.existsSync(root)) return [];
-  const results: string[] = [];
-  const walk = (dir: string): void => {
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (entry.name === ".git" || entry.isSymbolicLink()) continue;
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-      } else if (entry.isFile() && matchesAdapterExtension(entry.name, extensions)) {
-        // Skip akm's OWN resolved registry-cache copies, not any user
-        // directory that happens to be named ".cache" or "registry".
-        if (isAkmRegistryCachePath(full)) continue;
-        results.push(full);
-      }
-    }
-  };
-  walk(root);
-  return results;
-}
-
-/**
  * Every closed {@link LintIssueType} member a current adapter `validate()` can
  * legitimately emit. Anything outside this set folds onto `"adapter-diagnostic"`
  * (see `types.ts`'s doc comment on that member) rather than being dropped.
@@ -312,14 +269,18 @@ async function lintViaAdapter(
     );
   }
 
-  const files = collectAdapterFiles(stashRoot, adapter.extensions);
-  const changes: FileChange[] = files.map((filePath) => ({
-    path: path.relative(stashRoot, filePath).replace(/\\/g, "/"),
-    op: "update",
-  }));
   const ids = deriveBundleIds(sources);
   const sourceIndex = sources.findIndex((s) => samePath(s.path, stashRoot));
-  const componentId = sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot;
+  const bundle: Bundle = {
+    id: sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot,
+    root: stashRoot,
+    writable: true,
+  };
+  const changes: FileChange[] = adapter
+    .list(bundle)
+    .entries // akm's own resolved registry-cache copies are not the bundle's content.
+    .filter((entry) => entry.file === undefined || !isAkmRegistryCachePath(entry.file))
+    .map((entry) => ({ path: entry.relPath, op: "update" }));
 
   const ctx = createValidateContext({
     root: stashRoot,
@@ -327,11 +288,7 @@ async function lintViaAdapter(
     config: cfg,
     readMoves: options.readMoves ?? readRecordedMoves,
   });
-  const diagnostics = await adapter.validate(
-    { id: componentId, adapter: adapterId, root: stashRoot, writable: true },
-    changes,
-    ctx,
-  );
+  const diagnostics = await adapter.validate(bundle, changes, ctx);
 
   const mapped = diagnostics.map(diagnosticToLintIssue);
   // Advisory diagnostics travel in their own channel — never `flagged`, so a

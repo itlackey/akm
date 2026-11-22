@@ -39,21 +39,24 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   akmAdapter,
+  azureKeyVaultAdapter,
   dotenvAdapter,
   genericFilesAdapter,
   llmWikiAdapter,
   okfAdapter,
   opencodeAdapter,
+  secretToolAdapter,
 } from "../../../../src/core/adapter/adapters";
-import type { BundleAdapter } from "../../../../src/core/adapter/bundle-adapter";
+import { DirectoryAdapterBase } from "../../../../src/core/adapter/directory-adapter";
 import { adapterForId, getAdapters } from "../../../../src/core/adapter/registry";
-import type { BundleComponent, IndexDocument } from "../../../../src/core/adapter/types";
+import type { Bundle, IndexDocument } from "../../../../src/core/adapter/types";
 import {
   AdapterConceptCollisionError,
   resolveAdapterConceptOwner,
 } from "../../../../src/indexer/lookup/adapter-concept-owner";
 import { buildFileContext } from "../../../../src/indexer/walk/file-context";
 import { walkStashFlat } from "../../../../src/indexer/walk/walker";
+import { withFakeSecretStores } from "../../../_helpers/fake-secret-stores";
 import { sandboxStashDir } from "../../../_helpers/sandbox";
 
 /** The `okf` reference bundle's own root (root `index.md`, no `TYPE_DIRS` subdir). */
@@ -95,16 +98,9 @@ const OWN_ROOT_BY_ID: Record<string, string> = {
   "code-project": CODE_PROJECT_ROOT,
 };
 
-/**
- * The adapters of a bundle kept by a secret manager, not a directory: they have
- * no root to probe and no fixture files, and
- * `tests/integration/secret-manager-bundles.test.ts` covers them.
- */
-const NOT_DIRECTORIES = new Set(["secret-tool", "azure-key-vault"]);
-
-/** The adapters this suite covers: every adapter that reads a directory. */
-function directoryAdapters(): BundleAdapter[] {
-  return getAdapters().filter((adapter) => !NOT_DIRECTORIES.has(adapter.id));
+/** The adapters this suite covers: every adapter that reads a directory. A secret manager's adapters have no root to probe and no fixture files; `tests/integration/secret-manager-bundles.test.ts` covers them. */
+function directoryAdapters(): DirectoryAdapterBase[] {
+  return getAdapters().filter((adapter): adapter is DirectoryAdapterBase => adapter instanceof DirectoryAdapterBase);
 }
 
 /** Adapters whose `looksLikeRoot` is intentionally never-firing (explicit-config, §1.2). */
@@ -125,8 +121,8 @@ function orderedProbeOwner(root: string): string | undefined {
   return undefined;
 }
 
-function component(id: string, adapterId: string, root: string): BundleComponent {
-  return { id, adapter: adapterId, root, writable: true };
+function component(id: string, root: string): Bundle {
+  return { id, root, writable: true };
 }
 
 /** `{ref, type}` projection of a doc stream — the comparison key for the walk×recognize mapping. */
@@ -135,7 +131,7 @@ function refType(docs: IndexDocument[]): Array<{ ref: string | undefined; type: 
 }
 
 /** fold(recognize): map `adapter.recognize` over the SAME `walkStashFlat(root)` files directly, dropping abstentions. */
-function foldRecognize(adapter: BundleAdapter, c: BundleComponent): IndexDocument[] {
+function foldRecognize(adapter: DirectoryAdapterBase, c: Bundle): IndexDocument[] {
   const out: IndexDocument[] = [];
   for (const file of walkStashFlat(c.root)) {
     const doc = adapter.recognize(c, file);
@@ -211,21 +207,21 @@ describe("conformance — fold(recognize) over the walk", () => {
   // recognize-over-walk behavior directly (owner ruling 2026-07-21 — the
   // walk×recognize mapping the retired `scanComponent` module used to wrap).
   test("akm: fold(recognize) over the all-types walk yields a stable ref/type stream", () => {
-    const c = component("all-types", "akm", AKM_ROOT);
+    const c = component("all-types", AKM_ROOT);
     const folded = foldRecognize(akmAdapter, c);
     expect(folded.length).toBeGreaterThan(0); // the fixture actually exercises the walk
     expect(refType(folded)).toEqual(refType(foldRecognize(akmAdapter, c)));
   });
 
   test("okf: fold(recognize) over the okf-sample walk yields a stable ref/type stream", () => {
-    const c = component("okf-sample", "okf", OKF_ROOT);
+    const c = component("okf-sample", OKF_ROOT);
     const folded = foldRecognize(okfAdapter, c);
     expect(folded.length).toBeGreaterThan(0);
     expect(refType(folded)).toEqual(refType(foldRecognize(okfAdapter, c)));
   });
 
   test("llm-wiki: fold(recognize) over the llm-wiki walk yields a stable ref/type stream", () => {
-    const c = component("sample-wiki", "llm-wiki", LLM_WIKI_ROOT);
+    const c = component("sample-wiki", LLM_WIKI_ROOT);
     const folded = foldRecognize(llmWikiAdapter, c);
     expect(folded.length).toBeGreaterThan(0);
     expect(refType(folded)).toEqual(refType(foldRecognize(llmWikiAdapter, c)));
@@ -236,7 +232,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
   test("every registered adapter maps each recognized fixture file back from its canonical concept", () => {
     for (const adapter of directoryAdapters()) {
       const root = OWN_ROOT_BY_ID[adapter.id]!;
-      const c = component(adapter.id, adapter.id, root);
+      const c = component(adapter.id, root);
       expect(typeof adapter.readCandidates, adapter.id).toBe("function");
       for (const file of walkStashFlat(root)) {
         const document = adapter.recognize(c, file);
@@ -256,7 +252,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
   test("every existing fixture candidate either abstains or recognizes the queried canonical concept", () => {
     for (const adapter of directoryAdapters()) {
       const root = OWN_ROOT_BY_ID[adapter.id]!;
-      const c = component(adapter.id, adapter.id, root);
+      const c = component(adapter.id, root);
       for (const file of walkStashFlat(root)) {
         const indexed = adapter.recognize(c, file);
         if (!indexed?.conceptId) continue;
@@ -278,7 +274,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
       const toolRoot = path.join(sandbox.dir, "tool");
       for (const root of [genericRoot, dotenvRoot, toolRoot]) fs.mkdirSync(root, { recursive: true });
 
-      const genericComponent = component("generic", "generic-files", genericRoot);
+      const genericComponent = component("generic", genericRoot);
       const upperText = path.join(genericRoot, "docs", "format.TEXT");
       fs.mkdirSync(path.dirname(upperText), { recursive: true });
       fs.writeFileSync(upperText, "generic text");
@@ -309,7 +305,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
       expect(linkedOwner?.path).toBe(linked);
       expect(linkedOwner?.realPath).toBe(fs.realpathSync(outside));
 
-      const dotenvComponent = component("dotenv", "dotenv", dotenvRoot);
+      const dotenvComponent = component("dotenv", dotenvRoot);
       const defaultEnv = path.join(dotenvRoot, "env", ".env");
       fs.mkdirSync(path.dirname(defaultEnv), { recursive: true });
       fs.writeFileSync(defaultEnv, "TOKEN=hidden\n");
@@ -324,7 +320,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
       expect(dotenvAdapter.recognize(dotenvComponent, buildFileContext(dotenvRoot, defaultEnv))).toBeNull();
       expect(resolveAdapterConceptOwner(dotenvRoot, "dotenv", "env/default")).toBeUndefined();
 
-      const toolComponent = component("tool", "opencode", toolRoot);
+      const toolComponent = component("tool", toolRoot);
       const singular = path.join(toolRoot, "skill", "pkg", "SKILL.md");
       fs.mkdirSync(path.dirname(singular), { recursive: true });
       fs.writeFileSync(singular, "---\nname: pkg\ndescription: pkg\n---\n");
@@ -373,7 +369,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
         ["env/team/.env", "TOKEN=hidden\n"],
       ] as const;
       const expected: Array<{ adapterId: string; root: string; path: string; conceptId: string }> = [];
-      const akmComponent = component("akm", "akm", akmRoot);
+      const akmComponent = component("akm", akmRoot);
       for (const [relativePath, content] of authored) {
         const filePath = path.join(akmRoot, relativePath);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -388,7 +384,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
       fs.mkdirSync(path.dirname(nestedDefault), { recursive: true });
       fs.writeFileSync(nestedDefault, "TOKEN=hidden\n");
       const dotenvDocument = dotenvAdapter.recognize(
-        component("dotenv", "dotenv", dotenvRoot),
+        component("dotenv", dotenvRoot),
         buildFileContext(dotenvRoot, nestedDefault),
       );
       expect(dotenvDocument?.conceptId).toBe("env/team/default");
@@ -425,10 +421,8 @@ describe("conformance — read candidates and recognition are two-way canonical 
       for (const entry of expected) {
         const adapter = adapterForId(entry.adapterId)!;
         expect(
-          adapter.recognize(
-            component(entry.adapterId, entry.adapterId, entry.root),
-            buildFileContext(entry.root, entry.path),
-          )?.conceptId,
+          adapter.recognize(component(entry.adapterId, entry.root), buildFileContext(entry.root, entry.path))
+            ?.conceptId,
           entry.path,
         ).toBe(entry.conceptId);
       }
@@ -464,5 +458,53 @@ describe("conformance — read candidates and recognition are two-way canonical 
     } finally {
       sandbox.cleanup();
     }
+  });
+});
+
+describe("conformance — declared writes and what an adapter refuses", () => {
+  test("every adapter declares the types it writes; a read-only adapter's create and place refuse", () => {
+    const b: Bundle = { id: "b", root: "/nonexistent/bundle", writable: true, location: "x" };
+    for (const adapter of getAdapters()) {
+      expect(Array.isArray(adapter.writes), adapter.id).toBe(true);
+      if (adapter.writes.length > 0) continue;
+      expect(() => adapter.place(b, { type: "knowledge", name: "a" }), `${adapter.id} place`).toThrow();
+      expect(() => adapter.create(b, { type: "knowledge", name: "a", content: "x" }), `${adapter.id} create`).toThrow();
+    }
+  });
+
+  test("the writing adapters are the akm formats and the secret managers", () => {
+    expect(
+      getAdapters()
+        .filter((adapter) => adapter.writes.length > 0)
+        .map((adapter) => adapter.id),
+    ).toEqual(["dotenv", "akm-workflow", "akm", "secret-tool", "azure-key-vault"]);
+  });
+
+  test("a secret manager's entry has no file, and its index document has no path", async () => {
+    const keyring = [
+      {
+        path: "/org/freedesktop/secrets/collection/akm/1",
+        label: "gh_token",
+        attributes: { akm: "akm/gh_token" },
+        secret: "v",
+      },
+    ];
+    await withFakeSecretStores({ keyrings: { akm: keyring }, vaults: { vault: { token: "v" } } }, async () => {
+      for (const [adapter, location] of [
+        [secretToolAdapter, "akm"],
+        [azureKeyVaultAdapter, "vault"],
+      ] as const) {
+        const b: Bundle = { id: "bundle", root: "/not/a/directory", writable: true, location };
+        const { entries, complete } = adapter.list(b);
+        expect(complete, adapter.id).toBe(true);
+        expect(entries.length, adapter.id).toBe(1);
+        const [entry] = entries;
+        expect(entry?.file, adapter.id).toBeUndefined();
+        expect(entry?.relPath.startsWith("secrets/"), adapter.id).toBe(true);
+        const document = adapter.recognize(b, entry as NonNullable<typeof entry>);
+        expect(document?.type, adapter.id).toBe("secret");
+        expect(document, adapter.id).not.toHaveProperty("path");
+      }
+    });
   });
 });

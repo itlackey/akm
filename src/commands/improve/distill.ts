@@ -501,7 +501,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const inputType =
     resolveOwnedType(parseBundleRef(inputRef), resolveSourceEntries(options.stashDir, config), {
       mode: "read",
-      includeSensitive: true,
+      unlisted: true,
     }) ?? address.type;
   if (isDistillRefusedInputType(inputType)) {
     const secret = inputType === "env" || inputType === "secret";

@@ -204,7 +204,7 @@ const secretRemoveCommand = defineJsonCommand({
       return;
     }
     if (!findWriteTargetAsset(resolution)) throw new NotFoundError(`Secret not found: ${ref}`);
-    writeEnvSecret(resolution, { op: "retire" });
+    writeEnvSecret(resolution, { op: "delete" });
     output("secret-remove", { ref, removed: true });
   },
 });

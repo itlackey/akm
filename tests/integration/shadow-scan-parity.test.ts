@@ -33,7 +33,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
-import type { BundleComponent, IndexDocument } from "../../src/core/adapter/types";
+import type { Bundle, IndexDocument } from "../../src/core/adapter/types";
 import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
 import { indexDocumentToStashEntry } from "../../src/indexer/scan/doc-to-entry";
@@ -54,7 +54,7 @@ const STASHES: Array<{ name: string; root: string }> = [
  */
 function newStream(root: string): IndexDocument[] {
   const bundle = "parity";
-  const component: BundleComponent = { id: bundle, adapter: "akm", root, writable: true };
+  const component: Bundle = { id: bundle, root, writable: true };
   const docs: IndexDocument[] = [];
   for (const file of walkStashFlat(root)) {
     const doc = akmAdapter.recognize(component, file);

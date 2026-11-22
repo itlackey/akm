@@ -82,7 +82,12 @@ import {
   hasMarkdownFragmentContent,
   setMarkdownFragmentContent,
 } from "../../../indexer/passes/metadata";
-import { buildFileContext, type FileContext, type MatchResult } from "../../../indexer/walk/file-context";
+import {
+  buildFileContext,
+  type FileContext,
+  fileContextOfEntry,
+  type MatchResult,
+} from "../../../indexer/walk/file-context";
 import { declaredTypeForPath } from "../../../indexer/walk/matchers";
 import {
   assetPathCandidatesForName,
@@ -95,15 +100,13 @@ import {
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { looksLikeLlmWikiRoot } from "../../asset/llm-wiki-root";
 import type { FileChange } from "../../file-change";
-import { sensitiveMarkerPath } from "../../sensitive-marker-path";
-import type { BundleAdapter } from "../bundle-adapter";
+import type { AdapterReadCandidate, AssetEntry } from "../bundle-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import { recognizeMatch } from "../recognize-match";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import { AkmFormatAdapterBase, sensitiveMarkerPath } from "./akm-format";
 import { derivedSiblingPath, perTypeDiagnostics, skillDirectoryDiagnostics, type TypeCheckInput } from "./akm-lint";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "./akm-metadata";
-import { akmWrites } from "./akm-writes";
-import { directoryAdapter } from "./directory-assets";
 import { createBaseChecker, hashContent, type ParsedForValidate, parseForValidate, RESERVED_FILES } from "./shared";
 
 // `recognizeMatch` + the builtin matcher list moved to the cycle-free leaf
@@ -275,7 +278,7 @@ function indexDocumentFromEntry(
  * as it is when the wiki is a bundle of its own; its ref stays the
  * bundle-relative path.
  */
-function isWikiRaw(c: BundleComponent, file: FileContext): boolean {
+function isWikiRaw(c: Bundle, file: FileContext): boolean {
   if (file.ext !== ".md") return false;
   const dirs = file.ancestorDirs;
   for (let i = 0; i < dirs.length; i++) {
@@ -316,7 +319,7 @@ export function classifyAkmFile(
   return { match, conceptId, canonicalName };
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   const classified = classifyAkmFile(c.root, file);
   if (classified === null) return null;
   const { match, conceptId, canonicalName } = classified;
@@ -362,7 +365,8 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
 }
 
 /** Render AKM-native command/agent Markdown into the shared execution source. */
-function renderExecutionSource(c: BundleComponent, file: FileContext): AdapterRenderedExecutionSource | null {
+function renderExecutionSource(c: Bundle, entry: AssetEntry): AdapterRenderedExecutionSource | null {
+  const file = fileContextOfEntry(c.root, entry);
   const document = recognize(c, file);
   if (document?.type !== "command" && document?.type !== "agent") return null;
   if (!document.ref) return null;
@@ -408,6 +412,7 @@ function buildOverlayContext(root: string, relPathInput: string, raw: string): F
 
   return {
     absPath,
+    file: absPath,
     relPath,
     ext,
     fileName,
@@ -416,6 +421,7 @@ function buildOverlayContext(root: string, relPathInput: string, raw: string): F
     ancestorDirs,
     stashRoot: root,
     content: () => raw,
+    bytes: () => Buffer.from(raw),
     frontmatter: () => {
       if (!frontmatterComputed) {
         const parsed = parseFrontmatter(raw);
@@ -443,7 +449,7 @@ function buildOverlayContext(root: string, relPathInput: string, raw: string): F
  * Base checks (shared) then the per-type extra checks run; a `skills/` directory
  * pass reproduces `SkillLinter.lintDirectory` across the change set.
  */
-async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+async function validate(c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   const seenSkillDirs = new Set<string>();
   const { check, rulesFor } = createBaseChecker(c.root, ctx);
@@ -481,9 +487,8 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
   return diagnostics;
 }
 
-export const akmAdapter: BundleAdapter = directoryAdapter({
-  writes: akmWrites,
-  id: "akm",
+export class AkmAdapter extends AkmFormatAdapterBase {
+  readonly id = "akm";
   // Bump when a change to the matchers (or `recognize`) can retype or re-ref a
   // file that has not changed, or when the document records new fields from it
   // (0.9.4: frontmatter dates, #1228; 0.9.5: path refs, #1432; 0.9.6: a wiki's raw/ is wiki-source; 0.9.7: selection frontmatter, #1453): the version is
@@ -491,7 +496,8 @@ export const akmAdapter: BundleAdapter = directoryAdapter({
   // re-drains it and re-files those rows, including old command refs inferred
   // from body placeholders and loose files' type-folder refs. Vectors are kept
   // when the search text is unchanged.
-  version: "0.9.7",
+  readonly version = "0.9.7";
+  override readonly writes = placementTypes();
   // Recognized-extension HINT, derived from what the matchers accept (§6):
   // `.md` (Markdown types + workflow peer), `.yml` (task and workflow YAML),
   // `.yaml` (task near-miss diagnostics), `.env` (env files), and the 16
@@ -499,7 +505,7 @@ export const akmAdapter: BundleAdapter = directoryAdapter({
   // NON-EXHAUSTIVE hint for the akm adapter: recognition is directory-driven
   // via `recognize()` (e.g. a bare `secrets/<anything>` file with no extension
   // is a `secret`), so `recognize()` — not this list — is the source of truth.
-  extensions: [
+  override readonly extensions = [
     ".md",
     ".yaml",
     ".yml",
@@ -521,11 +527,24 @@ export const akmAdapter: BundleAdapter = directoryAdapter({
     ".swift",
     ".kt",
     ".kts",
-  ],
+  ];
 
-  recognize,
-  renderExecutionSource,
-  validate,
+  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
+    return recognize(b, file);
+  }
+
+  override renderExecutionSource(b: Bundle, entry: AssetEntry): AdapterRenderedExecutionSource | null {
+    return renderExecutionSource(b, entry);
+  }
+
+  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    return validate(b, changes, ctx);
+  }
+
+  /** A skill's folder holds its `SKILL.md` and the resources that belong to it. */
+  protected override packageDir(file: FileContext): string | undefined {
+    return file.fileName === "SKILL.md" ? file.parentDirAbs : undefined;
+  }
 
   /**
    * Closed-form owner candidates (#857): every physical path spelling that
@@ -537,7 +556,7 @@ export const akmAdapter: BundleAdapter = directoryAdapter({
    * type spells the file's ref itself. `recognize` decides which candidate
    * really owns the ref.
    */
-  readCandidates(c: BundleComponent, conceptId: string) {
+  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const posix = conceptId.replace(/\\/g, "/");
     const paths = placementTypes().flatMap((type) =>
       assetPathCandidatesForName(type, c.root, posix).filter((candidate) => {
@@ -548,12 +567,12 @@ export const akmAdapter: BundleAdapter = directoryAdapter({
       }),
     );
     return [...new Set(paths)].map((candidatePath) => ({ path: candidatePath, conceptId: posix }));
-  },
+  }
 
   /** The AKM workspace's owned stash subdirs (§7): the placement stash-subdir names, feeding git exact-path staging. */
-  directoryList(_c: BundleComponent): string[] {
+  override directoryList(_c: Bundle): string[] {
     return [...new Set(stashDirNames())];
-  },
+  }
 
   /**
    * Install-time probe (§1.2), reproducing today's stash-root detection
@@ -593,5 +612,7 @@ export const akmAdapter: BundleAdapter = directoryAdapter({
     } catch {
       return true;
     }
-  },
-});
+  }
+}
+
+export const akmAdapter = new AkmAdapter();

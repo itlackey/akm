@@ -31,7 +31,6 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { withAssetMutationLeaseSync } from "../indexer/index-writer-lock";
-import { declaredTypeForPath } from "../indexer/walk/matchers";
 import { lockContentRootFor } from "../integrations/lockfile";
 import {
   GitStashPushError,
@@ -43,12 +42,12 @@ import {
   saveGitStash,
 } from "../sources/providers/git";
 import { listIgnoredExactPaths } from "../sources/providers/git-stash";
-import { findAbsoluteHomePaths } from "./adapter/adapters/akm-writes";
-import { assertWritableFile } from "./adapter/adapters/directory-assets";
+import { findAbsoluteHomePaths } from "./adapter/adapters/akm-format";
 import type { AssetChange, BundleAdapter, NewAsset } from "./adapter/bundle-adapter";
 import { detectAdapterId } from "./adapter/detect-adapter";
-import { adapterForId, componentOf } from "./adapter/registry";
-import type { BundleComponent } from "./adapter/types";
+import { assertWritableFile } from "./adapter/directory-adapter";
+import { adapterForId, bundleOf } from "./adapter/registry";
+import type { Bundle } from "./adapter/types";
 import { normalizeAkmMarkdown } from "./asset/akm-markdown";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
@@ -337,7 +336,7 @@ function writerOf(source: WriteTargetSource): BundleAdapter {
  */
 export function assertAdapterWrites(source: WriteTargetSource, type?: string): void {
   const adapter = writerOf(source);
-  const writes = adapter.writes ?? [];
+  const { writes } = adapter;
   if (writes.length > 0 && (type === undefined || writes.includes(type))) return;
   throw new UsageError(
     writes.length === 0
@@ -452,7 +451,7 @@ export function prepareWriteTargetForMutation(target: ResolvedWriteTarget, kind:
 export type AssetOperation =
   | { op: "create"; asset: NewAsset; exclusive?: boolean }
   | { op: "update"; conceptId: string; content: string | Buffer; revision?: string }
-  | { op: "retire"; conceptId: string; revision?: string };
+  | { op: "delete"; conceptId: string; revision?: string };
 
 /** An asset's revision: the SHA-256 of its content. */
 export function assetRevision(content: string | Buffer): string {
@@ -460,7 +459,7 @@ export function assetRevision(content: string | Buffer): string {
 }
 
 /**
- * Create, update or retire an asset of `source` through the bundle's adapter,
+ * Create, update or delete an asset of `source` through the bundle's adapter,
  * after the gates every asset write passes. The files it changed are recorded
  * for the target's boundary commit ({@link commitWriteTargetBoundary}); none
  * is committed here.
@@ -473,18 +472,18 @@ export function writeAsset(
   // The adapter writes the asset, however the bundle keeps it: the bundle need only take writes.
   ensureWritable(source, config);
   const adapter = writerOf(source);
-  const component = componentOf(source, adapter.id);
+  const bundle = bundleOf(source, adapter.id);
   const type =
-    operation.op === "create" ? operation.asset.type : existingAssetType(adapter, component, operation.conceptId);
+    operation.op === "create" ? operation.asset.type : existingAssetType(adapter, bundle, operation.conceptId);
   assertAdapterWrites(source, type);
   if (operation.op === "create" && operation.exclusive) {
-    const conceptId = conceptIdFromTypeName(operation.asset.type, operation.asset.name);
-    if (adapter.read(component, conceptId, { includeSensitive: true })) {
+    const conceptId = adapter.place(bundle, operation.asset);
+    if (adapter.read(bundle, conceptId)) {
       throw new UsageError(`Asset "${source.name}//${conceptId}" already exists.`, "RESOURCE_ALREADY_EXISTS");
     }
   }
   if (operation.op !== "create" && operation.revision !== undefined) {
-    const current = adapter.read(component, operation.conceptId, { includeSensitive: true })?.file.content();
+    const current = adapter.read(bundle, operation.conceptId)?.entry.content();
     if (current === undefined || assetRevision(current) !== operation.revision) {
       throw new UsageError(
         `Asset "${source.name}//${operation.conceptId}" changed since it was read; the change was not applied.`,
@@ -494,16 +493,24 @@ export function writeAsset(
   }
   const change =
     operation.op === "create"
-      ? (adapter.create as NonNullable<BundleAdapter["create"]>)(component, operation.asset)
+      ? adapter.create(bundle, operation.asset)
       : operation.op === "update"
-        ? (adapter.update as NonNullable<BundleAdapter["update"]>)(component, operation.conceptId, operation.content)
-        : (adapter.retire as NonNullable<BundleAdapter["retire"]>)(component, operation.conceptId);
+        ? adapter.update(bundle, operation.conceptId, operation.content)
+        : adapter.delete(bundle, operation.conceptId);
   for (const file of change.changed) {
     recordWriteTargetPath(source, file);
     // Run-scoped write provenance (#652).
     recordWrittenPath(file);
   }
   return change;
+}
+
+/** The file a write left an asset in, for a caller that works with files; refused when its bundle keeps no file for it. */
+export function fileOfChange(change: AssetChange, source: WriteTargetSource): string {
+  if (change.file === undefined) {
+    throw new UsageError(`Asset "${source.name}//${change.conceptId}" is not kept in a file.`);
+  }
+  return change.file;
 }
 
 /**
@@ -523,12 +530,10 @@ export function changeAsset(
 }
 
 /** The type of the asset `conceptId` names in the bundle, refused when there is none. */
-function existingAssetType(adapter: BundleAdapter, component: BundleComponent, conceptId: string): string {
-  const asset = adapter.read(component, conceptId, { includeSensitive: true });
-  if (!asset) throw new NotFoundError(`Asset not found: ${component.id}//${conceptId}`);
-  const type = adapter.recognize(component, asset.file)?.type ?? declaredTypeForPath(asset.file);
-  if (!type) throw new UsageError(`Bundle adapter "${adapter.id}" does not recognize ${conceptId} as an asset.`);
-  return type;
+function existingAssetType(adapter: BundleAdapter, bundle: Bundle, conceptId: string): string {
+  const asset = adapter.read(bundle, conceptId);
+  if (!asset) throw new NotFoundError(`Asset not found: ${bundle.id}//${conceptId}`);
+  return asset.type;
 }
 
 /** Write a textual asset of `ref`'s type and name into `source`. No commit runs here. */
@@ -539,7 +544,7 @@ export async function writeAssetToSource(
   content: string,
 ): Promise<{ path: string; ref: string }> {
   const change = writeAsset(source, config, { op: "create", asset: { type: ref.type, name: ref.name, content } });
-  return { path: change.path, ref: displayRef({ conceptId: change.conceptId, bundleId: ref.origin }) };
+  return { path: fileOfChange(change, source), ref: displayRef({ conceptId: change.conceptId, bundleId: ref.origin }) };
 }
 
 /** The gates an asset write passes: {@link assertPlainWritable}, and an adapter that writes assets of `type`. */
@@ -592,10 +597,13 @@ export async function deleteAssetFromSource(
   source: WriteTargetSource,
   config: SourceConfigEntry,
   ref: AssetRef,
-): Promise<{ path: string; ref: string }> {
+): Promise<{ path?: string; ref: string }> {
   const conceptId = conceptIdFromTypeName(ref.type, ref.name);
-  const change = writeAsset(source, config, { op: "retire", conceptId });
-  return { path: change.path, ref: displayRef({ conceptId, bundleId: ref.origin }) };
+  const change = writeAsset(source, config, { op: "delete", conceptId });
+  return {
+    ...(change.file !== undefined ? { path: change.file } : {}),
+    ref: displayRef({ conceptId, bundleId: ref.origin }),
+  };
 }
 
 function ensureWritable(source: WriteTargetSource, config: SourceConfigEntry): void {

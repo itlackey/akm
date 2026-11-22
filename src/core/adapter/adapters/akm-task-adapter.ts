@@ -43,9 +43,9 @@ import {
 } from "../../../tasks/source-v3";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { directoryAdapter } from "./directory-assets";
+import type { AdapterReadCandidate } from "../bundle-adapter";
+import { DirectoryAdapterBase } from "../directory-adapter";
+import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { hashContent } from "./shared";
 
 /** A native task bundle is single-component; its one component is `main`. */
@@ -53,7 +53,7 @@ const COMPONENT_ID = "main";
 /** The task YAML extension. */
 const TASK_EXT = TASK_EXTENSION;
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   if (file.ext !== TASK_EXT) return null;
   const conceptId = toPosix(file.relPath).replace(/\.yml$/i, "");
   const name = conceptId.split("/").pop() ?? conceptId;
@@ -73,7 +73,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   };
 }
 
-async function validate(_c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+async function validate(_c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   for (const change of changes) {
     if (change.op === "delete") continue;
@@ -108,30 +108,35 @@ async function validate(_c: BundleComponent, changes: FileChange[], ctx: Validat
   return diagnostics;
 }
 
-export const akmTaskAdapter: BundleAdapter = directoryAdapter({
-  id: "akm-task",
-  version: "0.9.2",
+export class AkmTaskAdapter extends DirectoryAdapterBase {
+  readonly id = "akm-task";
+  readonly version = "0.9.2";
   // `.yaml` is listed as a COLLECTION hint only — `recognize` still gates on
   // `.yml`, so a `.yaml` file is never indexed as a task. Listing it is what
   // routes the near-miss file into `validate`, where it is reported instead of
   // silently skipped (issue #760).
-  extensions: [TASK_EXT, TASK_NEAR_MISS_EXTENSION],
+  override readonly extensions = [TASK_EXT, TASK_NEAR_MISS_EXTENSION];
 
-  recognize,
-  validate,
+  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
+    return recognize(b, file);
+  }
 
-  readCandidates(c: BundleComponent, conceptId: string) {
+  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    return validate(b, changes, ctx);
+  }
+
+  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const posix = toPosix(conceptId).replace(/\.ya?ml$/i, "");
     return [
       { path: path.join(c.root, `${posix}.yml`), conceptId: posix },
       { path: path.join(c.root, `${posix}.yaml`), conceptId: posix },
     ];
-  },
+  }
 
   /** Tasks live anywhere under the component root. */
-  directoryList(): string[] {
+  override directoryList(): string[] {
     return ["."];
-  },
+  }
 
   /**
    * Install-time probe (§1.2): a root holding a top-level, valid task source
@@ -165,8 +170,10 @@ export const akmTaskAdapter: BundleAdapter = directoryAdapter({
       }
     }
     return false;
-  },
-});
+  }
+}
+
+export const akmTaskAdapter = new AkmTaskAdapter();
 
 /** The executable keys each retired task schema version required one of. */
 const LEGACY_TASK_TARGET_KEYS: Readonly<Record<number, readonly string[]>> = {

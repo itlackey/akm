@@ -4,10 +4,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { BundleAdapter } from "../core/adapter/bundle-adapter";
+import type { BundleAdapter, BundleListing } from "../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../core/adapter/detect-adapter";
 import { adapterForId } from "../core/adapter/registry";
-import type { BundleComponent } from "../core/adapter/types";
+import type { Bundle } from "../core/adapter/types";
 import { compareCodePoints, isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
 import { appendEvent } from "../core/events";
@@ -83,7 +83,11 @@ import { upsertUtilityScore } from "../storage/repositories/index-utility-reposi
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { withImmediateTransaction } from "../storage/sqlite-transaction";
 import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo, vacuumIfReclaimable } from "../storage/state-db-integrity";
-import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
+import {
+  assertIndexedWorkflowSourceIdentity,
+  WorkflowSourceIdentityError,
+  workflowNameForSourcePath,
+} from "../workflows/source-files";
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
 import { legacyRefMove, rekeyLegacyEntry } from "./legacy-refs";
@@ -123,7 +127,7 @@ import {
 import { drainDirDocuments } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
 import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
-import type { FileContext } from "./walk/file-context";
+import { type FileContext, fileContextOfEntry } from "./walk/file-context";
 import {
   INCOMPLETE_SOURCES_META_KEY,
   type IncompleteIndexSource,
@@ -132,7 +136,7 @@ import {
   SEMANTIC_SEARCH_META_KEY,
   type SemanticSearchRecord,
 } from "./walk/index-context";
-import { walkStashFlatWithStatus } from "./walk/walker";
+import { type WalkStashFlatResult, walkStashFlatWithStatus } from "./walk/walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -274,9 +278,12 @@ function throwIfAborted(signal?: AbortSignal): void {
 
 // ── Source ownership ─────────────────────────────────────────────────────────
 
-/** Each source's durable bundle component (`deriveInstallations`: one per source, source order). */
-function sourceComponents(sources: readonly SearchSource[]): BundleComponent[] {
-  return deriveInstallations([...sources]).map((installation) => installation.components[0] as BundleComponent);
+/** Each source's durable bundle and the id of the adapter that reads it (`deriveInstallations`: one per source, source order). */
+function sourceBundles(sources: readonly SearchSource[]): Array<{ component: Bundle; adapterId: string }> {
+  return deriveInstallations([...sources]).map((installation) => ({
+    component: installation.components[0] as Bundle,
+    adapterId: installation.adapterId,
+  }));
 }
 
 interface IndexSourceOwner {
@@ -285,7 +292,7 @@ interface IndexSourceOwner {
 }
 
 function sourceOwners(sources: readonly SearchSource[]): IndexSourceOwner[] {
-  return sourceComponents(sources).map((component, index) => ({
+  return sourceBundles(sources).map(({ component }, index) => ({
     bundleId: component.id,
     sourceRoot: path.resolve((sources[index] as SearchSource).path),
   }));
@@ -971,18 +978,20 @@ type DirRecord = {
 type IndexedSourceOwner = Pick<EntryProvenance, "bundleId" | "componentId" | "adapterId">;
 
 function buildIndexedSourceOwners(sources: readonly SearchSource[]): Map<string, IndexedSourceOwner> {
-  const components = sourceComponents(sources);
+  const bundles = sourceBundles(sources);
   return new Map(
     sources.map((source, index) => {
-      const { id, adapter } = components[index] as BundleComponent;
-      return [path.resolve(source.path), { bundleId: id, componentId: id, adapterId: adapter }];
+      const { component, adapterId } = bundles[index] as { component: Bundle; adapterId: string };
+      return [path.resolve(source.path), { bundleId: component.id, componentId: component.id, adapterId }];
     }),
   );
 }
 
 type SourceScanPlan = {
   currentStashDir: string;
-  component: BundleComponent;
+  component: Bundle;
+  /** The id of the adapter that reads the source: configured, else detected. */
+  adapterId: string;
   adapter?: BundleAdapter;
   dirGroups: Map<string, FileContext[]>;
   removals: Array<DirRecord & { reason: DirScanReason }>;
@@ -1058,7 +1067,7 @@ interface AdapterSkip {
 }
 
 function adapterSkippedAkmContent(
-  component: BundleComponent,
+  component: Bundle,
   files: readonly FileContext[],
   adapter: BundleAdapter,
 ): AdapterSkip | undefined {
@@ -1075,7 +1084,6 @@ function adapterSkippedAkmContent(
     else byTopDir.set(top, [file]);
   }
 
-  const akmComponent: BundleComponent = { ...component, adapter: "akm" };
   let count = 0;
   const dirs: string[] = [];
   for (const [dir, dirFiles] of byTopDir) {
@@ -1089,7 +1097,7 @@ function adapterSkippedAkmContent(
     if (chosenRecognizesAny) continue; // the chosen adapter owns this dir; nothing skipped
     const akmCandidates = dirFiles.filter((file) => {
       try {
-        return akm.recognize(akmComponent, file) !== null;
+        return akm.recognize(component, file) !== null;
       } catch {
         return false;
       }
@@ -1142,24 +1150,34 @@ function reportAdapterSkips(db: Database, config: AkmConfig, plans: readonly Sou
   if (JSON.stringify(next) !== JSON.stringify(previous)) setMeta(db, ADAPTER_SKIPS_META_KEY, JSON.stringify(next));
 }
 
+/** A bundle's listing as the walk's result: every entry a `FileContext` keyed under the bundle's root. */
+function walkResultOf(listing: BundleListing, root: string): WalkStashFlatResult {
+  return {
+    files: listing.entries.map((entry) => fileContextOfEntry(root, entry)),
+    complete: listing.complete,
+    ...(listing.incompleteReason !== undefined ? { incompleteReason: listing.incompleteReason } : {}),
+  };
+}
+
 function buildSourceScanPlans(
   db: Database,
   allSourceEntries: SearchSource[],
   isIncremental: boolean,
   reconcileMissingDirs: boolean,
 ): { plans: SourceScanPlan[]; handoffDirs: Set<string> } {
-  // Each source root → its durable `BundleComponent`; the per-dir document
-  // drain dispatches `adapterForId(component.adapter).recognize` for it.
-  const components = sourceComponents(allSourceEntries);
-  const componentBySource = new Map(allSourceEntries.map((source, index) => [source.path, components[index]]));
+  // Each source root → its durable `Bundle` and adapter id; the per-dir document
+  // drain dispatches `adapterForId(adapterId).recognize` for it.
+  const bundles = sourceBundles(allSourceEntries);
+  const bundleBySource = new Map(allSourceEntries.map((source, index) => [source.path, bundles[index]]));
   const handoffDirs = new Set<string>();
   const plans = allSourceEntries.map((sourceAdded): SourceScanPlan => {
     const currentStashDir = sourceAdded.path;
-    const component = componentBySource.get(currentStashDir) as BundleComponent;
+    const { component, adapterId } = bundleBySource.get(currentStashDir) as { component: Bundle; adapterId: string };
     if (sourceAdded.unresolved) {
       return {
         currentStashDir,
         component,
+        adapterId,
         adapter: undefined,
         dirGroups: new Map(),
         removals: [],
@@ -1168,14 +1186,17 @@ function buildSourceScanPlans(
         incompletePath: sourceAdded.unresolved.path ?? "unknown",
       };
     }
-    const adapter = adapterForId(component.adapter);
+    const adapter = adapterForId(adapterId);
     // A component whose adapter is unknown is still walked, so its directories stay claimed; it is skipped below.
-    const walked = adapter ? adapter.list(component) : walkStashFlatWithStatus(currentStashDir);
+    const walked = adapter
+      ? walkResultOf(adapter.list(component), currentStashDir)
+      : walkStashFlatWithStatus(currentStashDir);
     const dirGroups = groupFileContextsByDir(walked.files);
     const adapterSkip = adapter ? adapterSkippedAkmContent(component, walked.files, adapter) : undefined;
     return {
       currentStashDir,
       component,
+      adapterId,
       adapter,
       dirGroups,
       removals: [],
@@ -1322,7 +1343,7 @@ async function scanSourceDirs(
   };
 
   for (const plan of plans) {
-    const { currentStashDir, component, adapter, dirGroups, removals, walkComplete } = plan;
+    const { currentStashDir, component, adapterId, adapter, dirGroups, removals, walkComplete } = plan;
     processedDirs++;
     reportScanProgress(
       `Processed ${processedDirs}/${allSourceEntries.length} source${allSourceEntries.length === 1 ? "" : "s"}.`,
@@ -1352,9 +1373,9 @@ async function scanSourceDirs(
         bundle: component.id,
         component: configuredComponentName(config, component.id),
         path: currentStashDir,
-        reason: `unknown adapter id "${component.adapter}"`,
+        reason: `unknown adapter id "${adapterId}"`,
       });
-      warn(`Skipping component "${component.id}": unknown adapter id "${component.adapter}".`);
+      warn(`Skipping component "${component.id}": unknown adapter id "${adapterId}".`);
       continue;
     }
     // The content projection's version is part of the variant: a change to what Markdown bodies index re-projects
@@ -1970,9 +1991,14 @@ async function lookupBundleRefWithResolutionUsing(
       return resolved(null, match);
     }
     if (entry) {
-      if (owner.workflowSource) {
+      if (workflowNameForSourcePath(source.path, adapterId, owner.path) !== undefined) {
         try {
-          assertIndexedWorkflowSourceIdentity(inputRef, entry.filePath, owner.workflowSource);
+          assertIndexedWorkflowSourceIdentity(inputRef, entry.filePath, {
+            path: owner.path,
+            realPath: owner.realPath,
+            relativePath: owner.entry.relPath,
+            canonicalName: owner.conceptId,
+          });
           if (entry.adapterId !== adapterId) {
             throw new WorkflowSourceIdentityError(inputRef, entry.filePath, owner.path);
           }

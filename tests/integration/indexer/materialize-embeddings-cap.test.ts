@@ -54,7 +54,7 @@ describe("generateEmbeddingsForDb: per-document embedding cap (#956)", () => {
     if (!installation || !component) throw new Error("failed to derive a test bundle installation");
     const entry = { name: "big-note", type: "memories", filename: "big-note.md", content };
     const provenance = deriveEntryProvenance(
-      { bundleId: installation.id, componentId: component.id, adapterId: component.adapter },
+      { bundleId: installation.id, componentId: component.id, adapterId: installation.adapterId },
       "memories",
       "big-note",
     );

@@ -69,6 +69,7 @@ import {
   buildFileContext,
   buildRenderContext,
   type FileContext,
+  fileContextOfEntry,
   getRenderer,
   type MatchResult,
 } from "../../indexer/walk/file-context";
@@ -381,7 +382,7 @@ export async function showLocal(input: {
     );
   }
 
-  const fileCtx = owned.file;
+  const fileCtx = fileContextOfEntry(sourceStashDir, owned.entry);
   const presentedName = indexedEntry.name;
   const opaqueFragmentSelector = parsed.fragment?.startsWith("akm-fragment-") === true;
   // Friendly heading selectors retain the source-live exact response contract.
@@ -442,6 +443,8 @@ export async function showLocal(input: {
   }
   response.type = indexedEntry.type;
   response.name = indexedEntry.name;
+  // An asset no file holds is keyed under a path that leads nowhere; none is printed.
+  if (indexedEntry.document?.fileless) delete response.path;
   const defaultBundle = displayDefaultBundle(config.defaultBundle, source, indexedEntry.bundleId);
   const canonicalRef = displayRef(
     { conceptId: indexedEntry.conceptId, bundleId: indexedEntry.bundleId },

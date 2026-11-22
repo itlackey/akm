@@ -19,7 +19,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { okfAdapter, resolveOkfLinks } from "../../../../src/core/adapter/adapters/okf-adapter";
-import type { BundleComponent, Diagnostic, ValidateContext } from "../../../../src/core/adapter/types";
+import type { Bundle, Diagnostic, ValidateContext } from "../../../../src/core/adapter/types";
 import type { FileChange } from "../../../../src/core/file-change";
 import { presentationFor } from "../../../../src/core/type-presentation";
 import { buildFileContext, type FileContext } from "../../../../src/indexer/walk/file-context";
@@ -32,8 +32,8 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(overrides: Partial<BundleComponent> = {}): BundleComponent {
-  return { id: BUNDLE_ID, adapter: "okf", root: FIXTURE_ROOT, writable: true, ...overrides };
+function component(overrides: Partial<Bundle> = {}): Bundle {
+  return { id: BUNDLE_ID, root: FIXTURE_ROOT, writable: true, ...overrides };
 }
 
 /** A real FileContext for a fixture-relative path. */
@@ -45,6 +45,7 @@ function fc(relPath: string): FileContext {
 function synthetic(relPath: string, content: string): FileContext {
   return {
     absPath: path.join(FIXTURE_ROOT, relPath),
+    file: path.join(FIXTURE_ROOT, relPath),
     relPath,
     ext: path.extname(relPath).toLowerCase(),
     fileName: path.basename(relPath),
@@ -53,6 +54,7 @@ function synthetic(relPath: string, content: string): FileContext {
     ancestorDirs: path.dirname(relPath) === "." ? [] : path.dirname(relPath).split("/"),
     stashRoot: FIXTURE_ROOT,
     content: () => content,
+    bytes: () => Buffer.from(content),
     frontmatter: () => null,
     stat: () => ({}) as Stats,
   };

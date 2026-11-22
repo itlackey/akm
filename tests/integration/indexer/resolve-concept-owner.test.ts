@@ -81,10 +81,8 @@ describe("resolveConceptOwner", () => {
     });
 
     expect(resolve("env/prod", [stash])).toBeUndefined();
-    expect(resolve("env/prod", [stash], { includeSensitive: true })?.owner.path).toBe(
-      path.join(stash.path, "env", "prod.env"),
-    );
-    expect(resolve("secrets/token", [stash], { includeSensitive: true })?.owner.path).toBe(
+    expect(resolve("env/prod", [stash], { unlisted: true })?.owner.path).toBe(path.join(stash.path, "env", "prod.env"));
+    expect(resolve("secrets/token", [stash], { unlisted: true })?.owner.path).toBe(
       path.join(stash.path, "secrets", "token"),
     );
   });

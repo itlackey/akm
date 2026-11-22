@@ -27,10 +27,11 @@ import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
+import type { FileChange } from "../../file-change";
 import { SCRIPT_EXTENSIONS } from "../../recognition-util";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, IndexDocument } from "../types";
-import { directoryAdapter } from "./directory-assets";
+import type { AdapterReadCandidate } from "../bundle-adapter";
+import { DirectoryAdapterBase } from "../directory-adapter";
+import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { hashContent, nonEmptyString, RESERVED_FILES, readTags, validateChangesWithBaseChecks } from "./shared";
 
 /** A generic-files bundle is single-component; its one component is `main`. */
@@ -51,7 +52,7 @@ function classify(ext: string): GenericType {
   return "file";
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   const posix = toPosix(file.relPath);
   const base = posix.split("/").pop() ?? posix;
   if (isReserved(base)) return null; // D-R6: never index a structural listing
@@ -84,17 +85,22 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   return doc;
 }
 
-export const genericFilesAdapter: BundleAdapter = directoryAdapter({
-  id: "generic-files",
-  version: "0.9.0",
+export class GenericFilesAdapter extends DirectoryAdapterBase {
+  readonly id = "generic-files";
+  readonly version = "0.9.0";
   // Non-exhaustive HINT: generic-files recognizes ANY file — recognize() is the
   // source of truth (empty extension list would drop the extension-strip hint).
-  extensions: [".md", ".txt"],
+  override readonly extensions = [".md", ".txt"];
 
-  recognize,
-  validate: validateChangesWithBaseChecks,
+  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
+    return recognize(b, file);
+  }
 
-  readCandidates(c: BundleComponent, conceptId: string) {
+  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    return validateChangesWithBaseChecks(b, changes, ctx);
+  }
+
+  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const posix = toPosix(conceptId);
     const extension = path.extname(posix).toLowerCase();
     const documentCandidates = [...DOCUMENT_EXTENSIONS].map((candidateExtension) => ({
@@ -104,10 +110,12 @@ export const genericFilesAdapter: BundleAdapter = directoryAdapter({
     return DOCUMENT_EXTENSIONS.has(extension)
       ? documentCandidates
       : [{ path: path.join(c.root, posix), conceptId: posix }, ...documentCandidates];
-  },
+  }
 
   /** generic-files is EXPLICIT-CONFIG ONLY — never auto-selected (§1.2), so this never fires. */
-  looksLikeRoot(): boolean {
+  looksLikeRoot(_root: string): boolean {
     return false;
-  },
-});
+  }
+}
+
+export const genericFilesAdapter = new GenericFilesAdapter();

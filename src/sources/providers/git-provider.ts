@@ -6,7 +6,6 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
-import { stashDirNames } from "../../core/asset/asset-placement";
 import { resolveSecret, type SourceConfigEntry } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { getRegistryIndexCacheDir } from "../../core/paths";
@@ -196,10 +195,8 @@ function hasExtractedRepo(repoDir: string): boolean {
 
   try {
     if (!fs.statSync(repoDir).isDirectory()) return false;
-    // The "any type dir present" test is sourced from the `akm`
-    // adapter's directoryList(), with `stashDirNames()` as the fallback.
-    const ownedDirs =
-      akmAdapter.directoryList?.({ id: "akm", adapter: "akm", root: repoDir, writable: false }) ?? stashDirNames();
+    // The "any type dir present" test is sourced from the `akm` adapter's directoryList().
+    const ownedDirs = akmAdapter.directoryList({ id: "akm", root: repoDir, writable: false });
     return ownedDirs.some((dirName) => fs.existsSync(path.join(repoDir, dirName)));
   } catch {
     return false;

@@ -13,6 +13,7 @@ import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { compileWorkflowSource } from "../compile";
 import type { WorkflowPlan } from "../plan";
+import { workflowNameForSourcePath } from "../source-files";
 
 /** A resolved workflow asset, compiled from either authored format into its plan. */
 export type WorkflowAsset = {
@@ -74,7 +75,7 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
     throw new NotFoundError(`Workflow not found for ref: ${ref}`);
   }
   const { owner, source, bundleId, adapterId } = match;
-  if ((adapterId !== "akm" && adapterId !== "akm-workflow") || !owner.workflowSource) {
+  if (workflowNameForSourcePath(source.path, adapterId, owner.path) === undefined) {
     throw new UsageError(
       `Bundle "${bundleId}" uses adapter "${adapterId}", which does not support native workflow execution.`,
       "WORKFLOW_SOURCE_INVALID",
@@ -83,7 +84,7 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
 
   // Canonicalize the stored ref: `workflows/foo.md` and `workflows/foo` resolve
   // to the same file, so they MUST share one run identity.
-  const canonicalName = canonicalizeWorkflowName(owner.workflowSource.canonicalName);
+  const canonicalName = canonicalizeWorkflowName(owner.conceptId);
   const fullRef = makeBundleRef(bundleId, canonicalName);
 
   return { assetPath: owner.path, sourcePath: source.path, adapterId, canonicalName, fullRef };

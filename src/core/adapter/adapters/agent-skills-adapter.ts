@@ -49,9 +49,9 @@ import { parseFrontmatter } from "../../asset/frontmatter";
 import { isScratchPath } from "../../asset/scratch";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { directoryAdapter } from "./directory-assets";
+import type { AdapterReadCandidate } from "../bundle-adapter";
+import { DirectoryAdapterBase } from "../directory-adapter";
+import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { hashContent, nonEmptyString, readTags } from "./shared";
 
 /** A skills collection is a single-component bundle; its one component is `main`. */
@@ -78,7 +78,7 @@ function skillPackage(relPath: string): { conceptId: string; dirName: string } |
   return { conceptId, dirName };
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   const pkg = skillPackage(file.relPath);
   if (pkg === null) return null;
 
@@ -226,7 +226,7 @@ async function missingManifestDiagnostics(ctx: ValidateContext): Promise<Diagnos
   return diagnostics;
 }
 
-async function validate(_c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+async function validate(_c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   const seenDirs = new Set<string>();
   for (const change of changes) {
@@ -248,17 +248,27 @@ async function validate(_c: BundleComponent, changes: FileChange[], ctx: Validat
   return diagnostics;
 }
 
-export const agentSkillsAdapter: BundleAdapter = directoryAdapter({
-  id: "agent-skills",
-  version: "0.9.0",
-  extensions: [".md"],
+export class AgentSkillsAdapter extends DirectoryAdapterBase {
+  readonly id = "agent-skills";
+  readonly version = "0.9.0";
+  override readonly extensions = [".md"];
 
-  recognize,
-  validate,
+  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
+    return recognize(b, file);
+  }
 
-  readCandidates(c: BundleComponent, conceptId: string) {
+  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    return validate(b, changes, ctx);
+  }
+
+  /** A skill's folder holds its `SKILL.md` and the resources that belong to it. */
+  protected override packageDir(file: FileContext): string | undefined {
+    return file.fileName === SKILL_MANIFEST ? file.parentDirAbs : undefined;
+  }
+
+  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     return [{ path: path.join(c.root, conceptId, SKILL_MANIFEST), conceptId }];
-  },
+  }
 
   /** Install-time probe: a root that directly contains one or more `<name>/SKILL.md` skill packages. */
   looksLikeRoot(root: string): boolean {
@@ -276,5 +286,7 @@ export const agentSkillsAdapter: BundleAdapter = directoryAdapter({
         return false;
       }
     });
-  },
-});
+  }
+}
+
+export const agentSkillsAdapter = new AgentSkillsAdapter();

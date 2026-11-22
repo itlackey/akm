@@ -36,16 +36,9 @@ import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { isScratchPath } from "../../asset/scratch";
 import { isRecord, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { BundleAdapter } from "../bundle-adapter";
-import type {
-  BundleComponent,
-  Diagnostic,
-  IndexDocument,
-  OkfSourceEntry,
-  OkfVerifiedEntry,
-  ValidateContext,
-} from "../types";
-import { directoryAdapter } from "./directory-assets";
+import type { AdapterReadCandidate } from "../bundle-adapter";
+import { DirectoryAdapterBase } from "../directory-adapter";
+import type { Bundle, Diagnostic, IndexDocument, OkfSourceEntry, OkfVerifiedEntry, ValidateContext } from "../types";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
 /** v0.2 frontmatter keys consumed into first-class fields below (§0.1) — excluded from the generic `documentJson` extras fold alongside the v0.1 five, so nothing is duplicated between a first-class field and the opaque extras bag. */
@@ -190,7 +183,7 @@ export function resolveOkfLinks(body: string, fileRelPath: string): string[] {
   return out;
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   // `okf` owns `.md` only (extensions: [".md"]). No directory gate anywhere.
   if (file.ext !== ".md") return null;
   // Reserved OKF files are recognized (excluded), never indexed as concepts.
@@ -268,7 +261,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   return doc;
 }
 
-async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+async function validate(c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   const { check } = createBaseChecker(c.root, ctx);
   for (const change of changes) {
@@ -313,24 +306,29 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
   return diagnostics;
 }
 
-export const okfAdapter: BundleAdapter = directoryAdapter({
-  id: "okf",
-  version: "0.9.0",
-  extensions: [".md"],
-  walkMode: "all-directories",
+export class OkfAdapter extends DirectoryAdapterBase {
+  readonly id = "okf";
+  readonly version = "0.9.0";
+  override readonly extensions = [".md"];
+  protected override readonly walkMode = "all-directories" as const;
 
-  recognize,
-  validate,
+  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
+    return recognize(b, file);
+  }
 
-  readCandidates(c: BundleComponent, conceptId: string) {
+  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    return validate(b, changes, ctx);
+  }
+
+  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const canonical = conceptId.replace(/\\/g, "/").replace(/\.md$/i, "");
     return [{ path: path.join(c.root, `${canonical}.md`), conceptId: canonical }];
-  },
+  }
 
   /** OKF concepts live anywhere under the component root (§5). */
-  directoryList(_c: BundleComponent): string[] {
+  override directoryList(_b: Bundle): string[] {
     return ["."];
-  },
+  }
 
   /**
    * Install-time probe. A root index is sufficient; an index-less root is also
@@ -363,5 +361,7 @@ export const okfAdapter: BundleAdapter = directoryAdapter({
       }
     }
     return false;
-  },
-});
+  }
+}
+
+export const okfAdapter = new OkfAdapter();

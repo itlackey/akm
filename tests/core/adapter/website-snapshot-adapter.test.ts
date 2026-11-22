@@ -24,7 +24,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { websiteSnapshotAdapter } from "../../../src/core/adapter/adapters/website-snapshot-adapter";
-import type { BundleComponent, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
+import type { Bundle, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
 
@@ -36,9 +36,9 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(): BundleComponent {
+function component(): Bundle {
   // Read-only snapshot (Mode A): writable false.
-  return { id: BUNDLE_ID, adapter: "website-snapshot", root: FIXTURE_ROOT, writable: false };
+  return { id: BUNDLE_ID, root: FIXTURE_ROOT, writable: false };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {

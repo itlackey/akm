@@ -25,7 +25,7 @@ import {
   AdapterConceptCollisionError,
   resolveAdapterConceptOwner,
 } from "../../../../src/indexer/lookup/adapter-concept-owner";
-import { buildFileContext } from "../../../../src/indexer/walk/file-context";
+import { buildFileContext, type FileContext } from "../../../../src/indexer/walk/file-context";
 import { sandboxStashDir } from "../../../_helpers/sandbox";
 
 describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
@@ -56,22 +56,22 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, "Use $ARGUMENTS exactly.\n");
 
-      const document = akmAdapter.recognize(
-        { id: "akm", adapter: "akm", root, writable: false },
-        {
-          absPath: target,
-          relPath: "vendor/tools/deploy.md",
-          ext: ".md",
-          fileName: "deploy.md",
-          parentDir: "tools",
-          parentDirAbs: path.dirname(target),
-          ancestorDirs: ["vendor", "tools"],
-          stashRoot: root,
-          content: () => fs.readFileSync(target, "utf8"),
-          frontmatter: () => null,
-          stat: () => fs.statSync(target),
-        },
-      );
+      const entry: FileContext = {
+        absPath: target,
+        file: target,
+        relPath: "vendor/tools/deploy.md",
+        ext: ".md",
+        fileName: "deploy.md",
+        parentDir: "tools",
+        parentDirAbs: path.dirname(target),
+        ancestorDirs: ["vendor", "tools"],
+        stashRoot: root,
+        content: () => fs.readFileSync(target, "utf8"),
+        bytes: () => fs.readFileSync(target),
+        frontmatter: () => null,
+        stat: () => fs.statSync(target),
+      };
+      const document = akmAdapter.recognize({ id: "akm", root, writable: false }, entry);
       expect(document?.conceptId).toBe("vendor/tools/deploy");
 
       const readdirSpy = spyOn(fs, "readdirSync");

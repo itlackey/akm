@@ -128,7 +128,7 @@ test("env and secret writes check the revision with the bytes they replace or re
   const saved = await sensitive.save({ ref: created.ref, content: "A=4\n", revision: created.revision });
   expect(saved.revision).toBe(sha("A=4\n"));
   expect(await sensitive.remove({ ref: created.ref, revision: saved.revision })).toMatchObject({ removed: true });
-  expect(fs.existsSync(info.path)).toBe(false);
+  expect(fs.existsSync(info.path as string)).toBe(false);
 });
 
 test("a protected file in a read-only bundle says why it cannot be edited or deleted, in the sentence akm's own write refuses with", async () => {

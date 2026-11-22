@@ -35,12 +35,10 @@ import { assetPathCandidatesForName } from "../../asset/asset-placement";
 import { isScratchPath } from "../../asset/scratch";
 import { scanEnvKeyNames, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import { sensitiveMarkerPath } from "../../sensitive-marker-path";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { AdapterReadCandidate } from "../bundle-adapter";
+import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import { AkmFormatAdapterBase, sensitiveMarkerPath } from "./akm-format";
 import { dangerousEnvKeyDiagnostics } from "./akm-lint";
-import { dotenvWrites } from "./akm-writes";
-import { directoryAdapter } from "./directory-assets";
 import { hashContent } from "./shared";
 
 /** A dotenv bundle is single-component; its one component is `main`. */
@@ -97,7 +95,7 @@ function conceptIdForPath(type: DotenvType, relativePath: string): string {
   return stripped.endsWith("/") ? `${stripped}default` : stripped;
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   const type = classify(file.relPath);
   if (type === null) return null;
   if (hasSensitiveMarker(file.absPath, type)) return null;
@@ -139,7 +137,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   };
 }
 
-async function validate(_c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+async function validate(_c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   for (const change of changes) {
     if (change.op === "delete") continue;
@@ -153,14 +151,19 @@ async function validate(_c: BundleComponent, changes: FileChange[], ctx: Validat
   return diagnostics;
 }
 
-export const dotenvAdapter: BundleAdapter = directoryAdapter({
-  writes: dotenvWrites,
-  id: "dotenv",
-  version: "0.9.0",
-  extensions: [".env"],
+export class DotenvAdapter extends AkmFormatAdapterBase {
+  readonly id = "dotenv";
+  readonly version = "0.9.0";
+  override readonly writes = ["env", "secret"];
+  override readonly extensions = [".env"];
 
-  recognize,
-  validate,
+  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
+    return recognize(b, file);
+  }
+
+  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    return validate(b, changes, ctx);
+  }
 
   /**
    * Closed-form owner candidates (#857): the ref is the file's path under the
@@ -169,7 +172,7 @@ export const dotenvAdapter: BundleAdapter = directoryAdapter({
    * `.env`/`<name>.env` duality; the sensitive-marker sibling spellings are then
    * layered on each. `recognize` decides which candidate really owns the ref.
    */
-  readCandidates(c: BundleComponent, conceptId: string) {
+  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const posix = toPosix(conceptId);
     const expanded = (["env", "secret"] as const).flatMap((type) =>
       assetPathCandidatesForName(type, c.root, posix).flatMap((primary) =>
@@ -179,12 +182,12 @@ export const dotenvAdapter: BundleAdapter = directoryAdapter({
       ),
     );
     return [...new Set(expanded)].map((candidatePath) => ({ path: candidatePath, conceptId: posix }));
-  },
+  }
 
   /** The dotenv bundle owns its `env/` + `secrets/` dirs. */
-  directoryList(): string[] {
+  override directoryList(): string[] {
     return [ENV_DIR, SECRETS_DIR];
-  },
+  }
 
   /**
    * Install-time probe (§1.2): a root whose ONLY content dirs are `env/` and/or
@@ -204,5 +207,7 @@ export const dotenvAdapter: BundleAdapter = directoryAdapter({
     if (dirs.length === 0) return false;
     if (!dirs.every((d) => d === ENV_DIR || d === SECRETS_DIR)) return false;
     return dirs.includes(ENV_DIR) || dirs.includes(SECRETS_DIR);
-  },
-});
+  }
+}
+
+export const dotenvAdapter = new DotenvAdapter();

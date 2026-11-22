@@ -17,7 +17,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { findAbsoluteHomePaths } from "../../src/core/adapter/adapters/akm-writes";
+import { findAbsoluteHomePaths } from "../../src/core/adapter/adapters/akm-format";
 import type { AssetRef } from "../../src/core/asset/resolve-ref";
 import type { SourceConfigEntry } from "../../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";

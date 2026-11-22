@@ -17,16 +17,14 @@ import path from "node:path";
 import {
   type AdapterConceptOwner,
   type ConceptOwnerMatch,
-  ownedAssetType,
   readBundleAsset,
   resolveConceptOwner,
 } from "../indexer/lookup/adapter-concept-owner";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
-import type { FileContext } from "../indexer/walk/file-context";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
-import type { AssetChange } from "./adapter/bundle-adapter";
+import type { AssetChange, AssetEntry } from "./adapter/bundle-adapter";
 import { detectAdapterId } from "./adapter/detect-adapter";
-import { adapterForId, componentOf } from "./adapter/registry";
+import { adapterForId, bundleOf } from "./adapter/registry";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
 import { stashDirFor } from "./asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
@@ -39,7 +37,7 @@ import { resolveMutationTarget } from "./mutation-target";
 import { warn } from "./warn";
 import { type AssetOperation, changeAsset, formatRefForMessage, type ResolvedWriteTarget } from "./write-source";
 
-export { sensitiveMarkerPath } from "./sensitive-marker-path";
+export { sensitiveMarkerPath } from "./adapter/adapters/akm-format";
 export type { IndexSearchSource };
 
 /**
@@ -50,23 +48,28 @@ export type { IndexSearchSource };
 function listAssetsOfType(
   type: "env" | "secret",
   config: AkmConfig,
-): Array<{ conceptId: string; source: IndexSearchSource; file: FileContext }> {
-  const found: Array<{ conceptId: string; source: IndexSearchSource; file: FileContext }> = [];
+): Array<{ conceptId: string; source: IndexSearchSource; entry: AssetEntry }> {
+  const found: Array<{ conceptId: string; source: IndexSearchSource; entry: AssetEntry }> = [];
   for (const source of resolveSourceEntries(undefined, config)) {
     if (source.unresolved) continue;
     const adapter = adapterForId(source.adapterId ?? detectAdapterId(source.path));
     if (!adapter) continue;
-    const component = componentOf(source, adapter.id);
-    const listing = adapter.list(component);
+    const bundle = bundleOf(source, adapter.id);
+    const listing = adapter.list(bundle);
     if (!listing.complete && listing.incompleteReason) {
       warn(`Bundle "${source.registryId ?? source.path}" was not listed completely: ${listing.incompleteReason}`);
     }
-    for (const file of listing.files) {
-      const document = adapter.recognize(component, file);
-      if (document?.type === type && document.conceptId) found.push({ conceptId: document.conceptId, source, file });
+    for (const entry of listing.entries) {
+      const document = adapter.recognize(bundle, entry);
+      if (document?.type === type && document.conceptId) found.push({ conceptId: document.conceptId, source, entry });
     }
   }
-  return found.sort((left, right) => compareCodePoints(left.file.absPath, right.file.absPath));
+  return found.sort((left, right) => compareCodePoints(entryKey(left), entryKey(right)));
+}
+
+/** Where an entry sorts: its file, else the path its bundle indexes it under. */
+function entryKey({ source, entry }: { source: IndexSearchSource; entry: AssetEntry }): string {
+  return entry.file ?? path.join(source.path, entry.relPath);
 }
 
 /**
@@ -77,19 +80,19 @@ function listAssetsOfType(
  */
 export function listEnvsRecursive(
   config: AkmConfig = loadConfig(),
-): Array<{ ref: string; path: string; keys: string[] }> {
-  return listAssetsOfType("env", config).map(({ conceptId, source, file }) => ({
+): Array<{ ref: string; path?: string; keys: string[] }> {
+  return listAssetsOfType("env", config).map(({ conceptId, source, entry }) => ({
     ref: makeEnvRef(conceptId, source, config),
-    path: file.absPath,
-    keys: scanEnvKeyNames(file.content()),
+    ...(entry.file !== undefined ? { path: entry.file } : {}),
+    keys: scanEnvKeyNames(entry.content()),
   }));
 }
 
 /** Every listed secret, by ref. Its value is not read. */
-export function listSecrets(config: AkmConfig = loadConfig()): Array<{ ref: string; path: string }> {
-  return listAssetsOfType("secret", config).map(({ conceptId, source, file }) => ({
+export function listSecrets(config: AkmConfig = loadConfig()): Array<{ ref: string; path?: string }> {
+  return listAssetsOfType("secret", config).map(({ conceptId, source, entry }) => ({
     ref: makeSecretRef(conceptId, source),
-    path: file.absPath,
+    ...(entry.file !== undefined ? { path: entry.file } : {}),
   }));
 }
 
@@ -120,16 +123,6 @@ function parseTypedRef(ref: string, type: "env" | "secret", form: string): Asset
   return { type, name: parsed.conceptId.slice(prefix.length), origin: parsed.bundle };
 }
 
-/** The type of the asset a match owns, as its adapter recognizes it (or, for a sensitive one, where it sits). */
-function ownedType(match: ConceptOwnerMatch): string | undefined {
-  return ownedAssetType({
-    root: match.source.path,
-    owner: match.owner,
-    adapterId: match.adapterId,
-    location: match.source.location,
-  });
-}
-
 /**
  * The owner of a read ref of the given type. The ref is the file's path inside
  * its bundle, so it may sit anywhere: what makes it an env or a secret is the
@@ -147,7 +140,7 @@ function ownerOfType(
     parseTypedRef(ref, type, form);
     throw new NotFoundError(`${type === "env" ? "Env" : "Secret"} not found: ${ref}`);
   }
-  if (ownedType(match) !== type) {
+  if (match.owner.type !== type) {
     throw new UsageError(
       `Expected ${type === "env" ? "an" : "a"} ${type} ref (${form} or <bundle>//${form}); got "${ref}". Write the full ref.`,
       "INVALID_FLAG_VALUE",
@@ -159,7 +152,7 @@ function ownerOfType(
 /** The bundle and file that own an env or secret ref right now, or undefined. Sensitive files resolve too. */
 function findEnvSecretOwner(origin: string | undefined, conceptId: string): ConceptOwnerMatch | undefined {
   return resolveConceptOwner({ bundle: origin, conceptId }, resolveSourceEntries(undefined, loadConfig()), {
-    includeSensitive: true,
+    unlisted: true,
   });
 }
 
@@ -170,8 +163,9 @@ function findEnvSecretOwner(origin: string | undefined, conceptId: string): Conc
  */
 export function resolveRefOwner(ref: string):
   | {
-      absPath: string;
-      type: string | undefined;
+      /** The file that holds the asset; absent when the bundle keeps it elsewhere. */
+      absPath: string | undefined;
+      type: string;
       ref: string;
       /** The owner's value when it is a secret (`type: "secret"`), trimmed. Never print or log it. */
       secretValue: () => string;
@@ -181,8 +175,8 @@ export function resolveRefOwner(ref: string):
   const match = findEnvSecretOwner(bundle, conceptId);
   return (
     match && {
-      absPath: match.owner.path,
-      type: ownedType(match),
+      absPath: match.owner.entry.file,
+      type: match.owner.type,
       ref: makeBundleRef(match.bundleId, conceptId),
       secretValue: () => secretValue(match),
     }
@@ -195,7 +189,7 @@ export function resolveRefOwner(ref: string):
  * an HTTP header. The one read every consumer uses.
  */
 function secretValue(match: ConceptOwnerMatch): string {
-  return match.owner.file.content().trim();
+  return match.owner.entry.content().trim();
 }
 
 /**
@@ -234,7 +228,10 @@ export function makeEnvRef(conceptId: string, source?: IndexSearchSource, config
 export function resolveEnvPath(ref: string): {
   /** The env's ref (conceptId), as the owning bundle spells it. */
   conceptId: string;
-  absPath: string;
+  /** The file that holds the env; absent when the bundle keeps it elsewhere. */
+  absPath: string | undefined;
+  /** The env's path inside its bundle. */
+  relPath: string;
   source: IndexSearchSource;
   /** The bundle that owns the env file. */
   bundleId: string;
@@ -245,11 +242,12 @@ export function resolveEnvPath(ref: string): {
   const { match, conceptId } = ownerOfType(ref, "env", "env/<name>");
   return {
     conceptId,
-    absPath: match.owner.path,
+    absPath: match.owner.entry.file,
+    relPath: match.owner.entry.relPath,
     source: match.source,
     bundleId: match.bundleId,
     dir: "env",
-    content: () => match.owner.file.content(),
+    content: () => match.owner.entry.content(),
   };
 }
 
@@ -271,13 +269,23 @@ function displayDefaultBundle(source?: IndexSearchSource, config: AkmConfig = lo
 
 export function resolveSecretPath(ref: string): {
   conceptId: string;
-  absPath: string;
+  /** The file that holds the secret; absent when the bundle keeps it elsewhere. */
+  absPath: string | undefined;
+  /** The secret's path inside its bundle. */
+  relPath: string;
   source: IndexSearchSource;
   /** The secret's raw content, as its adapter reads it. Never print or log it. */
   content: () => string;
 } {
   const { match, conceptId } = ownerOfType(ref, "secret", "secrets/<name>");
-  return { conceptId, absPath: match.owner.path, source: match.source, content: () => match.owner.file.content() };
+  const { entry } = match.owner;
+  return {
+    conceptId,
+    absPath: entry.file,
+    relPath: entry.relPath,
+    source: match.source,
+    content: () => entry.content(),
+  };
 }
 
 /**
@@ -361,7 +369,7 @@ export function resolveSecretWriteTarget(
 export function findWriteTargetAsset(resolution: EnvSecretWriteResolution): AdapterConceptOwner | undefined {
   const { source } = resolution.target;
   return readBundleAsset(source, source.adapterId ?? detectAdapterId(source.path), resolution.conceptId, {
-    includeSensitive: true,
+    unlisted: true,
   });
 }
 
@@ -375,20 +383,20 @@ export function writeEnvSecret(
   operation:
     | { op: "create"; content: string | Buffer; sensitive?: boolean; exclusive?: boolean }
     | { op: "update"; content: string | Buffer; revision?: string }
-    | { op: "retire"; revision?: string },
+    | { op: "delete"; revision?: string },
 ): AssetChange {
   const { type, name, conceptId, target } = resolution;
   const asset: AssetOperation =
     operation.op === "create"
       ? {
           op: "create",
-          asset: { type, name, content: operation.content, sensitive: operation.sensitive },
+          asset: { type, name, content: operation.content, unlisted: operation.sensitive },
           exclusive: operation.exclusive,
         }
       : operation.op === "update"
         ? { op: "update", conceptId, content: operation.content, revision: operation.revision }
-        : { op: "retire", conceptId, revision: operation.revision };
-  const verb = operation.op === "retire" ? "Remove" : "Update";
+        : { op: "delete", conceptId, revision: operation.revision };
+  const verb = operation.op === "delete" ? "Remove" : "Update";
   return changeAsset(target, asset, {
     purpose: `${type}-${verb.toLowerCase()}`,
     message: `${verb} ${formatRefForMessage({ type, name, origin: target.source.name })}`,

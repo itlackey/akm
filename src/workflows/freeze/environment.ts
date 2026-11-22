@@ -39,7 +39,7 @@ function qualifyEnvRef(refInput: string, context: ResolutionContext): string {
   const match = resolveConceptOwner(
     { bundle: parsed.bundle, conceptId: parsed.conceptId },
     resolveSourceEntries(undefined, context.config),
-    { includeSensitive: true },
+    { unlisted: true },
   );
   if (!match) throw new UsageError(`Workflow source target ${refInput} was not found.`, "INVALID_FLAG_VALUE");
   return makeBundleRef(match.bundleId, parsed.conceptId);

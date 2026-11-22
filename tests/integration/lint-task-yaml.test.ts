@@ -27,7 +27,7 @@ import path from "node:path";
 import { akmLint } from "../../src/commands/lint/index";
 import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
 import { akmTaskAdapter } from "../../src/core/adapter/adapters/akm-task-adapter";
-import type { BundleComponent } from "../../src/core/adapter/types";
+import type { Bundle } from "../../src/core/adapter/types";
 import { createValidateContext } from "../../src/core/adapter/validate-context";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -48,8 +48,8 @@ function writeTask(stashDir: string, relPath: string, content: string): string {
   return full;
 }
 
-function component(root: string, adapter: string): BundleComponent {
-  return { id: "fixture", adapter, root, writable: true };
+function component(root: string): Bundle {
+  return { id: "fixture", root, writable: true };
 }
 
 describe("akm lint — malformed task YAML (issue #760)", () => {
@@ -156,7 +156,7 @@ describe("akm adapter validate() — malformed task YAML (issue #760)", () => {
     writeTask(storage.stashDir, "broken.yml", MALFORMED_TASK);
 
     const diagnostics = await akmAdapter.validate(
-      component(storage.stashDir, "akm"),
+      component(storage.stashDir),
       [{ path: "tasks/broken.yml", op: "update" }],
       createValidateContext({ root: storage.stashDir }),
     );
@@ -176,7 +176,7 @@ describe("akm-task adapter validate() — malformed task YAML (issue #760)", () 
     fs.writeFileSync(path.join(root, "broken.yml"), MALFORMED_TASK, "utf8");
 
     const diagnostics = await akmTaskAdapter.validate(
-      component(root, "akm-task"),
+      component(root),
       [{ path: "broken.yml", op: "update" }],
       createValidateContext({ root }),
     );
@@ -192,7 +192,7 @@ describe("akm-task adapter validate() — malformed task YAML (issue #760)", () 
     fs.writeFileSync(path.join(root, "misnamed.yaml"), VALID_TASK, "utf8");
 
     const diagnostics = await akmTaskAdapter.validate(
-      component(root, "akm-task"),
+      component(root),
       [{ path: "misnamed.yaml", op: "update" }],
       createValidateContext({ root }),
     );

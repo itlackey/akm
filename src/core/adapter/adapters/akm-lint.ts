@@ -61,7 +61,7 @@ import { checkWorkflowPlan, compileWorkflowSource } from "../../../workflows/com
 import { type RuleScope, ruleApplies } from "../../asset/lint-text";
 import { conceptIdForStashFile } from "../../asset/resolve-ref";
 import { isAkmRegistryCachePath, scanEnvKeyNames } from "../../common";
-import type { BundleComponent, Diagnostic, ValidateContext } from "../types";
+import type { Bundle, Diagnostic, ValidateContext } from "../types";
 
 /** Recommended `category` values for facts — `commands/lint/fact-linter.ts:9`. */
 export const KNOWN_CATEGORIES = new Set(["personal", "team", "project", "convention", "meta"]);
@@ -532,4 +532,4 @@ export function memoryOrphanStubApplies(data: Record<string, unknown>, body: str
 
 // Re-export the component type so `akm-adapter.ts` can share it without a
 // second import site if it ever needs it here (keeps the leaf self-describing).
-export type { BundleComponent };
+export type { Bundle };

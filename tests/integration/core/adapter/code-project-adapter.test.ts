@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { codeProjectAdapter, eligibleType } from "../../../../src/core/adapter/adapters/code-project-adapter";
-import type { BundleComponent, ValidateContext } from "../../../../src/core/adapter/types";
+import type { Bundle, ValidateContext } from "../../../../src/core/adapter/types";
 import { buildFileContext, type FileContext } from "../../../../src/indexer/walk/file-context";
 import { walkStashFlat } from "../../../../src/indexer/walk/walker";
 
@@ -13,7 +13,7 @@ const GOLDEN = JSON.parse(
     "utf8",
   ),
 ) as { byRelPath: Record<string, { type: string; ref: string; name: string; tags?: string[] }> };
-const component: BundleComponent = { id: "sample-project", adapter: "code-project", root: ROOT, writable: false };
+const component: Bundle = { id: "sample-project", root: ROOT, writable: false };
 
 describe("code-project eligibility", () => {
   test.each([

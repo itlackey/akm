@@ -7,7 +7,7 @@
  *
  * Bridges the `SearchSource[]` model (the live indexer's source list,
  * `search-source.ts`) onto the durable `BundleInstallation[]` /
- * `BundleComponent[]` model. Called from the indexer
+ * `Bundle[]` model. Called from the indexer
  * (provenance derivation), the proposal repository, and written-asset
  * indexing.
  *
@@ -18,7 +18,7 @@
  *                  by appending a short path-hash suffix on collision, so two
  *                  sources sharing a basename never mint the same bundle id.
  *   - components = ONE component for the current single-root akm layout
- *                  `{ id, root: source.path, adapter }`. The
+ *                  `{ id, root: source.path }`. The
  *                  akm layout's type dirs (`knowledge/`, `skills/`, …) are NOT
  *                  separate components — they are type-derived leading path
  *                  segments of the conceptId within the one component.
@@ -97,16 +97,16 @@ export function deriveInstallations(sources: SearchSource[]): BundleInstallation
     const id = ids[index] as string;
 
     const writable = isSourceWriteActivated(source);
-    const adapter = source.adapterId ?? detectAdapterId(source.path, FALLBACK_ADAPTER_ID);
+    const adapterId = source.adapterId ?? detectAdapterId(source.path, FALLBACK_ADAPTER_ID);
 
     installations.push({
       id,
+      adapterId,
       components: [
         {
           // Single-component akm layout: the component id == the bundle id so
           // the adapter's `ref = ${c.id}//${conceptId}` yields `bundle//…`.
           id,
-          adapter,
           root: source.path,
           writable,
           ...(source.location !== undefined ? { location: source.location } : {}),

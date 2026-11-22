@@ -23,7 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
 import { akmWorkflowAdapter } from "../../../src/core/adapter/adapters/akm-workflow-adapter";
-import type { BundleComponent } from "../../../src/core/adapter/types";
+import type { Bundle } from "../../../src/core/adapter/types";
 import { drainDirDocuments } from "../../../src/indexer/scan/drain-dir";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
 
@@ -63,8 +63,8 @@ function makeStash(): { stashDir: string; goodPath: string; badPath: string } {
   return { stashDir, goodPath, badPath };
 }
 
-function component(root: string): BundleComponent {
-  return { id: "b", adapter: "akm", root, writable: true };
+function component(root: string): Bundle {
+  return { id: "b", root, writable: true };
 }
 
 describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
@@ -106,9 +106,9 @@ describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
   });
 
   test.each([
-    ["ordinary", akmAdapter, "akm", "workflows"],
-    ["standalone", akmWorkflowAdapter, "akm-workflow", "."],
-  ] as const)("%s adapter drains prose step content without scanning it for native-tool constructs", (_label, adapter, adapterId, subdir) => {
+    ["ordinary", akmAdapter, "workflows"],
+    ["standalone", akmWorkflowAdapter, "."],
+  ] as const)("%s adapter drains prose step content without scanning it for native-tool constructs", (_label, adapter, subdir) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-drain-template-"));
     const ownedDir = path.join(root, subdir);
     fs.mkdirSync(ownedDir, { recursive: true });
@@ -129,7 +129,7 @@ describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
       ].join("\n"),
     );
     try {
-      const c: BundleComponent = { id: "b", adapter: adapterId, root, writable: true };
+      const c: Bundle = { id: "b", root, writable: true };
       const context = buildFileContext(root, templatePath);
       expect(adapter.recognize(c, context)).toMatchObject({ type: "workflow" });
 

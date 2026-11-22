@@ -92,15 +92,16 @@ export async function indexWrittenAssets(
     const adapterId = options.bundleId
       ? resolveSourceEntries(undefined, loadConfig()).find((entry) => entry.registryId === options.bundleId)?.adapterId
       : undefined;
-    const component = deriveInstallations([
+    const installation = deriveInstallations([
       {
         path: stashDir,
         writable: true,
         ...(options.bundleId ? { registryId: options.bundleId } : {}),
         ...(adapterId ? { adapterId } : {}),
       },
-    ])[0]?.components[0];
-    if (!component) throw new Error(`Could not derive bundle provenance for ${stashDir}`);
+    ])[0];
+    const component = installation?.components[0];
+    if (!installation || !component) throw new Error(`Could not derive bundle provenance for ${stashDir}`);
     const pairs: Array<{ file: string; entry: IndexDocument; conceptId: string; contentHash?: string }> = [];
     const unindexable = new Set<string>();
     const rejectedConceptIds = new Set<string>();
@@ -118,8 +119,8 @@ export async function indexWrittenAssets(
         }
       }
       const ctx = buildFileContext(stashDir, file);
-      const adapter = adapterForId(component.adapter);
-      if (!adapter) throw new Error(`Unknown adapter "${component.adapter}" for ${stashDir}`);
+      const adapter = adapterForId(installation.adapterId);
+      if (!adapter) throw new Error(`Unknown adapter "${installation.adapterId}" for ${stashDir}`);
       const drained = drainDirDocuments(adapter, component, [ctx]);
       for (const rejectedPath of drained.rejectedPaths) unindexable.add(rejectedPath);
       for (const conceptId of drained.rejectedConceptIds) rejectedConceptIds.add(conceptId);
@@ -148,7 +149,7 @@ export async function indexWrittenAssets(
                   AND bundle_id = ?
                   AND adapter_id = ?`,
             )
-            .all(file, component.id, component.adapter) as Array<{ id: number }>;
+            .all(file, component.id, installation.adapterId) as Array<{ id: number }>;
           for (const row of rows) unindexableEntryIds.add(row.id);
         }
         for (const conceptId of rejectedConceptIds) {
@@ -160,7 +161,7 @@ export async function indexWrittenAssets(
                   AND type = 'workflow'
                   AND (concept_id = ? OR item_ref = ?)`,
             )
-            .all(component.id, component.adapter, conceptId, itemRef) as Array<{ id: number }>;
+            .all(component.id, installation.adapterId, conceptId, itemRef) as Array<{ id: number }>;
           for (const row of rows) unindexableEntryIds.add(row.id);
         }
         deleteEntriesByIds(db, [...unindexableEntryIds]);
@@ -171,7 +172,7 @@ export async function indexWrittenAssets(
           // via the SAME derivation the full-index writer uses, so a write-path
           // row is never a NULL-item_ref straggler.
           const provenance = deriveEntryProvenance(
-            { bundleId: component.id, componentId: component.id, adapterId: component.adapter },
+            { bundleId: component.id, componentId: component.id, adapterId: installation.adapterId },
             entry.type,
             entry.name,
             conceptId,

@@ -124,6 +124,7 @@ const envPathCommand = defineJsonCommand({
   },
   async run({ args }) {
     const { absPath } = resolveEnvPath(args.ref);
+    if (absPath === undefined) throw new UsageError(`Env "${args.ref}" is not kept in a file, so it has no path.`);
     // The raw `.env` may contain `X=$(cmd)`, which executes if `source`d.
     // Warning goes to stderr (never contaminates the path on stdout) and is
     // suppressed with --quiet for the legitimate `_FILE` / `--env-file` use.
@@ -325,7 +326,7 @@ const envRemoveCommand = defineJsonCommand({
       return;
     }
     if (!findWriteTargetAsset(resolution)) throw new NotFoundError(`Env not found: ${ref}`);
-    writeEnvSecret(resolution, { op: "retire" });
+    writeEnvSecret(resolution, { op: "delete" });
     output("env-remove", { ref, removed: true });
   },
 });

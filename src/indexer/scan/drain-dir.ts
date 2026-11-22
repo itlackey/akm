@@ -29,7 +29,7 @@
 import path from "node:path";
 import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
 import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
-import type { BundleComponent, IndexDocument } from "../../core/adapter/types";
+import type { Bundle, IndexDocument } from "../../core/adapter/types";
 import { compareCodePoints } from "../../core/common";
 import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import { compileWorkflowSource } from "../../workflows/compile";
@@ -72,7 +72,7 @@ export interface DrainedDir {
  */
 export function drainDirDocuments(
   adapter: BundleAdapter,
-  component: BundleComponent,
+  component: Bundle,
   fileContexts: readonly FileContext[],
 ): DrainedDir {
   const entries: IndexDocument[] = [];
@@ -135,6 +135,12 @@ export function drainDirDocuments(
     }
 
     const entry = indexDocumentToStashEntry(doc);
+    // An entry no file holds (a secret manager's) is keyed under the path the indexer gave it, and marked: no output
+    // prints a path for it.
+    if (doc.path === undefined) {
+      entry.filename = file.fileName;
+      entry.fileless = true;
+    }
     // Workflow docs: drop-with-warning if broken; otherwise cache a lossless
     // runtime projection when the current executor can represent the source.
     const dropWarning = handleWorkflowDoc(doc, file);
@@ -164,7 +170,7 @@ export function drainDirDocuments(
  * callers, so the synthetic component id is immaterial.
  */
 export function recognizeStashEntries(stashRoot: string, files: string[]): StashFile {
-  const component: BundleComponent = { id: stashRoot, adapter: "akm", root: stashRoot, writable: false };
+  const component: Bundle = { id: stashRoot, root: stashRoot, writable: false };
   // No pre-filter: the `akm` adapter's `recognize` claims/abstains per file
   // (owner ruling 2026-07-21 — adapter-owned filtering).
   const contexts = files.map((file) => buildFileContext(stashRoot, file));

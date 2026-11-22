@@ -28,7 +28,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmAdapter, recognizeMatch } from "../../../../src/core/adapter/adapters/akm-adapter";
-import type { BundleComponent } from "../../../../src/core/adapter/types";
+import type { Bundle } from "../../../../src/core/adapter/types";
 import { buildFileContext, type FileContext } from "../../../../src/indexer/walk/file-context";
 import { walkStashFlat } from "../../../../src/indexer/walk/walker";
 
@@ -49,8 +49,8 @@ afterAll(() => {
   for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true });
 });
 
-function component(overrides: Partial<BundleComponent> = {}): BundleComponent {
-  return { id: BUNDLE_ID, adapter: "akm", root: ALL_TYPES_ROOT, writable: true, ...overrides };
+function component(overrides: Partial<Bundle> = {}): Bundle {
+  return { id: BUNDLE_ID, root: ALL_TYPES_ROOT, writable: true, ...overrides };
 }
 
 /** Every asset FileContext in the all-types stash, MANIFEST.json excluded — exactly the golden capture's walk. */
@@ -385,26 +385,26 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
       "env/ci.env": "API_KEY=secret-token\n",
       "env/ci.sensitive": "",
     });
-    const c = component({ root, id: "s", adapter: "akm" });
+    const c = component({ root, id: "s" });
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "env/ci.env")))).toBeNull();
   });
 
   test("env `.env` WITHOUT a sibling marker is still recognized (type env)", () => {
     const root = makeStashWith({ "env/ci.env": "API_KEY=token\n" });
-    const c = component({ root, id: "s", adapter: "akm" });
+    const c = component({ root, id: "s" });
     const doc = akmAdapter.recognize(c, buildFileContext(root, path.join(root, "env/ci.env")));
     expect(doc?.type).toBe("env");
   });
 
   test("anything under the legacy `vaults/` dir is abstained", () => {
     const root = makeStashWith({ "vaults/prod/api.env": "K=V\n" });
-    const c = component({ root, id: "s", adapter: "akm" });
+    const c = component({ root, id: "s" });
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "vaults/prod/api.env")))).toBeNull();
   });
 
   test("a `secrets/` `.sensitive` / `.lock` marker file is abstained", () => {
     const root = makeStashWith({ "secrets/key.sensitive": "", "secrets/key.lock": "" });
-    const c = component({ root, id: "s", adapter: "akm" });
+    const c = component({ root, id: "s" });
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/key.sensitive")))).toBeNull();
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/key.lock")))).toBeNull();
   });
@@ -415,7 +415,7 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
       "secrets/deploy-key.sensitive": "",
       "secrets/plain-token": "cred-value\n",
     });
-    const c = component({ root, id: "s", adapter: "akm" });
+    const c = component({ root, id: "s" });
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/deploy-key")))).toBeNull();
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/plain-token")))?.type).toBe(
       "secret",
@@ -429,7 +429,7 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
       "projects/openpalm/secrets/deploy-key": "cred-value\n",
       "projects/openpalm/secrets/deploy-key.sensitive": "",
     });
-    const c = component({ root, id: "s", adapter: "akm" });
+    const c = component({ root, id: "s" });
     for (const rel of [
       "projects/openpalm/env/prod.env",
       "projects/openpalm/secrets/deploy-key",
@@ -441,7 +441,7 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
 
   test("a `wikis/<name>/` root-level infra file (schema.md) is abstained", () => {
     const root = makeStashWith({ "wikis/team/schema.md": "# schema\n" });
-    const c = component({ root, id: "s", adapter: "akm" });
+    const c = component({ root, id: "s" });
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "wikis/team/schema.md")))).toBeNull();
   });
 
@@ -452,7 +452,7 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
       "wikis/team/raw/x.md": "# raw\n",
       "notes/raw/y.md": "# not a wiki\n",
     });
-    const c = component({ root, id: "s", adapter: "akm" });
+    const c = component({ root, id: "s" });
     const recognize = (rel: string) => akmAdapter.recognize(c, buildFileContext(root, path.join(root, rel)));
     expect(recognize("wikis/team/raw/x.md")).toMatchObject({ type: "wiki-source", ref: "s//wikis/team/raw/x" });
     expect(recognize("wikis/team/pages/p.md")?.type).toBe("knowledge");
@@ -461,7 +461,7 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
 
   test("raw/ of a bundle whose root is itself a wiki is `wiki-source`", () => {
     const root = makeStashWith({ "schema.md": "# schema\n", "pages/p.md": "# page\n", "raw/x.md": "# raw\n" });
-    const c = component({ root, id: "s", adapter: "akm" });
+    const c = component({ root, id: "s" });
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "raw/x.md")))).toMatchObject({
       type: "wiki-source",
       ref: "s//raw/x",
@@ -475,7 +475,7 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
       "secrets/key.sensitive": "",
       "vaults/prod/api.env": "K=V\n",
     });
-    const c = component({ root, id: "s", adapter: "akm" });
+    const c = component({ root, id: "s" });
     // Each of these abstains via path/stat only — a content()/frontmatter() read would THROW.
     expect(akmAdapter.recognize(c, bytesForbiddenContext(root, "env/ci.env"))).toBeNull();
     expect(akmAdapter.recognize(c, bytesForbiddenContext(root, "secrets/key.sensitive"))).toBeNull();

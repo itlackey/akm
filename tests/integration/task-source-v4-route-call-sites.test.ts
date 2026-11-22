@@ -46,7 +46,7 @@ import { akmTasksEnable } from "../../src/commands/tasks/tasks";
 import { taskDiagnostics } from "../../src/core/adapter/adapters/akm-lint";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "../../src/core/adapter/adapters/akm-metadata";
 import { akmTaskAdapter } from "../../src/core/adapter/adapters/akm-task-adapter";
-import type { BundleComponent } from "../../src/core/adapter/types";
+import type { Bundle } from "../../src/core/adapter/types";
 import { createValidateContext } from "../../src/core/adapter/validate-context";
 import { resetConfigCache } from "../../src/core/config/config";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
@@ -65,8 +65,8 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content, "utf8");
 }
 
-function component(root: string, adapter: string): BundleComponent {
-  return { id: "fixture", adapter, root, writable: true };
+function component(root: string): Bundle {
+  return { id: "fixture", root, writable: true };
 }
 
 const VALID_V4_TASK = ["version: 4", "run: echo hi", "shell: sh", ""].join("\n");
@@ -100,7 +100,7 @@ describe("akmTaskAdapter.validate() — a version: 4 source (akm-task-adapter.ts
     writeFile(path.join(root, "nightly.yml"), VALID_V4_TASK);
 
     const diagnostics = await akmTaskAdapter.validate(
-      component(root, "akm-task"),
+      component(root),
       [{ path: "nightly.yml", op: "update" }],
       createValidateContext({ root }),
     );
@@ -113,7 +113,7 @@ describe("akmTaskAdapter.validate() — a version: 4 source (akm-task-adapter.ts
     writeFile(path.join(root, "bad.yml"), INVALID_V4_TASK);
 
     const diagnostics = await akmTaskAdapter.validate(
-      component(root, "akm-task"),
+      component(root),
       [{ path: "bad.yml", op: "update" }],
       createValidateContext({ root }),
     );
@@ -281,7 +281,7 @@ describe("a version: 5-beta.1 task through the read-only call sites", () => {
     writeFile(path.join(root, "nightly.yml"), VALID_V5_TASK);
     expect(
       await akmTaskAdapter.validate(
-        component(root, "akm-task"),
+        component(root),
         [{ path: "nightly.yml", op: "update" }],
         createValidateContext({ root }),
       ),
@@ -289,7 +289,7 @@ describe("a version: 5-beta.1 task through the read-only call sites", () => {
     expect(akmTaskAdapter.looksLikeRoot?.(root)).toBe(true);
     writeFile(path.join(root, "bad.yml"), INVALID_V5_TASK);
     const diagnostics = await akmTaskAdapter.validate(
-      component(root, "akm-task"),
+      component(root),
       [{ path: "bad.yml", op: "update" }],
       createValidateContext({ root }),
     );

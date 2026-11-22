@@ -62,7 +62,7 @@ describe("generateEmbeddingsForDb: throughput line sums the capped text actually
       const name = `entry-${i}`;
       const entry = { name, type: "memories", filename: `${name}.md`, content: text };
       const provenance = deriveEntryProvenance(
-        { bundleId: installation.id, componentId: component.id, adapterId: component.adapter },
+        { bundleId: installation.id, componentId: component.id, adapterId: installation.adapterId },
         "memories",
         name,
       );

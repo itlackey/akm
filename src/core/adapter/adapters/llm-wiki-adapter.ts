@@ -77,9 +77,9 @@ import { LLM_WIKI_PAGES_DIR, looksLikeLlmWikiRoot } from "../../asset/llm-wiki-r
 import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { directoryAdapter } from "./directory-assets";
+import type { AdapterReadCandidate } from "../bundle-adapter";
+import { DirectoryAdapterBase } from "../directory-adapter";
+import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { hashContent, nonEmptyString } from "./shared";
 
 /** A wiki is a single-component bundle; its one component is conventionally `main` (recognition golden). */
@@ -254,7 +254,7 @@ function resolveSources(fm: WikiPageFrontmatter): string[] {
   return out;
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   if (file.ext !== ".md") return null;
   const relPath = toPosix(file.relPath);
 
@@ -312,7 +312,7 @@ interface WikiValidateItem {
   body: string;
 }
 
-async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+async function validate(c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const items: WikiValidateItem[] = [];
   for (const change of changes) {
     if (change.op === "delete") continue;
@@ -402,27 +402,36 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
   return diagnostics;
 }
 
-export const llmWikiAdapter: BundleAdapter = directoryAdapter({
-  id: "llm-wiki",
-  version: "0.9.0",
-  extensions: [".md"],
+export class LlmWikiAdapter extends DirectoryAdapterBase {
+  readonly id = "llm-wiki";
+  readonly version = "0.9.0";
+  override readonly extensions = [".md"];
 
-  recognize,
-  validate,
+  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
+    return recognize(b, file);
+  }
 
-  readCandidates(c: BundleComponent, conceptId: string) {
+  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    return validate(b, changes, ctx);
+  }
+
+  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const canonical = toPosix(conceptId).replace(/\.md$/i, "");
     return [{ path: path.join(c.root, `${canonical}.md`), conceptId: canonical }];
-  },
+  }
 
   /** The wiki owns its whole root (schema/index/log at root plus pages/ + raw/); one component. */
-  directoryList(_c: BundleComponent): string[] {
+  override directoryList(_b: Bundle): string[] {
     return ["."];
-  },
+  }
 
   /** Install-time probe (§1.2): a root is an LLM Wiki when it has a root `schema.md` AND a `pages/` directory. */
-  looksLikeRoot: looksLikeLlmWikiRoot,
-});
+  looksLikeRoot(root: string): boolean {
+    return looksLikeLlmWikiRoot(root);
+  }
+}
+
+export const llmWikiAdapter = new LlmWikiAdapter();
 
 // Exported pure helpers for the conformance test.
 export { resolveBodyLinks, resolvePageLinks, resolveSources, resolveXref };

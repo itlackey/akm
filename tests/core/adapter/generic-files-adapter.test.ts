@@ -17,7 +17,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { genericFilesAdapter } from "../../../src/core/adapter/adapters/generic-files-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
+import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
 import type { FileChange } from "../../../src/core/file-change";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
@@ -30,8 +30,8 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(): BundleComponent {
-  return { id: BUNDLE_ID, adapter: "generic-files", root: FIXTURE_ROOT, writable: true };
+function component(): Bundle {
+  return { id: BUNDLE_ID, root: FIXTURE_ROOT, writable: true };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {

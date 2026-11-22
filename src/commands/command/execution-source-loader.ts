@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
 import { adapterForId } from "../../core/adapter/registry";
-import type { BundleComponent } from "../../core/adapter/types";
+import type { Bundle } from "../../core/adapter/types";
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { isContainedResolvedPath, isWithin } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -78,7 +78,7 @@ function isLexicallyWithin(candidate: string, root: string): boolean {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }
 
-function implicitComponentForEntry(entry: IndexEntry, config: AkmConfig): BundleComponent | undefined {
+function implicitComponentForEntry(entry: IndexEntry, config: AkmConfig): Bundle | undefined {
   const sources = resolveSourceEntries(undefined, config);
   const installations = deriveInstallations(sources);
   for (const [index, installation] of installations.entries()) {
@@ -87,15 +87,14 @@ function implicitComponentForEntry(entry: IndexEntry, config: AkmConfig): Bundle
     const component = installation.components[0];
     if (!source || !component) continue;
     const canonicalRoot = realDirectory(component.root, `Canonical implicit source root for ${entry.bundleId}`);
-    if (component.adapter !== entry.adapterId) {
+    if (installation.adapterId !== entry.adapterId) {
       warnOnce(
         `execution-source-adapter-drift:${entry.itemRef}`,
-        `[command] Indexed adapter ${JSON.stringify(entry.adapterId)} for ${JSON.stringify(entry.itemRef)} no longer matches the working source's adapter ${JSON.stringify(component.adapter)}; re-resolving from live config. Run \`akm index --full\` to refresh it.`,
+        `[command] Indexed adapter ${JSON.stringify(entry.adapterId)} for ${JSON.stringify(entry.itemRef)} no longer matches the working source's adapter ${JSON.stringify(installation.adapterId)}; re-resolving from live config. Run \`akm index --full\` to refresh it.`,
       );
     }
     return Object.freeze({
       id: installation.id,
-      adapter: component.adapter,
       root: canonicalRoot,
       writable: component.writable,
     });
@@ -103,7 +102,7 @@ function implicitComponentForEntry(entry: IndexEntry, config: AkmConfig): Bundle
   return undefined;
 }
 
-function componentForEntry(entry: IndexEntry, config: AkmConfig, realRoot: string): BundleComponent {
+function componentForEntry(entry: IndexEntry, config: AkmConfig, realRoot: string): Bundle {
   const configured = config.bundles?.[entry.bundleId];
   if (!configured) {
     const implicit = implicitComponentForEntry(entry, config);
@@ -163,7 +162,6 @@ function componentForEntry(entry: IndexEntry, config: AkmConfig, realRoot: strin
   const writable = component?.writable ?? configured.writable ?? configured.path !== undefined;
   return Object.freeze({
     id: entry.bundleId,
-    adapter: entry.adapterId,
     root: realRoot,
     writable,
   });

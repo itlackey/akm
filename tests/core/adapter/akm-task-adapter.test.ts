@@ -15,10 +15,10 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmTaskAdapter } from "../../../src/core/adapter/adapters/akm-task-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
+import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
 import type { FileChange } from "../../../src/core/file-change";
 import { presentationFor } from "../../../src/core/type-presentation";
-import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { buildFileContext, type FileContext } from "../../../src/indexer/walk/file-context";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/akm-task");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/akm-task");
@@ -28,8 +28,8 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(): BundleComponent {
-  return { id: BUNDLE_ID, adapter: "akm-task", root: FIXTURE_ROOT, writable: true };
+function component(): Bundle {
+  return { id: BUNDLE_ID, root: FIXTURE_ROOT, writable: true };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {
@@ -61,12 +61,12 @@ describe("akm-task adapter — metadata", () => {
   });
 
   test("recognition still gates on .yml — a .yaml file is never indexed as a task", () => {
-    const doc = akmTaskAdapter.recognize(component(), {
+    const misnamed: FileContext = {
       ...buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, "nightly-index.yml")),
       relPath: "misnamed.yaml",
       ext: ".yaml",
-    });
-    expect(doc).toBeNull();
+    };
+    expect(akmTaskAdapter.recognize(component(), misnamed)).toBeNull();
   });
 });
 

@@ -25,7 +25,7 @@ import type { RuleScope } from "../../asset/lint-text";
 import { toPosix } from "../../common";
 import { loadConfig } from "../../config/config";
 import type { FileChange } from "../../file-change";
-import type { BundleComponent, Diagnostic, ValidateContext } from "../types";
+import type { Bundle, Diagnostic, ValidateContext } from "../types";
 
 // ── Small pure helpers, reused across the concrete adapters ──────────────────
 
@@ -118,7 +118,7 @@ export function createBaseChecker(componentRoot: string, ctx: ValidateContext): 
  * {@link createBaseChecker} directly instead.
  */
 export async function validateChangesWithBaseChecks(
-  c: BundleComponent,
+  c: Bundle,
   changes: FileChange[],
   ctx: ValidateContext,
 ): Promise<Diagnostic[]> {

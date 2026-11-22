@@ -169,7 +169,7 @@ describe("re-embedding follows the embedded input, not the whole search text", (
       const component = installation?.components[0];
       if (!installation || !component) throw new Error("failed to derive a test bundle installation");
       const provenance = deriveEntryProvenance(
-        { bundleId: installation.id, componentId: component.id, adapterId: component.adapter },
+        { bundleId: installation.id, componentId: component.id, adapterId: installation.adapterId },
         "knowledge",
         "edge",
       );

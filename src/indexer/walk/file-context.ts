@@ -11,6 +11,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { AssetEntry } from "../../core/adapter/bundle-adapter";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { toPosix } from "../../core/common";
 import type { ShowResponse, SourceSearchHit } from "../../sources/types";
@@ -25,9 +26,11 @@ import type { ShowResponse, SourceSearchHit } from "../../sources/types";
  * as lazy-loading getters that read from disk on first call and cache the
  * result for subsequent accesses.
  */
-export interface FileContext {
+export interface FileContext extends AssetEntry {
   /** Absolute path to the file */
   absPath: string;
+  /** The same file, as an asset entry names it. */
+  file: string;
   /** Path relative to the stash root (POSIX separators) */
   relPath: string;
   /** File extension including the dot, e.g. ".ts", ".md" */
@@ -49,6 +52,8 @@ export interface FileContext {
 
   /** Reads and caches the file content on first call */
   content: () => string;
+  /** Reads and caches the file's bytes on first call */
+  bytes: () => Buffer;
   /** Parses frontmatter from content(); returns data or null if none found */
   frontmatter: () => Record<string, unknown> | null;
   /** Returns and caches fs.Stats for the file */
@@ -77,12 +82,14 @@ export function buildFileContext(stashRoot: string, absPath: string): FileContex
 
   // Lazy caches
   let cachedContent: string | undefined;
+  let cachedBytes: Buffer | undefined;
   let cachedFrontmatter: Record<string, unknown> | null | undefined;
   let frontmatterComputed = false;
   let cachedStat: fs.Stats | undefined;
 
   return {
     absPath,
+    file: absPath,
     relPath,
     ext,
     fileName,
@@ -96,6 +103,13 @@ export function buildFileContext(stashRoot: string, absPath: string): FileContex
         cachedContent = fs.readFileSync(absPath, "utf8");
       }
       return cachedContent;
+    },
+
+    bytes(): Buffer {
+      if (cachedBytes === undefined) {
+        cachedBytes = fs.readFileSync(absPath);
+      }
+      return cachedBytes;
     },
 
     frontmatter(): Record<string, unknown> | null {
@@ -233,5 +247,19 @@ export function buildRenderContext(
     stashDirs,
     origin,
     defaultBundle,
+  };
+}
+
+/**
+ * The `FileContext` of an entry a bundle's adapter lists. A directory entry is one already. Any other entry has no
+ * file: its path fields are the ones the index keys it under (`<root>/<relPath>`), and its content is the entry's.
+ */
+export function fileContextOfEntry(root: string, entry: AssetEntry): FileContext {
+  if ("absPath" in entry) return entry as FileContext;
+  return {
+    ...buildFileContext(root, path.join(root, entry.relPath)),
+    content: () => entry.content(),
+    bytes: () => entry.bytes(),
+    frontmatter: () => entry.frontmatter(),
   };
 }

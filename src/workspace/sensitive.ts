@@ -32,7 +32,6 @@ export interface SensitiveSelector {
 
 type Kind = "env" | "secret";
 const REF = /^(?:([^/]+)\/\/)?(env|secrets)\//;
-const relative = (root: string, file: string) => path.relative(root, file).split(path.sep).join("/");
 
 /** The ref akm's env/secret functions take, from a ref or a bundle-relative file in a named bundle. */
 function selection(input: SensitiveSelector): { type: Kind; ref: string } {
@@ -67,13 +66,12 @@ function selection(input: SensitiveSelector): { type: Kind; ref: string } {
 function locate(input: SensitiveSelector) {
   const { type, ref } = selection(input);
   const found = type === "env" ? resolveEnvPath(ref) : resolveSecretPath(ref);
-  const root = found.source.path;
   const bundle = found.source.registryId ?? input.bundle ?? "";
   return {
     bundle,
     file: found.absPath,
     type,
-    relative: relative(root, found.absPath),
+    relative: found.relPath,
     ref: ref.includes("//") ? ref : `${bundle}//${ref}`,
     content: found.content,
   };
@@ -102,9 +100,10 @@ export function describe(input: SensitiveSelector) {
   return {
     ref: found.ref,
     type: found.type,
-    name: path.basename(found.file),
+    name: path.basename(found.relative),
     bundle: found.bundle,
-    path: found.file,
+    // A secret a manager keeps has no file: no path.
+    path: found.file ?? null,
     actions: { edit: verdict, delete: verdict },
     revision: digest(contentOf(found)),
     location: { bundle: found.bundle, path: found.relative, parent },
@@ -146,7 +145,7 @@ function write(
     const found = findWriteTargetAsset(resolution);
     return {
       bundle,
-      file: found ? relative(target.source.path, found.path) : conceptId,
+      file: found ? found.entry.relPath : conceptId,
       ref: `${bundle}//${conceptId}`,
       warnings,
       resolution,
@@ -157,7 +156,7 @@ function write(
 /** The revision of the asset a resolution names now, or undefined when it has none. */
 function currentRevision(resolution: Resolution): string | undefined {
   const found = findWriteTargetAsset(resolution);
-  return found && digest(found.file.content());
+  return found && digest(found.entry.content());
 }
 
 /** Create the file (no `revision`; an existing file is refused) or replace it (the `revision` the owner last saw). */
@@ -189,7 +188,7 @@ export async function remove(input: SensitiveSelector & { revision: string }) {
     input,
     (target) => {
       try {
-        writeEnvSecret(target, { op: "retire", revision });
+        writeEnvSecret(target, { op: "delete", revision });
       } catch (error) {
         throw sensitiveWriteError(error);
       }

@@ -33,9 +33,9 @@ import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { directoryAdapter } from "./directory-assets";
+import type { AdapterReadCandidate } from "../bundle-adapter";
+import { DirectoryAdapterBase } from "../directory-adapter";
+import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate } from "./shared";
 
 /** A snapshot bundle is single-component; its one component is `main`. */
@@ -91,7 +91,7 @@ function conceptIdOf(relPath: string): string {
   return toPosix(relPath).slice(PAGES_PREFIX.length).replace(/\.md$/i, "");
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   if (file.ext !== ".md" || !isSnapshotPage(file.relPath)) return null;
   const raw = file.content();
   const fm = parseSnapshotFrontmatter(raw);
@@ -119,7 +119,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   return doc;
 }
 
-async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+async function validate(c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   const { check } = createBaseChecker(c.root, ctx);
   for (const change of changes) {
@@ -134,18 +134,23 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
   return diagnostics;
 }
 
-export const websiteSnapshotAdapter: BundleAdapter = directoryAdapter({
-  id: "website-snapshot",
-  version: "0.9.0",
-  extensions: [".md"],
+export class WebsiteSnapshotAdapter extends DirectoryAdapterBase {
+  readonly id = "website-snapshot";
+  readonly version = "0.9.0";
+  override readonly extensions = [".md"];
 
-  recognize,
-  validate,
+  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
+    return recognize(b, file);
+  }
 
-  readCandidates(c: BundleComponent, conceptId: string) {
+  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    return validate(b, changes, ctx);
+  }
+
+  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const canonical = toPosix(conceptId).replace(/\.md$/i, "");
     return [{ path: path.join(c.root, PAGES_PREFIX, `${canonical}.md`), conceptId: canonical }];
-  },
+  }
 
   // The snapshot is READ-ONLY (Mode A). Export (Mode B) routes content through
   // the DESTINATION adapter, which owns placement.
@@ -168,5 +173,7 @@ export const websiteSnapshotAdapter: BundleAdapter = directoryAdapter({
     } catch {
       return false;
     }
-  },
-});
+  }
+}
+
+export const websiteSnapshotAdapter = new WebsiteSnapshotAdapter();

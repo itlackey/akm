@@ -120,7 +120,8 @@ describe("workflow source canonical-ref collisions", () => {
       expect(owner, ref).toMatchObject({
         path: sourcePath,
         conceptId: canonicalConceptId,
-        workflowSource: { path: sourcePath, canonicalName: canonicalConceptId },
+        type: "workflow",
+        entry: { file: sourcePath },
       });
       await expect(loadWorkflowAsset(ref), ref).resolves.toMatchObject({
         ref: fixture.canonicalRef,

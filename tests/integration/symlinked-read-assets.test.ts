@@ -38,7 +38,7 @@ describe("reads follow symlinks that leave their directory", () => {
       resolveSecretPath("secrets/token"),
     );
     expect(resolved.absPath).toBe(path.join(stash, "secrets", "token"));
-    expect(fs.readFileSync(resolved.absPath, "utf8")).toBe("s3cret");
+    expect(fs.readFileSync(resolved.absPath as string, "utf8")).toBe("s3cret");
   });
 
   test("resolveEnvPath resolves a symlinked env file", async () => {
@@ -47,7 +47,7 @@ describe("reads follow symlinks that leave their directory", () => {
       resolveEnvPath("env/prod"),
     );
     expect(resolved.absPath).toBe(path.join(stash, "env", "prod.env"));
-    expect(fs.readFileSync(resolved.absPath, "utf8")).toBe("A=1\n");
+    expect(fs.readFileSync(resolved.absPath as string, "utf8")).toBe("A=1\n");
   });
 
   test("resolveAssetPath resolves a symlinked asset by its authored path", async () => {

@@ -7,7 +7,7 @@
  * (`./bundle-adapter.ts`):
  *
  *  - `BundleId` / `ComponentId` / `ItemRef` / `BundleInstallation` /
- *    `BundleComponent` and `IndexDocument` — the full shapes, each documented
+ *    `Bundle` and `IndexDocument` — the full shapes, each documented
  *    at its declaration.
  *
  *  - `ValidateContext` — the read-only context `validate` receives.
@@ -53,13 +53,15 @@ export interface BundleInstallation {
   revision?: string;
   /** Transport locator, kept OUT of identity (normative §11.2). */
   source?: string;
-  components: BundleComponent[];
+  /** The id of the adapter that reads the bundle: configured, else detected. */
+  adapterId: string;
+  components: Bundle[];
 }
 
-export interface BundleComponent {
-  id: ComponentId;
-  /** Static adapter id, one per root — no per-file competition. */
-  adapter: string;
+/** A bundle as its adapter is handed it. */
+export interface Bundle {
+  /** The bundle's id: the prefix of every ref its adapter emits. */
+  id: BundleId;
   /** Absolute materialized root; workspace state NEVER written here. */
   root: string;
   writable: boolean;
@@ -144,7 +146,7 @@ export interface IndexDocument {
   component?: ComponentId;
   /** OKF concept ID = path within bundle − ext; opaque to the core. */
   conceptId?: string;
-  /** Absolute local path (the read path). */
+  /** Absolute local path (the read path). Absent when no file holds the asset (a secret manager's). */
   path?: string;
   hash?: string;
   adapterId?: string;
@@ -182,6 +184,11 @@ export interface IndexDocument {
   searchHints?: string[];
   intent?: StashIntent;
   filename?: string;
+  /**
+   * No file holds the asset (a secret manager's): the index keys its row under a path inside the bundle's root, and
+   * no output prints that path.
+   */
+  fileless?: boolean;
   /**
    * Asset quality marker. Four values are well-known:
    * `"generated"` and `"curated"` are included in default search;

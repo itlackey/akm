@@ -8,11 +8,12 @@
  * family (`src/core/adapter/types.ts`).
  *
  * A minimal STUB adapter implements only the REQUIRED members (`id`,
- * `version`, `extensions`, `recognize`, `validate`) and is assigned to a
+ * `version`, `writes`, `list`, `read`, `recognize`, `validate`, `place`,
+ * `create`, `update`, `delete`) and is assigned to a
  * `BundleAdapter`-typed const below. That assignment is the COMPILE-TIME
  * half of the gate: `bunx tsc --noEmit` fails if the stub does not
  * structurally satisfy `BundleAdapter` given only its required members —
- * which in turn proves the whole D1-1 type family (`BundleComponent`,
+ * which in turn proves the whole D1-1 type family (`Bundle`,
  * `IndexDocument`, `Diagnostic`, `ValidateContext`, ...) compiles and is
  * usable together with `FileChange` (reused from `core/file-change.ts`) and
  * the type-only `FileContext` import (D1-3, `indexer/walk/file-context.ts`).
@@ -26,14 +27,15 @@
 
 import { describe, expect, test } from "bun:test";
 import type { Stats } from "node:fs";
-import type { BundleAdapter, BundleAsset, BundleListing } from "../../../src/core/adapter/bundle-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
+import type { AssetEntry, BundleAdapter, BundleAsset, BundleListing } from "../../../src/core/adapter/bundle-adapter";
+import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
 import type { FileChange } from "../../../src/core/file-change";
 import type { FileContext } from "../../../src/indexer/walk/file-context";
 
 function makeFileContext(overrides: Partial<FileContext> = {}): FileContext {
   return {
     absPath: "/bundle/notes/example.md",
+    file: "/bundle/notes/example.md",
     relPath: "notes/example.md",
     ext: ".md",
     fileName: "example.md",
@@ -42,14 +44,15 @@ function makeFileContext(overrides: Partial<FileContext> = {}): FileContext {
     ancestorDirs: ["notes"],
     stashRoot: "/bundle",
     content: () => "# Example",
+    bytes: () => Buffer.from("# Example"),
     frontmatter: () => null,
     stat: () => ({}) as Stats,
     ...overrides,
   };
 }
 
-function makeComponent(overrides: Partial<BundleComponent> = {}): BundleComponent {
-  return { id: "main", adapter: "stub", root: "/bundle", writable: true, ...overrides };
+function makeComponent(overrides: Partial<Bundle> = {}): Bundle {
+  return { id: "main", root: "/bundle", writable: true, ...overrides };
 }
 
 function makeValidateContext(): ValidateContext {
@@ -61,46 +64,58 @@ function makeValidateContext(): ValidateContext {
 }
 
 /**
- * The stub itself: implements ONLY the required surface
- * (id/version/extensions/list/read/recognize/validate). This assignment is the
- * compile-time conformance check — `stubAdapter` must structurally satisfy
- * `BundleAdapter` with every OTHER member (writes/create/update/retire, renderExecutionSource, readCandidates, directoryList, looksLikeRoot) left absent, proving they are genuinely
- * optional per the transcription. (The spec's Tier-B authoring/export/memory
+ * The stub itself: implements ONLY the required surface. This assignment is
+ * the compile-time conformance check — `stubAdapter` must structurally satisfy
+ * `BundleAdapter` with the two optional members (renderExecutionSource,
+ * looksLikeRoot) left absent, proving they are genuinely optional. (The spec's Tier-B authoring/export/memory
  * facet methods are deferred, not declared on the 0.9.0 contract — see the
  * interface docblock.)
  */
 const stubAdapter: BundleAdapter = {
   id: "stub",
   version: "0.0.0",
-  extensions: [".md"],
+  writes: [],
 
   list(): BundleListing {
-    return { files: [], complete: true };
+    return { entries: [], complete: true };
   },
 
   read(): BundleAsset | undefined {
     return undefined;
   },
 
-  recognize(_c: BundleComponent, file: FileContext): IndexDocument | null {
-    if (file.ext !== ".md") return null;
+  recognize(_c: Bundle, file: AssetEntry): IndexDocument | null {
+    if (!file.relPath.endsWith(".md")) return null;
     const conceptId = file.relPath.replace(/\.md$/, "");
     return {
       ref: `stub//${conceptId}`,
       bundle: "stub",
       component: "main",
       conceptId,
-      path: file.absPath,
+      ...(file.file !== undefined ? { path: file.file } : {}),
       hash: "deadbeef",
       adapterId: "stub",
       // `type` is a required member of the merged IndexDocument (F4a M-core-1).
       type: "knowledge",
-      name: file.fileName,
+      name: file.relPath.split("/").pop() as string,
     };
   },
 
-  async validate(_c: BundleComponent, _changes: FileChange[], _ctx: ValidateContext): Promise<Diagnostic[]> {
+  async validate(_c: Bundle, _changes: FileChange[], _ctx: ValidateContext): Promise<Diagnostic[]> {
     return [];
+  },
+
+  place(): string {
+    throw new Error("read-only");
+  },
+  create(): never {
+    throw new Error("read-only");
+  },
+  update(): never {
+    throw new Error("read-only");
+  },
+  delete(): never {
+    throw new Error("read-only");
   },
 };
 
@@ -112,7 +127,7 @@ describe("BundleAdapter type-level conformance (WI-1.1)", () => {
     expect(typeof stubAdapter.validate).toBe("function");
     expect(stubAdapter.id).toBe("stub");
     expect(stubAdapter.version).toBe("0.0.0");
-    expect(stubAdapter.extensions).toEqual([".md"]);
+    expect(stubAdapter.writes).toEqual([]);
   });
 
   test("recognize is callable and returns an IndexDocument for a matching file", () => {
@@ -136,8 +151,6 @@ describe("BundleAdapter type-level conformance (WI-1.1)", () => {
 
   test("all optional members are legitimately absent on a REQUIRED-only stub", () => {
     expect(stubAdapter.renderExecutionSource).toBeUndefined();
-    expect(stubAdapter.readCandidates).toBeUndefined();
-    expect(stubAdapter.directoryList).toBeUndefined();
     expect(stubAdapter.looksLikeRoot).toBeUndefined();
   });
 });

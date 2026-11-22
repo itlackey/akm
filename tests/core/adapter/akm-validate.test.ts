@@ -30,7 +30,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
-import type { BundleComponent, Diagnostic, ValidateContext } from "../../../src/core/adapter/types";
+import type { Bundle, Diagnostic, ValidateContext } from "../../../src/core/adapter/types";
 import type { FileChange } from "../../../src/core/file-change";
 
 const ALL_TYPES_ROOT = path.resolve(__dirname, "../../fixtures/stashes/all-types");
@@ -43,8 +43,8 @@ const LINT_GOLDEN = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, "../../fixtures/goldens/lint/all-types.json"), "utf8"),
 ) as LintGolden;
 
-function component(overrides: Partial<BundleComponent> = {}): BundleComponent {
-  return { id: BUNDLE_ID, adapter: "akm", root: ALL_TYPES_ROOT, writable: true, ...overrides };
+function component(overrides: Partial<Bundle> = {}): Bundle {
+  return { id: BUNDLE_ID, root: ALL_TYPES_ROOT, writable: true, ...overrides };
 }
 
 /** Disk-backed ValidateContext (reads the real fixture stash) — for the CLEAN golden-parity run. */

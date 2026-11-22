@@ -189,6 +189,7 @@ export async function show(input: { ref: string }) {
   const slugs = uniqueHeadingSlugs(headings);
   const links: Record<string, string> = {};
   if (shown.path && durableRef) {
+    const shownDir = path.dirname(shown.path);
     const owner = parseBundleRef(durableRef).bundle;
     readUsableIndex((db) => {
       for (const raw of markdownLinkTargets(content, false)) {
@@ -201,7 +202,7 @@ export async function show(input: { ref: string }) {
         } catch {
           continue;
         }
-        const id = getEntryIdByFilePath(db, path.resolve(path.dirname(shown.path), decoded));
+        const id = getEntryIdByFilePath(db, path.resolve(shownDir, decoded));
         const target = id === undefined ? undefined : getItemRefById(db, id);
         if (target && parseBundleRef(target).bundle === owner) links[raw] = target + (fragment ? `#${fragment}` : "");
       }

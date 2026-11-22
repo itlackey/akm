@@ -316,7 +316,8 @@ export namespace sensitive {
     type: "env" | "secret";
     name: string;
     bundle: string;
-    path: string;
+    /** The file that holds it; null when its bundle keeps it elsewhere (a secret manager). */
+    path: string | null;
     /** What akm accepts doing to the file: allowed, or the sentence its write path refuses with. */
     actions: Record<"edit" | "delete", { allowed: true } | { allowed: false; reason: string }>;
     revision: string;

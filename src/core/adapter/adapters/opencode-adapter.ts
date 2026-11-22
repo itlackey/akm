@@ -12,7 +12,7 @@
  * `skills/<name>/SKILL.md` → `skill`, and ABSTAINS on `opencode.json` runtime
  * config. Only OpenCode's canonical plural tool directories are accepted.
  *
- * All behavior lives in the shared tool-dir codec ({@link makeToolDirAdapter});
+ * All behavior lives in the shared tool-dir codec ({@link ToolDirAdapterBase});
  * this module supplies only the `.opencode` layout + the install-time probe.
  *
  * Conformance oracle (authored, DO NOT modify): fixture
@@ -22,8 +22,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { BundleAdapter } from "../bundle-adapter";
-import { makeToolDirAdapter, type ToolDirLayout } from "./tool-dir-shared";
+import { ToolDirAdapterBase, type ToolDirLayout } from "./tool-dir-shared";
 
 const LAYOUT: ToolDirLayout = {
   adapterId: "opencode",
@@ -67,4 +66,14 @@ function opencodeLooksLikeRoot(root: string): boolean {
   return TOOL_DIRS.some((d) => dirExists(path.join(root, d)));
 }
 
-export const opencodeAdapter: BundleAdapter = makeToolDirAdapter(LAYOUT, opencodeLooksLikeRoot);
+export class OpencodeAdapter extends ToolDirAdapterBase {
+  constructor() {
+    super(LAYOUT);
+  }
+
+  looksLikeRoot(root: string): boolean {
+    return opencodeLooksLikeRoot(root);
+  }
+}
+
+export const opencodeAdapter = new OpencodeAdapter();

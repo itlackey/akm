@@ -34,9 +34,10 @@ import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, IndexDocument } from "../types";
-import { directoryAdapter } from "./directory-assets";
+import type { FileChange } from "../../file-change";
+import type { AdapterReadCandidate } from "../bundle-adapter";
+import { DirectoryAdapterBase } from "../directory-adapter";
+import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { hashContent, nonEmptyString, readTags, validateChangesWithBaseChecks } from "./shared";
 
 const LANGUAGE_BY_EXTENSION: Readonly<Record<string, string>> = {
@@ -171,7 +172,7 @@ export function languageOf(relPath: string): string | undefined {
   return LANGUAGE_BY_EXTENSION[path.extname(relPath).toLowerCase()];
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   const conceptId = toPosix(file.relPath);
   const type = eligibleType(conceptId);
   if (type === undefined) return null; // decided before any byte is read
@@ -204,23 +205,30 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   return doc;
 }
 
-export const codeProjectAdapter: BundleAdapter = directoryAdapter({
-  id: "code-project",
-  version: "0.10.0",
+export class CodeProjectAdapter extends DirectoryAdapterBase {
+  readonly id = "code-project";
+  readonly version = "0.10.0";
   // The files `validate` checks; the walk and `recognize` decide what is indexed.
-  extensions: [...MARKDOWN_EXTENSIONS],
-  walkMode: "all-directories",
+  override readonly extensions = [...MARKDOWN_EXTENSIONS];
+  protected override readonly walkMode = "all-directories" as const;
 
-  recognize,
+  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
+    return recognize(b, file);
+  }
 
   // The base checks misfire on source (`stale-path` flags `/tmp/...` literals,
   // the ref regex matches Python's `y//2`), so they run on Markdown only.
-  validate: (c, changes, ctx) =>
-    validateChangesWithBaseChecks(
-      c,
+  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    return validateChangesWithBaseChecks(
+      b,
       changes.filter((change) => MARKDOWN_EXTENSIONS.has(path.extname(change.path).toLowerCase())),
       ctx,
-    ),
+    );
+  }
 
-  readCandidates: (c, conceptId) => [{ path: path.join(c.root, conceptId), conceptId }],
-});
+  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
+    return [{ path: path.join(c.root, conceptId), conceptId }];
+  }
+}
+
+export const codeProjectAdapter = new CodeProjectAdapter();

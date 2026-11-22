@@ -103,8 +103,9 @@ export function akmRules(input: {
   const bundles: string[] = [];
   const found: Array<RuleItem & { shared: boolean; durableRef: string }> = [];
   for (const source of new Set(wanted)) {
-    const component = installations[sources.indexOf(source)]?.components[0];
-    if (!component || component.adapter !== "akm" || source.unresolved) continue;
+    const installation = installations[sources.indexOf(source)];
+    const component = installation?.components[0];
+    if (!component || installation?.adapterId !== "akm" || source.unresolved) continue;
     bundles.push(component.id);
     const files = walkedFiles(
       component.root,

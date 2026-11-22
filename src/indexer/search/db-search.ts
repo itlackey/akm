@@ -902,7 +902,8 @@ export async function buildDbHit(input: {
   const hit: SourceSearchHit = {
     type: input.entry.type,
     name: input.entry.name,
-    path: absolutePath,
+    // An entry no file holds is keyed under a path that leads nowhere; none is printed.
+    ...(input.entry.fileless ? {} : { path: absolutePath }),
     ref,
     itemRef: input.itemRef,
     origin: source?.registryId ?? null,

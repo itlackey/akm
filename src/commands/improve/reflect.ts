@@ -729,7 +729,7 @@ async function resolveReflectSource(
   const address = resolveWriteAddress(root, options.ref);
   const ownedType = resolveOwnedType(parseBundleRef(options.itemRef ?? options.ref), resolveSourceEntries(stash), {
     mode: "read",
-    includeSensitive: true,
+    unlisted: true,
   });
   const parsedRef: WriteAddress = { ...address, type: ownedType ?? address.type };
   // A secret's content is never read, whatever it looks like.

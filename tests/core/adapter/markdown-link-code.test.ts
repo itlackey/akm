@@ -116,7 +116,7 @@ test("OKF code examples produce no broken-link diagnostic; a real missing link r
     },
   };
   const diagnostics = await okfAdapter.validate(
-    { id: "sample", root: "/sample", adapter: "okf", writable: false },
+    { id: "sample", root: "/sample", writable: false },
     [
       {
         path: "pages/start.md",

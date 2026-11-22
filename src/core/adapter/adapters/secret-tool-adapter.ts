@@ -18,21 +18,8 @@
  * because `secret-tool clear` deletes every match in every keyring.
  */
 
-import { ConfigError, NotFoundError } from "../../errors";
-import type { AssetChange, BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent } from "../types";
-import {
-  type Client,
-  listSecrets,
-  locationOf,
-  newSecretName,
-  recognizeSecret,
-  requireClient,
-  requireSecretName,
-  secretAsset,
-  secretChange,
-  secretNameOf,
-} from "./secret-client-shared";
+import { ConfigError } from "../../errors";
+import { type Client, requireClient, SecretManagerAdapterBase } from "../secret-manager-adapter";
 
 const ID = "secret-tool";
 const SECRET_TOOL: Client = { command: "secret-tool", install: "the libsecret-tools package" };
@@ -55,8 +42,6 @@ interface KeyringItem {
 interface BusReply<T> {
   data: T;
 }
-
-const keyringOf = (c: BundleComponent) => locationOf(c, ID, "a keyring");
 
 function bus<T>(action: string, args: readonly string[]): T {
   const reply = requireClient(BUSCTL, action, ["--user", "--json=short", ...args]);
@@ -86,8 +71,8 @@ function keyringItems(keyring: string): KeyringItem[] {
   });
 }
 
-function findItem(keyring: string, name: string | undefined): KeyringItem | undefined {
-  return name === undefined ? undefined : keyringItems(keyring).find((item) => item.label === name);
+function findItem(keyring: string, name: string): KeyringItem | undefined {
+  return keyringItems(keyring).find((item) => item.label === name);
 }
 
 /** The `attribute value …` arguments by which `secret-tool` finds `item`. */
@@ -107,62 +92,38 @@ function lookup(item: KeyringItem): string {
   return requireClient(SECRET_TOOL, `read "${item.label}"`, ["lookup", ...attributePairs(item)]);
 }
 
-/** Store `content` as the secret `name`: into its existing entry, or a new one akm can find again. */
-function store(c: BundleComponent, name: string, content: string | Buffer): AssetChange {
-  const keyring = keyringOf(c);
-  const item = findItem(keyring, name) ?? { label: name, attributes: { [CREATED_ATTRIBUTE]: `${keyring}/${name}` } };
-  requireClient(
-    SECRET_TOOL,
-    `store "${name}"`,
-    ["store", `--collection=${keyring}`, `--label=${name}`, ...attributePairs(item)],
-    Buffer.from(content),
-  );
-  return secretChange(c, name, content);
-}
+export class SecretToolAdapter extends SecretManagerAdapterBase {
+  readonly id = ID;
+  readonly version = "0.10.0";
+  protected readonly what = "a keyring";
 
-export const secretToolAdapter: BundleAdapter = {
-  id: ID,
-  version: "0.10.0",
-  extensions: [],
-  writes: ["secret"],
+  protected listSecrets(keyring: string) {
+    const items = keyringItems(keyring).filter((item) => item.label !== "");
+    return [...new Set(items.map((item) => item.label))].map((name) => ({
+      name,
+      read: () => lookup(items.find((item) => item.label === name) as KeyringItem),
+    }));
+  }
 
-  list(c) {
-    let items: KeyringItem[] = [];
-    return listSecrets(
-      c,
-      () => {
-        items = keyringItems(keyringOf(c)).filter((item) => item.label !== "");
-        return [...new Set(items.map((item) => item.label))];
-      },
-      (name) => lookup(items.find((item) => item.label === name) as KeyringItem),
-    );
-  },
-
-  read(c, conceptId) {
-    const name = secretNameOf(conceptId);
-    const item = findItem(keyringOf(c), name);
-    return item && secretAsset(c, item.label, () => lookup(item));
-  },
-
-  recognize: (c, file) => recognizeSecret(ID, c, file.relPath),
-
-  async validate() {
-    return [];
-  },
-
-  create: (c, asset) => store(c, newSecretName(asset, ID), asset.content),
-
-  update(c, conceptId, content) {
-    const name = requireSecretName(conceptId);
-    if (!findItem(keyringOf(c), name)) throw new NotFoundError(`Secret not found: ${c.id}//${conceptId}`);
-    return store(c, name, content);
-  },
-
-  retire(c, conceptId) {
-    const keyring = keyringOf(c);
-    const name = requireSecretName(conceptId);
+  protected findSecret(keyring: string, name: string) {
     const item = findItem(keyring, name);
-    if (!item) throw new NotFoundError(`Secret not found: ${c.id}//${conceptId}`);
+    return item && { read: () => lookup(item) };
+  }
+
+  /** Store `value` as the secret `name`: into its existing entry, or a new one akm can find again. */
+  protected storeSecret(keyring: string, name: string, value: Buffer): void {
+    const item = findItem(keyring, name) ?? { label: name, attributes: { [CREATED_ATTRIBUTE]: `${keyring}/${name}` } };
+    requireClient(
+      SECRET_TOOL,
+      `store "${name}"`,
+      ["store", `--collection=${keyring}`, `--label=${name}`, ...attributePairs(item)],
+      value,
+    );
+  }
+
+  protected deleteSecret(keyring: string, name: string): boolean {
+    const item = findItem(keyring, name);
+    if (!item) return false;
     // `Delete` answers with the prompt it needs, or "/" when it has deleted the item.
     const [prompt] = bus<[string]>(`delete "${item.label}"`, [
       "call",
@@ -178,6 +139,8 @@ export const secretToolAdapter: BundleAdapter = {
         "Unlock the keyring and try again.",
       );
     }
-    return secretChange(c, name);
-  },
-};
+    return true;
+  }
+}
+
+export const secretToolAdapter = new SecretToolAdapter();

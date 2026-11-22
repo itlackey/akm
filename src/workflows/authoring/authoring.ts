@@ -12,7 +12,7 @@ import { UsageError } from "../../core/errors";
 import { defaultBundleForTarget } from "../../core/mutation-target";
 import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../../core/recognition-util";
 import { warn } from "../../core/warn";
-import { changeAsset, prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
+import { changeAsset, fileOfChange, prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
 import { checkWorkflowPlan, compileWorkflowSource } from "../compile";
 import type { WorkflowError } from "../plan";
 
@@ -125,7 +125,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
 
   return {
     ref,
-    path: written.path,
+    path: fileOfChange(written, target.source),
     bundleDir,
   };
 }

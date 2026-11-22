@@ -10,7 +10,7 @@ import {
   parseExecutionMarkdown,
   renderMarkdownExecutionSource,
 } from "../../../src/core/adapter/execution-source";
-import type { BundleComponent } from "../../../src/core/adapter/types";
+import type { Bundle } from "../../../src/core/adapter/types";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
 import {
@@ -38,9 +38,8 @@ const cases: Array<{
 
 function render(testCase: (typeof cases)[number]) {
   const root = path.join(NATIVE_ROOT, testCase.adapterId);
-  const component: BundleComponent = {
+  const component: Bundle = {
     id: `fixture-${testCase.adapterId}`,
-    adapter: testCase.adapterId,
     root,
     writable: false,
   };

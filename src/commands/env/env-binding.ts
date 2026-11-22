@@ -49,9 +49,9 @@ export function resolveRefToken(
 ): { kind: "secret"; value: string } | { kind: "path"; path: string } | undefined {
   const owner = resolveRefOwner(ref);
   if (owner === undefined) return undefined;
-  return owner.type === "secret"
-    ? { kind: "secret", value: owner.secretValue() }
-    : { kind: "path", path: owner.absPath };
+  if (owner.type === "secret") return { kind: "secret", value: owner.secretValue() };
+  if (owner.absPath === undefined) throw new UsageError(`"${owner.ref}" is not kept in a file, so it has no path.`);
+  return { kind: "path", path: owner.absPath };
 }
 
 export interface ResolveEnvBindingOptions {

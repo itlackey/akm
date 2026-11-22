@@ -3,26 +3,21 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
-import type { AssetReadOptions, BundleAsset } from "../../core/adapter/bundle-adapter";
+import type { AssetEntry, AssetReadOptions, BundleAsset } from "../../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
-import { adapterForId, componentOf } from "../../core/adapter/registry";
+import { DirectoryAdapterBase } from "../../core/adapter/directory-adapter";
+import { adapterForId, bundleOf } from "../../core/adapter/registry";
 import { assetPathForName, stashDirFor, stashDirNames } from "../../core/asset/asset-placement";
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { safeRealpath } from "../../core/common";
 import { warnOnce } from "../../core/warn";
 import { withMdVariants } from "../../storage/repositories/index-entries-repository";
-import type { WorkflowSourceFile } from "../../workflows/source-files";
 import type { IndexEntry } from "../indexer";
 import { deriveEntryProvenance, deriveInstallations } from "../installations";
 import type { SearchSource } from "../search/search-source";
-import type { FileContext } from "../walk/file-context";
-import { declaredTypeForPath } from "../walk/matchers";
 
-export {
-  AdapterConceptCollisionError,
-  AdapterConceptOwnershipError,
-} from "../../core/adapter/adapters/directory-assets";
+export { AdapterConceptCollisionError, AdapterConceptOwnershipError } from "../../core/adapter/directory-adapter";
 
 /** The asset a bundle's adapter read for a ref: where it is indexed, and the entry holding it. */
 export interface AdapterConceptOwner {
@@ -32,24 +27,30 @@ export interface AdapterConceptOwner {
   realPath: string;
   conceptId: string;
   adapterId: string;
-  workflowSource?: WorkflowSourceFile;
+  /** The asset's type, as its adapter knows it. */
+  type: string;
   /** The entry holding the asset, as its adapter gives it. */
-  file: FileContext;
-  /** Whether the adapter lists the asset (indexes it). */
-  listed(): boolean;
+  entry: AssetEntry;
 }
 
-export type ResolveAdapterConceptOwnerOptions = AssetReadOptions;
+export interface ResolveAdapterConceptOwnerOptions extends AssetReadOptions {
+  /** Also find an asset the adapter keeps out of listings (an env file or secret a `.sensitive` marker hides). */
+  unlisted?: boolean;
+}
 
-function ownerOf(adapterId: string, asset: BundleAsset): AdapterConceptOwner {
+function ownerOf(source: Pick<SearchSource, "path">, adapterId: string, asset: BundleAsset): AdapterConceptOwner {
+  // The index keys an entry under `<root>/<relPath>`; for an entry with no file that is not a path to anything.
+  const indexed = path.join(source.path, asset.entry.relPath);
   return {
-    path: asset.file.absPath,
-    realPath: asset.workflowSource?.realPath ?? safeRealpath(asset.file.absPath),
+    path: asset.entry.file ?? indexed,
+    realPath: safeRealpath(asset.entry.file ?? indexed),
     conceptId: asset.conceptId,
     adapterId,
-    ...(asset.workflowSource ? { workflowSource: asset.workflowSource } : {}),
-    file: asset.file,
-    listed: () => asset.listed?.() ?? true,
+    // Asked for, not copied: it can cost a read of the file.
+    get type() {
+      return asset.type;
+    },
+    entry: asset.entry,
   };
 }
 
@@ -61,8 +62,8 @@ export function readBundleAsset(
   options?: ResolveAdapterConceptOwnerOptions,
 ): AdapterConceptOwner | undefined {
   const adapter = adapterForId(adapterId);
-  const asset = adapter?.read(componentOf(source, adapterId), conceptId, options);
-  return asset && ownerOf(adapterId, asset);
+  const asset = adapter?.read(bundleOf(source, adapterId), conceptId, options);
+  return asset && (asset.listed || options?.unlisted) ? ownerOf(source, adapterId, asset) : undefined;
 }
 
 /** The asset `conceptId` names in the bundle at `sourcePath`, read by the adapter `adapterId`. */
@@ -96,8 +97,13 @@ export function entryFromFiles(match: ConceptOwnerMatch): IndexEntry | undefined
   const { owner, source, bundleId, adapterId } = match;
   try {
     const adapter = adapterForId(adapterId);
-    if (!adapter || !owner.listed()) return undefined;
-    const document = adapter.recognize(componentOf(source, adapterId), owner.file);
+    if (
+      !adapter ||
+      (adapter instanceof DirectoryAdapterBase && !adapter.walksFile(bundleOf(source, adapterId), owner.path))
+    ) {
+      return undefined;
+    }
+    const document = adapter.recognize(bundleOf(source, adapterId), owner.entry);
     if (!document?.conceptId || !withMdVariants(owner.conceptId).includes(document.conceptId)) return undefined;
     const { itemRef, conceptId } = deriveEntryProvenance(
       { bundleId, componentId: adapterId, adapterId },
@@ -192,28 +198,13 @@ export function indexedPathMatchesOwner(indexedPath: string, owner: AdapterConce
   return safeRealpath(indexedPath) === path.resolve(owner.realPath);
 }
 
-/**
- * The type of the asset a match owns, from its file: what the owner's adapter
- * recognizes it as, else what its location declares (a `.sensitive` env or
- * secret is not recognized). An existing asset's type is never read from its
- * ref's first folder.
- */
-export function ownedAssetType(
-  match: Pick<ConceptOwnerMatch, "owner" | "adapterId"> & { root: string; location?: string },
-): string | undefined {
-  const { file } = match.owner;
-  const component = componentOf({ path: match.root, location: match.location }, match.adapterId);
-  return adapterForId(match.adapterId)?.recognize(component, file)?.type ?? declaredTypeForPath(file);
-}
-
 /** The type of the asset a ref names, from the file that owns it among `sources`; undefined when none does. */
 export function resolveOwnedType(
   ref: BundleRef,
   sources: readonly SearchSource[],
   options?: ResolveAdapterConceptOwnerOptions,
 ): string | undefined {
-  const match = resolveConceptOwner(ref, sources, options);
-  return match && ownedAssetType({ root: match.source.path, owner: match.owner, adapterId: match.adapterId });
+  return resolveConceptOwner(ref, sources, options)?.owner.type;
 }
 
 /** Where a write to an asset goes: its type and name, its ref, and its file. */
@@ -242,8 +233,8 @@ export function resolveWriteAddress(root: string, raw: string): WriteAddress {
       conceptId = current;
     }
   }
-  const type = owner && ownedAssetType({ root, owner, adapterId: "akm" });
-  if (owner && type) {
+  if (owner) {
+    const { type } = owner;
     const typeDir = stashDirFor(type);
     const name = conceptId.startsWith(`${typeDir}/`) ? conceptId.slice(`${typeDir}/`.length) : conceptId;
     return { type, name, origin: bundle, conceptId, path: owner.path };

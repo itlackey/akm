@@ -25,11 +25,10 @@ import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { AdapterReadCandidate, NewAsset } from "../bundle-adapter";
+import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import { AkmFormatAdapterBase } from "./akm-format";
 import { perTypeDiagnostics } from "./akm-lint";
-import { workflowBundleWrites } from "./akm-writes";
-import { directoryAdapter } from "./directory-assets";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, readTags } from "./shared";
 
 /** A native workflow bundle is single-component; its one component is `main`. */
@@ -60,7 +59,7 @@ function isWorkflowFile(raw: string): boolean {
   return type === undefined || type === "workflow";
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   if (!WORKFLOW_EXTS.has(file.ext)) return null;
   if (isReservedDocFile(file.fileName)) return null;
   const raw = file.content();
@@ -90,7 +89,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   return doc;
 }
 
-async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+async function validate(c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   const { check, rulesFor } = createBaseChecker(c.root, ctx);
   for (const change of changes) {
@@ -150,27 +149,37 @@ function hasTopLevelWorkflowFile(root: string, entries: fs.Dirent[]): boolean {
   return false;
 }
 
-export const akmWorkflowAdapter: BundleAdapter = directoryAdapter({
-  writes: workflowBundleWrites,
-  id: "akm-workflow",
-  version: "0.9.2",
-  extensions: [".md"],
+export class AkmWorkflowAdapter extends AkmFormatAdapterBase {
+  readonly id = "akm-workflow";
+  readonly version = "0.9.2";
+  override readonly writes = ["workflow"];
+  override readonly extensions = [".md"];
 
-  recognize,
-  validate,
+  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
+    return recognize(b, file);
+  }
 
-  readCandidates(c: BundleComponent, conceptId: string) {
+  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    return validate(b, changes, ctx);
+  }
+
+  /** A standalone workflow bundle keeps its workflows at its root, one Markdown file each. */
+  protected override placeFile(b: Bundle, { name }: Pick<NewAsset, "type" | "name">): string {
+    return path.join(b.root, `${name}.md`);
+  }
+
+  readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const posix = toPosix(conceptId);
     const canonical = posix.replace(/\.md$/i, "");
     return /\.md$/i.test(posix)
       ? [{ path: path.join(c.root, posix), conceptId: canonical }]
       : [{ path: path.join(c.root, `${posix}.md`), conceptId: canonical }];
-  },
+  }
 
   /** Workflows live anywhere under the component root. */
-  directoryList(): string[] {
+  override directoryList(): string[] {
     return ["."];
-  },
+  }
 
   /**
    * Install-time probe (§1.2): a root holding an explicitly typed Markdown
@@ -184,5 +193,7 @@ export const akmWorkflowAdapter: BundleAdapter = directoryAdapter({
       return false;
     }
     return hasTopLevelWorkflowFile(root, entries);
-  },
-});
+  }
+}
+
+export const akmWorkflowAdapter = new AkmWorkflowAdapter();

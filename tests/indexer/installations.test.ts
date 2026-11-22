@@ -66,17 +66,17 @@ describe("slugForRegistryId", () => {
 describe("deriveInstallations — adapter selection (ordered §1.2 probe)", () => {
   test("akm workspace stash → akm adapter", () => {
     const [inst] = deriveInstallations([{ path: AKM_ROOT, writable: true }]);
-    expect(inst!.components[0]!.adapter).toBe("akm");
+    expect(inst!.adapterId).toBe("akm");
   });
 
   test("okf reference bundle → okf adapter", () => {
     const [inst] = deriveInstallations([{ path: OKF_ROOT }]);
-    expect(inst!.components[0]!.adapter).toBe("okf");
+    expect(inst!.adapterId).toBe("okf");
   });
 
   test("llm-wiki bundle → llm-wiki adapter (more-specific probe wins over okf)", () => {
     const [inst] = deriveInstallations([{ path: LLM_WIKI_ROOT }]);
-    expect(inst!.components[0]!.adapter).toBe("llm-wiki");
+    expect(inst!.adapterId).toBe("llm-wiki");
   });
 
   test("a root no probe claims falls back to akm (recorded deviation from spec §1.2(3)'s okf)", () => {
@@ -85,7 +85,7 @@ describe("deriveInstallations — adapter selection (ordered §1.2 probe)", () =
     // pre-config-adapter transitional model (see installations.ts). Pins that
     // decision so a future 0.9.1 flip to `okf` is a deliberate, visible change.
     const [inst] = deriveInstallations([{ path: "/nonexistent/empty/root" }]);
-    expect(inst!.components[0]!.adapter).toBe("akm");
+    expect(inst!.adapterId).toBe("akm");
   });
 
   test("the ordered probe is genuinely consulted in production — non-akm roots no longer all collapse to akm", () => {
@@ -96,13 +96,13 @@ describe("deriveInstallations — adapter selection (ordered §1.2 probe)", () =
       { path: AKM_ROOT, writable: true },
       { path: OKF_ROOT },
       { path: LLM_WIKI_ROOT },
-    ]).map((i) => i.components[0]!.adapter);
+    ]).map((i) => i.adapterId);
     expect(adapters).toEqual(["akm", "okf", "llm-wiki"]);
   });
 
   test("configured adapter ownership wins over filesystem probing", () => {
     const [inst] = deriveInstallations([{ path: AKM_ROOT, adapterId: "okf" }]);
-    expect(inst!.components[0]!.adapter).toBe("okf");
+    expect(inst!.adapterId).toBe("okf");
   });
 });
 

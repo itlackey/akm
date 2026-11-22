@@ -57,7 +57,8 @@ export interface FragmentProvenance {
 export interface SourceSearchHit {
   type: string;
   name: string;
-  path: string;
+  /** The file that holds the asset. Absent when no file does (a secret manager's). */
+  path?: string;
   ref: string;
   /** Durable fully-qualified `bundle//conceptId` of the indexed entry; `ref` is its display spelling. */
   itemRef?: string;
@@ -508,7 +509,8 @@ export interface ShowResponse extends FragmentProvenance {
   schemaVersion?: number;
   type: string;
   name: string;
-  path: string;
+  /** The file that holds the asset. Absent when no file does (a secret manager's). */
+  path?: string;
   /** Canonical indexed ref for a materialized local asset. */
   ref?: string;
   content?: string;

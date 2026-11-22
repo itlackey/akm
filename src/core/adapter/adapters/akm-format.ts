@@ -3,20 +3,23 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * How the akm formats place and serialize the assets they write: each type in
- * its own folder (`knowledge/`, `env/`, `secrets/`, ...), named by the type's
- * placement spec, Markdown made a conformant akm document. The `akm`,
- * `dotenv` and `akm-workflow` adapters write through these.
+ * The base of the adapters of the akm formats (`akm`, `dotenv`, `akm-workflow`):
+ * how they place and serialize the assets they write. Each type goes in its own
+ * folder (`knowledge/`, `env/`, `secrets/`, ...), named by the type's placement
+ * spec, and Markdown is made a conformant akm document. An env file's or
+ * secret's `.sensitive` marker keeps it out of listings.
  */
 
 import path from "node:path";
+import type { FileContext } from "../../../indexer/walk/file-context";
+import { declaredTypeForPath } from "../../../indexer/walk/matchers";
 import { normalizeAkmMarkdown } from "../../asset/akm-markdown";
-import { assetPathForName, placementTypes, stashDirFor } from "../../asset/asset-placement";
+import { assetPathForName, stashDirFor } from "../../asset/asset-placement";
 import { UsageError } from "../../errors";
 import { warn, warnOnce } from "../../warn";
 import type { NewAsset } from "../bundle-adapter";
-import type { BundleComponent } from "../types";
-import type { DirectoryWrites } from "./directory-assets";
+import { DirectoryAdapterBase } from "../directory-adapter";
+import type { Bundle } from "../types";
 
 /** MS-DOS device names Windows reserves in every directory, with or without an extension. */
 const WINDOWS_RESERVED_DEVICE_NAMES = new Set([
@@ -43,7 +46,7 @@ export function findAbsoluteHomePaths(content: string): string[] {
 }
 
 /** The file an asset of `type` and `name` is kept in: `<type folder>/<name><suffix>`, inside that folder. */
-export function placeInTypeFolder(c: BundleComponent, { type, name }: Pick<NewAsset, "type" | "name">): string {
+export function placeInTypeFolder(b: Bundle, { type, name }: Pick<NewAsset, "type" | "name">): string {
   const basename = path.posix.basename(name.replaceAll("\\", "/")).replace(/\.md$/i, "").toLowerCase();
   if (basename === "index" || basename === "log") {
     warnOnce(
@@ -60,12 +63,12 @@ export function placeInTypeFolder(c: BundleComponent, { type, name }: Pick<NewAs
   const typeDir = stashDirFor(type);
   if (!typeDir)
     throw new UsageError(`Unknown asset type "${type}". Cannot resolve a write path.`, "INVALID_FLAG_VALUE");
-  const typeRoot = path.join(c.root, typeDir);
+  const typeRoot = path.join(b.root, typeDir);
   const file = assetPathForName(type, typeRoot, name);
   const relative = path.relative(typeRoot, file);
   if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new UsageError(
-      `Resolved asset path escapes its source: "${name}" in bundle "${c.id}".`,
+      `Resolved asset path escapes its source: "${name}" in bundle "${b.id}".`,
       "PATH_ESCAPE_VIOLATION",
     );
   }
@@ -92,23 +95,36 @@ export function serializeAkmContent(type: string, file: string, content: string 
   return text;
 }
 
-/** An akm bundle writes every type it has a folder for. */
-export const akmWrites: DirectoryWrites = {
-  types: placementTypes(),
-  place: placeInTypeFolder,
-  serialize: serializeAkmContent,
-};
+/**
+ * The path of the sibling marker file that keeps an env file or secret out of
+ * listings: `<name>.sensitive` for an env file, `<secret>.sensitive` for a secret.
+ */
+export function sensitiveMarkerPath(assetPath: string, type: "env" | "secret"): string {
+  return type === "env" ? assetPath.replace(/\.env$/, ".sensitive") : `${assetPath}.sensitive`;
+}
 
-/** A dotenv bundle writes its env files and secrets. */
-export const dotenvWrites: DirectoryWrites = {
-  types: ["env", "secret"],
-  place: placeInTypeFolder,
-  serialize: serializeAkmContent,
-};
+export abstract class AkmFormatAdapterBase extends DirectoryAdapterBase {
+  protected override placeFile(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {
+    return placeInTypeFolder(b, asset);
+  }
 
-/** A standalone workflow bundle keeps its workflows at its root, one Markdown file each. */
-export const workflowBundleWrites: DirectoryWrites = {
-  types: ["workflow"],
-  place: (c, { name }) => path.join(c.root, `${name}.md`),
-  serialize: serializeAkmContent,
-};
+  protected override serialize(type: string, file: string, content: string | Buffer): string | Buffer {
+    return serializeAkmContent(type, file, content);
+  }
+
+  /** Env files and secrets are readable by their owner only. */
+  protected override fileMode(type: string): number | undefined {
+    return type === "env" || type === "secret" ? 0o600 : undefined;
+  }
+
+  protected override unlistedMarker(file: FileContext): string | undefined {
+    const type = declaredTypeForPath(file);
+    if (type !== "env" && type !== "secret") return undefined;
+    const marker = sensitiveMarkerPath(file.absPath, type);
+    return marker === file.absPath ? undefined : marker;
+  }
+
+  protected override declaredType(file: FileContext): string | undefined {
+    return declaredTypeForPath(file);
+  }
+}

@@ -55,7 +55,7 @@ describe("generateEmbeddingsForDb: embedding-credential diagnostics (#953)", () 
     if (!installation || !component) throw new Error("failed to derive a test bundle installation");
     const entry = { name: "note", type: "memories", filename: "note.md" };
     const provenance = deriveEntryProvenance(
-      { bundleId: installation.id, componentId: component.id, adapterId: component.adapter },
+      { bundleId: installation.id, componentId: component.id, adapterId: installation.adapterId },
       "memories",
       "note",
     );

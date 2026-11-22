@@ -359,6 +359,7 @@ const scriptSourceRenderer: AssetRenderer = {
   },
 
   enrichSearchHit(hit: SourceSearchHit, _stashDir: string): void {
+    if (hit.path === undefined) return;
     const ext = path.extname(hit.path).toLowerCase();
     if (!SCRIPT_EXTENSIONS.has(ext)) return;
 
@@ -395,6 +396,7 @@ const envFileRenderer: AssetRenderer = {
   },
 
   enrichSearchHit(hit: SourceSearchHit, _stashDir: string): void {
+    if (hit.path === undefined) return;
     const { keys } = listVaultKeys(hit.path);
     if (keys.length > 0) hit.keys = keys;
   },
