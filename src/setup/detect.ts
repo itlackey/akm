@@ -44,17 +44,10 @@ export function _setDetectForTests(fakes?: DetectOverridesForTests): void {
  * Setup stash-source candidates, derived from the unified harness registry
  * (#567).
  *
- * BEHAVIOUR FIX: the old hardcoded list named 6 harnesses (Claude Code,
- * OpenCode, Continue, Codeium/Windsurf, Cursor, Codex CLI) but only the first
- * two have a session-log provider. Selecting any of the other four added a
- * filesystem stash source that was never indexed/extracted — a silent no-op
- * "detection trap" (sessions never reached the improve pipeline).
- *
- * The registry is now the single source of which harnesses are real stash
+ * The registry is the single source of which harnesses are real stash
  * sources: a candidate must (a) register a `sessionLogProvider` AND
  * (b) declare a `setupDetectionDir`. `SESSION_LOG_HARNESSES` already filters by
- * (a), so dropping the four dead options is automatic — they aren't even in the
- * registry. Adding a new session-log harness with a detection dir makes it
+ * (a). Adding a new session-log harness with a detection dir makes it
  * appear here with no edit to this file.
  */
 const AGENT_PLATFORMS: Array<{ name: string; relPath: string }> = SESSION_LOG_HARNESSES.filter(

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Top-level `akm health` result shape (chunk-9 WI-9.5d per-domain split of
+ * Top-level `akm health` result shape (split out of
  * `./types`) — the return type of `akmHealth()`, combining every other
  * domain (checks, metrics, improve, per-run, window-compare).
  */

@@ -5,8 +5,7 @@
 /**
  * `akm show` plain-text renderer.
  *
- * Split out of `helpers.ts` (formerly 1418 lines / 59 fns) as its own
- * sibling module: `formatShowPlain` is the single largest formatter in the
+ * A sibling module of `helpers.ts`: `formatShowPlain` is the single largest formatter in the
  * file. Agent-directive emission (APPLY / show-loop / workflow-active
  * blocks) lives in the sibling `show-directives.ts`.
  */

@@ -136,7 +136,7 @@ export interface CurateOptions extends RecallOptions {
   /** Internal projection used only to decide whether derived surface content was emitted. */
   attributionProjection?: AttributionProjection;
   /**
-   * When true, skip logging usage events for this curate call (F2/R-055):
+   * When true, skip logging usage events for this curate call:
    * neither the top-level curate event nor the underlying search/show reads
    * feed usage-events telemetry.
    * Curate's own nested `akmSearch`/`akmShowUnified` calls always pass
@@ -327,7 +327,7 @@ export async function curateSearchResults(
   const allStashHits = result.hits.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
   const registryHits = result.registryHits ?? [];
 
-  // F3/R-018: `--type` NARROWS the candidate pool. The caller's search
+  // `--type` NARROWS the candidate pool. The caller's search
   // usually applied the filter already, but `curateSearchResults` is also
   // driven directly (tests, `searchResponse` fixtures) with a
   // `SearchResponse` that was never type-filtered.
@@ -336,7 +336,7 @@ export async function curateSearchResults(
 
   const selectedStashHits = stashHits.slice(0, limit);
 
-  // F4/R-019: respect `--limit` for registry fill instead of hard-capping it
+  // respect `--limit` for registry fill instead of hard-capping it
   // at a bare literal 2 — the remaining slots after stash hits ARE the cap.
   const selectedRegistryHits =
     selectedStashHits.length >= limit ? [] : registryHits.slice(0, limit - selectedStashHits.length);

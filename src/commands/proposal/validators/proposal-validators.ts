@@ -20,7 +20,7 @@ import type {
 import { defaultProposalQualityValidators } from "./proposal-quality-validators";
 
 // ProposalValidationContext / ProposalValidator moved to ../proposal-types.ts
-// (WI-9.8 KILL 1 — proposal-quality-validators.ts needed ProposalValidator
+// (proposal-quality-validators.ts needs ProposalValidator
 // back, and this module needs defaultProposalQualityValidators from
 // proposal-quality-validators.ts as a value; hoisting the shared interface to
 // the dependency-free leaf breaks that back-edge). Re-exported here so

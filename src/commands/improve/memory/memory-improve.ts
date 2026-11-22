@@ -567,7 +567,7 @@ function stronglyConnectedComponents(
  * `undefined` for a knowledge or lesson ref (no such twin exists), or for a
  * memory that is already itself `.derived` (it has no further twin).
  *
- * Used by `akm proposal accept` (alpha.9) to take a retired or promoted
+ * Used by `akm proposal accept` to take a retired or promoted
  * memory's derived child along when it archives the memory.
  */
 export function derivedTwinPath(filePath: string, refType: string): string | undefined {
@@ -577,8 +577,8 @@ export function derivedTwinPath(filePath: string, refType: string): string | und
 }
 
 /**
- * True for a retire-proposal-caused archive (alpha.9: the consolidate pair
- * pass, or O1's promotion retirement) — distinguished from a memory-cleanup
+ * True for a retire-proposal-caused archive (the consolidate pair
+ * pass, or a promotion's retirement of its source) — distinguished from a memory-cleanup
  * family-prune candidate by carrying a `proposalId`. The two paths differ in
  * how `previousBeliefState` is derived (below) and in which extra tombstone
  * fields apply.
@@ -621,7 +621,7 @@ function resolvePreviousBeliefState(
  * `"git"`, in which case the caller's own `commitWriteTargetBoundary` commits
  * (and maybe pushes) immediately as part of the SAME accept.
  *
- * Generalized in alpha.9 to cover any memory, knowledge or lesson file in a
+ * Covers any memory, knowledge or lesson file in a
  * writable bundle — not only `.derived` memories — so `akm proposal accept`
  * can archive a consolidate pair-pass `retire` proposal's target, or (O1) an
  * accepted promotion's source memory, through the same one encoding memory
@@ -703,7 +703,7 @@ export function archiveCleanupCandidate(
 /**
  * How long a retirement's archived bytes stay on disk after `retiredAt`
  * before the purge sweep deletes them. Git history keeps the bytes (D27;
- * plan §5.4 "Purge").
+ * the purge sweep).
  */
 export const RETIRE_GRACE_DAYS = 30;
 
@@ -722,8 +722,7 @@ export interface ArchivePurgeResult {
 const EMPTY_ARCHIVE_PURGE_RESULT: ArchivePurgeResult = { purgedDirs: 0, purgedFiles: 0 };
 
 /**
- * The purge sweep (0.9.17-alpha.9 plan §5.4, §8 step 8): deterministic, no
- * LLM, run once at improve-run start. Deletes the archived asset bytes —
+ * The purge sweep: deterministic, no LLM, run once at improve-run start. Deletes the archived asset bytes —
  * never `cleanup.md` — of every retirement whose tombstone `retiredAt` is
  * more than {@link RETIRE_GRACE_DAYS} old AND whose archived files are all
  * git-tracked and clean at the time of the sweep (see below). Git history
@@ -982,7 +981,7 @@ function collectDerivedMemories(stashDir: string, parentRefFilter?: string): Der
       tags,
       searchHints,
       body,
-      // parentRef is the 0.9.0 `memories/<name>` conceptId (Group-C item 2), so
+      // parentRef is the `memories/<name>` conceptId, so
       // the canonical-child test compares the minted conceptId of the suffix-
       // stripped name against it rather than slicing a fixed `memory:` prefix.
       canonicalName:
@@ -1013,7 +1012,7 @@ function isActiveLikeBeliefState(state: Exclude<MemoryBeliefState, "archived">):
 }
 
 /**
- * `deprecated` is a frozen historical state introduced in Phase 1A. Once
+ * `deprecated` is a frozen historical state. Once
  * recorded, the contradiction-resolution pass must not refresh it back to
  * active. (`contradicted` is also historical but it *is* updated by the
  * contradiction resolver, so it is treated separately.)
@@ -1049,7 +1048,7 @@ function resolveBeliefState(frontmatter: Record<string, unknown>): Exclude<Memor
 // IDENTITY channel: they are compared against a derived memory's own
 // `memory:<name>` ref (resolveFamilyContradictions' familyRefSet,
 // firstExistingRef's byRef map), so they are NORMALIZED to `memory:<name>` here.
-// On disk they arrive in either spelling — `memory:<name>` from pre-0.9.0
+// On disk they arrive in either spelling — `memory:<name>` from older
 // writes, or the `[<bundle>//]memories/<name>` conceptId that
 // `writeSupersededEdge` persists today — and
 // `parseMemoryName` accepts both. Reading only the first spelling silently

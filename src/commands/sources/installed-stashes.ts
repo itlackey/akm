@@ -8,7 +8,7 @@
  * Provides unified operations across all configured bundle source providers.
  * The CLI's `akm bundle list`, `akm bundle remove`, and `akm bundle update` commands are wired here.
  *
- * 0.9.0: the retired `installed[]` array is gone — a
+ * the retired `installed[]` array is gone — a
  * registry-managed source is now a `bundles.<slug>` entry (the desired locator)
  * paired with a lock entry (the resolved `localRoot`/version). A bundle that has
  * a lock entry is "managed" (installed from a registry and overwritten on
@@ -1146,7 +1146,7 @@ export async function akmUpdate(input?: {
   }
 
   // `--all` must account for EVERY configured source, not only the
-  // registry-managed (lock-backed) ones (R-015) — `selectManagedTargets`
+  // registry-managed (lock-backed) ones — `selectManagedTargets`
   // above returns only `installs` for `all`, so plain sources were
   // previously never even looked at. Git/website/npm plain sources are synced
   // here too (npm is promoted to managed, same as the single-target path
@@ -1265,7 +1265,7 @@ function selectManagedTargets(
  * in the warning so an operator can tell which command left the directory
  * behind. Failure does not throw — callers already committed the config/lock
  * change that made `target` orphaned — but it must not be silent either
- * (F1/R-058): a swallowed `rmSync` error used to leave no trace anywhere the
+ *: a swallowed `rmSync` error used to leave no trace anywhere the
  * caller could inspect, so a confirmed deletion that then failed (permission
  * error, file in use, …) looked identical to a successful one.
  */

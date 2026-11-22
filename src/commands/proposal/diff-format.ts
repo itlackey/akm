@@ -4,7 +4,7 @@
 
 /**
  * Proposal diff renderers — extracted verbatim from `repository.ts`
- * (Chunk 6 WI-6.6 decompose). Pure string functions with no repository
+ *. Pure string functions with no repository
  * dependency; `diffProposal` (repository.ts) is the only production caller.
  */
 

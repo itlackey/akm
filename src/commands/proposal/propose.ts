@@ -188,7 +188,7 @@ async function dispatchProposalPrompt(
 }
 
 /**
- * WI-8.5a — the fully-qualified `bundle//conceptId` item_ref for a proposal
+ * the fully-qualified `bundle//conceptId` item_ref for a proposal
  * target in `stashDir`. The conceptId is BUILT from the D-R2 static table
  * (`deriveEntryProvenance`), never looked up, so a propose target that does not
  * yet exist on disk still keys onto its final spelling; the bundle is the
@@ -201,7 +201,7 @@ function proposeItemRef(bundleId: string, type: string, name: string): string {
 }
 
 /**
- * The command-entry `propose_invoked` event. WI-8.5b: the ref carries the same
+ * The command-entry `propose_invoked` event. The ref carries the same
  * fully-qualified item_ref the durable proposal is minted under
  * (`proposeItemRef`), so the entry event and the stored proposal agree.
  */

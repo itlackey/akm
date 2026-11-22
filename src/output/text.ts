@@ -17,10 +17,7 @@
  * falls back to `renderGenericText`'s flat `key=value` rendering of the
  * shaped envelope (`src/output/generic-render.ts` — NOT `renderGenericMarkdown`;
  * markdown syntax is markup, not plain text, so `text` gets its own generic
- * renderer rather than reusing `md`'s). NOT YAML either: this comment (and
- * the one on `formatPlain` below) used to say the fallback was YAML, but it
- * never was — the fallback was pretty-printed JSON until it became a generic
- * renderer.
+ * renderer rather than reusing `md`'s). The fallback is not YAML.
  *
  * Pure functions — no IO.
  */

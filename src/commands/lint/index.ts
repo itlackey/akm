@@ -110,7 +110,7 @@ export interface AkmLintOptions {
  * `.yaml` near-miss. A `.yaml` file is not a runnable task — it is invisible to
  * the indexer's `tasks` matcher — but collecting it here is what lets the sweep
  * SAY so (`invalid-task-yaml`, see {@link taskExtensionDetail}) instead of
- * walking past it and reporting a clean scan (issue #760).
+ * walking past it and reporting a clean scan.
  */
 function collectTaskFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
@@ -185,18 +185,11 @@ function resolveWorkflowLintOwnership(stashRoot: string, files: readonly string[
 
 // ── Non-akm adapter dispatch (real `adapter.validate()`, not a re-implementation) ──
 //
-// akm 0.9.0 lint/adapter-dispatch wiring: `akm lint` used to special-case
-// exactly one non-akm adapter (`okf`, via a hand-rolled `missing-type`-only
-// `lintOkfBundle` re-implementation this change deletes) and silently route
-// every OTHER non-akm bundle (llm-wiki, dotenv, claude, opencode,
-// agent-skills, website-snapshot, generic-files, akm-task, akm-workflow)
-// through the AKM-shaped akm sweep — the wrong linter for the wrong
-// format, and the reason those adapters' own `validate()` checks (OKF's
-// `missing-ref`; llm-wiki's `uncited-raw`/`missing-description`/`broken-xref`/
-// `broken-source`) were unreachable dead code. Every bundle is now linted by
-// its OWN configured/detected adapter's `validate()` — the single definition
-// of that format's rules, shared with the (now also wired, advisory-only)
-// change-transaction pre-commit gate in `commands/proposal/repository.ts`.
+// Every bundle is linted by its OWN configured/detected adapter's `validate()`
+// — the single definition of that format's rules (OKF's `missing-ref`;
+// llm-wiki's `uncited-raw`/`missing-description`/`broken-xref`/`broken-source`),
+// shared with the advisory-only change-transaction pre-commit gate in
+// `commands/proposal/repository.ts`.
 // The adapter-dispatch work intentionally stays outside the `akm` sweep below.
 // The sweep's workflow branch separately supports authoritative peer `.md` and
 // `.yml` sources while preserving the pinned Markdown findings/`--fix` bytes.
@@ -258,7 +251,7 @@ const KNOWN_ADAPTER_ISSUE_TYPES: ReadonlySet<string> = new Set<LintIssueType>([
   "missing-name-or-type",
   "missing-skill-md",
   // The `akm-task` adapter's own code. Now reachable from `akm lint` for a
-  // malformed or misnamed task file (issue #760); without it here, a genuine
+  // malformed or misnamed task file; without it here, a genuine
   // task finding would arrive folded onto `adapter-diagnostic`.
   "invalid-task-yaml",
   "dangerous-env-key",
@@ -302,7 +295,7 @@ async function lintViaAdapter(
   // vocabulary and `validate()` sees the whole bundle regardless. That is not a
   // correctness problem (full-bundle validation is a superset of the requested
   // scope), but a user narrowing a run deserves to hear the flag did nothing
-  // rather than infer it from identical output (issue #762). Warn, don't throw:
+  // rather than infer it from identical output. Warn, don't throw:
   // a hard error would break scripts passing one `--type` across mixed-adapter
   // bundle sets.
   if (options.typeFilter) {
@@ -405,7 +398,7 @@ function runEnvDangerousKeyPass(
     // `env` assets live under `env/`, whole-file `secret` assets under
     // `secrets/`. `displayRefForConceptId` owns the short-default /
     // qualified-secondary `Ref:` spelling `akm show` emits — the old
-    // hand-built `env:<base>` colon grammar is rejected by the 0.9.0 ref
+    // hand-built `env:<base>` colon grammar is rejected by the ref
     // parser, which dead-ended a user copying the ref off a security finding.
     for (const assetType of ["env", "secret"] as const) {
       const dir = path.join(root, stashDirFor(assetType) as string);
@@ -425,7 +418,7 @@ function runEnvDangerousKeyPass(
 
 /**
  * Refuse `--fix` against a bundle the config marks `writable: false`, BEFORE
- * the sweep touches a single file (issue #761).
+ * the sweep touches a single file.
  *
  * Every other mutating command routes through `core/write-source.ts`'s
  * `ensureWritable`/`resolveWritable` pair; `akm lint --fix` writes and deletes
@@ -454,16 +447,14 @@ function isFileDeletion(issue: LintIssue): boolean {
   return issue.fixed === true && (issue.issue === "orphaned-stub" || issue.issue === "placeholder-stub");
 }
 
-// ── Per-file lint dispatch (was registry.ts + the 9 per-type linter classes) ──
+// ── Per-file lint dispatch ──
 //
-// akm 0.9.0 chunk-3 (plan §12): the 9 `BaseLinter` subclasses + `LINTER_MAP`/
-// `getLinterForType` are gone. The format-generic checks are the shared
-// `runBaseChecks` (`./base-linter`); the per-`type` RULES are the `akm`
-// adapter's `validate` surface (`core/adapter/adapters/akm-lint.ts`), imported
-// here so both the read-only adapter and this fix-capable CLI sweep share ONE
-// definition of each finding. The adapter never writes; the delete-fix for the
-// two stub types is applied HERE (a core/CLI concern), reproducing the old
-// MemoryLinter/WorkflowLinter `--fix` behavior byte-for-byte.
+// The format-generic checks are the shared `runBaseChecks` (`./base-linter`);
+// the per-`type` RULES are the `akm` adapter's `validate` surface
+// (`core/adapter/adapters/akm-lint.ts`), imported here so both the read-only
+// adapter and this fix-capable CLI sweep share ONE definition of each finding.
+// The adapter never writes; the delete-fix for the two stub types is applied
+// HERE (a core/CLI concern).
 
 /**
  * Reproduce `SkillLinter.lintDirectory`: a skill subdirectory with no
@@ -637,7 +628,7 @@ function lintDocument(
   // One file's checks — including its `--fix` mutations — must never abort
   // the sweep: an uncaught throw here left the caller with an exception and
   // no record of which earlier files had ALREADY been rewritten on disk
-  // (issue #761). A failure is reported per-file, in-band, and the sweep
+  //. A failure is reported per-file, in-band, and the sweep
   // continues so the rest of the bundle is still linted.
   let issues: LintIssue[];
   try {

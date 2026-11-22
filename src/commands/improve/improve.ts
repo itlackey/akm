@@ -298,7 +298,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         syncRepoDir && isGitBackedStash(syncRepoDir) ? new Set(listGitChangedPaths(syncRepoDir)) : new Set<string>();
       journal = beginWriteProvenance();
 
-      // Step 8 (alpha.9 plan §5.4): the purge sweep. Deterministic, no LLM,
+      // Step 8: the purge sweep. Deterministic, no LLM,
       // and first — before anything else this run might touch the archive
       // for. Git-backed bundles only; a bundle with no git history of its
       // own is left untouched (akm health reports its size instead).

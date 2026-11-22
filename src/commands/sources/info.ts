@@ -59,7 +59,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
   }
 
   // Primary stash directory + default bundle name — same resolution
-  // `akm sources list` uses (R-057), so `akm info` and `akm sources list`
+  // `akm sources list` uses, so `akm info` and `akm sources list`
   // agree on which stash is primary. No bundle created yet
   // (STASH_DIR_NOT_FOUND, the ordinary fresh-install state) reports where a
   // fresh `akm setup`/`akm bundle create` would put it, same as "report the
@@ -246,7 +246,7 @@ function readIndexStats(resolvedPath: string): InfoResponse["indexStats"] {
     // Surface the error so operators can diagnose mismatches between
     // `akm info` and `akm health` rather than silently returning zeros.
     // Routed through core/warn's `error()` (not a raw stderr write)
-    // so `--quiet`/`setQuiet()` actually gate this line (R-057).
+    // so `--quiet`/`setQuiet()` actually gate this line.
     error(`[akm info] failed to read index stats from ${resolvedPath}: ${String(err)}`);
     return { ...EMPTY, unavailable: describeIndexReadFailure(err) };
   } finally {
