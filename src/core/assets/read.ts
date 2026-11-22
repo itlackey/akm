@@ -73,7 +73,12 @@ function assetOf(source: SearchSource, bundle: string, adapterId: string, found:
 }
 
 /** The asset `conceptId` names in one source, as its adapter reads it. */
-function readFrom(source: SearchSource, bundle: string, conceptId: string, options: FindOptions): Asset | undefined {
+export function readFrom(
+  source: SearchSource,
+  bundle: string,
+  conceptId: string,
+  options: FindOptions,
+): Asset | undefined {
   const { adapter, bundle: b } = assetBundleOf({
     name: bundle,
     path: source.path,

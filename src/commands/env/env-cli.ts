@@ -13,8 +13,7 @@
  * Values and comment text are NEVER written to stdout or structured output —
  * only key NAMES are surfaced (comments routinely contain commented-out
  * credentials). akm does not manage individual entries;
- * you edit the `.env` file yourself and akm loads it. Replaced the deprecated
- * `vault` type (removed in 0.9.0).
+ * you edit the `.env` file yourself and akm loads it.
  */
 
 import fs from "node:fs";
@@ -123,7 +122,7 @@ const envPathCommand = defineJsonCommand({
     quiet: { type: "boolean", alias: "q", description: "Suppress the unsafe-source warning", default: false },
   },
   async run({ args }) {
-    const { absPath } = resolveEnvPath(args.ref);
+    const absPath = resolveEnvPath(args.ref).asset.entry.file;
     if (absPath === undefined) throw new UsageError(`Env "${args.ref}" is not kept in a file, so it has no path.`);
     // The raw `.env` may contain `X=$(cmd)`, which executes if `source`d.
     // Warning goes to stderr (never contaminates the path on stdout) and is
@@ -174,11 +173,11 @@ const envExportCommand = defineJsonCommand({
         "MISSING_REQUIRED_ARGUMENT",
       );
     }
-    const { conceptId, source, content } = resolveEnvPath(args.ref);
+    const { conceptId, asset } = resolveEnvPath(args.ref);
     const { buildShellExportScript } = await import("./env.js");
     const resolvedOut = path.resolve(outPath);
-    writeFileAtomic(resolvedOut, buildShellExportScript(content()), 0o600);
-    output("env-export", { ref: makeEnvRef(conceptId, source), out: resolvedOut });
+    writeFileAtomic(resolvedOut, buildShellExportScript(asset.entry.content()), 0o600);
+    output("env-export", { ref: makeEnvRef(conceptId, asset.source), out: resolvedOut });
   },
 });
 

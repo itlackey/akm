@@ -191,7 +191,7 @@ describe("env and secrets outside their folder", () => {
     write("secrets/token", "tok\n");
     configure();
     const found = resolveEnvPath("team//team/env/staging");
-    expect(found.absPath).toBe(loose);
+    expect(found.asset.entry.file).toBe(loose);
     expect(found.conceptId).toBe("team/env/staging");
     expect(() => resolveEnvPath("secrets/token")).toThrow(/Expected an env ref/);
   });

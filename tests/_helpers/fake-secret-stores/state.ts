@@ -22,6 +22,12 @@ export interface FakeStoreState {
   keyrings: Record<string, FakeKeyringItem[]>;
   /** Azure Key Vaults by name, each a map of secret name to value. */
   vaults: Record<string, Record<string, string>>;
+  /** Names of keyrings that are locked: their `Items` read as empty, as KWallet's does. */
+  locked?: string[];
+  /** Azure Key Vault secrets that are deleted but recoverable, by vault, then name. */
+  deleted?: Record<string, Record<string, string>>;
+  /** Vaults that refuse `purge`, as one with purge protection or without purge permission does. */
+  purgeForbidden?: string[];
   /** Every command line a fake client received, program first. */
   calls: string[][];
 }

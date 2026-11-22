@@ -9,18 +9,13 @@
  * (parseSecretRef / makeSecretRef / resolveSecretPath) live in src/core/env-secret-ref.ts so env + secret share one
  * copy.
  *
- * `akm secret` manages whole-file secrets under each stash's secrets/ directory.
- * Unlike env files (.env key/value), the ENTIRE file is the secret value. The bytes
+ * `akm secret` manages the secrets of each bundle: whole files under a directory bundle's secrets/, or the
+ * entries of a keyring or vault. Unlike env files (.env key/value), the ENTIRE secret is the value. The bytes
  * are NEVER written to stdout or structured output. The only value-use path is
  * `akm secret run` (injected into a child env var).
  *
- * `secret path` was REMOVED in 0.9.0 (R-027 / D-49) and `secret remove` with it: an
- * audit found `path` resolved the ref through the read-side, all-sources
- * resolver while `remove` resolved it through the write-target resolver, so the
- * two could silently name different files when a ref existed in more than one
- * bundle. `secret remove` is back (0.10) for Desktop and the browser UI, shaped
- * like `akm env remove`: it names its file through the write-target resolver
- * only, and `--bundle` picks the bundle.
+ * `secret set` and `secret remove` name their bundle through the write-target resolver, and `--bundle` picks it.
+ * A removal deletes the secret.
  */
 
 import fs from "node:fs";

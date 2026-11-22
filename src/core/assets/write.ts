@@ -23,7 +23,7 @@ import {
   recordWriteTargetPath,
 } from "../write-source";
 import { type AssetBundle, assertAdapterWrites, assetBundleOf } from "./bundle";
-import { type Asset, assetRevision, warnOutdatedRef, withoutTypeHead } from "./read";
+import { type Asset, assetRevision, readFrom, warnOutdatedRef, withoutTypeHead } from "./read";
 
 /** Where a write to a ref goes. */
 export interface AssetAddress {
@@ -66,35 +66,14 @@ function searchSourceOf(source: WriteSource): SearchSource {
   };
 }
 
-function readIn(
-  { adapter, bundle }: AssetBundle,
-  source: WriteSource,
-  conceptId: string,
-  options: { unlisted?: boolean; mode: "read" | "write" },
-): Asset | undefined {
-  const found = adapter.read(bundle, conceptId, { mode: options.mode });
-  if (!found || !(found.listed || options.unlisted)) return undefined;
-  return {
-    bundle: bundle.id,
-    conceptId: found.conceptId,
-    ref: `${bundle.id}//${found.conceptId}`,
-    get type() {
-      return found.type;
-    },
-    entry: found.entry,
-    listed: found.listed,
-    source: searchSourceOf(source),
-    adapterId: adapter.id,
-  };
-}
-
 function addressIn(held: AssetBundle, source: WriteSource, ref: string): AssetAddress {
+  const readIn = (id: string): Asset | undefined => readFrom(searchSourceOf(source), source.name, id, { mode: "read" });
   const { bundle: origin, conceptId: asWritten, fragment } = parseBundleRef(ref);
   let conceptId = asWritten;
-  let found = fragment === undefined ? readIn(held, source, conceptId, { mode: "read" }) : undefined;
+  let found = fragment === undefined ? readIn(conceptId) : undefined;
   const current = fragment === undefined && !found ? withoutTypeHead(asWritten) : undefined;
   if (current !== undefined) {
-    found = readIn(held, source, current, { mode: "read" });
+    found = readIn(current);
     if (found) {
       warnOutdatedRef(asWritten, current);
       conceptId = current;
@@ -129,6 +108,11 @@ export function addressOf(source: WriteSource, ref: string): AssetAddress {
   return addressIn(assetBundleOf(source), source, ref);
 }
 
+/** The asset `conceptId` names in `source`'s bundle, read outside a write session; `unlisted` finds one `list` leaves out. */
+export function readAsset(source: WriteSource, conceptId: string, options?: { unlisted?: boolean }): Asset | undefined {
+  return readFrom(searchSourceOf(source), source.name, conceptId, { unlisted: options?.unlisted });
+}
+
 function writerFor(target: ResolvedWriteTarget): AssetWriter {
   const { source, config } = target;
   const held = assetBundleOf(source);
@@ -144,7 +128,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
   /** The asset a change applies to, after the gates every change to an existing asset passes. */
   const existing = (conceptId: string, options?: { revision?: string; retire?: boolean }): Asset => {
     ensureWritable(source, config);
-    const asset = readIn(held, source, conceptId, { unlisted: true, mode: "write" });
+    const asset = readAsset(source, conceptId, { unlisted: true });
     if (!asset) throw new NotFoundError(`Asset not found: ${source.name}//${conceptId}`);
     const { type } = asset;
     assertAdapterWrites(source, type);
@@ -164,7 +148,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
   };
   return {
     bundle: held,
-    read: (conceptId, options) => readIn(held, source, conceptId, { unlisted: options?.unlisted, mode: "write" }),
+    read: (conceptId, options) => readAsset(source, conceptId, options),
     address: (ref) => addressIn(held, source, ref),
     create(asset, options) {
       ensureWritable(source, config);

@@ -444,7 +444,11 @@ export async function showLocal(input: {
   response.type = indexedEntry.type;
   response.name = indexedEntry.name;
   // An asset no file holds is keyed under a path that leads nowhere; none is printed.
-  if (indexedEntry.document?.fileless) delete response.path;
+  if (indexedEntry.document?.fileless) {
+    delete response.path;
+    // Nor is its value "the file contents".
+    if (response.action) response.action = response.action.replace("the file contents are", "its content is");
+  }
   const defaultBundle = displayDefaultBundle(config.defaultBundle, source, indexedEntry.bundleId);
   const canonicalRef = displayRef(
     { conceptId: indexedEntry.conceptId, bundleId: indexedEntry.bundleId },

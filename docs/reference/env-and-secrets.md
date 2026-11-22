@@ -195,8 +195,7 @@ is there too:
 ## Files and storage
 
 Env files live under `env/` and secrets under `secrets/` in the target bundle,
-with mode 0600. A secret is written under an exclusive per-secret lock held in
-akm's data directory. `akm secret set` reads the value from stdin by default,
+with mode 0600. `akm secret set` reads the value from stdin by default,
 or from `--from-file` (byte-exact, multi-line allowed) or `--from-env <VAR>`,
 so the value is not on the command line. `akm env create --sensitive` adds a
 sibling `.sensitive` marker; an env file or secret with that marker is left
@@ -276,14 +275,25 @@ such a bundle after the bundles before it in priority.
   value through the attributes the entry already has; an entry with no
   attributes is listed but cannot be read until it has one. A lookup is not
   limited to one keyring: when an entry of another keyring carries the same
-  attributes, `secret-tool` may return that one. An entry `akm secret set`
-  creates carries the attribute `akm` with the value `<keyring>/<name>`. akm
-  does not unlock a keyring; a process with no session bus (a scheduled task,
-  a container) cannot reach the Secret Service.
+  attributes, `secret-tool` may return that one. So before akm reads or
+  replaces an entry it asks the Secret Service which entries those attributes
+  find, and refuses, naming the other entry, unless the entry is the only one.
+  An entry `akm secret set` creates carries the attribute `akm` with the value
+  `<keyring>/<name>`. The keyring's entries are read once per process and again
+  after akm stores or deletes one. akm does not unlock a keyring: a locked one
+  lists as incomplete (the index keeps its entries) and refuses a read until
+  you unlock it. The keyring must exist, and `secret-tool` cannot create it:
+  create the wallet or keyring named in `location` in your keyring manager
+  (KWalletManager, Seahorse). A missing one is refused naming the keyrings the
+  service has. A process with no session bus (a scheduled task, a container)
+  cannot reach the Secret Service.
 - **`azure-key-vault`**: `akm secret set` passes the value to `az` in a
   temporary file only your user can read, removed when `az` returns. `akm
-  secret remove` runs `az keyvault secret delete`; whether the secret can be
-  recovered is the vault's soft-delete setting.
+  secret remove` runs `az keyvault secret delete` and then `az keyvault secret
+  purge`, so the secret is gone. If the vault refuses the purge (no purge
+  permission, or purge protection), the remove still completes and akm says the
+  vault keeps the deleted secret until its retention period ends; until then
+  `akm secret set` of that name fails with a hint to recover or purge it.
 - `akm env` commands, `.sensitive` markers and the Desktop Files view apply to
   directory bundles; the Desktop protected-file view shows, edits, creates and
   deletes these secrets too.

@@ -88,7 +88,6 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 | `metrics.db` | Local CLI usage counts, in tables named `cli_usage_*` (see [CLI usage counts](#cli-usage-counts)). Deleting it only discards those counts. |
 | `akm.lock` | The lockfile: resolved version, revision and integrity of each installed bundle. `akm.lock.lck` is its write sentinel. |
 | `index.rebuild.lock`, `index.db.write.lock` | Lock files for `akm index` and asset writes. |
-| `secret-locks/` | Per-secret lock files taken while a secret is written. |
 | `state.db.pre-<migration id>.bak` | A copy of `state.db` taken before a migration that drops schema (`018`, `028`) runs. Yours to delete. |
 | `workflow-run-locks/` | One lock file per running workflow run. |
 | `backups/tasks/` | Copies of task files made by `akm migrate apply` before it rewrites them. |

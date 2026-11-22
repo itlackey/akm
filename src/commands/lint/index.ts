@@ -371,7 +371,7 @@ function runEnvDangerousKeyPass(
         const conceptId = conceptIdForStashFile(assetType, root, envPath);
         const ref = displayRefForConceptId(conceptId, bundleId, cfg.defaultBundle);
         const relPath = path.relative(root, envPath);
-        for (const issue of checkEnvForDangerousKeys(envPath, relPath, ref)) {
+        for (const issue of checkEnvForDangerousKeys(fs.readFileSync(envPath, "utf8"), relPath, ref)) {
           flagged.push(issue);
         }
       }

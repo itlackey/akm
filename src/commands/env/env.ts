@@ -24,12 +24,12 @@
  * comments are treated exactly like values. The supported value-load paths
  * are:
  *
- *   - `akm env run <ref> -- <command>` — values injected into the child
+ *   - `akm run --env <ref> scripts/<file>` — values injected into the child
  *     process env (never via a shell), see `parseEnvText` (loaded by
- *     `env-binding.ts#resolveEnvBinding`, then merged into the child env by
- *     `env-cli.ts`). This is the primary path and the only one safe for AI
- *     agents (no values ever reach stdout). For an interactive shell, `akm
- *     env run <ref> -- $SHELL`.
+ *     `env-binding.ts#resolveEnvBinding`). This is the primary path and the
+ *     only one safe for AI agents (no values ever reach stdout). The
+ *     Deprecated `akm env run <ref> -- <command>` does the same for one command
+ *     until 0.11.
  *   - `akm env export <ref> --out <file>` — write parse-then-reserialized safe
  *     `export KEY='value'` lines to a file (mode 0600) for `source`-ing. Values
  *     are re-emitted single-quoted so a raw `.env` containing `X=$(cmd)` cannot
@@ -45,26 +45,7 @@
  * `$VAR` are left untouched.
  */
 
-import fs from "node:fs";
 import dotenv from "dotenv";
-import { scanEnvKeyNames } from "../../core/common";
-
-export { scanEnvKeyNames };
-
-/**
- * Read and return ONLY non-secret metadata: key names.
- *
- * The function reads the whole file into memory (same as any dotenv parser)
- * but deliberately does not parse values — the LHS-only regex scanner above
- * ensures no value content is retained or returned. Comment text is never
- * returned either: comments routinely contain commented-out `KEY=value`
- * credentials and free-text secrets, so they never leave this function.
- */
-export function listKeys(envPath: string): { keys: string[] } {
-  if (!fs.existsSync(envPath)) return { keys: [] };
-  const text = fs.readFileSync(envPath, "utf8");
-  return { keys: scanEnvKeyNames(text) };
-}
 
 /**
  * One env-line shape. It mirrors dotenv's LINE pattern, so the two agree on which lines are assignments,

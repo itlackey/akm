@@ -121,10 +121,10 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   }
 
   read(b: Bundle, conceptId: string, _options?: AssetReadOptions): BundleAsset | undefined {
-    const location = this.locationOf(b);
     const name = secretNameOf(conceptId);
-    const found = name === undefined ? undefined : this.findSecret(location, name);
-    return name === undefined || found === undefined
+    if (name === undefined) return undefined;
+    const found = this.findSecret(this.locationOf(b), name);
+    return found === undefined
       ? undefined
       : { conceptId: secretEntryPath(name), type: "secret", entry: secretEntry(name, found.read), listed: true };
   }
@@ -233,10 +233,18 @@ export function runClient(client: Client, args: readonly string[], input?: Buffe
   return { status: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
 }
 
-/** The error for a request a client failed, with the client's own message. */
-export function clientFailure(client: Client, action: string, result: ClientResult): ConfigError {
+/** What a client's message says when it could not reach the store or was not let in: a vault or keyring that is not there, no session bus, no login. */
+const UNREACHABLE =
+  /az login|AADSTS|AuthorizationFailed|Forbidden|VaultNotFound|ServiceUnknown|Failed to connect|Cannot autolaunch|No such (secret )?collection|Unknown object|org\.freedesktop\.DBus\.Error/i;
+
+/**
+ * The error for a request a client failed, with the client's own message. A store that cannot be reached or
+ * refuses the account is `BUNDLE_UNREACHABLE`; any other failure is a plain error naming the operation.
+ */
+export function clientFailure(client: Client, action: string, result: ClientResult): Error {
   const reason = result.stderr.trim() || `exit status ${result.status}`;
-  return new ConfigError(`${client.command} could not ${action}: ${reason}`, "BUNDLE_UNREACHABLE");
+  const message = `${client.command} could not ${action}: ${reason}`;
+  return UNREACHABLE.test(reason) ? new ConfigError(message, "BUNDLE_UNREACHABLE") : new Error(message);
 }
 
 /** Run a client request that must succeed, and return what it printed. */

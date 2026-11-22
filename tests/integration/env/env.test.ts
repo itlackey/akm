@@ -2,8 +2,9 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildShellExportScript, listKeys, parseEnvText } from "../../../src/commands/env/env";
-import { sensitiveMarkerPath } from "../../../src/core/env-secret-ref";
+import { buildShellExportScript, parseEnvText } from "../../../src/commands/env/env";
+import { sensitiveMarkerPath } from "../../../src/core/adapter/adapters/akm-format";
+import { scanEnvKeyNames } from "../../../src/core/common";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
@@ -59,32 +60,24 @@ async function runCli(
   });
 }
 
-// ── listKeys ────────────────────────────────────────────────────────────────
+// ── scanEnvKeyNames ─────────────────────────────────────────────────────────
 
-describe("listKeys", () => {
+describe("scanEnvKeyNames", () => {
   test("returns key names only — no values, no comment text", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(
-      fp,
+    const keys = scanEnvKeyNames(
       ["# top comment", "DB_URL=postgres://example", "API_TOKEN=secret-value-do-not-leak", "# bottom comment"].join(
         "\n",
       ),
     );
-    const result = listKeys(fp);
-    expect(result.keys).toEqual(["DB_URL", "API_TOKEN"]);
-    expect(Object.keys(result)).toEqual(["keys"]);
-    const json = JSON.stringify(result);
+    expect(keys).toEqual(["DB_URL", "API_TOKEN"]);
+    const json = JSON.stringify(keys);
     expect(json).not.toContain("secret-value-do-not-leak");
     expect(json).not.toContain("top comment");
     expect(json).not.toContain("bottom comment");
   });
 
   test("comment text is never extracted — commented-out credentials stay private", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(
-      fp,
+    const keys = scanEnvKeyNames(
       [
         "# OLD_GITEA_TOKEN=zqxcommentedoutcredential",
         "  # webhook: https://hooks.example.com/services/zqxfreetexttoken",
@@ -92,31 +85,23 @@ describe("listKeys", () => {
         "BAZ=qux",
       ].join("\n"),
     );
-    const result = listKeys(fp);
-    expect(result.keys).toEqual(["FOO", "BAZ"]);
-    const json = JSON.stringify(result);
+    expect(keys).toEqual(["FOO", "BAZ"]);
+    const json = JSON.stringify(keys);
     expect(json).not.toContain("zqxcommentedoutcredential");
     expect(json).not.toContain("zqxfreetexttoken");
     expect(json).not.toContain("trailing-comment-not-extracted");
   });
 
   test("preserves key order and de-duplicates", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(fp, "FOO=first\nBAR=middle\nFOO=second\n");
-    expect(listKeys(fp).keys).toEqual(["FOO", "BAR"]);
+    expect(scanEnvKeyNames("FOO=first\nBAR=middle\nFOO=second\n")).toEqual(["FOO", "BAR"]);
   });
 
   test("recognises `export KEY=value`", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(fp, "export FOO=bar\n");
-    expect(listKeys(fp).keys).toEqual(["FOO"]);
+    expect(scanEnvKeyNames("export FOO=bar\n")).toEqual(["FOO"]);
   });
 
-  test("returns empty result for missing file", () => {
-    const result = listKeys(path.join(tmpDir(), "missing.env"));
-    expect(result).toEqual({ keys: [] });
+  test("an empty file has no keys", () => {
+    expect(scanEnvKeyNames("")).toEqual([]);
   });
 });
 

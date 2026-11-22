@@ -18,8 +18,14 @@
  * because `secret-tool clear` deletes every match in every keyring.
  */
 
-import { ConfigError } from "../../errors";
-import { type Client, requireClient, SecretManagerAdapterBase } from "../secret-manager-adapter";
+import { ConfigError, UsageError } from "../../errors";
+import {
+  type Client,
+  clientFailure,
+  requireClient,
+  runClient,
+  SecretManagerAdapterBase,
+} from "../secret-manager-adapter";
 
 const ID = "secret-tool";
 const SECRET_TOOL: Client = { command: "secret-tool", install: "the libsecret-tools package" };
@@ -48,27 +54,82 @@ function bus<T>(action: string, args: readonly string[]): T {
   return (JSON.parse(reply) as BusReply<T>).data;
 }
 
+const SERVICE_PATH = "/org/freedesktop/secrets";
+const COLLECTION = "org.freedesktop.Secret.Collection";
+
+/** The keyring's items, read once per process and dropped when akm stores or deletes one. */
+const itemCache = new Map<string, KeyringItem[]>();
+
+/** Forget the keyrings read so far: the next request reads them again. */
+export function clearKeyringCache(): void {
+  itemCache.clear();
+}
+
+/** Refuse a keyring that is not there, or is locked (a locked collection may read as empty rather than fail). */
+function requireOpenKeyring(keyring: string): void {
+  const result = runClient(BUSCTL, [
+    "--user",
+    "--json=short",
+    "get-property",
+    SERVICE,
+    `${COLLECTION_PREFIX}${keyring}`,
+    COLLECTION,
+    "Locked",
+  ]);
+  if (result.status !== 0) {
+    if (!/Unknown object/.test(result.stderr)) throw clientFailure(BUSCTL, `read keyring "${keyring}"`, result);
+    const available = bus<string[]>(`list keyrings`, [
+      "get-property",
+      SERVICE,
+      SERVICE_PATH,
+      "org.freedesktop.Secret.Service",
+      "Collections",
+    ])
+      .map((path) => path.slice(COLLECTION_PREFIX.length))
+      .filter((name) => name !== "");
+    throw new ConfigError(
+      `Keyring "${keyring}" does not exist. The Secret Service has: ${available.join(", ") || "no keyrings"}.`,
+      "BUNDLE_UNREACHABLE",
+      `secret-tool cannot create a keyring. Create the wallet or keyring "${keyring}" in your keyring manager (KWalletManager, Seahorse), or set the bundle's \`location\` to one that exists.`,
+    );
+  }
+  if ((JSON.parse(result.stdout) as BusReply<boolean>).data) {
+    throw new ConfigError(
+      `Keyring "${keyring}" is locked.`,
+      "BUNDLE_UNREACHABLE",
+      "Unlock the keyring (your keyring manager asks for its password), then try again.",
+    );
+  }
+}
+
+function itemAt(path: string, reading: string): KeyringItem {
+  const [properties] = bus<[{ Label: BusReply<string>; Attributes: BusReply<Record<string, string>> }]>(reading, [
+    "call",
+    SERVICE,
+    path,
+    "org.freedesktop.DBus.Properties",
+    "GetAll",
+    "s",
+    "org.freedesktop.Secret.Item",
+  ]);
+  return { path, label: properties.Label.data, attributes: properties.Attributes.data };
+}
+
 function keyringItems(keyring: string): KeyringItem[] {
+  const cached = itemCache.get(keyring);
+  if (cached) return cached;
+  requireOpenKeyring(keyring);
   const reading = `read keyring "${keyring}"`;
   const paths = bus<string[]>(reading, [
     "get-property",
     SERVICE,
     `${COLLECTION_PREFIX}${keyring}`,
-    "org.freedesktop.Secret.Collection",
+    COLLECTION,
     "Items",
   ]);
-  return paths.map((path) => {
-    const [properties] = bus<[{ Label: BusReply<string>; Attributes: BusReply<Record<string, string>> }]>(reading, [
-      "call",
-      SERVICE,
-      path,
-      "org.freedesktop.DBus.Properties",
-      "GetAll",
-      "s",
-      "org.freedesktop.Secret.Item",
-    ]);
-    return { path, label: properties.Label.data, attributes: properties.Attributes.data };
-  });
+  const items = paths.map((path) => itemAt(path, reading));
+  itemCache.set(keyring, items);
+  return items;
 }
 
 function findItem(keyring: string, name: string): KeyringItem | undefined {
@@ -88,7 +149,34 @@ function attributePairs(item: Pick<KeyringItem, "label" | "attributes">): string
   return pairs;
 }
 
+/**
+ * `secret-tool` finds an entry by attributes in ANY keyring, and takes the first whose attributes include them. So
+ * before it reads or replaces `item`, require `item` to be the only entry the service finds for its attributes.
+ */
+function requireOnlyMatch(item: KeyringItem): void {
+  const pairs = attributePairs(item);
+  const [unlocked, locked] = bus<[string[], string[]]>(`check "${item.label}"`, [
+    "call",
+    SERVICE,
+    SERVICE_PATH,
+    "org.freedesktop.Secret.Service",
+    "SearchItems",
+    "a{ss}",
+    String(pairs.length / 2),
+    ...pairs,
+  ]);
+  const other = [...unlocked, ...locked].find((path) => path !== item.path);
+  if (other === undefined) return;
+  const clash = itemAt(other, `check "${item.label}"`);
+  throw new UsageError(
+    `Keyring entry "${clash.label}" (${clash.path}) has attributes that include those of "${item.label}", so secret-tool would use it in place of "${item.label}".`,
+    "INVALID_FLAG_VALUE",
+    "Remove one of the entries in your keyring manager, or give one a distinguishing attribute.",
+  );
+}
+
 function lookup(item: KeyringItem): string {
+  requireOnlyMatch(item);
   return requireClient(SECRET_TOOL, `read "${item.label}"`, ["lookup", ...attributePairs(item)]);
 }
 
@@ -112,13 +200,19 @@ export class SecretToolAdapter extends SecretManagerAdapterBase {
 
   /** Store `value` as the secret `name`: into its existing entry, or a new one akm can find again. */
   protected storeSecret(keyring: string, name: string, value: Buffer): void {
-    const item = findItem(keyring, name) ?? { label: name, attributes: { [CREATED_ATTRIBUTE]: `${keyring}/${name}` } };
-    requireClient(
-      SECRET_TOOL,
-      `store "${name}"`,
-      ["store", `--collection=${keyring}`, `--label=${name}`, ...attributePairs(item)],
-      value,
-    );
+    const existing = findItem(keyring, name);
+    if (existing) requireOnlyMatch(existing);
+    const item = existing ?? { label: name, attributes: { [CREATED_ATTRIBUTE]: `${keyring}/${name}` } };
+    try {
+      requireClient(
+        SECRET_TOOL,
+        `store "${name}"`,
+        ["store", `--collection=${keyring}`, `--label=${name}`, ...attributePairs(item)],
+        value,
+      );
+    } finally {
+      itemCache.delete(keyring);
+    }
   }
 
   protected deleteSecret(keyring: string, name: string): boolean {
@@ -132,6 +226,7 @@ export class SecretToolAdapter extends SecretManagerAdapterBase {
       "org.freedesktop.Secret.Item",
       "Delete",
     ]);
+    itemCache.delete(keyring);
     if (prompt !== "/") {
       throw new ConfigError(
         `Keyring "${keyring}" asks for confirmation before it deletes "${item.label}".`,

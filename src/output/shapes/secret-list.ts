@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// secret-list strips `path` from each secret object (same as vault-list: avoid
-// leaking absolute disk paths) then stamps the envelope.
+// secret-list strips `path` from each secret object (avoid leaking absolute
+// disk paths) then stamps the envelope.
 import type { OutputShapeEntry } from "./registry";
 
 export const secretListShapes: OutputShapeEntry[] = [

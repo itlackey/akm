@@ -14,7 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  checkEnvForDangerousKeys as checkVaultForDangerousKeys,
+  checkEnvForDangerousKeys,
   DANGEROUS_ENV_KEY_PATTERNS as DANGEROUS_VAULT_KEY_PATTERNS,
   DANGEROUS_ENV_KEYS as DANGEROUS_VAULT_KEYS,
   isDangerousEnvKey as isDangerousVaultKey,
@@ -22,6 +22,10 @@ import {
 import { akmLint } from "../../src/commands/lint/index";
 import { parsePlacementRef } from "../../src/core/asset/resolve-ref";
 import type { AkmConfig } from "../../src/core/config/config";
+
+/** The dangerous-key check of the env file at `envPath`; a file that is not there has no keys. */
+const checkVaultForDangerousKeys = (envPath: string, relPath: string, envRef: string) =>
+  checkEnvForDangerousKeys(fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "", relPath, envRef);
 
 // ── Temp dir helpers ──────────────────────────────────────────────────────────
 

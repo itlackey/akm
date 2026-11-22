@@ -17,7 +17,13 @@
  *   - Resolved values must never be written to stdout or logs by callers.
  */
 
-import { isInstalledBundle, makeEnvRef, resolveEnvPath, resolveRefOwner } from "../../core/env-secret-ref";
+import {
+  isInstalledBundle,
+  makeEnvRef,
+  resolveEnvPath,
+  resolveRefOwner,
+  secretValueOf,
+} from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { substituteRefTokens } from "../../core/ref-token";
@@ -47,11 +53,11 @@ export interface ResolvedEnvBinding {
 export function resolveRefToken(
   ref: string,
 ): { kind: "secret"; value: string } | { kind: "path"; path: string } | undefined {
-  const owner = resolveRefOwner(ref);
-  if (owner === undefined) return undefined;
-  if (owner.type === "secret") return { kind: "secret", value: owner.secretValue() };
-  if (owner.absPath === undefined) throw new UsageError(`"${owner.ref}" is not kept in a file, so it has no path.`);
-  return { kind: "path", path: owner.absPath };
+  const asset = resolveRefOwner(ref);
+  if (asset === undefined) return undefined;
+  if (asset.type === "secret") return { kind: "secret", value: secretValueOf(asset) };
+  if (asset.entry.file === undefined) throw new UsageError(`"${asset.ref}" is not kept in a file, so it has no path.`);
+  return { kind: "path", path: asset.entry.file };
 }
 
 export interface ResolveEnvBindingOptions {
@@ -72,10 +78,11 @@ export interface ResolveEnvBindingOptions {
  */
 export function resolveEnvBinding(target: string, options: ResolveEnvBindingOptions = {}): ResolvedEnvBinding {
   const warn = options.warn ?? ((message: string) => stderr().write(`warning: ${message}\n`));
-  const { conceptId, source, bundleId, content } = resolveEnvPath(target);
-  const envRef = makeEnvRef(conceptId, source);
+  const { conceptId, asset } = resolveEnvPath(target);
+  const bundleId = asset.bundle;
+  const envRef = makeEnvRef(conceptId, asset.source);
 
-  const allValues = parseEnvText(content());
+  const allValues = parseEnvText(asset.entry.content());
 
   // Value-safe key filtering (--only / --except operate on key NAMES only).
   let envValues = allValues;

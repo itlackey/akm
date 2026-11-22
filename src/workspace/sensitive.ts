@@ -65,15 +65,15 @@ function selection(input: SensitiveSelector): { type: Kind; ref: string } {
 /** An existing env file or secret, found and read through its bundle's adapter. */
 function locate(input: SensitiveSelector) {
   const { type, ref } = selection(input);
-  const found = type === "env" ? resolveEnvPath(ref) : resolveSecretPath(ref);
-  const bundle = found.source.registryId ?? input.bundle ?? "";
+  const { asset } = type === "env" ? resolveEnvPath(ref) : resolveSecretPath(ref);
+  const bundle = asset.source.registryId ?? input.bundle ?? "";
   return {
     bundle,
-    file: found.absPath,
+    file: asset.entry.file,
     type,
-    relative: found.relPath,
+    relative: asset.entry.relPath,
     ref: ref.includes("//") ? ref : `${bundle}//${ref}`,
-    content: found.content,
+    content: () => asset.entry.content(),
   };
 }
 

@@ -673,7 +673,7 @@ export function applyProvenanceFrontmatter(entry: IndexDocument, fmData: Record<
   if (Object.keys(result).length > 0) entry.provenance = result;
 }
 
-// AKM-stash indexing policy (env/vaults/secrets sensitive-marker + wiki-infra
+// AKM-stash indexing policy (env/secrets sensitive-marker + wiki-infra
 // exclusions) lives in the `akm` adapter's `recognize` as path/stat-based
 // abstention. See
 // `akmStashAbstains` in `src/core/adapter/adapters/akm-adapter.ts`.

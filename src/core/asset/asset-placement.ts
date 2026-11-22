@@ -121,9 +121,8 @@ const BUILTIN_PLACEMENT_SPECS = {
   workflow: { stashDir: "workflows", ...workflowSpec },
   script: { stashDir: "scripts", ...scriptSpec },
   memory: { stashDir: "memories", ...markdownSpec },
-  // Environment assets — whole `.env` files sourced/injected wholesale. Replaced
-  // the deprecated `vault` type (removed in 0.9.0). Only key NAMES are surfaced
-  // as metadata; values and comment text are never read for indexing (comments
+  // Environment assets — whole `.env` files sourced/injected wholesale. Only
+  // key NAMES are surfaced as metadata; values and comment text are never read for indexing (comments
   // routinely contain commented-out credentials).
   env: {
     stashDir: "env",

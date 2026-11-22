@@ -20,6 +20,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveEnvBinding } from "../../src/commands/env/env-binding";
 import { resolveInjectionRefs } from "../../src/commands/env/injection";
+import { azureKeyVaultAdapter } from "../../src/core/adapter/adapters/azure-key-vault-adapter";
+import { secretToolAdapter } from "../../src/core/adapter/adapters/secret-tool-adapter";
+import { clientFailure } from "../../src/core/adapter/secret-manager-adapter";
+import { ConfigError } from "../../src/core/errors";
+import { _setWarnSinkForTests } from "../../src/core/warn";
 import { akmIndex } from "../../src/indexer/indexer";
 import { sensitive } from "../../src/workspace";
 import { runCliCapture } from "../_helpers/cli";
@@ -174,11 +179,14 @@ describe("secret manager bundles", () => {
       resolveEnvBinding("env/one");
       expect(requests(stores.state().calls)).toEqual(["az show"]);
     });
-    // A keyring is read once: its entries, each entry's label and attributes, then the one lookup.
+    // A keyring is read once: whether it is locked, its entries, each entry's label and attributes; then the
+    // entry is checked to be the only one its attributes find, and looked up.
     await withFakeSecretStores({ keyrings: KEYRING }, async (stores) => {
       resolveInjectionRefs({ secret: ["keyring//secrets/wifi:T"] });
       expect(requests(stores.state().calls)).toEqual([
         "busctl get-property",
+        "busctl get-property",
+        "busctl call",
         "busctl call",
         "busctl call",
         "secret-tool lookup",
@@ -399,6 +407,145 @@ describe("secret manager bundles in the workspace API", () => {
       expect(info.actions.edit).toMatchObject({ allowed: false });
       await expect(sensitive.save({ bundle: "vault", file: "secrets/api-key", content: "k" })).rejects.toThrow();
       expect(stores.state().vaults).toEqual(VAULT);
+    });
+  });
+});
+
+describe("secret manager bundles: what the stores do that a file does not", () => {
+  const bundle = (id: string, location: string) => ({
+    id,
+    root: path.join(storage.root, id),
+    writable: true,
+    location,
+  });
+
+  test("a keyring entry whose attributes another keyring's entry includes is refused, naming the other", async () => {
+    const clash = {
+      akm: [keyringItem(1, "wifi", "home-value", { ssid: "home" })],
+      login: [
+        {
+          path: "/org/freedesktop/secrets/collection/login/1",
+          label: "wifi-login",
+          attributes: { ssid: "home", kind: "wpa" },
+          secret: "login-value",
+        },
+      ],
+    };
+    await withFakeSecretStores({ keyrings: clash }, async () => {
+      const adapter = secretToolAdapter;
+      const read = () => adapter.read(bundle("keyring", "akm"), "secrets/wifi")?.entry.content();
+      expect(read).toThrow(/"wifi-login".*include those of "wifi"/);
+      expect(() => adapter.update(bundle("keyring", "akm"), "secrets/wifi", "new")).toThrow(/"wifi-login"/);
+    });
+  });
+
+  test("a keyring is read once per process and again after akm stores or deletes in it", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING }, async (stores) => {
+      const b = bundle("keyring", "akm");
+      secretToolAdapter.read(b, "secrets/gh_token");
+      secretToolAdapter.read(b, "secrets/gh_token");
+      const itemReads = () => requests(stores.state().calls).filter((r) => r === "busctl get-property").length;
+      expect(itemReads()).toBe(2);
+      secretToolAdapter.create(b, { type: "secret", name: "fresh", content: "v" });
+      secretToolAdapter.read(b, "secrets/fresh");
+      expect(itemReads()).toBe(4);
+      secretToolAdapter.delete(b, "secrets/fresh");
+      secretToolAdapter.read(b, "secrets/gh_token");
+      expect(itemReads()).toBe(6);
+    });
+  });
+
+  test("a locked keyring lists as incomplete and refuses a read with unlock guidance", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async () => {
+      const b = bundle("keyring", "akm");
+      expect(secretToolAdapter.list(b)).toMatchObject({ entries: [], complete: false });
+      expect(() => secretToolAdapter.read(b, "secrets/gh_token")).toThrow(/locked/);
+    });
+  });
+
+  test("a keyring that does not exist names the ones that do, and says how to make it", async () => {
+    await withFakeSecretStores({ keyrings: { login: [] } }, async () => {
+      const failure = await Promise.resolve()
+        .then(() => secretToolAdapter.read(bundle("keyring", "akm"), "secrets/x"))
+        .catch((error: Error & { hint?: () => string }) => error);
+      expect((failure as Error).message).toBe('Keyring "akm" does not exist. The Secret Service has: login.');
+      expect(String((failure as { hint: () => string }).hint())).toContain("Create the wallet or keyring");
+    });
+  });
+
+  test("a vault removal purges the soft-deleted secret, and says so when the purge is refused", async () => {
+    await withFakeSecretStores({ vaults: VAULT }, async (stores) => {
+      const b = bundle("vault", "team-vault");
+      azureKeyVaultAdapter.delete(b, "secrets/deploy-token");
+      expect(stores.state().deleted?.["team-vault"] ?? {}).toEqual({});
+      azureKeyVaultAdapter.create(b, { type: "secret", name: "deploy-token", content: "again" });
+    });
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      await withFakeSecretStores({ vaults: VAULT, purgeForbidden: ["team-vault"] } as never, async (stores) => {
+        const b = bundle("vault", "team-vault");
+        azureKeyVaultAdapter.delete(b, "secrets/deploy-token");
+        expect(stores.state().deleted?.["team-vault"]).toEqual({ "deploy-token": "vault-value" });
+      });
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    expect(warnings.join("\n")).toMatch(/refused to purge.*until its retention period ends/);
+  });
+
+  test("setting a name a deleted vault secret still holds hints at recover or purge", async () => {
+    await withFakeSecretStores({ vaults: VAULT, purgeForbidden: ["team-vault"] } as never, async () => {
+      const b = bundle("vault", "team-vault");
+      azureKeyVaultAdapter.delete(b, "secrets/deploy-token");
+      let failure: (Error & { hint?: () => string }) | undefined;
+      try {
+        azureKeyVaultAdapter.create(b, { type: "secret", name: "deploy-token", content: "x" });
+      } catch (error) {
+        failure = error as Error & { hint?: () => string };
+      }
+      expect(failure?.message).toContain("still holds a deleted secret");
+      expect(String(failure?.hint?.())).toMatch(/recover.*purge/);
+    });
+  });
+
+  test("a vault refuses a name it cannot hold before it calls az", async () => {
+    await withFakeSecretStores({ vaults: VAULT }, async (stores) => {
+      expect(() =>
+        azureKeyVaultAdapter.create(bundle("vault", "team-vault"), { type: "secret", name: "bad_name", content: "x" }),
+      ).toThrow(/not a name an Azure Key Vault accepts/);
+      expect(stores.state().calls).toEqual([]);
+    });
+  });
+
+  test("a failure that is not about reaching the store is a plain error, not BUNDLE_UNREACHABLE", () => {
+    const refused = clientFailure({ command: "az", install: "the Azure CLI" }, "store x", {
+      status: 1,
+      stdout: "",
+      stderr: "ERROR: (BadRequest) The value is too large.",
+    });
+    expect(refused).not.toBeInstanceOf(ConfigError);
+    const down = clientFailure({ command: "az", install: "the Azure CLI" }, "list v", {
+      status: 1,
+      stdout: "",
+      stderr: "ERROR: Please run 'az login' to setup account.",
+    });
+    expect((down as ConfigError).code).toBe("BUNDLE_UNREACHABLE");
+  });
+
+  test("a misconfigured secret bundle does not throw for a ref that is not a secret", () => {
+    const b = { id: "keyring", root: "/x", writable: true };
+    expect(secretToolAdapter.read(b, "skills/x")).toBeUndefined();
+  });
+
+  test("showing a store secret does not say its value is a file", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING }, async () => {
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+      const shown = await akm("show", "keyring//secrets/wifi");
+      expect(String(shown.json.action)).toContain("its content is the value");
+      expect(String(shown.json.action)).not.toContain("file contents");
     });
   });
 });
