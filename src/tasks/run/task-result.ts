@@ -84,7 +84,7 @@ export interface RunTaskOptions {
   bundleDir: string;
   /** Durable bundle identity for fully-qualified refs. */
   bundleName?: string;
-  /** Configured adapter for the selected component root. */
+  /** Configured adapter for the selected bundle. */
   adapterId?: string;
   /** Override the common command dispatch's agent runner (tests). */
   runAgentImpl?: RunExecutionOptions["runAgent"];

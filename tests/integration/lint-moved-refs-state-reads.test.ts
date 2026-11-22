@@ -53,7 +53,7 @@ beforeEach(() => {
   writeSandboxConfig({
     semanticSearchMode: "off",
     defaultBundle: "stash",
-    bundles: { stash: { path: storage.stashDir, writable: true, components: { main: { root: ".", adapter: "akm" } } } },
+    bundles: { stash: { path: storage.stashDir, writable: true, adapter: "akm" } },
   });
 });
 

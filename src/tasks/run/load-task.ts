@@ -14,6 +14,7 @@ import fs from "node:fs";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { makeBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
+import { slugForPath } from "../../core/bundle-id";
 import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
@@ -105,10 +106,14 @@ export async function loadPreparedTask(
   if (adapterId === "akm-task") validateTaskConceptId(id);
   else validateTaskId(id);
   const taskConceptId = adapterId === "akm" ? `tasks/${id}` : id;
-  const owner = resolveAdapterConceptOwner(bundleDir, adapterId, taskConceptId);
+  const owner = resolveAdapterConceptOwner(
+    { name: options.bundleName ?? slugForPath(bundleDir), path: bundleDir },
+    adapterId,
+    taskConceptId,
+  );
   if (!owner) {
     throw new NotFoundError(
-      `Task ${JSON.stringify(id)} was not found in the configured ${JSON.stringify(adapterId)} component.`,
+      `Task ${JSON.stringify(id)} was not found in the configured ${JSON.stringify(adapterId)} bundle.`,
       "ASSET_NOT_FOUND",
     );
   }

@@ -70,7 +70,7 @@ async function claudeBundle(fixture) {
   config.bundles.claude = {
     path: path.join(fixture.root, "claude"),
     writable: true,
-    components: { main: { root: ".", adapter: "claude" } },
+    adapter: "claude",
   };
   await fs.writeFile(file, JSON.stringify(config));
   await fs.mkdir(path.join(fixture.root, "claude/commands"), { recursive: true });

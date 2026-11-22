@@ -20,7 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { warnWorkflowUse } from "../../cli/deprecations";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { adapterIdOf, detectAdapterId } from "../../core/adapter/detect-adapter";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
@@ -322,7 +322,7 @@ export async function akmTasksRun(
   try {
     parsed = parseTaskRef(id);
     bundle = resolveTaskReadBundle(parsed.bundle, options.target);
-    adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
+    adapterId = adapterIdOf(bundle.source);
     resolvedId = taskIdForAdapter(parsed.id, adapterId);
   } catch (failure) {
     if (scheduled) {
@@ -384,7 +384,7 @@ function stepTaskRunner(scheduled: boolean): NonNullable<RunTaskOptions["taskSte
     check: async (ref) => {
       const parsed = parseTaskRef(ref);
       const bundle = resolveTaskReadBundle(parsed.bundle, undefined);
-      const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
+      const adapterId = adapterIdOf(bundle.source);
       const prepared = await loadPreparedTask(taskIdForAdapter(parsed.id, adapterId), {
         bundleDir: bundle.source.path,
         bundleName: bundle.source.name,
@@ -423,7 +423,7 @@ function resolveTaskActivation(
 } {
   const parsed = parseTaskRef(ref);
   const bundle = resolveTaskReadBundle(parsed.bundle, target);
-  const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
+  const adapterId = adapterIdOf(bundle.source);
   const id = taskIdForAdapter(parsed.id, adapterId);
   const conceptId = adapterId === "akm" ? `tasks/${id}` : id;
   const sourcePath =
@@ -550,7 +550,7 @@ export async function akmTasksHistory(input: {
   const limit = input.limit !== undefined && input.limit > 0 ? input.limit : 50;
   const parsed = input.id ? parseTaskRef(input.id) : undefined;
   const bundle = resolveTaskReadBundle(parsed?.bundle, input.target);
-  const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
+  const adapterId = adapterIdOf(bundle.source);
   const id = parsed ? taskIdForAdapter(parsed.id, adapterId) : undefined;
   // A bundle named by `--bundle` or by the ref selects the rows that recorded that bundle.
   const named = parsed?.bundle !== undefined || input.target !== undefined;
@@ -1143,7 +1143,7 @@ export function resolveTaskReadBundle(
         kind: source.type ?? "filesystem",
         name: selector,
         path: source.path,
-        adapterId: source.adapterId ?? detectAdapterId(source.path),
+        adapterId: adapterIdOf(source),
       },
     };
   }

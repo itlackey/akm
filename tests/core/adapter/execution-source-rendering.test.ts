@@ -38,13 +38,13 @@ const cases: Array<{
 
 function render(testCase: (typeof cases)[number]) {
   const root = path.join(NATIVE_ROOT, testCase.adapterId);
-  const component: Bundle = {
+  const bundle: Bundle = {
     id: `fixture-${testCase.adapterId}`,
     root,
     writable: false,
   };
   const file = buildFileContext(root, path.join(root, testCase.file));
-  const source = testCase.adapter.renderExecutionSource?.(component, file);
+  const source = testCase.adapter.renderExecutionSource?.(bundle, file);
   if (!source) throw new Error(`${testCase.adapterId}:${testCase.file} did not render an execution source`);
   return { root, file, source };
 }

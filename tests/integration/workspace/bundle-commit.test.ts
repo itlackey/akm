@@ -29,8 +29,8 @@ beforeEach(() => {
     ...makeConfig(storage.stashDir),
     semanticSearchMode: "off",
     bundles: {
-      stash: { path: storage.stashDir, writable: true, components: { main: { root: ".", adapter: "akm" } } },
-      plain: { path: plain, writable: true, components: { main: { root: ".", adapter: "akm" } } },
+      stash: { path: storage.stashDir, writable: true, adapter: "akm" },
+      plain: { path: plain, writable: true, adapter: "akm" },
     },
   });
   resetConfigCache();

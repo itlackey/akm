@@ -485,7 +485,7 @@ function gatherAncillaryAdvisories(
  */
 function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult | undefined {
   const read = readHealthIndex((indexDb) => {
-    // Directory intent is read only from inside the component root that owns the entry.
+    // Directory intent is read only from inside the bundle root that owns the entry.
     // Both spellings of each root: indexed paths may be realpaths (a symlinked
     // stash, macOS /var -> /private/var) while config holds the configured path.
     const roots = resolveSourceEntries(stashRoot).flatMap((source) => {

@@ -31,12 +31,10 @@ import { AkmFormatAdapterBase } from "./akm-format";
 import { perTypeDiagnostics } from "./akm-lint";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, readTags } from "./shared";
 
-/** A native workflow bundle is single-component; its one component is `main`. */
-const COMPONENT_ID = "main";
 /** The authoritative workflow source format. */
 const WORKFLOW_EXTS = new Set([".md"]);
 
-/** Strip the recognized workflow extension from a component-root-relative path → conceptId. */
+/** Strip the recognized workflow extension from a bundle-root-relative path → conceptId. */
 function conceptIdOf(relPath: string): string {
   return toPosix(relPath).replace(/\.(?:md|yml)$/i, "");
 }
@@ -75,7 +73,6 @@ function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   const doc: IndexDocument = {
     ref: `${c.id}//${conceptId}`,
     bundle: c.id,
-    component: COMPONENT_ID,
     conceptId,
     path: file.absPath,
     hash: hashContent(raw),
@@ -176,7 +173,7 @@ export class AkmWorkflowAdapter extends AkmFormatAdapterBase {
       : [{ path: path.join(c.root, `${posix}.md`), conceptId: canonical }];
   }
 
-  /** Workflows live anywhere under the component root. */
+  /** Workflows live anywhere under the bundle root. */
   override directoryList(): string[] {
     return ["."];
   }

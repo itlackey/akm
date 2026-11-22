@@ -1620,12 +1620,12 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
 | `--credential` | Git HTTPS bearer credential, stored as a reference and never a literal token: `$VAR`, `${VAR}`, or an akm ref such as `${secrets/gitea_token}` (`${team//secrets/gitea_token}` for a secret in another bundle). Resolved only when git runs |
 
-To index only a subdirectory of a git bundle, set the component `root` after
+To index only a subdirectory of a git bundle, set the bundle's `root` after
 adding it:
 
 ```sh
 akm bundle add <url> --name <name>
-akm config set bundles.<name>.components.main.root <subdir>
+akm config set bundles.<name>.root <subdir>
 akm bundle update <name>
 ```
 
@@ -1701,6 +1701,11 @@ akm bundle list --kind filesystem,git      # Multiple kinds (comma-separated)
 | Flag | Description |
 | --- | --- |
 | `--kind` | Filter by source provider: `filesystem`, `git`, `npm`, `website` (comma-separated). Any other value is a usage error (exit 2) — there is no `local`/`managed`/`remote` grouping. |
+
+Each entry has `adapter` (the adapter that reads the bundle: the configured one, or the one detected from its content)
+and `detected` (`true` when no `adapter` is configured). `components`, a one-entry list
+(`name`, `root`, `adapter`, `detected`, `writable`), is **Deprecated** and removed in 0.11: read `adapter` and
+`detected` on the entry itself.
 
 ### bundle remove
 

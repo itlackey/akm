@@ -13,7 +13,7 @@ const GOLDEN = JSON.parse(
     "utf8",
   ),
 ) as { byRelPath: Record<string, { type: string; ref: string; name: string; tags?: string[] }> };
-const component: Bundle = { id: "sample-project", root: ROOT, writable: false };
+const bundle: Bundle = { id: "sample-project", root: ROOT, writable: false };
 
 describe("code-project eligibility", () => {
   test.each([
@@ -66,13 +66,13 @@ describe("code-project recognize", () => {
       content: refuse,
       frontmatter: refuse,
     };
-    expect(codeProjectAdapter.recognize(component, file)).toBeNull();
+    expect(codeProjectAdapter.recognize(bundle, file)).toBeNull();
   });
 
   test("recognizes the fixture exactly as the golden", () => {
     const got: Record<string, unknown> = {};
     for (const file of walkStashFlat(ROOT, { includeAllDirectories: true })) {
-      const doc = codeProjectAdapter.recognize(component, file);
+      const doc = codeProjectAdapter.recognize(bundle, file);
       if (doc) {
         got[file.relPath] = {
           type: doc.type,
@@ -92,11 +92,11 @@ describe("code-project recognize", () => {
     const file: FileContext = { ...base, relPath: "ci.toml", ext: ".toml", content: () => "---\nkey: v\n---\nbody" };
     // `ci.toml` is not an eligible name; use a named config file to reach content.
     const cfg: FileContext = { ...file, relPath: "package.json", ext: ".json" };
-    expect(codeProjectAdapter.recognize(component, cfg)?.content).toBe("---\nkey: v\n---\nbody");
+    expect(codeProjectAdapter.recognize(bundle, cfg)?.content).toBe("---\nkey: v\n---\nbody");
   });
 
   test("readCandidates is the identity inversion", () => {
-    expect(codeProjectAdapter.readCandidates?.(component, "src/auth/oauth.ts")).toEqual([
+    expect(codeProjectAdapter.readCandidates?.(bundle, "src/auth/oauth.ts")).toEqual([
       { path: path.join(ROOT, "src/auth/oauth.ts"), conceptId: "src/auth/oauth.ts" },
     ]);
     expect(codeProjectAdapter.looksLikeRoot).toBeUndefined();
@@ -112,7 +112,7 @@ describe("code-project validate", () => {
 
   test("base checks do not run on source (no stale-path or ref misfires)", async () => {
     const diagnostics = await codeProjectAdapter.validate(
-      component,
+      bundle,
       [
         { path: "src/a.ts", op: "update", after: 'const p = "/tmp/x";' },
         { path: "src/b.py", op: "update", after: "y = x//2" },

@@ -43,7 +43,7 @@ const LINT_GOLDEN = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, "../../fixtures/goldens/lint/all-types.json"), "utf8"),
 ) as LintGolden;
 
-function component(overrides: Partial<Bundle> = {}): Bundle {
+function bundle(overrides: Partial<Bundle> = {}): Bundle {
   return { id: BUNDLE_ID, root: ALL_TYPES_ROOT, writable: true, ...overrides };
 }
 
@@ -91,7 +91,7 @@ describe("akm adapter — validate reproduces the lint golden perType (clean, §
     let asserted = 0;
     for (const [key, entry] of Object.entries(LINT_GOLDEN.perType)) {
       const raw = fs.readFileSync(path.join(ALL_TYPES_ROOT, entry.relPath), "utf8");
-      const diags = await akmAdapter.validate(component(), [change(entry.relPath, raw, "update")], ctx);
+      const diags = await akmAdapter.validate(bundle(), [change(entry.relPath, raw, "update")], ctx);
       // `workflowProgramYaml` is a parseWorkflowProgram correctness entry, not a
       // lint path — production never lints it; validate must still be clean.
       const expectedIssues = entry.issues ?? [];
@@ -118,7 +118,7 @@ describe("akm adapter — validate reproduces the lint golden perType (clean, §
       "lessons/all-types-lesson.md",
     ]) {
       const raw = fs.readFileSync(path.join(ALL_TYPES_ROOT, rel), "utf8");
-      expect(await akmAdapter.validate(component(), [change(rel, raw, "update")], ctx)).toEqual([]);
+      expect(await akmAdapter.validate(bundle(), [change(rel, raw, "update")], ctx)).toEqual([]);
     }
   });
 });
@@ -132,7 +132,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
   test("missing-skill-md — a skill dir with no SKILL.md (SkillLinter.lintDirectory)", async () => {
     const ctx = overlayCtx(ROOT, { "skills/broken/notes.md": "# notes\n\nbody\n" });
     const diags = await akmAdapter.validate(
-      component({ root: ROOT }),
+      bundle({ root: ROOT }),
       [change("skills/broken/notes.md", "# notes\n\nbody\n")],
       ctx,
     );
@@ -148,11 +148,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
       "skills/ok/notes.md": "# notes\n",
       "skills/ok/SKILL.md": "---\nupdated: 2025-01-01\n---\n# skill\n",
     });
-    const diags = await akmAdapter.validate(
-      component({ root: ROOT }),
-      [change("skills/ok/notes.md", "# notes\n")],
-      ctx,
-    );
+    const diags = await akmAdapter.validate(bundle({ root: ROOT }), [change("skills/ok/notes.md", "# notes\n")], ctx);
     expect(issues(diags)).not.toContain("missing-skill-md");
   });
 
@@ -164,7 +160,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
   test("invalid-task-yaml — a task missing the version field (canonical source parser)", async () => {
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(
-      component({ root: ROOT }),
+      bundle({ root: ROOT }),
       [change("tasks/bad.yml", "uses: commands/review\nschedule: '@daily'\n")],
       ctx,
     );
@@ -176,7 +172,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
   test("a valid task source v4 document is not flagged", async () => {
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(
-      component({ root: ROOT }),
+      bundle({ root: ROOT }),
       [change("tasks/ok.yml", "version: 4\nuses: akm/command\nwith:\n  content: hi\nschedule: '@daily'\n")],
       ctx,
     );
@@ -190,7 +186,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
   test("a task with source-owned schedule[].enabled is flagged naming `akm migrate apply`", async () => {
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(
-      component({ root: ROOT }),
+      bundle({ root: ROOT }),
       [
         change(
           "tasks/bad-enabled.yml",
@@ -207,7 +203,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
   test("a task omitting `version` is flagged", async () => {
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(
-      component({ root: ROOT }),
+      bundle({ root: ROOT }),
       [change("tasks/no-version.yml", "uses: commands/review\nschedule: '@daily'\n")],
       ctx,
     );
@@ -220,7 +216,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
     ["a v2 task", "version: 2\nschedule: '@daily'\ncommand: [echo, hi]\n"],
   ])("%s is flagged naming `akm migrate apply`", async (_label, yaml) => {
     const ctx = overlayCtx(ROOT, {});
-    const diags = await akmAdapter.validate(component({ root: ROOT }), [change("tasks/legacy.yml", yaml)], ctx);
+    const diags = await akmAdapter.validate(bundle({ root: ROOT }), [change("tasks/legacy.yml", yaml)], ctx);
     const hit = diags.find((d) => d.issue === "invalid-task-yaml");
     expect(hit?.detail).toContain("akm migrate apply");
   });
@@ -228,7 +224,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
   test("dangerous-env-key — a dangerous key name in an env file (env dangerous-key scan)", async () => {
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(
-      component({ root: ROOT }),
+      bundle({ root: ROOT }),
       [change("env/danger.env", "LD_PRELOAD=libevil.so\nSAFE=1\n")],
       ctx,
     );
@@ -245,7 +241,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
   test("dangerous-env-key is suppressed by the inline comment (never widened)", async () => {
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(
-      component({ root: ROOT }),
+      bundle({ root: ROOT }),
       [change("env/ok.env", "# akm-lint-ok: dangerous-env-key\nLD_PRELOAD=x\n")],
       ctx,
     );
@@ -255,7 +251,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
   test("missing-name-or-type — a command with no name/type frontmatter (CommandLinter)", async () => {
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(
-      component({ root: ROOT }),
+      bundle({ root: ROOT }),
       [change("commands/nameless.md", "---\ndescription: x\nupdated: 2025-01-01\n---\nrun $ARGUMENTS\n")],
       ctx,
     );
@@ -267,7 +263,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
   test("missing-category — a fact with no category (FactLinter)", async () => {
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(
-      component({ root: ROOT }),
+      bundle({ root: ROOT }),
       [change("facts/nocat.md", "---\ndescription: x\nupdated: 2025-01-01\n---\n# f\n")],
       ctx,
     );
@@ -285,7 +281,7 @@ describe("akm adapter — validate keeps placeholder-stub / orphaned-stub READ-O
   test("placeholder-stub is a non-fixable Diagnostic (WorkflowLinter, never deleted)", async () => {
     const ctx = overlayCtx(ROOT, {});
     const raw = "# Workflow: Example Workflow\n\n## Step: a\nStep ID: a\n\n### Instructions\ndo it\n";
-    const diags = await akmAdapter.validate(component({ root: ROOT }), [change("workflows/stub.md", raw)], ctx);
+    const diags = await akmAdapter.validate(bundle({ root: ROOT }), [change("workflows/stub.md", raw)], ctx);
     const hit = diags.find((d) => d.issue === "placeholder-stub");
     expect(hit).toBeDefined();
     expect(hit?.detail).toBe('placeholder text: "Example Workflow"');
@@ -296,7 +292,7 @@ describe("akm adapter — validate keeps placeholder-stub / orphaned-stub READ-O
     // inferenceProcessed + short body + no `.derived.md` sibling in the overlay.
     const ctx = overlayCtx(ROOT, {});
     const raw = "---\ninferenceProcessed: true\nupdated: 2025-01-01\n---\nshort\n";
-    const diags = await akmAdapter.validate(component({ root: ROOT }), [change("memories/stub.md", raw)], ctx);
+    const diags = await akmAdapter.validate(bundle({ root: ROOT }), [change("memories/stub.md", raw)], ctx);
     const hit = diags.find((d) => d.issue === "orphaned-stub");
     expect(hit).toBeDefined();
     expect(hit?.detail).toBe("inferenceProcessed stub with no derived sibling");
@@ -306,7 +302,7 @@ describe("akm adapter — validate keeps placeholder-stub / orphaned-stub READ-O
   test("orphaned-stub does NOT fire when the derived sibling exists in the overlay", async () => {
     const ctx = overlayCtx(ROOT, { "memories/stub.derived.md": "# derived\n" });
     const raw = "---\ninferenceProcessed: true\nupdated: 2025-01-01\n---\nshort\n";
-    const diags = await akmAdapter.validate(component({ root: ROOT }), [change("memories/stub.md", raw)], ctx);
+    const diags = await akmAdapter.validate(bundle({ root: ROOT }), [change("memories/stub.md", raw)], ctx);
     expect(diags.map((d) => d.issue)).not.toContain("orphaned-stub");
   });
 });
@@ -319,18 +315,14 @@ describe("akm adapter — env/secret dangerous-key `.env`-suffix narrowness pres
   test("a bare (non-`.env`) secret file is NOT scanned even with a dangerous-looking key", async () => {
     // secrets/<bare> is a secret VALUE, never reached by collectEnvFiles.
     const ctx = overlayCtx(ROOT, {});
-    const diags = await akmAdapter.validate(
-      component({ root: ROOT }),
-      [change("secrets/mytoken", "LD_PRELOAD=x\n")],
-      ctx,
-    );
+    const diags = await akmAdapter.validate(bundle({ root: ROOT }), [change("secrets/mytoken", "LD_PRELOAD=x\n")], ctx);
     expect(diags.map((d) => d.issue)).not.toContain("dangerous-env-key");
   });
 
   test("a `.env`-suffixed secret file IS scanned, and reports a resolvable `secrets/` ref", async () => {
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(
-      component({ root: ROOT }),
+      bundle({ root: ROOT }),
       [change("secrets/creds.env", "LD_PRELOAD=x\n")],
       ctx,
     );

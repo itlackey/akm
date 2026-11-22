@@ -103,7 +103,7 @@ describe("adapter registry — the one list of adapter ids", () => {
     const bundles = (adapter?: string) => ({
       configVersion: "0.9.0" as const,
       semanticSearchMode: "auto" as const,
-      bundles: { docs: { path: "/tmp/docs", components: { main: { root: ".", ...(adapter ? { adapter } : {}) } } } },
+      bundles: { docs: { path: "/tmp/docs", ...(adapter ? { adapter } : {}) } },
     });
     expect(() => requireConfiguredAdapters(bundles("okf"))).not.toThrow();
     expect(() => requireConfiguredAdapters(bundles())).not.toThrow();

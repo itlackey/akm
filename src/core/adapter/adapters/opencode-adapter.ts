@@ -26,7 +26,6 @@ import { ToolDirAdapterBase, type ToolDirLayout } from "./tool-dir-shared";
 
 const LAYOUT: ToolDirLayout = {
   adapterId: "opencode",
-  componentId: ".opencode",
   instructionFile: "AGENTS.md",
   instructionConceptId: "AGENTS",
   commandDirs: new Set(["commands"]),

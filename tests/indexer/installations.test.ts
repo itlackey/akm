@@ -4,7 +4,7 @@
 
 /**
  * Chunk 5 M-a — `deriveInstallations` (`src/indexer/installations.ts`):
- * SearchSource[] → BundleInstallation[] derivation (spec §1.1/§1.2).
+ * SearchSource[] → Bundle[] derivation (spec §1.1/§1.2).
  *
  * Exercised against the frozen fixture roots the conformance suite uses so the
  * ordered `looksLikeRoot` probe is checked over real bundle layouts:
@@ -15,6 +15,7 @@
 
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+import { adapterIdOf } from "../../src/core/adapter/detect-adapter";
 import { slugForRegistryId } from "../../src/core/bundle-id";
 import { deriveBundleId, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import type { SearchSource } from "../../src/indexer/search/search-source";
@@ -63,20 +64,17 @@ describe("slugForRegistryId", () => {
   });
 });
 
-describe("deriveInstallations — adapter selection (ordered §1.2 probe)", () => {
+describe("adapterIdOf — adapter selection (ordered §1.2 probe)", () => {
   test("akm workspace stash → akm adapter", () => {
-    const [inst] = deriveInstallations([{ path: AKM_ROOT, writable: true }]);
-    expect(inst!.adapterId).toBe("akm");
+    expect(adapterIdOf({ path: AKM_ROOT })).toBe("akm");
   });
 
   test("okf reference bundle → okf adapter", () => {
-    const [inst] = deriveInstallations([{ path: OKF_ROOT }]);
-    expect(inst!.adapterId).toBe("okf");
+    expect(adapterIdOf({ path: OKF_ROOT })).toBe("okf");
   });
 
   test("llm-wiki bundle → llm-wiki adapter (more-specific probe wins over okf)", () => {
-    const [inst] = deriveInstallations([{ path: LLM_WIKI_ROOT }]);
-    expect(inst!.adapterId).toBe("llm-wiki");
+    expect(adapterIdOf({ path: LLM_WIKI_ROOT })).toBe("llm-wiki");
   });
 
   test("a root no probe claims falls back to akm (recorded deviation from spec §1.2(3)'s okf)", () => {
@@ -84,29 +82,25 @@ describe("deriveInstallations — adapter selection (ordered §1.2 probe)", () =
     // status-quo-preserving / workspace-root-discipline choice in this
     // pre-config-adapter transitional model (see installations.ts). Pins that
     // decision so a future 0.9.1 flip to `okf` is a deliberate, visible change.
-    const [inst] = deriveInstallations([{ path: "/nonexistent/empty/root" }]);
-    expect(inst!.adapterId).toBe("akm");
+    expect(adapterIdOf({ path: "/nonexistent/empty/root" })).toBe("akm");
   });
 
   test("the ordered probe is genuinely consulted in production — non-akm roots no longer all collapse to akm", () => {
     // The pre-wiring bug: an empty registry made EVERY source fall back to
     // `akm`. Now distinct bundle shapes resolve to distinct adapters through
     // the same `deriveInstallations` call sites production uses.
-    const adapters = deriveInstallations([
-      { path: AKM_ROOT, writable: true },
-      { path: OKF_ROOT },
-      { path: LLM_WIKI_ROOT },
-    ]).map((i) => i.adapterId);
+    const adapters = [{ path: AKM_ROOT }, { path: OKF_ROOT }, { path: LLM_WIKI_ROOT }].map((source) =>
+      adapterIdOf(source),
+    );
     expect(adapters).toEqual(["akm", "okf", "llm-wiki"]);
   });
 
   test("configured adapter ownership wins over filesystem probing", () => {
-    const [inst] = deriveInstallations([{ path: AKM_ROOT, adapterId: "okf" }]);
-    expect(inst!.adapterId).toBe("okf");
+    expect(adapterIdOf({ path: AKM_ROOT, adapterId: "okf" })).toBe("okf");
   });
 });
 
-describe("deriveInstallations — id / trust / component shape", () => {
+describe("deriveInstallations — id / trust / bundle shape", () => {
   test("registryId is the bundle id when present; otherwise a path slug", () => {
     const sources: SearchSource[] = [
       { path: AKM_ROOT, writable: true },
@@ -117,14 +111,13 @@ describe("deriveInstallations — id / trust / component shape", () => {
     expect(installed!.id).toBe("team-catalog");
   });
 
-  test("component carries root/writable and id == bundle id", () => {
+  test("a bundle carries root and writable under its id", () => {
     const [writable, readonly] = deriveInstallations([
       { path: AKM_ROOT, writable: true },
       { path: OKF_ROOT, registryId: "ro", writable: false },
     ]);
-    expect(writable!.components).toHaveLength(1);
-    expect(writable!.components[0]).toMatchObject({ id: "all-types", root: AKM_ROOT, writable: true });
-    expect(readonly!.components[0]!.writable).toBe(false);
+    expect(writable).toMatchObject({ id: "all-types", root: AKM_ROOT, writable: true });
+    expect(readonly!.writable).toBe(false);
   });
 
   test("source order is preserved as installation priority", () => {

@@ -30,9 +30,9 @@ list where a bundle names one, and `akm config set` and `akm doctor` check it up
 | `generic-files` | Catch-all mount | scripts as `script`, `.md`/`.txt` as `document`, everything else as `file` |
 
 The first adapter whose `looksLikeRoot` probe matches a root claims it, and the
-winner is recorded per component. A root matching no probe falls back to `akm`
+winner is recorded per bundle. A root matching no probe falls back to `akm`
 (`FALLBACK_ADAPTER_ID`, `src/indexer/installations.ts`). `generic-files` is not
-probed. An adapter set in a bundle's config entry (`components.<name>.adapter`,
+probed. An adapter set in a bundle's config entry (`bundles.<name>.adapter`,
 validated against the ids above) wins over probing. The probe order puts
 `claude`, `opencode`, and `dotenv` ahead of `akm`, and `akm` ahead of `okf`,
 because AKM Markdown is an OKF-compatible superset.

@@ -530,6 +530,6 @@ export function memoryOrphanStubApplies(data: Record<string, unknown>, body: str
   return data.inferenceProcessed === true && body.trim().length < 100;
 }
 
-// Re-export the component type so `akm-adapter.ts` can share it without a
+// Re-export the bundle type so `akm-adapter.ts` can share it without a
 // second import site if it ever needs it here (keeps the leaf self-describing).
 export type { Bundle };

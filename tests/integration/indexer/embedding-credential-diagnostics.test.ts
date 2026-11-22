@@ -51,14 +51,9 @@ describe("generateEmbeddingsForDb: embedding-credential diagnostics (#953)", () 
 
   function seedOneEntry(db: Database): void {
     const installation = deriveInstallations([{ path: storage.stashDir, writable: true }])[0];
-    const component = installation?.components[0];
-    if (!installation || !component) throw new Error("failed to derive a test bundle installation");
+    if (!installation) throw new Error("failed to derive a test bundle installation");
     const entry = { name: "note", type: "memories", filename: "note.md" };
-    const provenance = deriveEntryProvenance(
-      { bundleId: installation.id, componentId: component.id, adapterId: installation.adapterId },
-      "memories",
-      "note",
-    );
+    const provenance = deriveEntryProvenance({ bundleId: installation.id, adapterId: "akm" }, "memories", "note");
     upsertEntry(db, `${storage.stashDir}/memories/note.md`, entry, provenance);
   }
 

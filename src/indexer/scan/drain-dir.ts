@@ -72,7 +72,7 @@ export interface DrainedDir {
  */
 export function drainDirDocuments(
   adapter: BundleAdapter,
-  component: Bundle,
+  bundle: Bundle,
   fileContexts: readonly FileContext[],
 ): DrainedDir {
   const entries: IndexDocument[] = [];
@@ -90,7 +90,7 @@ export function drainDirDocuments(
   // source and therefore marks an existing peer row stale for read fallback.
   const workflowOwnerPathByCanonicalName = new Map(
     resolveWorkflowSourceDomains(
-      component.root,
+      bundle.root,
       adapter.id,
       fileContexts.map((file) => file.absPath),
     )
@@ -99,8 +99,8 @@ export function drainDirDocuments(
   );
   const invalidWorkflowOwnerNames = new Set<string>();
   const orderedFileContexts = [...fileContexts].sort((left, right) => {
-    const leftName = workflowNameForSourcePath(component.root, adapter.id, left.absPath);
-    const rightName = workflowNameForSourcePath(component.root, adapter.id, right.absPath);
+    const leftName = workflowNameForSourcePath(bundle.root, adapter.id, left.absPath);
+    const rightName = workflowNameForSourcePath(bundle.root, adapter.id, right.absPath);
     const leftOwner =
       leftName !== undefined &&
       workflowOwnerPathByCanonicalName.get(canonicalizeWorkflowName(leftName)) === path.resolve(left.absPath);
@@ -114,7 +114,7 @@ export function drainDirDocuments(
   for (const file of orderedFileContexts) {
     if (rejectedPaths.has(file.absPath)) continue;
 
-    const workflowName = workflowNameForSourcePath(component.root, adapter.id, file.absPath);
+    const workflowName = workflowNameForSourcePath(bundle.root, adapter.id, file.absPath);
     if (workflowName !== undefined) {
       const canonicalName = canonicalizeWorkflowName(workflowName);
       const ownerPath = workflowOwnerPathByCanonicalName.get(canonicalName);
@@ -127,7 +127,7 @@ export function drainDirDocuments(
       }
     }
 
-    const doc = adapter.recognize(component, file);
+    const doc = adapter.recognize(bundle, file);
     if (doc === null) continue;
     if (!doc.conceptId) {
       warnings.push(`Skipped ${file.absPath}: adapter "${adapter.id}" returned no conceptId.`);
@@ -167,14 +167,14 @@ export function drainDirDocuments(
  * the `registry` static-index builder, and the metadata unit tests) get identical
  * entries — plus the D-R6 reserved-file exclusion and the AKM sensitive/infra
  * abstention the adapter now enforces itself. Provenance is not persisted by these
- * callers, so the synthetic component id is immaterial.
+ * callers, so the synthetic bundle id is immaterial.
  */
 export function recognizeStashEntries(stashRoot: string, files: string[]): StashFile {
-  const component: Bundle = { id: stashRoot, root: stashRoot, writable: false };
+  const bundle: Bundle = { id: stashRoot, root: stashRoot, writable: false };
   // No pre-filter: the `akm` adapter's `recognize` claims/abstains per file
   // (owner ruling 2026-07-21 — adapter-owned filtering).
   const contexts = files.map((file) => buildFileContext(stashRoot, file));
-  const drained = drainDirDocuments(akmAdapter, component, contexts);
+  const drained = drainDirDocuments(akmAdapter, bundle, contexts);
   return drained.warnings.length > 0
     ? { entries: drained.entries, warnings: drained.warnings }
     : { entries: drained.entries };

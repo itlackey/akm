@@ -6,12 +6,13 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
+import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
 import type { Bundle } from "../../core/adapter/types";
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { isContainedResolvedPath, isWithin } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
-import { bundleComponentConfig, bundlesToSourceEntries } from "../../core/config/config-sources";
+import { bundlesToSourceEntries } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { warnOnce } from "../../core/warn";
@@ -78,34 +79,34 @@ function isLexicallyWithin(candidate: string, root: string): boolean {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }
 
-function implicitComponentForEntry(entry: IndexEntry, config: AkmConfig): Bundle | undefined {
+function implicitBundleForEntry(entry: IndexEntry, config: AkmConfig): Bundle | undefined {
   const sources = resolveSourceEntries(undefined, config);
   const installations = deriveInstallations(sources);
   for (const [index, installation] of installations.entries()) {
     if (installation.id !== entry.bundleId) continue;
     const source = sources[index];
-    const component = installation.components[0];
-    if (!source || !component) continue;
-    const canonicalRoot = realDirectory(component.root, `Canonical implicit source root for ${entry.bundleId}`);
-    if (installation.adapterId !== entry.adapterId) {
+    if (!source) continue;
+    const canonicalRoot = realDirectory(installation.root, `Canonical implicit source root for ${entry.bundleId}`);
+    const adapterId = adapterIdOf(source);
+    if (adapterId !== entry.adapterId) {
       warnOnce(
         `execution-source-adapter-drift:${entry.itemRef}`,
-        `[command] Indexed adapter ${JSON.stringify(entry.adapterId)} for ${JSON.stringify(entry.itemRef)} no longer matches the working source's adapter ${JSON.stringify(installation.adapterId)}; re-resolving from live config. Run \`akm index --full\` to refresh it.`,
+        `[command] Indexed adapter ${JSON.stringify(entry.adapterId)} for ${JSON.stringify(entry.itemRef)} no longer matches the working source's adapter ${JSON.stringify(adapterId)}; re-resolving from live config. Run \`akm index --full\` to refresh it.`,
       );
     }
     return Object.freeze({
       id: installation.id,
       root: canonicalRoot,
-      writable: component.writable,
+      writable: installation.writable,
     });
   }
   return undefined;
 }
 
-function componentForEntry(entry: IndexEntry, config: AkmConfig, realRoot: string): Bundle {
+function bundleForEntry(entry: IndexEntry, config: AkmConfig, realRoot: string): Bundle {
   const configured = config.bundles?.[entry.bundleId];
   if (!configured) {
-    const implicit = implicitComponentForEntry(entry, config);
+    const implicit = implicitBundleForEntry(entry, config);
     if (implicit) return implicit;
     throw new ConfigError(
       `Indexed execution source ${JSON.stringify(entry.itemRef)} belongs to unconfigured bundle ${JSON.stringify(entry.bundleId)}.`,
@@ -113,8 +114,7 @@ function componentForEntry(entry: IndexEntry, config: AkmConfig, realRoot: strin
       "Refresh the bundle configuration and rebuild the index before dispatching this asset.",
     );
   }
-  const component = bundleComponentConfig(configured);
-  const configuredAdapter = component?.adapter;
+  const configuredAdapter = configured.adapter;
   if (configuredAdapter && configuredAdapter !== entry.adapterId) {
     warnOnce(
       `execution-source-adapter-drift:${entry.itemRef}`,
@@ -132,34 +132,34 @@ function componentForEntry(entry: IndexEntry, config: AkmConfig, realRoot: strin
     );
   } else {
     const lexicalSourceRoot = path.resolve(configuredContentRoot);
-    const lexicalConfiguredRoot = path.resolve(configuredContentRoot, component?.root ?? ".");
+    const lexicalConfiguredRoot = path.resolve(configuredContentRoot, configured.root ?? ".");
     if (!isLexicallyWithin(lexicalConfiguredRoot, lexicalSourceRoot)) {
       throw new ConfigError(
-        `Configured component root for ${JSON.stringify(entry.itemRef)} resolves outside its materialized bundle source.`,
+        `Configured bundle root for ${JSON.stringify(entry.itemRef)} resolves outside its materialized bundle source.`,
         "INVALID_CONFIG_FILE",
-        "Keep component roots inside their owning bundle source, then run `akm index --full`.",
+        "Keep bundle roots inside their owning bundle source, then run `akm index --full`.",
       );
     }
     const configuredSourceRoot = realDirectory(lexicalSourceRoot, `Configured source root for ${entry.bundleId}`);
     let configuredRoot: string;
     try {
-      configuredRoot = realDirectory(lexicalConfiguredRoot, `Configured component root for ${entry.bundleId}`);
+      configuredRoot = realDirectory(lexicalConfiguredRoot, `Configured bundle root for ${entry.bundleId}`);
     } catch {
       throw new ConfigError(
-        `Configured ${JSON.stringify(configuredSource.type)} source for ${JSON.stringify(entry.itemRef)} is not materialized at its current component root.`,
+        `Configured ${JSON.stringify(configuredSource.type)} source for ${JSON.stringify(entry.itemRef)} is not materialized at its current bundle root.`,
         "INVALID_CONFIG_FILE",
         "Restore or update the bundle, then run `akm index --full` before dispatching this asset.",
       );
     }
     if (!isWithin(configuredRoot, configuredSourceRoot)) {
       throw new ConfigError(
-        `Configured component root for ${JSON.stringify(entry.itemRef)} resolves outside its materialized bundle source.`,
+        `Configured bundle root for ${JSON.stringify(entry.itemRef)} resolves outside its materialized bundle source.`,
         "INVALID_CONFIG_FILE",
-        "Remove the escaping symlink or component path, then run `akm index --full`.",
+        "Remove the escaping symlink or root path, then run `akm index --full`.",
       );
     }
   }
-  const writable = component?.writable ?? configured.writable ?? configured.path !== undefined;
+  const writable = configured.writable ?? configured.path !== undefined;
   return Object.freeze({
     id: entry.bundleId,
     root: realRoot,
@@ -228,18 +228,18 @@ export async function loadAdapterExecutionSource(
   }
 
   const config = await effectiveConfig(options.config);
-  const realRoot = realDirectory(entry.stashDir, `Indexed component root for ${entry.itemRef}`);
+  const realRoot = realDirectory(entry.stashDir, `Indexed bundle root for ${entry.itemRef}`);
   realRegularFile(entry.filePath, `Indexed execution source ${entry.itemRef}`);
-  // An index row must name a file inside its own component root. Checked on the
+  // An index row must name a file inside its own bundle root. Checked on the
   // authored path, so a file that is a symlink to one elsewhere still loads.
   if (!isContainedResolvedPath(path.resolve(entry.filePath), path.resolve(entry.stashDir))) {
     throw new ConfigError(
-      `Indexed execution source ${JSON.stringify(entry.itemRef)} resolves outside its component root.`,
+      `Indexed execution source ${JSON.stringify(entry.itemRef)} resolves outside its bundle root.`,
       "INVALID_CONFIG_FILE",
       "Remove the escaping path and rebuild the index.",
     );
   }
-  const component = componentForEntry(entry, config, realRoot);
+  const bundle = bundleForEntry(entry, config, realRoot);
   const adapter = (options.adapterFor ?? adapterForId)(entry.adapterId);
   if (!adapter) {
     throw new ConfigError(
@@ -255,7 +255,7 @@ export async function loadAdapterExecutionSource(
   }
 
   const fileContext = (options.fileContext ?? buildFileContext)(entry.stashDir, entry.filePath);
-  const rendered = adapter.renderExecutionSource(component, fileContext);
+  const rendered = adapter.renderExecutionSource(bundle, fileContext);
   if (!rendered || rendered.kind !== expectedKind) {
     throw new ConfigError(
       `Bundle adapter ${JSON.stringify(entry.adapterId)} did not render ${JSON.stringify(entry.itemRef)} as a ${expectedKind}.`,

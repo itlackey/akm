@@ -6,7 +6,7 @@
  * Regression for #908 — `detectAdapterId` now corrects AUTO-DETECTION for a
  * mixed-layout root (a tool-dir/agent-skills layout alongside ordinary akm
  * content detects as `akm`), but that correction cannot see an EXPLICITLY
- * configured adapter (`components.main.adapter: "agent-skills"`). Indexing
+ * configured adapter (`adapter: "agent-skills"`). Indexing
  * that configuration over the same mixed tree used to silently drop
  * everything outside `agent-skills`' own recognized slice with no warning at
  * all — this pins the ONE-per-process warning that now fires instead, naming
@@ -40,7 +40,7 @@ function configureMixedBundle(adapter: string): void {
   writeSandboxConfig({
     semanticSearchMode: "off",
     bundles: {
-      mixed: { path: MIXED_ROOT, components: { main: { root: ".", adapter } } },
+      mixed: { path: MIXED_ROOT, adapter },
     },
     defaultBundle: "mixed",
   });

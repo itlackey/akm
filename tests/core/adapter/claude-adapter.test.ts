@@ -31,12 +31,12 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(): Bundle {
+function bundle(): Bundle {
   return { id: BUNDLE_ID, root: FIXTURE_ROOT, writable: true };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {
-  return claudeAdapter.recognize(component(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
+  return claudeAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
 const ctx: ValidateContext = {
@@ -71,7 +71,6 @@ describe("claude adapter — recognition golden", () => {
       expect(doc, `${relPath} must be recognized`).not.toBeNull();
       if (!doc) throw new Error("unreachable");
       expect(doc.adapterId).toBe(expected.adapterId as string);
-      expect(doc.component).toBe(expected.component as string);
       expect(doc.bundle).toBe(BUNDLE_ID);
       expect(doc.type).toBe(expected.type as string);
       expect(doc.conceptId).toBe(expected.conceptId as string);
@@ -110,7 +109,7 @@ describe("claude adapter — lint golden (lenient tool-dir validation)", () => {
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await claudeAdapter.validate(component(), changes, ctx);
+    const diags = await claudeAdapter.validate(bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {
@@ -121,7 +120,7 @@ describe("claude adapter — lint golden (lenient tool-dir validation)", () => {
   test("a skill directory with no SKILL.md emits missing-skill-md (the one coded skill check)", async () => {
     const emptyCtx: ValidateContext = { ...ctx, readFile: async () => null };
     const diags = await claudeAdapter.validate(
-      component(),
+      bundle(),
       [{ path: "skills/csv-cleanup/reference.md", op: "update", after: "resource" }],
       emptyCtx,
     );

@@ -525,14 +525,14 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
   });
 
   test("preserves an arbitrary-depth standalone task concept id through the whole plan", async () => {
-    const componentRoot = root();
+    const contentRoot = root();
     write(
-      path.join(componentRoot, "sub", "deep", "nightly.yml"),
+      path.join(contentRoot, "sub", "deep", "nightly.yml"),
       "version: 4\nrun: echo nested\nshell: sh\nschedule: '@daily'\n",
     );
 
     const plan = await planSchedulerSync({
-      sourceRoot: componentRoot,
+      sourceRoot: contentRoot,
       adapterId: "akm-task",
       bundleName: "team",
       backend: "cron",
@@ -548,18 +548,15 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
   });
 
   test("duplicate standalone basenames retain distinct canonical ids instead of colliding", async () => {
-    const componentRoot = root();
+    const contentRoot = root();
     write(
-      path.join(componentRoot, "alpha", "nightly.yml"),
+      path.join(contentRoot, "alpha", "nightly.yml"),
       "version: 4\nrun: echo alpha\nshell: sh\nschedule: '@daily'\n",
     );
-    write(
-      path.join(componentRoot, "beta", "nightly.yml"),
-      "version: 4\nrun: echo beta\nshell: sh\nschedule: '@daily'\n",
-    );
+    write(path.join(contentRoot, "beta", "nightly.yml"), "version: 4\nrun: echo beta\nshell: sh\nschedule: '@daily'\n");
 
     const plan = await planSchedulerSync({
-      sourceRoot: componentRoot,
+      sourceRoot: contentRoot,
       adapterId: "akm-task",
       bundleName: "team",
       backend: "cron",
@@ -574,19 +571,19 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
   });
 
   test("two sources claiming one native row are both reported and neither is installed", async () => {
-    const componentRoot = root();
+    const contentRoot = root();
     write(
-      path.join(componentRoot, "sub", "nightly.yml"),
+      path.join(contentRoot, "sub", "nightly.yml"),
       "version: 4\nrun: echo nested\nshell: sh\nschedule: '@daily'\n",
     );
     write(
-      path.join(componentRoot, "task-5f14bc23cb233df4713f2e147b6c077f.yml"),
+      path.join(contentRoot, "task-5f14bc23cb233df4713f2e147b6c077f.yml"),
       "version: 4\nrun: echo flat\nshell: sh\nschedule: '@daily'\n",
     );
     let signatures = 0;
 
     const plan = await planSchedulerSync({
-      sourceRoot: componentRoot,
+      sourceRoot: contentRoot,
       adapterId: "akm-task",
       bundleName: "team",
       backend: "cron",
@@ -608,13 +605,13 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
   test.each([
     ["case folding", "Nightly", "nightly"],
   ] as const)("native ids that differ only by %s are one row: both are reported", async (_label, first, second) => {
-    const componentRoot = root();
-    write(path.join(componentRoot, `${first}.yml`), "version: 4\nrun: echo first\nshell: sh\nschedule: '@daily'\n");
-    write(path.join(componentRoot, `${second}.yml`), "version: 4\nrun: echo second\nshell: sh\nschedule: '@daily'\n");
+    const contentRoot = root();
+    write(path.join(contentRoot, `${first}.yml`), "version: 4\nrun: echo first\nshell: sh\nschedule: '@daily'\n");
+    write(path.join(contentRoot, `${second}.yml`), "version: 4\nrun: echo second\nshell: sh\nschedule: '@daily'\n");
     let signatures = 0;
 
     const plan = await planSchedulerSync({
-      sourceRoot: componentRoot,
+      sourceRoot: contentRoot,
       adapterId: "akm-task",
       bundleName: "team",
       backend: "schtasks",
@@ -631,15 +628,15 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
   });
 
   test("rejects a single logical/native id ending in a period before signatures", async () => {
-    const componentRoot = root();
-    write(path.join(componentRoot, "nightly..yml"), "version: 4\nrun: echo unsafe\nshell: sh\nschedule: '@daily'\n");
+    const contentRoot = root();
+    write(path.join(contentRoot, "nightly..yml"), "version: 4\nrun: echo unsafe\nshell: sh\nschedule: '@daily'\n");
     let signatures = 0;
 
     // #867: an unportable id is a per-source failure — it degrades (no
     // bindings desired for this lone source, no signature call) rather
     // than rejecting the whole sync.
     const plan = await planSchedulerSync({
-      sourceRoot: componentRoot,
+      sourceRoot: contentRoot,
       adapterId: "akm-task",
       bundleName: "team",
       backend: "schtasks",
@@ -656,7 +653,7 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
   });
 
   test("a nested task whose source is gone is removed by its native id", async () => {
-    const componentRoot = root();
+    const contentRoot = root();
     const nativeId = "task-5f14bc23cb233df4713f2e147b6c077f";
     const installed = {
       id: "sub/nightly",
@@ -669,7 +666,7 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     };
 
     const plan = await planSchedulerSync({
-      sourceRoot: componentRoot,
+      sourceRoot: contentRoot,
       adapterId: "akm-task",
       bundleName: "team",
       backend: "cron",
@@ -681,16 +678,16 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
   });
 
   test("an in-bundle symlink alias is read through like any other source file", async () => {
-    const componentRoot = root();
-    const owner = path.join(componentRoot, "alpha", "nightly.yml");
-    const alias = path.join(componentRoot, "beta", "nightly.yml");
+    const contentRoot = root();
+    const owner = path.join(contentRoot, "alpha", "nightly.yml");
+    const alias = path.join(contentRoot, "beta", "nightly.yml");
     write(owner, "version: 4\nrun: echo owner\nshell: sh\nschedule: '@daily'\n");
     fs.mkdirSync(path.dirname(alias), { recursive: true });
     fs.symlinkSync(owner, alias);
     let signatures = 0;
 
     const plan = await planSchedulerSync({
-      sourceRoot: componentRoot,
+      sourceRoot: contentRoot,
       adapterId: "akm-task",
       bundleName: "team",
       backend: "cron",
@@ -822,7 +819,7 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
 
 describe("#846: the primary bundle owns rows by resolved bundle path, not display name", () => {
   test("two bundles at different paths sharing the same display name: bundle A's sync does not compute bundle B's installed binding as removable", async () => {
-    const componentRoot = root();
+    const contentRoot = root();
     const bundleAPath = "/home/user/work/akm";
     const bundleBPath = "/home/user/personal/akm";
     // Both bundles resolve to the same unconfigured display name ("akm" —
@@ -842,7 +839,7 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
     };
 
     const plan = await planSchedulerSync({
-      sourceRoot: componentRoot,
+      sourceRoot: contentRoot,
       adapterId: "akm-task",
       bundleName: "akm",
       bundlePath: bundleAPath,
@@ -896,7 +893,7 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
   });
 
   test("a binding genuinely owned by the invoking bundle (matching resolved path) is still removed as drift", async () => {
-    const componentRoot = root();
+    const contentRoot = root();
     const nativeId = "task-owned";
     const bundlePath = "/home/user/work/akm";
     const installed = {
@@ -911,7 +908,7 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
     };
 
     const plan = await planSchedulerSync({
-      sourceRoot: componentRoot,
+      sourceRoot: contentRoot,
       adapterId: "akm-task",
       bundleName: "team",
       bundlePath,
@@ -927,7 +924,7 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
   });
 
   test("the primary bundle owns the rows whose AKM_BUNDLE_DIR is its path, inline or in an older row's descriptor; any other bundle owns rows by name", async () => {
-    const componentRoot = root();
+    const contentRoot = root();
     const bundlePath = "/home/user/stash";
     const row = (id: string, extra: Partial<InstalledSchedulerBinding>) => ({
       id,
@@ -947,7 +944,7 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
     ];
     const plan = (primary: boolean) =>
       planSchedulerSync({
-        sourceRoot: componentRoot,
+        sourceRoot: contentRoot,
         adapterId: "akm-task",
         bundleName: "stash",
         ...(primary ? { bundlePath } : {}),
@@ -967,7 +964,7 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
   });
 
   test("an orphaned row without a listed signature is removed like any other", async () => {
-    const componentRoot = root();
+    const contentRoot = root();
     const bundlePath = "/home/user/work/akm";
     const healthy = {
       id: "healthy-orphan",
@@ -990,7 +987,7 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
     };
 
     const plan = await planSchedulerSync({
-      sourceRoot: componentRoot,
+      sourceRoot: contentRoot,
       adapterId: "akm-task",
       bundleName: "team",
       bundlePath,

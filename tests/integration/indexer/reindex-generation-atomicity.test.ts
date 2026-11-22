@@ -42,8 +42,8 @@ beforeEach(() => {
     bundles: {
       primary: {
         path: storage.stashDir,
+        adapter: "akm",
         writable: true,
-        components: { main: { root: ".", adapter: "akm", writable: true } },
       },
     },
     defaultBundle: "primary",

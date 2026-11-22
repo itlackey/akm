@@ -20,7 +20,7 @@
  * bundle-root probe in `provider-utils.ts#detectStashRoot`.
  *
  * KEYED BY `adapter.id` ONLY. Adapters are FORMAT FAMILIES (§0.2): one adapter
- * per component root, and `recognize()` is the single source of truth for what
+ * per bundle root, and `recognize()` is the single source of truth for what
  * a file IS. The open OKF `type` lives on the emitted `IndexDocument`, never on
  * the adapter — so there is deliberately NO per-`type` → adapter mapping here.
  *
@@ -81,12 +81,12 @@ export function requireConfiguredAdapters(config: AkmConfig): void {
   }
 }
 
-/** The bundle a bundle's adapter is called with: its root, and its `location` when it has one. */
-export function bundleOf(bundle: { path: string; location?: string }, id: string): Bundle {
+/** The bundle its adapter is called with: its id (its config name), root, and `location` when it has one. */
+export function bundleOf(source: { name: string; path: string; location?: string }): Bundle {
   return {
-    id,
-    root: bundle.path,
+    id: source.name,
+    root: source.path,
     writable: false,
-    ...(bundle.location ? { location: bundle.location } : {}),
+    ...(source.location ? { location: source.location } : {}),
   };
 }

@@ -75,7 +75,6 @@ function indexAsset(
   const entry: IndexDocument = { type, name, description: `desc for ${name}` };
   const id = upsertEntry(db, file, entry, {
     bundleId,
-    componentId: bundleId,
     adapterId: "akm",
     conceptId: `${TYPE_DIR[type]}/${name}`,
     itemRef: `${bundleId}//${TYPE_DIR[type]}/${name}`,

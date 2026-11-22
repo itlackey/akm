@@ -41,8 +41,6 @@ import { AkmFormatAdapterBase, sensitiveMarkerPath } from "./akm-format";
 import { dangerousEnvKeyDiagnostics } from "./akm-lint";
 import { hashContent } from "./shared";
 
-/** A dotenv bundle is single-component; its one component is `main`. */
-const COMPONENT_ID = "main";
 /** The `env/` content subdir (KEY=VALUE files). */
 const ENV_DIR = "env";
 /** The `secrets/` content subdir (whole-file secrets). */
@@ -52,7 +50,7 @@ const SECRET_SKIP_SUFFIXES = [".lock", ".sensitive"];
 
 type DotenvType = "env" | "secret";
 
-/** Classify a component-root-relative file as env / secret, or null (abstain). */
+/** Classify a bundle-root-relative file as env / secret, or null (abstain). */
 function classify(relPath: string): DotenvType | null {
   const posix = toPosix(relPath);
   const segs = posix.split("/").filter((s) => s.length > 0);
@@ -110,7 +108,6 @@ function recognize(c: Bundle, file: FileContext): IndexDocument | null {
     const doc: IndexDocument = {
       ref: `${c.id}//${conceptId}`,
       bundle: c.id,
-      component: COMPONENT_ID,
       conceptId,
       path: file.absPath,
       hash: hashContent(raw),
@@ -127,7 +124,6 @@ function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   return {
     ref: `${c.id}//${posix}`,
     bundle: c.id,
-    component: COMPONENT_ID,
     conceptId: posix,
     path: file.absPath,
     hash: hashContent(raw),
@@ -167,7 +163,7 @@ export class DotenvAdapter extends AkmFormatAdapterBase {
 
   /**
    * Closed-form owner candidates (#857): the ref is the file's path under the
-   * component root (`conceptIdForPath`), so it is inverted for the two types
+   * bundle root (`conceptIdForPath`), so it is inverted for the two types
    * this adapter recognizes. `assetPathCandidatesForName` expands `env`'s
    * `.env`/`<name>.env` duality; the sensitive-marker sibling spellings are then
    * layered on each. `recognize` decides which candidate really owns the ref.

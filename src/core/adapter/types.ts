@@ -6,9 +6,8 @@
  * Supporting type family for the `BundleAdapter` interface
  * (`./bundle-adapter.ts`):
  *
- *  - `BundleId` / `ComponentId` / `ItemRef` / `BundleInstallation` /
- *    `Bundle` and `IndexDocument` — the full shapes, each documented
- *    at its declaration.
+ *  - `BundleId` / `ItemRef` / `Bundle` and `IndexDocument` — the full
+ *    shapes, each documented at its declaration.
  *
  *  - `ValidateContext` — the read-only context `validate` receives.
  *
@@ -36,27 +35,13 @@ import type { StalePathFields } from "../asset/stale-path";
 import type { AkmConfig } from "../config/config-types";
 import type { EventEnvelope } from "../events-types";
 
-// ── §1.1 — bundle / component / installation model ─────────────────────────
+// ── §1.1 — bundle model ─────────────────────────────────────────────────────
 
 /** Stable bundle name (workspace identity); the optional ref prefix. */
 export type BundleId = string;
 
-/** A configured root under one adapter; PROVENANCE, not a ref segment. */
-export type ComponentId = string;
-
 /** `"[<bundle>//]<concept-id>"` — the ref grammar. */
 export type ItemRef = string;
-
-export interface BundleInstallation {
-  id: BundleId;
-  /** Resolved git sha / npm version+integrity / snapshot digest. */
-  revision?: string;
-  /** Transport locator, kept OUT of identity (normative §11.2). */
-  source?: string;
-  /** The id of the adapter that reads the bundle: configured, else detected. */
-  adapterId: string;
-  components: Bundle[];
-}
 
 /** A bundle as its adapter is handed it. */
 export interface Bundle {
@@ -142,8 +127,6 @@ export interface IndexDocument {
   /** Fully-qualified "<bundle>//<concept-id>" (canonical stored spelling). */
   ref?: ItemRef;
   bundle?: BundleId;
-  /** PROVENANCE from the bundle's single configured component, not a ref segment. */
-  component?: ComponentId;
   /** OKF concept ID = path within bundle − ext; opaque to the core. */
   conceptId?: string;
   /** Absolute local path (the read path). Absent when no file holds the asset (a secret manager's). */

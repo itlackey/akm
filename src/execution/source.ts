@@ -16,7 +16,7 @@ export interface ExecutionSourceIdentity {
   readonly ref: string;
   readonly bundle: string;
   readonly adapter: string;
-  /** POSIX path relative to the owning bundle/component root. */
+  /** POSIX path relative to the owning bundle root. */
   readonly file: string;
   /** SHA-256 of the authoritative native file bytes decoded as UTF-8. */
   readonly hash: string;

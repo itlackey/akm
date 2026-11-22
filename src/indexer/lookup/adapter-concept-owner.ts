@@ -4,7 +4,7 @@
 
 import path from "node:path";
 import type { AssetEntry, AssetReadOptions, BundleAsset } from "../../core/adapter/bundle-adapter";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { DirectoryAdapterBase } from "../../core/adapter/directory-adapter";
 import { adapterForId, bundleOf } from "../../core/adapter/registry";
 import { assetPathForName, stashDirFor, stashDirNames } from "../../core/asset/asset-placement";
@@ -14,7 +14,7 @@ import { safeRealpath } from "../../core/common";
 import { warnOnce } from "../../core/warn";
 import { withMdVariants } from "../../storage/repositories/index-entries-repository";
 import type { IndexEntry } from "../indexer";
-import { deriveEntryProvenance, deriveInstallations } from "../installations";
+import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../installations";
 import type { SearchSource } from "../search/search-source";
 
 export { AdapterConceptCollisionError, AdapterConceptOwnershipError } from "../../core/adapter/directory-adapter";
@@ -38,6 +38,9 @@ export interface ResolveAdapterConceptOwnerOptions extends AssetReadOptions {
   unlisted?: boolean;
 }
 
+/** A bundle as a lookup names it: the id its refs use, and where it is. */
+type LookupBundle = { name: string; path: string; location?: string };
+
 function ownerOf(source: Pick<SearchSource, "path">, adapterId: string, asset: BundleAsset): AdapterConceptOwner {
   // The index keys an entry under `<root>/<relPath>`; for an entry with no file that is not a path to anything.
   const indexed = path.join(source.path, asset.entry.relPath);
@@ -56,24 +59,24 @@ function ownerOf(source: Pick<SearchSource, "path">, adapterId: string, asset: B
 
 /** The asset `conceptId` names in one bundle, as the bundle's adapter reads it. */
 export function readBundleAsset(
-  source: Pick<SearchSource, "path" | "location">,
+  source: LookupBundle,
   adapterId: string,
   conceptId: string,
   options?: ResolveAdapterConceptOwnerOptions,
 ): AdapterConceptOwner | undefined {
   const adapter = adapterForId(adapterId);
-  const asset = adapter?.read(bundleOf(source, adapterId), conceptId, options);
+  const asset = adapter?.read(bundleOf(source), conceptId, options);
   return asset && (asset.listed || options?.unlisted) ? ownerOf(source, adapterId, asset) : undefined;
 }
 
-/** The asset `conceptId` names in the bundle at `sourcePath`, read by the adapter `adapterId`. */
+/** The asset `conceptId` names in `bundle`, read by the adapter `adapterId`. */
 export function resolveAdapterConceptOwner(
-  sourcePath: string,
+  bundle: Pick<LookupBundle, "name" | "path">,
   adapterId: string,
   conceptId: string,
   options?: ResolveAdapterConceptOwnerOptions,
 ): AdapterConceptOwner | undefined {
-  return readBundleAsset({ path: sourcePath }, adapterId, conceptId, options);
+  return readBundleAsset(bundle, adapterId, conceptId, options);
 }
 
 export interface ConceptOwnerMatch {
@@ -99,14 +102,18 @@ export function entryFromFiles(match: ConceptOwnerMatch): IndexEntry | undefined
     const adapter = adapterForId(adapterId);
     if (
       !adapter ||
-      (adapter instanceof DirectoryAdapterBase && !adapter.walksFile(bundleOf(source, adapterId), owner.path))
+      (adapter instanceof DirectoryAdapterBase &&
+        !adapter.walksFile(bundleOf({ name: bundleId, path: source.path, location: source.location }), owner.path))
     ) {
       return undefined;
     }
-    const document = adapter.recognize(bundleOf(source, adapterId), owner.entry);
+    const document = adapter.recognize(
+      bundleOf({ name: bundleId, path: source.path, location: source.location }),
+      owner.entry,
+    );
     if (!document?.conceptId || !withMdVariants(owner.conceptId).includes(document.conceptId)) return undefined;
     const { itemRef, conceptId } = deriveEntryProvenance(
-      { bundleId, componentId: adapterId, adapterId },
+      { bundleId, adapterId },
       document.type,
       document.name,
       document.conceptId,
@@ -185,8 +192,13 @@ function ownerAmong(
   for (const [index, source] of sources.entries()) {
     const bundleId = installations[index]?.id;
     if (!bundleId || (ref.bundle !== undefined && bundleId !== ref.bundle)) continue;
-    const adapterId = source.adapterId ?? detectAdapterId(source.path);
-    const owner = readBundleAsset(source, adapterId, ref.conceptId, options);
+    const adapterId = adapterIdOf(source);
+    const owner = readBundleAsset(
+      { name: bundleId, path: source.path, location: source.location },
+      adapterId,
+      ref.conceptId,
+      options,
+    );
     if (owner) return { owner, source, bundleId, adapterId };
   }
   return undefined;
@@ -224,10 +236,12 @@ export interface WriteAddress extends AssetRef {
 export function resolveWriteAddress(root: string, raw: string): WriteAddress {
   const { bundle, conceptId: asWritten, fragment } = parseBundleRef(raw);
   let conceptId = asWritten;
-  let owner = fragment === undefined ? resolveAdapterConceptOwner(root, "akm", conceptId, { mode: "read" }) : undefined;
+  const rootBundle = { name: slugForPath(root), path: root };
+  let owner =
+    fragment === undefined ? resolveAdapterConceptOwner(rootBundle, "akm", conceptId, { mode: "read" }) : undefined;
   const current = fragment === undefined && !owner ? withoutTypeHead(asWritten) : undefined;
   if (current !== undefined) {
-    owner = resolveAdapterConceptOwner(root, "akm", current, { mode: "read" });
+    owner = resolveAdapterConceptOwner(rootBundle, "akm", current, { mode: "read" });
     if (owner) {
       warnOutdatedRef(asWritten, current);
       conceptId = current;

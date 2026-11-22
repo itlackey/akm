@@ -69,7 +69,7 @@
  */
 
 import fs from "node:fs";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { toErrorMessage } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -423,15 +423,15 @@ async function resolveExecutionSettings(
 export async function akmTaskExplain(ref: string, options: TaskExplainOptions = {}): Promise<TaskExplainEnvelope> {
   const parsedRef = parseTaskRef(ref);
   const bundle = resolveTaskReadBundle(parsedRef.bundle, options.target);
-  const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
+  const adapterId = adapterIdOf(bundle.source);
   const id = taskIdForAdapter(parsedRef.id, adapterId);
   if (adapterId === "akm-task") validateTaskConceptId(id);
   else validateTaskId(id);
   const taskConceptId = adapterId === "akm" ? `tasks/${id}` : id;
-  const owner = resolveAdapterConceptOwner(bundle.source.path, adapterId, taskConceptId);
+  const owner = resolveAdapterConceptOwner(bundle.source, adapterId, taskConceptId);
   if (!owner) {
     throw new NotFoundError(
-      `Task ${JSON.stringify(ref)} was not found in the configured ${JSON.stringify(adapterId)} component.`,
+      `Task ${JSON.stringify(ref)} was not found in the configured ${JSON.stringify(adapterId)} bundle.`,
       "ASSET_NOT_FOUND",
     );
   }

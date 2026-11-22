@@ -27,12 +27,12 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(): Bundle {
+function bundle(): Bundle {
   return { id: BUNDLE_ID, root: FIXTURE_ROOT, writable: true };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {
-  return akmWorkflowAdapter.recognize(component(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
+  return akmWorkflowAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
 const ctx: ValidateContext = {
@@ -67,7 +67,6 @@ describe("akm-workflow adapter — recognition golden", () => {
       expect(doc, `${relPath} must be recognized`).not.toBeNull();
       if (!doc) throw new Error("unreachable");
       expect(doc.adapterId).toBe(expected.adapterId as string);
-      expect(doc.component).toBe(expected.component as string);
       expect(doc.type).toBe(expected.type as string);
       expect(doc.conceptId).toBe(expected.conceptId as string);
       expect(doc.ref).toBe(expected.ref as string);
@@ -103,7 +102,7 @@ describe("akm-workflow adapter — lint golden", () => {
       op: "update",
       after: fs.readFileSync(path.join(FIXTURE_ROOT, md!.relPath), "utf8"),
     };
-    const diags = await akmWorkflowAdapter.validate(component(), [change], ctx);
+    const diags = await akmWorkflowAdapter.validate(bundle(), [change], ctx);
     expect(diags.map((d) => d.issue)).toEqual((md!.issues ?? []).map((i) => i.issue));
   });
 });

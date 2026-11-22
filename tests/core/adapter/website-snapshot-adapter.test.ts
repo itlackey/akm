@@ -36,16 +36,13 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(): Bundle {
+function bundle(): Bundle {
   // Read-only snapshot (Mode A): writable false.
   return { id: BUNDLE_ID, root: FIXTURE_ROOT, writable: false };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {
-  return websiteSnapshotAdapter.recognize(
-    component(),
-    buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)),
-  );
+  return websiteSnapshotAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
 const ctx: ValidateContext = {
@@ -83,7 +80,6 @@ describe("website-snapshot adapter — recognition golden (gated re-type)", () =
       expect(doc, `${relPath} must be recognized`).not.toBeNull();
       if (!doc) throw new Error("unreachable");
       expect(doc.adapterId).toBe(expected.adapterId as string);
-      expect(doc.component).toBe(expected.component as string);
       expect(doc.type).toBe(expected.type as string);
       expect(doc.conceptId).toBe(expected.conceptId as string);
       expect(doc.ref).toBe(expected.ref as string);
@@ -121,7 +117,7 @@ describe("website-snapshot adapter — lint golden (base checks only; read-only 
     for (const entry of Object.values(perType)) {
       const raw = fs.readFileSync(path.join(FIXTURE_ROOT, entry.relPath), "utf8");
       const diags = await websiteSnapshotAdapter.validate(
-        component(),
+        bundle(),
         [{ path: entry.relPath, op: "update", after: raw }],
         ctx,
       );

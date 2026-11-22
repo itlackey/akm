@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { BundleAdapter, BundleListing } from "../core/adapter/bundle-adapter";
-import { detectAdapterId } from "../core/adapter/detect-adapter";
+import { adapterIdOf, detectAdapterId } from "../core/adapter/detect-adapter";
 import { adapterForId, requireAdapter } from "../core/adapter/registry";
 import type { Bundle } from "../core/adapter/types";
 import { compareCodePoints, isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
@@ -193,7 +193,7 @@ export interface IndexResponse {
   moves?: IndexMoves;
   /**
    * Present when this run auto-detected a bundle's adapter and persisted it
-   * to config.json (`bundles.<id>.components.<component>.adapter`) — a
+   * to config.json (`bundles.<id>.adapter`) — a
    * maintenance-command config write that would otherwise be invisible
    * (R-056). Keyed by bundle id, valued by the detected adapter id.
    */
@@ -278,22 +278,14 @@ function throwIfAborted(signal?: AbortSignal): void {
 
 // ── Source ownership ─────────────────────────────────────────────────────────
 
-/** Each source's durable bundle and the id of the adapter that reads it (`deriveInstallations`: one per source, source order). */
-function sourceBundles(sources: readonly SearchSource[]): Array<{ component: Bundle; adapterId: string }> {
-  return deriveInstallations([...sources]).map((installation) => ({
-    component: installation.components[0] as Bundle,
-    adapterId: installation.adapterId,
-  }));
-}
-
 interface IndexSourceOwner {
   bundleId: string;
   sourceRoot: string;
 }
 
 function sourceOwners(sources: readonly SearchSource[]): IndexSourceOwner[] {
-  return sourceBundles(sources).map(({ component }, index) => ({
-    bundleId: component.id,
+  return deriveInstallations([...sources]).map((bundle, index) => ({
+    bundleId: bundle.id,
     sourceRoot: path.resolve((sources[index] as SearchSource).path),
   }));
 }
@@ -667,10 +659,8 @@ function detectAndPersistBundleAdapters(
       for (const [bundleId, adapter] of detectedByBundle) {
         const bundle = bundles[bundleId];
         if (!bundle) continue;
-        const componentEntries = Object.entries(bundle.components ?? {});
-        const [componentId, component] = componentEntries[0] ?? ["main", {}];
-        if (component.adapter) continue;
-        bundles[bundleId] = { ...bundle, components: { [componentId]: { ...component, adapter } } };
+        if (bundle.adapter) continue;
+        bundles[bundleId] = { ...bundle, adapter };
         changed = true;
         persistedAdapters[bundleId] = adapter;
       }
@@ -686,7 +676,7 @@ function detectAndPersistBundleAdapters(
       .join(", ");
     warn(
       `[index] Detected adapter${persistedCount === 1 ? "" : "s"} for ${summary}; persisted to config.json ` +
-        "(bundles.<id>.components.<component>.adapter).",
+        "(bundles.<id>.adapter).",
     );
   }
   return { config: nextConfig, persistedAdapters };
@@ -805,7 +795,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
         !clean,
       );
     // …then write it in one transaction: `item_ref = <bundle>//<conceptId>`
-    // plus canonical component/adapter provenance per source root.
+    // plus canonical bundle/adapter provenance per source root.
     const bundleByRoot = buildIndexedSourceOwners(sources);
     // A source that did not resolve this run keeps its last-known-good rows through a library switch.
     const unresolvedBundleIds = new Set(
@@ -975,23 +965,21 @@ type DirRecord = {
   remove?: boolean;
 };
 
-type IndexedSourceOwner = Pick<EntryProvenance, "bundleId" | "componentId" | "adapterId">;
+type IndexedSourceOwner = Pick<EntryProvenance, "bundleId" | "adapterId">;
 
 function buildIndexedSourceOwners(sources: readonly SearchSource[]): Map<string, IndexedSourceOwner> {
-  const bundles = sourceBundles(sources);
+  const bundles = deriveInstallations([...sources]);
   return new Map(
-    sources.map((source, index) => {
-      const { component, adapterId } = bundles[index] as { component: Bundle; adapterId: string };
-      return [path.resolve(source.path), { bundleId: component.id, componentId: component.id, adapterId }];
-    }),
+    sources.map((source, index) => [
+      path.resolve(source.path),
+      { bundleId: (bundles[index] as Bundle).id, adapterId: adapterIdOf(source) },
+    ]),
   );
 }
 
 type SourceScanPlan = {
   currentStashDir: string;
-  component: Bundle;
-  /** The id of the adapter that reads the source: configured, else detected. */
-  adapterId: string;
+  bundle: Bundle;
   adapter?: BundleAdapter;
   dirGroups: Map<string, FileContext[]>;
   removals: Array<DirRecord & { reason: DirScanReason }>;
@@ -1055,10 +1043,10 @@ function sourceSnapshotRemovals(
 }
 
 /**
- * What the chosen adapter for a component entirely skips (#908): top-level directories that hold files the `akm`
+ * What the chosen adapter for a bundle entirely skips (#908): top-level directories that hold files the `akm`
  * adapter, the format-neutral superset, would have indexed. `detectAdapterId` corrects this for AUTO-DETECTION (a
  * mixed layout detects as `akm`); this covers what detection cannot see, an EXPLICITLY configured narrow adapter
- * (`components.<name>.adapter: "agent-skills"`, say) sitting next to ordinary akm content.
+ * (`adapter: "agent-skills"`, say) sitting next to ordinary akm content.
  */
 interface AdapterSkip {
   adapter: string;
@@ -1067,7 +1055,7 @@ interface AdapterSkip {
 }
 
 function adapterSkippedAkmContent(
-  component: Bundle,
+  bundle: Bundle,
   files: readonly FileContext[],
   adapter: BundleAdapter,
 ): AdapterSkip | undefined {
@@ -1089,7 +1077,7 @@ function adapterSkippedAkmContent(
   for (const [dir, dirFiles] of byTopDir) {
     const chosenRecognizesAny = dirFiles.some((file) => {
       try {
-        return adapter.recognize(component, file) !== null;
+        return adapter.recognize(bundle, file) !== null;
       } catch {
         return false;
       }
@@ -1097,7 +1085,7 @@ function adapterSkippedAkmContent(
     if (chosenRecognizesAny) continue; // the chosen adapter owns this dir; nothing skipped
     const akmCandidates = dirFiles.filter((file) => {
       try {
-        return akm.recognize(component, file) !== null;
+        return akm.recognize(bundle, file) !== null;
       } catch {
         return false;
       }
@@ -1112,16 +1100,11 @@ function adapterSkippedAkmContent(
 /** `index_meta` key holding each bundle's {@link AdapterSkip}, so a skip is reported once, and again only when it changes. */
 const ADAPTER_SKIPS_META_KEY = "adapterSkips";
 
-/** The component's name in its bundle's config; `main` is the implicit one every bundle has. */
-function configuredComponentName(config: AkmConfig, bundleId: string): string {
-  return Object.keys(config.bundles?.[bundleId]?.components ?? {})[0] ?? "main";
-}
-
 /**
  * Warn about each bundle whose skipped content differs from what the last index recorded, then record this run's
  * skips. A configured bundle that was not scanned this run keeps its record.
  */
-function reportAdapterSkips(db: Database, config: AkmConfig, plans: readonly SourceScanPlan[]): void {
+function reportAdapterSkips(db: Database, plans: readonly SourceScanPlan[]): void {
   let previous: Record<string, AdapterSkip> = {};
   try {
     previous = JSON.parse(getMeta(db, ADAPTER_SKIPS_META_KEY) ?? "{}") as Record<string, AdapterSkip>;
@@ -1130,11 +1113,11 @@ function reportAdapterSkips(db: Database, config: AkmConfig, plans: readonly Sou
     previous = {};
   }
   // A removed bundle takes its record with it.
-  const configured = new Set(plans.map((plan) => plan.component.id));
+  const configured = new Set(plans.map((plan) => plan.bundle.id));
   const next = Object.fromEntries(Object.entries(previous).filter(([id]) => configured.has(id)));
   for (const plan of plans) {
     if (!plan.adapter || !plan.walkComplete) continue;
-    const id = plan.component.id;
+    const id = plan.bundle.id;
     if (!plan.adapterSkip) {
       delete next[id];
       continue;
@@ -1144,7 +1127,7 @@ function reportAdapterSkips(db: Database, config: AkmConfig, plans: readonly Sou
     const { adapter, count, dirs } = plan.adapterSkip;
     warn(
       `[index] bundle "${id}": ${adapter} adapter skipped ${count} file${count === 1 ? "" : "s"} in ` +
-        `${dirs.map((dir) => `${dir}/`).join(", ")} — set bundles.${id}.components.${configuredComponentName(config, id)}.adapter to "akm" to index them`,
+        `${dirs.map((dir) => `${dir}/`).join(", ")} — set bundles.${id}.adapter to "akm" to index them`,
     );
   }
   if (JSON.stringify(next) !== JSON.stringify(previous)) setMeta(db, ADAPTER_SKIPS_META_KEY, JSON.stringify(next));
@@ -1165,19 +1148,18 @@ function buildSourceScanPlans(
   isIncremental: boolean,
   reconcileMissingDirs: boolean,
 ): { plans: SourceScanPlan[]; handoffDirs: Set<string> } {
-  // Each source root → its durable `Bundle` and adapter id; the per-dir document
-  // drain dispatches `adapterForId(adapterId).recognize` for it.
-  const bundles = sourceBundles(allSourceEntries);
-  const bundleBySource = new Map(allSourceEntries.map((source, index) => [source.path, bundles[index]]));
+  // Each source root → its durable `Bundle`; the per-dir document drain dispatches
+  // its adapter's `recognize` for it.
+  const bundles = deriveInstallations(allSourceEntries);
+  const bundleBySource = new Map(allSourceEntries.map((source, index) => [source.path, bundles[index] as Bundle]));
   const handoffDirs = new Set<string>();
   const plans = allSourceEntries.map((sourceAdded): SourceScanPlan => {
     const currentStashDir = sourceAdded.path;
-    const { component, adapterId } = bundleBySource.get(currentStashDir) as { component: Bundle; adapterId: string };
+    const bundle = bundleBySource.get(currentStashDir) as Bundle;
     if (sourceAdded.unresolved) {
       return {
         currentStashDir,
-        component,
-        adapterId,
+        bundle,
         adapter: undefined,
         dirGroups: new Map(),
         removals: [],
@@ -1187,14 +1169,13 @@ function buildSourceScanPlans(
       };
     }
     // A bundle that names an adapter akm does not have stops the index before it changes anything.
-    const adapter = requireAdapter(component.id, adapterId);
-    const walked = walkResultOf(adapter.list(component), currentStashDir);
+    const adapter = requireAdapter(bundle.id, adapterIdOf(sourceAdded));
+    const walked = walkResultOf(adapter.list(bundle), currentStashDir);
     const dirGroups = groupFileContextsByDir(walked.files);
-    const adapterSkip = adapterSkippedAkmContent(component, walked.files, adapter);
+    const adapterSkip = adapterSkippedAkmContent(bundle, walked.files, adapter);
     return {
       currentStashDir,
-      component,
-      adapterId,
+      bundle,
       adapter,
       dirGroups,
       removals: [],
@@ -1242,7 +1223,7 @@ function buildSourceScanPlans(
       for (const removal of sourceSnapshotRemovals(
         db,
         plan.currentStashDir,
-        plan.component.id,
+        plan.bundle.id,
         currentDirs,
         allIndexedDirsByBundle,
       )) {
@@ -1258,14 +1239,14 @@ function buildSourceScanPlans(
   // The first configured source that exposes a physical directory owns it.
   // Remove rows left by a prior owner even when both adapters are identical.
   const claimedDirs = new Set<string>();
-  const sourcePathByBundle = new Map(plans.map((plan) => [plan.component.id, plan.currentStashDir] as const));
+  const sourcePathByBundle = new Map(plans.map((plan) => [plan.bundle.id, plan.currentStashDir] as const));
   for (const plan of plans) {
     for (const dirPath of plan.dirGroups.keys()) {
       const resolvedDir = path.resolve(dirPath);
       if (claimedDirs.has(resolvedDir)) continue;
       claimedDirs.add(resolvedDir);
       for (const priorOwnerBundle of getIndexedBundleIdsByDir(db, dirPath)) {
-        if (priorOwnerBundle !== plan.component.id) {
+        if (priorOwnerBundle !== plan.bundle.id) {
           const priorOwnerPath = sourcePathByBundle.get(priorOwnerBundle);
           if (priorOwnerPath) addRemoval(plan, dirPath, priorOwnerPath);
         }
@@ -1280,7 +1261,7 @@ function buildSourceScanPlans(
  * outside any transaction, producing the per-directory scan records that
  * {@link persistDirRecords} later writes.
  *
- * The per-dir document drain (`drainDirDocuments` × the component's dispatched
+ * The per-dir document drain (`drainDirDocuments` × the bundle's dispatched
  * `adapter.recognize`, F4a M-core-2) is synchronous, but the walk still runs
  * outside `db.transaction()` so the persist pass can be a single synchronous
  * transaction.
@@ -1302,7 +1283,7 @@ async function scanSourceDirs(
   const incompleteSources: IncompleteIndexSource[] = [];
   const seenPaths = new Set<string>();
   const { plans, handoffDirs } = buildSourceScanPlans(db, allSourceEntries, isIncremental, reconcileMissingDirs);
-  reportAdapterSkips(db, config, plans);
+  reportAdapterSkips(db, plans);
 
   const dirRecords: DirRecord[] = [];
   let processedDirs = 0;
@@ -1341,7 +1322,7 @@ async function scanSourceDirs(
   };
 
   for (const plan of plans) {
-    const { currentStashDir, component, adapterId, adapter, dirGroups, removals, walkComplete } = plan;
+    const { currentStashDir, bundle, adapter, dirGroups, removals, walkComplete } = plan;
     processedDirs++;
     reportScanProgress(
       `Processed ${processedDirs}/${allSourceEntries.length} source${allSourceEntries.length === 1 ? "" : "s"}.`,
@@ -1351,18 +1332,15 @@ async function scanSourceDirs(
       for (const dirPath of dirGroups.keys()) seenPaths.add(path.resolve(dirPath));
       const reason = plan.incompleteReason ?? "the scan did not complete";
       incompleteSources.push({
-        bundle: component.id,
-        component: configuredComponentName(config, component.id),
+        bundle: bundle.id,
         path: plan.incompletePath ?? currentStashDir,
         reason,
       });
-      warn(
-        `[index] source "${component.id}" was not scanned completely; preserving its last-known-good rows. ${reason}`,
-      );
+      warn(`[index] source "${bundle.id}" was not scanned completely; preserving its last-known-good rows. ${reason}`);
       continue;
     }
 
-    // Owner ruling 2026-07-21: dispatch each component's DETECTED adapter (§4).
+    // Owner ruling 2026-07-21: dispatch each bundle's DETECTED adapter (§4).
     // The content projection's version is part of the variant: a change to what Markdown bodies index re-projects
     // every directory once instead of keeping the old text for unchanged files.
     const indexVariant = `${adapter.id}@${adapter.version}+content${CONTENT_PROJECTION_VERSION}`;
@@ -1415,10 +1393,10 @@ async function scanSourceDirs(
       }
 
       // F4a M-core-2 (the flip): drain the dir's `IndexDocument` stream via the
-      // component's dispatched `adapter.recognize` (broken workflows dropped-with-
+      // bundle's dispatched `adapter.recognize` (broken workflows dropped-with-
       // warning at the drain layer) and reconstruct the durable `IndexDocument`s.
       drainObserverForTests?.(dirPath, ctxs.length);
-      const drained = drainDirDocuments(adapter, component, ctxs);
+      const drained = drainDirDocuments(adapter, bundle, ctxs);
       if (drained.warnings.length) warnings.push(...drained.warnings);
       generatedCount += drained.entries.length;
       const stash = drained.entries.length > 0 ? { entries: drained.entries } : null;
@@ -1553,7 +1531,7 @@ function persistDirRecords(
   db: Database,
   dirRecords: DirRecord[],
   warnings: string[],
-  bundleByRoot: ReadonlyMap<string, { bundleId: string; componentId: string; adapterId: string }>,
+  bundleByRoot: ReadonlyMap<string, { bundleId: string; adapterId: string }>,
   maxInputTokens: number,
   library: { stashDir: string; sourceDirs: string[]; unresolvedBundleIds: ReadonlySet<string | undefined> },
 ): IndexMoves | undefined {
@@ -1793,7 +1771,7 @@ function persistDirRecords(
 /** The path and durable identity of a drained entry, or why it has none. */
 function identifyEntry(
   dirPath: string,
-  bundle: { bundleId: string; componentId: string; adapterId: string },
+  bundle: { bundleId: string; adapterId: string },
   entry: IndexDocument,
   conceptIdByFile: Map<string, string> | undefined,
 ): { entryPath: string; provenance: EntryProvenance } | { problem: string } {

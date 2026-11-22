@@ -154,7 +154,8 @@ describe("akm bundle add website", () => {
           string,
           {
             website?: { url?: string; maxPages?: number; maxDepth?: number };
-            components?: { main?: { root?: string; adapter?: string; writable?: boolean } };
+            adapter?: string;
+            writable?: boolean;
           }
         >;
       };
@@ -162,11 +163,7 @@ describe("akm bundle add website", () => {
       expect(config.bundles?.["docs-site"]?.website?.url).toBe(normalizedWebsiteUrl);
       expect(config.bundles?.["docs-site"]?.website?.maxPages).toBe(2);
       expect(config.bundles?.["docs-site"]?.website?.maxDepth).toBe(1);
-      expect(config.bundles?.["docs-site"]?.components?.main).toEqual({
-        root: ".",
-        adapter: "website-snapshot",
-        writable: false,
-      });
+      expect(config.bundles?.["docs-site"]).toMatchObject({ adapter: "website-snapshot", writable: false });
 
       expect(parsed.sourceAdded?.stashRoot).toBeDefined();
       const knowledgeFiles = fs.readdirSync(path.join(parsed.sourceAdded?.stashRoot as string, "knowledge")).sort();

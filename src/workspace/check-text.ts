@@ -14,8 +14,9 @@ import path from "node:path";
 import { parseDocument } from "yaml";
 import { lintDocumentText } from "../commands/lint";
 import { classifyAkmFile } from "../core/adapter/adapters/akm-adapter";
-import { detectAdapterId } from "../core/adapter/detect-adapter";
+import { adapterIdOf } from "../core/adapter/detect-adapter";
 import { adapterForId } from "../core/adapter/registry";
+import type { Bundle } from "../core/adapter/types";
 import { normalizeAkmMarkdown } from "../core/asset/akm-markdown";
 import { documentStashDirFor } from "../core/asset/asset-placement";
 import { parseFrontmatterBlock } from "../core/asset/frontmatter";
@@ -53,10 +54,10 @@ function unreadableReason(
     }
   }
   if (taskFinding !== undefined) return { reason: taskFinding };
-  const component = { id: bundle, adapter: "akm", root: scratchRoot, writable: true };
+  const scratchBundle: Bundle = { id: bundle, root: scratchRoot, writable: true };
   const file = buildFileContext(scratchRoot, path.join(scratchRoot, relative));
   const adapter = adapterForId("akm");
-  const drained = adapter ? drainDirDocuments(adapter, component, [file]) : undefined;
+  const drained = adapter ? drainDirDocuments(adapter, scratchBundle, [file]) : undefined;
   if (drained === undefined || drained.entries.length > 0) return null;
   // The scratch folder is not the person's: a path in the reason is the bundle-relative one.
   const reason = (drained.warnings[0] ?? "akm does not index a file here.").split(`${scratchRoot}${path.sep}`).join("");
@@ -76,7 +77,7 @@ export function akmBundleFile(input: { bundle: string; path: string; content: st
     (entry) => entry.registryId === bundle && !entry.unresolved,
   );
   if (!source) throw new UsageError(`Bundle "${bundle}" is disabled or unavailable.`);
-  const adapter = source.adapterId ?? detectAdapterId(source.path);
+  const adapter = adapterIdOf(source);
   if (!anyAdapter && adapter !== "akm")
     throw new UsageError(`akm checks the files of akm bundles; "${bundle}" is not one.`);
   const blocked =

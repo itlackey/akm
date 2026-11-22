@@ -226,7 +226,7 @@ describe("the step", () => {
     writeSandboxConfig({
       defaultBundle: "primary",
       bundles: {
-        primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } },
+        primary: { path: stash(), writable: true, adapter: "akm" },
       },
       connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } },
       harnesses: { claude: {} },
@@ -315,7 +315,7 @@ describe("the step", () => {
   test("a v2 task source that names the engine the conversion renamed is left whole, so a later run reads the old name", async () => {
     writeSandboxConfig({
       defaultBundle: "primary",
-      bundles: { primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } } },
+      bundles: { primary: { path: stash(), writable: true, adapter: "akm" } },
       engines: { lab: { kind: "llm", endpoint: "http://lab:8080/v1/chat/completions", model: "m" } },
       defaults: { llmEngine: "lab" },
     });
@@ -346,8 +346,8 @@ describe("the step", () => {
       bundles: {
         primary: {
           path: stash(),
+          adapter: "akm",
           writable: false,
-          components: { main: { root: ".", adapter: "akm", writable: false } },
         },
       },
     });
@@ -365,7 +365,7 @@ describe("the step", () => {
     writeSandboxConfig({
       defaultBundle: "primary",
       bundles: {
-        primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } },
+        primary: { path: stash(), writable: true, adapter: "akm" },
       },
       engines: {
         lab: { kind: "llm", endpoint: "http://lab:8080/v1/chat/completions", model: "qwen3-32b" },
@@ -390,7 +390,7 @@ describe("the step", () => {
     writeSandboxConfig({
       defaultBundle: "primary",
       bundles: {
-        primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } },
+        primary: { path: stash(), writable: true, adapter: "akm" },
       },
       engines: {
         lab: { kind: "llm", endpoint: "http://lab:8080/v1/chat/completions", model: "qwen3-32b" },
@@ -425,8 +425,8 @@ describe("the step", () => {
       bundles: {
         primary: {
           path: stash(),
+          adapter: "akm",
           writable: false,
-          components: { main: { root: ".", adapter: "akm", writable: false } },
         },
       },
       engines: {
@@ -447,7 +447,7 @@ describe("the step", () => {
     const migrated = JSON.parse(fs.readFileSync(configPath, "utf8"));
     expect(migrated.engines).toBeUndefined();
     migrated.bundles.primary.writable = true;
-    migrated.bundles.primary.components.main = { root: ".", adapter: "akm" };
+    migrated.bundles.primary.adapter = "akm";
     fs.writeFileSync(configPath, JSON.stringify(migrated));
     resetConfigCache();
 
@@ -469,8 +469,8 @@ describe("the step", () => {
       bundles: {
         primary: {
           path: stash(),
+          adapter: "akm",
           writable: false,
-          components: { main: { root: ".", adapter: "akm", writable: false } },
         },
       },
       engines: {
@@ -507,7 +507,7 @@ describe("the step", () => {
     const configPath = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
     const migrated = JSON.parse(fs.readFileSync(configPath, "utf8"));
     migrated.bundles.primary.writable = true;
-    migrated.bundles.primary.components.main = { root: ".", adapter: "akm" };
+    migrated.bundles.primary.adapter = "akm";
     fs.writeFileSync(configPath, JSON.stringify(migrated));
     resetConfigCache();
     const retry = await runMigration({ apply: true });
@@ -519,7 +519,7 @@ describe("the step", () => {
   test("a file rewritten in part keeps the old names for the engine key it could not rewrite", async () => {
     writeSandboxConfig({
       defaultBundle: "primary",
-      bundles: { primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } } },
+      bundles: { primary: { path: stash(), writable: true, adapter: "akm" } },
       engines: {
         lab: { kind: "llm", endpoint: "http://lab:8080/v1/chat/completions", model: "qwen3-32b" },
         default: { kind: "llm", endpoint: "http://old:8080/v1/chat/completions", model: "old-model" },
@@ -557,7 +557,7 @@ describe("the step", () => {
   test("a rewrite that leaves nothing behind forgets the old names, and a file that is only skipped does not", async () => {
     writeSandboxConfig({
       defaultBundle: "primary",
-      bundles: { primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } } },
+      bundles: { primary: { path: stash(), writable: true, adapter: "akm" } },
       engines: { lab: { kind: "llm", endpoint: "http://lab:8080/v1/chat/completions", model: "m" } },
       defaults: { llmEngine: "lab" },
     });
@@ -644,8 +644,8 @@ describe("the step", () => {
     fs.writeFileSync(file, "version: 4\nrun: echo hi\nengine: lab\n");
     configure({
       bundles: {
-        primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } },
-        tasks: { path: alias, components: { main: { root: ".", adapter: "akm-task" } } },
+        primary: { path: stash(), writable: true, adapter: "akm" },
+        tasks: { path: alias, adapter: "akm-task" },
       },
       connections: { default: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } },
       harnesses: {},
@@ -675,8 +675,8 @@ describe("the step", () => {
       semanticSearchMode: "off",
       defaultBundle: "primary",
       bundles: {
-        primary: { path: stash(), components: { main: { root: ".", adapter: "akm" } } },
-        team: { path: root, writable, components: { main: { root: ".", adapter: "akm-workflow", writable } } },
+        primary: { path: stash(), adapter: "akm" },
+        team: { path: root, writable, adapter: "akm-workflow" },
       },
       connections: {
         default: { endpoint: "https://fixture.example.test/v1", models: { fast: "fixture", balanced: "fixture" } },
@@ -741,11 +741,11 @@ describe("the step", () => {
     });
     configure({
       bundles: {
-        primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } },
-        claude: { path: path.join(storage.root, "claude"), components: { main: { root: ".", adapter: "claude" } } },
+        primary: { path: stash(), writable: true, adapter: "akm" },
+        claude: { path: path.join(storage.root, "claude"), adapter: "claude" },
         opencode: {
           path: path.join(storage.root, "opencode"),
-          components: { main: { root: ".", adapter: "opencode" } },
+          adapter: "opencode",
         },
       },
       connections: {
@@ -773,7 +773,7 @@ describe("the step", () => {
     fs.writeFileSync(path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "credentials.json"), "not json");
     writeSandboxConfig({
       defaultBundle: "primary",
-      bundles: { primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } } },
+      bundles: { primary: { path: stash(), writable: true, adapter: "akm" } },
       engines: {
         lab: { kind: "llm", endpoint: "http://lab:8080/v1/chat/completions", model: "m", apiKey: "sk-literal" },
       },
@@ -823,8 +823,8 @@ describe("the step", () => {
     const other = otherBundle();
     writeSandboxConfig({
       bundles: {
-        dormant: { path: path.join(home, "akm"), enabled: false, components: { main: { root: ".", adapter: "akm" } } },
-        active: { path: other.root, components: { main: { root: ".", adapter: "akm" } } },
+        dormant: { path: path.join(home, "akm"), enabled: false, adapter: "akm" },
+        active: { path: other.root, adapter: "akm" },
       },
       connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } },
     });
@@ -845,8 +845,8 @@ describe("the step", () => {
     fs.symlinkSync(stash(), alias, "dir");
     writeSandboxConfig({
       bundles: {
-        dormant: { path: stash(), enabled: false, components: { main: { root: ".", adapter: "akm" } } },
-        active: { path: other.root, components: { main: { root: ".", adapter: "akm" } } },
+        dormant: { path: stash(), enabled: false, adapter: "akm" },
+        active: { path: other.root, adapter: "akm" },
       },
       connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } },
     });
@@ -869,8 +869,8 @@ describe("the step", () => {
       bundles: {
         primary: {
           path: stash(),
+          adapter: "akm",
           writable: false,
-          components: { main: { root: ".", adapter: "akm", writable: false } },
         },
       },
     });

@@ -47,13 +47,8 @@ function configure(kind: BundleKind): CollisionFixture {
     bundles: {
       [bundle]: {
         path: root,
-        components: {
-          main: {
-            root: ".",
-            adapter: kind === "ordinary" ? "akm" : "akm-workflow",
-            writable: true,
-          },
-        },
+        adapter: kind === "ordinary" ? "akm" : "akm-workflow",
+        writable: true,
       },
     },
   });
@@ -116,7 +111,11 @@ describe("workflow source canonical-ref collisions", () => {
     const canonicalConceptId = kind === "ordinary" ? "workflows/collision" : "collision";
 
     for (const ref of fixture.aliases) {
-      const owner = resolveAdapterConceptOwner(fixture.root, adapterId, parseBundleRef(ref).conceptId);
+      const owner = resolveAdapterConceptOwner(
+        { name: "test", path: fixture.root },
+        adapterId,
+        parseBundleRef(ref).conceptId,
+      );
       expect(owner, ref).toMatchObject({
         path: sourcePath,
         conceptId: canonicalConceptId,
@@ -254,11 +253,13 @@ describe("workflow source canonical-ref collisions", () => {
       bundles: {
         primary: {
           path: storage.stashDir,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
+          adapter: "akm",
+          writable: true,
         },
         secondary: {
           path: secondaryRoot,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
+          adapter: "akm",
+          writable: true,
         },
       },
     });

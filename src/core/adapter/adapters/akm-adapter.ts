@@ -232,7 +232,7 @@ const DOCUMENT_JSON_CARRIED_FIELDS = [
  */
 function indexDocumentFromEntry(
   entry: IndexDocument,
-  base: Pick<IndexDocument, "ref" | "bundle" | "component" | "conceptId" | "path" | "hash" | "adapterId" | "type">,
+  base: Pick<IndexDocument, "ref" | "bundle" | "conceptId" | "path" | "hash" | "adapterId" | "type">,
   rendererName: string,
 ): IndexDocument {
   const extras: Record<string, unknown> = { renderer: rendererName };
@@ -351,7 +351,6 @@ function recognize(c: Bundle, file: FileContext): IndexDocument | null {
     {
       ref: `${c.id}//${conceptId}`,
       bundle: c.id,
-      component: c.id,
       conceptId,
       path: file.absPath,
       // Hash over the full raw bytes (incrementality/fingerprints, `types.ts`

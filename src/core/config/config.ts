@@ -22,7 +22,6 @@ import {
 } from "./config-io";
 import { AkmConfigSchema, CURRENT_CONFIG_VERSION } from "./config-schema";
 import {
-  bundleComponentConfig,
   bundleContentRoot,
   bundleContentRoots,
   bundleSourceId,
@@ -41,6 +40,7 @@ import type {
   SourceConfigEntry,
 } from "./config-types";
 import { isOpaqueSchema, resolveSchemaAt } from "./config-walker";
+import { convertBundleComponents } from "./convert-bundle-components";
 import { convertEngineConfig, type EngineTarget } from "./convert-engines";
 import { fileFlatCredentials, writeCredential } from "./credentials";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
@@ -215,7 +215,7 @@ export function loadUserConfig(): AkmConfig {
  * the file that extends it.
  */
 function runConfigFilePipeline(text: string, sourcePath?: string): Record<string, unknown> {
-  return readRetiredEngines(readConfigFile(text, sourcePath), sourcePath);
+  return readRetiredForms(readConfigFile(text, sourcePath), sourcePath);
 }
 
 /**
@@ -300,6 +300,25 @@ function readRetiredEngines(raw: Record<string, unknown>, sourcePath?: string): 
     }. \`akm migrate apply\` rewrites config.json${retiredForm ? "" : " and moves models.json aside"}.${[...notes, ...keyNotes].map((note) => `\n  - ${note}`).join("")}`,
   );
   return config;
+}
+
+/**
+ * `bundles.<name>.components` is retired: a bundle's one component only repeated it. A config in that form is read
+ * with `adapter`, `root` and `writable` on the bundle, in memory, with one warning; `akm migrate apply` writes it back.
+ */
+function readRetiredBundleComponents(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
+  const { config, changed, bundles } = convertBundleComponents(raw);
+  if (!changed) return raw;
+  warnOnce(
+    `config:retired-bundle-components:${sourcePath ?? "inline"}`,
+    `${sourcePath ?? "config.json"} uses the retired bundles.<name>.components form (${bundles.join(", ")}); reading its adapter, root and writable from it. \`akm migrate apply\` rewrites config.json.`,
+  );
+  return config;
+}
+
+/** Every retired form of the file the reader still takes, read as the current one. */
+function readRetiredForms(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
+  return readRetiredBundleComponents(readRetiredEngines(raw, sourcePath), sourcePath);
 }
 
 /** The retired `secret://<name>` credential form; it survives only in {@link readRetiredSecretRefs}. */
@@ -798,16 +817,8 @@ function resolveConfigBundleRefSource(
       "INVALID_CONFIG_FILE",
     );
   }
-  let componentRoot: string | undefined;
-  try {
-    componentRoot = bundleComponentConfig(bundleEntry as BundleConfigEntry)?.root;
-  } catch (err) {
-    throw new ConfigError(
-      `extends "${ref}" names bundle "${bundleId}": ${err instanceof Error ? err.message : String(err)}`,
-      "INVALID_CONFIG_FILE",
-    );
-  }
-  const bundleRoot = bundleContentRoot(bundlePath, componentRoot);
+  const root = typeof bundleEntry.root === "string" ? bundleEntry.root : undefined;
+  const bundleRoot = bundleContentRoot(bundlePath, root);
 
   const resolvedPath = path.resolve(bundleRoot, relativePath);
   const relativeToRoot = path.relative(bundleRoot, resolvedPath);
@@ -1141,6 +1152,7 @@ function editedConfigFile(
   // back byte for byte.
   const body = structuredClone(document);
   applyEdit(body, current, next, unremoved);
+  keepRetiredComponentWritable(body, next);
   // A project the caller names is written whole even when it equals the effective entry: the file's own may hold parts the reader ignores.
   for (const name of writeProjects) {
     const entry = next.projects?.[name];
@@ -1159,6 +1171,21 @@ function editedConfigFile(
 }
 
 /**
+ * A bundle still in the retired `components` form keeps its `writable` there, and the reader takes that one over the
+ * bundle's own: an edit to the bundle's `writable` has to reach it, or the next read gives the old value back.
+ */
+function keepRetiredComponentWritable(body: Record<string, unknown>, next: AkmConfig): void {
+  if (!isPlainObject(body.bundles)) return;
+  for (const [name, entry] of Object.entries(body.bundles)) {
+    const writable = next.bundles?.[name]?.writable;
+    if (writable === undefined || !isPlainObject(entry) || !isPlainObject(entry.components)) continue;
+    for (const component of Object.values(entry.components)) {
+      if (isPlainObject(component) && component.writable !== undefined) component.writable = writable;
+    }
+  }
+}
+
+/**
  * A file still in the retired `engines` form holds `engines` and `defaults`, not
  * the `connections`, `harnesses` and `improve` keys the reader makes of them, so
  * removing one of those is a change the file cannot take: the next load would
@@ -1174,7 +1201,7 @@ function refuseRemovalFromRetiredForm(
   );
   if (fromRetiredForm.length === 0) return;
   throw new UsageError(
-    `Cannot remove ${fromRetiredForm.map((keyPath) => keyPath.join(".")).join(", ")}: it comes from the retired engines form or models.json, which this config.json still reads. ` +
+    `Cannot remove ${fromRetiredForm.map((keyPath) => keyPath.join(".")).join(", ")}: it comes from a retired form (engines, bundles.<name>.components) or models.json, which this config.json still reads. ` +
       "Run `akm migrate apply` to convert the file, then repeat the change.",
   );
 }
@@ -1236,7 +1263,7 @@ export function unusableEntryAt(
   const text = readConfigText(configPath);
   if (text === undefined) return undefined;
   const document = readConfigFile(text, configPath);
-  const localRaw = readRetiredEngines(document, configPath);
+  const localRaw = readRetiredForms(document, configPath);
   const entry = findUnusableEntries(localRaw).find(
     (found) => found.name === name && found.kind === (group === "connections" ? "connection" : "harness"),
   );
@@ -1316,7 +1343,8 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     const plan = planKeyMoves(document, converted, {
       resolveSecretRef: (ref) => resolveSecret(ref, options.resolveFromStore),
     });
-    const localRaw = plan.config;
+    const lifted = convertBundleComponents(plan.config);
+    const localRaw = lifted.config;
     const current = buildEffectiveConfig(localRaw, configPath);
     const next = validateCompleteConfig({ ...current, configVersion: CURRENT_CONFIG_VERSION });
     const body = configWriteBody(localRaw, current, next) as Record<string, unknown>;
@@ -1344,7 +1372,14 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     if (dropsStrategy && improveBody) delete improveBody.strategy;
     // A key in the older flat form is filed only under an endpoint this file itself gives the block.
     const flat = fileFlatCredentials((slot) => documentEndpoint(plan.config, slot), false, plan.moves);
-    const notes = [...converted.notes, ...plan.notes, ...flat.notes];
+    const notes = [
+      ...converted.notes,
+      ...plan.notes,
+      ...flat.notes,
+      ...lifted.bundles.map(
+        (name) => `bundles.${name}.components: its adapter, root and writable are now on the bundle itself.`,
+      ),
+    ];
     if (dropsStrategy)
       notes.push(
         `improve.strategy: "${removedStrategy}" was removed in 0.10, so it is dropped and the default strategy applies; name "default" or "consolidate", or define "${removedStrategy}" under improve.strategies.`,
@@ -1414,7 +1449,7 @@ export function mutateConfig(
       return { config: { ...DEFAULT_CONFIG }, written: false };
     }
     const document = text === undefined ? undefined : readConfigFile(text, configPath);
-    const localRaw = document === undefined ? undefined : readRetiredEngines(document, configPath);
+    const localRaw = document === undefined ? undefined : readRetiredForms(document, configPath);
     const current =
       localRaw === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(localRaw, configPath);
     const mutated = mutate(current);
@@ -1446,7 +1481,7 @@ export async function mutateConfigWithPrecommit<T>(
   try {
     const text = readConfigText(configPath);
     const document = text === undefined ? undefined : readConfigFile(text, configPath);
-    const localRaw = document === undefined ? undefined : readRetiredEngines(document, configPath);
+    const localRaw = document === undefined ? undefined : readRetiredForms(document, configPath);
     const current =
       localRaw === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(localRaw, configPath);
     const mutated = mutate(current);
@@ -1576,7 +1611,6 @@ export function resolveSecret(value: string | undefined, resolveFromStore?: Secr
 
 // Re-export source runtime helpers — implementation lives in config-sources.ts.
 export {
-  bundleComponentConfig,
   bundleContentRoot,
   bundleContentRoots,
   bundleEntryToSourceEntry,

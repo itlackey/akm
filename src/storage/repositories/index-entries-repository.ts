@@ -98,7 +98,6 @@ export function upsertEntry(
     const result = stmts.upsert.get(
       provenance.itemRef,
       provenance.bundleId,
-      provenance.componentId,
       provenance.conceptId,
       provenance.adapterId,
       entry.type,
@@ -167,7 +166,6 @@ const upsertStmtsByDb = new WeakMap<Database, UpsertStmts>();
 // an upsert that omits it (`contentHash` is optional) cannot wipe a scan hash.
 const UPSERT_SET_CLAUSE = `SET
         bundle_id = excluded.bundle_id,
-        component_id = excluded.component_id,
         concept_id = excluded.concept_id,
         adapter_id = excluded.adapter_id,
         type = excluded.type,
@@ -186,10 +184,10 @@ function getUpsertStmts(db: Database): UpsertStmts {
     // ON CONFLICT). Use `.get()` so a single row comes back.
     upsert: db.prepare(`
       INSERT INTO entries (
-        item_ref, bundle_id, component_id, concept_id, adapter_id, type,
+        item_ref, bundle_id, concept_id, adapter_id, type,
         file_path, content_hash, document_json, derived_from, embed_hash
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(item_ref) DO UPDATE ${UPSERT_SET_CLAUSE}
       RETURNING id
     `),
@@ -857,22 +855,18 @@ export function getEntryById(
       entry: IndexDocument;
       itemRef: string;
       bundleId: string;
-      componentId: string;
       conceptId: string;
       adapterId: string;
     }
   | undefined {
   const row = db
-    .prepare(
-      "SELECT file_path, document_json, item_ref, bundle_id, component_id, concept_id, adapter_id FROM entries WHERE id = ?",
-    )
+    .prepare("SELECT file_path, document_json, item_ref, bundle_id, concept_id, adapter_id FROM entries WHERE id = ?")
     .get(id) as
     | {
         file_path: string;
         document_json: string;
         item_ref: string;
         bundle_id: string;
-        component_id: string;
         concept_id: string;
         adapter_id: string;
       }
@@ -891,7 +885,6 @@ export function getEntryById(
     entry,
     itemRef: row.item_ref,
     bundleId: row.bundle_id,
-    componentId: row.component_id,
     conceptId: row.concept_id,
     adapterId: row.adapter_id,
   };

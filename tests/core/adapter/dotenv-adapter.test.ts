@@ -31,12 +31,12 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(): Bundle {
+function bundle(): Bundle {
   return { id: BUNDLE_ID, root: FIXTURE_ROOT, writable: true };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {
-  return dotenvAdapter.recognize(component(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
+  return dotenvAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
 /** Assert none of the value/secret tokens leak into the serialized document. */
@@ -74,7 +74,6 @@ describe("dotenv adapter — recognition golden (env keys only / secret name onl
       expect(doc, `${relPath} must be recognized`).not.toBeNull();
       if (!doc) throw new Error("unreachable");
       expect(doc.adapterId).toBe(expected.adapterId as string);
-      expect(doc.component).toBe(expected.component as string);
       expect(doc.type).toBe(expected.type as string);
       expect(doc.conceptId).toBe(expected.conceptId as string);
       expect(doc.ref).toBe(expected.ref as string);
@@ -142,7 +141,7 @@ describe("dotenv adapter — lint golden (dangerous-env-key, .env-suffix-narrow)
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await dotenvAdapter.validate(component(), changes, ctx);
+    const diags = await dotenvAdapter.validate(bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {
@@ -156,9 +155,9 @@ describe("dotenv adapter — lint golden (dangerous-env-key, .env-suffix-narrow)
       op: "update",
       after: fs.readFileSync(path.join(FIXTURE_ROOT, rel), "utf8"),
     });
-    const dangerous = await dotenvAdapter.validate(component(), [mk("env/dangerous.env")], ctx);
+    const dangerous = await dotenvAdapter.validate(bundle(), [mk("env/dangerous.env")], ctx);
     expect(dangerous.map((d) => d.issue)).toEqual(["dangerous-env-key", "dangerous-env-key"]);
-    const bareSecret = await dotenvAdapter.validate(component(), [mk("secrets/deploy-key")], ctx);
+    const bareSecret = await dotenvAdapter.validate(bundle(), [mk("secrets/deploy-key")], ctx);
     expect(bareSecret).toEqual([]);
   });
 });

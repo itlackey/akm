@@ -41,6 +41,13 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
 }
 
 export function setConfigValue(config: AkmConfig, key: string, rawValue: string): AkmConfig {
+  const [group, bundle, member] = key.split(".");
+  if (group === "bundles" && member === "components") {
+    throw new UsageError(
+      `Config key "${key}" is retired: a bundle has no components. Set bundles.${bundle}.adapter, bundles.${bundle}.root or bundles.${bundle}.writable.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
   const next = configSet(config as unknown as Record<string, unknown>, key, rawValue) as unknown as AkmConfig;
   // A typo in an adapter id is caught as it is typed, not when a bundle is next read.
   if (key === "bundles" || key.startsWith("bundles.")) requireConfiguredAdapters(next);

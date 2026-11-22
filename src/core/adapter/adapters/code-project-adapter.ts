@@ -184,7 +184,6 @@ function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   const doc: IndexDocument = {
     ref: `${c.id}//${conceptId}`,
     bundle: c.id,
-    component: c.id,
     conceptId,
     path: file.absPath,
     hash: hashContent(raw),

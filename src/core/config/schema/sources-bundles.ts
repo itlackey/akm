@@ -86,9 +86,8 @@ export const RegistryConfigEntrySchema = z
 // `location` — mirroring today's source types), an optional `writable`, an optional
 // `registryId` locator (the original registry install id, preserved verbatim so
 // a non-slug-legal id like `github:owner/repo` is not lost when its slug-legal
-// bundle KEY is derived), and an optional single-entry `components` map (the
-// transitional one-component-per-bundle coupling — NOT multi-component
-// machinery). The map KEY is the workspace bundle slug (charset: no
+// bundle KEY is derived), an optional `adapter` and, for a `path` or `git`
+// bundle, an optional `root`. The map KEY is the workspace bundle slug (charset: no
 // `/`, `:`, `.`, `#`, whitespace), validated with {@link isBundleSlug}.
 //
 // `bindings` is not accepted here; the top-level schema rejects it.
@@ -114,15 +113,6 @@ const BundleWebsiteDescriptorSchema = z
   })
   .passthrough();
 
-/** One component of a bundle. Single-entry, transitional. */
-const BundleComponentConfigSchema = z
-  .object({
-    root: z.string().min(1).optional(),
-    adapter: nonEmptyString.optional(),
-    writable: z.boolean().optional(),
-  })
-  .passthrough();
-
 export const BundleConfigEntrySchema = z
   .object({
     // Exactly one source descriptor (enforced in superRefine below):
@@ -130,11 +120,12 @@ export const BundleConfigEntrySchema = z
     git: z.string().min(1).optional(),
     website: BundleWebsiteDescriptorSchema.optional(),
     npm: z.string().min(1).optional(),
-    /**
-     * Where the bundle's adapter finds a bundle that is not a directory (a keyring's name, a vault's name).
-     * The bundle's one component names the adapter.
-     */
+    /** Where the bundle's adapter finds a bundle that is not a directory (a keyring's name, a vault's name). Needs `adapter`. */
     location: z.string().min(1).optional(),
+    /** The adapter that reads the bundle. Absent: detected from its content, then recorded by `akm index`. */
+    adapter: nonEmptyString.optional(),
+    /** The content root inside a `path` or `git` bundle, relative to it. */
+    root: z.string().min(1).optional(),
     /** Symbolic HTTPS bearer credential; resolved only at the Git subprocess boundary. */
     credential: z.string().min(1).optional(),
     writable: z.boolean().optional(),
@@ -145,7 +136,6 @@ export const BundleConfigEntrySchema = z
     // The registry install id when the bundle key was slug-derived from it
     // (e.g. registryId `github:owner/repo` → key `repo`).
     registryId: z.string().min(1).optional(),
-    components: z.record(z.string().min(1), BundleComponentConfigSchema).optional(),
     // Lint rules to skip, per rule, for the assets whose bundle-relative path matches one of the
     // globs (`**` is the whole bundle). A rule name lint does not know is warned about and ignored.
     lint: z.object({ skip: z.record(z.string(), z.array(z.string())).optional() }).optional(),
@@ -193,27 +183,18 @@ export const BundleConfigEntrySchema = z
         message: "git credential must be a $VAR, ${VAR} or ${secrets/<name>} reference",
       });
     }
-    const componentEntries = entry.components ? Object.entries(entry.components) : [];
-    if (entry.components !== undefined && componentEntries.length !== 1) {
+    if (entry.location !== undefined && entry.adapter === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["components"],
-        message: "a bundle components map must contain exactly one component",
+        path: ["adapter"],
+        message: "a location bundle names the adapter that reads it, in `adapter`",
       });
     }
-    const componentEntry = componentEntries[0];
-    if (entry.location !== undefined && componentEntry?.[1].adapter === undefined) {
+    if (entry.root !== undefined && entry.path === undefined && entry.git === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["components"],
-        message: "a location bundle names the adapter that reads it, in its one component's `adapter`",
-      });
-    }
-    if (componentEntry?.[1].writable === true && (entry.website !== undefined || entry.npm !== undefined)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["components", componentEntry[0], "writable"],
-        message: "writable: true is only supported on path, git and location bundle sources",
+        path: ["root"],
+        message: "root is only supported on path and git bundle sources",
       });
     }
   });

@@ -407,7 +407,7 @@ describe("akmTasksSync — schedule drift", () => {
     // A root CLAUDE.md -> AGENTS.md pair is what adapter detection keys on, so
     // pin the adapter: this is about how sync reads the bundle.
     writeSandboxConfig({
-      bundles: { stash: { path: stashDir, components: { main: { root: ".", adapter: "akm", writable: true } } } },
+      bundles: { stash: { path: stashDir, adapter: "akm", writable: true } },
       defaultBundle: "stash",
     });
     const exec = memoryExec();

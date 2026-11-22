@@ -72,7 +72,7 @@ function insertTestEntry(
     db,
     opts?.filePath ?? `/test/dir/${key}.ts`,
     entry,
-    deriveEntryProvenance({ bundleId: "test-bundle", componentId: "test-bundle", adapterId: "akm" }, type, key),
+    deriveEntryProvenance({ bundleId: "test-bundle", adapterId: "akm" }, type, key),
   );
 }
 

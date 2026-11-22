@@ -117,7 +117,7 @@ async function seedBundleWithOneEntry(): Promise<void> {
   writeKnowledgeAsset(storage.stashDir, "hello", "---\ndescription: hello doc\n---\n\n# Hello\n");
   saveConfig({
     semanticSearchMode: "off",
-    bundles: { original: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+    bundles: { original: { path: storage.stashDir, adapter: "akm" } },
     defaultBundle: "original",
     defaultWriteTarget: "original",
   });

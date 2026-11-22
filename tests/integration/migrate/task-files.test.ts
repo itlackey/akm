@@ -283,7 +283,7 @@ describe("the migrator step over configured bundles", () => {
       writeSandboxConfig({
         defaultBundle: "primary",
         bundles: {
-          primary: { path: storage.stashDir, writable: true, components: { main: { root: ".", adapter: "akm" } } },
+          primary: { path: storage.stashDir, writable: true, adapter: "akm" },
         },
       });
       const edited = "version: 2\nschedule: '@hourly'\ncommand: /bin/echo edited late\n";
@@ -322,7 +322,7 @@ describe("the migrator step over configured bundles", () => {
       writeSandboxConfig({
         defaultBundle: "primary",
         bundles: {
-          primary: { path: storage.stashDir, writable: true, components: { main: { root: ".", adapter: "akm" } } },
+          primary: { path: storage.stashDir, writable: true, adapter: "akm" },
         },
       });
 

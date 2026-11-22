@@ -50,8 +50,8 @@ beforeEach(() => {
     semanticSearchMode: "off",
     bundles: {
       stash: { path: storage.stashDir, writable: true },
-      keyring: { location: "akm", components: { main: { adapter: "secret-tool" } } },
-      vault: { location: "team-vault", components: { main: { adapter: "azure-key-vault" } } },
+      keyring: { location: "akm", adapter: "secret-tool" },
+      vault: { location: "team-vault", adapter: "azure-key-vault" },
     },
     defaultBundle: "stash",
   });
@@ -391,7 +391,7 @@ describe("secret manager bundles in the workspace API", () => {
     writeSandboxConfig({
       bundles: {
         stash: { path: storage.stashDir, writable: true },
-        vault: { location: "team-vault", components: { main: { adapter: "azure-key-vault" } }, writable: false },
+        vault: { location: "team-vault", adapter: "azure-key-vault", writable: false },
       },
     });
     await withFakeSecretStores({ vaults: VAULT }, async (stores) => {

@@ -15,6 +15,9 @@
  * upgrade.
  */
 
+// 27: `entries` has no `component_id`, the retired name of a bundle's one component. The writable
+// opener drops the column in place (`dropComponentColumn`,
+// index-schema.ts); embeddings, utility scores and every other row stay.
 // 26: declared links (#935) live in `asset_links`, one row per link, owned by
 // the entry that declares it. The writable opener derives them in place from
 // each entry's stored `document_json` (`migrateToDeclaredLinks`,
@@ -29,14 +32,13 @@
 // 23 and earlier stored a second copy of every indexed field in FTS5's own
 // content shadow tables. `ensureFtsLayout` (index-schema.ts) rebuilds the FTS
 // tables from the stored entries when it finds the older layout.
-export const CANONICAL_INDEX_DB_VERSION = 26;
+export const CANONICAL_INDEX_DB_VERSION = 27;
 
 export const CANONICAL_ENTRY_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS entries (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     item_ref      TEXT NOT NULL UNIQUE,
     bundle_id     TEXT NOT NULL,
-    component_id  TEXT NOT NULL,
     concept_id    TEXT NOT NULL,
     adapter_id    TEXT NOT NULL,
     type          TEXT NOT NULL,
@@ -132,7 +134,6 @@ const REQUIRED_ENTRY_COLUMNS = [
   "id",
   "item_ref",
   "bundle_id",
-  "component_id",
   "concept_id",
   "adapter_id",
   "type",

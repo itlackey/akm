@@ -30,7 +30,7 @@ import type { HealthCheckResult } from "./types";
 export interface TypeDirectoryEntry {
   filePath: string;
   type: string;
-  /** Component root the entry was indexed under; directory intent is read only from inside it. */
+  /** Bundle root the entry was indexed under; directory intent is read only from inside it. */
   root: string;
   /** Owning adapter; only the `akm` adapter declares stash directory rules. */
   adapterId: string;
@@ -39,7 +39,7 @@ export interface TypeDirectoryEntry {
 /**
  * The type the entry's location declares under the `akm` stash rules, derived
  * with the indexer's own directory predicates (see `declaredTypeForPath`).
- * Other adapters, and paths outside the component root, declare nothing.
+ * Other adapters, and paths outside the bundle root, declare nothing.
  */
 function declaredTypeFor(entry: TypeDirectoryEntry): string | undefined {
   if (entry.adapterId !== "akm" || !entry.root) return undefined;

@@ -230,12 +230,12 @@ directly and do not need the index.
 A bundle can be one keyring of the desktop's Secret Service (KWallet,
 GNOME Keyring) or one Azure Key Vault, in place of a directory. Its config
 entry names the keyring or vault in `location` and the adapter that reads it
-in its component:
+in `adapter`:
 
 ```json
 "bundles": {
-  "keyring": { "location": "akm", "components": { "main": { "adapter": "secret-tool" } } },
-  "vault": { "location": "team-vault", "components": { "main": { "adapter": "azure-key-vault" } } }
+  "keyring": { "adapter": "secret-tool", "location": "akm" },
+  "vault": { "adapter": "azure-key-vault", "location": "team-vault" }
 }
 ```
 

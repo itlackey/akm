@@ -166,13 +166,8 @@ describe("re-embedding follows the embedded input, not the whole search text", (
     const db = openIndexDatabase();
     try {
       const installation = deriveInstallations([{ path: storage.stashDir, writable: true }])[0];
-      const component = installation?.components[0];
-      if (!installation || !component) throw new Error("failed to derive a test bundle installation");
-      const provenance = deriveEntryProvenance(
-        { bundleId: installation.id, componentId: component.id, adapterId: installation.adapterId },
-        "knowledge",
-        "edge",
-      );
+      if (!installation) throw new Error("failed to derive a test bundle installation");
+      const provenance = deriveEntryProvenance({ bundleId: installation.id, adapterId: "akm" }, "knowledge", "edge");
       const filePath = path.join(storage.stashDir, "knowledge", "edge.md");
       // The search text is `edge <content>`; a 10-token cap embeds its first 40 characters.
       const capTokens = 10;

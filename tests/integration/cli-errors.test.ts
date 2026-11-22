@@ -834,7 +834,7 @@ describe("S11: sectioned root help", () => {
   });
 
   test("akm bundle add --help lists every registry adapter id in --adapter's description (#909)", () => {
-    // Regression: there was no way to discover the valid `components.*.adapter`
+    // Regression: there was no way to discover the valid `bundles.<name>.adapter`
     // names from the CLI at all (`akm bundle add --help` named no `--adapter`
     // flag, let alone a registry listing). RED on old code: no `--adapter` flag
     // existed, so none of these assertions held.

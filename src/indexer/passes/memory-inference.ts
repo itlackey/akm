@@ -41,7 +41,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import {
   parseFrontmatter,
@@ -474,7 +474,7 @@ async function runMemoryInferencePassBody(
     warn("memory inference: skipped — no default bundle among the sources, so there is no write target");
     return completeResult();
   }
-  if ((primary.adapterId ?? detectAdapterId(primary.path)) !== "akm") {
+  if (adapterIdOf(primary) !== "akm") {
     warn(`memory inference: skipped — the default bundle at ${primary.path} is not an akm bundle`);
     return completeResult();
   }

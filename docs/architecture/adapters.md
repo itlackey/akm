@@ -28,7 +28,7 @@ is described in [Architecture: Connections and Harnesses](architecture.md#connec
 Each bundle root is owned by exactly **one** adapter, decided once at
 install/index time:
 
-1. If the bundle's config entry sets `components.<id>.adapter` explicitly,
+1. If the bundle's config entry sets `adapter` explicitly,
    that adapter wins — no detection runs.
 2. Otherwise, every built-in adapter's `looksLikeRoot(root)` probe runs in a
    **fixed order**, most-specific markers first. The first probe that
@@ -193,12 +193,12 @@ is computable in closed form, and no bundle walk is needed.
 secret manager's command-line client (`adapters/secret-client-shared.ts`).
 The bundle holds secrets only, as the entries `secrets/<name>`, the ref a
 secret file has in a directory bundle, so the rest of akm does not tell them
-apart. A bundle names the adapter in its component and the keyring or vault
+apart. A bundle names the adapter in `adapter` and the keyring or vault
 in `location`:
 
 ```json
-"keyring": { "location": "akm", "components": { "main": { "adapter": "secret-tool" } } },
-"vault": { "location": "team-vault", "components": { "main": { "adapter": "azure-key-vault" } } }
+"keyring": { "adapter": "secret-tool", "location": "akm" },
+"vault": { "adapter": "azure-key-vault", "location": "team-vault" }
 ```
 
 | | `secret-tool` | `azure-key-vault` |
@@ -330,7 +330,7 @@ they actually work:
   non-empty list.
 - **`generic-files` is the only adapter with no auto-detection at all.**
   `looksLikeRoot` always returns `false`; a bundle only gets this adapter
-  through an explicit `components.<id>.adapter: "generic-files"` override.
+  through an explicit `adapter: "generic-files"` override.
 
 ---
 

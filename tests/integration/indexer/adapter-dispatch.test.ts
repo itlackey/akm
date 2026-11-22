@@ -4,10 +4,10 @@
 
 /**
  * Adapter dispatch through the PRODUCTION index path (owner ruling 2026-07-21):
- * the live indexer's per-dir drain now resolves `adapterForId(component.adapter)`
- * per component instead of hardcoding the `akm` adapter (spec §4 / §14.2).
+ * the live indexer's per-dir drain now resolves `adapterForId(bundle.adapter)`
+ * per bundle instead of hardcoding the `akm` adapter (spec §4 / §14.2).
  *
- *   1. A component whose DETECTED adapter is `llm-wiki` gets recognized by the
+ *   1. A bundle whose DETECTED adapter is `llm-wiki` gets recognized by the
  *      llm-wiki adapter — the persisted entries carry llm-wiki's OWN open types
  *      (`wiki-source`/`concept`/`entity`/…), which the `akm` adapter would NEVER
  *      emit. This is the regression the completion fixes: before dispatch, the
@@ -17,7 +17,7 @@
  *      is the akm regression net; this pins the dispatch default stays `akm`).
  *   3. Unknown-adapter-id skip contract (§4): `adapterForId` returns `undefined`
  *      for an unknown id — the exact condition the production loop keys on to skip
- *      the component with a warning. (The condition is unreachable via the current
+ *      the bundle with a warning. (The condition is unreachable via the current
  *      probe-only `deriveInstallations`, which only ever yields a built-in id or
  *      the `akm` fallback; the branch is defensive for the future config-driven
  *      adapter id, so it is pinned at the `adapterForId` contract level.)
@@ -74,7 +74,7 @@ function freshDb(): void {
   }
 }
 
-describe("indexer dispatch — a detected llm-wiki component is recognized by the llm-wiki adapter", () => {
+describe("indexer dispatch — a detected llm-wiki bundle is recognized by the llm-wiki adapter", () => {
   let cleanup: Cleanup = () => {};
   let rows: Row[] = [];
 

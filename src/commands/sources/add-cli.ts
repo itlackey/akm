@@ -4,6 +4,7 @@
 
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineJsonCommand, output } from "../../cli/shared";
+import { adapterIds } from "../../core/adapter/registry";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";
@@ -58,8 +59,7 @@ export const addCommand = defineJsonCommand({
     name: { type: "string", description: "Human-friendly name for the source" },
     adapter: {
       type: "string",
-      description:
-        "Component adapter for a local directory: website-snapshot, agent-skills, claude, opencode, dotenv, akm-workflow, akm-task, llm-wiki, akm, okf, generic-files, code-project",
+      description: `Adapter for a local directory: ${adapterIds().join(", ")}`,
     },
     writable: {
       type: "boolean",

@@ -10,7 +10,7 @@
 
 import path from "node:path";
 import { akmLint } from "../commands/lint";
-import { detectAdapterId } from "../core/adapter/detect-adapter";
+import { adapterIdOf } from "../core/adapter/detect-adapter";
 import { type AkmConfig, loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { inspectWriteTarget } from "../core/write-source";
@@ -22,7 +22,7 @@ import { interactive } from "./lease";
 function akmBundles(config: AkmConfig, bundle?: string) {
   return resolveSourceEntries(undefined, config).flatMap((source) => {
     if (!source.registryId || source.unresolved || (bundle !== undefined && source.registryId !== bundle)) return [];
-    return (source.adapterId ?? detectAdapterId(source.path)) === "akm" ? [{ name: source.registryId, source }] : [];
+    return adapterIdOf(source) === "akm" ? [{ name: source.registryId, source }] : [];
   });
 }
 

@@ -56,16 +56,11 @@ describe("generateEmbeddingsForDb: throughput line sums the capped text actually
 
   function seedEntries(db: Database, texts: string[]): void {
     const installation = deriveInstallations([{ path: storage.stashDir, writable: true }])[0];
-    const component = installation?.components[0];
-    if (!installation || !component) throw new Error("failed to derive a test bundle installation");
+    if (!installation) throw new Error("failed to derive a test bundle installation");
     texts.forEach((text, i) => {
       const name = `entry-${i}`;
       const entry = { name, type: "memories", filename: `${name}.md`, content: text };
-      const provenance = deriveEntryProvenance(
-        { bundleId: installation.id, componentId: component.id, adapterId: installation.adapterId },
-        "memories",
-        name,
-      );
+      const provenance = deriveEntryProvenance({ bundleId: installation.id, adapterId: "akm" }, "memories", name);
       upsertEntry(db, `${storage.stashDir}/memories/${name}.md`, entry, provenance);
     });
   }

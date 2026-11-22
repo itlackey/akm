@@ -11,7 +11,7 @@
  * the package (`<name>/reference/FORMS.md`) are part of the item, not standalone
  * concepts (item-scoped incrementality). The SKILL.md codec is shared
  * with claude/opencode as functions; this adapter differs in that the
- * package dir sits directly under the component root (no `skills/` prefix) and
+ * package dir sits directly under the bundle root (no `skills/` prefix) and
  * that `validate` enforces the FULL Agent Skills contract.
  *
  * RECOGNITION ≠ VALIDATION: an invalid skill (bad name charset, over-long
@@ -29,7 +29,7 @@
  *   - `missing-skill-md` — a package dir with no SKILL.md (edge case; git cannot
  *     commit an empty dir, so it is covered by a directory-level check, not a
  *     fixture). Implemented by {@link missingManifestDiagnostics}, which scans
- *     the component root through `ValidateContext.list` — the change-set loop
+ *     the bundle root through `ValidateContext.list` — the change-set loop
  *     cannot reach it, because a change is always a file and a manifest-less
  *     package contributes no SKILL.md change (issue #774).
  *
@@ -54,8 +54,6 @@ import { DirectoryAdapterBase } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { hashContent, nonEmptyString, readTags } from "./shared";
 
-/** A skills collection is a single-component bundle; its one component is `main`. */
-const COMPONENT_ID = "main";
 /** The skill manifest basename (the item marker). */
 const SKILL_MANIFEST = "SKILL.md";
 /** Agent Skills hard limits. */
@@ -95,7 +93,6 @@ function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   const doc: IndexDocument = {
     ref: `${c.id}//${pkg.conceptId}`,
     bundle: c.id,
-    component: COMPONENT_ID,
     conceptId: pkg.conceptId,
     path: file.absPath,
     hash: hashContent(raw),
@@ -142,7 +139,7 @@ function skillFieldDiagnostics(relPath: string, dirName: string, data: Record<st
 
 /**
  * How deep below a candidate package directory the manifest probe looks. Agent
- * Skills packages sit at the component root (`<name>/SKILL.md`), occasionally
+ * Skills packages sit at the bundle root (`<name>/SKILL.md`), occasionally
  * one group level down (`<group>/<name>/SKILL.md`) — this bound keeps a deep
  * resource tree (a package's `reference/`, `assets/`, …) from turning the lint
  * sweep into a full recursive walk.
@@ -207,7 +204,7 @@ async function scanPackageCandidate(
  * directory carrying resources but no manifest contributes nothing the
  * change-loop can see, and the check the lint golden's `missingSkillMd` edge
  * case names would be unreachable. This scans the
- * component root through {@link ValidateContext.list} instead, so the case is
+ * bundle root through {@link ValidateContext.list} instead, so the case is
  * actually reported.
  *
  * A package's own resource dirs (`pdf-processing/reference/`) are part of the

@@ -70,12 +70,8 @@ export function withPrimaryBundle(config: AkmConfig, stashDir: string): AkmConfi
   const key =
     bundleKeyForContentRoot(config, path.resolve(stashDir)) ??
     deriveBundleId(undefined, stashDir, new Set(Object.keys(bundles)));
-  bundles[key] = {
-    ...bundles[key],
-    path: stashDir,
-    writable: true,
-    components: { main: { root: ".", adapter: "akm", writable: true } },
-  };
+  const { root: _root, ...existing } = bundles[key] ?? {};
+  bundles[key] = { ...existing, path: stashDir, writable: true, adapter: "akm" };
   return { ...config, bundles, defaultBundle: key };
 }
 

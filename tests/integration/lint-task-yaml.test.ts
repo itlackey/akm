@@ -48,7 +48,7 @@ function writeTask(stashDir: string, relPath: string, content: string): string {
   return full;
 }
 
-function component(root: string): Bundle {
+function bundle(root: string): Bundle {
   return { id: "fixture", root, writable: true };
 }
 
@@ -156,7 +156,7 @@ describe("akm adapter validate() — malformed task YAML (issue #760)", () => {
     writeTask(storage.stashDir, "broken.yml", MALFORMED_TASK);
 
     const diagnostics = await akmAdapter.validate(
-      component(storage.stashDir),
+      bundle(storage.stashDir),
       [{ path: "tasks/broken.yml", op: "update" }],
       createValidateContext({ root: storage.stashDir }),
     );
@@ -176,7 +176,7 @@ describe("akm-task adapter validate() — malformed task YAML (issue #760)", () 
     fs.writeFileSync(path.join(root, "broken.yml"), MALFORMED_TASK, "utf8");
 
     const diagnostics = await akmTaskAdapter.validate(
-      component(root),
+      bundle(root),
       [{ path: "broken.yml", op: "update" }],
       createValidateContext({ root }),
     );
@@ -192,7 +192,7 @@ describe("akm-task adapter validate() — malformed task YAML (issue #760)", () 
     fs.writeFileSync(path.join(root, "misnamed.yaml"), VALID_TASK, "utf8");
 
     const diagnostics = await akmTaskAdapter.validate(
-      component(root),
+      bundle(root),
       [{ path: "misnamed.yaml", op: "update" }],
       createValidateContext({ root }),
     );

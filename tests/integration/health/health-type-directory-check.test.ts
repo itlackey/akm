@@ -37,7 +37,7 @@ function setUpStash(): void {
   writeSandboxConfig({
     semanticSearchMode: "off",
     defaultBundle: "fixture",
-    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+    bundles: { fixture: { path: storage.stashDir, adapter: "akm" } },
   });
 }
 

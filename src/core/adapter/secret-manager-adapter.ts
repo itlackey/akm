@@ -136,7 +136,6 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     return {
       ref: `${b.id}//${entry.relPath}`,
       bundle: b.id,
-      component: "main",
       conceptId: entry.relPath,
       // An entry is its name: an unchanged listing rewrites no row.
       hash: hashContent(entry.relPath),

@@ -150,6 +150,15 @@ function dropVecMirror(db: Database): void {
 }
 
 /**
+ * Layout 27 drops `entries.component_id`. `NOT NULL`, so a table that still has it takes none of this release's
+ * inserts. One statement, in the caller's transaction; every row, vector and score stays.
+ */
+function dropComponentColumn(db: Database): void {
+  if (!tableExists(db, "entries") || !tableHasColumn(db, "entries", "component_id")) return;
+  db.exec("ALTER TABLE entries DROP COLUMN component_id");
+}
+
+/**
  * Layout 25 keeps a hash of each entry's embedding input (`embed_hash`)
  * instead of the text (`search_text`, layout 24 and earlier); the text is
  * derived from `document_json` when the entry is embedded. The hash is taken
@@ -267,6 +276,7 @@ function applySchema(db: Database): void {
   if (storedVersion > DB_VERSION) throw newerIndexLayoutError(storedVersion);
 
   ensureEntriesLayout(db);
+  dropComponentColumn(db);
 
   const hadFragmentSource = tableExists(db, "entry_fragments");
   db.exec(CANONICAL_ENTRY_SCHEMA_SQL);

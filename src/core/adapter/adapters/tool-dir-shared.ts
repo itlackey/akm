@@ -11,7 +11,7 @@
  * `agents/*.md` → `agent`, `skills/<name>/SKILL.md` → `skill` (item = the dir).
  * They differ only in two parameters carried on {@link ToolDirLayout}:
  *   - the instruction basename + its concept id,
- *   - the adapter id + component id.
+ *   - the adapter id.
  *
  * The SKILL.md codec is shared with the `agent-skills` adapter as functions:
  * a skill's conceptId is its DIRECTORY, and its `name` is the
@@ -70,8 +70,6 @@ const SKILL_MANIFEST = "SKILL.md";
 /** The per-adapter tool-dir parameters. */
 export interface ToolDirLayout {
   adapterId: string;
-  /** PROVENANCE component id emitted on every doc (".claude" / ".opencode"). */
-  componentId: string;
   /** Root instruction basename (CLAUDE.md / AGENTS.md). */
   instructionFile: string;
   /** conceptId for the root instruction file (CLAUDE / AGENTS). */
@@ -96,7 +94,7 @@ function isReserved(base: string): boolean {
   return RESERVED_FILES.has(base.toLowerCase());
 }
 
-/** Classify one component-root-relative file into a tool-dir `type` + conceptId, or abstain (null). */
+/** Classify one bundle-root-relative file into a tool-dir `type` + conceptId, or abstain (null). */
 function classify(relPath: string, layout: ToolDirLayout): ToolDirClassification | null {
   const posix = toPosix(relPath);
   const segs = posix.split("/").filter((s) => s.length > 0);
@@ -148,7 +146,6 @@ export function recognizeToolDir(layout: ToolDirLayout, c: Bundle, file: FileCon
   const doc: IndexDocument = {
     ref: `${c.id}//${cls.conceptId}`,
     bundle: c.id,
-    component: layout.componentId,
     conceptId: cls.conceptId,
     path: file.absPath,
     hash: hashContent(raw),

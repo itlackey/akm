@@ -51,7 +51,6 @@ function seedIndexBundles(bundleIds: string[]): void {
         {
           itemRef: `${bundleId}//${conceptId}`,
           bundleId,
-          componentId: bundleId,
           conceptId,
           adapterId: "akm",
         },

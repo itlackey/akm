@@ -6,51 +6,28 @@
  * `deriveInstallations`.
  *
  * Bridges the `SearchSource[]` model (the live indexer's source list,
- * `search-source.ts`) onto the durable `BundleInstallation[]` /
- * `Bundle[]` model. Called from the indexer
+ * `search-source.ts`) onto the durable `Bundle[]` model. Called from the indexer
  * (provenance derivation), the proposal repository, and written-asset
  * indexing.
  *
- * Per source → one installation:
- *   - `id`       = `source.registryId` ?? a deterministic slug of `source.path`
- *                  (the `<bundle>` prefix of every ref this installation emits).
- *                  Slugs are made unique WITHIN a derivation batch
- *                  by appending a short path-hash suffix on collision, so two
- *                  sources sharing a basename never mint the same bundle id.
- *   - components = ONE component for the current single-root akm layout
- *                  `{ id, root: source.path }`. The
- *                  akm layout's type dirs (`knowledge/`, `skills/`, …) are NOT
- *                  separate components — they are type-derived leading path
- *                  segments of the conceptId within the one component.
+ * Per source → one bundle:
+ *   - `id`   = `source.registryId` ?? a deterministic slug of `source.path`
+ *              (the `<bundle>` prefix of every ref its adapter emits). Slugs are
+ *              made unique WITHIN a derivation batch by appending a short
+ *              path-hash suffix on collision, so two sources sharing a basename
+ *              never mint the same bundle id.
+ *   - `root` = `source.path`. The akm layout's type dirs (`knowledge/`,
+ *              `skills/`, …) are type-derived leading path segments of the
+ *              conceptId within the one bundle.
  *
- * ── The component id == the bundle id (transitional coupling) ──
- *
- * The `akm` adapter's `recognize` derives an item's ref prefix from the
- * component it is handed (`ref = ${c.id}//${conceptId}`, `akm-adapter.ts`), so
- * for the single-component akm layout the component id MUST equal the
- * installation/bundle id for refs to be `bundle//conceptId`. This mirrors the
- * `akm-adapter.test.ts` convention (`component({ id: BUNDLE_ID })`). Splitting
- * component-provenance from the bundle prefix (recognize learning the bundle
- * from the installation) is a downstream contract refinement — nothing in the
- * live path reads `IndexDocument.component` as distinct from `bundle` today.
- *
- * ── Adapter selection (ordered probe) ──
- *
- * The adapter is chosen by the ordered `looksLikeRoot` probe over the built-in
- * adapters (`getAdapters()`), first match wins. The registry is now a STATIC
- * FROZEN map populated at module load, so this probe runs in
- * production with the full 11-family set — no registration call is required
- * first. Array order (`BUILTIN_ADAPTERS`) is the probe precedence, most-specific
- * first, so a `.claude`/dotenv/wiki root is claimed by its tight probe before
- * the loose `akm` stash-shape probe.
- *
- * When NO adapter's probe fires (an empty or not-yet-materialized root), the
- * fallback is **`akm`** (see {@link FALLBACK_ADAPTER_ID}), preserving workspace
- * root behavior. Explicit configured ownership always wins over probing.
+ * The adapter that reads a bundle is not part of it: {@link adapterIdOf}
+ * (`core/adapter/detect-adapter.ts`) is the one place that says which, the
+ * configured id or else the ordered `looksLikeRoot` probe over the built-in
+ * adapters (`getAdapters()`, most specific first), falling back to `akm` when no
+ * probe fires (an empty or not-yet-materialized root).
  */
 
-import { detectAdapterId } from "../core/adapter/detect-adapter";
-import type { BundleInstallation } from "../core/adapter/types";
+import type { Bundle } from "../core/adapter/types";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
 import { deriveBundleId, deriveBundleIds, slugForPath } from "../core/bundle-id";
 import { isSourceWriteActivated } from "../core/write-source";
@@ -60,70 +37,29 @@ import type { SearchSource } from "./search/search-source";
 export { deriveBundleId, deriveBundleIds, slugForPath };
 
 /**
- * The no-probe-match fallback adapter id.
- *
- * The status-quo-preserving default:
- *
- *  - Behavior discipline: the AKM workspace root's own indexing
- *    MUST stay classified `akm`. In this transitional model there is no
- *    depends on either explicit adapter configuration, `akm.looksLikeRoot`
- *    firing (type dirs / `.stash` present), or this fallback. A genuinely empty
- *    root fires no probe; `akm` keeps the implicit workspace root correct.
- *  - Status quo: before the registry was wired, `getAdapters()` was empty in
- *    production so EVERY source fell back here — this preserves that exact
- *    fallback value while the probe now genuinely classifies the non-akm shapes.
+ * Derive the durable `Bundle[]` from the transitional `SearchSource[]`. Order is
+ * preserved (source priority = bundle priority). Bundle ids are unique within the
+ * returned batch.
  */
-const FALLBACK_ADAPTER_ID = "akm";
-
-/**
- * Resolve the adapter id for a component root via the ordered `looksLikeRoot`
- * probe, first match wins; falls back to `akm` when no probe fires.
- */
-export { detectAdapterId } from "../core/adapter/detect-adapter";
-
-/**
- * Derive the durable `BundleInstallation[]` from the transitional
- * `SearchSource[]`. Order is preserved (source priority = installation
- * priority). Bundle ids are unique within the returned batch.
- */
-export function deriveInstallations(sources: SearchSource[]): BundleInstallation[] {
+export function deriveInstallations(sources: SearchSource[]): Bundle[] {
   const ids = deriveBundleIds(sources);
-  const installations: BundleInstallation[] = [];
-
-  for (const [index, source] of sources.entries()) {
+  return sources.map((source, index) => ({
     // D-R5 rule 1: when the source carries its config bundle key (a slug-legal
-    // registryId), that key IS the installation id — equal by construction to
-    // this derivation. A non-slug-legal registryId slugs from the path instead.
-    const id = ids[index] as string;
-
-    const writable = isSourceWriteActivated(source);
-    const adapterId = source.adapterId ?? detectAdapterId(source.path, FALLBACK_ADAPTER_ID);
-
-    installations.push({
-      id,
-      adapterId,
-      components: [
-        {
-          // Single-component akm layout: the component id == the bundle id so
-          // the adapter's `ref = ${c.id}//${conceptId}` yields `bundle//…`.
-          id,
-          root: source.path,
-          writable,
-          ...(source.location !== undefined ? { location: source.location } : {}),
-        },
-      ],
-    });
-  }
-
-  return installations;
+    // registryId), that key IS the bundle id — equal by construction to this
+    // derivation. A non-slug-legal registryId slugs from the path instead.
+    id: ids[index] as string,
+    root: source.path,
+    writable: isSourceWriteActivated(source),
+    ...(source.location !== undefined ? { location: source.location } : {}),
+  }));
 }
 
-/** Canonical bundle ids whose configured component policy permits mutation. */
+/** Canonical bundle ids whose configured policy permits mutation. */
 export function deriveWritableBundleIds(sources: SearchSource[]): Set<string> {
   return new Set(
     deriveInstallations(sources)
-      .filter((installation) => installation.components.some((component) => component.writable === true))
-      .map((installation) => installation.id),
+      .filter((bundle) => bundle.writable)
+      .map((bundle) => bundle.id),
   );
 }
 
@@ -136,7 +72,7 @@ export function deriveWritableBundleIds(sources: SearchSource[]): Set<string> {
  * populate item_ref identically (F4a M-core-2 item 5 — no NULL-item_ref rows).
  */
 export function deriveEntryProvenance(
-  bundle: { bundleId: string; componentId: string; adapterId: string },
+  bundle: { bundleId: string; adapterId: string },
   type: string,
   name: string,
   /**
@@ -151,7 +87,6 @@ export function deriveEntryProvenance(
   return {
     itemRef: `${bundle.bundleId}//${conceptId}`,
     bundleId: bundle.bundleId,
-    componentId: bundle.componentId,
     conceptId,
     adapterId: bundle.adapterId,
   };

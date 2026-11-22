@@ -28,12 +28,12 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(): Bundle {
+function bundle(): Bundle {
   return { id: BUNDLE_ID, root: FIXTURE_ROOT, writable: true };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {
-  return agentSkillsAdapter.recognize(component(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
+  return agentSkillsAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
 const ctx: ValidateContext = {
@@ -67,7 +67,6 @@ describe("agent-skills adapter — recognition golden (recognition ≠ validatio
       expect(doc, `${relPath} must be recognized`).not.toBeNull();
       if (!doc) throw new Error("unreachable");
       expect(doc.adapterId).toBe(expected.adapterId as string);
-      expect(doc.component).toBe(expected.component as string);
       expect(doc.type).toBe(expected.type as string);
       expect(doc.conceptId).toBe(expected.conceptId as string);
       expect(doc.ref).toBe(expected.ref as string);
@@ -104,7 +103,7 @@ describe("agent-skills adapter — lint golden (Agent Skills §4.5 hard rules)",
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await agentSkillsAdapter.validate(component(), changes, ctx);
+    const diags = await agentSkillsAdapter.validate(bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {
@@ -118,11 +117,11 @@ describe("agent-skills adapter — lint golden (Agent Skills §4.5 hard rules)",
       op: "update",
       after: fs.readFileSync(path.join(FIXTURE_ROOT, rel), "utf8"),
     });
-    const bad = await agentSkillsAdapter.validate(component(), [mk("Data_Analysis/SKILL.md")], ctx);
+    const bad = await agentSkillsAdapter.validate(bundle(), [mk("Data_Analysis/SKILL.md")], ctx);
     expect(bad.map((d) => d.issue)).toEqual(["skill-name-invalid"]);
-    const overlong = await agentSkillsAdapter.validate(component(), [mk("overlong-summary/SKILL.md")], ctx);
+    const overlong = await agentSkillsAdapter.validate(bundle(), [mk("overlong-summary/SKILL.md")], ctx);
     expect(overlong.map((d) => d.issue)).toEqual(["skill-description-too-long"]);
-    const clean = await agentSkillsAdapter.validate(component(), [mk("pdf-processing/SKILL.md")], ctx);
+    const clean = await agentSkillsAdapter.validate(bundle(), [mk("pdf-processing/SKILL.md")], ctx);
     expect(clean).toEqual([]);
   });
 });

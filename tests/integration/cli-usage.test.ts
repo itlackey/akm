@@ -49,7 +49,7 @@ test("no command prints the store's instance id: not the usage report, and not i
 test("show records the type of the asset it showed, and nothing of its ref", () => {
   const storage = sandbox();
   writeSandboxConfig({
-    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+    bundles: { fixture: { path: storage.stashDir, adapter: "akm" } },
   });
   fs.mkdirSync(path.join(storage.stashDir, "knowledge"), { recursive: true });
   fs.writeFileSync(path.join(storage.stashDir, "knowledge/private-guide.md"), "# Guide\n\nPRIVATE_CONTENT\n");
@@ -65,7 +65,7 @@ test("show records the type of the asset it showed, and nothing of its ref", () 
 test("run records one invocation with its resolved asset type and redacted asset inputs", () => {
   const storage = sandbox();
   writeSandboxConfig({
-    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+    bundles: { fixture: { path: storage.stashDir, adapter: "akm" } },
   });
   fs.mkdirSync(path.join(storage.stashDir, "tasks"), { recursive: true });
   fs.writeFileSync(
@@ -332,7 +332,7 @@ test("writer contention has a bounded fail-open budget", () => {
 test("run resolves colliding asset inputs against its selected executor in details and aggregates", () => {
   const storage = sandbox();
   writeSandboxConfig({
-    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+    bundles: { fixture: { path: storage.stashDir, adapter: "akm" } },
   });
   fs.mkdirSync(path.join(storage.stashDir, "tasks"), { recursive: true });
   fs.mkdirSync(path.join(storage.stashDir, "workflows"), { recursive: true });
@@ -404,7 +404,7 @@ Execute without a model.
 test("unsupported memory and session run attempts retain their resolved type", () => {
   const storage = sandbox();
   writeSandboxConfig({
-    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+    bundles: { fixture: { path: storage.stashDir, adapter: "akm" } },
   });
   for (const [directory, type] of [
     ["memories", "memory"],

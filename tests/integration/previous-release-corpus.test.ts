@@ -343,11 +343,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
               upgraded,
               "/fixture/stash/knowledge/new-note.md",
               entry,
-              deriveEntryProvenance(
-                { bundleId: "stash", componentId: "stash", adapterId: "akm" },
-                entry.type,
-                entry.name,
-              ),
+              deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, entry.type, entry.name),
             );
             expect(upgraded.prepare("SELECT item_ref FROM entries").all()).toEqual([
               { item_ref: "stash//knowledge/new-note" },
@@ -1102,7 +1098,7 @@ describe("previous-release corpus — leftover improve.strategies['graph-refresh
 describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () => {
   const OPENPALM_DIR = path.join(FIXTURES_DIR, "openpalm-consumer");
 
-  test("OpenPalm's config.json shape (bundles + one-component-per-bundle) parses without throwing", () => {
+  test("OpenPalm's config.json shape (bundles, in the retired components form) parses without throwing", () => {
     const text = fs.readFileSync(path.join(OPENPALM_DIR, "config.json"), "utf8");
     let config: ReturnType<typeof parseAndValidateConfigText> | undefined;
     expect(() => {
@@ -1110,6 +1106,9 @@ describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () 
     }).not.toThrow();
     expect(config?.defaultBundle).toBe("openpalm");
     expect(config?.bundles?.openpalm?.path).toBe("/srv/openpalm/stash");
+    // The retired `components` form is read as the flat bundle: its adapter and writable are on the bundle.
+    expect(config?.bundles?.openpalm).toMatchObject({ adapter: "akm", writable: true });
+    expect(config?.bundles?.openpalm).not.toHaveProperty("components");
   });
 
   test("OpenPalm's `uses:`/`with:` task source v4 file (builtin command target) parses without throwing", () => {

@@ -13,6 +13,7 @@ import path from "node:path";
 import { getStringArg, PROJECT_ARG } from "../../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
 import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
+import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { compareCodePoints } from "../../core/common";
@@ -103,17 +104,16 @@ export function akmRules(input: {
   const bundles: string[] = [];
   const found: Array<RuleItem & { shared: boolean; durableRef: string }> = [];
   for (const source of new Set(wanted)) {
-    const installation = installations[sources.indexOf(source)];
-    const component = installation?.components[0];
-    if (!component || installation?.adapterId !== "akm" || source.unresolved) continue;
-    bundles.push(component.id);
+    const bundle = installations[sources.indexOf(source)];
+    if (!bundle || adapterIdOf(source) !== "akm" || source.unresolved) continue;
+    bundles.push(bundle.id);
     const files = walkedFiles(
-      component.root,
-      walkStash(path.join(component.root, "rules"), "rule").flatMap((group) => group.files),
+      bundle.root,
+      walkStash(path.join(bundle.root, "rules"), "rule").flatMap((group) => group.files),
     );
     for (const file of files) {
-      const ctx = buildFileContext(component.root, file);
-      const drained = drainDirDocuments(akmAdapter, component, [ctx]);
+      const ctx = buildFileContext(bundle.root, file);
+      const drained = drainDirDocuments(akmAdapter, bundle, [ctx]);
       const entry = drained.entries[0];
       const conceptId = drained.conceptIdByFile.get(ctx.absPath);
       if (entry?.type !== "rule" || conceptId === undefined) continue;
@@ -123,10 +123,10 @@ export function akmRules(input: {
       found.push({
         ref: displayRefForConceptId(
           conceptId,
-          component.id,
-          config.defaultBundle ?? (source.isDefault ? component.id : undefined),
+          bundle.id,
+          config.defaultBundle ?? (source.isDefault ? bundle.id : undefined),
         ),
-        durableRef: `${component.id}//${conceptId}`,
+        durableRef: `${bundle.id}//${conceptId}`,
         ...(entry.description ? { description: entry.description } : {}),
         ...(named?.length ? { project: named.length === 1 ? named[0] : named } : {}),
         content: parseFrontmatter(ctx.content()).content.trim(),

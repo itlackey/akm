@@ -34,8 +34,6 @@ import { DirectoryAdapterBase } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { hashContent, nonEmptyString, RESERVED_FILES, readTags, validateChangesWithBaseChecks } from "./shared";
 
-/** A generic-files bundle is single-component; its one component is `main`. */
-const COMPONENT_ID = "main";
 /** Markdown / plain-text extensions classified as `document`. */
 const DOCUMENT_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".text"]);
 
@@ -68,7 +66,6 @@ function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   const doc: IndexDocument = {
     ref: `${c.id}//${conceptId}`,
     bundle: c.id,
-    component: COMPONENT_ID,
     conceptId,
     path: file.absPath,
     hash: hashContent(raw),

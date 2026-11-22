@@ -49,11 +49,7 @@ afterEach(() => {
 });
 
 function insertEntry(db: Database, key: string, entry: IndexDocument): number {
-  const provenance = deriveEntryProvenance(
-    { bundleId: "test-bundle", componentId: "test-bundle", adapterId: "akm" },
-    entry.type,
-    key,
-  );
+  const provenance = deriveEntryProvenance({ bundleId: "test-bundle", adapterId: "akm" }, entry.type, key);
   return upsertEntry(db, `/test/dir/${key}.ts`, entry, provenance);
 }
 

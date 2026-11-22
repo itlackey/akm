@@ -23,13 +23,14 @@ import {
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { AssetChange, AssetEntry } from "./adapter/bundle-adapter";
-import { detectAdapterId } from "./adapter/detect-adapter";
+import { adapterIdOf } from "./adapter/detect-adapter";
 import { adapterForId, bundleOf } from "./adapter/registry";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
 import { stashDirFor } from "./asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
+import { deriveBundleIds } from "./bundle-id";
 import { compareCodePoints, scanEnvKeyNames } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
@@ -50,11 +51,13 @@ function listAssetsOfType(
   config: AkmConfig,
 ): Array<{ conceptId: string; source: IndexSearchSource; entry: AssetEntry }> {
   const found: Array<{ conceptId: string; source: IndexSearchSource; entry: AssetEntry }> = [];
-  for (const source of resolveSourceEntries(undefined, config)) {
+  const sources = resolveSourceEntries(undefined, config);
+  const ids = deriveBundleIds(sources);
+  for (const [index, source] of sources.entries()) {
     if (source.unresolved) continue;
-    const adapter = adapterForId(source.adapterId ?? detectAdapterId(source.path));
+    const adapter = adapterForId(adapterIdOf(source));
     if (!adapter) continue;
-    const bundle = bundleOf(source, adapter.id);
+    const bundle = bundleOf({ name: ids[index] as string, path: source.path, location: source.location });
     const listing = adapter.list(bundle);
     if (!listing.complete && listing.incompleteReason) {
       warn(`Bundle "${source.registryId ?? source.path}" was not listed completely: ${listing.incompleteReason}`);
@@ -368,7 +371,7 @@ export function resolveSecretWriteTarget(
 /** The env file or secret a write resolution names, as the target bundle's adapter reads it; undefined when it has none. */
 export function findWriteTargetAsset(resolution: EnvSecretWriteResolution): AdapterConceptOwner | undefined {
   const { source } = resolution.target;
-  return readBundleAsset(source, source.adapterId ?? detectAdapterId(source.path), resolution.conceptId, {
+  return readBundleAsset(source, adapterIdOf(source), resolution.conceptId, {
     unlisted: true,
   });
 }

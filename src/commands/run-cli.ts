@@ -10,7 +10,7 @@ import { parseNonNegativeIntFlag, parseTimeoutValue } from "../cli/parse-args";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, reportChildExit } from "../cli/shared";
 import { assertKnownFlags, type FlagScanCommand, scanRoot } from "../cli/unknown-flags";
 import { setResolvedUsageAssetType } from "../cli/usage";
-import { adapterForId } from "../core/adapter/registry";
+import { adapterForId, bundleOf } from "../core/adapter/registry";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { loadConfig } from "../core/config/config";
 import { AkmError, NotFoundError, UsageError } from "../core/errors";
@@ -130,9 +130,9 @@ export async function resolveRunTarget(runArgs: readonly string[]): Promise<RunT
           "Use akm search to find an executable asset.",
         );
       }
-      const component = { id: match.bundleId, adapter: match.adapterId, root: match.source.path, writable: false };
+      const owning = bundleOf({ name: match.bundleId, path: match.source.path, location: match.source.location });
       const document = adapterForId(match.adapterId)?.recognize(
-        component,
+        owning,
         buildFileContext(match.source.path, match.owner.path),
       );
       const type = document?.type ?? "unknown";

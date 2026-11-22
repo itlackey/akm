@@ -49,7 +49,7 @@ afterAll(() => {
   for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true });
 });
 
-function component(overrides: Partial<Bundle> = {}): Bundle {
+function bundle(overrides: Partial<Bundle> = {}): Bundle {
   return { id: BUNDLE_ID, root: ALL_TYPES_ROOT, writable: true, ...overrides };
 }
 
@@ -87,7 +87,7 @@ describe("akm adapter — recognize reproduces runMatchers classification (§5.1
     for (const ctx of contexts) {
       const expected = RECOGNITION_GOLDEN.byRelPath[ctx.relPath];
       expect(expected, `no golden entry for ${ctx.relPath}`).toBeDefined();
-      const doc = akmAdapter.recognize(component(), ctx);
+      const doc = akmAdapter.recognize(bundle(), ctx);
       expect(doc, `recognize returned null for ${ctx.relPath}`).not.toBeNull();
       expect(doc?.type, `type mismatch for ${ctx.relPath}`).toBe(expected!.type);
       // Winner's renderer is carried on documentJson for WI-C (not a new field).
@@ -96,7 +96,6 @@ describe("akm adapter — recognize reproduces runMatchers classification (§5.1
       );
       expect(doc?.adapterId).toBe("akm");
       expect(doc?.bundle).toBe(BUNDLE_ID);
-      expect(doc?.component).toBe(BUNDLE_ID);
       expect(doc?.ref).toBe(`${BUNDLE_ID}//${doc?.conceptId}`);
       expect(doc?.path).toBe(ctx.absPath);
       expect(doc?.hash).toMatch(/^[0-9a-f]{64}$/);
@@ -125,14 +124,14 @@ describe("akm adapter — recognize reproduces runMatchers classification (§5.1
       const ctx = byRel.get(relPath);
       expect(ctx, `fixture missing ${relPath}`).toBeDefined();
       if (!ctx) continue;
-      const doc = akmAdapter.recognize(component(), ctx);
+      const doc = akmAdapter.recognize(bundle(), ctx);
       expect(doc?.conceptId, `conceptId for ${relPath}`).toBe(conceptId);
     }
   });
 
   test("a file no matcher claims => recognize returns null (unclaimed files skipped)", () => {
     const ctx = buildFileContext(ALL_TYPES_ROOT, path.join(ALL_TYPES_ROOT, "MANIFEST.json"));
-    expect(akmAdapter.recognize(component(), ctx)).toBeNull();
+    expect(akmAdapter.recognize(bundle(), ctx)).toBeNull();
   });
 });
 
@@ -215,7 +214,7 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
   test("the contributor-exclusive folds (searchHints/toc/parameters) are carried verbatim into recognize", () => {
     let asserted = 0;
     for (const ctx of allTypesContexts()) {
-      const doc = akmAdapter.recognize(component(), ctx);
+      const doc = akmAdapter.recognize(bundle(), ctx);
       expect(doc, `recognize null for ${ctx.relPath}`).not.toBeNull();
       if (!doc) continue;
       const extras = (doc.documentJson ?? {}) as Record<string, unknown>;
@@ -233,7 +232,7 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
 
   test("the winning renderer is still carried on documentJson.renderer (WI-B contract intact)", () => {
     for (const ctx of allTypesContexts()) {
-      const doc = akmAdapter.recognize(component(), ctx);
+      const doc = akmAdapter.recognize(bundle(), ctx);
       expect((doc?.documentJson as { renderer?: string })?.renderer).toBeDefined();
     }
   });
@@ -241,19 +240,19 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
   test("a few representative folds land on the expected IndexDocument fields", () => {
     const byRel = new Map(allTypesContexts().map((c) => [c.relPath, c]));
 
-    const env = akmAdapter.recognize(component(), byRel.get("env/all-types-env.env") as FileContext);
+    const env = akmAdapter.recognize(bundle(), byRel.get("env/all-types-env.env") as FileContext);
     expect(env?.tags).toEqual(["env", "secrets"]);
     expect(env?.searchHints).toEqual(["FIXTURE_GREETING", "FIXTURE_LOG_LEVEL"]);
 
-    const knowledge = akmAdapter.recognize(component(), byRel.get("knowledge/all-types-knowledge.md") as FileContext);
+    const knowledge = akmAdapter.recognize(bundle(), byRel.get("knowledge/all-types-knowledge.md") as FileContext);
     // toc has no first-class IndexDocument home → carried on documentJson.
     expect((knowledge?.documentJson as { toc?: unknown[] }).toc?.length).toBeGreaterThan(0);
 
-    const task = akmAdapter.recognize(component(), byRel.get("tasks/all-types-task.yml") as FileContext);
+    const task = akmAdapter.recognize(bundle(), byRel.get("tasks/all-types-task.yml") as FileContext);
     expect(task?.tags).toEqual(["task", "scheduled"]);
     expect(task?.searchHints).toContain("schedule:@daily");
 
-    const script = akmAdapter.recognize(component(), byRel.get("scripts/all-types-script.sh") as FileContext);
+    const script = akmAdapter.recognize(bundle(), byRel.get("scripts/all-types-script.sh") as FileContext);
     expect(script?.confidence).toBe(0.7);
     expect((script?.documentJson as { source?: string }).source).toBe("comments");
   });
@@ -267,7 +266,7 @@ describe("akm adapter — D-R6 reserved filenames are never items (spec §5.1)",
     tmpDirs.push(tmp);
     const file = path.join(tmp, "README.md");
     fs.writeFileSync(file, "# Bundle documentation\n\nInstall and usage notes.\n");
-    expect(akmAdapter.recognize(component({ root: tmp }), buildFileContext(tmp, file))).toBeNull();
+    expect(akmAdapter.recognize(bundle({ root: tmp }), buildFileContext(tmp, file))).toBeNull();
   });
 
   test("a knowledge/index.md is not recognized as an item", () => {
@@ -279,7 +278,7 @@ describe("akm adapter — D-R6 reserved filenames are never items (spec §5.1)",
     // Without the D-R6 guard the directoryMatcher would classify this as
     // `knowledge`; the reserved-file exclusion must veto it.
     fs.writeFileSync(file, "# Directory listing\n\n- [a](all-types-knowledge.md)\n");
-    expect(akmAdapter.recognize(component({ root: tmp }), buildFileContext(tmp, file))).toBeNull();
+    expect(akmAdapter.recognize(bundle({ root: tmp }), buildFileContext(tmp, file))).toBeNull();
   });
 
   test("a root-level log.md is not recognized as an item", () => {
@@ -287,7 +286,7 @@ describe("akm adapter — D-R6 reserved filenames are never items (spec §5.1)",
     tmpDirs.push(tmp);
     const file = path.join(tmp, "log.md");
     fs.writeFileSync(file, "# Update history\n\n- 2026-07-19 did a thing\n");
-    expect(akmAdapter.recognize(component({ root: tmp }), buildFileContext(tmp, file))).toBeNull();
+    expect(akmAdapter.recognize(bundle({ root: tmp }), buildFileContext(tmp, file))).toBeNull();
   });
 
   test("reserved matching is case-insensitive and exact — INDEX.md excluded, indexing.md kept", () => {
@@ -299,7 +298,7 @@ describe("akm adapter — D-R6 reserved filenames are never items (spec §5.1)",
     fs.writeFileSync(upper, "# listing\n");
     const kept = path.join(knowledgeDir, "indexing.md");
     fs.writeFileSync(kept, "# A real concept about indexing pipelines\n\nbody\n");
-    const c = component({ root: tmp });
+    const c = bundle({ root: tmp });
     expect(akmAdapter.recognize(c, buildFileContext(tmp, upper))).toBeNull();
     expect(akmAdapter.recognize(c, buildFileContext(tmp, kept))).not.toBeNull();
   });
@@ -309,7 +308,7 @@ describe("akm adapter — D-R6 reserved filenames are never items (spec §5.1)",
 
 describe("akm adapter — owned dirs + root probe (§7 / §1.2)", () => {
   test("directoryList = the TYPE_DIRS stash subdirs", () => {
-    const dirs = new Set(akmAdapter.directoryList?.(component()));
+    const dirs = new Set(akmAdapter.directoryList?.(bundle()));
     for (const d of [
       "skills",
       "commands",
@@ -385,26 +384,26 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
       "env/ci.env": "API_KEY=secret-token\n",
       "env/ci.sensitive": "",
     });
-    const c = component({ root, id: "s" });
+    const c = bundle({ root, id: "s" });
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "env/ci.env")))).toBeNull();
   });
 
   test("env `.env` WITHOUT a sibling marker is still recognized (type env)", () => {
     const root = makeStashWith({ "env/ci.env": "API_KEY=token\n" });
-    const c = component({ root, id: "s" });
+    const c = bundle({ root, id: "s" });
     const doc = akmAdapter.recognize(c, buildFileContext(root, path.join(root, "env/ci.env")));
     expect(doc?.type).toBe("env");
   });
 
   test("anything under the legacy `vaults/` dir is abstained", () => {
     const root = makeStashWith({ "vaults/prod/api.env": "K=V\n" });
-    const c = component({ root, id: "s" });
+    const c = bundle({ root, id: "s" });
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "vaults/prod/api.env")))).toBeNull();
   });
 
   test("a `secrets/` `.sensitive` / `.lock` marker file is abstained", () => {
     const root = makeStashWith({ "secrets/key.sensitive": "", "secrets/key.lock": "" });
-    const c = component({ root, id: "s" });
+    const c = bundle({ root, id: "s" });
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/key.sensitive")))).toBeNull();
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/key.lock")))).toBeNull();
   });
@@ -415,7 +414,7 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
       "secrets/deploy-key.sensitive": "",
       "secrets/plain-token": "cred-value\n",
     });
-    const c = component({ root, id: "s" });
+    const c = bundle({ root, id: "s" });
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/deploy-key")))).toBeNull();
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/plain-token")))?.type).toBe(
       "secret",
@@ -429,7 +428,7 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
       "projects/openpalm/secrets/deploy-key": "cred-value\n",
       "projects/openpalm/secrets/deploy-key.sensitive": "",
     });
-    const c = component({ root, id: "s" });
+    const c = bundle({ root, id: "s" });
     for (const rel of [
       "projects/openpalm/env/prod.env",
       "projects/openpalm/secrets/deploy-key",
@@ -441,7 +440,7 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
 
   test("a `wikis/<name>/` root-level infra file (schema.md) is abstained", () => {
     const root = makeStashWith({ "wikis/team/schema.md": "# schema\n" });
-    const c = component({ root, id: "s" });
+    const c = bundle({ root, id: "s" });
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "wikis/team/schema.md")))).toBeNull();
   });
 
@@ -452,7 +451,7 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
       "wikis/team/raw/x.md": "# raw\n",
       "notes/raw/y.md": "# not a wiki\n",
     });
-    const c = component({ root, id: "s" });
+    const c = bundle({ root, id: "s" });
     const recognize = (rel: string) => akmAdapter.recognize(c, buildFileContext(root, path.join(root, rel)));
     expect(recognize("wikis/team/raw/x.md")).toMatchObject({ type: "wiki-source", ref: "s//wikis/team/raw/x" });
     expect(recognize("wikis/team/pages/p.md")?.type).toBe("knowledge");
@@ -461,7 +460,7 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
 
   test("raw/ of a bundle whose root is itself a wiki is `wiki-source`", () => {
     const root = makeStashWith({ "schema.md": "# schema\n", "pages/p.md": "# page\n", "raw/x.md": "# raw\n" });
-    const c = component({ root, id: "s" });
+    const c = bundle({ root, id: "s" });
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "raw/x.md")))).toMatchObject({
       type: "wiki-source",
       ref: "s//raw/x",
@@ -475,7 +474,7 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
       "secrets/key.sensitive": "",
       "vaults/prod/api.env": "K=V\n",
     });
-    const c = component({ root, id: "s" });
+    const c = bundle({ root, id: "s" });
     // Each of these abstains via path/stat only — a content()/frontmatter() read would THROW.
     expect(akmAdapter.recognize(c, bytesForbiddenContext(root, "env/ci.env"))).toBeNull();
     expect(akmAdapter.recognize(c, bytesForbiddenContext(root, "secrets/key.sensitive"))).toBeNull();

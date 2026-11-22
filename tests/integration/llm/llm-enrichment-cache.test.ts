@@ -136,12 +136,7 @@ function writeFile(rel: string, frontmatter: Record<string, unknown>, body: stri
     const name = path.basename(rel, path.extname(rel));
     const entry = { name, type, filename: path.basename(rel) };
     try {
-      upsertEntry(
-        db,
-        filePath,
-        entry,
-        deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, type, name),
-      );
+      upsertEntry(db, filePath, entry, deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, type, name));
     } catch {
       /* db may be closed in some teardown paths */
     }
@@ -270,7 +265,7 @@ describe("clearStaleCacheEntries", () => {
       db,
       "/stash/memories/alive.md",
       { name: "alive", type: "memory" },
-      deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, "memory", "memories/alive"),
+      deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "memory", "memories/alive"),
     );
 
     clearStaleCacheEntries(db);

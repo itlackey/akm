@@ -461,11 +461,7 @@ describe("createContinuitySearch: keyword-only throttle after the first fallback
         db,
         `${storage.stashDir}/knowledge/deploy-guide.md`,
         { type: "knowledge", name: "deploy-guide", description: "deploy applications safely" } as IndexDocument,
-        deriveEntryProvenance(
-          { bundleId: "stash", componentId: "stash", adapterId: "akm" },
-          "knowledge",
-          "deploy-guide",
-        ),
+        deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "knowledge", "deploy-guide"),
       );
       upsertEmbedding(db, entryId, [1, 0, 0, 0]);
       rebuildFts(db);
@@ -515,11 +511,7 @@ describe("createContinuitySearch: keyword-only throttle after the first fallback
         db,
         `${storage.stashDir}/knowledge/deploy-guide.md`,
         { type: "knowledge", name: "deploy-guide", description: "deploy applications safely" } as IndexDocument,
-        deriveEntryProvenance(
-          { bundleId: "stash", componentId: "stash", adapterId: "akm" },
-          "knowledge",
-          "deploy-guide",
-        ),
+        deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "knowledge", "deploy-guide"),
       );
       rebuildFts(db);
       setMeta(db, "stashDir", storage.stashDir);

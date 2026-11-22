@@ -174,12 +174,7 @@ export namespace bundles {
   function list(): Promise<unknown>;
   function remove(input: { bundle: string; confirm: boolean }): Promise<unknown>;
   function rename(input: { bundle: string; name: string; dryRun?: boolean }): Promise<unknown>;
-  function setSettings(input: {
-    bundle?: string;
-    enabled?: boolean;
-    writable?: boolean;
-    componentWritability?: Record<string, boolean>;
-  }): { saved: boolean };
+  function setSettings(input: { bundle?: string; enabled?: boolean; writable?: boolean }): { saved: boolean };
   function update(input: { bundle: string }): Promise<unknown>;
 }
 export namespace config {

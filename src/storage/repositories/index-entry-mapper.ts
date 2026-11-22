@@ -29,7 +29,7 @@ import type { DbIndexedEntry } from "./index-entry-types";
  * current indexed provenance.
  */
 export const ENTRY_COLUMNS =
-  "id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path, content_hash, document_json";
+  "id, item_ref, bundle_id, concept_id, adapter_id, type, file_path, content_hash, document_json";
 
 /** A raw row selected via {@link ENTRY_COLUMNS}. */
 export type EntryRow = {
@@ -37,7 +37,6 @@ export type EntryRow = {
   /** Canonical durable `<bundle>//<concept-id>` ref. */
   item_ref: string;
   bundle_id: string;
-  component_id: string;
   /** Durable OKF concept id (`item_ref` tail). */
   concept_id: string;
   /** Owning adapter. */
@@ -68,7 +67,6 @@ export function rowToIndexedEntry(row: EntryRow, context: string): DbIndexedEntr
     itemRef: row.item_ref,
     conceptId: row.concept_id,
     bundleId: row.bundle_id,
-    componentId: row.component_id,
     adapterId: row.adapter_id,
     type: row.type,
     ...(row.content_hash ? { contentHash: row.content_hash } : {}),

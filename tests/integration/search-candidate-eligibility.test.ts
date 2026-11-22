@@ -41,7 +41,7 @@ function put(name: string, fields: Partial<IndexDocument>, eligible: boolean, bu
     db,
     path.join(storage.stashDir, bundle, `${name}.md`),
     entry,
-    deriveEntryProvenance({ bundleId: bundle, componentId: bundle, adapterId: "akm" }, entry.type, name),
+    deriveEntryProvenance({ bundleId: bundle, adapterId: "akm" }, entry.type, name),
   );
   if (vector) upsertEmbedding(db, id, eligible ? [0.6, 0.8] : [1, 0]);
   return id;

@@ -42,7 +42,7 @@ let bins: SandboxedDir;
 const bundleConfig = (stashDir: string) => ({
   semanticSearchMode: "off" as const,
   defaultBundle: "fixture",
-  bundles: { fixture: { path: stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+  bundles: { fixture: { path: stashDir, adapter: "akm" } },
 });
 
 beforeEach(async () => {

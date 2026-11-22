@@ -7,7 +7,6 @@ import path from "node:path";
 import { isWithin, relativeToRoot, resolveStashDir, safeRealpath, toErrorMessage } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import {
-  bundleComponentConfig,
   bundleKeyForContentRoot,
   bundlesToSourceEntries,
   getSources,
@@ -34,7 +33,7 @@ export interface SearchSource {
   writable?: boolean;
   /** Configured provider kind when this source has a config owner. */
   type?: SourceConfigEntry["type"];
-  /** Adapter selected for this bundle component. Index preflight fills and persists missing ownership. */
+  /** The adapter the bundle is configured with. Index preflight fills and persists missing ownership. */
   adapterId?: string;
   /** Set when the source's provider/path could not be resolved this run: why, and its real directory when it has one. */
   unresolved?: { reason: string; path?: string };
@@ -62,7 +61,7 @@ export function implicitStashDir(config: AkmConfig, overrideStashDir?: string): 
  * once. Iteration order:
  *
  *   1. An explicit argument or `AKM_BUNDLE_DIR`, when present.
- *   2. The configured `defaultBundle`, after component-root validation.
+ *   2. The configured `defaultBundle`, after root validation.
  *   3. Remaining configured bundles in installation-priority order.
  *
  * Disabled entries (`enabled: false`) are excluded before materialization.
@@ -140,11 +139,11 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
 
   // Resolve from `bundles` + `defaultBundle`.
   // `bundlesToSourceEntries` returns the configured default first, then map
-  // insertion order. Each entry is validated before insertion so a component
+  // insertion order. Each entry is validated before insertion so a bundle
   // root can never escape its provider's materialized content root.
   for (const entry of configuredEntries) {
     if (entry.enabled === false) continue;
-    const component = bundleComponentConfig(config.bundles?.[entry.name ?? ""]);
+    const bundle = config.bundles?.[entry.name ?? ""];
     const resolvedContent = resolveEntryContent(entry);
     if ("error" in resolvedContent) {
       const unresolvedPath = path.join(
@@ -154,26 +153,26 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       addSource(
         unresolvedPath,
         entry.name,
-        component?.writable ?? resolveWritable(entry),
+        resolveWritable(entry),
         entry.type,
-        component?.adapter,
+        bundle?.adapter,
         { reason: resolvedContent.error },
         entry.name === config.defaultBundle,
       );
       continue;
     }
     const contentRoot = resolvedContent.dir;
-    const dir = path.resolve(contentRoot, component?.root ?? ".");
+    const dir = path.resolve(contentRoot, bundle?.root ?? ".");
     if (!isWithin(dir, contentRoot)) {
-      warn(`Warning: component root "${component?.root}" escapes bundle "${entry.name}"; skipping source.`);
+      warn(`Warning: root "${bundle?.root}" escapes bundle "${entry.name}"; skipping source.`);
       const unresolvedPath = path.join(getUnresolvedSourcesDir(contentRoot), entry.name ?? entry.type);
       addSource(
         unresolvedPath,
         entry.name,
-        component?.writable ?? resolveWritable(entry),
+        resolveWritable(entry),
         entry.type,
-        component?.adapter,
-        { reason: `component root "${component?.root}" escapes bundle "${entry.name}"`, path: dir },
+        bundle?.adapter,
+        { reason: `root "${bundle?.root}" escapes bundle "${entry.name}"`, path: dir },
         entry.name === config.defaultBundle,
       );
       continue;
@@ -181,9 +180,9 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     addSource(
       dir,
       entry.name,
-      component?.writable ?? resolveWritable(entry),
+      resolveWritable(entry),
       entry.type,
-      component?.adapter,
+      bundle?.adapter,
       undefined,
       entry.name === config.defaultBundle,
       entry.location,

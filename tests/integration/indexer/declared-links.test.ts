@@ -143,8 +143,8 @@ describe("declared links", () => {
         semanticSearchMode: "off",
         defaultBundle: "stash",
         bundles: {
-          stash: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } },
-          portable: { path: portable, components: { main: { root: ".", adapter } } },
+          stash: { path: storage.stashDir, adapter: "akm" },
+          portable: { path: portable, adapter },
         },
       });
       const source = "portable//pages/zeppelin-rollout";
@@ -218,7 +218,7 @@ describe("declared links", () => {
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "stash",
-      bundles: { stash: { path: storage.stashDir, components: { main: { root: ".", adapter: "okf" } } } },
+      bundles: { stash: { path: storage.stashDir, adapter: "okf" } },
     });
     write("pages/start.md", "---\ntype: concept\ndescription: Start\n---\n\n`[Example](./example.md)`\n");
     write("pages/example.md", "---\ntype: concept\ndescription: Example\n---\n\nExample.\n");

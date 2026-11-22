@@ -27,7 +27,7 @@
  *   1. the AKM placement-derived paths (`filesForRef`
  *      + `assetPathForName` — the exact derivation `commands/lint/base-linter.ts
  *      #refToRelPath` already uses for the akm-native `missing-ref` check); and
- *   2. the DIRECT component-relative spelling (`<conceptId>.md`, and the bare
+ *   2. the DIRECT bundle-relative spelling (`<conceptId>.md`, and the bare
  *      `<conceptId>` for an extensionless asset) — the form every non-akm
  *      adapter's OWN conceptId already IS (OKF: path − `.md`; llm-wiki: same).
  * A `bundle//conceptId`-qualified ref has its bundle prefix stripped before
@@ -107,7 +107,7 @@ function refEscapesBundle(conceptId: string): boolean {
 /**
  * Every on-disk relative path a bare `conceptId` might resolve to: the files
  * any placement spec could give the ref (a ref is the file's path minus its
- * type's suffix) and the direct component-relative spellings every non-akm
+ * type's suffix) and the direct bundle-relative spellings every non-akm
  * adapter's own conceptId already uses. Order doesn't matter — the caller
  * checks all of them.
  */
@@ -135,7 +135,7 @@ function stripBundlePrefix(ref: string): string {
 }
 
 export interface ValidateContextOptions {
-  /** The primary root `changes` paths are relative to (a component's root, or a lint sweep's stash root). */
+  /** The primary root `changes` paths are relative to (a bundle's root, or a lint sweep's stash root). */
   root: string;
   /** The configured bundles; the roots other than `root` are consulted (disk only) for cross-bundle ref existence. */
   sources?: readonly BundleSourceRef[];

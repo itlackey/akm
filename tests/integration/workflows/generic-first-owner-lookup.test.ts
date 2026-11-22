@@ -52,11 +52,13 @@ function configure(early: BundleFixture, later: BundleFixture): void {
     bundles: {
       early: {
         path: early.root,
-        components: { main: { root: ".", adapter: early.adapter, writable: true } },
+        adapter: early.adapter,
+        writable: true,
       },
       later: {
         path: later.root,
-        components: { main: { root: ".", adapter: later.adapter, writable: true } },
+        adapter: later.adapter,
+        writable: true,
       },
     },
   });

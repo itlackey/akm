@@ -4,7 +4,7 @@
 
 /**
  * Regression for R-056: `akm index` auto-detects a bundle's adapter and
- * persists it to config.json (`bundles.<id>.components.<component>.adapter`)
+ * persists it to config.json (`bundles.<id>.adapter`)
  * whenever a resolved source has no adapter recorded yet. That write used to
  * have ZERO disclosure — absent from the result envelope, silent on stderr,
  * undocumented. This pins that the write is now surfaced two ways:
@@ -49,7 +49,7 @@ afterEach(() => {
 });
 
 test("akmIndex discloses an auto-detected, newly-persisted bundle adapter in the result and on stderr", async () => {
-  // `secondary` has NO adapter recorded on its (implicit) component — the
+  // `secondary` has NO adapter recorded on its (implicit) bundle — the
   // indexer must auto-detect one (via detectAdapterId) and persist it.
   writeSandboxConfig({
     semanticSearchMode: "off",
@@ -81,8 +81,7 @@ test("akmIndex discloses an auto-detected, newly-persisted bundle adapter in the
   resetConfigCache();
   const config = loadUserConfig();
   const teamBundle = config.bundles?.team;
-  const component = Object.values(teamBundle?.components ?? {})[0];
-  expect(component?.adapter).toBe(result.configUpdated?.detectedAdapters.team);
+  expect(teamBundle?.adapter).toBe(result.configUpdated?.detectedAdapters.team);
 });
 
 test("akmIndex automatically advances a known additive state prefix before indexing", async () => {
@@ -115,10 +114,10 @@ test("akmIndex does not re-report a bundle whose adapter is already configured",
     semanticSearchMode: "off",
     bundles: {
       // Both bundles pre-declare their adapter so neither triggers detection
-      // — a bare `path`-only bundle (no `components`) also lacks an adapter
+      // — a bare `path`-only bundle (no `adapter`) lacks an adapter
       // and would otherwise confound this "already configured" assertion.
-      primary: { path: storage.stashDir, writable: true, components: { main: { root: ".", adapter: "akm" } } },
-      team: { path: secondary.dir, components: { main: { root: ".", adapter: "akm" } } },
+      primary: { path: storage.stashDir, writable: true, adapter: "akm" },
+      team: { path: secondary.dir, adapter: "akm" },
     },
     defaultBundle: "primary",
   });

@@ -78,9 +78,9 @@ export interface BaseChecker {
   rulesFor(relPath: string, skip?: readonly string[]): RuleScope;
 }
 
-/** The base checks for the files of the bundle at `componentRoot`, among the bundles and with the settings `ctx` names (the settings are read once, here, only when `ctx` carries none). The scope (other bundles, moved refs, stale-path roots, LLM Wikis) is read once. */
-export function createBaseChecker(componentRoot: string, ctx: ValidateContext): BaseChecker {
-  const scope = lintScope(componentRoot, ctx.config ?? loadConfig(), ctx.sources ?? [], ctx.readMoves ?? noMoves);
+/** The base checks for the files of the bundle at `bundleRoot`, among the bundles and with the settings `ctx` names (the settings are read once, here, only when `ctx` carries none). The scope (other bundles, moved refs, stale-path roots, LLM Wikis) is read once. */
+export function createBaseChecker(bundleRoot: string, ctx: ValidateContext): BaseChecker {
+  const scope = lintScope(bundleRoot, ctx.config ?? loadConfig(), ctx.sources ?? [], ctx.readMoves ?? noMoves);
   const rulesFor = (relPath: string, skip: readonly string[] = []): RuleScope => ({
     relPath,
     llmWiki: scope.inLlmWiki(relPath),
@@ -91,7 +91,7 @@ export function createBaseChecker(componentRoot: string, ctx: ValidateContext): 
     check: (relPath, parsed, skip) => {
       const { llmWiki, skip: lintSkip } = rulesFor(relPath, skip);
       return runBaseChecks({
-        filePath: path.join(componentRoot, relPath),
+        filePath: path.join(bundleRoot, relPath),
         relPath,
         raw: parsed.raw,
         data: parsed.data,

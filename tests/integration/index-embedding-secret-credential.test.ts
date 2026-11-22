@@ -269,7 +269,7 @@ describe("akm bundle update: the update's embedding phase carries the stored cre
     writeSandboxConfig({
       semanticSearchMode: "auto",
       bundles: {
-        [id]: { npm: id, components: { main: { root: ".", adapter: "akm", writable: false } } },
+        [id]: { npm: id, adapter: "akm", writable: false },
       },
       embedding: { endpoint: capture.url, model: "mock", dimension: 8 },
     });

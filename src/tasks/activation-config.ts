@@ -19,7 +19,7 @@ import fs from "node:fs";
 import { filesForRef } from "../core/asset/asset-placement";
 import { bundleRefToString, makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { type AkmConfig, mutateConfig, schedulerSourceIdFor } from "../core/config/config";
-import { bundleComponentConfig, bundleContentRoots, isBundleEnabled } from "../core/config/config-sources";
+import { bundleContentRoots, isBundleEnabled } from "../core/config/config-sources";
 import { UsageError } from "../core/errors";
 import { warnOnce } from "../core/warn";
 import type { InstalledSchedulerBinding } from "./scheduler-binding";
@@ -135,7 +135,7 @@ function installedEntryRef(entry: InstalledSchedulerBinding, config: AkmConfig):
     const bundle = bundleIndex === -1 ? config.defaultBundle : invocation[bundleIndex + 1];
     if (!bundle || !isBundleEnabled(config, bundle)) return undefined;
     const bundleConfig = config.bundles?.[bundle];
-    const adapter = bundleConfig ? (bundleComponentConfig(bundleConfig)?.adapter ?? "akm") : "akm";
+    const adapter = bundleConfig?.adapter ?? "akm";
     const conceptId = adapter === "akm-task" ? invocation[2] : `tasks/${invocation[2]}`;
     if (!hasBackingFile(config, bundle, conceptId)) return undefined;
     return canonicalSchedulerRef(makeBundleRef(bundle, conceptId));

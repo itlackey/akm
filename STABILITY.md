@@ -55,7 +55,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | --- | --- | --- |
 | `akm bundle create` | Stable | |
 | `akm bundle add` | Stable | `--allow-dangerous-env-keys` is Deprecated, no effect: accepted through 0.10 and a usage error in 0.11, so drop it; prints a notice since 0.10.261122. |
-| `akm bundle list` | Stable | |
+| `akm bundle list` | Stable | Each entry has `adapter` and `detected` (since 0.10.261130). `components` is Deprecated, removed in 0.11: it holds one entry named `main` with what the entry's `adapter`, `detected`, `root` and `writable` say, so read those. |
 | `akm bundle show` | Evolving | |
 | `akm bundle rename` | Stable | |
 | `akm bundle remove` | Stable | |

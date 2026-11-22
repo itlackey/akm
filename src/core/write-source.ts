@@ -279,24 +279,21 @@ function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
     );
   }
   const contentRoot = kind === "git" ? (lockRoot ?? resolveGitContentRoot(repoPath)) : repoPath;
-  const componentRoot = path.resolve(contentRoot, runtime.componentRoot ?? ".");
-  if (!isWithin(componentRoot, contentRoot)) {
-    throw new ConfigError(
-      `Component root "${runtime.componentRoot}" escapes bundle "${runtime.name}".`,
-      "INVALID_CONFIG_FILE",
-    );
+  const root = path.resolve(contentRoot, runtime.root ?? ".");
+  if (!isWithin(root, contentRoot)) {
+    throw new ConfigError(`Root "${runtime.root}" escapes bundle "${runtime.name}".`, "INVALID_CONFIG_FILE");
   }
-  const adapterId = runtime.adapterId ?? detectAdapterId(componentRoot);
+  const adapterId = runtime.adapterId ?? detectAdapterId(root);
   const config: SourceConfigEntry = {
     type: runtime.type,
     name: runtime.name,
-    path: componentRoot,
+    path: root,
     ...(runtime.writable !== undefined ? { writable: runtime.writable } : {}),
     ...(runtime.options ? { options: runtime.options } : {}),
   };
   return {
     selector: runtime.name,
-    source: { kind, name: runtime.name, path: componentRoot, adapterId, ...(kind === "git" ? { repoPath } : {}) },
+    source: { kind, name: runtime.name, path: root, adapterId, ...(kind === "git" ? { repoPath } : {}) },
     config,
   };
 }
@@ -469,7 +466,7 @@ export function writeAsset(
   // The adapter writes the asset, however the bundle keeps it: the bundle need only take writes.
   ensureWritable(source, config);
   const adapter = writerOf(source);
-  const bundle = bundleOf(source, adapter.id);
+  const bundle = bundleOf(source);
   const type =
     operation.op === "create" ? operation.asset.type : existingAssetType(adapter, bundle, operation.conceptId);
   assertAdapterWrites(source, type);

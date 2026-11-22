@@ -111,14 +111,6 @@ export function pairMovedFiles(stored: readonly StoredEntry[], fresh: readonly N
 export function repointEntry(db: Database, id: number, entry: NewEntry): void {
   const { provenance } = entry;
   db.prepare(
-    "UPDATE entries SET item_ref = ?, bundle_id = ?, component_id = ?, concept_id = ?, adapter_id = ?, file_path = ? WHERE id = ?",
-  ).run(
-    provenance.itemRef,
-    provenance.bundleId,
-    provenance.componentId,
-    provenance.conceptId,
-    provenance.adapterId,
-    entry.filePath,
-    id,
-  );
+    "UPDATE entries SET item_ref = ?, bundle_id = ?, concept_id = ?, adapter_id = ?, file_path = ? WHERE id = ?",
+  ).run(provenance.itemRef, provenance.bundleId, provenance.conceptId, provenance.adapterId, entry.filePath, id);
 }

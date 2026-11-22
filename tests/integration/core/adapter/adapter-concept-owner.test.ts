@@ -76,7 +76,7 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
 
       const readdirSpy = spyOn(fs, "readdirSync");
       try {
-        const owner = resolveAdapterConceptOwner(root, "akm", "vendor/tools/deploy");
+        const owner = resolveAdapterConceptOwner({ name: "test", path: root }, "akm", "vendor/tools/deploy");
         expect(owner?.path).toBe(target);
       } finally {
         readdirSpy.mockRestore();
@@ -98,7 +98,7 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
       const canonical = path.join(root, "commands", "greet.md");
       fs.mkdirSync(path.dirname(canonical), { recursive: true });
       fs.writeFileSync(canonical, "# Greet\n");
-      const owner = resolveAdapterConceptOwner(root, "akm", "commands/greet");
+      const owner = resolveAdapterConceptOwner({ name: "test", path: root }, "akm", "commands/greet");
       expect(owner?.path).toBe(canonical);
     } finally {
       sandbox.cleanup();
@@ -112,7 +112,7 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
       const loose = path.join(root, "misc", "greet.md");
       fs.mkdirSync(path.dirname(loose), { recursive: true });
       fs.writeFileSync(loose, "Use $ARGUMENTS exactly.\n");
-      const owner = resolveAdapterConceptOwner(root, "akm", "misc/greet");
+      const owner = resolveAdapterConceptOwner({ name: "test", path: root }, "akm", "misc/greet");
       expect(owner?.path).toBe(loose);
     } finally {
       sandbox.cleanup();
@@ -126,7 +126,9 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
       fs.mkdirSync(path.join(root, "tasks"), { recursive: true });
       fs.writeFileSync(path.join(root, "tasks", "same.md"), "# Same note\n");
       fs.writeFileSync(path.join(root, "tasks", "same.yml"), "name: same\n");
-      expect(() => resolveAdapterConceptOwner(root, "akm", "tasks/same")).toThrow(AdapterConceptCollisionError);
+      expect(() => resolveAdapterConceptOwner({ name: "test", path: root }, "akm", "tasks/same")).toThrow(
+        AdapterConceptCollisionError,
+      );
     } finally {
       sandbox.cleanup();
     }
@@ -141,7 +143,7 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
       fs.writeFileSync(first, "# Same note\n");
       fs.writeFileSync(path.join(root, "tasks", "same.yml"), "name: same\n");
 
-      const owner = resolveAdapterConceptOwner(root, "akm", "tasks/same", { mode: "read" });
+      const owner = resolveAdapterConceptOwner({ name: "test", path: root }, "akm", "tasks/same", { mode: "read" });
       expect(owner?.path).toBe(first);
     } finally {
       sandbox.cleanup();
@@ -155,7 +157,7 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
       const dotEnv = path.join(root, "env", ".env");
       fs.mkdirSync(path.dirname(dotEnv), { recursive: true });
       fs.writeFileSync(dotEnv, "TOKEN=hidden\n");
-      const owner = resolveAdapterConceptOwner(root, "akm", "env/default");
+      const owner = resolveAdapterConceptOwner({ name: "test", path: root }, "akm", "env/default");
       expect(owner?.path).toBe(dotEnv);
     } finally {
       sandbox.cleanup();
@@ -169,7 +171,7 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
       const namedEnv = path.join(root, "env", "default.env");
       fs.mkdirSync(path.dirname(namedEnv), { recursive: true });
       fs.writeFileSync(namedEnv, "TOKEN=hidden\n");
-      const owner = resolveAdapterConceptOwner(root, "akm", "env/default");
+      const owner = resolveAdapterConceptOwner({ name: "test", path: root }, "akm", "env/default");
       expect(owner?.path).toBe(namedEnv);
     } finally {
       sandbox.cleanup();
@@ -184,7 +186,9 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
       fs.mkdirSync(envDir, { recursive: true });
       fs.writeFileSync(path.join(envDir, ".env"), "TOKEN=hidden\n");
       fs.writeFileSync(path.join(envDir, "default.env"), "TOKEN=hidden\n");
-      expect(() => resolveAdapterConceptOwner(root, "dotenv", "env/default")).toThrow(AdapterConceptCollisionError);
+      expect(() => resolveAdapterConceptOwner({ name: "test", path: root }, "dotenv", "env/default")).toThrow(
+        AdapterConceptCollisionError,
+      );
     } finally {
       sandbox.cleanup();
     }
@@ -200,7 +204,7 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
       const namedEnv = path.join(envDir, "default.env");
       fs.writeFileSync(dotEnv, "TOKEN=hidden\n");
       fs.writeFileSync(namedEnv, "TOKEN=hidden\n");
-      const owner = resolveAdapterConceptOwner(root, "dotenv", "env/default", { mode: "read" });
+      const owner = resolveAdapterConceptOwner({ name: "test", path: root }, "dotenv", "env/default", { mode: "read" });
       expect(owner?.path).toBe(dotEnv);
     } finally {
       sandbox.cleanup();
@@ -215,19 +219,19 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
     const sandbox = sandboxStashDir();
     try {
       const root = path.join(sandbox.dir, "akm");
-      const component = { id: "akm", adapter: "akm", root, writable: false };
+      const bundle = { id: "akm", adapter: "akm", root, writable: false };
       const parent = path.join(root, "memories", "ops", "gate.md");
       const child = path.join(root, "memories", "ops", "gate.derived.md");
       fs.mkdirSync(path.dirname(parent), { recursive: true });
       fs.writeFileSync(parent, "---\ndescription: Parent\n---\nParent body.\n");
       fs.writeFileSync(child, "---\ninferred: true\nsource: memories/ops/gate\n---\nDerived body.\n");
 
-      expect(akmAdapter.recognize(component, buildFileContext(root, parent))?.conceptId).toBe("memories/ops/gate");
-      expect(akmAdapter.recognize(component, buildFileContext(root, child))?.conceptId).toBe(
-        "memories/ops/gate.derived",
+      expect(akmAdapter.recognize(bundle, buildFileContext(root, parent))?.conceptId).toBe("memories/ops/gate");
+      expect(akmAdapter.recognize(bundle, buildFileContext(root, child))?.conceptId).toBe("memories/ops/gate.derived");
+      expect(resolveAdapterConceptOwner({ name: "test", path: root }, "akm", "memories/ops/gate")?.path).toBe(parent);
+      expect(resolveAdapterConceptOwner({ name: "test", path: root }, "akm", "memories/ops/gate.derived")?.path).toBe(
+        child,
       );
-      expect(resolveAdapterConceptOwner(root, "akm", "memories/ops/gate")?.path).toBe(parent);
-      expect(resolveAdapterConceptOwner(root, "akm", "memories/ops/gate.derived")?.path).toBe(child);
     } finally {
       sandbox.cleanup();
     }
@@ -241,8 +245,10 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
       fs.mkdirSync(path.dirname(child), { recursive: true });
       fs.writeFileSync(child, "---\ninferred: true\nsource: memories/ops/gate\n---\nDerived body.\n");
 
-      expect(resolveAdapterConceptOwner(root, "akm", "memories/ops/gate")).toBeUndefined();
-      expect(resolveAdapterConceptOwner(root, "akm", "memories/ops/gate.derived")?.path).toBe(child);
+      expect(resolveAdapterConceptOwner({ name: "test", path: root }, "akm", "memories/ops/gate")).toBeUndefined();
+      expect(resolveAdapterConceptOwner({ name: "test", path: root }, "akm", "memories/ops/gate.derived")?.path).toBe(
+        child,
+      );
     } finally {
       sandbox.cleanup();
     }
@@ -255,7 +261,7 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
       fs.mkdirSync(root, { recursive: true });
       const loose = path.join(root, "prod.env");
       fs.writeFileSync(loose, "TOKEN=hidden\n");
-      expect(resolveAdapterConceptOwner(root, "dotenv", "prod")).toBeUndefined();
+      expect(resolveAdapterConceptOwner({ name: "test", path: root }, "dotenv", "prod")).toBeUndefined();
     } finally {
       sandbox.cleanup();
     }

@@ -53,11 +53,10 @@ const STASHES: Array<{ name: string; root: string }> = [
  * `scanComponent` module, owner ruling 2026-07-21).
  */
 function newStream(root: string): IndexDocument[] {
-  const bundle = "parity";
-  const component: Bundle = { id: bundle, root, writable: true };
+  const bundle: Bundle = { id: "parity", root, writable: true };
   const docs: IndexDocument[] = [];
   for (const file of walkStashFlat(root)) {
-    const doc = akmAdapter.recognize(component, file);
+    const doc = akmAdapter.recognize(bundle, file);
     if (doc !== null) docs.push(doc);
   }
   return docs;

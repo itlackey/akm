@@ -116,8 +116,8 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
       bundles: {
         team: {
           git: "https://example.com/team/stash.git",
+          adapter: "akm",
           writable: true,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
         },
       },
     });

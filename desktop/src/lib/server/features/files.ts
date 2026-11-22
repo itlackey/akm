@@ -25,7 +25,6 @@ type Bundle = {
   enabled: boolean;
   writable: boolean;
   path: string | null;
-  components: Array<{ adapter: string }>;
 };
 type Selector = { ref?: string; bundle?: string; file?: string };
 

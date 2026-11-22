@@ -17,7 +17,6 @@
     "pdf-processing/SKILL.md": {
       "recognized": true,
       "adapterId": "agent-skills",
-      "component": "main",
       "type": "skill",
       "conceptId": "pdf-processing",
       "ref": "sample-agent-skills//pdf-processing",
@@ -33,7 +32,6 @@
     "Data_Analysis/SKILL.md": {
       "recognized": true,
       "adapterId": "agent-skills",
-      "component": "main",
       "type": "skill",
       "conceptId": "Data_Analysis",
       "ref": "sample-agent-skills//Data_Analysis",
@@ -44,7 +42,6 @@
     "overlong-summary/SKILL.md": {
       "recognized": true,
       "adapterId": "agent-skills",
-      "component": "main",
       "type": "skill",
       "conceptId": "overlong-summary",
       "ref": "sample-agent-skills//overlong-summary",

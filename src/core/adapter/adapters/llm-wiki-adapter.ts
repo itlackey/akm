@@ -82,9 +82,6 @@ import { DirectoryAdapterBase } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { hashContent, nonEmptyString } from "./shared";
 
-/** A wiki is a single-component bundle; its one component is conventionally `main` (recognition golden). */
-const WIKI_COMPONENT_ID = "main";
-
 /** The adapter's own `type` for immutable ingested sources under `raw/` (recognition golden, reading A). */
 const WIKI_SOURCE_TYPE = "wiki-source";
 
@@ -98,7 +95,7 @@ const RESERVED_ROOT_FILES = new Set(["schema.md", "index.md", "log.md"]);
 const RAW_SUBDIR = "raw";
 
 /** POSIX-normalize separators. */
-/** conceptId = component-root-relative path minus `.md`. */
+/** conceptId = bundle-root-relative path minus `.md`. */
 function conceptIdOf(relPath: string): string {
   return toPosix(relPath).replace(/\.md$/i, "");
 }
@@ -153,14 +150,14 @@ function parseWikiFrontmatter(raw: string): WikiPageFrontmatter {
   return out;
 }
 
-/** True when `relPath` is a RESERVED wiki file at the component root (schema/index/log). */
+/** True when `relPath` is a RESERVED wiki file at the bundle root (schema/index/log). */
 function isReservedRootFile(relPath: string): boolean {
   const posix = toPosix(relPath);
   if (posix.includes("/")) return false; // reserved files are special ONLY at the wiki root
   return RESERVED_ROOT_FILES.has(posix.toLowerCase());
 }
 
-/** First path segment of a component-root-relative POSIX path (or the whole thing when flat). */
+/** First path segment of a bundle-root-relative POSIX path (or the whole thing when flat). */
 function firstSegment(relPath: string): string {
   const posix = toPosix(relPath);
   const slash = posix.indexOf("/");
@@ -181,10 +178,10 @@ function resolveXref(xref: string, bundleId: string): string | null {
 }
 
 /**
- * Resolve a page body's bundle-relative markdown links to component-root-relative
- * conceptIds. `/`-rooted links resolve from the component root; standard relative
+ * Resolve a page body's bundle-relative markdown links to bundle-root-relative
+ * conceptIds. `/`-rooted links resolve from the bundle root; standard relative
  * links resolve against the linking page's own directory. External schemes,
- * anchors, non-`.md` targets, and links escaping the component root are dropped
+ * anchors, non-`.md` targets, and links escaping the bundle root are dropped
  * (tolerant, §9). First-appearance order; duplicates collapse.
  */
 function resolveBodyLinks(body: string, fileRelPath: string): string[] {
@@ -277,7 +274,6 @@ function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   const doc: IndexDocument = {
     ref: `${c.id}//${conceptId}`,
     bundle: c.id,
-    component: WIKI_COMPONENT_ID,
     conceptId,
     path: file.absPath,
     hash: hashContent(raw),
@@ -420,7 +416,7 @@ export class LlmWikiAdapter extends DirectoryAdapterBase {
     return [{ path: path.join(c.root, `${canonical}.md`), conceptId: canonical }];
   }
 
-  /** The wiki owns its whole root (schema/index/log at root plus pages/ + raw/); one component. */
+  /** The wiki owns its whole root (schema/index/log at root plus pages/ + raw/). */
   override directoryList(_b: Bundle): string[] {
     return ["."];
   }

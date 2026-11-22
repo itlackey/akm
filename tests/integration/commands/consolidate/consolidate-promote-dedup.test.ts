@@ -44,7 +44,7 @@ import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpe
 /** The durable `proposals.ref` item_ref (WI-8.5a): `<bundle>//<conceptId>`. */
 function durableRef(stashDir: string, type: string, name: string): string {
   const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
-  return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
+  return deriveEntryProvenance({ bundleId, adapterId: "akm" }, type, name).itemRef;
 }
 
 function makePromoteOp(ref: string, knowledgeRef: string): ConsolidatePromoteOp {

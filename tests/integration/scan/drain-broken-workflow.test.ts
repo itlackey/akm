@@ -63,7 +63,7 @@ function makeStash(): { stashDir: string; goodPath: string; badPath: string } {
   return { stashDir, goodPath, badPath };
 }
 
-function component(root: string): Bundle {
+function bundle(root: string): Bundle {
   return { id: "b", root, writable: true };
 }
 
@@ -74,7 +74,7 @@ describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
     // The adapter fold does NOT throw and does NOT abstain on a broken workflow
     // — it returns a full IndexDocument. Without the drain re-check this would
     // silently land in the index.
-    const doc = akmAdapter.recognize(component(stashDir), brokenCtx);
+    const doc = akmAdapter.recognize(bundle(stashDir), brokenCtx);
     expect(doc).not.toBeNull();
     expect(doc?.type).toBe("workflow");
   });
@@ -83,7 +83,7 @@ describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
     const { stashDir, goodPath, badPath } = makeStash();
     const ctxs = [buildFileContext(stashDir, goodPath), buildFileContext(stashDir, badPath)];
 
-    const drained = drainDirDocuments(akmAdapter, component(stashDir), ctxs);
+    const drained = drainDirDocuments(akmAdapter, bundle(stashDir), ctxs);
 
     // Only the valid workflow survives.
     expect(drained.entries).toHaveLength(1);

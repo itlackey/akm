@@ -51,7 +51,7 @@ export function collectIndexSourcesCheck(): HealthCheckResult {
       evidence: { sources: [] },
     };
   }
-  const named = sources.map((source) => `${source.bundle} (${source.component}: ${source.reason})`).join("; ");
+  const named = sources.map((source) => `${source.bundle} (${source.reason})`).join("; ");
   return {
     ...base,
     status: "warn",

@@ -311,10 +311,7 @@ export const routes: Route[] = [
   post("/api/bundles/remove", body(bundles.remove, ["bundle", "confirm"], "bundle remove")),
   post("/api/bundles/update", body(bundles.update, ["bundle"], "bundle update")),
   post("/api/bundles/rename", body(bundles.rename, ["bundle", "name", "dryRun"], "bundle rename")),
-  post(
-    "/api/bundles/settings",
-    body(bundles.setSettings, ["bundle", "enabled", "writable", "componentWritability"], "bundle settings"),
-  ),
+  post("/api/bundles/settings", body(bundles.setSettings, ["bundle", "enabled", "writable"], "bundle settings")),
   post("/api/setup/apply", body(setup.apply, ["dir", "harness", "connection", "learning"], "setup apply")),
   post("/api/config/set", body(config.change, ["set", "unset"], "config")),
   post("/api/config/projects", body(config.changeProjects, ["set", "unset"], "projects")),

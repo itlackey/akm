@@ -467,6 +467,14 @@
             "type": "string",
             "minLength": 1
           },
+          "adapter": {
+            "type": "string",
+            "minLength": 1
+          },
+          "root": {
+            "type": "string",
+            "minLength": 1
+          },
           "credential": {
             "type": "string",
             "minLength": 1
@@ -480,30 +488,6 @@
           "registryId": {
             "type": "string",
             "minLength": 1
-          },
-          "components": {
-            "type": "object",
-            "propertyNames": {
-              "type": "string",
-              "minLength": 1
-            },
-            "additionalProperties": {
-              "type": "object",
-              "properties": {
-                "root": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "adapter": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "writable": {
-                  "type": "boolean"
-                }
-              },
-              "additionalProperties": {}
-            }
           },
           "lint": {
             "type": "object",
@@ -2467,6 +2451,14 @@
                 "type": "string",
                 "minLength": 1
               },
+              "adapter": {
+                "type": "string",
+                "minLength": 1
+              },
+              "root": {
+                "type": "string",
+                "minLength": 1
+              },
               "credential": {
                 "type": "string",
                 "minLength": 1
@@ -2480,30 +2472,6 @@
               "registryId": {
                 "type": "string",
                 "minLength": 1
-              },
-              "components": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "additionalProperties": {
-                  "type": "object",
-                  "properties": {
-                    "root": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "adapter": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "writable": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": {}
-                }
               },
               "lint": {
                 "type": "object",

@@ -73,8 +73,8 @@ export type RegistryConfigEntry = z.infer<typeof import("./config-schema").Regis
 /**
  * A single current `bundles.<slug>` entry. Carries one source descriptor
  * (`path` | `git` | `website` | `npm`),
- * optional `writable`, an optional preserved `registryId` source locator, and an
- * optional single-entry `components` map. See config-schema.ts for the shape.
+ * optional `writable`, an optional preserved `registryId` source locator, and
+ * the optional `adapter` and `root`. See config-schema.ts for the shape.
  */
 export type BundleConfigEntry = z.infer<typeof import("./config-schema").BundleConfigEntrySchema>;
 
@@ -113,10 +113,10 @@ export interface ConfiguredSource {
   primary?: boolean;
   /** Pass-through provider-specific options. */
   options?: Record<string, unknown>;
-  /** Adapter selected for the bundle's sole component, when configured. */
+  /** The adapter the bundle is configured with. */
   adapterId?: string;
-  /** Component root relative to the provider's materialized content root. */
-  componentRoot?: string;
+  /** The content root, relative to the provider's materialized content root. */
+  root?: string;
 }
 
 /**

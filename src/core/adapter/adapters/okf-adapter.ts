@@ -11,13 +11,13 @@
  *  - recognize: any `.md` NOT named `index.md`/`log.md` (case-insensitive,
  *    reserved) → one concept. `type` = frontmatter `type` when a non-empty
  *    string, else the `knowledge` default. conceptId = the concept's path
- *    within the component root minus `.md`. The OKF field projection:
+ *    within the bundle root minus `.md`. The OKF field projection:
  *    name ← title (fallback: last path segment), description ← description,
  *    tags ← tags, updated ← timestamp. The directory a file sits in NEVER
  *    affects `type`.
  *  - links: BOTH OKF link forms — `/`-rooted bundle-relative and standard
  *    relative — resolve deterministically into target conceptIds, stored on
- *    `IndexDocument.links`. Unresolvable / out-of-component links are dropped
+ *    `IndexDocument.links`. Unresolvable / out-of-bundle links are dropped
  *    (tolerant).
  *  - validate (LENIENT): base checks only; unknown frontmatter never fails;
  *    `missing-type` is INFO; `missing-ref` on OKF links is a non-blocking
@@ -133,14 +133,14 @@ function isReservedFileName(name: string): boolean {
  * Resolve BOTH OKF link forms found in a concept body into target conceptIds
  * (§9, §5):
  *   - `/`-rooted bundle-relative — `[x](/tables/customers.md)` — resolved from
- *     the component root;
+ *     the bundle root;
  *   - standard relative — `[y](./other.md)`, `[z](../a/b.md)` — resolved
  *     relative to the linking concept's own directory.
- * Both are resolved against the component root, `.md` stripped, to yield a
- * component-root-relative conceptId (matching how `recognize` derives the
+ * Both are resolved against the bundle root, `.md` stripped, to yield a
+ * bundle-root-relative conceptId (matching how `recognize` derives the
  * target file's own conceptId). Deterministic string/path work — no LLM, no
  * I/O. Non-`.md` targets, external schemes (`http:`…), in-page anchors, and any
- * link that escapes the component root are dropped (tolerant, §5). Order of
+ * link that escapes the bundle root are dropped (tolerant, §5). Order of
  * first appearance is preserved; duplicates collapse.
  */
 export function resolveOkfLinks(body: string, fileRelPath: string): string[] {
@@ -166,14 +166,14 @@ export function resolveOkfLinks(body: string, fileRelPath: string): string[] {
 
     let resolved: string;
     if (target.startsWith("/")) {
-      // Bundle/component-root-relative.
+      // Bundle/bundle-root-relative.
       resolved = path.posix.normalize(target.slice(1));
     } else {
       // Standard relative — resolve against the linking concept's directory.
       const base = dir === "." ? "" : dir;
       resolved = path.posix.normalize(path.posix.join(base, target));
     }
-    // Drop anything that escapes the component root.
+    // Drop anything that escapes the bundle root.
     if (resolved.startsWith("../") || resolved === ".." || resolved.startsWith("/")) continue;
     const conceptId = resolved.replace(/\.md$/i, "");
     if (!conceptId || seen.has(conceptId)) continue;
@@ -236,7 +236,6 @@ function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   const doc: IndexDocument = {
     ref: `${c.id}//${conceptId}`,
     bundle: c.id,
-    component: c.id,
     conceptId,
     path: file.absPath,
     // hash over the full raw file (frontmatter + body) so any edit invalidates
@@ -325,7 +324,7 @@ export class OkfAdapter extends DirectoryAdapterBase {
     return [{ path: path.join(c.root, `${canonical}.md`), conceptId: canonical }];
   }
 
-  /** OKF concepts live anywhere under the component root (§5). */
+  /** OKF concepts live anywhere under the bundle root (§5). */
   override directoryList(_b: Bundle): string[] {
     return ["."];
   }

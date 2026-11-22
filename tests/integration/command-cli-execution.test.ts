@@ -21,7 +21,7 @@ beforeEach(async () => {
     bundles: {
       fixture: {
         path: storage.stashDir,
-        components: { main: { root: ".", adapter: "akm" } },
+        adapter: "akm",
       },
     },
     harnesses: {

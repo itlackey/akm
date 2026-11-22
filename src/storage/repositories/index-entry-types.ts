@@ -25,7 +25,6 @@ import type { IndexDocument } from "../../indexer/passes/metadata";
 export interface EntryProvenance {
   itemRef: string;
   bundleId: string;
-  componentId: string;
   conceptId: string;
   adapterId: string;
 }
@@ -45,7 +44,6 @@ export interface DbIndexedEntry {
    */
   conceptId: string;
   bundleId: string;
-  componentId: string;
   adapterId: string;
   type: string;
   contentHash?: string;

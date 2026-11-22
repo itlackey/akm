@@ -44,13 +44,13 @@ describe("OKF first-class conformance", () => {
       bundles: {
         local: {
           path: storage.stashDir,
+          adapter: "akm",
           writable: true,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
         },
         adversarial: {
           path: okfRoot,
+          adapter: adversarialAdapter,
           writable: true,
-          components: { main: { root: ".", adapter: adversarialAdapter, writable: true } },
         },
         noindex: { path: noIndexRoot, writable: false },
       },
@@ -100,7 +100,7 @@ describe("OKF first-class conformance", () => {
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
     expect(resolveSourceEntries().find((source) => source.registryId === "noindex")?.adapterId).toBe("okf");
-    expect(loadConfig().bundles?.noindex?.components?.main?.adapter).toBe("okf");
+    expect(loadConfig().bundles?.noindex?.adapter).toBe("okf");
 
     const db = openExistingDatabase(getDbPath());
     try {
@@ -358,11 +358,13 @@ describe("OKF first-class conformance", () => {
         bundles: {
           parent: {
             path: storage.stashDir,
-            components: { main: { root: ".", adapter: parentAdapter, writable: true } },
+            adapter: parentAdapter,
+            writable: true,
           },
           nested: {
             path: nestedRoot,
-            components: { main: { root: ".", adapter: "okf", writable: false } },
+            adapter: "okf",
+            writable: false,
           },
         },
       });
@@ -438,11 +440,13 @@ describe("OKF first-class conformance", () => {
         bundles: {
           parent: {
             path: storage.stashDir,
-            components: { main: { root: ".", adapter: parentAdapter, writable: true } },
+            adapter: parentAdapter,
+            writable: true,
           },
           nested: {
             path: nestedRoot,
-            components: { main: { root: ".", adapter: nestedAdapter, writable: false } },
+            adapter: nestedAdapter,
+            writable: false,
           },
         },
       });
@@ -516,9 +520,7 @@ describe("OKF first-class conformance", () => {
       expect(result.clean).toEqual({
         skipped: {
           reason: "incomplete-scan",
-          sources: [
-            { bundle: "adversarial", component: "main", path: okfRoot, reason: expect.stringContaining("ENOENT") },
-          ],
+          sources: [{ bundle: "adversarial", path: okfRoot, reason: expect.stringContaining("ENOENT") }],
         },
       });
     } finally {
@@ -539,7 +541,7 @@ describe("OKF first-class conformance", () => {
     }
   });
 
-  test("an unknown configured adapter cannot wipe a previously indexed component", async () => {
+  test("an unknown configured adapter cannot wipe a previously indexed bundle", async () => {
     await akmIndex({ stashDir: storage.stashDir, full: true });
     writeSandboxConfig({
       semanticSearchMode: "off",
@@ -547,11 +549,13 @@ describe("OKF first-class conformance", () => {
       bundles: {
         local: {
           path: storage.stashDir,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
+          adapter: "akm",
+          writable: true,
         },
         adversarial: {
           path: okfRoot,
-          components: { main: { root: ".", adapter: "no-such-adapter", writable: false } },
+          adapter: "no-such-adapter",
+          writable: false,
         },
       },
     });
@@ -650,10 +654,11 @@ describe("OKF first-class conformance", () => {
       bundles: {
         primary: {
           path: storage.stashDir,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
+          adapter: "okf",
+          writable: true,
         },
-        local: { path: localRoot, components: { main: { root: ".", adapter: "okf", writable: false } } },
-        stash: { path: stashRoot, components: { main: { root: ".", adapter: "okf", writable: false } } },
+        local: { path: localRoot, adapter: "okf", writable: false },
+        stash: { path: stashRoot, adapter: "okf", writable: false },
       },
     });
     resetConfigCache();
@@ -696,7 +701,8 @@ describe("OKF first-class conformance", () => {
         local: { path: storage.stashDir },
         native: {
           path: workflowRoot,
-          components: { main: { root: ".", adapter: "akm-workflow", writable: true } },
+          adapter: "akm-workflow",
+          writable: true,
         },
       },
     });
@@ -773,7 +779,8 @@ describe("OKF first-class conformance", () => {
         bundles: {
           native: {
             path: workflowRoot,
-            components: { main: { root: ".", adapter: "akm-workflow", writable: true } },
+            adapter: "akm-workflow",
+            writable: true,
           },
         },
       });
@@ -818,11 +825,13 @@ describe("OKF first-class conformance", () => {
       bundles: {
         local: {
           path: storage.stashDir,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
+          adapter: "akm",
+          writable: true,
         },
         native: {
           path: workflowRoot,
-          components: { main: { root: ".", adapter: "akm-workflow", writable: true } },
+          adapter: "akm-workflow",
+          writable: true,
         },
       },
     });
@@ -843,11 +852,13 @@ describe("OKF first-class conformance", () => {
       bundles: {
         adversarial: {
           path: okfRoot,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
+          adapter: "okf",
+          writable: true,
         },
         local: {
           path: storage.stashDir,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
+          adapter: "akm",
+          writable: true,
         },
       },
     });
@@ -875,11 +886,13 @@ describe("OKF first-class conformance", () => {
       bundles: {
         adversarial: {
           path: okfRoot,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
+          adapter: "okf",
+          writable: true,
         },
         native: {
           path: workflowRoot,
-          components: { main: { root: ".", adapter: "akm-workflow", writable: true } },
+          adapter: "akm-workflow",
+          writable: true,
         },
       },
     });
@@ -892,15 +905,15 @@ describe("OKF first-class conformance", () => {
     expect((await loadWorkflowAsset("index")).ref).toBe("native//index");
   });
 
-  test("workflow authoring rejects a default OKF component before touching disk", async () => {
+  test("workflow authoring rejects a default OKF bundle before touching disk", async () => {
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "adversarial",
       bundles: {
         adversarial: {
           path: okfRoot,
+          adapter: "okf",
           writable: true,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
         },
       },
     });
@@ -931,13 +944,13 @@ describe("OKF first-class conformance", () => {
       bundles: {
         local: {
           path: storage.stashDir,
+          adapter: "akm",
           writable: true,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
         },
         adversarial: {
           path: okfRoot,
+          adapter: "okf",
           writable: true,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
         },
       },
     });
@@ -979,9 +992,10 @@ describe("OKF first-class conformance", () => {
       bundles: {
         vendor: {
           path: okfRoot,
-          components: { main: { root: ".", adapter: "okf", writable: false } },
+          adapter: "okf",
+          writable: false,
         },
-        team: { path: teamRoot, components: { main: { root: ".", adapter: "akm", writable: true } } },
+        team: { path: teamRoot, adapter: "akm", writable: true },
       },
     });
 
@@ -1003,17 +1017,18 @@ describe("OKF first-class conformance", () => {
     expect(fs.existsSync(path.join(teamRoot, "memories", "replacement.md"))).toBe(true);
   });
 
-  test("a nested default component root owns writes, indexing, show, and lint", async () => {
+  test("a nested default bundle root owns writes, indexing, show, and lint", async () => {
     const packageRoot = path.join(storage.root, "nested-package");
-    const componentRoot = path.join(packageRoot, "catalog");
-    fs.mkdirSync(componentRoot, { recursive: true });
+    const contentRoot = path.join(packageRoot, "catalog");
+    fs.mkdirSync(contentRoot, { recursive: true });
     writeSandboxConfig({
       defaultBundle: "nested",
       bundles: {
         nested: {
           path: packageRoot,
+          adapter: "akm",
+          root: "catalog",
           writable: true,
-          components: { main: { root: "catalog", adapter: "akm", writable: true } },
         },
       },
     });
@@ -1022,21 +1037,21 @@ describe("OKF first-class conformance", () => {
       resetConfigCache();
       const written = await writeMarkdownAsset({
         type: "memory",
-        content: "---\nupdated: 2026-07-25\n---\n\nNested component body.",
+        content: "---\nupdated: 2026-07-25\n---\n\nNested bundle body.",
         name: "nested-root",
         fallbackPrefix: "memory",
       });
 
-      expect(written.path).toBe(path.join(componentRoot, "memories", "nested-root.md"));
-      expect(written.stashDir).toBe(componentRoot);
+      expect(written.path).toBe(path.join(contentRoot, "memories", "nested-root.md"));
+      expect(written.stashDir).toBe(contentRoot);
       expect(fs.existsSync(path.join(packageRoot, "memories", "nested-root.md"))).toBe(false);
       expect(resolveSourceEntries()).toEqual([
-        expect.objectContaining({ path: componentRoot, registryId: "nested", adapterId: "akm" }),
+        expect.objectContaining({ path: contentRoot, registryId: "nested", adapterId: "akm" }),
       ]);
 
-      await akmIndex({ stashDir: componentRoot, full: true });
+      await akmIndex({ stashDir: contentRoot, full: true });
       const shown = await showLocal({ ref: "nested//memories/nested-root" });
-      expect(shown.content).toContain("Nested component body.");
+      expect(shown.content).toContain("Nested bundle body.");
       expect((await akmLint()).flagged).toEqual([]);
     });
   });
@@ -1067,13 +1082,13 @@ describe("OKF v0.2 fixture bundle indexes end-to-end alongside the v0.1 fixture"
       bundles: {
         local: {
           path: v2Storage.stashDir,
+          adapter: "akm",
           writable: true,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
         },
         "okf-v2": {
           path: V2_FIXTURE_ROOT,
+          adapter: "okf",
           writable: true,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
         },
       },
     });

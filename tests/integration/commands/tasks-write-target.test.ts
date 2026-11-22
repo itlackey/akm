@@ -52,7 +52,8 @@ describe("task asset mutations honor write-target resolution", () => {
         bundles: {
           target: {
             path: target.dir,
-            components: { main: { root: ".", adapter: "okf", writable: true } },
+            adapter: "okf",
+            writable: true,
           },
         },
       });

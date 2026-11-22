@@ -46,7 +46,7 @@ export interface LockfileEntry {
   localRoot?: string;
   /** Manifest digest, when the install flow computed one. */
   manifestDigest?: string;
-  /** Component adapter ids, when known. */
+  /** Adapter ids, when known. */
   adapterIds?: string[];
   /** Installation timestamp. */
   installedAt?: string;

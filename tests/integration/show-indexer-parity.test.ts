@@ -74,13 +74,13 @@ async function indexAdapterBundle(
     bundles: {
       local: {
         path: stashDir,
+        adapter: "akm",
         writable: true,
-        components: { main: { root: ".", adapter: "akm", writable: true } },
       },
       [bundleId]: {
         path: root,
+        adapter,
         writable,
-        components: { main: { root: ".", adapter, writable } },
       },
     },
   });

@@ -99,7 +99,6 @@ function indexAsset(
   const entry: IndexDocument = { type, name, description: `desc for ${name}` };
   const id = upsertEntry(db, filePath, entry, {
     bundleId: "stash",
-    componentId: "stash",
     adapterId: "akm",
     conceptId: `${type === "memory" ? "memories" : type === "knowledge" ? "knowledge" : "lessons"}/${name}`,
     itemRef: `stash//${type === "memory" ? "memories" : type === "knowledge" ? "knowledge" : "lessons"}/${name}`,
@@ -597,7 +596,6 @@ describe("selectInitiators / selectCandidates — threshold math against a real 
         const entry: IndexDocument = { type: "memory", name: `noise-${i}`, description: `noise ${i}` };
         const id = upsertEntry(db, noisePath, entry, {
           bundleId: "other-bundle",
-          componentId: "other-bundle",
           adapterId: "akm",
           conceptId: `memories/noise-${i}`,
           itemRef: `other-bundle//memories/noise-${i}`,
@@ -1269,7 +1267,6 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
           { type: "memory", name, description: `desc for ${name}` },
           {
             bundleId: "stash",
-            componentId: "stash",
             adapterId: "akm",
             conceptId: `memories/${name}`,
             itemRef: `stash//memories/${name}`,

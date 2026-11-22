@@ -48,8 +48,6 @@ import { DirectoryAdapterBase } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { hashContent } from "./shared";
 
-/** A native task bundle is single-component; its one component is `main`. */
-const COMPONENT_ID = "main";
 /** The task YAML extension. */
 const TASK_EXT = TASK_EXTENSION;
 
@@ -62,7 +60,6 @@ function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   return {
     ref: `${c.id}//${conceptId}`,
     bundle: c.id,
-    component: COMPONENT_ID,
     conceptId,
     path: file.absPath,
     hash: hashContent(raw),
@@ -133,7 +130,7 @@ export class AkmTaskAdapter extends DirectoryAdapterBase {
     ];
   }
 
-  /** Tasks live anywhere under the component root. */
+  /** Tasks live anywhere under the bundle root. */
   override directoryList(): string[] {
     return ["."];
   }

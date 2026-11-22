@@ -9,7 +9,7 @@ function configWith(adapter: string | undefined): AkmConfig {
   return {
     configVersion: "0.9.0",
     semanticSearchMode: "auto",
-    bundles: { docs: { path: "/tmp/docs", components: { main: { root: ".", ...(adapter ? { adapter } : {}) } } } },
+    bundles: { docs: { path: "/tmp/docs", ...(adapter ? { adapter } : {}) } },
   };
 }
 

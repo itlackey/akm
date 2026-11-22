@@ -12,32 +12,20 @@ import path from "node:path";
 import { ConfigError } from "../errors";
 import type { AkmConfig, BundleConfigEntry, ConfiguredSource, SourceConfigEntry, SourceSpec } from "./config-types";
 
-/** The current one-component-per-bundle configuration entry, if present. */
-export function bundleComponentConfig(
-  bundle: BundleConfigEntry | undefined,
-): { root?: string; adapter?: string; writable?: boolean } | undefined {
-  if (!bundle?.components) return undefined;
-  const components = Object.values(bundle.components);
-  if (components.length !== 1) {
-    throw new ConfigError("A bundle components map must contain exactly one component.", "INVALID_CONFIG_FILE");
-  }
-  return components[0];
-}
-
 /**
  * Convert the current `bundles` map into its ordered provider projection:
  * `defaultBundle` first, then map insertion order. Each entry's `name` is its
  * bundle key. Returns `undefined` when no bundles map is configured.
  */
 /**
- * A bundle's true identity: its configured `path` plus its component's
+ * A bundle's true identity: its configured `path` plus its
  * `root` (default `"."`), fully resolved. Two bundle entries whose bare
  * `path` differs (relative vs. absolute, trailing slash, `~` vs. expanded)
  * can still resolve to this same directory — this is the identity akm
  * compares before registering or reconciling a bundle (issue #870).
  */
-export function bundleContentRoot(entryPath: string, componentRoot?: string): string {
-  return path.resolve(entryPath, componentRoot ?? ".");
+export function bundleContentRoot(entryPath: string, root?: string): string {
+  return path.resolve(entryPath, root ?? ".");
 }
 
 /**
@@ -48,8 +36,8 @@ export function bundleContentRoot(entryPath: string, componentRoot?: string): st
  * distinct would make ownership, default-source trust, and scheduler grants
  * depend on syntax instead of the directory the OS will actually read.
  */
-export function bundlePhysicalContentRoot(entryPath: string, componentRoot?: string): string {
-  const resolved = bundleContentRoot(entryPath, componentRoot);
+export function bundlePhysicalContentRoot(entryPath: string, root?: string): string {
+  const resolved = bundleContentRoot(entryPath, root);
   try {
     return fs.realpathSync.native(resolved);
   } catch (cause) {
@@ -75,17 +63,16 @@ export function isBundleEnabled(config: AkmConfig, bundleId: string): boolean {
  * This deliberately excludes mutable policy (`enabled`, `writable`,
  * credentials, adapter selection) and bundle contents. Ordinary updates and
  * adapter auto-detection for the same origin keep their grant; changing the
- * locator or component root does not.
+ * locator or root does not.
  */
 export function bundleSourceId(config: AkmConfig, bundleId: string): string {
   const bundle = config.bundles?.[bundleId];
   if (!bundle) {
     throw new ConfigError(`Bundle ${JSON.stringify(bundleId)} is not configured.`, "INVALID_CONFIG_FILE");
   }
-  const component = bundleComponentConfig(bundle);
   let source: Readonly<Record<string, unknown>>;
   if (bundle.path !== undefined) {
-    source = { kind: "filesystem", locator: bundlePhysicalContentRoot(bundle.path, component?.root) };
+    source = { kind: "filesystem", locator: bundlePhysicalContentRoot(bundle.path, bundle.root) };
   } else if (bundle.git !== undefined) {
     source = { kind: "git", locator: normalizeInstalledGitRef("git", bundle.git) };
   } else if (bundle.website !== undefined) {
@@ -104,7 +91,7 @@ export function bundleSourceId(config: AkmConfig, bundleId: string): string {
     version: 1,
     source,
     registryId: bundle.registryId ?? null,
-    componentRoot: component?.root ?? ".",
+    root: bundle.root ?? ".",
   });
 }
 
@@ -114,7 +101,7 @@ export function filesystemBundleSourceId(contentRoot: string): string {
     version: 1,
     source: { kind: "filesystem", locator: bundlePhysicalContentRoot(contentRoot) },
     registryId: null,
-    componentRoot: ".",
+    root: ".",
   });
 }
 
@@ -135,13 +122,13 @@ export function primaryBundlePath(config: AkmConfig): string | undefined {
   if (!bundles || !key) return undefined;
   const entry = bundles[key];
   if (!entry || typeof entry.path !== "string" || entry.path.length === 0) return undefined;
-  const componentRoot = bundleComponentConfig(entry)?.root;
+  const root = entry.root;
   const bundleRoot = path.resolve(entry.path);
-  if (!componentRoot || componentRoot === ".") return bundleRoot;
-  const resolved = path.resolve(bundleRoot, componentRoot);
+  if (!root || root === ".") return bundleRoot;
+  const resolved = path.resolve(bundleRoot, root);
   const relative = path.relative(bundleRoot, resolved);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new ConfigError(`Component root "${componentRoot}" escapes bundle "${key}".`, "INVALID_CONFIG_FILE");
+    throw new ConfigError(`Root "${root}" escapes bundle "${key}".`, "INVALID_CONFIG_FILE");
   }
   return resolved;
 }
@@ -157,7 +144,7 @@ export function bundleContentRoots(config: AkmConfig): { id: string; contentRoot
   const out: { id: string; contentRoot: string }[] = [];
   for (const [id, entry] of Object.entries(bundles)) {
     if (typeof entry.path !== "string" || entry.path.length === 0) continue;
-    out.push({ id, contentRoot: bundlePhysicalContentRoot(entry.path, bundleComponentConfig(entry)?.root) });
+    out.push({ id, contentRoot: bundlePhysicalContentRoot(entry.path, entry.root) });
   }
   return out;
 }
@@ -334,12 +321,11 @@ export function resolveConfiguredSources(config: AkmConfig): ConfiguredSource[] 
   for (const persisted of bundleEntries) {
     const runtime = toConfiguredSource(persisted, persisted.primary === true);
     if (runtime) {
-      const component = bundleComponentConfig(config.bundles?.[persisted.name ?? ""]);
+      const bundle = config.bundles?.[persisted.name ?? ""];
       out.push({
         ...runtime,
-        ...(component?.adapter ? { adapterId: component.adapter } : {}),
-        ...(component?.root ? { componentRoot: component.root } : {}),
-        ...(component?.writable !== undefined ? { writable: component.writable } : {}),
+        ...(bundle?.adapter ? { adapterId: bundle.adapter } : {}),
+        ...(bundle?.root ? { root: bundle.root } : {}),
       });
     }
   }

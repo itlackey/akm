@@ -191,7 +191,8 @@ describe("env/secret write-target routing", () => {
         stash: { path: storage.stashDir },
         vendor: {
           path: okf,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
+          adapter: "okf",
+          writable: true,
         },
       },
       defaultBundle: "stash",

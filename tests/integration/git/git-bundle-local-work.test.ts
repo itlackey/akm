@@ -77,14 +77,11 @@ function makeReadOnly(): void {
   const config = loadConfig();
   const entry = config.bundles?.[BUNDLE];
   if (!entry) throw new Error("bundle missing");
-  const components = Object.fromEntries(
-    Object.entries(entry.components ?? {}).map(([name, component]) => [name, { ...component, writable: false }]),
-  );
   saveConfig({
     ...config,
     bundles: {
       ...config.bundles,
-      [BUNDLE]: { ...entry, writable: false, ...(entry.components ? { components } : {}) },
+      [BUNDLE]: { ...entry, writable: false },
     },
   });
 }

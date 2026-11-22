@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
 import { adapterForId } from "../../src/core/adapter/registry";
+import type { Bundle } from "../../src/core/adapter/types";
 import { loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { withConfigLock } from "../../src/core/config/config-io";
 import { getDataDir } from "../../src/core/paths";
@@ -93,9 +94,9 @@ function bundleDocuments(roots: readonly BundleRoot[]): { bundles: Map<string, s
     const adapterId = root.adapter ?? detectAdapterId(root.root);
     const adapter = adapterForId(adapterId);
     if (!adapter) continue;
-    const component = { id: root.bundleId, adapter: adapterId, root: root.root, writable: root.writable };
+    const bundle: Bundle = { id: root.bundleId, root: root.root, writable: root.writable };
     const documents = walkStashFlat(root.root).flatMap((file): string[] => {
-      const doc = adapter.recognize(component, file);
+      const doc = adapter.recognize(bundle, file);
       if (doc) files.add(file.absPath);
       return doc?.conceptId ? [doc.conceptId] : [];
     });

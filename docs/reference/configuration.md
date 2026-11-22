@@ -928,14 +928,16 @@ the key is ignored, and enables nothing; `akm migrate apply` drops it.
 and `defaultBundle` are the 0.9 source configuration shape — see
 [Concepts](../guides/concepts.md) and the [CLI reference](cli.md) for the
 full bundle model (`path`, `git`, `website`, `npm`, `location`, `writable`,
-`registryId`, `components`, `lint`). A bundle carries exactly one of `path`,
-`git`, `website`, `npm` and `location`. `location` is where the adapter its one
-component names finds a bundle that is not a directory: a keyring
+`registryId`, `adapter`, `root`, `lint`). A bundle carries exactly one of `path`,
+`git`, `website`, `npm` and `location`. `location` is where the bundle's `adapter`
+finds a bundle that is not a directory (it needs `adapter`): a keyring
 (`secret-tool`) or an Azure Key Vault (`azure-key-vault`), see
 [Environment & Secrets](env-and-secrets.md#secrets-kept-by-a-secret-manager).
 `defaultBundle` must name a key in `bundles` when set. A
-bundle's `components.<id>.adapter` key pins it to a specific format adapter
-instead of relying on auto-detection — see [Bundle Types](bundle-types.md)
+bundle's `adapter` key pins it to a specific format adapter
+instead of relying on auto-detection. `root` (a `path` or `git` bundle) is the content
+root inside the bundle. The retired `components` map is read as these keys, with a
+warning, and `akm migrate apply` rewrites the file — see [Bundle Types](bundle-types.md)
 for the full adapter list and what each one reads/writes.
 
 A bundle entry also carries the lint policy for its own files:

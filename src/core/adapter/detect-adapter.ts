@@ -103,3 +103,8 @@ export function detectAdapterId(root: string, fallback = "akm"): string {
   }
   return fallback;
 }
+
+/** The id of the adapter that reads a bundle: the one it is configured with, else the one its root's probe finds. */
+export function adapterIdOf(source: { path: string; adapterId?: string }, fallback = "akm"): string {
+  return source.adapterId ?? detectAdapterId(source.path, fallback);
+}

@@ -32,7 +32,7 @@ export function collectBundleAdaptersCheck(readConfig: () => AkmConfig = loadCon
     return {
       ...base,
       status: "fail",
-      message: `${toErrorMessage(error)} Fix it with \`akm config set bundles.<name>.components.main.adapter <id>\`.`,
+      message: `${toErrorMessage(error)} Fix it with \`akm config set bundles.<name>.adapter <id>\`.`,
     };
   }
   return { ...base, status: "pass", message: "Every configured bundle names an adapter akm has." };

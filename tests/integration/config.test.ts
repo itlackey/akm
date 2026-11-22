@@ -782,23 +782,23 @@ describe("getImproveProcessConfig", () => {
   });
 });
 
-// ── components.*.adapter (#909) ──────────────────────────────────────────────
+// ── bundles.*.adapter (#909) ──────────────────────────────────────────────
 // The schema takes any adapter id; the registry rejects an unknown one where a bundle is resolved
 // (`requireAdapter`), and `akm config set` / `akm doctor` check it up front.
 
-describe("components.*.adapter (#909)", () => {
+describe("bundles.*.adapter (#909)", () => {
   test("an unrecognized adapter loads: the registry, not the schema, rejects it where the bundle is resolved", () => {
     writeCurrentConfig({
       bundles: {
         main: {
           path: "/home/user/my-stash",
           writable: true,
-          components: { main: { root: ".", adapter: "__invalid__" } },
+          adapter: "__invalid__",
         },
       },
       defaultBundle: "main",
     });
-    expect(loadConfig().bundles?.main?.components?.main?.adapter).toBe("__invalid__");
+    expect(loadConfig().bundles?.main?.adapter).toBe("__invalid__");
     expect(() => requireConfiguredAdapters(loadConfig())).toThrow(
       /Bundle "main" names adapter "__invalid__", which akm does not have\. Expected one of: .*\bagent-skills\b.*\bokf\b/,
     );
@@ -810,13 +810,13 @@ describe("components.*.adapter (#909)", () => {
         main: {
           path: "/home/user/my-stash",
           writable: true,
-          components: { main: { root: ".", adapter: "agent-skills" } },
+          adapter: "agent-skills",
         },
       },
       defaultBundle: "main",
     });
     const config = loadConfig();
-    expect(config.bundles?.main?.components?.main?.adapter).toBe("agent-skills");
+    expect(config.bundles?.main?.adapter).toBe("agent-skills");
   });
 });
 
@@ -831,13 +831,14 @@ describe("primary stash config", () => {
     expect(primaryBundlePath(loadConfig())).toBe("/home/user/my-stash");
   });
 
-  test("resolves the primary stash from the default bundle's component root", () => {
+  test("resolves the primary stash from the default bundle's bundle root", () => {
     writeCurrentConfig({
       bundles: {
         main: {
           path: "/home/user/package",
           writable: true,
-          components: { main: { root: "catalog", adapter: "akm" } },
+          adapter: "akm",
+          root: "catalog",
         },
       },
       defaultBundle: "main",

@@ -18,6 +18,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { adapterIdOf } from "../core/adapter/detect-adapter";
 import { adapterForId } from "../core/adapter/registry";
 import { loadConfig } from "../core/config/config";
 import { isDataDirUnreadableError, TransientError } from "../core/errors";
@@ -89,19 +90,18 @@ export async function indexWrittenAssets(
     // reuses the full-index recognize engine (F4a M-core-2 item 5): broken
     // workflows drop, valid workflow docs are cached for the side-table upsert.
     // The bundle's own adapter recognizes what was written: a named bundle's configured one, the akm adapter otherwise.
-    const adapterId = options.bundleId
+    const configuredAdapterId = options.bundleId
       ? resolveSourceEntries(undefined, loadConfig()).find((entry) => entry.registryId === options.bundleId)?.adapterId
       : undefined;
-    const installation = deriveInstallations([
-      {
-        path: stashDir,
-        writable: true,
-        ...(options.bundleId ? { registryId: options.bundleId } : {}),
-        ...(adapterId ? { adapterId } : {}),
-      },
-    ])[0];
-    const component = installation?.components[0];
-    if (!installation || !component) throw new Error(`Could not derive bundle provenance for ${stashDir}`);
+    const writtenSource = {
+      path: stashDir,
+      writable: true,
+      ...(options.bundleId ? { registryId: options.bundleId } : {}),
+      ...(configuredAdapterId ? { adapterId: configuredAdapterId } : {}),
+    };
+    const bundle = deriveInstallations([writtenSource])[0];
+    if (!bundle) throw new Error(`Could not derive bundle provenance for ${stashDir}`);
+    const adapterId = adapterIdOf(writtenSource);
     const pairs: Array<{ file: string; entry: IndexDocument; conceptId: string; contentHash?: string }> = [];
     const unindexable = new Set<string>();
     const rejectedConceptIds = new Set<string>();
@@ -119,9 +119,9 @@ export async function indexWrittenAssets(
         }
       }
       const ctx = buildFileContext(stashDir, file);
-      const adapter = adapterForId(installation.adapterId);
-      if (!adapter) throw new Error(`Unknown adapter "${installation.adapterId}" for ${stashDir}`);
-      const drained = drainDirDocuments(adapter, component, [ctx]);
+      const adapter = adapterForId(adapterId);
+      if (!adapter) throw new Error(`Unknown adapter "${adapterId}" for ${stashDir}`);
+      const drained = drainDirDocuments(adapter, bundle, [ctx]);
       for (const rejectedPath of drained.rejectedPaths) unindexable.add(rejectedPath);
       for (const conceptId of drained.rejectedConceptIds) rejectedConceptIds.add(conceptId);
       const entry = drained.entries[0];
@@ -149,11 +149,11 @@ export async function indexWrittenAssets(
                   AND bundle_id = ?
                   AND adapter_id = ?`,
             )
-            .all(file, component.id, installation.adapterId) as Array<{ id: number }>;
+            .all(file, bundle.id, adapterId) as Array<{ id: number }>;
           for (const row of rows) unindexableEntryIds.add(row.id);
         }
         for (const conceptId of rejectedConceptIds) {
-          const itemRef = `${component.id}//${conceptId}`;
+          const itemRef = `${bundle.id}//${conceptId}`;
           const rows = db
             .prepare(
               `SELECT id FROM entries
@@ -161,7 +161,7 @@ export async function indexWrittenAssets(
                   AND type = 'workflow'
                   AND (concept_id = ? OR item_ref = ?)`,
             )
-            .all(component.id, installation.adapterId, conceptId, itemRef) as Array<{ id: number }>;
+            .all(bundle.id, adapterId, conceptId, itemRef) as Array<{ id: number }>;
           for (const row of rows) unindexableEntryIds.add(row.id);
         }
         deleteEntriesByIds(db, [...unindexableEntryIds]);
@@ -172,7 +172,7 @@ export async function indexWrittenAssets(
           // via the SAME derivation the full-index writer uses, so a write-path
           // row is never a NULL-item_ref straggler.
           const provenance = deriveEntryProvenance(
-            { bundleId: component.id, componentId: component.id, adapterId: installation.adapterId },
+            { bundleId: bundle.id, adapterId },
             entry.type,
             entry.name,
             conceptId,

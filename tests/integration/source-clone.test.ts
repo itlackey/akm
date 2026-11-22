@@ -194,8 +194,8 @@ describe("akmClone", () => {
         searchpath: { path: searchPathDir },
         foreign: {
           path: targetDir,
+          adapter: "okf",
           writable: true,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
         },
       },
     });
@@ -684,7 +684,7 @@ describe("akmClone opaque refs and provenance", () => {
         searchpath: { path: searchPathDir },
         flat: { path: flatSkillsDir },
         site: { path: siteDir },
-        docs: { path: docsDir, components: { main: { root: ".", adapter: "generic-files" } } },
+        docs: { path: docsDir, adapter: "generic-files" },
       },
       defaultBundle: "stash",
     });

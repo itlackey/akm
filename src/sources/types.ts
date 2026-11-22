@@ -341,16 +341,6 @@ export interface SourceLock {
   installedAt?: string;
 }
 
-export interface SourceComponent {
-  name: string;
-  root?: string;
-  /** The EFFECTIVE adapter — explicitly configured, or auto-detected when not (#908). */
-  adapter?: string;
-  /** `true` when `adapter` came from auto-detection rather than explicit config (#908). */
-  detected?: boolean;
-  writable?: boolean;
-}
-
 export interface SourceEntry {
   name: string;
   kind: SourceKind;
@@ -362,7 +352,12 @@ export interface SourceEntry {
   version?: string;
   writable: boolean;
   registryId?: string;
-  components: SourceComponent[];
+  /** The EFFECTIVE adapter — explicitly configured, or auto-detected when not (#908). */
+  adapter: string;
+  /** `true` when `adapter` was auto-detected rather than configured (#908). */
+  detected: boolean;
+  /** Deprecated, removed in 0.11: one entry named `main`; read `adapter` and `detected` above. */
+  components: Array<{ name: string; root?: string; adapter: string; detected: boolean; writable?: boolean }>;
   lock: SourceLock | null;
   itemCount: number;
   byType: Record<string, number>;

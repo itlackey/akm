@@ -6,13 +6,14 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
-import { adapterForId } from "../../core/adapter/registry";
+import { adapterIdOf } from "../../core/adapter/detect-adapter";
+import { adapterForId, bundleOf } from "../../core/adapter/registry";
 import { placementSpecFor, stashDirFor } from "../../core/asset/asset-placement";
 import { isBundleSlug } from "../../core/asset/asset-ref";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, replaceFrontmatterBlocks } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parseQualifiedPlacementRef } from "../../core/asset/resolve-ref";
+import { deriveBundleIds } from "../../core/bundle-id";
 import { isWithin, safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -148,7 +149,11 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       if (known) {
         sourcePath = await resolveAssetPath(source.path, parsed.type, parsed.name);
       } else {
-        const owned = resolveOpaqueAsset(source, parsed.name);
+        const owned = resolveOpaqueAsset(
+          source,
+          deriveBundleIds(allSources)[allSources.indexOf(source)] as string,
+          parsed.name,
+        );
         if (!owned) throw new NotFoundError(`Source asset not found for ref: ${options.sourceRef}`, "ASSET_NOT_FOUND");
         sourcePath = owned.path;
         opaqueType = owned.type;
@@ -332,14 +337,19 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
  * recognizes the file as. The same ownership + recognition `akm show` and the
  * index use, so a clone sees exactly the file the index holds for the ref.
  */
-function resolveOpaqueAsset(source: SearchSource, conceptId: string): { path: string; type?: string } | undefined {
-  const adapterId = source.adapterId ?? detectAdapterId(source.path);
-  const owner = resolveAdapterConceptOwner(source.path, adapterId, conceptId, { mode: "read" });
+function resolveOpaqueAsset(
+  source: SearchSource,
+  bundleId: string,
+  conceptId: string,
+): { path: string; type?: string } | undefined {
+  const owner = resolveAdapterConceptOwner({ name: bundleId, path: source.path }, adapterIdOf(source), conceptId, {
+    mode: "read",
+  });
   if (!owner) return undefined;
   let type: string | undefined;
   try {
-    const component = { id: adapterId, adapter: adapterId, root: source.path, writable: false };
-    type = adapterForId(adapterId)?.recognize(component, buildFileContext(source.path, owner.path))?.type;
+    const bundle = bundleOf({ name: bundleId, path: source.path });
+    type = adapterForId(adapterIdOf(source))?.recognize(bundle, buildFileContext(source.path, owner.path))?.type;
   } catch {
     // An adapter that cannot recognize the file leaves its type unknown.
   }

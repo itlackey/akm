@@ -121,7 +121,7 @@ function orderedProbeOwner(root: string): string | undefined {
   return undefined;
 }
 
-function component(id: string, root: string): Bundle {
+function bundle(id: string, root: string): Bundle {
   return { id, root, writable: true };
 }
 
@@ -207,21 +207,21 @@ describe("conformance — fold(recognize) over the walk", () => {
   // recognize-over-walk behavior directly (owner ruling 2026-07-21 — the
   // walk×recognize mapping the retired `scanComponent` module used to wrap).
   test("akm: fold(recognize) over the all-types walk yields a stable ref/type stream", () => {
-    const c = component("all-types", AKM_ROOT);
+    const c = bundle("all-types", AKM_ROOT);
     const folded = foldRecognize(akmAdapter, c);
     expect(folded.length).toBeGreaterThan(0); // the fixture actually exercises the walk
     expect(refType(folded)).toEqual(refType(foldRecognize(akmAdapter, c)));
   });
 
   test("okf: fold(recognize) over the okf-sample walk yields a stable ref/type stream", () => {
-    const c = component("okf-sample", OKF_ROOT);
+    const c = bundle("okf-sample", OKF_ROOT);
     const folded = foldRecognize(okfAdapter, c);
     expect(folded.length).toBeGreaterThan(0);
     expect(refType(folded)).toEqual(refType(foldRecognize(okfAdapter, c)));
   });
 
   test("llm-wiki: fold(recognize) over the llm-wiki walk yields a stable ref/type stream", () => {
-    const c = component("sample-wiki", LLM_WIKI_ROOT);
+    const c = bundle("sample-wiki", LLM_WIKI_ROOT);
     const folded = foldRecognize(llmWikiAdapter, c);
     expect(folded.length).toBeGreaterThan(0);
     expect(refType(folded)).toEqual(refType(foldRecognize(llmWikiAdapter, c)));
@@ -232,7 +232,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
   test("every registered adapter maps each recognized fixture file back from its canonical concept", () => {
     for (const adapter of directoryAdapters()) {
       const root = OWN_ROOT_BY_ID[adapter.id]!;
-      const c = component(adapter.id, root);
+      const c = bundle(adapter.id, root);
       expect(typeof adapter.readCandidates, adapter.id).toBe("function");
       for (const file of walkStashFlat(root)) {
         const document = adapter.recognize(c, file);
@@ -252,7 +252,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
   test("every existing fixture candidate either abstains or recognizes the queried canonical concept", () => {
     for (const adapter of directoryAdapters()) {
       const root = OWN_ROOT_BY_ID[adapter.id]!;
-      const c = component(adapter.id, root);
+      const c = bundle(adapter.id, root);
       for (const file of walkStashFlat(root)) {
         const indexed = adapter.recognize(c, file);
         if (!indexed?.conceptId) continue;
@@ -274,23 +274,27 @@ describe("conformance — read candidates and recognition are two-way canonical 
       const toolRoot = path.join(sandbox.dir, "tool");
       for (const root of [genericRoot, dotenvRoot, toolRoot]) fs.mkdirSync(root, { recursive: true });
 
-      const genericComponent = component("generic", genericRoot);
+      const genericComponent = bundle("generic", genericRoot);
       const upperText = path.join(genericRoot, "docs", "format.TEXT");
       fs.mkdirSync(path.dirname(upperText), { recursive: true });
       fs.writeFileSync(upperText, "generic text");
       expect(genericFilesAdapter.recognize(genericComponent, buildFileContext(genericRoot, upperText))?.conceptId).toBe(
         "docs/format",
       );
-      expect(resolveAdapterConceptOwner(genericRoot, "generic-files", "docs/format")?.path).toBe(upperText);
+      expect(
+        resolveAdapterConceptOwner({ name: "test", path: genericRoot }, "generic-files", "docs/format")?.path,
+      ).toBe(upperText);
 
       fs.writeFileSync(path.join(genericRoot, "docs", "format.md"), "# collision");
-      expect(() => resolveAdapterConceptOwner(genericRoot, "generic-files", "docs/format")).toThrow(
-        AdapterConceptCollisionError,
-      );
+      expect(() =>
+        resolveAdapterConceptOwner({ name: "test", path: genericRoot }, "generic-files", "docs/format"),
+      ).toThrow(AdapterConceptCollisionError);
 
       const extensionless = path.join(genericRoot, "LICENSE");
       fs.writeFileSync(extensionless, "license");
-      expect(resolveAdapterConceptOwner(genericRoot, "generic-files", "LICENSE")?.path).toBe(extensionless);
+      expect(resolveAdapterConceptOwner({ name: "test", path: genericRoot }, "generic-files", "LICENSE")?.path).toBe(
+        extensionless,
+      );
       const reserved = path.join(genericRoot, "index.md");
       fs.writeFileSync(reserved, "# reserved");
       expect(genericFilesAdapter.recognize(genericComponent, buildFileContext(genericRoot, reserved))).toBeNull();
@@ -301,11 +305,11 @@ describe("conformance — read candidates and recognition are two-way canonical 
       fs.writeFileSync(outside, "outside");
       const linked = path.join(genericRoot, "linked.md");
       fs.symlinkSync(outside, linked);
-      const linkedOwner = resolveAdapterConceptOwner(genericRoot, "generic-files", "linked");
+      const linkedOwner = resolveAdapterConceptOwner({ name: "test", path: genericRoot }, "generic-files", "linked");
       expect(linkedOwner?.path).toBe(linked);
       expect(linkedOwner?.realPath).toBe(fs.realpathSync(outside));
 
-      const dotenvComponent = component("dotenv", dotenvRoot);
+      const dotenvComponent = bundle("dotenv", dotenvRoot);
       const defaultEnv = path.join(dotenvRoot, "env", ".env");
       fs.mkdirSync(path.dirname(defaultEnv), { recursive: true });
       fs.writeFileSync(defaultEnv, "TOKEN=hidden\n");
@@ -318,9 +322,9 @@ describe("conformance — read candidates and recognition are two-way canonical 
       });
       fs.writeFileSync(path.join(dotenvRoot, "env", ".sensitive"), "");
       expect(dotenvAdapter.recognize(dotenvComponent, buildFileContext(dotenvRoot, defaultEnv))).toBeNull();
-      expect(resolveAdapterConceptOwner(dotenvRoot, "dotenv", "env/default")).toBeUndefined();
+      expect(resolveAdapterConceptOwner({ name: "test", path: dotenvRoot }, "dotenv", "env/default")).toBeUndefined();
 
-      const toolComponent = component("tool", toolRoot);
+      const toolComponent = bundle("tool", toolRoot);
       const singular = path.join(toolRoot, "skill", "pkg", "SKILL.md");
       fs.mkdirSync(path.dirname(singular), { recursive: true });
       fs.writeFileSync(singular, "---\nname: pkg\ndescription: pkg\n---\n");
@@ -369,7 +373,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
         ["env/team/.env", "TOKEN=hidden\n"],
       ] as const;
       const expected: Array<{ adapterId: string; root: string; path: string; conceptId: string }> = [];
-      const akmComponent = component("akm", akmRoot);
+      const akmComponent = bundle("akm", akmRoot);
       for (const [relativePath, content] of authored) {
         const filePath = path.join(akmRoot, relativePath);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -384,7 +388,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
       fs.mkdirSync(path.dirname(nestedDefault), { recursive: true });
       fs.writeFileSync(nestedDefault, "TOKEN=hidden\n");
       const dotenvDocument = dotenvAdapter.recognize(
-        component("dotenv", dotenvRoot),
+        bundle("dotenv", dotenvRoot),
         buildFileContext(dotenvRoot, nestedDefault),
       );
       expect(dotenvDocument?.conceptId).toBe("env/team/default");
@@ -407,7 +411,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
       try {
         for (const entry of expected) {
           expect(
-            resolveAdapterConceptOwner(entry.root, entry.adapterId, entry.conceptId),
+            resolveAdapterConceptOwner({ name: "test", path: entry.root }, entry.adapterId, entry.conceptId),
             entry.conceptId,
           ).toMatchObject({
             path: entry.path,
@@ -421,8 +425,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
       for (const entry of expected) {
         const adapter = adapterForId(entry.adapterId)!;
         expect(
-          adapter.recognize(component(entry.adapterId, entry.root), buildFileContext(entry.root, entry.path))
-            ?.conceptId,
+          adapter.recognize(bundle(entry.adapterId, entry.root), buildFileContext(entry.root, entry.path))?.conceptId,
           entry.path,
         ).toBe(entry.conceptId);
       }
@@ -448,9 +451,11 @@ describe("conformance — read candidates and recognition are two-way canonical 
         return originalRead(candidate, options as never);
       }) as typeof fs.readFileSync);
       try {
-        expect(() => resolveAdapterConceptOwner(root, "akm", "tasks/same")).toThrow(AdapterConceptCollisionError);
+        expect(() => resolveAdapterConceptOwner({ name: "test", path: root }, "akm", "tasks/same")).toThrow(
+          AdapterConceptCollisionError,
+        );
 
-        const owner = resolveAdapterConceptOwner(root, "akm", "tasks/same", { mode: "read" });
+        const owner = resolveAdapterConceptOwner({ name: "test", path: root }, "akm", "tasks/same", { mode: "read" });
         expect(owner?.path).toBe(loose);
       } finally {
         readSpy.mockRestore();

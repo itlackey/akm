@@ -98,7 +98,6 @@ const stubAdapter: BundleAdapter = {
     return {
       ref: `stub//${conceptId}`,
       bundle: "stub",
-      component: "main",
       conceptId,
       ...(file.file !== undefined ? { path: file.file } : {}),
       hash: "deadbeef",

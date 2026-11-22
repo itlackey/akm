@@ -228,8 +228,8 @@ describe("akm metrics", () => {
     const index = openIndexDatabase(getDbPath());
     try {
       const entry = index.prepare(
-        `INSERT INTO entries (item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path, document_json)
-         VALUES (?, ?, 'c', ?, 'a', 'skill', ?, '{}')`,
+        `INSERT INTO entries (item_ref, bundle_id, concept_id, adapter_id, type, file_path, document_json)
+         VALUES (?, ?, ?, 'a', 'skill', ?, '{}')`,
       );
       entry.run("main//skills/low", "main", "skills/low", "/x/low");
       entry.run("main//skills/high", "main", "skills/high", "/x/high");

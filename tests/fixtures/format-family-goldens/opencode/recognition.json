@@ -22,7 +22,6 @@
     "AGENTS.md": {
       "recognized": true,
       "adapterId": "opencode",
-      "component": ".opencode",
       "type": "instruction",
       "conceptId": "AGENTS",
       "ref": "sample-opencode//AGENTS",
@@ -32,7 +31,6 @@
     "commands/test.md": {
       "recognized": true,
       "adapterId": "opencode",
-      "component": ".opencode",
       "type": "command",
       "conceptId": "commands/test",
       "ref": "sample-opencode//commands/test",
@@ -43,7 +41,6 @@
     "agents/explorer.md": {
       "recognized": true,
       "adapterId": "opencode",
-      "component": ".opencode",
       "type": "agent",
       "conceptId": "agents/explorer",
       "ref": "sample-opencode//agents/explorer",
@@ -54,7 +51,6 @@
     "skills/changelog/SKILL.md": {
       "recognized": true,
       "adapterId": "opencode",
-      "component": ".opencode",
       "type": "skill",
       "conceptId": "skills/changelog",
       "ref": "sample-opencode//skills/changelog",

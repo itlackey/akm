@@ -152,7 +152,7 @@ export function workflowNameForSourcePath(
 }
 
 /**
- * Enumerate every owned source path that maps to `name` under one component.
+ * Enumerate every owned source path that maps to `name` under one bundle.
  * Ownership is decided before parsing so a malformed peer cannot be hidden by
  * a valid source. Results retain authored extension case for diagnostics.
  */
@@ -209,7 +209,7 @@ export function listWorkflowSourceFiles(sourceRoot: string, adapterId: string, n
 /**
  * Resolve a pre-enumerated set of authored workflow candidates in one batch.
  *
- * Callers that already walked a component (for example full lint/index scans)
+ * Callers that already walked a bundle (for example full lint/index scans)
  * must use this surface instead of point-resolving every canonical ref and
  * re-reading the same parent directory once per workflow. Candidate
  * inspection, symlink containment/format rules, nested-suffix rejection, and

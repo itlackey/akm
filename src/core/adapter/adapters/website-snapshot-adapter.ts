@@ -38,8 +38,6 @@ import { DirectoryAdapterBase } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate } from "./shared";
 
-/** A snapshot bundle is single-component; its one component is `main`. */
-const COMPONENT_ID = "main";
 /** The crawl page root the snapshot writer materializes pages under. */
 const PAGES_PREFIX = "stash/knowledge/";
 /** The provenance manifest basename (probe marker only, never indexed). */
@@ -104,7 +102,6 @@ function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   const doc: IndexDocument = {
     ref: `${c.id}//${conceptId}`,
     bundle: c.id,
-    component: COMPONENT_ID,
     conceptId,
     path: file.absPath,
     hash: hashContent(raw),

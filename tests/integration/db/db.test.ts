@@ -96,11 +96,7 @@ function insertTestEntry(
 ): number {
   const type = opts?.type ?? "script";
   const entry = makeEntry({ name: key, type, description: opts?.description ?? `Description for ${key}` });
-  const provenance = deriveEntryProvenance(
-    { bundleId: "test-bundle", componentId: "test-bundle", adapterId: "akm" },
-    type,
-    key,
-  );
+  const provenance = deriveEntryProvenance({ bundleId: "test-bundle", adapterId: "akm" }, type, key);
   const dirPath = opts?.dirPath ?? "/test/dir";
   return upsertEntry(db, opts?.filePath ?? path.join(dirPath, `${key}.ts`), entry, provenance);
 }
@@ -188,7 +184,7 @@ describe("Entry CRUD", () => {
     try {
       const type = "script";
       const name = "my-tool";
-      const prov = deriveEntryProvenance({ bundleId: "team-kb", componentId: "team-kb", adapterId: "akm" }, type, name);
+      const prov = deriveEntryProvenance({ bundleId: "team-kb", adapterId: "akm" }, type, name);
       const entry = makeEntry({ name, type, description: "original" });
       upsertEntry(db, "/s/dir/my-tool.ts", entry, prov);
       // Re-upsert the SAME item_ref (same identity) with an updated payload.
@@ -219,22 +215,14 @@ describe("Entry CRUD", () => {
       const name = "my-tool";
       // Insert the primary bundle FIRST (it gets the lower id, mirroring a
       // precedence-ordered index walk).
-      const primaryProv = deriveEntryProvenance(
-        { bundleId: "primary-kb", componentId: "primary-kb", adapterId: "akm" },
-        type,
-        name,
-      );
+      const primaryProv = deriveEntryProvenance({ bundleId: "primary-kb", adapterId: "akm" }, type, name);
       const primaryId = upsertEntry(
         db,
         "/p/dir/my-tool.ts",
         makeEntry({ name, type, description: "primary" }),
         primaryProv,
       );
-      const secondaryProv = deriveEntryProvenance(
-        { bundleId: "zzz-source", componentId: "zzz-source", adapterId: "akm" },
-        type,
-        name,
-      );
+      const secondaryProv = deriveEntryProvenance({ bundleId: "zzz-source", adapterId: "akm" }, type, name);
       const secondaryId = upsertEntry(
         db,
         "/z/dir/my-tool.ts",
@@ -762,11 +750,7 @@ describe("entry-owned FTS projection", () => {
   }
 
   function upsertFtsEntry(db: Database, key: string, entry: IndexDocument): number {
-    const provenance = deriveEntryProvenance(
-      { bundleId: "stash", componentId: "stash", adapterId: "akm" },
-      entry.type,
-      key,
-    );
+    const provenance = deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, entry.type, key);
     return upsertEntry(db, `/d/${key}.md`, entry, provenance);
   }
 
@@ -819,7 +803,7 @@ describe("entries-by-path reads (getEntryIdByFilePath / getEntryFilePathById)", 
   function seedAt(db: Database, key: string, filePath: string, stashDir: string, type: IndexDocument["type"]): number {
     const entry = { description: `Description for ${key}`, type, name: key } as unknown as IndexDocument;
     const bundleId = path.basename(stashDir) || "root";
-    const provenance = deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, key);
+    const provenance = deriveEntryProvenance({ bundleId, adapterId: "akm" }, type, key);
     return upsertEntry(db, filePath, entry, provenance);
   }
 

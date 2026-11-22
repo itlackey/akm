@@ -20,7 +20,6 @@
     "CLAUDE.md": {
       "recognized": true,
       "adapterId": "claude",
-      "component": ".claude",
       "type": "instruction",
       "conceptId": "CLAUDE",
       "ref": "sample-claude//CLAUDE",
@@ -30,7 +29,6 @@
     "commands/deploy.md": {
       "recognized": true,
       "adapterId": "claude",
-      "component": ".claude",
       "type": "command",
       "conceptId": "commands/deploy",
       "ref": "sample-claude//commands/deploy",
@@ -41,7 +39,6 @@
     "agents/reviewer.md": {
       "recognized": true,
       "adapterId": "claude",
-      "component": ".claude",
       "type": "agent",
       "conceptId": "agents/reviewer",
       "ref": "sample-claude//agents/reviewer",
@@ -52,7 +49,6 @@
     "skills/pdf-processing/SKILL.md": {
       "recognized": true,
       "adapterId": "claude",
-      "component": ".claude",
       "type": "skill",
       "conceptId": "skills/pdf-processing",
       "ref": "sample-claude//skills/pdf-processing",

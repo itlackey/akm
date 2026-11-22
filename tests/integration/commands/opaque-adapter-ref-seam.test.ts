@@ -17,7 +17,7 @@
  *
  * This file drives each of those command-level surfaces (utility-repo
  * coverage lives in `tests/integration/get-retrieval-counts.test.ts`, next to
- * its existing durable-ref suite) against a real OKF-adapter component whose
+ * its existing durable-ref suite) against a real OKF-adapter bundle whose
  * conceptId (`tables/customers`) has NO AKM placement type at all — proving
  * the round trip end to end, not just that the parser stops throwing.
  */
@@ -62,13 +62,13 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
       bundles: {
         local: {
           path: storage.stashDir,
+          adapter: "akm",
           writable: true,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
         },
         adversarial: {
           path: okfRoot,
+          adapter: "okf",
           writable: true,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
         },
       },
     });

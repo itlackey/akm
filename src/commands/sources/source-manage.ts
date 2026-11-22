@@ -118,10 +118,8 @@ export function addStash(
       key = nextBundleKey(bundles, name, resolvedPath);
       const entry: BundleConfigEntry = {
         path: resolvedPath,
-        ...(writable === true ? { writable: true } : {}),
-        components: {
-          main: { root: ".", adapter: detectAdapterId(resolvedPath), writable: writable ?? true },
-        },
+        adapter: detectAdapterId(resolvedPath),
+        writable: writable ?? true,
       };
       const nextBundles = placeBundle(bundles, key, entry, { before, after });
       const next = { ...config, bundles: nextBundles };
@@ -154,7 +152,8 @@ function urlBundleDescriptor(
     // round-trip back to `entry.options` via bundleEntryToSourceEntry.
     return {
       website: { url: locator, ...(options ?? {}) },
-      components: { main: { root: ".", adapter: "website-snapshot", writable: false } },
+      adapter: "website-snapshot",
+      writable: false,
     };
   }
   if (providerType === "npm") return { npm: locator };

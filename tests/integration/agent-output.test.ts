@@ -374,8 +374,8 @@ describe("--format jsonl", () => {
       bundles: {
         fixture: {
           path: stashDir,
+          adapter: "okf",
           writable: false,
-          components: { main: { root: ".", adapter: "okf", writable: false } },
         },
       },
       harnesses: { test: { platform: "opencode", bin: "/bin/echo" } },

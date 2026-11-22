@@ -127,9 +127,9 @@ don't record it as feedback.
 
 An LLM Wiki (Karpathy-style knowledge base) is a **bundle format**, not an akm
 asset type — there is no `akm wiki` command family. akm's LLM Wiki adapter
-recognizes one deterministically at install time: a bundle component whose root
-holds a `schema.md` plus a `pages/` directory is mounted as an `llm-wiki`
-component. Its pages are then indexed like any other content and resolve to
+recognizes one deterministically at install time: a bundle whose root
+holds a `schema.md` plus a `pages/` directory is read with the `llm-wiki`
+adapter. Its pages are then indexed like any other content and resolve to
 `bundle//conceptId` refs (e.g. `team-catalog//pages/attention`).
 
 Install one as a source, then search and read its pages with the ordinary

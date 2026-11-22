@@ -182,7 +182,7 @@ directory that has two or more of akm's type directories (`skills/`,
 directory of its own (a `scripts/` is the common one) is normally taken as the
 bundle, and the whole repository is indexed; your users can then
 [index only the subdirectory](bundles.md#akm-bundle-add) with
-`components.main.root`.
+`bundles.<name>.root`.
 
 ### Sharing on npm
 

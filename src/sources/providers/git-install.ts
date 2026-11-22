@@ -482,7 +482,7 @@ export function syncExistingWritableCheckout(
   const rootsToPreserve = [...new Set([root, ...requiredRoots.map((candidate) => path.resolve(candidate))])];
   for (const requiredRoot of rootsToPreserve) {
     if (!isWithin(requiredRoot, repoDir)) {
-      throw new UsageError(`Configured Git component root ${requiredRoot} resolves outside ${repoDir}.`);
+      throw new UsageError(`Configured Git root ${requiredRoot} resolves outside ${repoDir}.`);
     }
   }
 

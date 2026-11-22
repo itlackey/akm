@@ -70,7 +70,7 @@ function seedIndexEntry(db: ReturnType<typeof openIndexDatabase>, name: string, 
     db,
     filePath,
     { name, type: "script" },
-    deriveEntryProvenance({ bundleId: "test", componentId: "test", adapterId: "akm" }, "script", name),
+    deriveEntryProvenance({ bundleId: "test", adapterId: "akm" }, "script", name),
   );
 }
 

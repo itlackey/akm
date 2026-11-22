@@ -24,7 +24,7 @@ let dir: string;
 
 type IndexOutput = {
   scanComplete: boolean;
-  incompleteSources: Array<{ bundle: string; component: string; path: string; reason: string }>;
+  incompleteSources: Array<{ bundle: string; path: string; reason: string }>;
   clean?: { skipped?: { reason: string; sources: unknown[] }; checked?: number };
 };
 
@@ -68,7 +68,7 @@ describe("a configured source that cannot be scanned", () => {
     const second = await index();
     expect(second.out.scanComplete).toBe(false);
     expect(second.out.incompleteSources).toHaveLength(1);
-    expect(second.out.incompleteSources[0]).toMatchObject({ bundle: "notes", component: "main", path: dir });
+    expect(second.out.incompleteSources[0]).toMatchObject({ bundle: "notes", path: dir });
     expect(second.out.incompleteSources[0]?.reason).toContain("ENOENT");
     expect(recordedIncompleteSources()).toEqual(second.out.incompleteSources);
 
@@ -94,7 +94,9 @@ describe("an unresolved source", () => {
       bundles: {
         escaping: {
           path: dir,
-          components: { main: { root: "../team-notes-sibling", adapter: "akm", writable: false } },
+          adapter: "akm",
+          root: "../team-notes-sibling",
+          writable: false,
         },
         unmaterialized: { git: "git://127.0.0.1:1/none.git" },
       },
@@ -173,7 +175,7 @@ describe("the adapter-skip warning", () => {
       ...config,
       bundles: {
         ...config.bundles,
-        notes: { ...entry, components: { main: { root: ".", adapter: "agent-skills", writable: false } } },
+        notes: { ...entry, adapter: "agent-skills", writable: false },
       },
     });
   }
@@ -184,8 +186,7 @@ describe("the adapter-skip warning", () => {
 
     const first = await index("--full");
     expect(first.stderr).toContain('bundle "notes"');
-    expect(first.stderr).toContain('bundles.notes.components.main.adapter to "akm"');
-    expect(first.stderr).not.toContain("components.<name>");
+    expect(first.stderr).toContain('bundles.notes.adapter to "akm"');
 
     const again = await index("--full");
     expect(again.stderr).not.toContain("adapter skipped");
@@ -207,7 +208,7 @@ describe("the adapter-skip warning", () => {
       ...config,
       bundles: {
         ...config.bundles,
-        notes: { path: dir, components: { main: { root: ".", adapter: "agent-skills", writable: false } } },
+        notes: { path: dir, adapter: "agent-skills", writable: false },
       },
     });
 

@@ -18,5 +18,5 @@ import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../s
 /** The durable `<bundle>//<conceptId>` item_ref for `type`/`name` in `stashDir`. */
 export function durableItemRef(stashDir: string, type: string, name: string): string {
   const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
-  return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
+  return deriveEntryProvenance({ bundleId, adapterId: "akm" }, type, name).itemRef;
 }

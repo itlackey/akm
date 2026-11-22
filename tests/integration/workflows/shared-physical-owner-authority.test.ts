@@ -65,8 +65,8 @@ function configure(early: Fixture, later: Fixture): void {
     semanticSearchMode: "off",
     defaultBundle: "early",
     bundles: {
-      early: { path: early.root, components: { main: { root: ".", adapter: early.adapter, writable: true } } },
-      later: { path: later.root, components: { main: { root: ".", adapter: later.adapter, writable: true } } },
+      early: { path: early.root, adapter: early.adapter, writable: true },
+      later: { path: later.root, adapter: later.adapter, writable: true },
     },
   });
   resetConfigCache();

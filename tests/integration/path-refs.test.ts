@@ -35,7 +35,7 @@ function write(rel: string, content = "x\n"): string {
   return file;
 }
 
-const component = () => ({ id: "akm", adapter: "akm", root: storage.stashDir, writable: false });
+const bundle = () => ({ id: "akm", adapter: "akm", root: storage.stashDir, writable: false });
 
 describe("the placement pair: a file's ref and the files a ref can name", () => {
   // One sample file per placement type, in its type folder and out of it.
@@ -87,9 +87,7 @@ describe("the placement pair: a file's ref and the files a ref can name", () => 
 describe("recognition gives a file its path as its ref", () => {
   test("a file under its type folder keeps its ref", () => {
     const file = write("knowledge/auth.md", "# Auth\n");
-    expect(akmAdapter.recognize(component(), buildFileContext(storage.stashDir, file))?.conceptId).toBe(
-      "knowledge/auth",
-    );
+    expect(akmAdapter.recognize(bundle(), buildFileContext(storage.stashDir, file))?.conceptId).toBe("knowledge/auth");
   });
 
   test.each([
@@ -98,11 +96,11 @@ describe("recognition gives a file its path as its ref", () => {
     ["reports/data.js", "reports/data.js"],
   ])("%s is %s", (rel, ref) => {
     const file = write(rel, "# Doc\n");
-    const document = akmAdapter.recognize(component(), buildFileContext(storage.stashDir, file));
+    const document = akmAdapter.recognize(bundle(), buildFileContext(storage.stashDir, file));
     expect(document?.conceptId).toBe(ref);
     expect(document?.ref).toBe(`akm//${ref}`);
     // The ref inverts to the file.
-    expect(resolveAdapterConceptOwner(storage.stashDir, "akm", ref)?.path).toBe(file);
+    expect(resolveAdapterConceptOwner({ name: "test", path: storage.stashDir }, "akm", ref)?.path).toBe(file);
   });
 });
 

@@ -20,7 +20,7 @@ import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
-import { bundleComponentConfig, getSources, loadConfig, resolveSecret } from "../../core/config/config";
+import { getSources, loadConfig, resolveSecret } from "../../core/config/config";
 import { AkmError, ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath, getRegistryCacheDir } from "../../core/paths";
@@ -49,7 +49,6 @@ import { storeSecretResolver } from "../../sources/snapshot-fetchers/secret-seam
 import { ensureWebsiteMirror } from "../../sources/snapshot-fetchers/website-ingest";
 import type {
   RemoveResponse,
-  SourceComponent,
   SourceDescriptor,
   SourceEntry,
   SourceKind,
@@ -83,7 +82,6 @@ interface ManagedInstall {
   resolvedVersion?: string;
   resolvedRevision?: string;
   writable: boolean;
-  componentRoot: string;
   requiredRoots: string[];
   credential?: string;
 }
@@ -96,8 +94,6 @@ function listManagedInstalls(config: AkmConfig): ManagedInstall[] {
   for (const [key, bundle] of Object.entries(bundles)) {
     const lock = locks.get(key);
     if (!lock) continue; // only lock-backed bundles are registry-managed
-    const componentWritable = Object.values(bundle.components ?? {})[0]?.writable;
-    const componentRoot = bundleComponentConfig(bundle)?.root ?? ".";
     out.push({
       bundleKey: key,
       installId: bundle.registryId ?? key,
@@ -107,9 +103,8 @@ function listManagedInstalls(config: AkmConfig): ManagedInstall[] {
       installedAt: lock.installedAt ?? "",
       resolvedVersion: lock.resolvedVersion,
       resolvedRevision: lock.resolvedRevision,
-      writable: componentWritable ?? bundle.writable === true,
-      componentRoot,
-      requiredRoots: lock.localRoot ? [path.resolve(lock.localRoot, componentRoot)] : [],
+      writable: bundle.writable === true,
+      requiredRoots: lock.localRoot ? [path.resolve(lock.localRoot, bundle.root ?? ".")] : [],
       ...(bundle.credential !== undefined ? { credential: bundle.credential } : {}),
     });
   }
@@ -153,39 +148,38 @@ function describeBundleSource(entry: BundleConfigEntry): SourceDescriptor {
 }
 
 /**
- * Per-component `{ adapter, detected }` disclosure (#908/#909): `adapter` is
- * the EFFECTIVE adapter (explicit config, or auto-detected via the same
- * ordered probe `akm index` uses) and `detected` is `true` exactly when no
- * explicit `adapter` was configured. Before this, an auto-detected adapter
- * was invisible on `akm bundle list` — a mixed-layout bundle silently
- * shadowed by a narrower adapter (#908) gave no sign a choice had even been
- * made. `bundleRoot` is the bundle's resolved content root (lock `localRoot`
- * or its plain `path`), or `undefined` when neither is known yet (an
- * unresolved registry/website source) — detection is skipped in that case
- * rather than probing a path that may not exist.
+ * `{ adapter, detected }` disclosure (#908/#909): `adapter` is the EFFECTIVE
+ * adapter (explicit config, or auto-detected via the same ordered probe `akm
+ * index` uses) and `detected` is `true` exactly when no explicit `adapter` was
+ * configured. Before this, an auto-detected adapter was invisible on `akm bundle
+ * list` — a mixed-layout bundle silently shadowed by a narrower adapter (#908)
+ * gave no sign a choice had even been made. `bundleRoot` is the bundle's
+ * resolved root (lock `localRoot` or its plain `path`), or `undefined` when
+ * neither is known yet (an unresolved registry/website source) — detection is
+ * skipped in that case rather than probing a path that may not exist.
  */
-function describeComponents(entry: BundleConfigEntry, bundleRoot: string | undefined): SourceComponent[] {
-  const configuredComponents = entry.components ?? {};
-  const names = Object.keys(configuredComponents);
-  if (names.length === 0) {
-    // No explicit component at all — the implicit single component every
-    // bundle gets (`deriveInstallations` applies the same
-    // "main"-shaped default at index time).
-    const adapter = bundleRoot !== undefined ? detectAdapterId(bundleRoot) : "akm";
-    return [{ name: "main", adapter, detected: true }];
-  }
-  return names.map((name) => {
-    const component = configuredComponents[name]!;
-    const componentRoot = bundleRoot !== undefined ? path.resolve(bundleRoot, component.root ?? ".") : undefined;
-    const adapter = component.adapter ?? (componentRoot !== undefined ? detectAdapterId(componentRoot) : "akm");
-    return {
-      name,
-      ...(component.root !== undefined ? { root: component.root } : {}),
-      adapter,
-      detected: component.adapter === undefined,
-      ...(component.writable !== undefined ? { writable: component.writable } : {}),
-    };
-  });
+function describeAdapter(
+  entry: BundleConfigEntry,
+  bundleRoot: string | undefined,
+): { adapter: string; detected: boolean } {
+  if (entry.adapter !== undefined) return { adapter: entry.adapter, detected: false };
+  const contentRoot = bundleRoot !== undefined ? path.resolve(bundleRoot, entry.root ?? ".") : undefined;
+  return { adapter: contentRoot !== undefined ? detectAdapterId(contentRoot) : "akm", detected: true };
+}
+
+/** Deprecated, removed in 0.11: the one-entry `components` list `akm bundle list` showed before a bundle named its adapter itself. */
+function describeComponents(
+  entry: BundleConfigEntry,
+  described: { adapter: string; detected: boolean },
+): SourceEntry["components"] {
+  return [
+    {
+      name: "main",
+      root: entry.root ?? ".",
+      ...described,
+      ...(entry.writable !== undefined ? { writable: entry.writable } : {}),
+    },
+  ];
 }
 
 function describeLock(entry: LockfileEntry | undefined): SourceLock | null {
@@ -259,7 +253,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
     const kind = bundle.type as SourceKind;
     if (kindFilter && !kindFilter.includes(kind)) continue;
     const root = lock?.localRoot ?? bundle.path ?? "";
-    const componentWritable = Object.values(configured.components ?? {})[0]?.writable;
+    const described = describeAdapter(configured, root || undefined);
     const bundleCounts = counts.get(key) ?? { itemCount: 0, byType: {} };
     sources.push({
       name: key,
@@ -270,9 +264,10 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
       ...(lock ? { ref: lock.ref } : {}),
       provider: bundle.url != null ? bundle.type : undefined,
       ...(lock?.resolvedVersion !== undefined ? { version: lock.resolvedVersion } : {}),
-      writable: componentWritable ?? bundle.writable ?? kind === "filesystem",
+      writable: bundle.writable ?? kind === "filesystem",
       ...(configured.registryId !== undefined ? { registryId: configured.registryId } : {}),
-      components: describeComponents(configured, root || undefined),
+      ...described,
+      components: describeComponents(configured, described),
       lock: describeLock(lock),
       itemCount: bundleCounts.itemCount,
       byType: bundleCounts.byType,
@@ -508,13 +503,6 @@ interface StagedUpdate {
 function createStagingParent(parent: string): string {
   fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
   return fs.mkdtempSync(path.join(parent, ".akm-update-stage-"));
-}
-
-/** A bundle's single component root and writability. */
-function bundleComponent(config: AkmConfig, id: string): { root: string; writable: boolean } {
-  const bundle = config.bundles?.[id];
-  const component = bundleComponentConfig(bundle);
-  return { root: component?.root ?? ".", writable: component?.writable ?? bundle?.writable === true };
 }
 
 function gitOrThrow(repoDir: string, args: string[]): string {
@@ -766,13 +754,13 @@ async function syncGitPlainSource(
   const id = gitSource.name ?? gitSource.url ?? "";
   const ref = gitSource.url ?? "";
   if (!gitSource.url) throw new ConfigError(`Git source "${id}" has no URL.`);
-  const component = bundleComponent(config, id);
+  const writable = config.bundles?.[id]?.writable === true;
   const canonicalUrl = parseGitRepoUrl(gitSource.url).canonicalUrl;
   const livePaths = getCachePaths(canonicalUrl);
   // A read-only refresh replaces the live directory; a checkout there is replaced only without local work.
   // Checked before the fetch, and again right before the replacement, since work can appear in between.
   const assertLiveCheckoutHasNoWork = () => {
-    if (!component.writable) {
+    if (!writable) {
       assertCheckoutHasNoLocalWork(livePaths.repoDir, `Git source checkout at ${livePaths.repoDir}`);
     }
   };
@@ -782,12 +770,12 @@ async function syncGitPlainSource(
     const stagedPaths = getCachePaths(canonicalUrl, stagingParent);
     // A writable mirror may carry local commits: pull into a copy, then
     // fast-forward the live checkout to it.
-    const liveCheckout = component.writable && fs.existsSync(livePaths.repoDir);
+    const liveCheckout = writable && fs.existsSync(livePaths.repoDir);
     const expectedUpstream = liveCheckout ? originUpstream(livePaths.repoDir) : undefined;
     if (liveCheckout) fs.cpSync(livePaths.rootDir, stagedPaths.rootDir, { recursive: true, preserveTimestamps: true });
     await syncMirroredRepo(gitSource, {
       force: true,
-      writable: component.writable,
+      writable,
       cacheRootDir: stagingParent,
       displayRoot: livePaths.repoDir,
       ...(gitSource.credential
@@ -898,7 +886,6 @@ function managedInstallViewOfPlainNpm(config: AkmConfig, npmSource: ConfiguredSo
     localRoot: "",
     installedAt: "",
     writable: false,
-    componentRoot: bundleComponent(config, id).root,
     requiredRoots: [],
   };
 }
@@ -1032,9 +1019,7 @@ function referencesRoot(target: string, config: AkmConfig, locks: LockfileEntry[
     const root = bundle.path ?? locksById.get(bundleId)?.localRoot;
     if (!root) continue;
     if (isRootAtOrBelow(root, resolvedTarget)) return true;
-    for (const component of Object.values(bundle.components ?? {})) {
-      if (isRootAtOrBelow(path.resolve(root, component.root ?? "."), resolvedTarget)) return true;
-    }
+    if (bundle.root !== undefined && isRootAtOrBelow(path.resolve(root, bundle.root), resolvedTarget)) return true;
   }
   return locks.some((entry) => entry.localRoot && isRootAtOrBelow(entry.localRoot, resolvedTarget));
 }

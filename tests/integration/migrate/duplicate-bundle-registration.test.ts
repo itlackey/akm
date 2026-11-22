@@ -12,7 +12,7 @@
  *
  * Three parts, matching the issue's ask:
  *   1. Registration matches on the RESOLVED CONTENT ROOT
- *      (`path.resolve(entry.path, component.root ?? ".")`), not the bare
+ *      (`path.resolve(entry.path, bundle.root ?? ".")`), not the bare
  *      configured `path` — `bundleKeyForContentRoot` / `withPrimaryBundle`.
  *   2. `akm migrate`'s file enumeration (`bundleRoots` in
  *      scripts/akm-migrate/bundle-roots.ts) reconciles two bundle ids that
@@ -49,12 +49,12 @@ describe("bundleContentRoot / bundleKeyForContentRoot", () => {
     expect(a).toBe(c);
   });
 
-  test("finds the bundle id owning a resolved content root, honoring a non-trivial component root", () => {
+  test("finds the bundle id owning a resolved content root, honoring a non-trivial bundle root", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: {
-        openpalm: { path: "/home/user/openpalm", components: { main: { root: "catalog" } } },
+        openpalm: { path: "/home/user/openpalm", root: "catalog" },
       },
     };
     expect(bundleKeyForContentRoot(config, "/home/user/openpalm/catalog")).toBe("openpalm");
@@ -133,13 +133,13 @@ describe("akm migrate task enumeration (issue #870 parts 2 & 3)", () => {
         bundles: {
           "bundle-a": {
             path: storage.stashDir,
+            adapter: "akm",
             writable: true,
-            components: { main: { root: ".", adapter: "akm", writable: true } },
           },
           "bundle-b": {
             path: storage.stashDir,
+            adapter: "akm",
             writable: true,
-            components: { main: { root: ".", adapter: "akm", writable: true } },
           },
         },
       });
@@ -159,13 +159,13 @@ describe("akm migrate task enumeration (issue #870 parts 2 & 3)", () => {
         bundles: {
           "bundle-a": {
             path: storage.stashDir,
+            adapter: "akm",
             writable: true,
-            components: { main: { root: ".", adapter: "akm", writable: true } },
           },
           "bundle-b": {
             path: storage.stashDir,
-            writable: true,
-            components: { main: { root: ".", adapter: "akm", writable: false } },
+            adapter: "akm",
+            writable: false,
           },
         },
       });

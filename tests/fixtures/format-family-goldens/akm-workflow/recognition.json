@@ -15,7 +15,6 @@
     "release.md": {
       "recognized": true,
       "adapterId": "akm-workflow",
-      "component": "main",
       "type": "workflow",
       "conceptId": "release",
       "ref": "sample-akm-workflow//release",

@@ -257,7 +257,7 @@ test("Git retirement commits only its paths and the manual archive is grace-purg
     semanticSearchMode: "off",
     defaultBundle: "stash",
     bundles: {
-      stash: { git: url, writable: true, components: { main: { root: ".", adapter: "akm", writable: true } } },
+      stash: { git: url, writable: true, adapter: "akm" },
     },
   });
   const receipt = await retireAsset(ref, hash());

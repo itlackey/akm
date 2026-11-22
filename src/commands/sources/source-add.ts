@@ -50,7 +50,7 @@ export async function akmAdd(
     writable?: boolean;
     /** Symbolic Git credential reference; resolved only for Git subprocesses. */
     credential?: string;
-    /** Override the auto-detected component adapter (#909). Local (filesystem) adds only. */
+    /** Override the auto-detected adapter (#909). Local (filesystem) adds only. */
     adapter?: string;
   } & BundleInsertPosition,
 ): Promise<AddResponse> {
@@ -103,13 +103,10 @@ async function addLocalSource(
       }
       bundleKey = existing;
       const current = config.bundles?.[existing];
-      if (current?.components && explicitAdapter === undefined) return config;
+      if (current?.adapter !== undefined && explicitAdapter === undefined) return config;
       const bundles = { ...(config.bundles ?? {}) };
-      bundles[existing] = {
-        ...current,
-        path: resolvedPath,
-        components: { main: { root: ".", adapter } },
-      };
+      const { root: _root, ...rest } = current ?? {};
+      bundles[existing] = { ...rest, path: resolvedPath, adapter };
       return { ...config, bundles };
     }
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
@@ -118,10 +115,7 @@ async function addLocalSource(
     // used by the out-of-scope `akm source add` (`addStash`) and stays forgiving.
     if (explicitName !== undefined) validateExplicitBundleName(bundles, explicitName);
     bundleKey = nextBundleKey(bundles, explicitName, resolvedPath);
-    const entry: BundleConfigEntry = {
-      path: resolvedPath,
-      components: { main: { root: ".", adapter } },
-    };
+    const entry: BundleConfigEntry = { path: resolvedPath, adapter };
     return { ...config, bundles: placeBundle(bundles, bundleKey, entry, position) };
   });
 
@@ -203,7 +197,8 @@ async function addWebsiteSource(
     const nextBundle: BundleConfigEntry = {
       ...(existingKey ? bundles[key] : {}),
       website,
-      components: { main: { root: ".", adapter: "website-snapshot", writable: false } },
+      adapter: "website-snapshot",
+      writable: false,
     };
     if (JSON.stringify(bundles[key]) === JSON.stringify(nextBundle)) {
       entry = bundleEntryToSourceEntry(key, bundles[key]!) as SourceConfigEntry;
@@ -280,14 +275,10 @@ async function addRegistryStash(
   }
   const existingBundle = existingBundleKey ? currentConfig.bundles?.[existingBundleKey] : undefined;
   const priorLock = existingBundleKey ? readLockfile().find((entry) => entry.id === existingBundleKey) : undefined;
-  const existingWritable =
-    Object.values(existingBundle?.components ?? {})[0]?.writable ?? existingBundle?.writable === true;
+  const existingWritable = existingBundle?.writable === true;
   const effectiveWritable = writable === true || existingWritable;
-  const requiredRoots = priorLock?.localRoot
-    ? Object.values(existingBundle?.components ?? {}).map((component) =>
-        path.resolve(priorLock.localRoot as string, component.root ?? "."),
-      )
-    : [];
+  const requiredRoots =
+    priorLock?.localRoot && existingBundle ? [path.resolve(priorLock.localRoot, existingBundle.root ?? ".")] : [];
   const synced = await syncFromRef(ref, {
     writable: effectiveWritable,
     // Reuse a checkout only when the install is already writable; promoting a
@@ -400,21 +391,7 @@ export function upsertInstalledRegistryEntry(
   const config = mutateConfig((current) => {
     const bundles: Record<string, BundleConfigEntry> = { ...(current.bundles ?? {}) };
     bundleId = resolveInstalledBundleKey(bundles, entry.id, entry.stashRoot, explicitName);
-    const existingComponents = bundles[bundleId]?.components;
-    const components = existingComponents
-      ? Object.fromEntries(
-          Object.entries(existingComponents).map(([id, component]) => [
-            id,
-            { ...component, writable: entry.writable === true },
-          ]),
-        )
-      : {
-          main: {
-            root: ".",
-            adapter: detectAdapterId(path.resolve(entry.stashRoot)),
-            writable: entry.writable === true,
-          },
-        };
+    const existing = bundles[bundleId];
     const descriptor = installedSourceDescriptor(entry.source, entry.ref, path.resolve(entry.stashRoot));
     const effectiveCredential = credential ?? bundles[bundleId]?.credential;
     const nextEntry: BundleConfigEntry = {
@@ -422,7 +399,8 @@ export function upsertInstalledRegistryEntry(
       ...(effectiveCredential ? { credential: effectiveCredential } : {}),
       ...(entry.writable === true ? { writable: true } : {}),
       ...(entry.id !== bundleId ? { registryId: entry.id } : {}),
-      components: components satisfies NonNullable<BundleConfigEntry["components"]>,
+      adapter: existing?.adapter ?? detectAdapterId(path.resolve(entry.stashRoot)),
+      ...(existing?.root !== undefined ? { root: existing.root } : {}),
     };
     return { ...current, bundles: placeBundle(bundles, bundleId, nextEntry, position) };
   }).config;

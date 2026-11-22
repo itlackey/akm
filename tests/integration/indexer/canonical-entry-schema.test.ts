@@ -17,7 +17,6 @@ const CURRENT_ENTRY_COLUMNS: string[] = [
   "id",
   "item_ref",
   "bundle_id",
-  "component_id",
   "concept_id",
   "adapter_id",
   "type",
@@ -158,11 +157,7 @@ describe("canonical derived-index entry schema", () => {
         description: "kept across the upgrade",
         filename: "layout-21.md",
       };
-      const provenance = deriveEntryProvenance(
-        { bundleId: "primary", componentId: "primary", adapterId: "akm" },
-        entry.type,
-        entry.name,
-      );
+      const provenance = deriveEntryProvenance({ bundleId: "primary", adapterId: "akm" }, entry.type, entry.name);
       const id = upsertEntry(legacy, "/primary/knowledge/layout-21.md", entry, provenance);
       // Layout 21: content-bearing FTS (here left stale and empty), a dirty
       // queue, and no fragment tables.

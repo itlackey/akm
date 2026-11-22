@@ -101,7 +101,6 @@ function insertLiveEntry(indexDb: Database, itemRef: string): void {
     {
       itemRef: storedRef,
       bundleId,
-      componentId: bundleId,
       conceptId,
       adapterId: "akm",
     },

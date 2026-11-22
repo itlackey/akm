@@ -38,7 +38,7 @@ import {
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
 import { CANONICAL_INDEX_DB_VERSION } from "../../../src/storage/repositories/index-entry-schema";
 import { searchFts } from "../../../src/storage/repositories/index-fts-repository";
-import { deleteMeta, getMeta } from "../../../src/storage/repositories/index-meta-repository";
+import { deleteMeta, getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { VACUUM_PENDING_META } from "../../../src/storage/repositories/index-schema";
 import { getEmbeddingCount, searchVec } from "../../../src/storage/repositories/index-vec-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -478,9 +478,72 @@ describe("index.db layout 24 → 25", () => {
         db,
         path.join(storage.stashDir, "knowledge", `${alpha.name}.md`),
         fixtureDocument(alpha),
-        deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, "knowledge", alpha.name),
+        deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "knowledge", alpha.name),
       );
       expect(getEmbeddingCount(db, FINGERPRINT)).toBe(3);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+describe("index.db layout 26 → 27", () => {
+  let storage: IsolatedAkmStorage;
+  let dbPath = "";
+
+  beforeEach(() => {
+    storage = withIsolatedAkmStorage();
+    dbPath = path.join(storage.root, "layout-26.db");
+    // Layout 26 is the current one plus `component_id`, `NOT NULL`, the retired name of a bundle's one component.
+    const db = openIndexDatabase(dbPath);
+    try {
+      for (const fixture of ENTRIES) {
+        upsertEntry(
+          db,
+          path.join(storage.stashDir, "knowledge", `${fixture.name}.md`),
+          fixtureDocument(fixture),
+          deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "knowledge", fixture.name),
+        );
+      }
+      db.exec("ALTER TABLE entries ADD COLUMN component_id TEXT NOT NULL DEFAULT 'main'");
+      setMeta(db, "version", "26");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  afterEach(() => {
+    storage.cleanup();
+  });
+
+  test("an older index opens read-only as-is and answers keyword queries", () => {
+    const db = openReadonlyExistingDatabase(dbPath);
+    if (!db) throw new Error("expected a handle");
+    try {
+      expect(searchFts(db, "backup", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/bravo-backup"]);
+      expect(getMeta(db, "version")).toBe("26");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("the writable open drops the column in place and keeps every row", () => {
+    const db = openIndexDatabase(dbPath);
+    try {
+      expect(getMeta(db, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
+      expect(CANONICAL_INDEX_DB_VERSION).toBe(27);
+      expect(entryColumns(db)).not.toContain("component_id");
+      expect(count(db, "entries")).toBe(ENTRIES.length);
+      expect(searchFts(db, "backup", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/bravo-backup"]);
+      // An insert of this release no longer fails on the retired NOT NULL column.
+      const alpha = ENTRIES[0]!;
+      upsertEntry(
+        db,
+        path.join(storage.stashDir, "knowledge", `${alpha.name}.md`),
+        fixtureDocument(alpha),
+        deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "knowledge", alpha.name),
+      );
+      expect(count(db, "entries")).toBe(ENTRIES.length);
     } finally {
       closeDatabase(db);
     }
