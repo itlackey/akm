@@ -1234,6 +1234,7 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
           .split("\n")
           .find((line) => line.includes(" task run ping ")) ?? "";
       expect(row.startsWith(`*/15 * * * * AKM_BUNDLE_DIR=${path.resolve(stash.dir)} `)).toBe(true);
+      expect(row).toContain(` AKM_CONFIG_DIR=${path.join(process.env.XDG_CONFIG_HOME as string, "akm")} `);
       expect(row).toContain(` /usr/local/bin/akm task run ping --bundle ${defaultBundle} --scheduled`);
       expect(exec.current()).not.toContain("--scheduler-context");
     } finally {

@@ -405,6 +405,7 @@ describe.skipIf(!posix || !hasPython)("the installed launcher", () => {
         expect(readPid("akm-pid")).toBe(child.pid as number);
         process.kill(child.pid as number, "SIGQUIT");
         await exited;
+        expect(child.signalCode).toBe("SIGQUIT");
         expect(mark()).toBe("int");
         expect(await until(() => !alive(bg), 5_000)).toBe(true);
       }, 30_000);
