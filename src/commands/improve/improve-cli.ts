@@ -87,7 +87,8 @@ async function runShowPromptCli(
 export const improveReportCommand = defineJsonCommand({
   meta: {
     name: "report",
-    description: "Show the LLM usage/routing report for the most recent improve run, one run, or a window of runs.",
+    description:
+      "Deprecated, removed in 0.11: use `akm doctor metrics improve`. Show the LLM usage/routing report for the most recent improve run, one run, or a window of runs.",
   },
   args: {
     run: {
@@ -115,7 +116,7 @@ const improveJudgeCommand = defineJsonCommand({
   meta: {
     name: "judge",
     description:
-      "Run reflect's quality judge on one revision, read as {source, candidate, feedback, ref} JSON from stdin (the same as `akm judge reflect.quality`). Writes nothing.",
+      "Deprecated, removed in 0.11: use `akm doctor judge`. Run reflect's quality judge on one revision, read as {source, candidate, feedback, ref} JSON from stdin (the same as `akm judge reflect.quality`). Writes nothing.",
   },
   async run() {
     const input = isTerminal(0) ? {} : (JSON.parse((await readStdin()).toString("utf8")) as Record<string, unknown>);
@@ -188,12 +189,13 @@ export const improveCommand = defineCommand({
     },
     "timeout-ms": {
       type: "string",
-      description: "Wall-clock budget for the entire run in milliseconds (default: 7200000 = 2 hours)",
+      description:
+        "Deprecated: use `--timeout`. Wall-clock budget for the entire run in milliseconds (default: 7200000 = 2 hours)",
     },
     "require-feedback-signal": {
       type: "boolean",
       description:
-        "Turn the proactive-maintenance lane off for this run, so only assets with recent feedback are planned",
+        "Deprecated: select a strategy with `processes.proactiveMaintenance.enabled: false` using `--strategy`. Turn the proactive-maintenance lane off for this run, so only assets with recent feedback are planned",
       default: false,
     },
     "json-to-stdout": {
@@ -210,7 +212,8 @@ export const improveCommand = defineCommand({
     "require-engines": { type: "boolean", hidden: true, description: "Retired: has no effect." },
     "show-prompt": {
       type: "boolean",
-      description: "Print the composed reflect prompt for one asset ref and exit (no lock, index write or model call)",
+      description:
+        "Deprecated: use `akm doctor prompt`. Print the composed reflect prompt for one asset ref and exit (no lock, index write or model call)",
       default: false,
     },
     strategy: {

@@ -75,8 +75,8 @@ export function assertUnsettable(key: string): void {
 }
 
 export function listConfig(config: AkmConfig): Record<string, unknown> {
-  // Sources live in `bundles` (spread from config); the
-  // retired top-level `sources[]` array is no longer surfaced.
+  // Sources live in `bundles` (spread from config); there is no top-level
+  // `sources[]` array.
   return redactConfigValue({ ...DEFAULT_CONFIG, ...config }) as Record<string, unknown>;
 }
 
@@ -170,15 +170,11 @@ export function akmConfigDiff(ref: string): { rows: ConfigDiffRow[] } {
 }
 
 // ── `akm config` command surface ────────────────────────────────────────────
-// Extracted verbatim from src/cli.ts (WS6). The `main.subCommands.config` key
-// and every config subcommand's args/output shape are byte-identical. Leaf
-// handlers whose body is a plain `runWithJsonErrors(() => { … })` are
-// migrated to `defineJsonCommand`, which emits the same JSON envelope
-// (stdout/stderr/exit-code) as the inline form.
+// Leaf handlers are `defineJsonCommand`s, which emit the JSON envelope
+// (stdout/stderr/exit-code).
 //
-// `akm config enable|disable` (a hardcoded alias for toggling the skills.sh
-// registry) was removed in 0.9.0 (C4). Use `akm registry add|remove`, the
-// general mechanism, instead.
+// There is no `akm config enable|disable`: add or remove a registry with
+// `akm registry add|remove`.
 
 export const configCommand = defineGroupCommand({
   meta: { name: "config", description: "Show and manage configuration" },

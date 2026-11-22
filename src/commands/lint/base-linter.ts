@@ -27,9 +27,9 @@
 //   - non-existent refs
 //   - script paths with explicit extensions
 //
-// As of 0.9 the path mapping in `refToRelPath` is DERIVED FROM THE PLACEMENT
+// The path mapping in `refToRelPath` is DERIVED FROM THE PLACEMENT
 // SPECS (`assetPathForName` in `src/core/asset/asset-placement.ts`) rather than
-// hand-encoded, so it can no longer drift from the placement layer. `env`/
+// hand-encoded, so it cannot drift from the placement layer. `env`/
 // `secret`, `script`, and `task` refs are path-resolved.
 // ----------------------------------------------------------------------------
 
@@ -220,7 +220,7 @@ export function refExistsInAnyStash(relPath: string, refType: string, refName: s
   for (const root of stashRoots) {
     if (resolveRefPathInStash(relPath, refType, refName, root) !== null) return true;
   }
-  // #884: an asset `analyzeMemoryCleanup` pruned, or (alpha.9) a consolidate
+  // #884: an asset `analyzeMemoryCleanup` pruned, or a consolidate
   // pair-pass `retire` proposal or a promotion's source memory retired, was
   // ARCHIVED, not deleted — its bytes and identity live on under
   // `.akm/memory-cleanup/archive`. Inbound refs to it are satisfied, not
@@ -256,8 +256,7 @@ function refPathCandidates(refType: string, typeDir: string, refName: string): s
  * resolves once archived.
  *
  * Originally memory-only (#884: only `.derived` memories were ever pruned).
- * 0.9.17-alpha.9 generalized `archiveCleanupCandidate` to any memory,
- * knowledge or lesson file (a consolidate pair-pass `retire` proposal, or an
+ * `archiveCleanupCandidate` also archives any memory, knowledge or lesson file (a consolidate pair-pass `retire` proposal, or an
  * accepted promotion's source memory), so this must check every type, not
  * just `memory` — otherwise an xref to a retired knowledge or lesson asset
  * reports `missing-ref` even though it resolves fine through the tombstone.
@@ -330,7 +329,7 @@ function localRefMissingRelPath(refType: string, refName: string, allRoots: stri
 }
 
 /**
- * 0.9.0 grammar recognition: fully-qualified `bundle//conceptId` body-refs
+ * Grammar recognition: fully-qualified `bundle//conceptId` body-refs
  * (`BUNDLE_REF_RE`, the anchored prose form). The conceptId is
  * is checked on disk by {@link classifyConceptRef}; a conceptId whose leading
  * segment names no known stash-subdir is not a local asset ref and is skipped (foreign-adapter / cross-bundle prose).
@@ -422,8 +421,8 @@ function classifyConceptRef(
 
 /**
  * Read-only fallback for the retired `type:slug` xref grammar (see
- * resolve-ref.ts Q-02 — the write boundary no longer emits or accepts it).
- * Stash content written before that retirement still carries it in frontmatter
+ * resolve-ref.ts — the write boundary neither emits nor accepts it).
+ * Older stash content may still carry it in frontmatter
  * `xrefs:` lists, and the conceptId check returns
  * `null` for it, so without this it was silently skipped rather than
  * validated (#882). `refToRelPath`/`refExistsInAnyStash` already key off a bare
@@ -442,7 +441,7 @@ function legacyTypeSlugParts(rawConceptId: string): { type: string; name: string
 /**
  * Returns an array of {ref, resolvedRelPath} for every local AKM ref in the
  * PROSE body that does not resolve to a real file under any of the provided
- * stash roots. Recognizes the 0.9.0 fully-qualified `bundle//conceptId` grammar
+ * stash roots. Recognizes the fully-qualified `bundle//conceptId` grammar
  * ({@link scanBundleRefs}). Bare short conceptIds are NOT refs in prose (D-R3) —
  * those are recognized only in the ref-list channels
  * ({@link checkMissingRefsInList}).
@@ -465,7 +464,7 @@ function checkMissingRefs(
  * `xrefs:` / `supersededBy:` / `contradictedBy:`) where EACH value is a whole
  * ref, not prose. Unlike the body scan, a bare short conceptId (`memories/foo`)
  * IS a ref here (the value's whole purpose is to name one asset), so the flipped
- * short-conceptId frontmatter the 0.9.0 output emits is no longer invisible.
+ * short-conceptId frontmatter the current output emits is no longer invisible.
  * Recognizes, per value:
  *   - fully-qualified `bundle//conceptId`;
  *   - bare short `conceptId` (`<stash-subdir>/<name>`).
@@ -484,7 +483,7 @@ function checkMissingRefsInList(
     const value = raw.trim();
     if (!value || value.includes("$(") || value.includes("${") || value.includes("::")) continue;
     const boundary = value.indexOf("//");
-    // A colon in the tail of a qualified value marks a legacy/remote `origin//type:name`, not the 0.9.0 grammar.
+    // A colon in the tail of a qualified value marks a legacy/remote `origin//type:name`, not the grammar.
     if (boundary >= 0 && value.slice(boundary + 2).includes(":")) continue;
     // The retired `type:slug` spelling is read as it always was; every other value is a ref as the index reads it.
     const target: { bundle?: string; conceptId: string } | undefined =
@@ -655,11 +654,9 @@ function parseInnerFrontmatterBlock(body: string): Record<string, unknown> | nul
  * The cross-type checks every asset linter runs first: `unquoted-colon`,
  * `missing-updated`, `stale-path`, and `missing-ref`.
  *
- * akm 0.9.0 chunk-3 (plan §12): this was the `BaseLinter.runBaseChecks`
- * protected method every per-type linter class inherited. Those classes are
- * gone — the format-generic checks live here as ONE shared function (this), and
- * the per-`type` extra rules moved to the `akm` adapter's `validate`
- * (`core/adapter/adapters/akm-lint.ts`). The live `akmLint` command
+ * The format-generic checks live here as ONE shared function, and the
+ * per-`type` extra rules live in the `akm` adapter's `validate`
+ * (`core/adapter/adapters/akm-lint.ts`). The `akmLint` command
  * (`commands/lint/index.ts`) calls this directly, then appends the adapter's
  * per-type findings.
  *
@@ -668,8 +665,8 @@ function parseInnerFrontmatterBlock(body: string): Record<string, unknown> | nul
  * `ctx.raw` is updated in place so a caller can re-parse the post-fix content.
  * A failed flush (read-only file, full disk) DOWNGRADES the optimistic
  * `fixed: true` findings this call made to `fixed: "failed"` rather than
- * throwing — an uncaught throw here used to kill the whole sweep and hide
- * which earlier files had already been rewritten (issue #761).
+ * throwing — an uncaught throw here would kill the whole sweep and hide
+ * which earlier files had already been rewritten.
  */
 export function runBaseChecks(ctx: LintContext): LintIssue[] {
   const issues: LintIssue[] = [];
@@ -758,8 +755,8 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
   /**
    * Flush accumulated mutations to disk. Called after the fixable checks above
    * AND again at the very end, because the `missing-ref` section below can also
-   * mutate (`--prune-dangling-edges`, #884) and used to run PAST this point —
-   * its edits were computed and then silently dropped.
+   * mutate (`--prune-dangling-edges`, #884) and runs after the first flush —
+   * its edits must not be silently dropped.
    *
    * Mirrors the two stub-delete call sites in `commands/lint/index.ts`
    * (`appendMemoryStubIssue`/`appendWorkflowStubIssue`), which already report

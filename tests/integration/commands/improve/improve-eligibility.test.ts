@@ -51,7 +51,7 @@ import { type IsolatedAkmStorage, mutateScopedEnv, withIsolatedAkmStorage } from
 describe("resolveImproveScope syntax classification", () => {
   test("rejects colon, fragment, and malformed slash-shaped explicit refs as usage errors", () => {
     for (const input of ["memory:old", "memories/item#section", "memories/../item"]) {
-      expect(() => resolveImproveScope(input)).toThrow(/Invalid --scope/);
+      expect(() => resolveImproveScope(input)).toThrow(/Invalid scope/);
     }
   });
 });

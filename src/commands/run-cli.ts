@@ -169,7 +169,7 @@ export const runAssetCommand = defineJsonCommand({
   meta: {
     name: "run",
     description:
-      "Run a script (`akm run scripts/<file> [arguments]`: akm's flags go before the ref, everything after it is the script's own), an agent (--prompt/--prompt-stdin), command (--arguments), task (declared input flags), or workflow (declared parameter flags). Repeatable --env <ref> and --secret <ref>:<VAR> inject env assets and secrets into the run. Existing workflow run ids continue their frozen run. Other workflow lifecycle operations remain under akm workflow. To run any other program, use `akm exec`.",
+      "Run a script (`akm run scripts/<file> [arguments]`: akm's flags go before the ref, everything after it is the script's own), an agent (--prompt/--prompt-stdin), command (--arguments), task (declared input flags), or workflow (Deprecated, removed in 0.11; declared parameter flags). Repeatable --env <ref> and --secret <ref>:<VAR> inject env assets and secrets into the run. Existing workflow run ids continue their frozen run. The other workflow lifecycle operations (Deprecated) remain under akm workflow. To run any other program, use `akm exec`.",
   },
   args,
   async run({ args: parsed, rawArgs }) {

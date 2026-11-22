@@ -7,7 +7,7 @@
  * frontmatter and demote its `beliefState`, metadata only. Idempotent (a
  * present edge AND demotion is a no-op; an edge without its demotion is
  * repaired) and never weakens a stronger demotion — severity is
- * superseded > contradicted > archived. (alpha.4 removed belief weights from
+ * superseded > contradicted > archived. (Belief weights do not affect
  * ranking: beliefState never changes rank. Search/curate filter current
  * by default; --belief all|historical explicitly includes older context.)
  * The SCC resolver in memory-improve.ts is a state-transition writer (it

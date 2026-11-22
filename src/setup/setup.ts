@@ -68,8 +68,7 @@ import { describeRuns, type SetupRuns } from "./summary";
 /**
  * Warn when an explicit `--dir /tmp/...` is persisted as the default bundle
  * path — `akm setup --dir $(mktemp -d)` resolves under this family on every
- * macOS machine (`/var/folders/...`), and used to be refused outright with
- * no discoverable remedy. The OS may reap the directory at any time, so the
+ * macOS machine (`/var/folders/...`). The OS may reap the directory at any time, so the
  * operator is told up front; `applyStashIsolationToEnv` below still pre-sets
  * `AKM_BUNDLE_DIR` so the `getConfigDir` / `getCacheDir` isolation rules
  * (`core/paths.ts`) route config + cache writes into `$stashDir/.akm/`
@@ -824,7 +823,7 @@ export async function runSetupWithDefaults(opts: {
 }): Promise<SetupSummary> {
   assertSetupConfigPreflight();
   const explicitStashDir = opts.dir != null ? path.resolve(opts.dir) : undefined;
-  // R-066 #4: a second `assertSetupSandbox(stashDir, explicitStashDir != null)`
+  // a second `assertSetupSandbox(stashDir, explicitStashDir != null)`
   // + `applyStashIsolationToEnv(stashDir, explicitStashDir != null)` pair used
   // to follow `stashDir`'s resolution below. It was strictly redundant: unlike
   // `runSetupFromConfig` (which can also derive an explicit stash dir from an
@@ -906,7 +905,7 @@ export async function runSetupFromConfig(opts: {
   }
   // Derived from AkmConfigShape (via `listTopLevelConfigKeys`) rather than a
   // hand-copied set: a hand-copied allowlist silently fell out of sync as the
-  // schema grew (R-017 — `index`, `search`, `feedback`, `archiveRetentionDays`,
+  // schema grew, (`index`, `search`, `feedback`, `archiveRetentionDays`,
   // `workflow`, and `experimental` were all valid schema keys that this list
   // forgot, each dropped with only a warning while the command exited 0).
   // Every key the schema recognizes is a legitimate thing to set via
@@ -926,8 +925,8 @@ export async function runSetupFromConfig(opts: {
 
   // Phase 3: Merge with existing config
   //
-  // R-066 #4 (verified, NOT reduced — unlike the `runSetupWithDefaults` pair
-  // above, this one is NOT strictly redundant): the `assertSetupSandbox` +
+  // Unlike the `runSetupWithDefaults` pair above, this one is NOT strictly
+  // redundant: the `assertSetupSandbox` +
   // `applyStashIsolationToEnv` pair below looks like a duplicate of the pair
   // here, but each guards a case the other cannot:
   //   - THIS early pair must run before `loadUserConfig()` so an explicit

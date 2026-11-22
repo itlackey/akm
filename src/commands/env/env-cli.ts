@@ -3,9 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm env` command family. Extracted verbatim from src/cli.ts (WS6) so the God
- * Module shrinks; the `main.subCommands.env` key and every subcommand's
- * args/output shape are byte-identical. The ref-resolution helpers
+ * `akm env` command family. The ref-resolution helpers
  * (parseEnvRef / makeEnvRef / resolveEnvPath) live in src/core/env-secret-ref.ts so env + secret share one
  * copy.
  *
@@ -13,8 +11,7 @@
  * Values and comment text are NEVER written to stdout or structured output —
  * only key NAMES are surfaced (comments routinely contain commented-out
  * credentials). akm does not manage individual entries;
- * you edit the `.env` file yourself and akm loads it. Replaced the deprecated
- * `vault` type (removed in 0.9.0).
+ * you edit the `.env` file yourself and akm loads it.
  */
 
 import fs from "node:fs";
@@ -254,13 +251,10 @@ async function runEnvInjected(
   }
 
   const result = await runProgram({ argv: command, env: mergedEnv, capture: false });
-  // R-067: was `process.exit(result.status ?? 0)`, which terminates the
-  // process synchronously and skips the `finally { disposeLlmUsageSink(); }`
-  // block in src/cli.ts's `runCommand` — even
-  // on the success path, since this call was unconditional. Setting
-  // `process.exitCode` and returning lets cleanup run while still exiting
-  // with the child's exact status once the event loop drains, matching the
-  // pattern `emitJsonError` (src/cli/shared.ts) already established.
+  // Set `process.exitCode` and return rather than calling `process.exit`, which
+  // would skip the `finally { disposeLlmUsageSink(); }` block in src/cli.ts's
+  // `runCommand`. The process still exits with the child's exact status once the
+  // event loop drains, the pattern `emitJsonError` (src/cli/shared.ts) uses.
   reportChildExit(result.exitCode ?? 0);
   return;
 }
