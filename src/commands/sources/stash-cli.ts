@@ -7,22 +7,12 @@
  * the working stash and its index database: `akm index` (build/refresh the
  * search index), `akm import` (ingest a knowledge doc/URL), and `akm info`
  * (system capabilities + index stats).
- * Extracted verbatim from src/cli.ts (WS6) so the God Module shrinks; the
- * `main.subCommands.{index,import,info}` keys and every subcommand's
- * args/output shape stay byte-identical.
- *
- * These share no private helper with any command still inline in cli.ts — every
- * dependency is already exported from a shared module (core/paths, core/warn,
- * core/errors, core/events, output/context, cli/shared, cli/parse-args, plus the
- * per-command implementations in ./init, ./indexer, ./info, ./knowledge,
- * ./core/asset-create, ./core/common), so the cluster moves with zero hoisting.
  *
  * The leaf handlers whose body is a plain `runWithJsonErrors(...) + output(...)`
- * (`import`, `info`) are migrated onto
- * `defineJsonCommand`, which emits the same JSON envelope (stdout/stderr/
- * exit-code) as the inline form. `index` keeps a plain `defineCommand` wrapping
+ * (`import`, `info`) are `defineJsonCommand`s, which emit the JSON envelope
+ * (stdout/stderr/exit-code). `index` keeps a plain `defineCommand` wrapping
  * `runWithJsonErrors` because its body owns a spinner, an AbortController, and
- * SIGINT/SIGTERM handlers in a try/finally — left byte-for-byte untouched.
+ * SIGINT/SIGTERM handlers in a try/finally.
  */
 
 import path from "node:path";

@@ -3,12 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm proposal` command family (#225). Extracted verbatim from src/cli.ts
- * (WS6) so the God Module shrinks; the `main.subCommands.proposal` key and
- * every subcommand's args/output shape are byte-identical. Leaf handlers are
- * migrated to `defineJsonCommand`, which wraps the body in `runWithJsonErrors`
- * and emits the same JSON envelope (stdout/stderr/exit-code) as the inline
- * `runWithJsonErrors` form it replaces.
+ * `akm proposal` command family (#225). Leaf handlers are `defineJsonCommand`s,
+ * which wrap the body in `runWithJsonErrors` and emit the JSON envelope
+ * (stdout/stderr/exit-code).
  */
 
 import { parsePositiveIntFlag } from "../../cli/parse-args";
@@ -42,8 +39,7 @@ import { proposeCommand } from "./propose-cli";
 
 /**
  * Parse + validate the shared bulk-adjudication filter flags
- * (`--max-diff-lines`, `--older-than`). Extracted from the two verbatim
- * copies that lived in the accept and reject bulk branches.
+ * (`--max-diff-lines`, `--older-than`). Shared by the accept and reject bulk branches.
  */
 function parseBulkFilterFlags(args: Record<string, unknown>): { maxDiffLines?: number; olderThanMs?: number } {
   const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
@@ -167,7 +163,7 @@ const proposalAcceptCommand = defineJsonCommand({
       output("proposal-accept-batch", {
         accepted: count,
         results,
-        // how many otherwise-matching proposals were skipped specifically
+        // How many otherwise-matching proposals were skipped specifically
         // because they carry retirement.continuityRisk — visible under
         // --dry-run and on a real run alike, distinct from an ordinary
         // --max-diff-lines/--older-than miss.
@@ -334,7 +330,7 @@ const proposalDiffCommand = defineJsonCommand({
   },
 });
 
-// revert an accepted proposal.
+// Revert an accepted proposal.
 //
 // Exit codes (mapped by `runWithJsonErrors` from the typed errors thrown by
 // `akmProposalRevert` / `revertProposal`):
@@ -432,7 +428,7 @@ const proposalDrainCommand = defineJsonCommand({
     const stashDir = resolveStashDir();
     const cfg = loadConfig();
 
-    // Phase 2: read the triage block from the named improve strategy. CLI flags
+    // Read the triage block from the named improve strategy. CLI flags
     // always override config; config supplies defaults for any flag omitted,
     // except that a bare drain queues: the apply mode comes from `--promote`
     // or an explicitly named `--strategy`, never from the implicit default
@@ -487,7 +483,7 @@ const proposalDrainCommand = defineJsonCommand({
       );
     }
 
-    // Phase 3: --judgment is an invocation-level opt-in that overrides a
+    // --judgment is an invocation-level opt-in that overrides a
     // disabled block. An explicitly selected strategy may opt in through its
     // judgment block; the implicit default strategy keeps standalone drain's
     // historical no-judge behavior.

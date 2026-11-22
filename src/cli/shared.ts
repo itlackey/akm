@@ -183,7 +183,7 @@ export const GLOBAL_OUTPUT_ARGS = {
     description: "Detail level: brief|normal|full, or agent (trims search, curate and show to essential fields)",
   },
   output: { type: "string", description: "Write output to a file instead of stdout (not jsonl)" },
-  // declared at every leaf so a command's flags parse wherever they sit;
+  // These flags are declared at every leaf so a command's flags parse wherever they sit;
   // leaf `--help` prints them once as a pointer (see `withoutGlobalArgs`), root
   // `--help` lists them in full. They are parsed from raw argv by
   // `applyEarlyStderrFlags` in src/cli.ts before citty ever sees them. A

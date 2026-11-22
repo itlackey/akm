@@ -838,7 +838,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
       files.push(item.filePath);
       demotedByRoot.set(item.stashRoot, files);
     }
-    // single batch commit at the write boundary for git
+    // Single batch commit at the write boundary for git
     // targets. No-op for filesystem/primary-stash targets.
     commitWriteTargetBoundary(target, `Update ${formatRefForMessage(resolved.ref)}`);
     return { result, superseded, demotedByRoot };
@@ -846,7 +846,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
   if (written.unchanged) return written;
   const { result, superseded, demotedByRoot } = written;
   // Write-path indexing: the asset is searchable immediately. Fail-open; reads
-  // no longer trigger reindexes, so keeping the index current is the writer's
+  // do not trigger reindexes, so keeping the index current is the writer's
   // job. Demoted files reindex under their own containing root (usually the
   // write target itself; the working stash when writing to a --bundle) so
   // `--belief current` filtering takes effect without waiting for the next

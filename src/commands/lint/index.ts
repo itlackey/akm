@@ -250,7 +250,7 @@ const KNOWN_ADAPTER_ISSUE_TYPES: ReadonlySet<string> = new Set<LintIssueType>([
   "missing-type",
   "missing-name-or-type",
   "missing-skill-md",
-  // The `akm-task` adapter's own code. Now reachable from `akm lint` for a
+  // The `akm-task` adapter's own code, reported by `akm lint` for a
   // malformed or misnamed task file; without it here, a genuine
   // task finding would arrive folded onto `adapter-diagnostic`.
   "invalid-task-yaml",
@@ -377,12 +377,9 @@ function collectEnvFiles(dir: string): string[] {
  * for keys that are known to enable process-execution hijacking. This is a
  * cross-bundle SECURITY sweep, not per-adapter validation — it has always run
  * regardless of which format family a given root's OWN files are (verbatim
- * extraction of the pass `lintAkmSweep` still runs inline; kept byte-identical
- * there per the CRITICAL akm-path constraint, and reused here for the
- * non-akm dispatch path so a non-akm PRIMARY bundle keeps the exact
- * cross-bundle coverage it already had — the pass previously reached every
- * non-akm adapter's bundle via the accidental akm-sweep fallthrough this
- * change replaces with real dispatch).
+ * extraction of the pass `lintAkmSweep` still runs inline; shared with
+ * the non-akm dispatch path so a non-akm PRIMARY bundle gets the same
+ * cross-bundle coverage).
  */
 function runEnvDangerousKeyPass(
   stashRoot: string,
@@ -422,7 +419,7 @@ function runEnvDangerousKeyPass(
  *
  * Every other mutating command routes through `core/write-source.ts`'s
  * `ensureWritable`/`resolveWritable` pair; `akm lint --fix` writes and deletes
- * directly and never consulted the flag, so it happily rewrote frontmatter in a
+ * directly, so without this check it would rewrite frontmatter in a
  * bundle explicitly configured read-only. `SearchSource.writable` is already the
  * EFFECTIVE policy (`resolveWritable` applied — see `resolveSourceEntries`), so
  * this reads the same answer the write path would, without a second resolver.
@@ -1054,9 +1051,9 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
       "INVALID_FLAG_VALUE",
     );
   }
-  // Fail closed on a mistyped invocation (§24.2 "Lint" release gate): a
-  // nonexistent --dir used to walk nothing and report a clean
-  // `ok:true, flagged:0`, silently passing scripted --fail-on-flagged gates.
+  // Fail closed on a mistyped invocation: a nonexistent --dir would walk
+  // nothing and report a clean `ok:true, flagged:0`, silently passing scripted
+  // --fail-on-flagged gates.
   if (options.dir !== undefined && !fs.statSync(options.dir, { throwIfNoEntry: false })?.isDirectory()) {
     throw new UsageError(`lint: --dir "${options.dir}" is not a directory.`, "INVALID_FLAG_VALUE");
   }

@@ -1300,7 +1300,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  * frontmatter; every other byte, the body included, stays as written. The
  * edited text is parsed back to confirm it holds exactly the intended mapping;
  * when it does not (an indented `---` inside a block scalar), the frontmatter is
- * written out again instead, as it always used to be.
+ * written out again instead.
  */
 function stampProposalProvenance(
   content: string,
@@ -1614,7 +1614,7 @@ export function commitCollectedAccepts(collector: AcceptCommitCollector, label: 
 
 /**
  * O1: an accepted consolidate PROMOTION retires its source memory
- * (and its `.derived` twin), so promotion no longer leaves a memory/
+ * (and its `.derived` twin), so promotion leaves no memory/
  * knowledge duplicate behind. Runs whether a person accepted the promotion
  * or triage auto-promotion did — this is called from inside
  * `promoteProposalWithLease`'s ordinary accept path, below the drain/CLI
@@ -2313,7 +2313,7 @@ export async function revertProposal(
  * erroring on its own prior work. The archive dirs (tombstones) are removed
  * only after the "reverted" decision is durably recorded, not interleaved
  * with the moves — a crash between moving a file and recording the
- * decision used to delete that file's tombstone first, leaving an
+ * decision would otherwise delete that file's tombstone first, leaving an
  * "accepted" proposal a retry could neither finish nor re-validate.
  */
 async function unretireProposalWithLease(

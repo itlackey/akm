@@ -6,8 +6,7 @@
  * `semantic-search` for `akm health`: what the last `akm index` recorded about
  * semantic search (status, embedding runtime, the reason it failed), with the
  * index's own entry and vector counts read now. It loads no model and makes no
- * request, and nothing gates search on it (#873 removed the cached verdict
- * search used to obey); it reports what the index says.
+ * request, and nothing gates search on it; it reports what the index says.
  */
 
 import {

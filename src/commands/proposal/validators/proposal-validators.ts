@@ -169,8 +169,8 @@ export const defaultProposalValidators: ProposalValidator[] = [
  * canonical-structure gate (repository.ts, `hasCanonicalProposalValidator`).
  * That gate exists to reject a lesson/task/workflow proposal whose body is
  * not parseable as its type — it predates {@link defaultProposalQualityValidators}
- * and was previously safe to run in full there because every quality
- * validator was advisory (`advisory()` downgrades findings to `severity:
+ * and is safe to run in full there because every quality
+ * validator is advisory (`advisory()` downgrades findings to `severity:
  * "warn"`, which {@link runProposalValidators}'s `ok` never treats as
  * failing). Blocking durable-content validators (the #952 truncation marker
  * and #962 redaction marker) deliberately

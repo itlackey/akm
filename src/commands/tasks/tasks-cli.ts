@@ -3,14 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm task` command family. Extracted verbatim from src/cli.ts (WS6) so the
- * God Module shrinks; the `main.subCommands.task` key and every subcommand's
- * args/output shape are byte-identical. Handlers whose body is a plain
- * `runWithJsonErrors(...) + output(...)` are migrated to `defineJsonCommand`,
- * which emits the same JSON envelope (stdout/stderr/exit-code) as the inline
- * form. `task run` keeps a plain `defineCommand` because it forwards the
- * task's own exit code via `process.exitCode` (F4: not `process.exit()` —
- * that would skip pending cleanup).
+ * `akm task` command family. Handlers whose body is a plain
+ * `runWithJsonErrors(...) + output(...)` are `defineJsonCommand`s, which emit
+ * the JSON envelope (stdout/stderr/exit-code). `task run` keeps a plain
+ * `defineCommand` because it forwards the task's own exit code via
+ * `process.exitCode` (not `process.exit()`, which would skip pending cleanup).
  *
  * The default improve-schedule task set ships as embedded templates under
  * src/assets/tasks/improve/ (see src/tasks/embedded.ts), seeded through the
@@ -339,11 +336,10 @@ export const tasksRunCommand = defineCommand({
         ...taskInputReaders({ path: ["task", "run"], schema: tasksRunCommand as FlagScanCommand }, rawArgs, id),
       });
       output("task-run", envelope);
-      // F4: was `process.exit(envelope.exitCode)`, terminating synchronously
-      // and skipping any pending cleanup (this command forwards a run task's
-      // own exit code, so it can be any value, not just 0/1). output() has
-      // already run and this is the last statement, so process.exitCode +
-      // the implicit return is equivalent without the synchronous cutoff.
+      // Set `process.exitCode` rather than calling `process.exit`, which would
+      // skip pending cleanup (this command forwards a run task's own exit code,
+      // so it can be any value, not just 0/1). output() has already run and
+      // this is the last statement.
       if (envelope.exitCode !== 0) process.exitCode = envelope.exitCode;
     });
   },

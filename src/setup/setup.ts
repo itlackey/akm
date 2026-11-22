@@ -68,8 +68,7 @@ import { describeRuns, type SetupRuns } from "./summary";
 /**
  * Warn when an explicit `--dir /tmp/...` is persisted as the default bundle
  * path — `akm setup --dir $(mktemp -d)` resolves under this family on every
- * macOS machine (`/var/folders/...`), and used to be refused outright with
- * no discoverable remedy. The OS may reap the directory at any time, so the
+ * macOS machine (`/var/folders/...`). The OS may reap the directory at any time, so the
  * operator is told up front; `applyStashIsolationToEnv` below still pre-sets
  * `AKM_BUNDLE_DIR` so the `getConfigDir` / `getCacheDir` isolation rules
  * (`core/paths.ts`) route config + cache writes into `$stashDir/.akm/`

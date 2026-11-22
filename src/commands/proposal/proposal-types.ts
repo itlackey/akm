@@ -306,7 +306,7 @@ export interface Proposal {
    * A consolidate PROMOTION proposal's source memory ref: set
    * at mint by `emitPromotionProposal`. On accept, `promoteProposal` retires
    * this memory (and its `.derived` twin) through the same archive path, so
-   * an accepted promotion no longer leaves a memory/knowledge duplicate
+   * an accepted promotion leaves no memory/knowledge duplicate
    * behind — whether a person accepts it or triage auto-promotion does.
    */
   promotionSource?: string;

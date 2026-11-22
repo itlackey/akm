@@ -1146,7 +1146,7 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
       // The ledger keys the attempt by the source memory.
       attemptedRefs: [op.ref],
       // O1: on accept, promoteProposal retires this source memory
-      // (and its .derived twin) so promotion no longer leaves a duplicate.
+      // (and its .derived twin) so promotion leaves no duplicate.
       promotionSource: op.ref,
       // B3: recorded so accept can refuse to archive a source that was
       // edited after this promotion was queued — the RAW body hash (see

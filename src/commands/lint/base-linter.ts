@@ -27,9 +27,9 @@
 //   - non-existent refs
 //   - script paths with explicit extensions
 //
-// As of 0.9 the path mapping in `refToRelPath` is DERIVED FROM THE PLACEMENT
+// The path mapping in `refToRelPath` is DERIVED FROM THE PLACEMENT
 // SPECS (`assetPathForName` in `src/core/asset/asset-placement.ts`) rather than
-// hand-encoded, so it can no longer drift from the placement layer. `env`/
+// hand-encoded, so it cannot drift from the placement layer. `env`/
 // `secret`, `script`, and `task` refs are path-resolved.
 // ----------------------------------------------------------------------------
 
@@ -421,8 +421,8 @@ function classifyConceptRef(
 
 /**
  * Read-only fallback for the retired `type:slug` xref grammar (see
- * resolve-ref.ts Q-02 — the write boundary no longer emits or accepts it).
- * Stash content written before that retirement still carries it in frontmatter
+ * resolve-ref.ts — the write boundary neither emits nor accepts it).
+ * Older stash content may still carry it in frontmatter
  * `xrefs:` lists, and the conceptId check returns
  * `null` for it, so without this it was silently skipped rather than
  * validated (#882). `refToRelPath`/`refExistsInAnyStash` already key off a bare
@@ -654,11 +654,9 @@ function parseInnerFrontmatterBlock(body: string): Record<string, unknown> | nul
  * The cross-type checks every asset linter runs first: `unquoted-colon`,
  * `missing-updated`, `stale-path`, and `missing-ref`.
  *
- * akm: this was the `BaseLinter.runBaseChecks`
- * protected method every per-type linter class inherited. Those classes are
- * gone — the format-generic checks live here as ONE shared function (this), and
- * the per-`type` extra rules moved to the `akm` adapter's `validate`
- * (`core/adapter/adapters/akm-lint.ts`). The live `akmLint` command
+ * The format-generic checks live here as ONE shared function, and the
+ * per-`type` extra rules live in the `akm` adapter's `validate`
+ * (`core/adapter/adapters/akm-lint.ts`). The `akmLint` command
  * (`commands/lint/index.ts`) calls this directly, then appends the adapter's
  * per-type findings.
  *
@@ -667,7 +665,7 @@ function parseInnerFrontmatterBlock(body: string): Record<string, unknown> | nul
  * `ctx.raw` is updated in place so a caller can re-parse the post-fix content.
  * A failed flush (read-only file, full disk) DOWNGRADES the optimistic
  * `fixed: true` findings this call made to `fixed: "failed"` rather than
- * throwing — an uncaught throw here used to kill the whole sweep and hide
+ * throwing — an uncaught throw here would kill the whole sweep and hide
  * which earlier files had already been rewritten.
  */
 export function runBaseChecks(ctx: LintContext): LintIssue[] {
@@ -757,8 +755,8 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
   /**
    * Flush accumulated mutations to disk. Called after the fixable checks above
    * AND again at the very end, because the `missing-ref` section below can also
-   * mutate (`--prune-dangling-edges`, #884) and used to run PAST this point —
-   * its edits were computed and then silently dropped.
+   * mutate (`--prune-dangling-edges`, #884) and runs after the first flush —
+   * its edits must not be silently dropped.
    *
    * Mirrors the two stub-delete call sites in `commands/lint/index.ts`
    * (`appendMemoryStubIssue`/`appendWorkflowStubIssue`), which already report

@@ -1147,8 +1147,7 @@ export async function akmUpdate(input?: {
 
   // `--all` must account for EVERY configured source, not only the
   // registry-managed (lock-backed) ones — `selectManagedTargets`
-  // above returns only `installs` for `all`, so plain sources were
-  // previously never even looked at. Git/website/npm plain sources are synced
+  // above returns only `installs` for `all`, so plain sources need their own pass. Git/website/npm plain sources are synced
   // here too (npm is promoted to managed, same as the single-target path
   // above). Filesystem sources reflect their files in place and are reported
   // as intentionally skipped.
@@ -1264,8 +1263,8 @@ function selectManagedTargets(
  * or the lockfile. `context` labels the call site (e.g. "remove", "update")
  * in the warning so an operator can tell which command left the directory
  * behind. Failure does not throw — callers already committed the config/lock
- * change that made `target` orphaned — but it must not be silent either
- *: a swallowed `rmSync` error used to leave no trace anywhere the
+ * change that made `target` orphaned — but it must not be silent either:
+ * a swallowed `rmSync` error would leave no trace anywhere the
  * caller could inspect, so a confirmed deletion that then failed (permission
  * error, file in use, …) looked identical to a successful one.
  */

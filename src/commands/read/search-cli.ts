@@ -3,15 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm search`, `akm curate`, and `akm show` command family. Extracted verbatim
- * from src/cli.ts (WS6) so the God Module shrinks; the `main.subCommands.search`,
- * `.curate`, and `.show` keys and every command's args/output shape are
- * byte-identical. The three commands form a clean cluster: they share the
- * usage-event provenance and the `parseScopeFilterFlags`
- * search-source parsers. `show` takes a ref and applies no filter. Handlers whose body is a plain
- * `runWithJsonErrors(async () => { … })` are migrated to `defineJsonCommand`,
- * which emits the same JSON envelope (stdout/stderr/exit-code) as the inline
- * form.
+ * `akm search`, `akm curate`, and `akm show` command family. The three
+ * commands share the usage-event provenance and the `parseScopeFilterFlags`
+ * search-source parsers. `show` takes a ref and applies no filter. Handlers
+ * whose body is a plain `runWithJsonErrors(async () => { … })` are
+ * `defineJsonCommand`s, which emit the JSON envelope (stdout/stderr/exit-code).
  */
 
 import { getParsedInvocation } from "../../cli/invocation";

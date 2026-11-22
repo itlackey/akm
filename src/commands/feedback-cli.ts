@@ -77,7 +77,7 @@ function validateFeedbackTags(raw: string[]): string[] {
 // ── Lesson strength helper ────────────────────────────────────────────────────
 
 /**
- * append a feedback ref to a lesson's `lessonStrength[]`
+ * Append a feedback ref to a lesson's `lessonStrength[]`
  * frontmatter array. Returns `{ strength }` (post-update count) on success,
  * or `null` when the lesson cannot be located. Idempotent: if the ref is
  * already credited, no write occurs.
@@ -210,8 +210,8 @@ interface RecordFeedbackUsageResult {
  * Persist the feedback usage-event (state.db) and, for a user-attributed event,
  * recompute the entry's utility score (index.db) with the same function the
  * `akm index` finalize pass uses, scoped to this one entry, so there is one
- * formula and the stored value is what the next index would compute. Chunk-8
- * usage_events lives in state.db; entries + utility_scores stay in `indexDb`.
+ * formula and the stored value is what the next index would compute. The
+ * usage_events table lives in state.db; entries + utility_scores live in `indexDb`.
  * Search ranking does not read the utility score: it counts the recorded
  * `source='user'` feedback events itself, so a user-attributed event affects
  * ranking at once and an `improve`/`task`/`audit`/`unknown` one never does — an
@@ -731,7 +731,7 @@ export const feedbackCommand = defineJsonCommand({
       // also recomputes the entry's utility at once (see recordFeedbackUsage).
       // Search ranking reads the recorded events directly, so no `akm index`
       // run is needed.
-      // the `feedback` / `improve_review_needed` events key on the
+      // The `feedback` / `improve_review_needed` events key on the
       // resolved entry's fully-qualified item_ref — the SAME durable key the
       // usage_events row carries and the SAME spelling the signal-delta
       // correlation reads (buildLatestFeedbackTsMap, collapsed to [item_ref]).
@@ -875,7 +875,7 @@ export const feedbackCommand = defineJsonCommand({
 
     // --applied-to credits a lesson. When the
     // target is a `lessons/<name>` ref and the signal is positive, append
-    // the feedback ref to the target lesson's `lessonStrength[]`
+    // Credit the feedback ref to the target lesson's `lessonStrength[]`
     // frontmatter array (dedup, idempotent). Non-lesson targets are REJECTED
     // with a loud warning rather than silently doing nothing.
     // Failures here are warnings — feedback recording is the primary

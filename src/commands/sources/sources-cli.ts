@@ -5,16 +5,12 @@
 /**
  * Source-management CLI commands — `akm upgrade/sync/clone`.
  *
- * Extracted verbatim from src/cli.ts (WS6). Each `main.subCommands.<key>`
- * registration line stays byte-identical; the args/output shape of every
- * subcommand is unchanged. The `runSyncBody` git-commit/push body is used
- * ONLY by this cluster, so it moves with it.
+ * The `runSyncBody` git-commit/push body is used only by this cluster.
  *
- * Leaf handlers whose body is a plain `runWithJsonErrors(async () => { … })`
- * are migrated to `defineJsonCommand`, which emits the same JSON envelope
- * (stdout/stderr/exit-code) as the inline form. `sync` keeps `defineCommand`
- * because its `run` delegates to `runSyncBody` (which owns the
- * `runWithJsonErrors` wrapper) rather than wrapping inline.
+ * Leaf handlers are `defineJsonCommand`s, which emit the JSON envelope
+ * (stdout/stderr/exit-code). `sync` keeps `defineCommand` because its `run`
+ * delegates to `runSyncBody` (which owns the `runWithJsonErrors` wrapper)
+ * rather than wrapping inline.
  *
  * Bundle `list`/`remove`/`update` live in the `akm bundle` group
  * (src/commands/sources/bundle-cli.ts). Root `sync` and this file's

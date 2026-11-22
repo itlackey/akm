@@ -665,11 +665,11 @@ export function archiveCleanupCandidate(
     },
     "Archived derived memory for recoverable cleanup.\n",
   );
-  // Write the tombstone BEFORE moving the file — a
-  // crash in between used to leave a file already at archivedPath with no
-  // cleanup.md to explain it (unrecoverable: revert refuses on a missing
-  // tombstone, and nothing else knows this archive dir exists). Reordered,
-  // a crash here instead leaves, at worst, a tombstone describing a move
+  // Write the tombstone BEFORE moving the file: a crash in between would
+  // otherwise leave a file already at archivedPath with no cleanup.md to
+  // explain it (unrecoverable: revert refuses on a missing tombstone, and
+  // nothing else knows this archive dir exists). In this order, a crash
+  // leaves, at worst, a tombstone describing a move
   // that has not happened yet, with the file still at its original
   // location — the ordinary "nothing archived yet" state every caller
   // already handles.
@@ -1017,14 +1017,12 @@ function isActiveLikeBeliefState(state: Exclude<MemoryBeliefState, "archived">):
  * active. (`contradicted` is also historical but it *is* updated by the
  * contradiction resolver, so it is treated separately.)
  *
- * Note: `superseded` is deliberately NOT included here. Pre-Phase-1A,
- * `superseded` records were refreshed to `active` by the belief-refresh
- * pass (the old guard was `record.beliefState !== "active"`). In practice
- * most `superseded` records are pruned earlier via `supersededBy` metadata
- * in `analyzeMemoryCleanup`, so they never reach belief refresh — but a
- * record marked `beliefState: superseded` without `supersededBy` metadata
- * was previously refreshable. Preserving that behavior here avoids a
- * surprise regression; only `deprecated` is the new frozen state.
+ * Note: `superseded` is deliberately NOT included here. The belief-refresh
+ * pass refreshes `superseded` records to `active`. In practice most
+ * `superseded` records are pruned earlier via `supersededBy` metadata in
+ * `analyzeMemoryCleanup`, so they never reach belief refresh — but a record
+ * marked `beliefState: superseded` without `supersededBy` metadata is
+ * refreshable. Only `deprecated` is frozen.
  */
 function isFrozenHistoricalBeliefState(state: Exclude<MemoryBeliefState, "archived">): state is "deprecated" {
   return state === "deprecated";

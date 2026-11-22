@@ -107,8 +107,7 @@ function normalizedBody(raw: string): string {
  * ranking and either the retired asset never ranked top 10 for it, or the
  * survivor always did too. Never throws.
  *
- * two fixes against false flags measured on a real night-1 admission
- * (300 pairs, 6 flags, half spurious):
+ * Two guards against false flags:
  *  - queries are the cleaned set `loadRetrievalQueries` returns
  *    (`../retrieval-queries.ts`) — stash-README
  *    boilerplate, harness/tool envelopes, pastes over 2,000 characters, and
@@ -119,7 +118,7 @@ function normalizedBody(raw: string): string {
  *    "successor missing from the top 10" finding here would not be a real
  *    risk, just that dedupe working as designed.
  *
- * a query that never ran (the search call threw), ran on the
+ * A query that never ran (the search call threw), ran on the
  * keyword-only fallback (`mode: "fts-fallback"` — the real ranking was
  * attempted and failed, most often a down or unreachable embedding
  * endpoint), or ran after the shared search instance had already switched
@@ -145,13 +144,13 @@ export async function checkRetirementContinuity(args: {
   /** Test seam — production callers omit it and get the real search. */
   search?: ContinuitySearch;
 }): Promise<RetirementContinuityRisk | undefined> {
-  // identical bodies — search's own content-dedupe already hides the
+  // Identical bodies: search's own content-dedupe already hides the
   // successor for every query that would rank the retired asset, so there is
   // no real risk here to check for.
   if (normalizedBody(args.retiredRaw) === normalizedBody(args.successorRaw)) return undefined;
 
-  // the cleaned queries from `loadRetrievalQueries` —
-  // boilerplate, envelopes, pastes and duplicates dropped before replay.
+  // The cleaned queries from `loadRetrievalQueries`: boilerplate, envelopes,
+  // pastes and duplicates are dropped before replay.
   const queries = loadRetrievalQueries(args.ledgerAccess, args.retiredRef).slice(0, CONTINUITY_MAX_QUERIES);
   if (queries.length === 0) return undefined; // no queries recorded: no check, no flag
 

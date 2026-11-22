@@ -377,7 +377,7 @@ function rejectedPairKey(retiredRef: string, successorRef: string, retiredHash: 
 }
 
 /**
- * every rejected OR reverted consolidate-pair retirement on
+ * Every rejected OR reverted consolidate-pair retirement on
  * record, as {@link rejectedPairKey}s — read once per run, the same shape as
  * `pendingRetireRefs` in {@link runConsolidatePairPass}. `reverted` is
  * included alongside `rejected`: a person undoing an accept via `akm proposal
@@ -458,7 +458,7 @@ export function selectInitiators(
  * (needing the uncapped per-initiator totals to tell a cap-cut initiator
  * apart from a fully-judged one). Fetches `PAIR_NEIGHBOR_FETCH_K` (20)
  * raw neighbours and keeps the first `PAIR_NEIGHBOR_K` (5) that clear every
- * filter, so a few self/twin/bundle/tier misses in the raw top-5 no longer
+ * filter, so a few self/twin/bundle/tier misses in the raw top-5 cannot
  * starve an initiator down to zero real candidates. An initiator with no
  * stored vector (embeddings off, or not embedded yet) cannot be queried at
  * all; its ref is added to `unvectored` so the caller does not settle it.
@@ -476,7 +476,7 @@ export function selectCandidates(
       unvectored?.add(initiator.ref);
       continue;
     }
-    // a changed-content or new-material initiator judges at T_PAIR; the
+    // A changed-content or new-material initiator judges at T_PAIR; the
     // rest of the backlog (no row, not recently git-added) needs the higher
     // BACKFILL_FLOOR.
     const floor = initiator.backlog && !initiator.newMaterial ? BACKFILL_FLOOR : T_PAIR;
@@ -778,7 +778,7 @@ interface PairPassContext {
   warnings: string[];
   chat?: PairJudgeChat;
   /**
-   * The continuity check's search call (item 1) — one shared instance for
+   * The continuity check's search call: one shared instance for
    * the whole run, production or test. `runConsolidatePairPass` builds
    * the real one via {@link createContinuitySearch} unless a test seam
    * overrides it.
@@ -877,7 +877,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
       return live !== undefined && sameScope(judgedScope, scopeFromFrontmatter(live.frontmatter));
     });
 
-  // this exact pair (same two refs, same two content hashes,
+  // This exact pair (same two refs, same two content hashes,
   // EITHER orientation) was already judged and rejected OR reverted. Checked
   // HERE, before the judge call, not after — the judge (not yet run) is what
   // decides which side would be "retired" this time, so both orientations
@@ -924,10 +924,10 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
 
   // Guards.
   if (retired.asset.type === "memory" && retired.asset.name.endsWith(DERIVED_SUFFIX)) {
-    // derive the parent path from the FULL file path, not from name +
-    // dirname — for a subfolder memory (e.g. memories/sub/foo.derived) the
+    // Derive the parent path from the FULL file path, not from name +
+    // dirname: for a subfolder memory (e.g. memories/sub/foo.derived) the
     // name already carries "sub/", so joining dirname(filePath) (which ALSO
-    // ends in "sub") with it used to double the subfolder segment.
+    // ends in "sub") with it would double the subfolder segment.
     const parentPath = retired.asset.filePath.replace(/\.derived\.md$/, ".md");
     if (fs.existsSync(parentPath)) return {}; // never retire a .derived memory whose parent still exists
   }
@@ -987,7 +987,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
       ctx.stashDir,
       {
         ref: retired.asset.ref,
-        // its own generator, kept apart from the promote pass's
+        // A generator of its own, kept apart from the promote pass's
         // "consolidate" proposals — `accept --generator consolidate` (bulk
         // promotion review) never sweeps a retire proposal, and the reverse.
         source: "consolidate-pair",
@@ -1168,7 +1168,7 @@ export async function runConsolidatePairPass(
     rejectedPairKeys,
     retiredThisRun: new Set(),
     ...(seams.chat ? { chat: seams.chat } : {}),
-    // one instance for the whole run (not one per proposal), so its
+    // One instance for the whole run (not one per proposal), so its
     // "fell back once, go keyword-only from here" throttle actually covers
     // every remaining query in this run, not just one proposal's own five.
     continuitySearch: seams.continuitySearch ?? createContinuitySearch(stashDir, config),
@@ -1200,7 +1200,7 @@ export async function runConsolidatePairPass(
     });
   }
 
-  // a ledger row is written for an initiator only once ALL of its OWN
+  // A ledger row is written for an initiator only once ALL of its OWN
   // candidates were admitted (whole-initiator admission above makes this a
   // simple membership check: judgeable either has every one of an
   // initiator's candidates, or none of them) and none failed or were deferred

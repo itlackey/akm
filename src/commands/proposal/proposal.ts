@@ -569,21 +569,19 @@ function retiredTargetLineCount(
 
 /**
  * Bulk accept/reject every pending proposal from one generator, applying the
- * shared `--max-diff-lines` / `--older-than` filters. Consolidates the two
- * near-identical loops that lived in `proposal-cli.ts`;
- * behavior is verbatim — same filter order, same per-item envelopes, same
- * dry-run record shape. The destructive-confirmation prompt stays CLI-side.
+ * shared `--max-diff-lines` / `--older-than` filters. Accept and reject share one
+ * loop: the same filter order, per-item envelopes and dry-run record shape. The destructive-confirmation prompt stays CLI-side.
  */
 export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): Promise<BulkAdjudicateResult> {
   const config = options.config ?? loadConfig();
   const { stashDir, target: queueTarget } = resolveProposalQueue(options.stashDir, options.queue, config);
   // Every filter EXCEPT the continuityRisk exclusion below — matched against
-  // separately so its own count can be reported apart from an ordinary
+  // Matched separately so its own count can be reported apart from an ordinary
   // --max-diff-lines/--older-than miss.
   const matched = listProposals(stashDir, { status: "pending" }).filter((p) => {
     if (p.source !== options.generator) return false;
     if (options.maxDiffLines !== undefined) {
-      // a retire proposal's own payload is empty (it deletes its
+      // A retire proposal's own payload is empty (it deletes its
       // target) — proposalContent() would always read as 1 line, so
       // --max-diff-lines could never filter one out. Count the retired
       // file's own current line count instead.

@@ -75,8 +75,8 @@ export function assertUnsettable(key: string): void {
 }
 
 export function listConfig(config: AkmConfig): Record<string, unknown> {
-  // Sources live in `bundles` (spread from config); the
-  // retired top-level `sources[]` array is no longer surfaced.
+  // Sources live in `bundles` (spread from config); there is no top-level
+  // `sources[]` array.
   return redactConfigValue({ ...DEFAULT_CONFIG, ...config }) as Record<string, unknown>;
 }
 
@@ -170,11 +170,8 @@ export function akmConfigDiff(ref: string): { rows: ConfigDiffRow[] } {
 }
 
 // ── `akm config` command surface ────────────────────────────────────────────
-// Extracted verbatim from src/cli.ts (WS6). The `main.subCommands.config` key
-// and every config subcommand's args/output shape are byte-identical. Leaf
-// handlers whose body is a plain `runWithJsonErrors(() => { … })` are
-// migrated to `defineJsonCommand`, which emits the same JSON envelope
-// (stdout/stderr/exit-code) as the inline form.
+// Leaf handlers are `defineJsonCommand`s, which emit the JSON envelope
+// (stdout/stderr/exit-code).
 //
 // There is no `akm config enable|disable`: add or remove a registry with
 // `akm registry add|remove`.

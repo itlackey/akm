@@ -4,9 +4,7 @@
 
 /**
  * Contribution command cluster (`akm agent`, `akm lint`) — the asset
- * authoring / validation verbs. Extracted verbatim from src/cli.ts (WS6) so
- * the God Module shrinks; the `main.subCommands.{agent,lint}` keys and every
- * command's args / output shape stay byte-identical.
+ * authoring / validation verbs.
  *
  * These handlers branch on the result and set a non-zero `process.exitCode`
  * conditionally (exit 1 on a failed dispatch, or on `--fail-on-flagged` lint
@@ -121,14 +119,11 @@ export const agentCommand = defineCommand({
       output("agent-result", result);
 
       if (!result.ok) {
-        // style fix: this used to call `process.exit(EXIT_GENERAL)`
-        // directly, which terminates synchronously and skips any pending
-        // `finally`/cleanup up the call stack (including the dispatched
-        // agent process' own bookkeeping). `output()` has already run above,
-        // so there is nothing left in this handler that depends on
-        // terminating immediately — `process.exitCode` + `return` (this is
-        // the last statement anyway) lets the process exit naturally once
-        // the event loop drains.
+        // Set `process.exitCode` and return rather than calling
+        // `process.exit(EXIT_GENERAL)`, which would skip pending
+        // `finally`/cleanup up the call stack (including the dispatched agent
+        // process' own bookkeeping). `output()` has already run above, so the
+        // process can exit naturally once the event loop drains.
         process.exitCode = EXIT_GENERAL;
         return;
       }

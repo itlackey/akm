@@ -4,11 +4,8 @@
 
 /**
  * Observability command cluster — `akm log` (append-only events stream).
- * Extracted verbatim from src/cli.ts (WS6) so the God Module shrinks; the
- * `main.subCommands.log` key and its args/output shape are byte-identical.
  *
- * `log` reads the append-only state.db events stream. It shares no helpers
- * with any command still inline in cli.ts.
+ * `log` reads the append-only state.db events stream.
  *
  * `log` is a leaf command with the `--since @offset:<id>` durable cursor
  * and --ref/--type filters.
