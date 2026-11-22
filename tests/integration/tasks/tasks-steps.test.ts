@@ -119,7 +119,7 @@ steps:
     );
     const result = await run("flaky");
     expect(result.status).toBe("failed");
-    expect(result.detail).toEqual({ reason: "step_failed", error: "boom: exit code 3" });
+    expect(result.detail).toEqual({ reason: "step_failed", error: "boom: non_zero_exit: exit code 3: oops" });
     expect(result.steps?.map((s) => [s.name, s.status, s.attempts])).toEqual([
       ["retried", "completed", 2],
       ["boom", "failed", 1],

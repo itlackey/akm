@@ -8,6 +8,8 @@
  */
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 
 export interface GitDaemon {
   /** `git://127.0.0.1:<port>` */
@@ -39,4 +41,23 @@ export function startGitDaemon(basePath: string, readyRepo: string): GitDaemon {
     Bun.sleepSync(100);
   }
   return { baseUrl, stop: () => daemon.kill() };
+}
+
+/** Commits one note to a new repository under `root`, clones it bare as `remote.git`, and serves `root` with a daemon. */
+export function seedServedRepo(root: string): GitDaemon {
+  const seed = path.join(root, "seed");
+  const git = (...args: string[]) => {
+    const result = spawnSync("git", args, { encoding: "utf8" });
+    if (result.status !== 0) throw new Error(result.stderr || `git ${args.join(" ")} failed`);
+  };
+  git("init", "--initial-branch=main", seed);
+  git("-C", seed, "config", "user.name", "AKM Test");
+  git("-C", seed, "config", "user.email", "akm@example.test");
+  git("-C", seed, "config", "commit.gpgsign", "false");
+  fs.mkdirSync(path.join(seed, "knowledge"), { recursive: true });
+  fs.writeFileSync(path.join(seed, "knowledge", "note.md"), "---\ndescription: a note\n---\n\n# A note\n");
+  git("-C", seed, "add", "-A");
+  git("-C", seed, "commit", "-m", "seed");
+  git("clone", "--bare", seed, path.join(root, "remote.git"));
+  return startGitDaemon(root, "remote.git");
 }

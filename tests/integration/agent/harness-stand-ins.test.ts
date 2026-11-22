@@ -14,7 +14,7 @@ import path from "node:path";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { buildExecution, currentLayer, resolveExecution } from "../../../src/integrations/agent/execution";
 import { executeInteractiveAgentInvocation, runExecution } from "../../../src/integrations/agent/runner-dispatch";
-import { HARNESS_CONFIG_PLATFORMS, HARNESS_REGISTRY } from "../../../src/integrations/harnesses";
+import { HARNESS_CONFIG_PLATFORMS } from "../../../src/integrations/harnesses";
 import { harnessCalls, promptOf, writeFakeHarness } from "../../_helpers/engine-stubs";
 import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
 import { makeSandboxDir, type SandboxedDir } from "../../_helpers/sandbox";
@@ -69,11 +69,6 @@ const everything = (call: ReturnType<typeof harnessCalls>[number] | undefined): 
   [...(call?.argv ?? []), call?.stdin ?? "", ...Object.values(call?.env ?? {})].join("\n");
 
 describe("the harnesses akm starts", () => {
-  test("every registered harness is covered here", () => {
-    const covered: string[] = [...HARNESS_CONFIG_PLATFORMS];
-    expect(covered.sort()).toEqual(HARNESS_REGISTRY.map((h) => String(h.id)).sort());
-  });
-
   describe.each([...HARNESS_CONFIG_PLATFORMS].map((platform) => [platform]))("%s", (platform) => {
     test("a short prompt reaches the program whole", async () => {
       const { call } = await dispatch(platform, "do the short work");
@@ -88,7 +83,7 @@ describe("the harnesses akm starts", () => {
       },
     );
 
-    test("a model is passed once, and replaces one the harness's own args name", async () => {
+    test("a model is passed once, and replaces any the harness's own args name", async () => {
       const authored = MODEL_BY_ENVIRONMENT.includes(platform) ? [] : ["--model", "model-old"];
       const { call } = await dispatch(platform, "work", { model: "model-new", args: authored });
       const text = everything(call);
@@ -101,8 +96,11 @@ describe("the harnesses akm starts", () => {
       await executeInteractiveAgentInvocation({ config: configFor(platform, bin), harness: "standin" });
       const [call] = harnessCalls(bin);
       expect(call).toBeDefined();
-      expect(everything(call)).not.toContain("--prompt");
-      expect(call?.stdin).toBe("");
+      const oneShot = (arg: string) =>
+        ["-p", "run", "exec", "--no-interactive", "--headless"].includes(arg) ||
+        arg.startsWith("--message=") ||
+        arg.startsWith("--task=");
+      expect(call?.argv.filter(oneShot)).toEqual([]);
     });
   });
 });

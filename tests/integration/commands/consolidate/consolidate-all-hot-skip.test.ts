@@ -92,7 +92,7 @@ describe("akmConsolidate — all-hot chunk", () => {
     }
     for (const progress of ["[consolidate] chunk 1/", "[consolidate] plan:"]) {
       const lines = seen.filter((entry) => entry.line.includes(progress));
-      expect(lines.length).toBeGreaterThan(0);
+      expect(lines).toHaveLength(1);
       expect(lines.every((entry) => entry.level === "info")).toBe(true);
     }
   });

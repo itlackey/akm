@@ -236,7 +236,7 @@ describe.skipIf(!posix)("one timeout grammar and one limit", () => {
 });
 
 describe.skipIf(!posix)("a task is identified by its bundle and id", () => {
-  test("two bundles with the same task name keep their own resume record, lock and history", () => {
+  test("two bundles with the same task name keep their own resume record and history", () => {
     const other = makeSandboxDir("akm-tasks-run-fixes-two");
     try {
       writeSandboxConfig({
@@ -415,7 +415,7 @@ describe.skipIf(!posix)("the messages of a start", () => {
     expect(refused.stderr + refused.stdout).toContain("--clean is not taken by a version 5 task start");
   });
 
-  test("--max-retries 0 is accepted for a version 5 task, a script and an agent run", () => {
+  test("--max-retries 0 is accepted for a version 5 task and a script", () => {
     write("tasks/basic.yml", v5("exec: 'true'\n"));
     write("scripts/ok.sh", "#!/bin/sh\ntrue\n", 0o755);
     expect(akmJson(["run", "tasks/basic", "--max-retries", "0"]).status).toBe(0);

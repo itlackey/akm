@@ -71,7 +71,6 @@ describe("computeDeltas", () => {
     ] as const) {
       const entry = computeDeltas(first, last)["metrics.llmUsage.calls"];
       expect(entry?.pctChange).toBe("unknown");
-      expect(typeof entry?.pctChange).not.toBe("number");
     }
   });
 

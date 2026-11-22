@@ -110,7 +110,6 @@ describe("the hint names what is wrong", () => {
     expect(result.code).not.toBe(0);
     const { hint } = failure(result);
     expect(hint).toContain('agent ref "agents/missing"');
-    expect(hint).toContain("agents/missing");
     expect(hint).not.toContain("retry the command ref");
   });
 });

@@ -396,6 +396,7 @@ describe("the md report renders everything the result holds (B10-45)", () => {
 
     const result = await runCliCapture(["doctor", "--no-probe", "--report", "--format", "md"]);
     const out = result.stdout;
+    expect(out).toContain("## status");
     expect(out.indexOf("## status")).toBeLessThan(out.indexOf("## Checks"));
     expect(out).toMatch(/task-fail-rate\s+warn/);
     expect(out).toContain("## Window comparison");

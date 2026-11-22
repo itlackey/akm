@@ -5,7 +5,7 @@
 /**
  * How akm ends and what it reports around the processes it starts, measured with real processes:
  * a child's signal death, a program that cannot be run, a working folder that cannot be made, a descendant
- * left holding the output pipe, a signal that two owners both act on, and an env value that starts with `#`.
+ * left holding the output pipe, and an env value that starts with `#`.
  */
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";

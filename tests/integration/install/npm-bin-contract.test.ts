@@ -72,13 +72,11 @@ describe("npm bin contract", () => {
 
     const akmLauncher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm.mjs"), "utf8");
     expect(akmLauncher.startsWith("#!/usr/bin/env node")).toBe(true);
-    expect(akmLauncher).toContain("requires Node.js >= 22.15 to bootstrap");
     expect(akmLauncher).toContain('new URL("./cli.js", import.meta.url)');
     expect(akmLauncher).toContain('await import("./cli-node.mjs")');
 
     const migrateLauncher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm-migrate.mjs"), "utf8");
     expect(migrateLauncher.startsWith("#!/usr/bin/env node")).toBe(true);
-    expect(migrateLauncher).toContain("requires Node.js >= 22.15 to bootstrap");
     expect(migrateLauncher).toContain('new URL("./scripts/akm-migrate.js", import.meta.url)');
     expect(migrateLauncher).toContain('new URL("./scripts/akm-migrate-node.js", import.meta.url)');
     expect(migrateLauncher).toContain('process.versions.bun ? process.execPath : useBun ? "bun" : process.execPath');

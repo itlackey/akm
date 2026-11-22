@@ -122,7 +122,7 @@ describe("config display redacts by the credential-name rule (B10-50)", () => {
 });
 
 describe("migrate drops a removed improve strategy with a note (B10-40, migrate part)", () => {
-  test("improve.strategy naming a strategy 0.10 removed is dropped; the note names it", () => {
+  test("defaults.improveStrategy naming a strategy 0.10 removed is dropped; the note names it", () => {
     writeConfig({ configVersion: "0.9.0", defaults: { improveStrategy: "quick" } });
     const applied = normalizeConfigFile(getConfigPath(), { apply: true });
     expect(applied.applied).toBe(true);

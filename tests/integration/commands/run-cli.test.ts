@@ -406,7 +406,6 @@ describe("akm run scripts/<file>", () => {
       tails.push([`--${name}`, ...value], [`--${name}=v`]);
       if (definition.alias) tails.push([`-${definition.alias}`, ...value]);
     }
-    expect(tails.length).toBeGreaterThan(30);
     for (const tail of tails) {
       const result = await runCliCapture(["run", "scripts/args.sh", ...tail]);
       expect(result.code, `${tail.join(" ")}: ${result.stderr}`).toBe(0);

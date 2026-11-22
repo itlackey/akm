@@ -72,7 +72,7 @@ describe("config CLI helpers", () => {
     expect(updated.connections?.lab?.chat_template_kwargs).toEqual({ enable_thinking: false });
   });
 
-  test("setConfigValue refuses a retired key like sources, as config get and unset do (#37)", () => {
+  test("setConfigValue refuses the retired key sources", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     expect(() =>
       setConfigValue(base, "sources", '[{"type":"website","url":"https://example.com","writable":true}]'),
@@ -382,19 +382,7 @@ describe("unknown-key hint stays in sync with schema (#460)", () => {
   });
 });
 
-// ── #462 (relaxed): unknown fields on sources/registries are tolerated ───────
-// The config-wide unknown-key policy is now lenient (passthrough) so cross-
-// version config skew never becomes INVALID_CONFIG_FILE. That also relaxes the
-// #462 strict typo-catching on source/registry entries: unknown fields are now
-// preserved rather than rejected. Known fields are still type-validated.
-describe("registries/sources tolerate unknown fields at set time (lenient policy)", () => {
-  test("set sources is refused — the key retired with the 0.9.0 bundles cutover (#37/#16)", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    expect(() =>
-      setConfigValue(base, "sources", '[{"type":"git","name":"x","url":"https://example.com/r.git"}]'),
-    ).toThrow("Unknown config key: sources");
-  });
-
+describe("registries tolerate unknown fields at set time", () => {
   test("set registries tolerates and preserves an unknown field on a registry entry", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     const updated = setConfigValue(

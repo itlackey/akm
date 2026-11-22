@@ -76,10 +76,14 @@ test("a run on OpenCode 1 prints one line naming the binary, its version and the
 });
 
 test("--quiet and an akm-internal invocation print nothing", () => {
-  expect(noticeLines(run("1.18.25", ["--quiet"]).stderr)).toHaveLength(0);
-  expect(noticeLines(run("1.18.25", [], { AKM_EVENT_SOURCE: "task" }).stderr)).toHaveLength(0);
+  for (const result of [run("1.18.25", ["--quiet"]), run("1.18.25", [], { AKM_EVENT_SOURCE: "task" })]) {
+    expect(result.status).toBe(0);
+    expect(noticeLines(result.stderr)).toHaveLength(0);
+  }
 });
 
 test("a run on OpenCode 2 prints none", () => {
-  expect(noticeLines(run("2.2.0").stderr)).toHaveLength(0);
+  const result = run("2.2.0");
+  expect(result.status).toBe(0);
+  expect(noticeLines(result.stderr)).toHaveLength(0);
 });

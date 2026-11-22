@@ -20,7 +20,6 @@ describe("a turn that ended on a refused tool call", () => {
 
   test("the reply is what the default format printed", () => {
     expect(report.reply).toBe(fixture("oc1-default.out"));
-    expect(report.reply).toBe("I will read the file now.\n");
   });
 
   test("is unfinished: OpenCode's last step finished with tool-calls, and the failed tool carries OpenCode's message", () => {
@@ -56,7 +55,6 @@ describe("a provider error", () => {
   test("is OpenCode's own message, and the reply is what the default format printed (nothing)", () => {
     expect(report.errors).toEqual(["fake provider refused the request"]);
     expect(report.reply).toBe(fixture("oc1-error-default.out"));
-    expect(report.reply).toBe("");
   });
 });
 
