@@ -505,7 +505,7 @@ request into `main`), the gate a stable release merges through.
 
 On-demand measures of code quality and test strength. They are never part of `bun run check`, CI on a pull
 request, or a release, and nothing fails on a number: they exist to compare a change or a branch with its base.
-Each runs its tool through `bunx` at an exact version pinned in `scripts/quality/`, so nothing is added to
+Each runs its tool through `bunx` at an exact version pinned in `scripts/quality/`, so no dependency is added to
 `package.json` or the lockfile. Reports go to `reports/quality/<tool>/` (gitignored): the tool's own JSON, a
 `summary.txt`, and a flat `metrics.json`. The same measures run from the manual `Quality` workflow
 (`.github/workflows/quality.yml`, `workflow_dispatch`), which uploads `reports/quality` as an artifact.
