@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { BundleAdapter, BundleListing } from "../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../core/adapter/detect-adapter";
-import { adapterForId } from "../core/adapter/registry";
+import { adapterForId, requireAdapter } from "../core/adapter/registry";
 import type { Bundle } from "../core/adapter/types";
 import { compareCodePoints, isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
@@ -136,7 +136,7 @@ import {
   SEMANTIC_SEARCH_META_KEY,
   type SemanticSearchRecord,
 } from "./walk/index-context";
-import { type WalkStashFlatResult, walkStashFlatWithStatus } from "./walk/walker";
+import type { WalkStashFlatResult } from "./walk/walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -1186,13 +1186,11 @@ function buildSourceScanPlans(
         incompletePath: sourceAdded.unresolved.path ?? "unknown",
       };
     }
-    const adapter = adapterForId(adapterId);
-    // A component whose adapter is unknown is still walked, so its directories stay claimed; it is skipped below.
-    const walked = adapter
-      ? walkResultOf(adapter.list(component), currentStashDir)
-      : walkStashFlatWithStatus(currentStashDir);
+    // A bundle that names an adapter akm does not have stops the index before it changes anything.
+    const adapter = requireAdapter(component.id, adapterId);
+    const walked = walkResultOf(adapter.list(component), currentStashDir);
     const dirGroups = groupFileContextsByDir(walked.files);
-    const adapterSkip = adapter ? adapterSkippedAkmContent(component, walked.files, adapter) : undefined;
+    const adapterSkip = adapterSkippedAkmContent(component, walked.files, adapter);
     return {
       currentStashDir,
       component,
@@ -1349,7 +1347,7 @@ async function scanSourceDirs(
       `Processed ${processedDirs}/${allSourceEntries.length} source${allSourceEntries.length === 1 ? "" : "s"}.`,
     );
 
-    if (!walkComplete) {
+    if (!walkComplete || adapter === undefined) {
       for (const dirPath of dirGroups.keys()) seenPaths.add(path.resolve(dirPath));
       const reason = plan.incompleteReason ?? "the scan did not complete";
       incompleteSources.push({
@@ -1365,19 +1363,6 @@ async function scanSourceDirs(
     }
 
     // Owner ruling 2026-07-21: dispatch each component's DETECTED adapter (§4).
-    // An unknown adapter id has no `adapterForId` match → skip the whole
-    // component with a warning (one bundle = one component = one adapter).
-    if (!adapter) {
-      for (const dirPath of dirGroups.keys()) seenPaths.add(path.resolve(dirPath));
-      incompleteSources.push({
-        bundle: component.id,
-        component: configuredComponentName(config, component.id),
-        path: currentStashDir,
-        reason: `unknown adapter id "${adapterId}"`,
-      });
-      warn(`Skipping component "${component.id}": unknown adapter id "${adapterId}".`);
-      continue;
-    }
     // The content projection's version is part of the variant: a change to what Markdown bodies index re-projects
     // every directory once instead of keeping the old text for unchanged files.
     const indexVariant = `${adapter.id}@${adapter.version}+content${CONTENT_PROJECTION_VERSION}`;

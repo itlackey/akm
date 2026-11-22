@@ -15,6 +15,7 @@
  */
 import { isDeepStrictEqual } from "node:util";
 import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
+import { requireConfiguredAdapters } from "../core/adapter/registry";
 import { isRecord } from "../core/common";
 import {
   type AkmConfig,
@@ -40,7 +41,10 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
 }
 
 export function setConfigValue(config: AkmConfig, key: string, rawValue: string): AkmConfig {
-  return configSet(config as unknown as Record<string, unknown>, key, rawValue) as unknown as AkmConfig;
+  const next = configSet(config as unknown as Record<string, unknown>, key, rawValue) as unknown as AkmConfig;
+  // A typo in an adapter id is caught as it is typed, not when a bundle is next read.
+  if (key === "bundles" || key.startsWith("bundles.")) requireConfiguredAdapters(next);
+  return next;
 }
 
 export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {

@@ -11,8 +11,9 @@ file. The indexer calls it for every file the walker finds (see
 
 `BUILTIN_ADAPTERS` in `src/core/adapter/adapters/index.ts` is a frozen list,
 exposed through `src/core/adapter/registry.ts`. Its order is the install-time
-probe order, and `ADAPTER_ID_TABLE` (`src/core/adapter/adapter-ids.ts`) mirrors
-it. There are eleven:
+probe order, and it is the one list of adapter ids: adding an adapter is one
+class file and one line in it. The registry (`requireAdapter`) rejects an id that is not in the
+list where a bundle names one, and `akm config set` and `akm doctor` check it up front. There are eleven:
 
 | Adapter id | Format | Recognizes |
 | --- | --- | --- |

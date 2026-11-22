@@ -30,6 +30,9 @@
  * frozen list pulls the concrete adapters into no query-time graph.
  */
 
+import { resolveConfiguredSources } from "../config/config-sources";
+import type { AkmConfig } from "../config/config-types";
+import { ConfigError } from "../errors";
 import { BUILTIN_ADAPTERS } from "./adapters";
 import type { BundleAdapter } from "./bundle-adapter";
 import type { Bundle } from "./types";
@@ -52,6 +55,30 @@ export function getAdapters(): BundleAdapter[] {
 /** Look up an adapter by its own `id` ; `undefined` for an unknown id (the caller skips + warns). */
 export function adapterForId(id: string): BundleAdapter | undefined {
   return BY_ID.get(id);
+}
+
+/** The id of every built-in adapter, in probe order. */
+export function adapterIds(): string[] {
+  return BUILTIN_ADAPTERS.map((adapter) => adapter.id);
+}
+
+/** The adapter `bundle` names, or a `ConfigError` listing the ids akm has. */
+export function requireAdapter(bundle: string, id: string): BundleAdapter {
+  const adapter = BY_ID.get(id);
+  if (!adapter) {
+    throw new ConfigError(
+      `Bundle "${bundle}" names adapter "${id}", which akm does not have. Expected one of: ${adapterIds().join(", ")}.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  return adapter;
+}
+
+/** Refuse a config in which a bundle names an adapter akm does not have. */
+export function requireConfiguredAdapters(config: AkmConfig): void {
+  for (const source of resolveConfiguredSources(config)) {
+    if (source.adapterId !== undefined) requireAdapter(source.name, source.adapterId);
+  }
 }
 
 /** The bundle a bundle's adapter is called with: its root, and its `location` when it has one. */

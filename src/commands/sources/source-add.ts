@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { requireAdapter } from "../../core/adapter/registry";
 import { isBundleSlug } from "../../core/asset/asset-ref";
 import { slugForRegistryId, validateExplicitBundleName } from "../../core/bundle-id";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
@@ -93,6 +94,7 @@ async function addLocalSource(
   const resolvedPath = path.resolve(stashRoot);
   const adapter = explicitAdapter ?? detectAdapterId(resolvedPath);
   let bundleKey = explicitName ?? toReadableId(resolvedPath);
+  requireAdapter(bundleKey, adapter);
   mutateConfig((config) => {
     const existing = bundleKeyForPath(config, resolvedPath);
     if (existing) {

@@ -46,7 +46,7 @@ import { findAbsoluteHomePaths } from "./adapter/adapters/akm-format";
 import type { AssetChange, BundleAdapter, NewAsset } from "./adapter/bundle-adapter";
 import { detectAdapterId } from "./adapter/detect-adapter";
 import { assertWritableFile } from "./adapter/directory-adapter";
-import { adapterForId, bundleOf } from "./adapter/registry";
+import { bundleOf, requireAdapter } from "./adapter/registry";
 import type { Bundle } from "./adapter/types";
 import { normalizeAkmMarkdown } from "./asset/akm-markdown";
 import type { AssetRef } from "./asset/resolve-ref";
@@ -324,10 +324,7 @@ function pathFromConfiguredSource(runtime: ConfiguredSource): string | undefined
 
 /** The adapter that writes `source`'s assets: its configured or detected one, `akm` when none is recorded. */
 function writerOf(source: WriteTargetSource): BundleAdapter {
-  const id = source.adapterId ?? "akm";
-  const adapter = adapterForId(id);
-  if (!adapter) throw new ConfigError(`Bundle "${source.name}" uses unknown adapter "${id}".`, "INVALID_CONFIG_FILE");
-  return adapter;
+  return requireAdapter(source.name, source.adapterId ?? "akm");
 }
 
 /**

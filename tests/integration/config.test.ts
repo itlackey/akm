@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { setConfigValue } from "../../src/commands/config-cli";
 import { resolveImproveExecution } from "../../src/commands/improve/execution";
+import { requireConfiguredAdapters } from "../../src/core/adapter/registry";
 import {
   DEFAULT_CONFIG,
   defaultConnection,
@@ -781,10 +782,12 @@ describe("getImproveProcessConfig", () => {
   });
 });
 
-// ── components.*.adapter validation (#909) ───────────────────────────────────
+// ── components.*.adapter (#909) ──────────────────────────────────────────────
+// The schema takes any adapter id; the registry rejects an unknown one where a bundle is resolved
+// (`requireAdapter`), and `akm config set` / `akm doctor` check it up front.
 
-describe("components.*.adapter validation (#909)", () => {
-  test("an unrecognized adapter fails INVALID_CONFIG_FILE listing the accepted names", () => {
+describe("components.*.adapter (#909)", () => {
+  test("an unrecognized adapter loads: the registry, not the schema, rejects it where the bundle is resolved", () => {
     writeCurrentConfig({
       bundles: {
         main: {
@@ -795,25 +798,10 @@ describe("components.*.adapter validation (#909)", () => {
       },
       defaultBundle: "main",
     });
-    // RED on old code: an unknown adapter silently fell back to `akm` at
-    // detect-time — loadConfig() never threw, and `akm bundle list` reported
-    // "akm" as if it had been configured (#909). GREEN on the fix: config
-    // load itself rejects it.
-    let thrown: unknown;
-    try {
-      loadConfig();
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(ConfigError);
-    expect((thrown as ConfigError).code).toBe("INVALID_CONFIG_FILE");
-    const message = (thrown as ConfigError).message;
-    expect(message).toContain("__invalid__");
-    // The accepted names are listed, derived from the registry — spot-check a
-    // representative few rather than pinning the whole (registry-owned) list.
-    expect(message).toContain("akm");
-    expect(message).toContain("agent-skills");
-    expect(message).toContain("okf");
+    expect(loadConfig().bundles?.main?.components?.main?.adapter).toBe("__invalid__");
+    expect(() => requireConfiguredAdapters(loadConfig())).toThrow(
+      /Bundle "main" names adapter "__invalid__", which akm does not have\. Expected one of: .*\bagent-skills\b.*\bokf\b/,
+    );
   });
 
   test("a valid adapter name loads without error", () => {

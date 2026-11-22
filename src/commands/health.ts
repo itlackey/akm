@@ -29,6 +29,7 @@ import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 import { getStateDbFreelistInfo, runStateDbIntegrityCheck } from "../storage/state-db-integrity";
 import { pkgVersion } from "../version";
 import { collectArchiveUsageAdvisory } from "./health/archive-usage";
+import { collectBundleAdaptersCheck } from "./health/bundle-adapters-check";
 import {
   HEALTH_CHECKS,
   type HealthCheckContext,
@@ -807,6 +808,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       unverifiedActiveTasks: taskHistory.unverifiedActiveTasks,
       taskRuns: taskHistory.taskRuns,
       indexSources: collectIndexSourcesCheck(),
+      bundleAdapters: collectBundleAdaptersCheck(),
       worstTaskFailRate: taskHistory.worstTaskFailRate,
       agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       sessionExtractionLedger,

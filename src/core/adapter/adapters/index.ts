@@ -15,9 +15,12 @@
  * depends on anyone first calling a registration function (normative §12.6 —
  * "static frozen `BUILTIN_ADAPTERS` map"). The earlier mutable
  * `registerAdapter` singleton that this replaced is retired.
+ *
+ * This list is the one list of adapter ids: adding an adapter is one class
+ * file and one line here (its position is its probe order). The registry
+ * rejects an id that is not in it where a bundle names one.
  */
 
-import { ADAPTER_ID_TABLE } from "../adapter-ids";
 import type { BundleAdapter } from "../bundle-adapter";
 import { agentSkillsAdapter } from "./agent-skills-adapter";
 import { akmAdapter } from "./akm-adapter";
@@ -101,20 +104,3 @@ export const BUILTIN_ADAPTERS: readonly BundleAdapter[] = Object.freeze([
   secretToolAdapter,
   azureKeyVaultAdapter,
 ]);
-
-// Construction-time drift guard (#909): ../adapter-ids.ts's ADAPTER_ID_TABLE
-// is config's dependency-free mirror of this list, kept out of core/config's
-// import graph so config doesn't have to import this (heavier) barrel. Assert
-// they match so the mirror can never silently drift — a new/reordered/renamed
-// adapter that forgets to update adapter-ids.ts fails loudly here instead of
-// quietly breaking config's `components.*.adapter` validation.
-{
-  const actualIds = BUILTIN_ADAPTERS.map((a) => a.id);
-  const expectedIds = [...ADAPTER_ID_TABLE];
-  if (actualIds.length !== expectedIds.length || actualIds.some((id, i) => id !== expectedIds[i])) {
-    throw new Error(
-      `adapter-ids.ts ADAPTER_ID_TABLE (${expectedIds.join(", ")}) does not match ` +
-        `BUILTIN_ADAPTERS (${actualIds.join(", ")}) — update adapter-ids.ts to match.`,
-    );
-  }
-}

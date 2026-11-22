@@ -8,15 +8,8 @@
  * change.
  */
 import { z } from "zod";
-// Dependency-free mirror of the adapter registry's id list (#909) — see
-// adapter-ids.ts's header for why config imports this leaf rather than
-// `core/adapter/registry.ts` (which would pull in all 11 concrete adapters
-// and, transitively, the indexer modules they delegate to).
-import { VALID_ADAPTER_IDS } from "../../adapter/adapter-ids";
 import { isBundleSlug } from "../../asset/asset-ref";
 import { httpUrl, isApiKeyReference, nonEmptyString, positiveInt } from "./primitives";
-
-const VALID_ADAPTER_IDS_SET: ReadonlySet<string> = new Set(VALID_ADAPTER_IDS);
 
 // ── Sources / registries / installed ────────────────────────────────────────
 
@@ -222,23 +215,6 @@ export const BundleConfigEntrySchema = z
         path: ["components", componentEntry[0], "writable"],
         message: "writable: true is only supported on path, git and location bundle sources",
       });
-    }
-    // #909: an unrecognized `components.*.adapter` used to silently fall back
-    // to `akm` at detect-time with no error and no disclosure — a typo
-    // (`agent_skills`, `akm-native`, …) then silently changed which files got
-    // indexed. Reject it here instead, the same treatment other enum-valued
-    // config fields get, listing the accepted values (derived from the
-    // adapter registry, never hardcoded — see adapter-ids.ts).
-    if (componentEntry !== undefined) {
-      const [componentName, componentValue] = componentEntry;
-      const adapterValue = componentValue.adapter;
-      if (adapterValue !== undefined && !VALID_ADAPTER_IDS_SET.has(adapterValue)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["components", componentName, "adapter"],
-          message: `unrecognized adapter "${adapterValue}"; expected one of: ${VALID_ADAPTER_IDS.join(", ")}`,
-        });
-      }
     }
   });
 

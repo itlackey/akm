@@ -98,6 +98,21 @@ describe("config CLI helpers", () => {
     );
   });
 
+  test("setConfigValue refuses an adapter id akm does not have, as it is typed", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const bundle = { path: "/tmp/docs", components: { main: { root: ".", adapter: "agent-skills" } } };
+    const withDocs = setConfigValue(base, "bundles", JSON.stringify({ docs: bundle }));
+    expect(setConfigValue(withDocs, "bundles.docs.components.main.adapter", "okf").bundles?.docs?.components).toEqual({
+      main: { root: ".", adapter: "okf" },
+    });
+    expect(() => setConfigValue(withDocs, "bundles.docs.components.main.adapter", "agent_skills")).toThrow(
+      /Bundle "docs" names adapter "agent_skills", which akm does not have\. Expected one of: .*\bagent-skills\b/,
+    );
+    expect(() =>
+      setConfigValue(base, "bundles", JSON.stringify({ docs: { ...bundle, components: { main: { adapter: "x" } } } })),
+    ).toThrow(/names adapter "x"/);
+  });
+
   test("setConfigValue rejects empty and multi-entry component maps", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     expect(() => setConfigValue(base, "bundles", '{"empty":{"path":"/tmp/empty","components":{}}}')).toThrow(
