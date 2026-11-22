@@ -15,10 +15,10 @@ Task-oriented guides and command tours for using akm.
 - [Capture Knowledge](capture-knowledge.md) -- Capture memories and import documents
 - [Improve the Library](improve-the-library.md) -- Feedback, the event log, `akm improve`, and proposals
 
-## Running workflows
+## Tasks and workflows
 
-- [Running Workflows](run-workflows.md) -- Start, continue, check on, resume, and abandon a workflow run
-- [Author's Guide: Writing Workflows](author-workflows.md) -- Markdown structure, a minimal complete example, and common authoring mistakes
+- [Running Workflows](run-workflows.md) -- Deprecated, removed in 0.11. Start, continue, check on, resume, and abandon a workflow run
+- [Author's Guide: Writing Workflows](author-workflows.md) -- Deprecated, removed in 0.11. Markdown structure, a minimal complete example, and common authoring mistakes
 - [Scheduling](scheduling.md) -- Run `akm improve` and other background tasks through cron / launchd / schtasks
 
 ## Building and sharing

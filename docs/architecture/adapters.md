@@ -42,7 +42,7 @@ claude             -- root CLAUDE.md + commands/|agents/|skills/
 opencode           -- opencode.json(c), or root AGENTS.md + a tool dir
 dotenv             -- every top-level dir is env/ and/or secrets/
 akm-workflow       -- a top-level .md with explicit type: workflow
-akm-task           -- a top-level task source .yml (v4, or a v2/v3 file awaiting migration)
+akm-task           -- a top-level task source .yml (v4 or v5, or a v2/v3 file awaiting migration)
 llm-wiki           -- root schema.md + pages/
 akm                -- .stash marker, or 2+ native subdirs, or fallback
 okf                -- root index.md, or any .md with frontmatter type
@@ -185,8 +185,8 @@ does not add it.
 ## Task adapter
 
 The native and standalone `akm-task` paths delegate to the authoritative task
-source parser, `parseTaskSource`, which accepts only `version: 4` (task
-source v4). A task source v4 document declares exactly one executable
+source parser, `parseTaskSource`, which accepts `version: 4` (task
+source v4) and `version: 5-beta.1` (the Experimental task source v5). A task source v4 document declares exactly one executable
 selector (`uses` or `run`), but its scheduling is optional — a document with
 no `schedule:` is valid and runnable manually. A `version: 3` or `version: 2`
 document is not read: it raises `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming

@@ -39,7 +39,8 @@ changed. Run interactive `akm setup` to review, prepare, and activate tasks.
 
 ## Task definitions vs. scheduler state
 
-Task definitions live under `<bundle>/tasks/` as task source v4 `.yml` sources;
+Task definitions live under `<bundle>/tasks/` as task source v4 `.yml` sources
+(or the Experimental task source v5, which 0.11 makes the only format);
 the [task source reference](../reference/tasks.md) defines their executable and
 scheduling grammar. A definition cannot enable itself: the refs this host schedules live
 separately in `config.json` under `scheduler.enabled`, a list of
@@ -124,7 +125,7 @@ never silently rebinds existing entries on your behalf.
 
 - [Getting Started](getting-started.md) — the first-run path
 - [CLI Reference: task](../reference/cli.md#task) — the full `task` command
-  group, including `add`, `enable`, `disable`, `run`, `sync`, `doctor`, and
-  `history`
+  group; `enable` and `disable` stay, and the deprecated `add`, `run`, `sync`,
+  `doctor` and `history` name their replacements
 - [Task source reference](../reference/tasks.md) — exact file grammar,
   targets, triggers, and migration

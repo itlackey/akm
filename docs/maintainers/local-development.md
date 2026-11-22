@@ -14,7 +14,7 @@ Run the working tree directly for the normal edit-test loop:
 
 ```bash
 bun src/cli.ts search "deploy"
-bun src/cli.ts task doctor
+bun src/cli.ts doctor --no-probe
 ```
 
 This executes current uncommitted source. Tests that spawn the CLI should use
