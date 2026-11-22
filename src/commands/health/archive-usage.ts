@@ -27,7 +27,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { MEMORY_ARCHIVE_REL } from "../../core/asset/memory-archive";
 import { toPosix } from "../../core/common";
-import { checkGitPathSafety, isGitBackedStash } from "../../sources/providers/git-stash";
+import { checkGitPathSafety, isGitBackedStash } from "../../core/git-path-safety";
 import { MAX_WALK_ENTRIES, sizeOfPath } from "./data-dir-usage";
 import type { HealthCheckResult } from "./types";
 

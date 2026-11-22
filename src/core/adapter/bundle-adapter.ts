@@ -7,7 +7,7 @@
  * works with a bundle's assets, whatever keeps them.
  *
  * An adapter owns the mechanics of its bundles: how assets are listed, read,
- * described for the index, placed, created, updated and deleted. Everything
+ * described for the index, placed, created, updated, deleted and retired. Everything
  * outside the adapter calls these members and never asks which adapter it has
  * or how the bundle is stored. A directory bundle's adapter keeps assets as
  * files (`directory-adapter.ts` implements the mechanics every directory
@@ -16,7 +16,8 @@
  *
  * Every member is required. A base class implements the ones its adapters do
  * not support by refusing; `writes` says which types an adapter writes, and is
- * empty for a read-only one. `renderExecutionSource` and `looksLikeRoot` are
+ * empty for a read-only one; `retires` says which of those it retires
+ * recoverably rather than deletes (never an env file or a secret). `renderExecutionSource` and `looksLikeRoot` are
  * optional: absence means "no runtime translation" and "never auto-detected".
  *
  * An asset is addressed by its concept id: the ref without its bundle. An
@@ -100,8 +101,22 @@ export interface AssetChange {
   file?: string;
   /** The files the write changed, for the bundle's commit boundary. Empty when the bundle is not a directory. */
   changed: string[];
-  /** The content the asset holds after the write. Absent after a delete. */
+  /** The content the asset holds after the write. Absent after a delete, retire or forget. */
   content?: string | Buffer;
+}
+
+/** What the caller records with a retirement; kept with it and returned by `retired`. YAML-serializable. */
+export type RetireNote = Readonly<Record<string, unknown>>;
+
+/** A recoverable retirement. */
+export interface Retirement {
+  /** The adapter's stable name for it. Callers persist it (a proposal's `retiredArchive.dirs`). */
+  handle: string;
+  /** The concept id the asset had. */
+  conceptId: string;
+  note: RetireNote;
+  /** False once the retired content has expired: `restore` then needs a fallback. */
+  restorable: boolean;
 }
 
 export interface BundleAdapter {
@@ -110,6 +125,8 @@ export interface BundleAdapter {
   readonly version: string;
   /** Types it creates, updates and deletes. Empty: read-only. */
   readonly writes: readonly string[];
+  /** Types it retires recoverably; a subset of `writes`. Empty: it deletes only. */
+  readonly retires: readonly string[];
 
   /** Every entry of the bundle. The indexer describes each with `recognize`. */
   list(b: Bundle): BundleListing;
@@ -132,6 +149,23 @@ export interface BundleAdapter {
   update(b: Bundle, conceptId: string, content: string | Buffer): AssetChange;
   /** Take the asset out of the bundle. */
   delete(b: Bundle, conceptId: string): AssetChange;
+
+  /**
+   * Take the asset out of the bundle recoverably, keeping `note` with it. The handle in the result names the
+   * retirement. Refused for a type not in `retires`.
+   */
+  retire(b: Bundle, conceptId: string, note: RetireNote): AssetChange & { handle: string };
+  /** The bundle's retirements. */
+  retired(b: Bundle): Retirement[];
+  /**
+   * Put a retired asset back; when its retired content has expired, write `fallback` (refused without one). The
+   * retirement is kept, so a caller can record its decision before `forget` removes it: restoring twice is a no-op.
+   */
+  restore(b: Bundle, handle: string, fallback?: string | Buffer): AssetChange;
+  /** Drop a retirement's record, and with it any retired content that remains. */
+  forget(b: Bundle, handle: string): AssetChange;
+  /** Delete the retired content of every retirement recorded before `before`, when the adapter can recover it elsewhere. */
+  expireRetired(b: Bundle, before: Date): AssetChange;
 
   /**
    * Runtime translation for executable agent assets. The adapter receives the authoritative native entry and

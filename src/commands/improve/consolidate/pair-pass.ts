@@ -39,6 +39,7 @@ import { concurrentMap } from "../../../core/concurrent";
 import type { AkmConfig } from "../../../core/config/config";
 import { SHIPPED_ALIAS } from "../../../core/config/model-aliases";
 import { UsageError } from "../../../core/errors";
+import { runGit } from "../../../core/git-run";
 import type {
   ConsolidatePairJudgeLabel,
   ConsolidatePairPassResult,
@@ -54,7 +55,6 @@ import { sameScope, scopeFromFrontmatter } from "../../../indexer/passes/metadat
 import type { RunnerSpec } from "../../../integrations/agent/runner";
 import type { Judge } from "../../../judges/registry";
 import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from "../../../llm/client";
-import { runGit } from "../../../sources/providers/git-install";
 import type { Database } from "../../../storage/database";
 import {
   closeDatabase,

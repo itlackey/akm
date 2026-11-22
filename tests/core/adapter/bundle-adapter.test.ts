@@ -9,7 +9,8 @@
  *
  * A minimal STUB adapter implements only the REQUIRED members (`id`,
  * `version`, `writes`, `list`, `read`, `recognize`, `validate`, `place`,
- * `create`, `update`, `delete`) and is assigned to a
+ * `create`, `update`, `delete`, `retires`, `retire`, `retired`, `restore`, `forget`,
+ * `expireRetired`) and is assigned to a
  * `BundleAdapter`-typed const below. That assignment is the COMPILE-TIME
  * half of the gate: `bunx tsc --noEmit` fails if the stub does not
  * structurally satisfy `BundleAdapter` given only its required members —
@@ -27,7 +28,13 @@
 
 import { describe, expect, test } from "bun:test";
 import type { Stats } from "node:fs";
-import type { AssetEntry, BundleAdapter, BundleAsset, BundleListing } from "../../../src/core/adapter/bundle-adapter";
+import type {
+  AssetEntry,
+  BundleAdapter,
+  BundleAsset,
+  BundleListing,
+  Retirement,
+} from "../../../src/core/adapter/bundle-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
 import type { FileChange } from "../../../src/core/file-change";
 import type { FileContext } from "../../../src/indexer/walk/file-context";
@@ -75,6 +82,7 @@ const stubAdapter: BundleAdapter = {
   id: "stub",
   version: "0.0.0",
   writes: [],
+  retires: [],
 
   list(): BundleListing {
     return { entries: [], complete: true };
@@ -115,6 +123,21 @@ const stubAdapter: BundleAdapter = {
     throw new Error("read-only");
   },
   delete(): never {
+    throw new Error("read-only");
+  },
+  retire(): never {
+    throw new Error("read-only");
+  },
+  retired(): Retirement[] {
+    return [];
+  },
+  restore(): never {
+    throw new Error("read-only");
+  },
+  forget(): never {
+    throw new Error("read-only");
+  },
+  expireRetired(): never {
     throw new Error("read-only");
   },
 };

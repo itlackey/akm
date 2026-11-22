@@ -27,71 +27,13 @@
  * gated behind `akm lint --prune-dangling-edges`.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { parseFrontmatter } from "./frontmatter";
+import { archivedOriginalPaths, MEMORY_ARCHIVE_REL, resetArchiveCache } from "../adapter/directory-archive";
 
-/** Stash-relative root the prune path archives into. Must match `memory-improve.ts#createArchiveDir`. */
-export const MEMORY_ARCHIVE_REL = ".akm/memory-cleanup/archive";
-
-/** Filename of the per-archive audit asset written alongside the archived memory. */
-const AUDIT_FILENAME = "cleanup.md";
-
-/**
- * Cache keyed by stash root. A lint sweep resolves thousands of refs against a
- * directory that only the prune path ever writes, so the scan runs once per
- * root instead of once per missing ref.
- */
-const cache = new Map<string, Set<string>>();
+export { archivedOriginalPaths, MEMORY_ARCHIVE_REL };
 
 /** @internal Drop the memoized scans — process-global state needs a reset seam for tests (#785). */
 export function resetMemoryArchiveCache(): void {
-  cache.clear();
-}
-
-/**
- * Every stash-relative `originalPath` archived under `root`, i.e. the set of
- * paths that USED to hold a memory and now hold a tombstone instead.
- *
- * Unreadable or malformed audit records are skipped rather than thrown: a
- * corrupt tombstone must degrade to "this ref is missing" (the pre-#884
- * answer), never break the whole lint sweep.
- */
-export function archivedOriginalPaths(root: string): Set<string> {
-  const cached = cache.get(root);
-  if (cached !== undefined) return cached;
-
-  const paths = new Set<string>();
-  const archiveRoot = path.join(root, MEMORY_ARCHIVE_REL);
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(archiveRoot, { withFileTypes: true });
-  } catch {
-    cache.set(root, paths); // no archive dir — nothing was ever pruned here
-    return paths;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    let raw: string;
-    try {
-      raw = fs.readFileSync(path.join(archiveRoot, entry.name, AUDIT_FILENAME), "utf8");
-    } catch {
-      continue;
-    }
-    let originalPath: unknown;
-    try {
-      originalPath = parseFrontmatter(raw).data.originalPath;
-    } catch {
-      continue;
-    }
-    if (typeof originalPath === "string" && originalPath.trim().length > 0) {
-      paths.add(originalPath.trim().replace(/\\/g, "/"));
-    }
-  }
-
-  cache.set(root, paths);
-  return paths;
+  resetArchiveCache();
 }
 
 /**

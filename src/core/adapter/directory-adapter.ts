@@ -7,7 +7,7 @@
  * files under the bundle's root. `DirectoryAdapterBase` implements every
  * `BundleAdapter` member once, as template methods: the walk that lists the
  * files, the arbitration that reads one by its concept id, and the atomic
- * writes that create, update and delete them. A subclass supplies the format
+ * writes that create, update, delete and retire them. A subclass supplies the format
  * through the hooks below (how a file is recognized, validated and placed) and
  * does not override the template methods.
  */
@@ -19,6 +19,7 @@ import type { AdapterRenderedExecutionSource } from "../../execution/source";
 import { buildFileContext, type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
 import { isWalkedFile, walkStashFlatWithStatus } from "../../indexer/walk/walker";
 import { resolveUniqueWorkflowSource } from "../../workflows/source-files";
+import { parseFrontmatter } from "../asset/frontmatter";
 import { compareCodePoints, existingFileMode, hasErrnoCode, writeFileAtomic } from "../common";
 import { ConfigError, NotFoundError, UsageError } from "../errors";
 import type { FileChange } from "../file-change";
@@ -33,7 +34,20 @@ import type {
   BundleAsset,
   BundleListing,
   NewAsset,
+  Retirement,
+  RetireNote,
 } from "./bundle-adapter";
+import {
+  archiveFile,
+  expireArchive,
+  forgetArchive,
+  listTombstones,
+  MEMORY_ARCHIVE_REL,
+  noteOf,
+  readTombstone,
+  restoreArchive,
+  type Tombstone,
+} from "./directory-archive";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "./types";
 
 export abstract class AdapterConceptOwnershipError extends UsageError {}
@@ -59,6 +73,10 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   abstract readonly version: string;
   /** The asset types it writes. Empty: read-only. */
   readonly writes: readonly string[] = [];
+  /** The asset types it retires recoverably; a subset of `writes`. Empty: it deletes only. */
+  get retires(): readonly string[] {
+    return [];
+  }
   /** Recognized extensions, a hint for the walk. Recognition, not this list, says what an asset is. */
   readonly extensions: readonly string[] = [];
   /**
@@ -243,7 +261,92 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return { conceptId, file, changed };
   }
 
+  retire(b: Bundle, conceptId: string, note: RetireNote): AssetChange & { handle: string } {
+    const { entry, type } = this.existing(b, conceptId);
+    this.requireRetires(b, type);
+    const file = entry.file as string;
+    assertWritableFile(b.root, b.id, file);
+    assertWritableFile(b.root, b.id, path.join(b.root, MEMORY_ARCHIVE_REL, "retirement"));
+    const ref = typeof note.ref === "string" ? note.ref : `${b.id}//${conceptId}`;
+    const written = archiveFile(b.root, file, { ref, archivedAt: new Date().toISOString(), note });
+    return { conceptId, changed: written.changed, handle: written.handle };
+  }
+
+  retired(b: Bundle): Retirement[] {
+    return listTombstones(b.root).map((tombstone) => ({
+      handle: tombstone.handle,
+      conceptId: this.describeRetired(b, tombstone).conceptId,
+      note: noteOf(tombstone),
+      restorable: tombstone.archivedPath !== undefined && fs.existsSync(path.join(b.root, tombstone.archivedPath)),
+    }));
+  }
+
+  restore(b: Bundle, handle: string, fallback?: string | Buffer): AssetChange {
+    this.requireRetiring(b);
+    const tombstone = readTombstone(b.root, handle);
+    const { conceptId, type } = this.describeRetired(b, tombstone);
+    if (type !== undefined) this.requireRetires(b, type);
+    const file = path.join(b.root, tombstone.originalPath);
+    assertWritableFile(b.root, b.id, file);
+    return { conceptId, file, changed: restoreArchive(b.root, tombstone, fallback) };
+  }
+
+  forget(b: Bundle, handle: string): AssetChange {
+    this.requireRetiring(b);
+    let conceptId = "";
+    try {
+      conceptId = this.describeRetired(b, readTombstone(b.root, handle)).conceptId;
+    } catch (error) {
+      // Forgetting what is already gone is how a resumed caller finishes.
+      if (!(error instanceof NotFoundError)) throw error;
+    }
+    return { conceptId, changed: forgetArchive(b.root, handle) };
+  }
+
+  expireRetired(b: Bundle, before: Date): AssetChange {
+    this.requireRetiring(b);
+    return { conceptId: "", changed: expireArchive(b.root, before).changed };
+  }
+
   // ── Internals ───────────────────────────────────────────────────────────────
+
+  private requireRetiring(b: Bundle): void {
+    if (this.retires.length === 0) {
+      throw new UsageError(`Bundle "${b.id}" (adapter "${this.id}") does not retire assets.`);
+    }
+  }
+
+  private requireRetires(b: Bundle, type: string): void {
+    if (!this.retires.includes(type)) {
+      throw new UsageError(`Bundle "${b.id}" (adapter "${this.id}") does not retire ${type} assets.`);
+    }
+  }
+
+  /**
+   * The concept id (and type, when known) a retired file had, from its original path and the content it kept: the
+   * archived copy while there is one. A file the adapter cannot describe is named by its path without extension.
+   */
+  private describeRetired(b: Bundle, tombstone: Tombstone): { conceptId: string; type?: string } {
+    const original = path.join(b.root, tombstone.originalPath);
+    const archived = tombstone.archivedPath === undefined ? undefined : path.join(b.root, tombstone.archivedPath);
+    const source = archived !== undefined && fs.existsSync(archived) ? archived : original;
+    const file: FileContext = {
+      ...buildFileContext(b.root, original),
+      content: () => fs.readFileSync(source, "utf8"),
+      bytes: () => fs.readFileSync(source),
+      frontmatter: () => {
+        const data = parseFrontmatter(fs.readFileSync(source, "utf8")).data;
+        return Object.keys(data).length > 0 ? data : null;
+      },
+    };
+    try {
+      const document = this.recognizeFile(b, file);
+      const type = document?.type ?? this.declaredType(file);
+      return { conceptId: document?.conceptId ?? file.relPath.replace(/\.[^./]+$/, ""), ...(type ? { type } : {}) };
+    } catch {
+      return { conceptId: file.relPath.replace(/\.[^./]+$/, "") };
+    }
+  }
 
   private walkOptions() {
     return { includeAllDirectories: this.walkMode === "all-directories" };

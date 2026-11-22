@@ -26,6 +26,8 @@ import type {
   BundleAsset,
   BundleListing,
   NewAsset,
+  Retirement,
+  RetireNote,
 } from "./bundle-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "./types";
 
@@ -70,6 +72,8 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   abstract readonly id: string;
   abstract readonly version: string;
   readonly writes: readonly string[] = ["secret"];
+  /** A secret is deleted, never retired: nothing recoverable should keep its value. */
+  readonly retires: readonly string[] = [];
 
   /** What `location` names, for the error of a bundle without one: "a keyring", "an Azure Key Vault". */
   protected abstract readonly what: string;
@@ -170,6 +174,30 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     const name = requireSecretName(conceptId);
     if (!this.deleteSecret(location, name)) throw new NotFoundError(`Secret not found: ${b.id}//${conceptId}`);
     return this.change(name);
+  }
+
+  retire(_b: Bundle, _conceptId: string, _note: RetireNote): AssetChange & { handle: string } {
+    return this.refuseRetire();
+  }
+
+  retired(_b: Bundle): Retirement[] {
+    return [];
+  }
+
+  restore(_b: Bundle, _handle: string, _fallback?: string | Buffer): AssetChange {
+    return this.refuseRetire();
+  }
+
+  forget(_b: Bundle, _handle: string): AssetChange {
+    return this.refuseRetire();
+  }
+
+  expireRetired(_b: Bundle, _before: Date): AssetChange {
+    return this.refuseRetire();
+  }
+
+  private refuseRetire(): never {
+    throw new UsageError(`The ${this.id} adapter deletes secrets; it does not retire them.`);
   }
 }
 

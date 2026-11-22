@@ -8,6 +8,7 @@ import path from "node:path";
 import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
 import { resolveSecret, type SourceConfigEntry } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
+import { runGit } from "../../core/git-run";
 import { getRegistryIndexCacheDir } from "../../core/paths";
 import { validateGitUrl } from "../../registry/resolve";
 import { withFreshnessCache } from "../freshness";
@@ -18,7 +19,6 @@ import {
   assertNoLocalWork,
   cloneRepo,
   inspectGitUpstream,
-  runGit,
 } from "./git-install";
 import type { SourceLockData, SyncOptions } from "./install-types";
 import { sanitizeString } from "./provider-utils";

@@ -104,6 +104,11 @@ export function sensitiveMarkerPath(assetPath: string, type: "env" | "secret"): 
 }
 
 export abstract class AkmFormatAdapterBase extends DirectoryAdapterBase {
+  /** Everything it writes is retired, not deleted, except an env file or a secret: those are always deleted. */
+  override get retires(): readonly string[] {
+    return this.writes.filter((type) => type !== "env" && type !== "secret");
+  }
+
   protected override placeFile(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {
     return placeInTypeFolder(b, asset);
   }

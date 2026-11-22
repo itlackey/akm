@@ -2,13 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from "node:child_process";
-import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isWithin } from "../../core/common";
 import { ConfigError, UsageError } from "../../core/errors";
+import { runGit } from "../../core/git-run";
 import { getRegistryCacheDir } from "../../core/paths";
 import {
   gitCredentialEnvironment,
@@ -87,21 +86,6 @@ function unpushedCommits(repoDir: string, upstream?: string): { against: string;
     against: against ?? "any remote",
     commits: log.stdout.split("\n").filter((line) => line.trim()),
   };
-}
-
-/**
- * Shared subprocess wrapper for `git` invocations. Disables git's interactive
- * terminal prompt so a missing credential never hangs the process.
- */
-export function runGit(
-  args: string[],
-  options?: Omit<SpawnSyncOptionsWithStringEncoding, "encoding">,
-): SpawnSyncReturns<string> {
-  return spawnSync("git", args, {
-    encoding: "utf8",
-    ...options,
-    env: { ...process.env, ...options?.env, GIT_TERMINAL_PROMPT: "0" },
-  });
 }
 
 export interface GitUpstreamState {

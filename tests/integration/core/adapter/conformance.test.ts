@@ -462,6 +462,21 @@ describe("conformance — read candidates and recognition are two-way canonical 
 });
 
 describe("conformance — declared writes and what an adapter refuses", () => {
+  test("every adapter declares the types it writes and retires; what it retires, it writes", () => {
+    for (const adapter of getAdapters()) {
+      expect(Array.isArray(adapter.writes), `${adapter.id} writes`).toBe(true);
+      expect(Array.isArray(adapter.retires), `${adapter.id} retires`).toBe(true);
+      for (const type of adapter.retires) expect(adapter.writes, `${adapter.id} retires ${type}`).toContain(type);
+    }
+  });
+
+  test("an env file and a secret are never retired", () => {
+    for (const adapter of getAdapters()) {
+      expect(adapter.retires, adapter.id).not.toContain("env");
+      expect(adapter.retires, adapter.id).not.toContain("secret");
+    }
+  });
+
   test("every adapter declares the types it writes; a read-only adapter's create and place refuse", () => {
     const b: Bundle = { id: "b", root: "/nonexistent/bundle", writable: true, location: "x" };
     for (const adapter of getAdapters()) {
