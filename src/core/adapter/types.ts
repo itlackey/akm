@@ -63,8 +63,12 @@ export interface BundleComponent {
   /** Absolute materialized root; workspace state NEVER written here. */
   root: string;
   writable: boolean;
-  /** Set for a secret store bundle: what `adapter.secretStore` opens. `root` is then no directory, only where its entries are indexed. */
-  locator?: string;
+  /**
+   * Where the adapter finds a bundle that is not a directory (a keyring's name,
+   * a vault's name): the bundle's configured `location`. `root` is then only the
+   * path its entries are indexed under; nothing is there.
+   */
+  location?: string;
 }
 
 // ── Durable entry sub-shapes ────────────────────────────────────────────────

@@ -7,10 +7,10 @@
  * (WS6). These were duplicated/co-located inline in `src/cli.ts`; hoisting them
  * here lets `src/commands/env/env-cli.ts` and `src/commands/env/secret-cli.ts` import a
  * single copy of the parse/resolve/make + path-traversal-guard logic (the WS6
- * "env traversal-guard copies 5 → 1" KPI). These helpers resolve refs to their
- * owners and guard against directory traversal; the only value read here is a
- * secret's, for the callers that inject it ({@link readSecret}), from the file
- * or the secret store that owns it. No value is surfaced.
+ * "env traversal-guard copies 5 → 1" KPI). Behaviour is byte-identical to the
+ * inline forms: env/secret VALUES are never read or surfaced here — these
+ * helpers only resolve refs to absolute paths and guard against directory
+ * traversal.
  */
 
 import fs from "node:fs";
@@ -21,9 +21,6 @@ import { buildFileContext } from "../indexer/walk/file-context";
 import { declaredTypeForPath } from "../indexer/walk/matchers";
 import { isFileOrFileSymlink } from "../indexer/walk/walker";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
-import { SECRET_STORE_ADAPTER_IDS } from "./adapter/adapter-ids";
-import { secretStoreOf } from "./adapter/registry";
-import { type SecretStore, secretNameOf } from "./adapter/secret-store";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
 import { assetPathForName, refForFile, stashDirFor } from "./asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
@@ -33,7 +30,6 @@ import { isWithin } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
 import { resolveMutationTarget } from "./mutation-target";
-import { readValue } from "./secret-value";
 import { sensitiveMarkerPath } from "./sensitive-marker-path";
 import { formatRefForMessage, type ResolvedWriteTarget, withWriteTargetMutation } from "./write-source";
 
@@ -130,11 +126,9 @@ function ownerOfType(
   ref: string,
   type: "env" | "secret",
   form: string,
-  options?: StoreReadOptions,
 ): { match: ConceptOwnerMatch; conceptId: string } {
   const parsed = parseBundleRef(ref);
-  const match =
-    parsed.fragment === undefined ? findEnvSecretOwner(parsed.bundle, parsed.conceptId, options) : undefined;
+  const match = parsed.fragment === undefined ? findEnvSecretOwner(parsed.bundle, parsed.conceptId) : undefined;
   if (!match) {
     // Not owned: a typed placement address reads as "not found", anything else as the wrong kind of ref.
     parseTypedRef(ref, type, form);
@@ -149,24 +143,10 @@ function ownerOfType(
   return { match, conceptId: match.owner.conceptId };
 }
 
-/**
- * How a lookup treats a secret store. With `readStoreSecret` the store's secret is found by reading it, and the value
- * comes back with the owner: one request to the store, for a caller about to use the value. Without it the store is
- * only asked which secrets it holds, and no value is read.
- */
-export interface StoreReadOptions {
-  readStoreSecret?: boolean;
-}
-
 /** The bundle and file that own an env or secret ref right now, or undefined. Sensitive files resolve too. */
-function findEnvSecretOwner(
-  origin: string | undefined,
-  conceptId: string,
-  options?: StoreReadOptions,
-): ConceptOwnerMatch | undefined {
+function findEnvSecretOwner(origin: string | undefined, conceptId: string): ConceptOwnerMatch | undefined {
   return resolveConceptOwner({ bundle: origin, conceptId }, resolveSourceEntries(undefined, loadConfig()), {
     includeSensitive: true,
-    readStoreSecret: options?.readStoreSecret === true,
   });
 }
 
@@ -175,42 +155,16 @@ function findEnvSecretOwner(
  * names, and the bundle-qualified spelling of the ref), or undefined when no
  * bundle owns it. The lookup behind `${ref}` tokens.
  */
-export function resolveRefOwner(
-  ref: string,
-  options?: StoreReadOptions,
-):
-  | {
-      absPath: string;
-      type: string | undefined;
-      ref: string;
-      /** The owner's value when it is a secret (`type: "secret"`). Never print or log it. */
-      secretValue: () => string;
-    }
-  | undefined {
+export function resolveRefOwner(ref: string): { absPath: string; type: string | undefined; ref: string } | undefined {
   const { bundle, conceptId } = parseBundleRef(ref);
-  const match = findEnvSecretOwner(bundle, conceptId, options);
+  const match = findEnvSecretOwner(bundle, conceptId);
   return (
     match && {
       absPath: match.owner.path,
       type: ownedType(match),
       ref: makeBundleRef(match.bundleId, conceptId),
-      secretValue: () => secretValue(match),
     }
   );
-}
-
-/**
- * The value of the secret a match owns, with surrounding whitespace trimmed:
- * from the owning bundle's store, or from its file. The one place a secret's
- * value is read for use.
- */
-function secretValue(match: ConceptOwnerMatch): string {
-  const store = secretStoreOf(match.source);
-  if (!store) return readValue(match.owner.path);
-  // A lookup that read the store to find the secret already holds its value.
-  const value = match.owner.storeValue ?? store.read(secretNameOf(match.owner.conceptId) as string);
-  if (value === undefined) throw new NotFoundError(`Secret not found: ${match.bundleId}//${match.owner.conceptId}`);
-  return value.trim();
 }
 
 /**
@@ -275,30 +229,13 @@ function displayDefaultBundle(source?: IndexSearchSource, config: AkmConfig = lo
   return primary && path.resolve(primary.path) === path.resolve(source.path) ? source.registryId : undefined;
 }
 
-export function resolveSecretPath(
-  ref: string,
-  options?: StoreReadOptions,
-): {
+export function resolveSecretPath(ref: string): {
   conceptId: string;
-  /** The secret's file. A secret store entry has none: this is only where it is indexed. */
   absPath: string;
   source: IndexSearchSource;
-  /** A secret store entry's value as its store returned it, when `readStoreSecret` asked for it. */
-  storeValue?: string;
 } {
-  const { match, conceptId } = ownerOfType(ref, "secret", "secrets/<name>", options);
-  const { path: absPath, storeValue } = match.owner;
-  return { conceptId, absPath, source: match.source, ...(storeValue !== undefined ? { storeValue } : {}) };
-}
-
-/**
- * Read the secret `ref` names: its value with surrounding whitespace trimmed,
- * and the bundle that owns it. Callers MUST NOT write the value to stdout or
- * any log.
- */
-export function readSecret(ref: string): { conceptId: string; source: IndexSearchSource; value: string } {
-  const { match, conceptId } = ownerOfType(ref, "secret", "secrets/<name>", { readStoreSecret: true });
-  return { conceptId, source: match.source, value: secretValue(match) };
+  const { match, conceptId } = ownerOfType(ref, "secret", "secrets/<name>");
+  return { conceptId, absPath: match.owner.path, source: match.source };
 }
 
 // ── Write-target resolution (env/secret mutations) ───────────────────────────
@@ -352,12 +289,9 @@ export function resolveEnvWriteTarget(
 
 export interface SecretWriteResolution {
   name: string;
-  /** The secret's file. In a secret store bundle no file exists: the write goes to `store`. */
   absPath: string;
   target: ResolvedWriteTarget;
   ref: string;
-  /** Set when the target is a secret store bundle. */
-  store?: SecretStore;
 }
 
 /**
@@ -376,17 +310,14 @@ export function resolveSecretWriteTarget(
     assertFlatAssetName(parsed.name);
     parsed.name = combineCreatePath(normalizeCreateSubPath(create.subPath), parsed.name);
   }
-  const resolved = resolveMutationTarget(loadConfig(), parsed, writeTarget, {
-    allowedAdapters: ["akm", "dotenv", ...SECRET_STORE_ADAPTER_IDS],
-  });
+  const resolved = resolveMutationTarget(loadConfig(), parsed, writeTarget, { allowedAdapters: ["akm", "dotenv"] });
   const { target } = resolved;
   const typeRoot = path.join(target.source.path, "secrets");
   const absPath = assetPathForName("secret", typeRoot, parsed.name);
   if (!isWithin(absPath, typeRoot)) {
     throw new UsageError(`Secret name "${parsed.name}" escapes the secrets directory.`);
   }
-  const store = secretStoreOf(target.source);
-  return { name: parsed.name, absPath, target, ref: resolved.displayRef, ...(store ? { store } : {}) };
+  return { name: parsed.name, absPath, target, ref: resolved.displayRef };
 }
 
 /**

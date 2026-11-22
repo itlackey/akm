@@ -28,6 +28,7 @@ import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { perTypeDiagnostics } from "./akm-lint";
+import { directoryEntries } from "./directory-entries";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, readTags } from "./shared";
 
 /** A native workflow bundle is single-component; its one component is `main`. */
@@ -149,6 +150,7 @@ function hasTopLevelWorkflowFile(root: string, entries: fs.Dirent[]): boolean {
 }
 
 export const akmWorkflowAdapter: BundleAdapter = {
+  ...directoryEntries(),
   id: "akm-workflow",
   version: "0.9.2",
   extensions: [".md"],

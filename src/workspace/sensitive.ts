@@ -6,9 +6,6 @@
  * Environment files and secrets for the owner. Values appear in no result except `readValue`'s; a write names the
  * `revision` (sha256 of the raw bytes) the owner last saw and is checked inside the write lease, with the bytes it
  * then replaces. A host decides who may call `readValue`.
- *
- * A secret is a file of a directory bundle or an entry of a secret store bundle. Both are addressed alike
- * (`secrets/<name>`) and every operation here works on both.
  */
 
 import { createHash } from "node:crypto";
@@ -16,7 +13,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { removeEnv, writeEnv } from "../commands/env/env";
 import { removeSecret, setSecret } from "../commands/env/secret";
-import type { SecretStore } from "../core/adapter/secret-store";
 import { deriveCanonicalAssetName } from "../core/asset/asset-placement";
 import {
   resolveEnvPath,
@@ -26,7 +22,7 @@ import {
   sensitiveMarkerPath,
   withEnvSecretWrite,
 } from "../core/env-secret-ref";
-import { AkmError, NotFoundError, UsageError } from "../core/errors";
+import { UsageError } from "../core/errors";
 import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { interactive } from "./lease";
 
@@ -83,67 +79,12 @@ function selection(input: SensitiveSelector): { type: Kind; ref: string } {
   return { type, ref: `${input.bundle}//${dir}/${name}` };
 }
 
-/**
- * One env file or secret as a write uses it: its bytes, wherever they are kept. A file of a directory bundle, or an
- * entry of a secret store.
- */
-interface Kept {
-  exists(): boolean;
-  /** Its bytes. Throws when they cannot be had. */
-  read(): Buffer;
-  write(content: string): void;
-  remove(): void;
-}
-
-function keptAsFile(file: string, type: Kind): Kept {
-  return {
-    exists: () => fs.existsSync(file),
-    read: () => fs.readFileSync(file),
-    write: (content) => (type === "env" ? writeEnv(file, content) : setSecret(file, Buffer.from(content))),
-    remove() {
-      const marker = fs.lstatSync(sensitiveMarkerPath(file, type), { throwIfNoEntry: false });
-      if (marker && !marker.isFile())
-        throw new UsageError("The sensitive marker is not a regular file. Resolve it before deleting this asset.");
-      (type === "env" ? removeEnv : removeSecret)(file);
-    },
-  };
-}
-
-function keptInStore(store: SecretStore, name: string): Kept {
-  return {
-    exists: () => store.read(name) !== undefined,
-    read() {
-      const value = store.read(name);
-      if (value === undefined) throw new NotFoundError(`Secret not found: secrets/${name}`);
-      return Buffer.from(value);
-    },
-    write: (content) => store.write(name, Buffer.from(content)),
-    remove: () => void store.remove(name),
-  };
-}
-
-/** An existing env file or secret, resolved by akm's own read-side resolvers. */
+/** An existing env/secret file, resolved by akm's own read-side resolvers. */
 function locate(input: SensitiveSelector) {
   const { type, ref } = selection(input);
-  // One request to a secret store finds its secret and reads it: `describe` and `readValue` both need the bytes.
-  const found = type === "env" ? resolveEnvPath(ref) : resolveSecretPath(ref, { readStoreSecret: true });
+  const found = type === "env" ? resolveEnvPath(ref) : resolveSecretPath(ref);
   const root = found.source.path;
   const file = found.absPath;
-  const bundle = found.source.registryId ?? input.bundle ?? "";
-  const located = {
-    bundle,
-    file,
-    type,
-    root,
-    relative: relative(root, file),
-    ref: ref.includes("//") ? ref : `${bundle}//${ref}`,
-  };
-  const storeValue = "storeValue" in found ? found.storeValue : undefined;
-  if (storeValue !== undefined) {
-    // A secret store entry has no file to check; what is shown as its path is its store.
-    const shown = `${found.source.adapterId}:${found.source.locator}`;
-    return { ...located, shown, read: () => Buffer.from(storeValue) };
-  }
   try {
     safeFile(root, file);
   } catch {
@@ -156,7 +97,15 @@ function locate(input: SensitiveSelector) {
     throw new UsageError("This file is unavailable. Check its location and filesystem permissions.");
   }
   if (!stat.isFile()) throw new UsageError("Choose a file, not a folder.");
-  return { ...located, shown: file, read: () => fs.readFileSync(file) };
+  const bundle = found.source.registryId ?? input.bundle ?? "";
+  return {
+    bundle,
+    file,
+    type,
+    root,
+    relative: relative(root, file),
+    ref: ref.includes("//") ? ref : `${bundle}//${ref}`,
+  };
 }
 
 export function describe(input: SensitiveSelector) {
@@ -174,9 +123,9 @@ export function describe(input: SensitiveSelector) {
     type: found.type,
     name: path.basename(found.file),
     bundle: found.bundle,
-    path: found.shown,
+    path: found.file,
     actions: { edit: verdict, delete: verdict },
-    revision: digest(found.read()),
+    revision: digest(fs.readFileSync(found.file)),
     location: { bundle: found.bundle, path: found.relative, parent },
   };
 }
@@ -186,7 +135,7 @@ export function readValue(input: SensitiveSelector) {
   const found = locate(input);
   let bytes: Buffer;
   try {
-    bytes = found.read();
+    bytes = fs.readFileSync(found.file);
   } catch {
     throw new UsageError("The file could not be read. Check filesystem permissions.");
   }
@@ -196,33 +145,29 @@ export function readValue(input: SensitiveSelector) {
   return { content, revision: digest(bytes) };
 }
 
-/**
- * Run a write on the bundle that keeps the file or secret. A failure after it changed (git synchronization) is
- * reported, not thrown.
- */
+/** Run a write on the file's bundle. A failure after the file changed (git synchronization) is reported, not thrown. */
 function write(
   selector: SensitiveSelector,
   op: "Update" | "Remove",
   paths: (file: string, marker: string) => string[],
-  mutate: (kept: Kept) => void,
+  mutate: (file: string, type: Kind) => void,
 ) {
   const chosen = selection(selector);
+  const {
+    name,
+    absPath: file,
+    target,
+  } = (chosen.type === "env" ? resolveEnvWriteTarget : resolveSecretWriteTarget)(chosen.ref, undefined);
   const type = chosen.type;
-  const resolution = (type === "env" ? resolveEnvWriteTarget : resolveSecretWriteTarget)(chosen.ref, undefined);
-  const { name, absPath: file, target } = resolution;
-  const store = "store" in resolution ? resolution.store : undefined;
-  const kept = store ? keptInStore(store, name) : keptAsFile(file, type);
+  const marker = sensitiveMarkerPath(file, type);
   return interactive(`${type}-${op.toLowerCase()}`, async () => {
     let changed = false;
     const warnings: string[] = [];
-    const apply = () => {
-      mutate(kept);
-      changed = true;
-    };
     try {
-      // A secret store has no files and no git boundary: the write is the store's own.
-      if (store) apply();
-      else withEnvSecretWrite(target, { type, name }, op, paths(file, sensitiveMarkerPath(file, type)), apply);
+      withEnvSecretWrite(target, { type, name }, op, paths(file, marker), () => {
+        mutate(file, type);
+        changed = true;
+      });
     } catch (error) {
       if (!changed) throw error;
       warnings.push("The file changed, but Git synchronization failed. Check this bundle’s Git status.");
@@ -233,18 +178,16 @@ function write(
       file: relative(target.source.path, file),
       ref: `${bundle}//${type === "env" ? "env/" : "secrets/"}${name}`,
       warnings,
-      kept,
+      absolute: file,
     };
   });
 }
 
-function changedSince(kept: Kept, revision: string) {
+function changedSince(file: string, revision: string) {
   let bytes: Buffer;
   try {
-    bytes = kept.read();
-  } catch (error) {
-    // A failure akm has already worded (a secret store that cannot be reached) is shown as it is.
-    if (error instanceof AkmError) throw error;
+    bytes = fs.readFileSync(file);
+  } catch {
     throw new UsageError("This file is unavailable. Check its location and filesystem permissions.");
   }
   if (digest(bytes) !== revision)
@@ -259,22 +202,23 @@ export async function save(input: SensitiveSelector & { content: string; revisio
   if (typeof input.content !== "string" || input.content.includes("\0"))
     throw new UsageError("Provide the file and its text.");
   const content = input.content;
-  const { kept, ...result } = await write(
+  const { absolute, ...result } = await write(
     input,
     "Update",
     (file) => [file],
-    (target) => {
+    (file, type) => {
       if (input.revision === undefined) {
-        if (target.exists())
+        if (fs.existsSync(file))
           throw new UsageError(
             "A file already exists at this path. Choose a different name.",
             "RESOURCE_ALREADY_EXISTS",
           );
-      } else changedSince(target, input.revision);
-      target.write(content);
+      } else changedSince(file, input.revision);
+      if (type === "env") writeEnv(file, content);
+      else setSecret(file, Buffer.from(content));
     },
   );
-  return { ...result, revision: digest(kept.read()) };
+  return { ...result, revision: digest(fs.readFileSync(absolute)) };
 }
 
 /** Delete the file and its sensitive marker, if it is still the `revision` the owner last saw. */
@@ -282,13 +226,16 @@ export async function remove(input: SensitiveSelector & { revision: string }) {
   if (typeof input.revision !== "string" || !input.revision)
     throw new UsageError("Provide the file and its current revision.");
   const { revision } = input;
-  const { kept: _kept, ...result } = await write(
+  const { absolute: _absolute, ...result } = await write(
     input,
     "Remove",
-    (file, marker) => [file, marker],
-    (target) => {
+    (target, marker) => [target, marker],
+    (target, type) => {
+      const marker = fs.lstatSync(sensitiveMarkerPath(target, type), { throwIfNoEntry: false });
+      if (marker && !marker.isFile())
+        throw new UsageError("The sensitive marker is not a regular file. Resolve it before deleting this asset.");
       changedSince(target, revision);
-      target.remove();
+      (type === "env" ? removeEnv : removeSecret)(target);
     },
   );
   return { ...result, removed: true as const };

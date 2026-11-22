@@ -102,6 +102,7 @@ import { recognizeMatch } from "../recognize-match";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { derivedSiblingPath, perTypeDiagnostics, skillDirectoryDiagnostics, type TypeCheckInput } from "./akm-lint";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "./akm-metadata";
+import { directoryEntries } from "./directory-entries";
 import { createBaseChecker, hashContent, type ParsedForValidate, parseForValidate, RESERVED_FILES } from "./shared";
 
 // `recognizeMatch` + the builtin matcher list moved to the cycle-free leaf
@@ -480,6 +481,7 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
 }
 
 export const akmAdapter: BundleAdapter = {
+  ...directoryEntries(),
   id: "akm",
   // Bump when a change to the matchers (or `recognize`) can retype or re-ref a
   // file that has not changed, or when the document records new fields from it

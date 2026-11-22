@@ -30,6 +30,7 @@ import { toPosix } from "../../common";
 import { SCRIPT_EXTENSIONS } from "../../recognition-util";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, IndexDocument } from "../types";
+import { directoryEntries } from "./directory-entries";
 import { hashContent, nonEmptyString, RESERVED_FILES, readTags, validateChangesWithBaseChecks } from "./shared";
 
 /** A generic-files bundle is single-component; its one component is `main`. */
@@ -84,6 +85,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
 }
 
 export const genericFilesAdapter: BundleAdapter = {
+  ...directoryEntries(),
   id: "generic-files",
   version: "0.9.0",
   // Non-exhaustive HINT: generic-files recognizes ANY file — recognize() is the

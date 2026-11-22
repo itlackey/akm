@@ -1,10 +1,10 @@
 # Adapters
 
 A **`BundleAdapter`** (`src/core/adapter/bundle-adapter.ts`) is the code that
-decides what a bundle's entries *are*, how they're indexed and how `akm lint`
-validates them. akm ships 14 built-in adapters, one per format in
-[Supported Formats](../reference/supported-formats.md): 12 read a directory,
-and 2 read a [secret store](#secret-store-adapters). This page is the
+decides what a bundle's files *are*, how they're indexed, how `akm lint`
+validates them, and where a new item would be placed. akm ships 11
+built-in adapters — one per format in
+[Supported Formats](../reference/supported-formats.md). This page is the
 write-path and internals reference; that page is the compatibility table.
 
 For read-only native tool bundles, recognition is runtime translation, not
@@ -16,76 +16,6 @@ is described in [Architecture: Connections and Harnesses](architecture.md#connec
 
 > **Stability note.** The adapter set, bundle-recognition rules, and the
 > `bundles` config shape are still evolving — see [STABILITY.md](../../STABILITY.md).
-
----
-
-## Architecture
-
-A bundle's config entry says where its content is; its adapter says what the
-content means. The core reaches content only through the adapter contract, so
-a new format or a new store is one more adapter.
-
-```mermaid
-flowchart TD
-  CFG["config.json<br/>bundles.NAME has one descriptor:<br/>path, git, website, npm or store"]
-
-  subgraph WHERE["Where the content is"]
-    PROV["SourceProvider<br/>filesystem, git, npm, website<br/>materializes a directory"]
-    LOC["store descriptor<br/>ADAPTER:LOCATOR<br/>no directory"]
-    SRC["SearchSource<br/>path, adapterId, locator"]
-  end
-
-  subgraph WHAT["What the content means"]
-    REG["Adapter registry and detection<br/>BUILTIN_ADAPTERS, adapterForId,<br/>detectAdapterId, secretStoreOf"]
-    ADP["BundleAdapter<br/>recognize, validate<br/>readCandidates, renderExecutionSource,<br/>looksLikeRoot, secretStore"]
-    DIRS["Directory adapters<br/>akm, okf, llm-wiki, claude, opencode,<br/>agent-skills, dotenv, akm-workflow, akm-task,<br/>website-snapshot, generic-files, code-project"]
-    STORES["Secret store adapters<br/>secret-tool, azure-key-vault"]
-    SS["SecretStore<br/>list, read, write, remove"]
-  end
-
-  subgraph CORE["Core"]
-    IDX["Indexer<br/>walk or store listing,<br/>then recognize, then index.db"]
-    OWN["Ref ownership<br/>resolveConceptOwner"]
-    SEC["Secrets<br/>readSecret, secret list / set / remove"]
-    WR["write-source<br/>write target and adapter allowlist"]
-    LINT["akm lint<br/>validate"]
-    EXEC["akm run<br/>renderExecutionSource"]
-  end
-
-  FILES[("Files on disk")]
-  EXT[("Secret Service keyring<br/>Azure Key Vault")]
-
-  CFG -->|"path, git, website, npm"| PROV
-  CFG -->|"store"| LOC
-  PROV --> SRC
-  LOC --> SRC
-  PROV --> FILES
-  SRC -->|"adapterId, or looksLikeRoot probe"| REG
-  REG --> ADP
-  DIRS -.->|implements| ADP
-  STORES -.->|implements| ADP
-  STORES -->|"secretStore(locator)"| SS
-  SS -->|"secret-tool, busctl, az"| EXT
-
-  IDX -->|recognize| ADP
-  IDX -->|walk| FILES
-  IDX -->|list| SS
-  OWN -->|readCandidates| ADP
-  OWN -->|list| SS
-  SEC --> OWN
-  SEC -->|"read, write, remove"| SS
-  SEC -->|"secrets kept as files"| FILES
-  SEC --> WR
-  WR --> SRC
-  LINT -->|validate| ADP
-  EXEC -->|renderExecutionSource| ADP
-```
-
-Every adapter implements `recognize` and `validate`. A directory adapter is
-handed the files the core walk finds. A secret store adapter also implements
-`secretStore`: the core lists the store in place of a walk, hands each secret
-to `recognize` as the file `secrets/<name>`, and reads and writes values
-through the store.
 
 ---
 
@@ -118,8 +48,6 @@ akm                -- .stash marker, or 2+ native subdirs, or fallback
 okf                -- root index.md, or any .md with frontmatter type
 generic-files      -- never auto-selected; explicit config only
 code-project       -- never auto-selected; explicit config only
-secret-tool        -- no probe; named by a bundle's `store` descriptor
-azure-key-vault    -- no probe; named by a bundle's `store` descriptor
 ```
 
 The rationale for the ordering:
@@ -139,9 +67,6 @@ The rationale for the ordering:
   sit at the front for clarity.
 - `generic-files` is explicit-config-only — its `looksLikeRoot` never fires —
   so it's last and can never shadow anything.
-- `secret-tool` and `azure-key-vault` have no directory to probe. A bundle's
-  `store` descriptor names one, and `components.<id>.adapter` does not accept
-  them.
 
 ---
 
@@ -176,15 +101,12 @@ interface BundleAdapter {
   // OPTIONAL — discovery.
   directoryList?(c: BundleComponent): string[];               // owned dirs; feeds git exact-path staging
   looksLikeRoot?(root: string): boolean;                      // install-time probe
-
-  // OPTIONAL — the bundle is a secret store, not a directory.
-  secretStore?(locator: string): SecretStore;
 }
 ```
 
 `recognize` and `validate` are required on every adapter; `renderExecutionSource`,
-`readCandidates`, `directoryList`, `looksLikeRoot`, and `secretStore` are optional
-capability methods. The core walk drives `recognize()` once per file; incrementality comes
+`readCandidates`, `directoryList`, and `looksLikeRoot` are optional capability
+methods. The core walk drives `recognize()` once per file; incrementality comes
 from the indexer's per-directory fingerprints.
 
 `readCandidates` is intentionally distinct from `extensions`: extensions are
@@ -217,64 +139,6 @@ concern.
 
 ---
 
-## Secret store adapters
-
-A secret store adapter reads a bundle that is not a directory: one keyring, one
-vault. The bundle's config entry carries a `store` descriptor,
-`<adapter>:<locator>`, in place of `path`, `git`, `website` or `npm`; the
-locator is what the adapter opens (a keyring's name, a vault's name).
-
-```ts
-interface SecretStore {
-  list(): string[];                         // the name of every secret
-  read(name: string): string | undefined;   // undefined: no such secret
-  write(name: string, value: Buffer): void; // create or replace
-  remove(name: string): boolean;            // false: no such secret
-}
-```
-
-Each secret is an entry of the bundle under `secrets/<name>`, the ref a file of
-that name has in a directory bundle. That is the whole mapping, so the rest of
-akm does not tell the two apart:
-
-| Operation | Directory bundle | Secret store bundle |
-| --- | --- | --- |
-| Index (`listStoreEntries`, `src/indexer/scan/store-entries.ts`) | the core walk lists files | `SecretStore.list` lists secrets; a store that cannot be listed counts as an incomplete walk, so its indexed entries are kept |
-| Recognition | `recognize(file)` | the same `recognize`, given `secrets/<name>` as a path that no file is at |
-| Ref ownership (`resolveConceptOwner`) | `readCandidates`, probed on disk | the store lists a secret of that name, and no value is read; a ref that names no secret never reaches the store |
-| Value (`readSecret`, `src/core/env-secret-ref.ts`) | the file's content, trimmed | `SecretStore.read`, trimmed. The lookup finds the secret by reading it (`readStoreSecret`), so a read is one request to the store and no listing |
-| `akm secret set` / `secret remove` | the file, under the secret lock and the bundle's git boundary | `SecretStore.write` / `SecretStore.remove` |
-| `akm secret list` | files under `secrets/` | `SecretStore.list` |
-| `akm-cli/workspace` `sensitive.*` and `assets.bundleFiles` | the file | the store entry, through the same operations |
-
-A secret whose name no ref can spell (`#`, `..`, an empty segment) is not an
-entry: `listSecretNames` (`src/core/adapter/secret-store.ts`) leaves it out with
-a warning.
-
-`secretStoreAdapter` (`adapters/secret-store-shared.ts`) builds the adapter
-around a store, so a new store is one `SecretStore` implementation, its id in
-`SECRET_STORE_ADAPTER_IDS` (`adapter-ids.ts`), and its place in
-`BUILTIN_ADAPTERS`. The two built-in stores reach theirs through a command-line
-client, which `runStoreCli` runs. A value goes to a client on stdin or in a
-file only the user can read, never as an argument.
-
-- **`secret-tool`** reads one keyring of the desktop's Secret Service (KWallet,
-  GNOME Keyring). `secret-tool` has no verb that lists a keyring and finds an
-  entry only by attribute pairs, so the adapter reads the keyring's entries
-  (label and attributes, never a value) with `busctl`, and reads and replaces a
-  value through the attributes its entry already has. An entry's name is its
-  label. An entry `akm secret set` creates gets one attribute, `akm` with the
-  value `<keyring>/<name>`, because `secret-tool` stores nothing without one.
-  An entry is deleted by its own path in the service: `secret-tool clear` would
-  delete every match in every keyring.
-- **`azure-key-vault`** reads one Azure Key Vault through `az keyvault secret`,
-  under the account `az login` signed in.
-
-A store bundle's `SearchSource.path` (`getStoreBundleRoot`, `$CACHE/index/stores/<bundle>`)
-is where its entries are indexed. Nothing is written there.
-
----
-
 ## Placement
 
 Adapters do not place new items. AKM-native writes resolve through AKM's own
@@ -300,7 +164,6 @@ The default allowlist is `["akm"]`. Two command families widen it explicitly:
 | Command | Allowlist adds |
 | --- | --- |
 | `akm env create` / `env remove` / `secret set` / `secret remove` | `dotenv` |
-| `akm secret set` / `secret remove` | `secret-tool`, `azure-key-vault` |
 | `akm workflow create` | `akm-workflow` |
 
 Every other adapter (`agent-skills`, `claude`, `opencode`, `akm-task`,

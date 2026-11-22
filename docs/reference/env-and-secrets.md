@@ -225,71 +225,6 @@ secret; values are never indexed. `env list`, `env path`, `env export`,
 `secret list`, `akm exec` and `akm run`'s `--env` and `--secret` read the files
 directly and do not need the index.
 
-## Secret store bundles
-
-A bundle can be a secret store in place of a directory: one keyring of the
-desktop's Secret Service, or one Azure Key Vault. Its config entry carries a
-`store` descriptor, `<adapter>:<locator>`:
-
-```sh
-akm config set bundles.keyring.store secret-tool:akm            # the keyring named "akm"
-akm config set bundles.vault.store azure-key-vault:team-vault   # the vault named "team-vault"
-```
-
-Every secret of the store is a secret of the bundle, under `secrets/<name>`.
-Beyond the config entry it is used as a secret kept as a file is:
-
-```sh
-akm index                                             # entries are indexed by name; values never are
-akm secret list                                       # keyring//secrets/gh_token, vault//secrets/deploy-token, ...
-akm show keyring//secrets/gh_token                    # name only
-akm run --secret keyring//secrets/gh_token:GITHUB_TOKEN scripts/release.sh
-printf '%s' "$TOKEN" | akm secret set keyring//secrets/npm_token
-akm secret remove vault//secrets/deploy-token
-```
-
-A `${keyring//secrets/gh_token}` token in an env value or a git bundle's
-`credential` reads the store the same way, and an unqualified `secrets/<name>`
-reaches a store bundle after the bundles before it in priority.
-
-| | `secret-tool` | `azure-key-vault` |
-| --- | --- | --- |
-| Locator | the keyring's name, as `secret-tool store --collection` takes it | the vault's name |
-| Needs | `secret-tool` (package `libsecret-tools`) and `busctl` (systemd), a running Secret Service, and the keyring to exist | the Azure CLI, signed in with `az login` |
-| A secret's name | the entry's label | the vault's name for the secret (letters, digits and `-`) |
-
-- akm reaches a store through its command-line client on every read and write;
-  nothing of a store is kept on disk. Reading a secret is one request to its
-  store: one `az keyvault secret show` for a vault, and one reading of the
-  keyring followed by one `secret-tool lookup` for a keyring. The index holds each secret's name. A
-  store that cannot be reached at `akm index` keeps the entries it had, and
-  `akm index` names it under `incompleteSources`. `akm secret list` lists the
-  other bundles and warns about the store.
-- A store bundle is writable unless its entry sets `writable: false`. Only
-  `akm secret set` and `akm secret remove` write it, and only when the bundle is
-  named (a qualified ref, `--bundle`, or `defaultWriteTarget`); every other
-  write command refuses it.
-- **`secret-tool`**: every entry of the keyring is listed, whoever stored it.
-  `secret-tool` finds an entry by its attributes, so akm reads and replaces a
-  value through the attributes the entry already has, and an entry with no
-  attributes is listed but cannot be read until it has one. A lookup is not
-  limited to one keyring: when an entry in another keyring carries the same
-  attributes, `secret-tool` may return that one. An entry `akm secret set`
-  creates carries the attribute `akm` with the value `<keyring>/<name>`. akm
-  does not unlock a keyring: that is left to `secret-tool` and the desktop. A
-  process with no session bus (a scheduled task, a container) cannot reach the
-  Secret Service.
-- **`azure-key-vault`**: `akm secret set` passes the value to `az` in a
-  temporary file only your user can read, removed when `az` returns. `akm
-  secret remove` runs `az keyvault secret delete`; whether the secret can be
-  recovered afterwards is the vault's soft-delete setting.
-- A secret whose name no ref can spell (one containing `#`, a `..` segment, or
-  an empty segment) is not listed, and akm warns about it.
-- A store has no `.sensitive` marker and no env files: `akm env` commands work
-  on directory bundles only.
-- AKM Desktop lists a store bundle's secrets under `secrets/` and shows, edits,
-  creates and deletes them in its protected-file view, as it does a secret file.
-
 ## Write-target resolution
 
 Env and secret mutations (`env create`, `env remove`, `secret set`, `secret remove`) choose their
@@ -303,7 +238,7 @@ sources.
 ## Stability
 
 `env list`, `env path`, `env export` and `secret list` are Stable. `akm exec` is
-Experimental and off until `experimental.exec` is true. `env run` and `secret run` are Deprecated. `env create`, `env remove`, `secret set` and `secret remove` are Experimental. Secret store bundles are Experimental. See
+Experimental and off until `experimental.exec` is true. `env run` and `secret run` are Deprecated. `env create`, `env remove`, `secret set` and `secret remove` are Experimental. See
 [STABILITY.md](../../STABILITY.md).
 
 ## See also

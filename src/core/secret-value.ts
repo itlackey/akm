@@ -5,12 +5,11 @@
 import fs from "node:fs";
 
 /**
- * Read a secret file's value: the file content as UTF-8 with surrounding
- * whitespace trimmed, so a hand-written file's trailing newline never lands in
- * an HTTP header. Consumers (`secret run`, env `${ref}` tokens, config
- * credentials, website fetchers) read a secret through `readSecret`
- * (`env-secret-ref.ts`), which calls this for a secret kept as a file. Callers
- * MUST NOT write the returned value to stdout or any log.
+ * Read a secret's value: the file content as UTF-8 with surrounding whitespace
+ * trimmed. The one read every consumer uses (`secret run`, env `${ref}`
+ * tokens, config credentials, website fetchers), so a hand-written file's
+ * trailing newline never lands in an HTTP header. Callers MUST NOT write the
+ * returned value to stdout or any log.
  */
 export function readValue(secretPath: string): string {
   return fs.readFileSync(secretPath, "utf8").trim();

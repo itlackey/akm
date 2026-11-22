@@ -58,6 +58,7 @@ import type { BundleAdapter } from "../bundle-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { skillDirectoryDiagnostics } from "./akm-lint";
+import { directoryEntries } from "./directory-entries";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
 /** The canonical (plural) subdir spellings writes normalize to (open-question-6). */
@@ -270,6 +271,7 @@ export function renderToolDirExecutionSource(
 /** Build the concrete `BundleAdapter` from a layout + a `looksLikeRoot` probe (claude/opencode share everything else). */
 export function makeToolDirAdapter(layout: ToolDirLayout, looksLikeRoot: (root: string) => boolean): BundleAdapter {
   return {
+    ...directoryEntries(),
     id: layout.adapterId,
     version: "0.9.0",
     extensions: [".md"],

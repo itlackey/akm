@@ -95,15 +95,6 @@ const OWN_ROOT_BY_ID: Record<string, string> = {
   "code-project": CODE_PROJECT_ROOT,
 };
 
-/**
- * The adapters this suite covers: those that read a directory. A secret store
- * adapter has no root to probe and no files to map back, so it has no fixture
- * here; `tests/core/adapter/secret-store-adapter.test.ts` holds its contract.
- */
-function directoryAdapters(): BundleAdapter[] {
-  return getAdapters().filter((adapter) => adapter.secretStore === undefined);
-}
-
 /** Adapters whose `looksLikeRoot` is intentionally never-firing (explicit-config, §1.2). */
 const NEVER_FIRES = new Set(["generic-files", "code-project"]);
 
@@ -144,10 +135,10 @@ function foldRecognize(adapter: BundleAdapter, c: BundleComponent): IndexDocumen
 // ── 1. looksLikeRoot own-root-only (§4) ──────────────────────────────────────
 
 describe("conformance — looksLikeRoot own-root-only (§4)", () => {
-  test("the built-in registry holds exactly 12 directory format families, and every one has a fixture root", () => {
-    // Pins the fixture set: every registered directory adapter has a golden/fixture root in
+  test("the built-in registry is exactly the 12 format families, and every one has a fixture root", () => {
+    // Pins the fixture set: every registered adapter has a golden/fixture root in
     // OWN_ROOT_BY_ID, so the ordered-probe matrix below is complete.
-    const ids = directoryAdapters().map((a) => a.id);
+    const ids = getAdapters().map((a) => a.id);
     expect(ids.sort()).toEqual([
       "agent-skills",
       "akm",
@@ -231,7 +222,7 @@ describe("conformance — fold(recognize) over the walk", () => {
 
 describe("conformance — read candidates and recognition are two-way canonical peers", () => {
   test("every registered adapter maps each recognized fixture file back from its canonical concept", () => {
-    for (const adapter of directoryAdapters()) {
+    for (const adapter of getAdapters()) {
       const root = OWN_ROOT_BY_ID[adapter.id]!;
       const c = component(adapter.id, adapter.id, root);
       expect(typeof adapter.readCandidates, adapter.id).toBe("function");
@@ -251,7 +242,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
   });
 
   test("every existing fixture candidate either abstains or recognizes the queried canonical concept", () => {
-    for (const adapter of directoryAdapters()) {
+    for (const adapter of getAdapters()) {
       const root = OWN_ROOT_BY_ID[adapter.id]!;
       const c = component(adapter.id, adapter.id, root);
       for (const file of walkStashFlat(root)) {

@@ -79,6 +79,7 @@ import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import { directoryEntries } from "./directory-entries";
 import { hashContent, nonEmptyString } from "./shared";
 
 /** A wiki is a single-component bundle; its one component is conventionally `main` (recognition golden). */
@@ -402,6 +403,7 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
 }
 
 export const llmWikiAdapter: BundleAdapter = {
+  ...directoryEntries(),
   id: "llm-wiki",
   version: "0.9.0",
   extensions: [".md"],

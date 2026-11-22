@@ -8,10 +8,18 @@
  * Member-by-member required/optional status:
  *
  *   id, version, extensions .......... REQUIRED (readonly fields)
+ *   list / entry / write / remove ..... REQUIRED
  *   recognize ......................... REQUIRED
  *   validate .......................... REQUIRED
  *   readCandidates / directoryList / looksLikeRoot ... optional
- *   secretStore ....................... optional
+ *
+ * The adapter is the only way to a bundle's entries. The core lists, finds,
+ * writes and removes them through `list`, `entry`, `write` and `remove`, and
+ * never assumes the bundle is a directory. An entry is named by its path
+ * inside the bundle (POSIX separators), the path a ref is derived from. The
+ * adapters of a directory bundle share one file implementation
+ * (`adapters/directory-entries.ts`); an adapter of a bundle kept elsewhere (an
+ * OS keyring, a cloud vault) implements the four over that store.
  *
  * `renderExecutionSource` and `readCandidates` are two independent optional
  * read/runtime facets: `renderExecutionSource` serves the agent/command design,
@@ -47,13 +55,21 @@ import type { AdapterRenderedExecutionSource } from "../../execution/source";
 // WI's test does).
 import type { FileContext } from "../../indexer/walk/file-context";
 import type { FileChange } from "../file-change";
-import type { SecretStore } from "./secret-store";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "./types";
 
 export interface AdapterReadCandidate {
   path: string;
   /** Canonical concept identity this authored path may own. */
   conceptId: string;
+}
+
+/** Every entry of a bundle, as one listing. */
+export interface BundleListing {
+  files: FileContext[];
+  /** False when part of the bundle could not be read: the index keeps the entries it had. */
+  complete: boolean;
+  /** When `complete` is false: why. */
+  incompleteReason?: string;
 }
 
 export interface BundleAdapter {
@@ -69,6 +85,20 @@ export interface BundleAdapter {
    * `node_modules`, with no special `env/`/`secrets/` listing.
    */
   readonly walkMode?: "all-directories";
+
+  // REQUIRED — access to the bundle's entries. `entry` arguments are paths
+  // inside the bundle, the `relPath` of the entry's `FileContext`.
+  /** Every entry of the bundle. The indexer hands each to `recognize`. */
+  list(c: BundleComponent): BundleListing;
+  /**
+   * The entry at `entry`, or undefined when the bundle has none. Its
+   * `content()` is the entry's text, read once.
+   */
+  entry(c: BundleComponent, entry: string): FileContext | undefined;
+  /** Create the entry, or replace it. A written entry is readable by its owner only. */
+  write(c: BundleComponent, entry: string, content: Buffer): void;
+  /** Delete the entry. False when the bundle had none. */
+  remove(c: BundleComponent, entry: string): boolean;
 
   // REQUIRED — the single-file recognition primitive; replaces the matcher
   // stack (matchers.ts:151-305; file-context.ts:242-265).
@@ -99,12 +129,6 @@ export interface BundleAdapter {
   directoryList?(c: BundleComponent): string[];
   /** Install-time probe; ordered per §1.2. */
   looksLikeRoot?(root: string): boolean;
-
-  // OPTIONAL — the bundle is a secret store, not a directory. Its entries are
-  // the secrets of the store this opens for the bundle's locator: the core
-  // lists them in place of a walk, hands each to `recognize` as the file
-  // `secrets/<name>`, and reads and writes values through the store.
-  secretStore?(locator: string): SecretStore;
 
   // NOTE — the OPTIONAL authoring, export, and memory facet methods are
   // DEFERRED, not declared here: no adapter implements them, and every type they

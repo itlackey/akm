@@ -83,24 +83,7 @@ describe("config CLI helpers", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     expect(() =>
       setConfigValue(base, "bundles", '{"w":{"website":{"url":"https://example.com"},"writable":true}}'),
-    ).toThrow("writable: true is only supported on path, git and store bundle sources");
-  });
-
-  test("setConfigValue takes a secret store bundle and refuses a store descriptor it cannot use", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    const updated = setConfigValue(base, "bundles", '{"keyring":{"store":"secret-tool:akm","writable":true}}');
-    expect(updated.bundles?.keyring).toEqual({ store: "secret-tool:akm", writable: true });
-
-    const badDescriptor = "store must be <adapter>:<locator>, with adapter one of: secret-tool, azure-key-vault";
-    for (const store of ["akm:work", "secret-tool:", "secret-tool"]) {
-      expect(() => setConfigValue(base, "bundles", JSON.stringify({ k: { store } }))).toThrow(badDescriptor);
-    }
-    expect(() => setConfigValue(base, "bundles", '{"k":{"store":"secret-tool:akm","path":"/tmp/k"}}')).toThrow(
-      "a bundle entry must carry exactly one source descriptor; got path, store",
-    );
-    expect(() =>
-      setConfigValue(base, "bundles", '{"k":{"store":"secret-tool:akm","components":{"main":{"adapter":"akm"}}}}'),
-    ).toThrow("a store bundle takes no components: its store descriptor names its adapter");
+    ).toThrow("writable: true is only supported on path, git and location bundle sources");
   });
 
   test("setConfigValue rejects empty and multi-entry component maps", () => {
@@ -125,10 +108,10 @@ describe("config CLI helpers", () => {
         "bundles",
         '{"web":{"website":{"url":"https://example.com"},"components":{"main":{"writable":true}}}}',
       ),
-    ).toThrow("writable: true is only supported on path, git and store bundle sources");
+    ).toThrow("writable: true is only supported on path, git and location bundle sources");
     expect(() =>
       setConfigValue(base, "bundles", '{"pkg":{"npm":"example-package","components":{"main":{"writable":true}}}}'),
-    ).toThrow("writable: true is only supported on path, git and store bundle sources");
+    ).toThrow("writable: true is only supported on path, git and location bundle sources");
   });
 
   test("setConfigValue sets embedding via JSON", () => {

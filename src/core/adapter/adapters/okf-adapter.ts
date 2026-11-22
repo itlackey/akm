@@ -45,6 +45,7 @@ import type {
   OkfVerifiedEntry,
   ValidateContext,
 } from "../types";
+import { directoryEntries } from "./directory-entries";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
 /** v0.2 frontmatter keys consumed into first-class fields below (§0.1) — excluded from the generic `documentJson` extras fold alongside the v0.1 five, so nothing is duplicated between a first-class field and the opaque extras bag. */
@@ -316,7 +317,7 @@ export const okfAdapter: BundleAdapter = {
   id: "okf",
   version: "0.9.0",
   extensions: [".md"],
-  walkMode: "all-directories",
+  ...directoryEntries("all-directories"),
 
   recognize,
   validate,

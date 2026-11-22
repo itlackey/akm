@@ -367,16 +367,13 @@ export async function showLocal(input: {
   }
   enforceSensitiveFragmentPolicy(indexedEntry.type, parsed, input.contextMode, input.contextFlag);
 
-  const source = findSourceForPath(assetPath, allSources);
-  // A secret store entry has no file: the lookup above found it in its store.
-  if (source?.locator === undefined) {
-    try {
-      fs.accessSync(assetPath, fs.constants.R_OK);
-    } catch (error) {
-      throwIndexedPathNotFound(error, input.ref);
-    }
+  try {
+    fs.accessSync(assetPath, fs.constants.R_OK);
+  } catch (error) {
+    throwIndexedPathNotFound(error, input.ref);
   }
 
+  const source = findSourceForPath(assetPath, allSources);
   const sourceStashDir = source?.path ?? allSourceDirs[0];
 
   if (!sourceStashDir) {

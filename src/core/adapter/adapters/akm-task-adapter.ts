@@ -45,6 +45,7 @@ import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import { directoryEntries } from "./directory-entries";
 import { hashContent } from "./shared";
 
 /** A native task bundle is single-component; its one component is `main`. */
@@ -108,6 +109,7 @@ async function validate(_c: BundleComponent, changes: FileChange[], ctx: Validat
 }
 
 export const akmTaskAdapter: BundleAdapter = {
+  ...directoryEntries(),
   id: "akm-task",
   version: "0.9.2",
   // `.yaml` is listed as a COLLECTION hint only — `recognize` still gates on

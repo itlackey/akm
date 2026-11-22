@@ -12,7 +12,7 @@ import { z } from "zod";
 // adapter-ids.ts's header for why config imports this leaf rather than
 // `core/adapter/registry.ts` (which would pull in all 11 concrete adapters
 // and, transitively, the indexer modules they delegate to).
-import { parseStoreDescriptor, SECRET_STORE_ADAPTER_IDS, VALID_ADAPTER_IDS } from "../../adapter/adapter-ids";
+import { VALID_ADAPTER_IDS } from "../../adapter/adapter-ids";
 import { isBundleSlug } from "../../asset/asset-ref";
 import { httpUrl, isApiKeyReference, nonEmptyString, positiveInt } from "./primitives";
 
@@ -31,6 +31,7 @@ export const SourceConfigEntrySchema = z
     enabled: z.boolean().optional(),
     writable: z.boolean().optional(),
     credential: z.string().min(1).optional(),
+    location: z.string().min(1).optional(),
     primary: z.boolean().optional(),
     options: SourceConfigEntryOptionsSchema.optional(),
   })
@@ -43,18 +44,18 @@ export const SourceConfigEntrySchema = z
         message: "options.pushOnCommit is not supported",
       });
     }
-    if (!["filesystem", "git", "website", "npm", "store"].includes(entry.type)) {
+    if (!["filesystem", "git", "website", "npm", "location"].includes(entry.type)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["type"],
-        message: `unsupported source type "${entry.type}"; expected filesystem, git, website, npm, or store`,
+        message: `unsupported source type "${entry.type}"; expected filesystem, git, website, npm, or location`,
       });
     }
     if (entry.writable === true && (entry.type === "website" || entry.type === "npm")) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
-          `writable: true is only supported on filesystem, git and store sources (got "${entry.type}"` +
+          `writable: true is only supported on filesystem, git and location sources (got "${entry.type}"` +
           (entry.name ? ` on source "${entry.name}"` : "") +
           ").",
       });
@@ -89,7 +90,7 @@ export const RegistryConfigEntrySchema = z
 //
 // `bundles` + `defaultBundle` are the desired-configuration shape. Each bundle
 // entry carries ONE source descriptor (`path` | `git` | `website` | `npm` |
-// `store` — mirroring today's source types), an optional `writable`, an optional
+// `location` — mirroring today's source types), an optional `writable`, an optional
 // `registryId` locator (the original registry install id, preserved verbatim so
 // a non-slug-legal id like `github:owner/repo` is not lost when its slug-legal
 // bundle KEY is derived), and an optional single-entry `components` map (the
@@ -136,8 +137,11 @@ export const BundleConfigEntrySchema = z
     git: z.string().min(1).optional(),
     website: BundleWebsiteDescriptorSchema.optional(),
     npm: z.string().min(1).optional(),
-    /** A secret store, `<adapter>:<locator>`: the bundle's entries are the store's secrets, and it has no directory. */
-    store: z.string().min(1).optional(),
+    /**
+     * Where the bundle's adapter finds a bundle that is not a directory (a keyring's name, a vault's name).
+     * The bundle's one component names the adapter.
+     */
+    location: z.string().min(1).optional(),
     /** Symbolic HTTPS bearer credential; resolved only at the Git subprocess boundary. */
     credential: z.string().min(1).optional(),
     writable: z.boolean().optional(),
@@ -163,11 +167,11 @@ export const BundleConfigEntrySchema = z
         message: "options.pushOnCommit is not supported",
       });
     }
-    const descriptors = (["path", "git", "website", "npm", "store"] as const).filter((k) => entry[k] !== undefined);
+    const descriptors = (["path", "git", "website", "npm", "location"] as const).filter((k) => entry[k] !== undefined);
     if (descriptors.length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "a bundle entry must carry exactly one source descriptor (path, git, website, npm, or store)",
+        message: "a bundle entry must carry exactly one source descriptor (path, git, website, npm, or location)",
       });
     } else if (descriptors.length > 1) {
       ctx.addIssue({
@@ -175,25 +179,11 @@ export const BundleConfigEntrySchema = z
         message: `a bundle entry must carry exactly one source descriptor; got ${descriptors.join(", ")}`,
       });
     }
-    if (entry.store !== undefined && parseStoreDescriptor(entry.store) === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["store"],
-        message: `store must be <adapter>:<locator>, with adapter one of: ${SECRET_STORE_ADAPTER_IDS.join(", ")}`,
-      });
-    }
-    if (entry.store !== undefined && entry.components !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["components"],
-        message: "a store bundle takes no components: its store descriptor names its adapter",
-      });
-    }
     if (entry.writable === true && (entry.website !== undefined || entry.npm !== undefined)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["writable"],
-        message: "writable: true is only supported on path, git and store bundle sources",
+        message: "writable: true is only supported on path, git and location bundle sources",
       });
     }
     if (entry.credential !== undefined && entry.git === undefined) {
@@ -219,11 +209,18 @@ export const BundleConfigEntrySchema = z
       });
     }
     const componentEntry = componentEntries[0];
+    if (entry.location !== undefined && componentEntry?.[1].adapter === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["components"],
+        message: "a location bundle names the adapter that reads it, in its one component's `adapter`",
+      });
+    }
     if (componentEntry?.[1].writable === true && (entry.website !== undefined || entry.npm !== undefined)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["components", componentEntry[0], "writable"],
-        message: "writable: true is only supported on path, git and store bundle sources",
+        message: "writable: true is only supported on path, git and location bundle sources",
       });
     }
     // #909: an unrecognized `components.*.adapter` used to silently fall back

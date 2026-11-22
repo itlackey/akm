@@ -6,14 +6,13 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AdapterReadCandidate, BundleAdapter } from "../../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
-import { adapterForId, secretStoreOf } from "../../core/adapter/registry";
-import { listSecretNames, type SecretStore, secretNameOf } from "../../core/adapter/secret-store";
+import { adapterForId } from "../../core/adapter/registry";
 import type { BundleComponent } from "../../core/adapter/types";
 import { assetPathForName, stashDirFor, stashDirNames } from "../../core/asset/asset-placement";
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
-import { compareCodePoints, hasErrnoCode, safeRealpath } from "../../core/common";
-import { ConfigError, UsageError } from "../../core/errors";
+import { compareCodePoints, safeRealpath, toPosix } from "../../core/common";
+import { UsageError } from "../../core/errors";
 import { sensitiveMarkerPath } from "../../core/sensitive-marker-path";
 import { warnOnce } from "../../core/warn";
 import { withMdVariants } from "../../storage/repositories/index-entries-repository";
@@ -21,7 +20,7 @@ import { resolveUniqueWorkflowSource, type WorkflowSourceFile } from "../../work
 import type { IndexEntry } from "../indexer";
 import { deriveEntryProvenance, deriveInstallations } from "../installations";
 import type { SearchSource } from "../search/search-source";
-import { buildFileContext, type FileContext } from "../walk/file-context";
+import type { FileContext } from "../walk/file-context";
 import { declaredTypeForPath } from "../walk/matchers";
 import { isWalkedFile } from "../walk/walker";
 
@@ -35,8 +34,8 @@ export interface AdapterConceptOwner {
   conceptId: string;
   adapterId: string;
   workflowSource?: WorkflowSourceFile;
-  /** A secret store entry's value as its store returned it, set when the lookup found the entry by reading it. */
-  storeValue?: string;
+  /** The entry, as the owning bundle's adapter gives it. */
+  file: FileContext;
 }
 
 export abstract class AdapterConceptOwnershipError extends UsageError {}
@@ -67,8 +66,15 @@ function normalizedConceptId(conceptId: string): string | undefined {
   return normalized;
 }
 
-function componentFor(sourcePath: string, adapterId: string): BundleComponent {
-  return { id: adapterId, adapter: adapterId, root: sourcePath, writable: false };
+function componentFor(sourcePath: string, adapterId: string, location?: string): BundleComponent {
+  return { id: adapterId, adapter: adapterId, root: sourcePath, writable: false, ...(location ? { location } : {}) };
+}
+
+/** The entry a path under the bundle's root names, or undefined for a path outside it. */
+function entryOf(root: string, candidatePath: string): string | undefined {
+  return lexicallyWithin(candidatePath, root)
+    ? toPosix(path.relative(path.resolve(root), path.resolve(candidatePath)))
+    : undefined;
 }
 
 function lexicallyWithin(candidate: string, root: string): boolean {
@@ -101,37 +107,26 @@ function candidateSpellings(candidate: AdapterReadCandidate, sourcePath: string)
     .map((entry) => ({ ...candidate, path: path.join(parent, entry.name) }));
 }
 
+/** The owner a candidate is, when the bundle has that entry: the adapter says, without reading its content. */
 function inspectCandidate(
-  sourcePath: string,
-  adapterId: string,
+  adapter: BundleAdapter,
+  component: BundleComponent,
   candidate: AdapterReadCandidate,
 ): AdapterConceptOwner | undefined {
-  const authoredPath = path.resolve(candidate.path);
-  if (!lexicallyWithin(authoredPath, sourcePath)) return undefined;
-  let authoredStat: fs.Stats;
-  try {
-    authoredStat = fs.lstatSync(authoredPath);
-  } catch {
-    return undefined;
-  }
-  if (!authoredStat.isFile() && !authoredStat.isSymbolicLink()) return undefined;
-
-  let realPath: string;
-  try {
-    realPath = fs.realpathSync(authoredPath);
-  } catch {
-    return undefined;
-  }
-  try {
-    if (!fs.statSync(realPath).isFile()) return undefined;
-  } catch {
-    return undefined;
-  }
-  return { path: authoredPath, realPath, conceptId: candidate.conceptId, adapterId };
+  const entry = entryOf(component.root, candidate.path);
+  const file = entry === undefined || entry === "" ? undefined : adapter.entry(component, entry);
+  if (!file) return undefined;
+  return {
+    path: file.absPath,
+    realPath: safeRealpath(file.absPath),
+    conceptId: candidate.conceptId,
+    adapterId: adapter.id,
+    file,
+  };
 }
 
 function claimsWithoutContent(adapter: BundleAdapter, component: BundleComponent, owner: AdapterConceptOwner): boolean {
-  const file = buildFileContext(component.root, owner.path);
+  const { file } = owner;
   let requestedBytes = false;
   const denyBytes = (): never => {
     requestedBytes = true;
@@ -155,19 +150,15 @@ export interface ResolveAdapterConceptOwnerOptions {
    * the index. For resolving a file to run or inject; never for show or search.
    */
   includeSensitive?: boolean;
-  /**
-   * Find a secret store's entry by reading it and keep the value on the owner, so that finding and reading are one
-   * request to the store. For a caller about to use the value; without it a store is only asked which secrets it holds.
-   */
-  readStoreSecret?: boolean;
 }
 
-/** True for an env/secret file that a sibling `.sensitive` marker hides from the index. */
-function isMarkedSensitive(sourcePath: string, owner: AdapterConceptOwner): boolean {
-  const type = declaredTypeForPath(buildFileContext(sourcePath, owner.path));
+/** True for an env/secret entry that a sibling `.sensitive` marker hides from the index. */
+function isMarkedSensitive(adapter: BundleAdapter, component: BundleComponent, owner: AdapterConceptOwner): boolean {
+  const type = declaredTypeForPath(owner.file);
   if (type !== "env" && type !== "secret") return false;
   const marker = sensitiveMarkerPath(owner.path, type);
-  return marker !== owner.path && fs.existsSync(marker);
+  const entry = marker === owner.path ? undefined : entryOf(component.root, marker);
+  return entry !== undefined && adapter.entry(component, entry) !== undefined;
 }
 
 /**
@@ -182,33 +173,33 @@ export function resolveAdapterConceptOwner(
   conceptId: string,
   options?: ResolveAdapterConceptOwnerOptions,
 ): AdapterConceptOwner | undefined {
-  const adapter = adapterForId(adapterId);
+  return resolveComponentConceptOwner(componentFor(sourcePath, adapterId), conceptId, options);
+}
+
+/** {@link resolveAdapterConceptOwner} for one bundle's component. Every entry is found through the component's adapter. */
+function resolveComponentConceptOwner(
+  component: BundleComponent,
+  conceptId: string,
+  options?: ResolveAdapterConceptOwnerOptions,
+): AdapterConceptOwner | undefined {
+  const adapter = adapterForId(component.adapter);
   const normalized = normalizedConceptId(conceptId);
   if (!adapter || !normalized) return undefined;
-
-  try {
-    fs.realpathSync(sourcePath);
-  } catch (error) {
-    // Genuinely absent — "no owner" is correct. Any other failure (e.g.
-    // EACCES) is not "doesn't exist"; treating it as such would report a
-    // legitimate bundle root as owning nothing instead of raising the
-    // unreadable-directory error.
-    if (hasErrnoCode(error, "ENOENT")) return undefined;
-    throw new ConfigError(`Unable to read bundle directory at "${sourcePath}".`, "STASH_DIR_UNREADABLE");
-  }
-
-  const component = componentFor(sourcePath, adapterId);
+  const { root: sourcePath, adapter: adapterId } = component;
   const ownersByIdentity = new Map<string, AdapterConceptOwner>();
 
   const workflowSource = resolveUniqueWorkflowSource(sourcePath, adapterId, normalized);
   const resolutionConceptId = workflowSource ? workflowSource.canonicalName : normalized;
-  if (workflowSource) {
+  const workflowEntry = workflowSource && entryOf(sourcePath, workflowSource.path);
+  const workflowFile = workflowEntry ? adapter.entry(component, workflowEntry) : undefined;
+  if (workflowSource && workflowFile) {
     const workflowOwner = {
       path: workflowSource.path,
       realPath: workflowSource.realPath,
       conceptId: resolutionConceptId,
       adapterId,
       workflowSource,
+      file: workflowFile,
     };
     ownersByIdentity.set(`${path.resolve(workflowOwner.path)}\0${resolutionConceptId}`, workflowOwner);
   }
@@ -228,7 +219,7 @@ export function resolveAdapterConceptOwner(
   ]
     .sort((left, right) => compareCodePoints(left.path, right.path))
     .flatMap((candidate) => {
-      const owner = inspectCandidate(sourcePath, adapterId, candidate);
+      const owner = inspectCandidate(adapter, component, candidate);
       return owner ? [owner] : [];
     });
   for (const candidate of inspected) {
@@ -237,7 +228,7 @@ export function resolveAdapterConceptOwner(
     if (ownersByIdentity.has(identity)) continue;
     if (
       claimsWithoutContent(adapter, component, candidate) ||
-      (options?.includeSensitive && isMarkedSensitive(sourcePath, candidate))
+      (options?.includeSensitive && isMarkedSensitive(adapter, component, candidate))
     ) {
       ownersByIdentity.set(identity, candidate);
     }
@@ -287,13 +278,14 @@ export function entryFromFiles(match: ConceptOwnerMatch): IndexEntry | undefined
   const { owner, source, bundleId, adapterId } = match;
   try {
     const adapter = adapterForId(adapterId);
-    // A secret store's entries are listed, not walked.
-    const listed =
-      source.locator !== undefined ||
-      isWalkedFile(source.path, owner.path, { includeAllDirectories: adapter?.walkMode === "all-directories" });
-    if (!adapter || !listed) return undefined;
-    const component: BundleComponent = { id: adapterId, adapter: adapterId, root: source.path, writable: false };
-    const document = adapter.recognize(component, buildFileContext(source.path, owner.path));
+    if (
+      !adapter ||
+      !isWalkedFile(source.path, owner.path, { includeAllDirectories: adapter.walkMode === "all-directories" })
+    ) {
+      return undefined;
+    }
+    const component = componentFor(source.path, adapterId, source.location);
+    const document = adapter.recognize(component, owner.file);
     if (!document?.conceptId || !withMdVariants(owner.conceptId).includes(document.conceptId)) return undefined;
     const { itemRef, conceptId } = deriveEntryProvenance(
       { bundleId, componentId: adapterId, adapterId },
@@ -366,27 +358,6 @@ function warnOutdatedRef(outdated: string, current: string): void {
   );
 }
 
-/**
- * A secret store bundle's owner of `conceptId`: the store holds a secret of
- * that name. The owner's path is where the entry is indexed; no file is there.
- * A ref that names no secret never reaches the store.
- */
-function storeConceptOwner(
-  root: string,
-  adapterId: string,
-  store: SecretStore,
-  conceptId: string,
-  options?: ResolveAdapterConceptOwnerOptions,
-): AdapterConceptOwner | undefined {
-  const name = secretNameOf(conceptId);
-  if (name === undefined) return undefined;
-  const entryPath = path.join(root, conceptId);
-  const owner: AdapterConceptOwner = { path: entryPath, realPath: entryPath, conceptId, adapterId };
-  if (!options?.readStoreSecret) return listSecretNames(store).includes(name) ? owner : undefined;
-  const storeValue = store.read(name);
-  return storeValue === undefined ? undefined : { ...owner, storeValue };
-}
-
 function ownerAmong(
   ref: BundleRef,
   sources: readonly SearchSource[],
@@ -397,10 +368,11 @@ function ownerAmong(
     const bundleId = installations[index]?.id;
     if (!bundleId || (ref.bundle !== undefined && bundleId !== ref.bundle)) continue;
     const adapterId = source.adapterId ?? detectAdapterId(source.path);
-    const store = secretStoreOf(source);
-    const owner = store
-      ? storeConceptOwner(source.path, adapterId, store, ref.conceptId, options)
-      : resolveAdapterConceptOwner(source.path, adapterId, ref.conceptId, options);
+    const owner = resolveComponentConceptOwner(
+      componentFor(source.path, adapterId, source.location),
+      ref.conceptId,
+      options,
+    );
     if (owner) return { owner, source, bundleId, adapterId };
   }
   return undefined;
@@ -408,7 +380,7 @@ function ownerAmong(
 
 export function indexedPathMatchesOwner(indexedPath: string, owner: AdapterConceptOwner): boolean {
   if (path.resolve(indexedPath) !== path.resolve(owner.path)) return false;
-  // A secret store entry has no file to resolve: its path is already the one it is indexed under.
+  // The owner was found, so its entry exists; an entry that is no file resolves to its own path.
   return safeRealpath(indexedPath) === path.resolve(owner.realPath);
 }
 
@@ -421,7 +393,7 @@ export function indexedPathMatchesOwner(indexedPath: string, owner: AdapterConce
 export function ownedAssetType(
   match: Pick<ConceptOwnerMatch, "owner" | "adapterId"> & { root: string },
 ): string | undefined {
-  const file = buildFileContext(match.root, match.owner.path);
+  const { file } = match.owner;
   return (
     adapterForId(match.adapterId)?.recognize(componentFor(match.root, match.adapterId), file)?.type ??
     declaredTypeForPath(file)

@@ -36,6 +36,7 @@ import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, IndexDocument } from "../types";
+import { directoryEntries } from "./directory-entries";
 import { hashContent, nonEmptyString, readTags, validateChangesWithBaseChecks } from "./shared";
 
 const LANGUAGE_BY_EXTENSION: Readonly<Record<string, string>> = {
@@ -208,7 +209,7 @@ export const codeProjectAdapter: BundleAdapter = {
   version: "0.10.0",
   // The files `validate` checks; the walk and `recognize` decide what is indexed.
   extensions: [...MARKDOWN_EXTENSIONS],
-  walkMode: "all-directories",
+  ...directoryEntries("all-directories"),
 
   recognize,
 

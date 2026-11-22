@@ -35,14 +35,14 @@ import { addCommand } from "./add-cli";
 import { akmInit } from "./init";
 import { akmListSources, akmRemove, akmUpdate } from "./installed-stashes";
 
-const VALID_SOURCE_KINDS = new Set<SourceKind>(["filesystem", "git", "npm", "website", "store"]);
+const VALID_SOURCE_KINDS = new Set<SourceKind>(["filesystem", "git", "npm", "website"]);
 
 function parseKindFilter(raw: string | undefined): SourceKind[] | undefined {
   if (!raw) return undefined;
   const kinds = raw.split(",").map((s) => s.trim()) as SourceKind[];
   for (const k of kinds) {
     if (!VALID_SOURCE_KINDS.has(k)) {
-      throw new UsageError(`Invalid --kind value: "${k}". Expected one of: filesystem, git, npm, website, store`);
+      throw new UsageError(`Invalid --kind value: "${k}". Expected one of: filesystem, git, npm, website`);
     }
   }
   return kinds;
@@ -75,7 +75,7 @@ const listCommand = defineJsonCommand({
   args: {
     kind: {
       type: "string",
-      description: "Filter by source provider (filesystem, git, npm, website, store). Comma-separated.",
+      description: "Filter by source provider (filesystem, git, npm, website). Comma-separated.",
     },
   },
   async run({ args }) {

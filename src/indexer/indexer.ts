@@ -121,7 +121,6 @@ import {
   type StoredEntry,
 } from "./ref-moves";
 import { drainDirDocuments } from "./scan/drain-dir";
-import { listStoreEntries } from "./scan/store-entries";
 import type { SearchSource } from "./search/search-source";
 import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
 import type { FileContext } from "./walk/file-context";
@@ -1170,11 +1169,8 @@ function buildSourceScanPlans(
       };
     }
     const adapter = adapterForId(component.adapter);
-    const walked =
-      listStoreEntries(component) ??
-      walkStashFlatWithStatus(currentStashDir, {
-        includeAllDirectories: adapter?.walkMode === "all-directories",
-      });
+    // A component whose adapter is unknown is still walked, so its directories stay claimed; it is skipped below.
+    const walked = adapter ? adapter.list(component) : walkStashFlatWithStatus(currentStashDir);
     const dirGroups = groupFileContextsByDir(walked.files);
     const adapterSkip = adapter ? adapterSkippedAkmContent(component, walked.files, adapter) : undefined;
     return {

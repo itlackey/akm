@@ -126,9 +126,8 @@ akm bundle list --kind npm               # Only npm packages
 akm bundle list --kind filesystem,git    # Multiple kinds (comma-separated)
 ```
 
-Valid `--kind` values are the four bundle providers, `filesystem`, `git`,
-`npm` and `website`, and `store` for a
-[secret store bundle](../reference/env-and-secrets.md#secret-store-bundles).
+Valid `--kind` values are the four bundle providers: `filesystem`, `git`,
+`npm`, `website`.
 
 ## akm bundle update / akm bundle remove
 

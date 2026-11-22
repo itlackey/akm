@@ -39,6 +39,7 @@ import { sensitiveMarkerPath } from "../../sensitive-marker-path";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { dangerousEnvKeyDiagnostics } from "./akm-lint";
+import { directoryEntries } from "./directory-entries";
 import { hashContent } from "./shared";
 
 /** A dotenv bundle is single-component; its one component is `main`. */
@@ -152,6 +153,7 @@ async function validate(_c: BundleComponent, changes: FileChange[], ctx: Validat
 }
 
 export const dotenvAdapter: BundleAdapter = {
+  ...directoryEntries(),
   id: "dotenv",
   version: "0.9.0",
   extensions: [".env"],

@@ -10,9 +10,8 @@
  *
  *  1. Resolve the destination: `--bundle` → `defaultWriteTarget` → working
  *     stash (`defaultBundle`). `writable` defaults to true on `filesystem` and
- *     `store`, and false on `git`; `website` / `npm` are never writable (the
- *     config loader rejects `writable: true` on them). A `store` target takes
- *     secret writes only, through its adapter.
+ *     `location`, and false on `git`; `website` / `npm` are never writable (the
+ *     config loader rejects `writable: true` on them).
  *  2. Publish: write the file atomically inside the bundle root, and for a
  *     git-backed target commit exactly the operation's paths once at the
  *     boundary ({@link commitWriteTargetBoundary} → `saveGitStash`), pushing
@@ -53,7 +52,7 @@ import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/co
 import { bundleKeyForContentRoot, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
 import { ConfigError, UsageError } from "./errors";
 import { sanitizeCommitMessage } from "./git-message";
-import { getStoreBundleRoot } from "./paths";
+import { getLocationBundleRoot } from "./paths";
 import { warn, warnOnce } from "./warn";
 import { recordWrittenPath } from "./write-provenance";
 
@@ -61,7 +60,7 @@ import { recordWrittenPath } from "./write-provenance";
 
 /** Minimal source shape the write helpers need. */
 export interface WriteTargetSource {
-  /** Discriminator for write dispatch (`"filesystem"` | `"git"` | `"store"`). */
+  /** Discriminator for write dispatch (`"filesystem"` | `"git"` | `"location"`). */
   readonly kind: string;
   /** Human-readable identifier surfaced in error messages. */
   readonly name: string;
@@ -71,8 +70,8 @@ export interface WriteTargetSource {
   readonly repoPath?: string;
   /** Bundle adapter that owns placement and authoring semantics. */
   readonly adapterId?: string;
-  /** Set for a secret store bundle (`kind: "store"`): what its adapter opens. `path` is then no directory. */
-  readonly locator?: string;
+  /** A location bundle's `location`: where its adapter finds it. `path` is then the root its entries are indexed under. */
+  readonly location?: string;
 }
 
 /** The chosen source plus the persisted config entry that drove the choice. */
@@ -86,13 +85,10 @@ export interface ResolvedWriteTarget {
 
 // ── Write-target resolution ─────────────────────────────────────────────────
 
-/**
- * `writable` defaults to true on `filesystem` and `store`, and false on every other kind. Only `akm secret set` and
- * `akm secret remove` write a store, and only when the store is named.
- */
+/** `writable` defaults to true on `filesystem` and `location`, and false on every other kind. */
 export function resolveWritable(entry: Pick<SourceConfigEntry, "type" | "writable">): boolean {
   if (typeof entry.writable === "boolean") return entry.writable;
-  return entry.type === "filesystem" || entry.type === "store";
+  return entry.type === "filesystem" || entry.type === "location";
 }
 
 /**
@@ -240,22 +236,22 @@ export function resolveWorkingStashTarget(
  * `content/` convention.
  */
 function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
-  if (runtime.source.type === "store") {
-    // A secret store has no directory to write: it is the target of secret writes, which go through its adapter.
-    const { adapterId, locator } = runtime.source;
+  if (runtime.source.type === "location") {
+    // Its adapter reads and writes it; the adapter allowlists decide which writes it takes.
+    const { location } = runtime.source;
     return {
       selector: runtime.name,
       source: {
-        kind: "store",
+        kind: "location",
         name: runtime.name,
-        path: safeRealpath(getStoreBundleRoot(runtime.name)),
-        adapterId,
-        locator,
+        path: safeRealpath(getLocationBundleRoot(runtime.name)),
+        ...(runtime.adapterId ? { adapterId: runtime.adapterId } : {}),
+        location,
       },
       config: {
-        type: "store",
+        type: "location",
         name: runtime.name,
-        url: `${adapterId}:${locator}`,
+        location,
         ...(runtime.writable !== undefined ? { writable: runtime.writable } : {}),
       },
     };
@@ -628,7 +624,8 @@ function lstatOrNull(filePath: string): fs.Stats | null {
  */
 export function assertWritePathsInsideSource(source: WriteTargetSource, filePaths: readonly string[]): void {
   const lexicalRoot = path.resolve(source.path);
-  const canonicalRoot = fs.realpathSync(lexicalRoot);
+  // A root that is not on disk (a location bundle's) holds no link to follow.
+  const canonicalRoot = safeRealpath(lexicalRoot);
   for (const filePath of filePaths) {
     const relative = relativeToRoot(filePath, lexicalRoot) ?? "..";
     if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
@@ -658,7 +655,6 @@ export function withWriteTargetMutation<T>(
   mutate: () => T,
 ): T {
   return withAssetMutationLeaseSync(options.purpose, () => {
-    assertSupportedKind(target.source);
     assertWritePathsInsideSource(target.source, paths);
     const result = mutate();
     commitWriteTargetBoundary(target, options.message, { paths });

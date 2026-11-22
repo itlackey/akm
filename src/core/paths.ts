@@ -398,13 +398,13 @@ export function getUnresolvedSourcesDir(stashDir: string): string {
 }
 
 /**
- * `$CACHE/index/stores/<bundle>` — the path a secret store bundle's entries are
- * indexed under. A store has no directory and nothing is written here: this is
- * only the bundle's stable `SearchSource.path`, under which each secret takes
- * the path a file of its name would have.
+ * `$CACHE/index/bundles/<bundle>` — the root a location bundle's entries are
+ * indexed under. Such a bundle is not a directory (its adapter reads a keyring,
+ * a vault), and the index keys every entry by a path under its bundle's root.
+ * Nothing is written here.
  */
-export function getStoreBundleRoot(bundle: string): string {
-  return path.join(getCacheDir(), "index", "stores", bundle);
+export function getLocationBundleRoot(bundle: string): string {
+  return path.join(getCacheDir(), "index", "bundles", bundle);
 }
 
 /**

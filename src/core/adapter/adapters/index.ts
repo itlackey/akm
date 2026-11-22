@@ -75,8 +75,8 @@ export { websiteSnapshotAdapter } from "./website-snapshot-adapter";
  *    fire on none of the other roots; they come at the front for clarity.
  *  - `generic-files` and `code-project` are EXPLICIT-CONFIG ONLY (neither can
  *    be auto-detected), so they are LAST and can never shadow anything.
- *  - `secret-tool` and `azure-key-vault` are secret stores: a bundle's `store`
- *    descriptor names one, and they have no directory to probe.
+ *  - `secret-tool` and `azure-key-vault` read a bundle kept by a secret manager,
+ *    not a directory: explicit config only, with no probe.
  */
 export const BUILTIN_ADAPTERS: readonly BundleAdapter[] = Object.freeze([
   // Specific, disjoint markers first.
@@ -97,7 +97,7 @@ export const BUILTIN_ADAPTERS: readonly BundleAdapter[] = Object.freeze([
   genericFilesAdapter,
   // Explicit-config only (`--adapter code-project`) — no probe, so order is moot.
   codeProjectAdapter,
-  // Secret stores: named by a bundle's `store` descriptor, and no directory to probe.
+  // Bundles kept by a secret manager, named by a bundle's `location`: no directory to probe.
   secretToolAdapter,
   azureKeyVaultAdapter,
 ]);

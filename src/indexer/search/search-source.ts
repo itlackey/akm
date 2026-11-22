@@ -4,7 +4,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseStoreDescriptor } from "../../core/adapter/adapter-ids";
 import { isWithin, relativeToRoot, resolveStashDir, safeRealpath, toErrorMessage } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import {
@@ -16,7 +15,7 @@ import {
   loadConfig,
 } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
-import { getStoreBundleRoot, getUnresolvedSourcesDir } from "../../core/paths";
+import { getLocationBundleRoot, getUnresolvedSourcesDir } from "../../core/paths";
 import { warn } from "../../core/warn";
 import { resolveGitContentRoot, resolveWritable } from "../../core/write-source";
 import { lockContentRootFor } from "../../integrations/lockfile";
@@ -39,11 +38,8 @@ export interface SearchSource {
   adapterId?: string;
   /** Set when the source's provider/path could not be resolved this run: why, and its real directory when it has one. */
   unresolved?: { reason: string; path?: string };
-  /**
-   * Set for a secret store bundle: what its adapter opens (a keyring's name, a vault's name). `path` is then no
-   * directory, only the path the bundle's entries are indexed under.
-   */
-  locator?: string;
+  /** A location bundle's configured `location`: where its adapter finds it. `path` is then the root its entries are indexed under. */
+  location?: string;
 }
 
 // ── Resolution ──────────────────────────────────────────────────────────────
@@ -104,6 +100,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     adapterId?: string,
     unresolved?: { reason: string; path?: string },
     isDefault = false,
+    location?: string,
   ) => {
     const resolved = path.resolve(dir);
     const identity = safeRealpath(resolved);
@@ -137,6 +134,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       type,
       ...(adapterId ? { adapterId } : {}),
       ...(unresolved ? { unresolved } : {}),
+      ...(location ? { location } : {}),
     });
   };
 
@@ -146,18 +144,6 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
   // root can never escape its provider's materialized content root.
   for (const entry of configuredEntries) {
     if (entry.enabled === false) continue;
-    const store = entry.type === "store" && entry.url ? parseStoreDescriptor(entry.url) : undefined;
-    if (store && entry.name) {
-      sources.push({
-        path: safeRealpath(getStoreBundleRoot(entry.name)),
-        registryId: entry.name,
-        ...(entry.name === config.defaultBundle ? { isDefault: true } : {}),
-        writable: resolveWritable(entry),
-        type: entry.type,
-        ...store,
-      });
-      continue;
-    }
     const component = bundleComponentConfig(config.bundles?.[entry.name ?? ""]);
     const resolvedContent = resolveEntryContent(entry);
     if ("error" in resolvedContent) {
@@ -200,6 +186,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       component?.adapter,
       undefined,
       entry.name === config.defaultBundle,
+      entry.location,
     );
   }
 
@@ -231,6 +218,8 @@ export function resolveEntryContent(entry: SourceConfigEntry): { dir: string } |
   // materialized for the first time).
   const localRoot = lockContentRootFor(entry.name, entry.type);
   if (localRoot != null) return { dir: localRoot };
+  // A location bundle has no content directory: its adapter reads it, and its entries are indexed under this root.
+  if (entry.type === "location") return { dir: getLocationBundleRoot(entry.name ?? entry.location ?? "") };
 
   const factory = resolveSourceProviderFactory(entry.type);
   if (!factory) return { error: `no source provider is registered for type "${entry.type}"` };

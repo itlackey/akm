@@ -109,7 +109,7 @@ export function deriveInstallations(sources: SearchSource[]): BundleInstallation
           adapter,
           root: source.path,
           writable,
-          ...(source.locator !== undefined ? { locator: source.locator } : {}),
+          ...(source.location !== undefined ? { location: source.location } : {}),
         },
       ],
     });

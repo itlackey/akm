@@ -320,10 +320,10 @@ export interface SourceInstallStatus extends InstalledBundle {
 }
 
 /** Canonical source provider kinds. */
-export type SourceKind = "filesystem" | "git" | "npm" | "website" | "store";
+export type SourceKind = "filesystem" | "git" | "npm" | "website";
 
 export interface SourceDescriptor {
-  kind: "path" | "git" | "npm" | "website" | "store";
+  kind: "path" | "git" | "npm" | "website";
   locator: string;
   maxPages?: number;
 }
@@ -426,7 +426,7 @@ export interface UpdateResultItem {
  */
 export interface UpdatePlainSyncedItem {
   id: string;
-  kind: "filesystem" | "git" | "website" | "store";
+  kind: "filesystem" | "git" | "website";
   ref: string;
 }
 
