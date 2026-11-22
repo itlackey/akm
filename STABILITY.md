@@ -377,11 +377,12 @@ outside the built-in set, so there is no closed list to validate against —
 
 ### Renames and learned state (Stable)
 
-Moving or renaming an item gives it a new
-identity; learned state (feedback, usage, salience) does not follow it.
-Cross-bundle movement is copy/import plus delete. Move the file, then run
-`akm index`, then `akm lint` to catch inbound refs the move left dangling.
-There is no `akm mv`; `scripts/rekey-asset-ref.ts` re-keys earned signal from
+Moving or renaming a file gives the item a new ref. When `akm index` next runs it
+pairs a vanished file with a new file of the same content, in the same or another
+indexed bundle, and carries the learned state (feedback, usage, salience) to the
+new ref; an ambiguous or edited file is a new asset whose history stays with the old
+ref. Move the file, then run `akm index`, then `akm lint` to catch inbound refs the
+move left dangling. There is no `akm mv`; `scripts/rekey-asset-ref.ts` re-keys earned signal from
 an old ref to a new one and is repository maintenance tooling, not a public CLI command.
 
 ## Output, errors, and reporting

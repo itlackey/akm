@@ -530,6 +530,8 @@ calls use: for each kind of work, the connection or harness and the model.
 
 ## Workflows
 
+Workflows are Deprecated and removed in 0.11 (see [STABILITY.md](../../STABILITY.md)); their settings are read through 0.10.
+
 `workflow.maxConcurrency` is the ceiling on units a workflow run executes at
 once. An explicit value is clamped to `1..64`. When absent, akm derives it once
 from the CPU count (`min(16, max(1, cores - 2))`) and freezes it into the run
@@ -1050,7 +1052,7 @@ it. Scheduling lives in the tasks subsystem (`akm task`).
 
 ## Experimental opt-ins
 
-`experimental` holds explicit opt-ins for behavior outside the 0.9
+`experimental` holds explicit opt-ins for behavior outside the
 stability contract (see [STABILITY.md](../../STABILITY.md) for full
 classification). Every key defaults to **off**; an absent `experimental`
 section, an absent key, and an explicit `false` all read identically as off.
@@ -1112,7 +1114,7 @@ the file, so the strategy engine sees the one shape it always read. The old
 - The key adds no behavior by itself. An absent `experimental.learning` leaves
   every default as it was, and it does not gate `experimental.improveAutonomy`.
 
-Owner decisions on the classification of each learning control (2026-11-12):
+Classification of each learning control:
 
 | Control | Decision |
 | --- | --- |
