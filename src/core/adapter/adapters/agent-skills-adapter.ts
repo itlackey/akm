@@ -51,7 +51,7 @@ import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { directoryEntries } from "./directory-entries";
+import { directoryAdapter } from "./directory-assets";
 import { hashContent, nonEmptyString, readTags } from "./shared";
 
 /** A skills collection is a single-component bundle; its one component is `main`. */
@@ -248,8 +248,7 @@ async function validate(_c: BundleComponent, changes: FileChange[], ctx: Validat
   return diagnostics;
 }
 
-export const agentSkillsAdapter: BundleAdapter = {
-  ...directoryEntries(),
+export const agentSkillsAdapter: BundleAdapter = directoryAdapter({
   id: "agent-skills",
   version: "0.9.0",
   extensions: [".md"],
@@ -278,4 +277,4 @@ export const agentSkillsAdapter: BundleAdapter = {
       }
     });
   },
-};
+});

@@ -17,10 +17,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { findAbsoluteHomePaths } from "../../src/core/adapter/adapters/akm-writes";
 import type { AssetRef } from "../../src/core/asset/resolve-ref";
 import type { SourceConfigEntry } from "../../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
-import { findAbsoluteHomePaths, type WriteTargetSource, writeAssetToSource } from "../../src/core/write-source";
+import { type WriteTargetSource, writeAssetToSource } from "../../src/core/write-source";
 
 describe("findAbsoluteHomePaths", () => {
   test("flags an absolute Linux home path", () => {

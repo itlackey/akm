@@ -45,7 +45,7 @@ import type {
   OkfVerifiedEntry,
   ValidateContext,
 } from "../types";
-import { directoryEntries } from "./directory-entries";
+import { directoryAdapter } from "./directory-assets";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
 /** v0.2 frontmatter keys consumed into first-class fields below (§0.1) — excluded from the generic `documentJson` extras fold alongside the v0.1 five, so nothing is duplicated between a first-class field and the opaque extras bag. */
@@ -313,11 +313,11 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
   return diagnostics;
 }
 
-export const okfAdapter: BundleAdapter = {
+export const okfAdapter: BundleAdapter = directoryAdapter({
   id: "okf",
   version: "0.9.0",
   extensions: [".md"],
-  ...directoryEntries("all-directories"),
+  walkMode: "all-directories",
 
   recognize,
   validate,
@@ -364,4 +364,4 @@ export const okfAdapter: BundleAdapter = {
     }
     return false;
   },
-};
+});

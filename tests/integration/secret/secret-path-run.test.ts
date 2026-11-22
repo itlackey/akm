@@ -32,10 +32,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { setSecret } from "../../../src/commands/env/secret";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../../src/llm/embedder";
 import { runCliCapture } from "../../_helpers/cli";
 import { makeStashDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
+import { writeSecretFile } from "../../_helpers/secret-file";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
@@ -91,7 +91,7 @@ describe("secret path — removed in 0.9.0", () => {
   test("`akm secret path <ref>` fails loudly: exit 2, citty's Unknown command, no path printed", () => {
     const stashDir = makeStash();
     const fp = path.join(stashDir, "secrets", "demo");
-    setSecret(fp, Buffer.from("super-secret-token-value"));
+    writeSecretFile(fp, Buffer.from("super-secret-token-value"));
 
     const { stdout, stderr, status } = spawnCli(["secret", "path", "secrets/demo"], { AKM_BUNDLE_DIR: stashDir });
 
@@ -111,7 +111,7 @@ describe("secret run", () => {
   // subprocess. The cases below fail validation before any child spawn.
   test("injects a dangerous target variable name from the primary stash with no block or warning (#1237)", async () => {
     const stashDir = makeStash();
-    setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
+    writeSecretFile(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
     const out = path.join(stashDir, "out.txt");
     const { status, stderr } = await runCli(
       [
@@ -134,7 +134,7 @@ describe("secret run", () => {
   test("injects a dangerous target variable name from a non-primary (installed) bundle with no block (#1237)", async () => {
     const primaryStashDir = makeStash();
     const vendorStashDir = makeStash();
-    setSecret(path.join(vendorStashDir, "secrets", "demo"), Buffer.from("v"));
+    writeSecretFile(path.join(vendorStashDir, "secrets", "demo"), Buffer.from("v"));
     writeSandboxConfig({ bundles: { vendor: { path: vendorStashDir } } });
     const out = path.join(primaryStashDir, "out.txt");
 
@@ -159,7 +159,7 @@ describe("secret run", () => {
 
   test("rejects an invalid env var name", async () => {
     const stashDir = makeStash();
-    setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
+    writeSecretFile(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
     const { status } = await runCli(["secret", "run", "secrets/demo", "not a var", "--", "true"], {
       AKM_BUNDLE_DIR: stashDir,
     });
@@ -168,7 +168,7 @@ describe("secret run", () => {
 
   test("errors when no command is supplied after --", async () => {
     const stashDir = makeStash();
-    setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
+    writeSecretFile(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
     const { status } = await runCli(["secret", "run", "secrets/demo", "TOKEN"], { AKM_BUNDLE_DIR: stashDir });
     expect(status).toBe(2);
   });

@@ -27,9 +27,11 @@
  * proposals collects them and commits once at its boundary (#1185).
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { withAssetMutationLeaseSync } from "../indexer/index-writer-lock";
+import { declaredTypeForPath } from "../indexer/walk/matchers";
 import { lockContentRootFor } from "../integrations/lockfile";
 import {
   GitStashPushError,
@@ -41,16 +43,20 @@ import {
   saveGitStash,
 } from "../sources/providers/git";
 import { listIgnoredExactPaths } from "../sources/providers/git-stash";
+import { findAbsoluteHomePaths } from "./adapter/adapters/akm-writes";
+import { assertWritableFile } from "./adapter/adapters/directory-assets";
+import type { AssetChange, BundleAdapter, NewAsset } from "./adapter/bundle-adapter";
 import { detectAdapterId } from "./adapter/detect-adapter";
+import { adapterForId, componentOf } from "./adapter/registry";
+import type { BundleComponent } from "./adapter/types";
 import { normalizeAkmMarkdown } from "./asset/akm-markdown";
-import { assetPathForName, stashDirFor } from "./asset/asset-placement";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
 import { deriveBundleId } from "./bundle-id";
-import { existingFileMode, isWithin, relativeToRoot, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
+import { existingFileMode, isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
 import { bundleKeyForContentRoot, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
-import { ConfigError, UsageError } from "./errors";
+import { ConfigError, NotFoundError, UsageError } from "./errors";
 import { sanitizeCommitMessage } from "./git-message";
 import { getLocationBundleRoot } from "./paths";
 import { warn, warnOnce } from "./warn";
@@ -317,13 +323,36 @@ function pathFromConfiguredSource(runtime: ConfiguredSource): string | undefined
 
 // ── Preparing a target for mutation ─────────────────────────────────────────
 
-/** Refuse AKM asset writes into a bundle whose adapter owns a different layout. */
-export function assertAkmAssetWrite(source: WriteTargetSource, allowedAdapters: readonly string[] = ["akm"]): void {
-  if (!source.adapterId || allowedAdapters.includes(source.adapterId)) return;
+/** The adapter that writes `source`'s assets: its configured or detected one, `akm` when none is recorded. */
+function writerOf(source: WriteTargetSource): BundleAdapter {
+  const id = source.adapterId ?? "akm";
+  const adapter = adapterForId(id);
+  if (!adapter) throw new ConfigError(`Bundle "${source.name}" uses unknown adapter "${id}".`, "INVALID_CONFIG_FILE");
+  return adapter;
+}
+
+/**
+ * Refuse an asset write the bundle's adapter does not make: an adapter that
+ * writes nothing, or (with `type`) one that does not write assets of that type.
+ */
+export function assertAdapterWrites(source: WriteTargetSource, type?: string): void {
+  const adapter = writerOf(source);
+  const writes = adapter.writes ?? [];
+  if (writes.length > 0 && (type === undefined || writes.includes(type))) return;
   throw new UsageError(
-    `Bundle "${source.name}" uses adapter "${source.adapterId}", which does not support AKM asset writes.`,
+    writes.length === 0
+      ? `Bundle "${source.name}" uses adapter "${adapter.id}", which does not support AKM asset writes.`
+      : `Bundle "${source.name}" uses adapter "${adapter.id}", which does not write ${type} assets.`,
     "INVALID_FLAG_VALUE",
   );
+}
+
+/** What a write is, for the checks a target passes: an asset of a type, or a plain file (any bundle that takes writes). */
+export interface WriteKind {
+  /** The type of the asset the write creates or changes. Absent: an asset of any type the adapter writes. */
+  assetType?: string;
+  /** A plain file, not an asset: the adapter is not asked. */
+  plain?: boolean;
 }
 
 /**
@@ -333,9 +362,9 @@ export function assertAkmAssetWrite(source: WriteTargetSource, allowedAdapters: 
  */
 function checkWriteTarget(
   target: ResolvedWriteTarget,
-  options: { allowedAdapters?: readonly string[] } = {},
+  kind: WriteKind = {},
 ): { target: ResolvedWriteTarget; repoPath?: string } {
-  assertAkmAssetWrite(target.source, options.allowedAdapters);
+  if (!kind.plain) assertAdapterWrites(target.source, kind.assetType);
   if (target.source.kind !== "git") return { target };
 
   const contentRoot = path.resolve(target.source.path);
@@ -383,11 +412,8 @@ export function inspectWriteTarget(
 }
 
 /** Validate a write target before a command mutates it: the read-only checks, then an advisory upstream check. */
-export function prepareWriteTargetForMutation(
-  target: ResolvedWriteTarget,
-  options: { allowedAdapters?: readonly string[] } = {},
-): ResolvedWriteTarget {
-  const { repoPath } = checkWriteTarget(target, options);
+export function prepareWriteTargetForMutation(target: ResolvedWriteTarget, kind: WriteKind = {}): ResolvedWriteTarget {
+  const { repoPath } = checkWriteTarget(target, kind);
   if (repoPath === undefined) return target;
   const contentRoot = path.resolve(target.source.path);
   try {
@@ -418,30 +444,107 @@ export function prepareWriteTargetForMutation(
 // ── Writing assets ──────────────────────────────────────────────────────────
 
 /**
- * Write a textual asset into `source` at the path implied by `ref`: refuses a
- * non-writable config, rejects any kind but `filesystem` / `git`, then writes
- * atomically inside the bundle root. No commit runs here for any kind; a git
- * target records the path for {@link commitWriteTargetBoundary}.
+ * An asset write a bundle's adapter makes. `exclusive` refuses to replace an
+ * existing asset; `revision` (the SHA-256 of the content the writer last saw,
+ * {@link assetRevision}) refuses to change an asset whose content has changed
+ * since. Both are checked with the content the write replaces.
  */
+export type AssetOperation =
+  | { op: "create"; asset: NewAsset; exclusive?: boolean }
+  | { op: "update"; conceptId: string; content: string | Buffer; revision?: string }
+  | { op: "retire"; conceptId: string; revision?: string };
+
+/** An asset's revision: the SHA-256 of its content. */
+export function assetRevision(content: string | Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+/**
+ * Create, update or retire an asset of `source` through the bundle's adapter,
+ * after the gates every asset write passes. The files it changed are recorded
+ * for the target's boundary commit ({@link commitWriteTargetBoundary}); none
+ * is committed here.
+ */
+export function writeAsset(
+  source: WriteTargetSource,
+  config: SourceConfigEntry,
+  operation: AssetOperation,
+): AssetChange {
+  assertPlainWritable(source, config);
+  const adapter = writerOf(source);
+  const component = componentOf(source, adapter.id);
+  const type =
+    operation.op === "create" ? operation.asset.type : existingAssetType(adapter, component, operation.conceptId);
+  assertAdapterWrites(source, type);
+  if (operation.op === "create" && operation.exclusive) {
+    const conceptId = conceptIdFromTypeName(operation.asset.type, operation.asset.name);
+    if (adapter.read(component, conceptId, { includeSensitive: true })) {
+      throw new UsageError(`Asset "${source.name}//${conceptId}" already exists.`, "RESOURCE_ALREADY_EXISTS");
+    }
+  }
+  if (operation.op !== "create" && operation.revision !== undefined) {
+    const current = adapter.read(component, operation.conceptId, { includeSensitive: true })?.file.content();
+    if (current === undefined || assetRevision(current) !== operation.revision) {
+      throw new UsageError(
+        `Asset "${source.name}//${operation.conceptId}" changed since it was read; the change was not applied.`,
+        "ASSET_CONTENT_CHANGED",
+      );
+    }
+  }
+  const change =
+    operation.op === "create"
+      ? (adapter.create as NonNullable<BundleAdapter["create"]>)(component, operation.asset)
+      : operation.op === "update"
+        ? (adapter.update as NonNullable<BundleAdapter["update"]>)(component, operation.conceptId, operation.content)
+        : (adapter.retire as NonNullable<BundleAdapter["retire"]>)(component, operation.conceptId);
+  for (const file of change.changed) {
+    recordWriteTargetPath(source, file);
+    // Run-scoped write provenance (#652).
+    recordWrittenPath(file);
+  }
+  return change;
+}
+
+/**
+ * {@link writeAsset} under the asset-mutation lease, committed at the target's
+ * boundary: one asset write as a whole operation.
+ */
+export function changeAsset(
+  target: ResolvedWriteTarget,
+  operation: AssetOperation,
+  options: { purpose: string; message: string },
+): AssetChange {
+  return withAssetMutationLeaseSync(options.purpose, () => {
+    const change = writeAsset(target.source, target.config, operation);
+    commitWriteTargetBoundary(target, options.message);
+    return change;
+  });
+}
+
+/** The type of the asset `conceptId` names in the bundle, refused when there is none. */
+function existingAssetType(adapter: BundleAdapter, component: BundleComponent, conceptId: string): string {
+  const asset = adapter.read(component, conceptId, { includeSensitive: true });
+  if (!asset) throw new NotFoundError(`Asset not found: ${component.id}//${conceptId}`);
+  const type = adapter.recognize(component, asset.file)?.type ?? declaredTypeForPath(asset.file);
+  if (!type) throw new UsageError(`Bundle adapter "${adapter.id}" does not recognize ${conceptId} as an asset.`);
+  return type;
+}
+
+/** Write a textual asset of `ref`'s type and name into `source`. No commit runs here. */
 export async function writeAssetToSource(
   source: WriteTargetSource,
   config: SourceConfigEntry,
   ref: AssetRef,
   content: string,
 ): Promise<{ path: string; ref: string }> {
-  assertWritableSource(source, config);
-  const filePath = resolveAssetFilePath(source, ref);
-  writeSourceFile(source, filePath, content, formatRefForMessage(ref), ref.type);
-  return {
-    path: filePath,
-    ref: displayRef({ conceptId: conceptIdFromTypeName(ref.type, ref.name), bundleId: ref.origin }),
-  };
+  const change = writeAsset(source, config, { op: "create", asset: { type: ref.type, name: ref.name, content } });
+  return { path: change.path, ref: displayRef({ conceptId: change.conceptId, bundleId: ref.origin }) };
 }
 
-/** The gates an asset write passes: {@link assertPlainWritable}, and an adapter that takes AKM asset writes. */
-export function assertWritableSource(source: WriteTargetSource, config: SourceConfigEntry): void {
+/** The gates an asset write passes: {@link assertPlainWritable}, and an adapter that writes assets of `type`. */
+export function assertWritableSource(source: WriteTargetSource, config: SourceConfigEntry, type?: string): void {
   assertPlainWritable(source, config);
-  assertAkmAssetWrite(source);
+  assertAdapterWrites(source, type);
 }
 
 /** The gates of a plain file write: the source takes writes and is a kind akm writes, whatever its adapter. */
@@ -483,28 +586,15 @@ export function writeSourceFile(
   }
 }
 
-/** Delete the asset at `ref` from `source`. Same gates as {@link writeAssetToSource}, no commit. */
+/** Retire the asset at `ref` from `source`. Same gates as {@link writeAssetToSource}, no commit. */
 export async function deleteAssetFromSource(
   source: WriteTargetSource,
   config: SourceConfigEntry,
   ref: AssetRef,
 ): Promise<{ path: string; ref: string }> {
-  assertWritableSource(source, config);
-
-  const filePath = resolveAssetFilePath(source, ref);
-  if (!fs.existsSync(filePath)) {
-    throw new UsageError(
-      `Asset "${formatRefForMessage(ref)}" not found in source "${source.name}" (expected at ${filePath}).`,
-      "MISSING_REQUIRED_ARGUMENT",
-    );
-  }
-  fs.unlinkSync(filePath);
-  recordWriteTargetPath(source, filePath);
-  recordWrittenPath(filePath);
-  return {
-    path: filePath,
-    ref: displayRef({ conceptId: conceptIdFromTypeName(ref.type, ref.name), bundleId: ref.origin }),
-  };
+  const conceptId = conceptIdFromTypeName(ref.type, ref.name);
+  const change = writeAsset(source, config, { op: "retire", conceptId });
+  return { path: change.path, ref: displayRef({ conceptId, bundleId: ref.origin }) };
 }
 
 function ensureWritable(source: WriteTargetSource, config: SourceConfigEntry): void {
@@ -523,60 +613,6 @@ function assertSupportedKind(source: WriteTargetSource): void {
     "INVALID_CONFIG_FILE",
     'Set `kind: "filesystem"` (or `kind: "git"`) on the source, or add a parallel filesystem entry.',
   );
-}
-
-/** MS-DOS device names Windows reserves in every directory, with or without an extension. */
-const WINDOWS_RESERVED_DEVICE_NAMES = new Set([
-  "con",
-  "prn",
-  "aux",
-  "nul",
-  ...Array.from({ length: 9 }, (_, i) => `com${i + 1}`),
-  ...Array.from({ length: 9 }, (_, i) => `lpt${i + 1}`),
-]);
-
-/** The on-disk path for `ref` inside `source`, refusing anything that escapes the type directory. */
-function resolveAssetFilePath(source: WriteTargetSource, ref: AssetRef): string {
-  const basename = path.posix.basename(ref.name.replaceAll("\\", "/")).replace(/\.md$/i, "").toLowerCase();
-  if (basename === "index" || basename === "log") {
-    warnOnce(
-      `write-source:reserved-basename:${basename}`,
-      `Concept name "${basename}" collides with a reserved word some tooling treats specially; writing it anyway.`,
-    );
-  }
-  if (WINDOWS_RESERVED_DEVICE_NAMES.has(basename)) {
-    warnOnce(
-      `write-source:windows-device-name:${basename}`,
-      `Asset name "${basename}" is a reserved Windows device name; writing it anyway, but this bundle will not be portable to Windows.`,
-    );
-  }
-  const typeDir = stashDirFor(ref.type);
-  if (!typeDir) {
-    throw new UsageError(`Unknown asset type "${ref.type}". Cannot resolve a write path.`, "INVALID_FLAG_VALUE");
-  }
-  const typeRoot = path.join(source.path, typeDir);
-  const assetPath = assetPathForName(ref.type, typeRoot, ref.name);
-  if (!isWithin(assetPath, typeRoot)) {
-    throw new UsageError(
-      `Resolved asset path escapes its source: "${ref.name}" in source "${source.name}".`,
-      "PATH_ESCAPE_VIOLATION",
-    );
-  }
-  return assetPath;
-}
-
-/**
- * Matches an absolute host home path (`/home/<user>`, `/Users/<user>`) with at
- * least one user segment. Deliberately does not exempt fenced code, so content
- * that documents such a path can trip it; the advisory is non-fatal.
- */
-const ABSOLUTE_HOME_PATH_RE = /\/(?:home|Users)\/[^\s/"'`)\]}<>|:;,]+/g;
-
-/** Distinct `/home/<user>` / `/Users/<user>` prefixes in `content`, first-seen order. */
-export function findAbsoluteHomePaths(content: string): string[] {
-  const seen = new Set<string>();
-  for (const match of content.matchAll(ABSOLUTE_HOME_PATH_RE)) seen.add(match[0]);
-  return [...seen];
 }
 
 /** `[origin//]conceptId` for a commit subject, each component sanitized against CR/LF/NUL smuggling. */
@@ -608,39 +644,13 @@ export function recordWriteTargetPath(source: WriteTargetSource, filePath: strin
   pendingGitPaths.set(repoDir, pending);
 }
 
-function lstatOrNull(filePath: string): fs.Stats | null {
-  try {
-    return fs.lstatSync(filePath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
-}
-
 /**
  * Refuse a write path outside the source root, or one that passes through a
  * symbolic link below it (a linked directory would redirect the write out of
  * the bundle). The source root itself may be a symlink.
  */
 export function assertWritePathsInsideSource(source: WriteTargetSource, filePaths: readonly string[]): void {
-  const lexicalRoot = path.resolve(source.path);
-  // A root that is not on disk (a location bundle's) holds no link to follow.
-  const canonicalRoot = safeRealpath(lexicalRoot);
-  for (const filePath of filePaths) {
-    const relative = relativeToRoot(filePath, lexicalRoot) ?? "..";
-    if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      throw new UsageError(`Write path resolves outside source "${source.name}".`, "PATH_ESCAPE_VIOLATION");
-    }
-    let current = canonicalRoot;
-    for (const segment of relative.split(path.sep)) {
-      current = path.join(current, segment);
-      const stat = lstatOrNull(current);
-      if (!stat) break;
-      if (stat.isSymbolicLink()) {
-        throw new UsageError(`Write path contains a symbolic link below source "${source.name}": ${relative}`);
-      }
-    }
-  }
+  for (const filePath of filePaths) assertWritableFile(source.path, source.name, filePath);
 }
 
 /**

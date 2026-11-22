@@ -28,7 +28,8 @@ import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { perTypeDiagnostics } from "./akm-lint";
-import { directoryEntries } from "./directory-entries";
+import { workflowBundleWrites } from "./akm-writes";
+import { directoryAdapter } from "./directory-assets";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, readTags } from "./shared";
 
 /** A native workflow bundle is single-component; its one component is `main`. */
@@ -149,8 +150,8 @@ function hasTopLevelWorkflowFile(root: string, entries: fs.Dirent[]): boolean {
   return false;
 }
 
-export const akmWorkflowAdapter: BundleAdapter = {
-  ...directoryEntries(),
+export const akmWorkflowAdapter: BundleAdapter = directoryAdapter({
+  writes: workflowBundleWrites,
   id: "akm-workflow",
   version: "0.9.2",
   extensions: [".md"],
@@ -184,4 +185,4 @@ export const akmWorkflowAdapter: BundleAdapter = {
     }
     return hasTopLevelWorkflowFile(root, entries);
   },
-};
+});

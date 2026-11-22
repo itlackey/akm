@@ -103,7 +103,7 @@ export async function copyEntry(input: CopyEntryInput) {
 
   return interactive("ui-file-copy", async () => {
     const resolved = resolveBundleWriteTarget(config, toBundle, { requireWritable: true });
-    const target = prepareWriteTargetForMutation(resolved, { allowedAdapters: [resolved.source.adapterId ?? "akm"] });
+    const target = prepareWriteTargetForMutation(resolved, { plain: true });
     assertPlainWritable(target.source, target.config);
     const root = target.source.path;
     const destination = path.join(root, folder, name);

@@ -79,7 +79,7 @@ import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { directoryEntries } from "./directory-entries";
+import { directoryAdapter } from "./directory-assets";
 import { hashContent, nonEmptyString } from "./shared";
 
 /** A wiki is a single-component bundle; its one component is conventionally `main` (recognition golden). */
@@ -402,8 +402,7 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
   return diagnostics;
 }
 
-export const llmWikiAdapter: BundleAdapter = {
-  ...directoryEntries(),
+export const llmWikiAdapter: BundleAdapter = directoryAdapter({
   id: "llm-wiki",
   version: "0.9.0",
   extensions: [".md"],
@@ -423,7 +422,7 @@ export const llmWikiAdapter: BundleAdapter = {
 
   /** Install-time probe (§1.2): a root is an LLM Wiki when it has a root `schema.md` AND a `pages/` directory. */
   looksLikeRoot: looksLikeLlmWikiRoot,
-};
+});
 
 // Exported pure helpers for the conformance test.
 export { resolveBodyLinks, resolvePageLinks, resolveSources, resolveXref };

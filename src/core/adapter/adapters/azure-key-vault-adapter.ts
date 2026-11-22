@@ -13,20 +13,22 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { BundleAdapter } from "../bundle-adapter";
+import { NotFoundError } from "../../errors";
+import type { AssetChange, BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent } from "../types";
 import {
   type Client,
   clientFailure,
   listSecrets,
   locationOf,
+  newSecretName,
   recognizeSecret,
   requireClient,
   requireSecretName,
   runClient,
-  secretEntryContext,
+  secretAsset,
+  secretChange,
   secretNameOf,
-  secretReadCandidates,
 } from "./secret-client-shared";
 
 const ID = "azure-key-vault";
@@ -49,10 +51,34 @@ function show(vault: string, name: string): string | undefined {
   throw clientFailure(AZ, `read "${name}"`, result);
 }
 
+/** Store `content` as the secret `name`. */
+function store(c: BundleComponent, name: string, content: string | Buffer): AssetChange {
+  // `az` takes a value as an argument or from a file. An argument is readable by other
+  // processes, so the value goes through a file only this user can read, removed afterwards.
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "akm-secret-"));
+  try {
+    const file = path.join(directory, "value");
+    fs.writeFileSync(file, content, { mode: 0o600 });
+    requireClient(AZ, `store "${name}"`, [
+      ...secretArgs("set", vaultOf(c), name),
+      "--file",
+      file,
+      "--encoding",
+      "utf-8",
+      "--output",
+      "none",
+    ]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+  return secretChange(c, name);
+}
+
 export const azureKeyVaultAdapter: BundleAdapter = {
   id: ID,
   version: "0.10.0",
   extensions: [],
+  writes: ["secret"],
 
   list(c) {
     return listSecrets(
@@ -76,42 +102,11 @@ export const azureKeyVaultAdapter: BundleAdapter = {
     );
   },
 
-  entry(c, entry) {
-    const name = secretNameOf(entry);
+  read(c, conceptId) {
+    const name = secretNameOf(conceptId);
     // Finding a secret reads it: one request, which `content()` then answers from.
     const value = name === undefined ? undefined : show(vaultOf(c), name);
-    return value === undefined ? undefined : secretEntryContext(c, entry, () => value);
-  },
-
-  write(c, entry, content) {
-    const name = requireSecretName(entry);
-    // `az` takes a value as an argument or from a file. An argument is readable by other
-    // processes, so the value goes through a file only this user can read, removed afterwards.
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "akm-secret-"));
-    try {
-      const file = path.join(directory, "value");
-      fs.writeFileSync(file, content, { mode: 0o600 });
-      requireClient(AZ, `store "${name}"`, [
-        ...secretArgs("set", vaultOf(c), name),
-        "--file",
-        file,
-        "--encoding",
-        "utf-8",
-        "--output",
-        "none",
-      ]);
-    } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
-  },
-
-  remove(c, entry) {
-    const name = secretNameOf(entry);
-    if (name === undefined) return false;
-    const result = runClient(AZ, [...secretArgs("delete", vaultOf(c), name), "--output", "none"]);
-    if (result.status === 0) return true;
-    if (result.stderr.includes(NOT_FOUND)) return false;
-    throw clientFailure(AZ, `delete "${name}"`, result);
+    return name === undefined || value === undefined ? undefined : secretAsset(c, name, () => value);
   },
 
   recognize: (c, file) => recognizeSecret(ID, c, file.relPath),
@@ -120,5 +115,19 @@ export const azureKeyVaultAdapter: BundleAdapter = {
     return [];
   },
 
-  readCandidates: secretReadCandidates,
+  create: (c, asset) => store(c, newSecretName(asset, ID), asset.content),
+
+  update(c, conceptId, content) {
+    const name = requireSecretName(conceptId);
+    if (show(vaultOf(c), name) === undefined) throw new NotFoundError(`Secret not found: ${c.id}//${conceptId}`);
+    return store(c, name, content);
+  },
+
+  retire(c, conceptId) {
+    const name = requireSecretName(conceptId);
+    const result = runClient(AZ, [...secretArgs("delete", vaultOf(c), name), "--output", "none"]);
+    if (result.status === 0) return secretChange(c, name);
+    if (result.stderr.includes(NOT_FOUND)) throw new NotFoundError(`Secret not found: ${c.id}//${conceptId}`);
+    throw clientFailure(AZ, `delete "${name}"`, result);
+  },
 };

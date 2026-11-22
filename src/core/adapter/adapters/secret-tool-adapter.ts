@@ -18,19 +18,20 @@
  * because `secret-tool clear` deletes every match in every keyring.
  */
 
-import { ConfigError } from "../../errors";
-import type { BundleAdapter } from "../bundle-adapter";
+import { ConfigError, NotFoundError } from "../../errors";
+import type { AssetChange, BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent } from "../types";
 import {
   type Client,
   listSecrets,
   locationOf,
+  newSecretName,
   recognizeSecret,
   requireClient,
   requireSecretName,
-  secretEntryContext,
+  secretAsset,
+  secretChange,
   secretNameOf,
-  secretReadCandidates,
 } from "./secret-client-shared";
 
 const ID = "secret-tool";
@@ -106,10 +107,24 @@ function lookup(item: KeyringItem): string {
   return requireClient(SECRET_TOOL, `read "${item.label}"`, ["lookup", ...attributePairs(item)]);
 }
 
+/** Store `content` as the secret `name`: into its existing entry, or a new one akm can find again. */
+function store(c: BundleComponent, name: string, content: string | Buffer): AssetChange {
+  const keyring = keyringOf(c);
+  const item = findItem(keyring, name) ?? { label: name, attributes: { [CREATED_ATTRIBUTE]: `${keyring}/${name}` } };
+  requireClient(
+    SECRET_TOOL,
+    `store "${name}"`,
+    ["store", `--collection=${keyring}`, `--label=${name}`, ...attributePairs(item)],
+    Buffer.from(content),
+  );
+  return secretChange(c, name);
+}
+
 export const secretToolAdapter: BundleAdapter = {
   id: ID,
   version: "0.10.0",
   extensions: [],
+  writes: ["secret"],
 
   list(c) {
     let items: KeyringItem[] = [];
@@ -123,27 +138,31 @@ export const secretToolAdapter: BundleAdapter = {
     );
   },
 
-  entry(c, entry) {
-    const item = findItem(keyringOf(c), secretNameOf(entry));
-    return item && secretEntryContext(c, entry, () => lookup(item));
+  read(c, conceptId) {
+    const name = secretNameOf(conceptId);
+    const item = findItem(keyringOf(c), name);
+    return item && secretAsset(c, item.label, () => lookup(item));
   },
 
-  write(c, entry, content) {
-    const keyring = keyringOf(c);
-    const name = requireSecretName(entry);
-    const item = findItem(keyring, name) ?? { label: name, attributes: { [CREATED_ATTRIBUTE]: `${keyring}/${name}` } };
-    requireClient(
-      SECRET_TOOL,
-      `store "${name}"`,
-      ["store", `--collection=${keyring}`, `--label=${name}`, ...attributePairs(item)],
-      content,
-    );
+  recognize: (c, file) => recognizeSecret(ID, c, file.relPath),
+
+  async validate() {
+    return [];
   },
 
-  remove(c, entry) {
+  create: (c, asset) => store(c, newSecretName(asset, ID), asset.content),
+
+  update(c, conceptId, content) {
+    const name = requireSecretName(conceptId);
+    if (!findItem(keyringOf(c), name)) throw new NotFoundError(`Secret not found: ${c.id}//${conceptId}`);
+    return store(c, name, content);
+  },
+
+  retire(c, conceptId) {
     const keyring = keyringOf(c);
-    const item = findItem(keyring, secretNameOf(entry));
-    if (!item) return false;
+    const name = requireSecretName(conceptId);
+    const item = findItem(keyring, name);
+    if (!item) throw new NotFoundError(`Secret not found: ${c.id}//${conceptId}`);
     // `Delete` answers with the prompt it needs, or "/" when it has deleted the item.
     const [prompt] = bus<[string]>(`delete "${item.label}"`, [
       "call",
@@ -159,14 +178,6 @@ export const secretToolAdapter: BundleAdapter = {
         "Unlock the keyring and try again.",
       );
     }
-    return true;
+    return secretChange(c, name);
   },
-
-  recognize: (c, file) => recognizeSecret(ID, c, file.relPath),
-
-  async validate() {
-    return [];
-  },
-
-  readCandidates: secretReadCandidates,
 };

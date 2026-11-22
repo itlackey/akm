@@ -72,7 +72,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
 
   const config = loadConfig();
   const resolvedTarget = resolveWriteTarget(config);
-  const target = prepareWriteTargetForMutation(resolvedTarget, { allowedAdapters: ["akm", "akm-workflow"] });
+  const target = prepareWriteTargetForMutation(resolvedTarget, { assetType: "workflow" });
   const bundleDir = target.source.path;
   const standaloneWorkflowBundle = target.source.adapterId === "akm-workflow";
   const typeRoot = standaloneWorkflowBundle ? bundleDir : path.join(bundleDir, "workflows");

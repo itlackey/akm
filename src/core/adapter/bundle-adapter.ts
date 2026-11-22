@@ -3,48 +3,29 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `BundleAdapter` interface — one interface, optional capability methods.
+ * The `BundleAdapter` interface: the one layer through which the rest of akm
+ * works with a bundle's assets, whatever keeps them.
  *
- * Member-by-member required/optional status:
+ * An adapter owns the mechanics of its bundles: how assets are listed, read,
+ * described for the index, created, updated and retired. Everything outside
+ * the adapter calls these members and never asks which adapter it has or how
+ * the bundle is stored. A directory bundle's adapter keeps assets as files
+ * (`adapters/directory-assets.ts` implements the mechanics every directory
+ * adapter shares); an adapter may keep them elsewhere, such as an OS keyring
+ * or a cloud vault.
  *
- *   id, version, extensions .......... REQUIRED (readonly fields)
- *   list / entry / write / remove ..... REQUIRED
- *   recognize ......................... REQUIRED
- *   validate .......................... REQUIRED
- *   readCandidates / directoryList / looksLikeRoot ... optional
+ *   id, version, extensions ........... REQUIRED (readonly fields)
+ *   list ............................... REQUIRED  every asset entry, for the index
+ *   read ............................... REQUIRED  one asset, by its concept id
+ *   recognize .......................... REQUIRED  an entry's metadata for the index
+ *   validate ........................... REQUIRED  native validation
+ *   writes + create / update / retire .. optional  absent: the adapter is read-only
+ *   renderExecutionSource .............. optional  agent/command runtime source
+ *   readCandidates / directoryList / looksLikeRoot ... optional, directory adapters
  *
- * The adapter is the only way to a bundle's entries. The core lists, finds,
- * writes and removes them through `list`, `entry`, `write` and `remove`, and
- * never assumes the bundle is a directory. An entry is named by its path
- * inside the bundle (POSIX separators), the path a ref is derived from. The
- * adapters of a directory bundle share one file implementation
- * (`adapters/directory-entries.ts`); an adapter of a bundle kept elsewhere (an
- * OS keyring, a cloud vault) implements the four over that store.
- *
- * `renderExecutionSource` and `readCandidates` are two independent optional
- * read/runtime facets: `renderExecutionSource` serves the agent/command design,
- * and `readCandidates` makes an adapter's closed-form set of physical
- * spellings for one concept id explicit without changing write placement
- * (#857: this is the ONLY read-candidate surface — it is inverted from the
- * concept id, so it needs no bundle walk). This does not change the indexing or
- * validation contract.
- *
- * The optional authoring, export and memory facet methods are not declared
- * here: no adapter implements them, and their parameter types would be
- * shapeless placeholders. Each facet adds its method + a real type when it is
- * built.
- *
- * `recognize` takes `FileContext` (`src/indexer/walk/file-context.ts`)
- * as-is — a core->indexer layering import, taken
- * `import type` so it is erased at build time and adds no runtime edge.
- * FileContext arguably belongs in core long-term.
- *
- * `FileChange` is reused as-is from `../file-change.ts` (a
- * deliberately dependency-free type) — not re-minted here.
- *
- * No concrete adapter is implemented here — this is the contract only; the
- * live indexer's per-dir `drainDirDocuments` × `adapter.recognize` is the core
- * scan engine.
+ * An asset is addressed by its concept id: the ref without its bundle. An
+ * entry is the `FileContext` holding an asset: `relPath` is the path it is
+ * indexed under, and `content()` reads it once, when asked.
  */
 
 import type { AdapterRenderedExecutionSource } from "../../execution/source";
@@ -54,6 +35,7 @@ import type { AdapterRenderedExecutionSource } from "../../execution/source";
 // since nothing in `src/` imports FROM `src/core/adapter/` yet, only this
 // WI's test does).
 import type { FileContext } from "../../indexer/walk/file-context";
+import type { WorkflowSourceFile } from "../../workflows/source-files";
 import type { FileChange } from "../file-change";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "./types";
 
@@ -72,6 +54,45 @@ export interface BundleListing {
   incompleteReason?: string;
 }
 
+/** One asset of a bundle, as its adapter reads it. */
+export interface BundleAsset {
+  conceptId: string;
+  /** The entry holding it. */
+  file: FileContext;
+  /** For a workflow: the one source file among its peer formats that holds it. */
+  workflowSource?: WorkflowSourceFile;
+  /** Whether `list` lists the asset. Absent: it does. An asset `read` finds but `list` leaves out is not indexed. */
+  listed?(): boolean;
+}
+
+export interface AssetReadOptions {
+  /**
+   * When more than one entry holds the asset: `"read"` warns and reads the first; otherwise the read is refused
+   * (a write must not pick one of two copies).
+   */
+  mode?: "read" | "write";
+  /** Also read an env file or secret that a `.sensitive` marker hides from the index. For a run or an injection. */
+  includeSensitive?: boolean;
+}
+
+/** An asset to create: its type and its name within that type (`env/prod` is type `env`, name `prod`). */
+export interface NewAsset {
+  type: string;
+  name: string;
+  content: string | Buffer;
+  /** Keep the asset out of the index and listings; it is still read by its ref. */
+  sensitive?: boolean;
+}
+
+/** What a write did. */
+export interface AssetChange {
+  conceptId: string;
+  /** The asset's entry path: the path it is indexed under. */
+  path: string;
+  /** The files the write changed, for the bundle's commit boundary. Empty when the bundle is not a directory. */
+  changed: string[];
+}
+
 export interface BundleAdapter {
   readonly id: string;
   /** Feeds incrementality (§4) + fingerprints. */
@@ -79,26 +100,18 @@ export interface BundleAdapter {
   /** Recognized extensions; longest-match stripping + collision priority. */
   readonly extensions: readonly string[];
   /**
-   * How the core walk enumerates this adapter's bundle. Omitted: the akm-bundle
-   * walk (skips dot-directories, `bin/`, `.cache/`; lists git-ignored `env/` and
+   * How a directory adapter lists its bundle. Omitted: the akm-bundle walk
+   * (skips dot-directories, `bin/`, `.cache/`; lists git-ignored `env/` and
    * `secrets/` files). `"all-directories"`: every directory except `.git` and
    * `node_modules`, with no special `env/`/`secrets/` listing.
    */
   readonly walkMode?: "all-directories";
 
-  // REQUIRED — access to the bundle's entries. `entry` arguments are paths
-  // inside the bundle, the `relPath` of the entry's `FileContext`.
-  /** Every entry of the bundle. The indexer hands each to `recognize`. */
+  // REQUIRED — listing and reading.
+  /** Every entry of the bundle. The indexer describes each with `recognize`. */
   list(c: BundleComponent): BundleListing;
-  /**
-   * The entry at `entry`, or undefined when the bundle has none. Its
-   * `content()` is the entry's text, read once.
-   */
-  entry(c: BundleComponent, entry: string): FileContext | undefined;
-  /** Create the entry, or replace it. A written entry is readable by its owner only. */
-  write(c: BundleComponent, entry: string, content: Buffer): void;
-  /** Delete the entry. False when the bundle had none. */
-  remove(c: BundleComponent, entry: string): boolean;
+  /** The asset `conceptId` names, or undefined when the bundle has none. */
+  read(c: BundleComponent, conceptId: string, options?: AssetReadOptions): BundleAsset | undefined;
 
   // REQUIRED — the single-file recognition primitive; replaces the matcher
   // stack (matchers.ts:151-305; file-context.ts:242-265).
@@ -111,6 +124,17 @@ export interface BundleAdapter {
   // existence (normative §12.1). Cross-component ref existence is a CORE
   // base check, not an adapter concern.
   validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]>;
+
+  // OPTIONAL — writing. `writes` lists the asset types the adapter creates,
+  // updates and retires, and an adapter that lists any implements all three.
+  // Without it the adapter is read-only.
+  readonly writes?: readonly string[];
+  /** Create the asset; one of the same type and name is replaced. */
+  create?(c: BundleComponent, asset: NewAsset): AssetChange;
+  /** Replace the content of the asset `conceptId` holds. */
+  update?(c: BundleComponent, conceptId: string, content: string | Buffer): AssetChange;
+  /** Take the asset out of the bundle. */
+  retire?(c: BundleComponent, conceptId: string): AssetChange;
 
   // OPTIONAL — runtime translation for executable agent assets. The adapter
   // receives the authoritative native file and returns only a branded,

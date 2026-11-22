@@ -133,14 +133,11 @@ export async function createFile(input: CreateFileInput) {
     const blocker = folderBlocker(folder) ?? plainWriteBlocker(config, bundle);
     if (blocker !== null) throw new UsageError(blocker);
     const { type, fileName } = planNewFile(folder, name);
-    // A file of no type is a plain file; a typed asset goes through akm's writer, which takes akm bundles only.
+    // A file of no type is a plain file; a typed asset is written by the bundle's adapter, which must write that type.
     const resolved = resolveBundleWriteTarget(config, bundle, { requireWritable: true });
-    const target = prepareWriteTargetForMutation(
-      resolved,
-      type === null ? { allowedAdapters: [resolved.source.adapterId ?? "akm"] } : undefined,
-    );
+    const target = prepareWriteTargetForMutation(resolved, type === null ? { plain: true } : { assetType: type });
     if (type === null) assertPlainWritable(target.source, target.config);
-    else assertWritableSource(target.source, target.config);
+    else assertWritableSource(target.source, target.config, type);
     if (type === "skill" && fileName !== "SKILL.md")
       throw new UsageError("A skill is a folder with a SKILL.md: create the folder first.");
     const root = target.source.path;

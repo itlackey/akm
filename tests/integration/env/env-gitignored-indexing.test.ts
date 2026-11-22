@@ -17,10 +17,10 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { setSecret } from "../../../src/commands/env/secret";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../../src/llm/embedder";
 import { runCliCapture } from "../../_helpers/cli";
 import { makeSandboxDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
+import { writeSecretFile } from "../../_helpers/secret-file";
 
 const ENV_VALUE = "postgres://user:hunter2-do-not-leak@db.internal/app";
 const SECRET_VALUE = "correct-horse-battery-staple-secret-do-not-leak";
@@ -66,7 +66,7 @@ describe("git-ignored env/ and secrets/ are indexed", () => {
 
         fs.mkdirSync(path.join(bundleDir, "env"), { recursive: true });
         fs.writeFileSync(path.join(bundleDir, "env", "staging.env"), `DATABASE_URL=${ENV_VALUE}\nLOG_LEVEL=debug\n`);
-        setSecret(path.join(bundleDir, "secrets", "deploy-key"), Buffer.from(SECRET_VALUE));
+        writeSecretFile(path.join(bundleDir, "secrets", "deploy-key"), Buffer.from(SECRET_VALUE));
 
         // Both files really are git-ignored.
         for (const rel of ["env/staging.env", "secrets/deploy-key"]) {

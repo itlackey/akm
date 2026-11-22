@@ -39,7 +39,7 @@ import { getStateDbPath, withImmediateTransaction, withStateDb } from "../../cor
 import { warn } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import {
-  assertAkmAssetWrite,
+  assertAdapterWrites,
   assertWritePathsInsideSource,
   type CommitOutcome,
   commitAcceptedPaths,
@@ -1445,7 +1445,7 @@ export function preflightProposalPromotion(
   if (!assetPath) {
     throw new UsageError(`Proposal ${proposal.id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
-  assertAkmAssetWrite(target.source);
+  assertAdapterWrites(target.source);
   const markdown = assetPath.toLowerCase().endsWith(".md");
   let stampedContent = markdown
     ? stampProposalProvenance(repairedContent, prepared, options.gateDecision, ctx, nowIso(ctx))
@@ -1732,7 +1732,7 @@ async function promoteProposalWithLease(
   const assetPath = resolveAssetFilePathSafe(mutationTarget.source, proposal.ref);
   if (!assetPath) throw new UsageError(`Cannot resolve proposal target ${proposal.ref}.`, "INVALID_PROPOSAL");
   const backup = readFreshProposalTarget(proposal, assetPath, preflight.stampedContent);
-  assertAkmAssetWrite(mutationTarget.source);
+  assertAdapterWrites(mutationTarget.source);
   const refIdentity = proposalRefIdentity(preflight.proposal.ref);
   const proposalForMutation: Proposal =
     refIdentity?.bundle === undefined
@@ -2041,7 +2041,7 @@ async function retireProposalWithLease(
         "INVALID_FLAG_VALUE",
       );
     }
-    assertAkmAssetWrite(target.source);
+    assertAdapterWrites(target.source);
     // Phase 1: record intent BEFORE any move, and BEFORE the supersede edge:
     // `backupContent` is `currentBytes`, read
     // above, before any mutation of this file. Recording first means a crash
@@ -2061,7 +2061,7 @@ async function retireProposalWithLease(
       }
     }
   } else {
-    assertAkmAssetWrite(target.source);
+    assertAdapterWrites(target.source);
     assertRetiringTaskUnchanged(ref, intent, proposal);
     // Revalidate the survivor even after a partial archive. The recorded original
     // is the judged retired side when its file has already moved.

@@ -41,7 +41,7 @@ describe("buildShellExportScript (real bash)", () => {
     // shell unescaped. The export script must keep it a literal string.
     const evidence = path.join(dir, "evidence");
     fs.writeFileSync(fp, `EVIL=$(touch ${evidence})\nOK=ok-value\n`);
-    const script = buildShellExportScript(fp);
+    const script = buildShellExportScript(fs.readFileSync(fp, "utf8"));
     const scriptPath = path.join(dir, "eval-me.sh");
     fs.writeFileSync(scriptPath, script);
 

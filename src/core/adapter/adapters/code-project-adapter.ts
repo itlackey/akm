@@ -36,7 +36,7 @@ import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, IndexDocument } from "../types";
-import { directoryEntries } from "./directory-entries";
+import { directoryAdapter } from "./directory-assets";
 import { hashContent, nonEmptyString, readTags, validateChangesWithBaseChecks } from "./shared";
 
 const LANGUAGE_BY_EXTENSION: Readonly<Record<string, string>> = {
@@ -204,12 +204,12 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   return doc;
 }
 
-export const codeProjectAdapter: BundleAdapter = {
+export const codeProjectAdapter: BundleAdapter = directoryAdapter({
   id: "code-project",
   version: "0.10.0",
   // The files `validate` checks; the walk and `recognize` decide what is indexed.
   extensions: [...MARKDOWN_EXTENSIONS],
-  ...directoryEntries("all-directories"),
+  walkMode: "all-directories",
 
   recognize,
 
@@ -223,4 +223,4 @@ export const codeProjectAdapter: BundleAdapter = {
     ),
 
   readCandidates: (c, conceptId) => [{ path: path.join(c.root, conceptId), conceptId }],
-};
+});

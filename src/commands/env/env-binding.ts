@@ -21,10 +21,9 @@ import { isInstalledBundle, makeEnvRef, resolveEnvPath, resolveRefOwner } from "
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { substituteRefTokens } from "../../core/ref-token";
-import { readValue } from "../../core/secret-value";
 import { stderr } from "../../core/stdio";
 import { warnOnce } from "../../core/warn";
-import { loadEnv } from "./env";
+import { parseEnvText } from "./env";
 
 /** The retired `${secret:NAME}` env-value token (see `resolveEnvBinding`). */
 const LEGACY_SECRET_TOKEN_RE = /\$\{secret:([^}\s]+)\}/g;
@@ -51,7 +50,7 @@ export function resolveRefToken(
   const owner = resolveRefOwner(ref);
   if (owner === undefined) return undefined;
   return owner.type === "secret"
-    ? { kind: "secret", value: readValue(owner.absPath) }
+    ? { kind: "secret", value: owner.secretValue() }
     : { kind: "path", path: owner.absPath };
 }
 
@@ -73,10 +72,10 @@ export interface ResolveEnvBindingOptions {
  */
 export function resolveEnvBinding(target: string, options: ResolveEnvBindingOptions = {}): ResolvedEnvBinding {
   const warn = options.warn ?? ((message: string) => stderr().write(`warning: ${message}\n`));
-  const { conceptId, absPath, source, bundleId } = resolveEnvPath(target);
+  const { conceptId, source, bundleId, content } = resolveEnvPath(target);
   const envRef = makeEnvRef(conceptId, source);
 
-  const allValues = loadEnv(absPath);
+  const allValues = parseEnvText(content());
 
   // Value-safe key filtering (--only / --except operate on key NAMES only).
   let envValues = allValues;

@@ -39,7 +39,8 @@ import { sensitiveMarkerPath } from "../../sensitive-marker-path";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { dangerousEnvKeyDiagnostics } from "./akm-lint";
-import { directoryEntries } from "./directory-entries";
+import { dotenvWrites } from "./akm-writes";
+import { directoryAdapter } from "./directory-assets";
 import { hashContent } from "./shared";
 
 /** A dotenv bundle is single-component; its one component is `main`. */
@@ -152,8 +153,8 @@ async function validate(_c: BundleComponent, changes: FileChange[], ctx: Validat
   return diagnostics;
 }
 
-export const dotenvAdapter: BundleAdapter = {
-  ...directoryEntries(),
+export const dotenvAdapter: BundleAdapter = directoryAdapter({
+  writes: dotenvWrites,
   id: "dotenv",
   version: "0.9.0",
   extensions: [".env"],
@@ -204,4 +205,4 @@ export const dotenvAdapter: BundleAdapter = {
     if (!dirs.every((d) => d === ENV_DIR || d === SECRETS_DIR)) return false;
     return dirs.includes(ENV_DIR) || dirs.includes(SECRETS_DIR);
   },
-};
+});

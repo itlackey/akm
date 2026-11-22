@@ -13,7 +13,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { setSecret } from "../../../src/commands/env/secret";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
@@ -29,6 +28,7 @@ import {
   withEnv,
   writeSandboxConfig,
 } from "../../_helpers/sandbox";
+import { writeSecretFile } from "../../_helpers/secret-file";
 
 const SECRET_VALUE = "correct-horse-battery-staple-secret-do-not-leak";
 
@@ -67,7 +67,7 @@ afterEach(() => {
 describe("secret indexer safety", () => {
   test("secret values never appear in the FTS index, the embedding input, or document_json", async () => {
     const stashDir = currentStashDir;
-    setSecret(path.join(stashDir, "secrets", "deploy-key"), Buffer.from(`${SECRET_VALUE}\nmultiline\n`));
+    writeSecretFile(path.join(stashDir, "secrets", "deploy-key"), Buffer.from(`${SECRET_VALUE}\nmultiline\n`));
 
     const result = await akmIndex({ stashDir, full: true });
     expect(result.totalEntries).toBe(1);
@@ -106,7 +106,7 @@ describe("secret indexer safety", () => {
 
   test("secrets are searchable by name", async () => {
     const stashDir = currentStashDir;
-    setSecret(path.join(stashDir, "secrets", "stripe-api-key"), Buffer.from("sk_live_should_not_be_indexed"));
+    writeSecretFile(path.join(stashDir, "secrets", "stripe-api-key"), Buffer.from("sk_live_should_not_be_indexed"));
     await akmIndex({ stashDir, full: true });
 
     const db = openIndexDatabase();
@@ -124,7 +124,7 @@ describe("secret indexer safety", () => {
   test("a sibling .sensitive marker excludes the secret from indexing", async () => {
     const stashDir = currentStashDir;
     const fp = path.join(stashDir, "secrets", "hidden");
-    setSecret(fp, Buffer.from("v"));
+    writeSecretFile(fp, Buffer.from("v"));
     fs.writeFileSync(`${fp}.sensitive`, "");
 
     const result = await akmIndex({ stashDir, full: true });
@@ -133,7 +133,7 @@ describe("secret indexer safety", () => {
 
   test("`akm show` never emits the secret value", async () => {
     const stashDir = currentStashDir;
-    setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from(SECRET_VALUE));
+    writeSecretFile(path.join(stashDir, "secrets", "demo"), Buffer.from(SECRET_VALUE));
 
     const { stdout, code } = await withEnv({ AKM_BUNDLE_DIR: stashDir }, () =>
       runCliCapture(["show", "secrets/demo", "--format", "json"]),

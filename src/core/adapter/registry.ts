@@ -32,6 +32,7 @@
 
 import { BUILTIN_ADAPTERS } from "./adapters";
 import type { BundleAdapter } from "./bundle-adapter";
+import type { BundleComponent } from "./types";
 
 export { BUILTIN_ADAPTERS } from "./adapters";
 
@@ -51,4 +52,15 @@ export function getAdapters(): BundleAdapter[] {
 /** Look up an adapter by its own `id` (matches `BundleComponent.adapter`); `undefined` for an unknown id (the caller skips + warns). */
 export function adapterForId(id: string): BundleAdapter | undefined {
   return BY_ID.get(id);
+}
+
+/** The component a bundle's adapter is called with: the bundle's root, and its `location` when it has one. */
+export function componentOf(bundle: { path: string; location?: string }, adapterId: string): BundleComponent {
+  return {
+    id: adapterId,
+    adapter: adapterId,
+    root: bundle.path,
+    writable: false,
+    ...(bundle.location ? { location: bundle.location } : {}),
+  };
 }

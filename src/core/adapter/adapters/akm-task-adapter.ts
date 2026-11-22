@@ -45,7 +45,7 @@ import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { directoryEntries } from "./directory-entries";
+import { directoryAdapter } from "./directory-assets";
 import { hashContent } from "./shared";
 
 /** A native task bundle is single-component; its one component is `main`. */
@@ -108,8 +108,7 @@ async function validate(_c: BundleComponent, changes: FileChange[], ctx: Validat
   return diagnostics;
 }
 
-export const akmTaskAdapter: BundleAdapter = {
-  ...directoryEntries(),
+export const akmTaskAdapter: BundleAdapter = directoryAdapter({
   id: "akm-task",
   version: "0.9.2",
   // `.yaml` is listed as a COLLECTION hint only — `recognize` still gates on
@@ -167,7 +166,7 @@ export const akmTaskAdapter: BundleAdapter = {
     }
     return false;
   },
-};
+});
 
 /** The executable keys each retired task schema version required one of. */
 const LEGACY_TASK_TARGET_KEYS: Readonly<Record<number, readonly string[]>> = {

@@ -3,26 +3,23 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Environment files and secrets for the owner. Values appear in no result except `readValue`'s; a write names the
- * `revision` (sha256 of the raw bytes) the owner last saw and is checked inside the write lease, with the bytes it
- * then replaces. A host decides who may call `readValue`.
+ * Environment files and secrets for the owner, read and written through their bundle's adapter. Values appear in no
+ * result except `readValue`'s; a write names the `revision` (sha256 of the content) the owner last saw, and the write
+ * checks it with the content it then replaces. A host decides who may call `readValue`.
  */
 
-import { createHash } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
-import { removeEnv, writeEnv } from "../commands/env/env";
-import { removeSecret, setSecret } from "../commands/env/secret";
 import { deriveCanonicalAssetName } from "../core/asset/asset-placement";
 import {
+  findWriteTargetAsset,
   resolveEnvPath,
   resolveEnvWriteTarget,
   resolveSecretPath,
   resolveSecretWriteTarget,
-  sensitiveMarkerPath,
-  withEnvSecretWrite,
+  writeEnvSecret,
 } from "../core/env-secret-ref";
-import { UsageError } from "../core/errors";
+import { AkmError, UsageError } from "../core/errors";
+import { assetRevision as digest } from "../core/write-source";
 import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { interactive } from "./lease";
 
@@ -35,20 +32,7 @@ export interface SensitiveSelector {
 
 type Kind = "env" | "secret";
 const REF = /^(?:([^/]+)\/\/)?(env|secrets)\//;
-const digest = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
 const relative = (root: string, file: string) => path.relative(root, file).split(path.sep).join("/");
-
-/** Reading follows no link: a symbolic link, or a path that leaves the bundle, is refused. */
-function safeFile(root: string, file: string) {
-  const rel = path.relative(root, file);
-  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("The file must stay inside its bundle.");
-  let current = root;
-  for (const part of rel.split(path.sep)) {
-    current = path.join(current, part);
-    if (fs.lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink())
-      throw new Error("Use the real file, not a symbolic link.");
-  }
-}
 
 /** The ref akm's env/secret functions take, from a ref or a bundle-relative file in a named bundle. */
 function selection(input: SensitiveSelector): { type: Kind; ref: string } {
@@ -79,33 +63,30 @@ function selection(input: SensitiveSelector): { type: Kind; ref: string } {
   return { type, ref: `${input.bundle}//${dir}/${name}` };
 }
 
-/** An existing env/secret file, resolved by akm's own read-side resolvers. */
+/** An existing env file or secret, found and read through its bundle's adapter. */
 function locate(input: SensitiveSelector) {
   const { type, ref } = selection(input);
   const found = type === "env" ? resolveEnvPath(ref) : resolveSecretPath(ref);
   const root = found.source.path;
-  const file = found.absPath;
-  try {
-    safeFile(root, file);
-  } catch {
-    throw new UsageError("Choose a regular env/secret file inside this bundle, not a symbolic link or outside path.");
-  }
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(file);
-  } catch {
-    throw new UsageError("This file is unavailable. Check its location and filesystem permissions.");
-  }
-  if (!stat.isFile()) throw new UsageError("Choose a file, not a folder.");
   const bundle = found.source.registryId ?? input.bundle ?? "";
   return {
     bundle,
-    file,
+    file: found.absPath,
     type,
-    root,
-    relative: relative(root, file),
+    relative: relative(root, found.absPath),
     ref: ref.includes("//") ? ref : `${bundle}//${ref}`,
+    content: found.content,
   };
+}
+
+/** The content of a located env file or secret; an asset that cannot be read is named, with akm's own reason when it has one. */
+function contentOf(found: ReturnType<typeof locate>): string {
+  try {
+    return found.content();
+  } catch (error) {
+    if (error instanceof AkmError) throw error;
+    throw new UsageError("The file could not be read. Check filesystem permissions.");
+  }
 }
 
 export function describe(input: SensitiveSelector) {
@@ -125,100 +106,78 @@ export function describe(input: SensitiveSelector) {
     bundle: found.bundle,
     path: found.file,
     actions: { edit: verdict, delete: verdict },
-    revision: digest(fs.readFileSync(found.file)),
+    revision: digest(contentOf(found)),
     location: { bundle: found.bundle, path: found.relative, parent },
   };
 }
 
 /** The file's text and revision. The one result that carries a value. */
 export function readValue(input: SensitiveSelector) {
-  const found = locate(input);
-  let bytes: Buffer;
-  try {
-    bytes = fs.readFileSync(found.file);
-  } catch {
-    throw new UsageError("The file could not be read. Check filesystem permissions.");
-  }
-  const content = bytes.toString("utf8");
-  if (bytes.includes(0) || !Buffer.from(content).equals(bytes))
+  const content = contentOf(locate(input));
+  if (content.includes("\0") || content.includes("\uFFFD"))
     throw new UsageError("This is a binary file. Open it with a suitable local application.");
-  return { content, revision: digest(bytes) };
+  return { content, revision: digest(content) };
 }
 
-/** Run a write on the file's bundle. A failure after the file changed (git synchronization) is reported, not thrown. */
+type Resolution = ReturnType<typeof resolveEnvWriteTarget>;
+
+/**
+ * Run a write on the bundle that keeps the file or secret. A failure after the write landed (`landed` says whether it
+ * did; git synchronization fails after it) is reported, not thrown.
+ */
 function write(
   selector: SensitiveSelector,
-  op: "Update" | "Remove",
-  paths: (file: string, marker: string) => string[],
-  mutate: (file: string, type: Kind) => void,
+  run: (resolution: Resolution) => void,
+  landed: (resolution: Resolution) => boolean,
 ) {
   const chosen = selection(selector);
-  const {
-    name,
-    absPath: file,
-    target,
-  } = (chosen.type === "env" ? resolveEnvWriteTarget : resolveSecretWriteTarget)(chosen.ref, undefined);
-  const type = chosen.type;
-  const marker = sensitiveMarkerPath(file, type);
-  return interactive(`${type}-${op.toLowerCase()}`, async () => {
-    let changed = false;
+  const resolution = (chosen.type === "env" ? resolveEnvWriteTarget : resolveSecretWriteTarget)(chosen.ref, undefined);
+  const { type, name, target } = resolution;
+  return interactive(`${type}-update`, async () => {
     const warnings: string[] = [];
     try {
-      withEnvSecretWrite(target, { type, name }, op, paths(file, marker), () => {
-        mutate(file, type);
-        changed = true;
-      });
+      run(resolution);
     } catch (error) {
-      if (!changed) throw error;
+      if (!landed(resolution)) throw error;
       warnings.push("The file changed, but Git synchronization failed. Check this bundle’s Git status.");
     }
     const bundle = target.source.name;
+    const conceptId = `${type === "env" ? "env/" : "secrets/"}${name}`;
+    const found = findWriteTargetAsset(resolution);
     return {
       bundle,
-      file: relative(target.source.path, file),
-      ref: `${bundle}//${type === "env" ? "env/" : "secrets/"}${name}`,
+      file: found ? relative(target.source.path, found.path) : conceptId,
+      ref: `${bundle}//${conceptId}`,
       warnings,
-      absolute: file,
+      resolution,
     };
   });
 }
 
-function changedSince(file: string, revision: string) {
-  let bytes: Buffer;
-  try {
-    bytes = fs.readFileSync(file);
-  } catch {
-    throw new UsageError("This file is unavailable. Check its location and filesystem permissions.");
-  }
-  if (digest(bytes) !== revision)
-    throw new UsageError(
-      "This file changed. Reopen it before saving or deleting; your edit has not been applied.",
-      "ASSET_CONTENT_CHANGED",
-    );
+/** The revision of the asset a resolution names now, or undefined when it has none. */
+function currentRevision(resolution: Resolution): string | undefined {
+  const found = findWriteTargetAsset(resolution);
+  return found && digest(found.file.content());
 }
 
 /** Create the file (no `revision`; an existing file is refused) or replace it (the `revision` the owner last saw). */
 export async function save(input: SensitiveSelector & { content: string; revision?: string }) {
   if (typeof input.content !== "string" || input.content.includes("\0"))
     throw new UsageError("Provide the file and its text.");
-  const content = input.content;
-  const { absolute, ...result } = await write(
+  const { content, revision } = input;
+  const { resolution, ...result } = await write(
     input,
-    "Update",
-    (file) => [file],
-    (file, type) => {
-      if (input.revision === undefined) {
-        if (fs.existsSync(file))
-          throw new UsageError(
-            "A file already exists at this path. Choose a different name.",
-            "RESOURCE_ALREADY_EXISTS",
-          );
-      } else changedSince(file, input.revision);
-      if (type === "env") writeEnv(file, content);
-      else setSecret(file, Buffer.from(content));
+    (target) => {
+      try {
+        if (revision === undefined) writeEnvSecret(target, { op: "create", content, exclusive: true });
+        else writeEnvSecret(target, { op: "update", content, revision });
+      } catch (error) {
+        throw sensitiveWriteError(error);
+      }
     },
+    (target) => currentRevision(target) === digest(content),
   );
-  return { ...result, revision: digest(fs.readFileSync(absolute)) };
+  return { ...result, revision: currentRevision(resolution) ?? digest(content) };
 }
 
 /** Delete the file and its sensitive marker, if it is still the `revision` the owner last saw. */
@@ -226,17 +185,29 @@ export async function remove(input: SensitiveSelector & { revision: string }) {
   if (typeof input.revision !== "string" || !input.revision)
     throw new UsageError("Provide the file and its current revision.");
   const { revision } = input;
-  const { absolute: _absolute, ...result } = await write(
+  const { resolution: _resolution, ...result } = await write(
     input,
-    "Remove",
-    (target, marker) => [target, marker],
-    (target, type) => {
-      const marker = fs.lstatSync(sensitiveMarkerPath(target, type), { throwIfNoEntry: false });
-      if (marker && !marker.isFile())
-        throw new UsageError("The sensitive marker is not a regular file. Resolve it before deleting this asset.");
-      changedSince(target, revision);
-      (type === "env" ? removeEnv : removeSecret)(target);
+    (target) => {
+      try {
+        writeEnvSecret(target, { op: "retire", revision });
+      } catch (error) {
+        throw sensitiveWriteError(error);
+      }
     },
+    (target) => findWriteTargetAsset(target) === undefined,
   );
   return { ...result, removed: true as const };
+}
+
+/** The workspace's own wording for the two refusals an owner acts on. */
+function sensitiveWriteError(error: unknown): unknown {
+  if (!(error instanceof UsageError)) return error;
+  if (error.code === "RESOURCE_ALREADY_EXISTS")
+    return new UsageError("A file already exists at this path. Choose a different name.", "RESOURCE_ALREADY_EXISTS");
+  if (error.code === "ASSET_CONTENT_CHANGED")
+    return new UsageError(
+      "This file changed. Reopen it before saving or deleting; your edit has not been applied.",
+      "ASSET_CONTENT_CHANGED",
+    );
+  return error;
 }

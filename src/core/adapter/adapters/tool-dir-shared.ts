@@ -58,7 +58,7 @@ import type { BundleAdapter } from "../bundle-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { skillDirectoryDiagnostics } from "./akm-lint";
-import { directoryEntries } from "./directory-entries";
+import { directoryAdapter } from "./directory-assets";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
 /** The canonical (plural) subdir spellings writes normalize to (open-question-6). */
@@ -270,8 +270,7 @@ export function renderToolDirExecutionSource(
 
 /** Build the concrete `BundleAdapter` from a layout + a `looksLikeRoot` probe (claude/opencode share everything else). */
 export function makeToolDirAdapter(layout: ToolDirLayout, looksLikeRoot: (root: string) => boolean): BundleAdapter {
-  return {
-    ...directoryEntries(),
+  return directoryAdapter({
     id: layout.adapterId,
     version: "0.9.0",
     extensions: [".md"],
@@ -281,5 +280,5 @@ export function makeToolDirAdapter(layout: ToolDirLayout, looksLikeRoot: (root: 
     readCandidates: (c, conceptId) => readCandidatesToolDir(layout, c, conceptId),
     directoryList: () => [CANONICAL_COMMAND_DIR, CANONICAL_AGENT_DIR, CANONICAL_SKILL_DIR],
     looksLikeRoot,
-  };
+  });
 }

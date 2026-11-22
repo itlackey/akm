@@ -2,259 +2,77 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import fs from "node:fs";
 import path from "node:path";
-import type { AdapterReadCandidate, BundleAdapter } from "../../core/adapter/bundle-adapter";
+import type { AssetReadOptions, BundleAsset } from "../../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
-import { adapterForId } from "../../core/adapter/registry";
-import type { BundleComponent } from "../../core/adapter/types";
+import { adapterForId, componentOf } from "../../core/adapter/registry";
 import { assetPathForName, stashDirFor, stashDirNames } from "../../core/asset/asset-placement";
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
-import { compareCodePoints, safeRealpath, toPosix } from "../../core/common";
-import { UsageError } from "../../core/errors";
-import { sensitiveMarkerPath } from "../../core/sensitive-marker-path";
+import { safeRealpath } from "../../core/common";
 import { warnOnce } from "../../core/warn";
 import { withMdVariants } from "../../storage/repositories/index-entries-repository";
-import { resolveUniqueWorkflowSource, type WorkflowSourceFile } from "../../workflows/source-files";
+import type { WorkflowSourceFile } from "../../workflows/source-files";
 import type { IndexEntry } from "../indexer";
 import { deriveEntryProvenance, deriveInstallations } from "../installations";
 import type { SearchSource } from "../search/search-source";
 import type { FileContext } from "../walk/file-context";
 import { declaredTypeForPath } from "../walk/matchers";
-import { isWalkedFile } from "../walk/walker";
 
-const CONTENT_READ_REQUIRED = Symbol("adapter ownership probe requires content");
+export {
+  AdapterConceptCollisionError,
+  AdapterConceptOwnershipError,
+} from "../../core/adapter/adapters/directory-assets";
 
+/** The asset a bundle's adapter read for a ref: where it is indexed, and the entry holding it. */
 export interface AdapterConceptOwner {
-  /** Authored path spelling used by index/show/runtime provenance. */
+  /** The path the asset is indexed under. */
   path: string;
   /** Resolved path used only for containment and identity checks. */
   realPath: string;
   conceptId: string;
   adapterId: string;
   workflowSource?: WorkflowSourceFile;
-  /** The entry, as the owning bundle's adapter gives it. */
+  /** The entry holding the asset, as its adapter gives it. */
   file: FileContext;
+  /** Whether the adapter lists the asset (indexes it). */
+  listed(): boolean;
 }
 
-export abstract class AdapterConceptOwnershipError extends UsageError {}
+export type ResolveAdapterConceptOwnerOptions = AssetReadOptions;
 
-export class AdapterConceptCollisionError extends AdapterConceptOwnershipError {
-  constructor(adapterId: string, conceptId: string, paths: readonly string[]) {
-    const sorted = [...paths].sort(compareCodePoints);
-    super(
-      `Adapter "${adapterId}" has multiple physical owners for "${conceptId}": ${sorted.join(", ")}.`,
-      "RESOURCE_ALREADY_EXISTS",
-    );
-    this.name = "AdapterConceptCollisionError";
-    Object.setPrototypeOf(this, new.target.prototype);
-  }
-}
-
-function normalizedConceptId(conceptId: string): string | undefined {
-  const normalized = conceptId.replaceAll("\\", "/");
-  if (
-    !normalized ||
-    path.posix.isAbsolute(normalized) ||
-    normalized === ".." ||
-    normalized.startsWith("../") ||
-    path.posix.normalize(normalized) !== normalized
-  ) {
-    return undefined;
-  }
-  return normalized;
-}
-
-function componentFor(sourcePath: string, adapterId: string, location?: string): BundleComponent {
-  return { id: adapterId, adapter: adapterId, root: sourcePath, writable: false, ...(location ? { location } : {}) };
-}
-
-/** The entry a path under the bundle's root names, or undefined for a path outside it. */
-function entryOf(root: string, candidatePath: string): string | undefined {
-  return lexicallyWithin(candidatePath, root)
-    ? toPosix(path.relative(path.resolve(root), path.resolve(candidatePath)))
-    : undefined;
-}
-
-function lexicallyWithin(candidate: string, root: string): boolean {
-  const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
-}
-
-/** Add case-only suffix spellings beside an adapter-authored read candidate. */
-function candidateSpellings(candidate: AdapterReadCandidate, sourcePath: string): AdapterReadCandidate[] {
-  const authored = path.resolve(candidate.path);
-  if (!lexicallyWithin(authored, sourcePath)) return [{ ...candidate, path: authored }];
-  const parent = path.dirname(authored);
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(parent, { withFileTypes: true });
-  } catch {
-    return [{ ...candidate, path: authored }];
-  }
-
-  const extension = path.extname(authored);
-  if (!extension) return [{ ...candidate, path: authored }];
-  const stem = path.basename(authored, extension);
-  return entries
-    .filter((entry) => {
-      const entryExtension = path.extname(entry.name);
-      return (
-        path.basename(entry.name, entryExtension) === stem && entryExtension.toLowerCase() === extension.toLowerCase()
-      );
-    })
-    .map((entry) => ({ ...candidate, path: path.join(parent, entry.name) }));
-}
-
-/** The owner a candidate is, when the bundle has that entry: the adapter says, without reading its content. */
-function inspectCandidate(
-  adapter: BundleAdapter,
-  component: BundleComponent,
-  candidate: AdapterReadCandidate,
-): AdapterConceptOwner | undefined {
-  const entry = entryOf(component.root, candidate.path);
-  const file = entry === undefined || entry === "" ? undefined : adapter.entry(component, entry);
-  if (!file) return undefined;
+function ownerOf(adapterId: string, asset: BundleAsset): AdapterConceptOwner {
   return {
-    path: file.absPath,
-    realPath: safeRealpath(file.absPath),
-    conceptId: candidate.conceptId,
-    adapterId: adapter.id,
-    file,
+    path: asset.file.absPath,
+    realPath: asset.workflowSource?.realPath ?? safeRealpath(asset.file.absPath),
+    conceptId: asset.conceptId,
+    adapterId,
+    ...(asset.workflowSource ? { workflowSource: asset.workflowSource } : {}),
+    file: asset.file,
+    listed: () => asset.listed?.() ?? true,
   };
 }
 
-function claimsWithoutContent(adapter: BundleAdapter, component: BundleComponent, owner: AdapterConceptOwner): boolean {
-  const { file } = owner;
-  let requestedBytes = false;
-  const denyBytes = (): never => {
-    requestedBytes = true;
-    throw CONTENT_READ_REQUIRED;
-  };
-  const noContentFile: FileContext = { ...file, content: denyBytes, frontmatter: denyBytes };
-  try {
-    const document = adapter.recognize(component, noContentFile);
-    if (requestedBytes) return true;
-    return document?.conceptId === owner.conceptId;
-  } catch (error) {
-    if (error === CONTENT_READ_REQUIRED) return true;
-    throw error;
-  }
+/** The asset `conceptId` names in one bundle, as the bundle's adapter reads it. */
+export function readBundleAsset(
+  source: Pick<SearchSource, "path" | "location">,
+  adapterId: string,
+  conceptId: string,
+  options?: ResolveAdapterConceptOwnerOptions,
+): AdapterConceptOwner | undefined {
+  const adapter = adapterForId(adapterId);
+  const asset = adapter?.read(componentOf(source, adapterId), conceptId, options);
+  return asset && ownerOf(adapterId, asset);
 }
 
-export interface ResolveAdapterConceptOwnerOptions {
-  mode?: "read" | "write";
-  /**
-   * Also own an env/secret file that a sibling `.sensitive` marker hides from
-   * the index. For resolving a file to run or inject; never for show or search.
-   */
-  includeSensitive?: boolean;
-}
-
-/** True for an env/secret entry that a sibling `.sensitive` marker hides from the index. */
-function isMarkedSensitive(adapter: BundleAdapter, component: BundleComponent, owner: AdapterConceptOwner): boolean {
-  const type = declaredTypeForPath(owner.file);
-  if (type !== "env" && type !== "secret") return false;
-  const marker = sensitiveMarkerPath(owner.path, type);
-  const entry = marker === owner.path ? undefined : entryOf(component.root, marker);
-  return entry !== undefined && adapter.entry(component, entry) !== undefined;
-}
-
-/**
- * Resolve one adapter/component's exact physical concept owner without reading
- * authored bytes. Native workflow arbitration is reused verbatim; every other
- * adapter supplies its own read placements and is probed with a byte-denying
- * FileContext so path-level abstention remains authoritative.
- */
+/** The asset `conceptId` names in the bundle at `sourcePath`, read by the adapter `adapterId`. */
 export function resolveAdapterConceptOwner(
   sourcePath: string,
   adapterId: string,
   conceptId: string,
   options?: ResolveAdapterConceptOwnerOptions,
 ): AdapterConceptOwner | undefined {
-  return resolveComponentConceptOwner(componentFor(sourcePath, adapterId), conceptId, options);
-}
-
-/** {@link resolveAdapterConceptOwner} for one bundle's component. Every entry is found through the component's adapter. */
-function resolveComponentConceptOwner(
-  component: BundleComponent,
-  conceptId: string,
-  options?: ResolveAdapterConceptOwnerOptions,
-): AdapterConceptOwner | undefined {
-  const adapter = adapterForId(component.adapter);
-  const normalized = normalizedConceptId(conceptId);
-  if (!adapter || !normalized) return undefined;
-  const { root: sourcePath, adapter: adapterId } = component;
-  const ownersByIdentity = new Map<string, AdapterConceptOwner>();
-
-  const workflowSource = resolveUniqueWorkflowSource(sourcePath, adapterId, normalized);
-  const resolutionConceptId = workflowSource ? workflowSource.canonicalName : normalized;
-  const workflowEntry = workflowSource && entryOf(sourcePath, workflowSource.path);
-  const workflowFile = workflowEntry ? adapter.entry(component, workflowEntry) : undefined;
-  if (workflowSource && workflowFile) {
-    const workflowOwner = {
-      path: workflowSource.path,
-      realPath: workflowSource.realPath,
-      conceptId: resolutionConceptId,
-      adapterId,
-      workflowSource,
-      file: workflowFile,
-    };
-    ownersByIdentity.set(`${path.resolve(workflowOwner.path)}\0${resolutionConceptId}`, workflowOwner);
-  }
-
-  // Closed-form candidate set (#857): `readCandidates` inverts the conceptId
-  // directly into every physical spelling that could own it (no bundle walk
-  // — see each adapter's own doc comment for its candidate classes), and
-  // `candidateSpellings` adds case-only siblings via one `readdirSync` of
-  // each candidate's own parent directory.
-  const spellings = (adapter.readCandidates?.(component, resolutionConceptId) ?? []).flatMap((candidate) =>
-    candidateSpellings(candidate, sourcePath),
-  );
-  const inspected = [
-    ...new Map(
-      spellings.map((candidate) => [`${path.resolve(candidate.path)}\0${candidate.conceptId}`, candidate]),
-    ).values(),
-  ]
-    .sort((left, right) => compareCodePoints(left.path, right.path))
-    .flatMap((candidate) => {
-      const owner = inspectCandidate(adapter, component, candidate);
-      return owner ? [owner] : [];
-    });
-  for (const candidate of inspected) {
-    if (candidate.conceptId !== resolutionConceptId) continue;
-    const identity = `${path.resolve(candidate.path)}\0${candidate.conceptId}`;
-    if (ownersByIdentity.has(identity)) continue;
-    if (
-      claimsWithoutContent(adapter, component, candidate) ||
-      (options?.includeSensitive && isMarkedSensitive(adapter, component, candidate))
-    ) {
-      ownersByIdentity.set(identity, candidate);
-    }
-  }
-  const owners = [...ownersByIdentity.values()]
-    .filter((owner) => owner.conceptId === resolutionConceptId)
-    .sort((left, right) => compareCodePoints(left.path, right.path));
-  if (owners.length > 1) {
-    if (options?.mode !== "read") {
-      throw new AdapterConceptCollisionError(
-        adapterId,
-        resolutionConceptId,
-        owners.map((owner) => path.relative(sourcePath, owner.path).replaceAll("\\", "/")),
-      );
-    }
-    const [winner, ...losers] = owners;
-    warnOnce(
-      `adapter-concept-collision:${adapterId}:${resolutionConceptId}`,
-      `Adapter "${adapterId}" has multiple physical owners for "${resolutionConceptId}": ` +
-        `${owners.map((owner) => path.relative(sourcePath, owner.path).replaceAll("\\", "/")).join(", ")}. ` +
-        `Reading "${path.relative(sourcePath, winner!.path).replaceAll("\\", "/")}" and ignoring ` +
-        `${losers.map((owner) => path.relative(sourcePath, owner.path).replaceAll("\\", "/")).join(", ")}.`,
-    );
-    return winner;
-  }
-  return owners[0];
+  return readBundleAsset({ path: sourcePath }, adapterId, conceptId, options);
 }
 
 export interface ConceptOwnerMatch {
@@ -278,14 +96,8 @@ export function entryFromFiles(match: ConceptOwnerMatch): IndexEntry | undefined
   const { owner, source, bundleId, adapterId } = match;
   try {
     const adapter = adapterForId(adapterId);
-    if (
-      !adapter ||
-      !isWalkedFile(source.path, owner.path, { includeAllDirectories: adapter.walkMode === "all-directories" })
-    ) {
-      return undefined;
-    }
-    const component = componentFor(source.path, adapterId, source.location);
-    const document = adapter.recognize(component, owner.file);
+    if (!adapter || !owner.listed()) return undefined;
+    const document = adapter.recognize(componentOf(source, adapterId), owner.file);
     if (!document?.conceptId || !withMdVariants(owner.conceptId).includes(document.conceptId)) return undefined;
     const { itemRef, conceptId } = deriveEntryProvenance(
       { bundleId, componentId: adapterId, adapterId },
@@ -368,11 +180,7 @@ function ownerAmong(
     const bundleId = installations[index]?.id;
     if (!bundleId || (ref.bundle !== undefined && bundleId !== ref.bundle)) continue;
     const adapterId = source.adapterId ?? detectAdapterId(source.path);
-    const owner = resolveComponentConceptOwner(
-      componentFor(source.path, adapterId, source.location),
-      ref.conceptId,
-      options,
-    );
+    const owner = readBundleAsset(source, adapterId, ref.conceptId, options);
     if (owner) return { owner, source, bundleId, adapterId };
   }
   return undefined;
@@ -391,13 +199,11 @@ export function indexedPathMatchesOwner(indexedPath: string, owner: AdapterConce
  * ref's first folder.
  */
 export function ownedAssetType(
-  match: Pick<ConceptOwnerMatch, "owner" | "adapterId"> & { root: string },
+  match: Pick<ConceptOwnerMatch, "owner" | "adapterId"> & { root: string; location?: string },
 ): string | undefined {
   const { file } = match.owner;
-  return (
-    adapterForId(match.adapterId)?.recognize(componentFor(match.root, match.adapterId), file)?.type ??
-    declaredTypeForPath(file)
-  );
+  const component = componentOf({ path: match.root, location: match.location }, match.adapterId);
+  return adapterForId(match.adapterId)?.recognize(component, file)?.type ?? declaredTypeForPath(file);
 }
 
 /** The type of the asset a ref names, from the file that owns it among `sources`; undefined when none does. */

@@ -102,7 +102,8 @@ import { recognizeMatch } from "../recognize-match";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { derivedSiblingPath, perTypeDiagnostics, skillDirectoryDiagnostics, type TypeCheckInput } from "./akm-lint";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "./akm-metadata";
-import { directoryEntries } from "./directory-entries";
+import { akmWrites } from "./akm-writes";
+import { directoryAdapter } from "./directory-assets";
 import { createBaseChecker, hashContent, type ParsedForValidate, parseForValidate, RESERVED_FILES } from "./shared";
 
 // `recognizeMatch` + the builtin matcher list moved to the cycle-free leaf
@@ -480,8 +481,8 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
   return diagnostics;
 }
 
-export const akmAdapter: BundleAdapter = {
-  ...directoryEntries(),
+export const akmAdapter: BundleAdapter = directoryAdapter({
+  writes: akmWrites,
   id: "akm",
   // Bump when a change to the matchers (or `recognize`) can retype or re-ref a
   // file that has not changed, or when the document records new fields from it
@@ -593,4 +594,4 @@ export const akmAdapter: BundleAdapter = {
       return true;
     }
   },
-};
+});

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildShellExportScript, createEnv, listKeys, loadEnv, parseEnvText } from "../../../src/commands/env/env";
+import { buildShellExportScript, listKeys, parseEnvText } from "../../../src/commands/env/env";
 import { sensitiveMarkerPath } from "../../../src/core/env-secret-ref";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
@@ -120,49 +120,14 @@ describe("listKeys", () => {
   });
 });
 
-// ── loadEnv (delegates to dotenv) ───────────────────────────────────────────
+// ── parseEnvText (delegates to dotenv) ─────────────────────────────────────
 
-describe("loadEnv", () => {
+describe("parseEnvText", () => {
   test("returns parsed key/value pairs via dotenv", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(fp, 'FOO=bar\nQUOTED="hello world"\nMULTI="line1\\nline2"\n');
-    const env = loadEnv(fp);
+    const env = parseEnvText('FOO=bar\nQUOTED="hello world"\nMULTI="line1\\nline2"\n');
     expect(env.FOO).toBe("bar");
     expect(env.QUOTED).toBe("hello world");
     expect(env.MULTI).toBe("line1\nline2");
-  });
-
-  test("returns empty object for missing file", () => {
-    expect(loadEnv(path.join(tmpDir(), "missing.env"))).toEqual({});
-  });
-});
-
-// ── createEnv ─────────────────────────────────────────────────────────────
-
-describe("createEnv", () => {
-  test("creates an empty file", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "env", "prod.env");
-    createEnv(fp);
-    expect(fs.existsSync(fp)).toBe(true);
-    expect(fs.readFileSync(fp, "utf8")).toBe("");
-  });
-
-  test("does not overwrite an existing file", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(fp, "FOO=existing\n");
-    createEnv(fp);
-    expect(loadEnv(fp).FOO).toBe("existing");
-  });
-
-  test("creates the file with mode 0600", () => {
-    if (process.platform === "win32") return; // chmod is best-effort on win32
-    const dir = tmpDir();
-    const fp = path.join(dir, "env", "secrets.env");
-    createEnv(fp);
-    expect(fs.statSync(fp).mode & 0o777).toBe(0o600);
   });
 });
 
@@ -179,7 +144,7 @@ describe("buildShellExportScript", () => {
     const dir = tmpDir();
     const fp = path.join(dir, "v.env");
     fs.writeFileSync(fp, "PLAIN=hello\nDOLLAR='abc$HOME'\nAPOS=\"it's fine\"\n");
-    const script = buildShellExportScript(fp);
+    const script = buildShellExportScript(fs.readFileSync(fp, "utf8"));
     for (const line of script.split("\n").filter(Boolean)) {
       expect(line).toMatch(/^export [A-Za-z_][A-Za-z0-9_]*='.*'$/);
     }
@@ -210,7 +175,7 @@ describe("buildShellExportScript", () => {
       .map(([k, v]) => `${k}='${v}'`)
       .join("\n");
     fs.writeFileSync(fp, `${raw}\n`);
-    const env = loadEnv(fp);
+    const env = parseEnvText(fs.readFileSync(fp, "utf8"));
     for (const [k, v] of Object.entries(payloads)) {
       expect(env[k]).toBe(v);
     }

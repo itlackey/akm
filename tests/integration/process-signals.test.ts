@@ -12,9 +12,9 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { setSecret } from "../../src/commands/env/secret";
 import { runManagedSubprocess } from "../../src/core/subprocess";
 import { makeStashDir, type SandboxedDir, writeSandboxConfig } from "../_helpers/sandbox";
+import { writeSecretFile } from "../_helpers/secret-file";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
@@ -58,7 +58,7 @@ describe.skipIf(!posix)("a child that dies of a signal ends akm by that signal",
   const stashDir = makeStash();
   fs.writeFileSync(path.join(stashDir, "scripts", "sig.sh"), '#!/bin/sh\nkill -"$1" $$\n', { mode: 0o755 });
   fs.writeFileSync(path.join(stashDir, "env", "e.env"), "A=1\n");
-  setSecret(path.join(stashDir, "secrets", "s"), Buffer.from("v"));
+  writeSecretFile(path.join(stashDir, "secrets", "s"), Buffer.from("v"));
 
   for (const name of ["TERM", "INT", "KILL"] as const) {
     const signal = `SIG${name}` as NodeJS.Signals;

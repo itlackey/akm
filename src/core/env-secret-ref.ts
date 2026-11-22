@@ -7,78 +7,90 @@
  * (WS6). These were duplicated/co-located inline in `src/cli.ts`; hoisting them
  * here lets `src/commands/env/env-cli.ts` and `src/commands/env/secret-cli.ts` import a
  * single copy of the parse/resolve/make + path-traversal-guard logic (the WS6
- * "env traversal-guard copies 5 → 1" KPI). Behaviour is byte-identical to the
- * inline forms: env/secret VALUES are never read or surfaced here — these
- * helpers only resolve refs to absolute paths and guard against directory
- * traversal.
+ * "env traversal-guard copies 5 → 1" KPI). Every env file and secret is found,
+ * read and written through its bundle's adapter. The only value read here is a
+ * secret's, for the callers that inject it ({@link readSecret}); no value is
+ * surfaced.
  */
 
-import fs from "node:fs";
 import path from "node:path";
-import { type ConceptOwnerMatch, resolveConceptOwner } from "../indexer/lookup/adapter-concept-owner";
+import {
+  type AdapterConceptOwner,
+  type ConceptOwnerMatch,
+  ownedAssetType,
+  readBundleAsset,
+  resolveConceptOwner,
+} from "../indexer/lookup/adapter-concept-owner";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
-import { buildFileContext } from "../indexer/walk/file-context";
-import { declaredTypeForPath } from "../indexer/walk/matchers";
-import { isFileOrFileSymlink } from "../indexer/walk/walker";
+import type { FileContext } from "../indexer/walk/file-context";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
+import type { AssetChange } from "./adapter/bundle-adapter";
+import { detectAdapterId } from "./adapter/detect-adapter";
+import { adapterForId, componentOf } from "./adapter/registry";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
-import { assetPathForName, refForFile, stashDirFor } from "./asset/asset-placement";
+import { stashDirFor } from "./asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
-import { isWithin } from "./common";
+import { compareCodePoints, scanEnvKeyNames } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
 import { resolveMutationTarget } from "./mutation-target";
-import { sensitiveMarkerPath } from "./sensitive-marker-path";
-import { formatRefForMessage, type ResolvedWriteTarget, withWriteTargetMutation } from "./write-source";
+import { warn } from "./warn";
+import { type AssetOperation, changeAsset, formatRefForMessage, type ResolvedWriteTarget } from "./write-source";
 
 export { sensitiveMarkerPath } from "./sensitive-marker-path";
 export type { IndexSearchSource };
 
 /**
- * Walk each stash's env files and return one entry per `.env` file, using the
- * env asset spec's canonical-name logic (e.g. `env/team/prod.env` →
- * `env/team/prod`, `env/team/.env` → `env/team/default`). Moved here from
- * `commands/env/env-cli.ts` (#950) so `commands/health` can reuse it to name
- * which env asset supplies a credential's variable — pure move, `akm env
- * list`'s behaviour is unchanged. `listKeysFn` stays injected (rather than a
- * static import of `commands/env/env.ts`) so this core module never depends
- * upward on the commands layer. `config` defaults to the real `loadConfig()`
- * (unchanged default for `akm env list`); `commands/health` passes its own
- * injected/resolved config so a test-supplied `loadConfig` seam is honoured
- * instead of this always re-reading the real config/sources.
+ * Every listed asset of `type` across the bundles, as each bundle's adapter
+ * lists and recognizes it. An asset a `.sensitive` marker hides is not listed.
+ * A bundle that cannot be listed is left out, with a warning naming it.
+ */
+function listAssetsOfType(
+  type: "env" | "secret",
+  config: AkmConfig,
+): Array<{ conceptId: string; source: IndexSearchSource; file: FileContext }> {
+  const found: Array<{ conceptId: string; source: IndexSearchSource; file: FileContext }> = [];
+  for (const source of resolveSourceEntries(undefined, config)) {
+    if (source.unresolved) continue;
+    const adapter = adapterForId(source.adapterId ?? detectAdapterId(source.path));
+    if (!adapter) continue;
+    const component = componentOf(source, adapter.id);
+    const listing = adapter.list(component);
+    if (!listing.complete && listing.incompleteReason) {
+      warn(`Bundle "${source.registryId ?? source.path}" was not listed completely: ${listing.incompleteReason}`);
+    }
+    for (const file of listing.files) {
+      const document = adapter.recognize(component, file);
+      if (document?.type === type && document.conceptId) found.push({ conceptId: document.conceptId, source, file });
+    }
+  }
+  return found.sort((left, right) => compareCodePoints(left.file.absPath, right.file.absPath));
+}
+
+/**
+ * Every listed env asset with its key names (never values or comments). Moved
+ * here from `commands/env/env-cli.ts` (#950) so `commands/health` can reuse it
+ * to name which env asset supplies a credential's variable. `config` defaults to
+ * the real `loadConfig()`; `commands/health` passes its own resolved config.
  */
 export function listEnvsRecursive(
-  listKeysFn: (envPath: string) => { keys: string[] },
   config: AkmConfig = loadConfig(),
 ): Array<{ ref: string; path: string; keys: string[] }> {
-  const result: Array<{ ref: string; path: string; keys: string[] }> = [];
-  for (const source of resolveSourceEntries(undefined, config)) {
-    const root = path.join(source.path, "env");
-    if (!fs.existsSync(root)) continue;
+  return listAssetsOfType("env", config).map(({ conceptId, source, file }) => ({
+    ref: makeEnvRef(conceptId, source, config),
+    path: file.absPath,
+    keys: scanEnvKeyNames(file.content()),
+  }));
+}
 
-    const walk = (dir: string): void => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(full);
-          continue;
-        }
-        if (!entry.isFile() && !(entry.isSymbolicLink() && isFileOrFileSymlink(full))) continue;
-        if (entry.name !== ".env" && !entry.name.endsWith(".env")) continue;
-        const conceptId = refForFile("env", source.path, full);
-        if (!conceptId) continue;
-        // Skip sensitive envs: a sibling .sensitive marker file suppresses listing.
-        const markerPath = sensitiveMarkerPath(full, "env");
-        if (fs.existsSync(markerPath)) continue;
-        const { keys } = listKeysFn(full);
-        result.push({ ref: makeEnvRef(conceptId, source, config), path: full, keys });
-      }
-    };
-    walk(root);
-  }
-  return result;
+/** Every listed secret, by ref. Its value is not read. */
+export function listSecrets(config: AkmConfig = loadConfig()): Array<{ ref: string; path: string }> {
+  return listAssetsOfType("secret", config).map(({ conceptId, source, file }) => ({
+    ref: makeSecretRef(conceptId, source),
+    path: file.absPath,
+  }));
 }
 
 export function parseEnvRef(ref: string): AssetRef {
@@ -108,13 +120,14 @@ function parseTypedRef(ref: string, type: "env" | "secret", form: string): Asset
   return { type, name: parsed.conceptId.slice(prefix.length), origin: parsed.bundle };
 }
 
-/**
- * The type of the asset a match owns, from where its file sits (the indexer's
- * directory rules, path only): sensitive files have no index row to ask, and the
- * owner walk must stay index-free.
- */
+/** The type of the asset a match owns, as its adapter recognizes it (or, for a sensitive one, where it sits). */
 function ownedType(match: ConceptOwnerMatch): string | undefined {
-  return declaredTypeForPath(buildFileContext(match.source.path, match.owner.path));
+  return ownedAssetType({
+    root: match.source.path,
+    owner: match.owner,
+    adapterId: match.adapterId,
+    location: match.source.location,
+  });
 }
 
 /**
@@ -155,7 +168,15 @@ function findEnvSecretOwner(origin: string | undefined, conceptId: string): Conc
  * names, and the bundle-qualified spelling of the ref), or undefined when no
  * bundle owns it. The lookup behind `${ref}` tokens.
  */
-export function resolveRefOwner(ref: string): { absPath: string; type: string | undefined; ref: string } | undefined {
+export function resolveRefOwner(ref: string):
+  | {
+      absPath: string;
+      type: string | undefined;
+      ref: string;
+      /** The owner's value when it is a secret (`type: "secret"`), trimmed. Never print or log it. */
+      secretValue: () => string;
+    }
+  | undefined {
   const { bundle, conceptId } = parseBundleRef(ref);
   const match = findEnvSecretOwner(bundle, conceptId);
   return (
@@ -163,8 +184,18 @@ export function resolveRefOwner(ref: string): { absPath: string; type: string | 
       absPath: match.owner.path,
       type: ownedType(match),
       ref: makeBundleRef(match.bundleId, conceptId),
+      secretValue: () => secretValue(match),
     }
   );
+}
+
+/**
+ * A secret's value: its content as its adapter reads it, with surrounding
+ * whitespace trimmed, so a hand-written file's trailing newline never lands in
+ * an HTTP header. The one read every consumer uses.
+ */
+function secretValue(match: ConceptOwnerMatch): string {
+  return match.owner.file.content().trim();
 }
 
 /**
@@ -208,9 +239,18 @@ export function resolveEnvPath(ref: string): {
   /** The bundle that owns the env file. */
   bundleId: string;
   dir: "env";
+  /** The env file's text, as its adapter reads it. Never print or log it. */
+  content: () => string;
 } {
   const { match, conceptId } = ownerOfType(ref, "env", "env/<name>");
-  return { conceptId, absPath: match.owner.path, source: match.source, bundleId: match.bundleId, dir: "env" };
+  return {
+    conceptId,
+    absPath: match.owner.path,
+    source: match.source,
+    bundleId: match.bundleId,
+    dir: "env",
+    content: () => match.owner.file.content(),
+  };
 }
 
 export function parseSecretRef(ref: string): AssetRef {
@@ -233,9 +273,20 @@ export function resolveSecretPath(ref: string): {
   conceptId: string;
   absPath: string;
   source: IndexSearchSource;
+  /** The secret's raw content, as its adapter reads it. Never print or log it. */
+  content: () => string;
 } {
   const { match, conceptId } = ownerOfType(ref, "secret", "secrets/<name>");
-  return { conceptId, absPath: match.owner.path, source: match.source };
+  return { conceptId, absPath: match.owner.path, source: match.source, content: () => match.owner.file.content() };
+}
+
+/**
+ * Read the secret `ref` names: its trimmed value, and the bundle that owns it.
+ * Callers MUST NOT write the value to stdout or any log.
+ */
+export function readSecret(ref: string): { conceptId: string; source: IndexSearchSource; value: string } {
+  const { match, conceptId } = ownerOfType(ref, "secret", "secrets/<name>");
+  return { conceptId, source: match.source, value: secretValue(match) };
 }
 
 // ── Write-target resolution (env/secret mutations) ───────────────────────────
@@ -253,94 +304,93 @@ export function resolveSecretPath(ref: string): {
 // shared typed ConfigError). Env/secret VALUES are still never read or surfaced
 // here — these helpers only resolve the write target and the absolute path.
 
-export interface EnvWriteResolution {
+export interface EnvSecretWriteResolution {
+  type: "env" | "secret";
+  /** The name within the type (`prod` for `env/prod`). */
   name: string;
-  absPath: string;
+  /** The asset's concept id in the target bundle. */
+  conceptId: string;
   target: ResolvedWriteTarget;
-  parsedRef: AssetRef;
   ref: string;
 }
 
 /**
- * Resolve the destination for an env mutation. Mirrors {@link resolveEnvPath}
- * but selects the source via {@link resolveWriteTarget} (writability-checked)
- * instead of the read-side {@link resolveEnvPath}. `create` enforces a flat ref
- * name and applies `--path` as the subdirectory (matching `env create`).
+ * Resolve the destination of an env or secret mutation: an explicit
+ * `--bundle`, else `defaultWriteTarget`, else the working bundle, whose adapter
+ * must write the type. `create` enforces a flat ref name and applies `--path`
+ * as the subdirectory.
  */
+function resolveEnvSecretWriteTarget(
+  type: "env" | "secret",
+  ref: string,
+  writeTarget: string | undefined,
+  create?: { subPath?: string },
+): EnvSecretWriteResolution {
+  const parsed = type === "env" ? parseEnvRef(ref) : parseSecretRef(ref);
+  if (create) {
+    assertFlatAssetName(parsed.name);
+    parsed.name = combineCreatePath(normalizeCreateSubPath(create.subPath), parsed.name);
+  }
+  const resolved = resolveMutationTarget(loadConfig(), parsed, writeTarget);
+  return {
+    type,
+    name: parsed.name,
+    conceptId: conceptIdFromTypeName(type, parsed.name),
+    target: resolved.target,
+    ref: resolved.displayRef,
+  };
+}
+
 export function resolveEnvWriteTarget(
   ref: string,
   writeTarget: string | undefined,
   create?: { subPath?: string },
-): EnvWriteResolution {
-  const parsed = parseEnvRef(ref);
-  if (create) {
-    assertFlatAssetName(parsed.name);
-    parsed.name = combineCreatePath(normalizeCreateSubPath(create.subPath), parsed.name);
-  }
-  const resolved = resolveMutationTarget(loadConfig(), parsed, writeTarget, { allowedAdapters: ["akm", "dotenv"] });
-  const { target } = resolved;
-  const envRoot = path.join(target.source.path, "env");
-  const absPath = assetPathForName("env", envRoot, parsed.name);
-  if (!isWithin(absPath, envRoot)) {
-    throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
-  }
-  return { name: parsed.name, absPath, target, parsedRef: resolved.ref, ref: resolved.displayRef };
+): EnvSecretWriteResolution {
+  return resolveEnvSecretWriteTarget("env", ref, writeTarget, create);
 }
 
-export interface SecretWriteResolution {
-  name: string;
-  absPath: string;
-  target: ResolvedWriteTarget;
-  ref: string;
-}
-
-/**
- * Resolve the destination for a secret mutation. Mirrors
- * {@link resolveSecretPath} but selects the source via
- * {@link resolveWriteTarget} (writability-checked) instead of the read-side
- * {@link resolveSecretPath}.
- */
 export function resolveSecretWriteTarget(
   ref: string,
   writeTarget: string | undefined,
   create?: { subPath?: string },
-): SecretWriteResolution {
-  const parsed = parseSecretRef(ref);
-  if (create) {
-    assertFlatAssetName(parsed.name);
-    parsed.name = combineCreatePath(normalizeCreateSubPath(create.subPath), parsed.name);
-  }
-  const resolved = resolveMutationTarget(loadConfig(), parsed, writeTarget, { allowedAdapters: ["akm", "dotenv"] });
-  const { target } = resolved;
-  const typeRoot = path.join(target.source.path, "secrets");
-  const absPath = assetPathForName("secret", typeRoot, parsed.name);
-  if (!isWithin(absPath, typeRoot)) {
-    throw new UsageError(`Secret name "${parsed.name}" escapes the secrets directory.`);
-  }
-  return { name: parsed.name, absPath, target, ref: resolved.displayRef };
+): EnvSecretWriteResolution {
+  return resolveEnvSecretWriteTarget("secret", ref, writeTarget, create);
+}
+
+/** The env file or secret a write resolution names, as the target bundle's adapter reads it; undefined when it has none. */
+export function findWriteTargetAsset(resolution: EnvSecretWriteResolution): AdapterConceptOwner | undefined {
+  const { source } = resolution.target;
+  return readBundleAsset(source, source.adapterId ?? detectAdapterId(source.path), resolution.conceptId, {
+    includeSensitive: true,
+  });
 }
 
 /**
- * Land an env/secret mutation on its write target's git boundary. Mirrors the
- * tasks/knowledge write path: record each mutated path, then fire the single
- * batch-at-boundary commit. Both steps are no-ops for filesystem targets (the
- * primary stash included) and for `env/` paths a stash `.gitignore` excludes, so
- * callers invoke it unconditionally after every create/ingest/set/remove.
+ * Create, update or retire the env file or secret a resolution names, through
+ * the target bundle's adapter, as one operation committed at the target's
+ * boundary.
  */
-export function withEnvSecretWrite<T>(
-  target: ResolvedWriteTarget,
-  ref: { type: "env" | "secret"; name: string },
-  op: "Update" | "Remove",
-  paths: string[],
-  mutate: () => T,
-): T {
-  return withWriteTargetMutation(
-    target,
-    paths,
-    {
-      purpose: `${ref.type}-${op.toLowerCase()}`,
-      message: `${op} ${formatRefForMessage({ type: ref.type, name: ref.name, origin: target.source.name })}`,
-    },
-    mutate,
-  );
+export function writeEnvSecret(
+  resolution: EnvSecretWriteResolution,
+  operation:
+    | { op: "create"; content: string | Buffer; sensitive?: boolean; exclusive?: boolean }
+    | { op: "update"; content: string | Buffer; revision?: string }
+    | { op: "retire"; revision?: string },
+): AssetChange {
+  const { type, name, conceptId, target } = resolution;
+  const asset: AssetOperation =
+    operation.op === "create"
+      ? {
+          op: "create",
+          asset: { type, name, content: operation.content, sensitive: operation.sensitive },
+          exclusive: operation.exclusive,
+        }
+      : operation.op === "update"
+        ? { op: "update", conceptId, content: operation.content, revision: operation.revision }
+        : { op: "retire", conceptId, revision: operation.revision };
+  const verb = operation.op === "retire" ? "Remove" : "Update";
+  return changeAsset(target, asset, {
+    purpose: `${type}-${verb.toLowerCase()}`,
+    message: `${verb} ${formatRefForMessage({ type, name, origin: target.source.name })}`,
+  });
 }
