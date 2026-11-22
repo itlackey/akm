@@ -16,14 +16,9 @@
  * because its `run` delegates to `runSyncBody` (which owns the
  * `runWithJsonErrors` wrapper) rather than wrapping inline.
  *
- * 0.9.0 CLI overhaul (S3): top-level `history` was dropped; its
- * `--accept-rate-by-source` metric was folded into `akm health --report`
- * (src/commands/health/accept-rate.ts).
- *
- * 0.9 CLI overhaul (S7): `list`/`remove`/`update` moved out of this cluster
- * into the new `akm bundle` group (src/commands/sources/bundle-cli.ts) — no
- * top-level `list`/`remove`/`update` remains. Root `sync` and this file's
- * `clone`/`upgrade` stay top-level (the shipped `core/sync.yml` task calls
+ * Bundle `list`/`remove`/`update` live in the `akm bundle` group
+ * (src/commands/sources/bundle-cli.ts). Root `sync` and this file's
+ * `clone`/`upgrade` are top-level (the shipped `core/sync.yml` task calls
  * `akm sync` directly).
  */
 import { defineCommand } from "citty";
@@ -73,7 +68,7 @@ export const upgradeCommand = defineJsonCommand({
     },
     next: {
       type: "boolean",
-      description: "Install the newest prerelease (the @next npm tag)",
+      description: "Deprecated: use `--channel next`. Install the newest prerelease (the @next npm tag)",
       default: false,
     },
   },
@@ -147,7 +142,8 @@ export const syncCommand = defineCommand({
 export const cloneCommand = defineJsonCommand({
   meta: {
     name: "clone",
-    description: "Clone an asset from any source into a managed bundle or an unmanaged custom destination",
+    description:
+      "Deprecated, removed in 0.11: use `akm import <ref> --asset-ref`. Clone an asset from any source into a managed bundle or an unmanaged custom destination",
   },
   args: {
     ref: { type: "positional", description: "Asset ref (e.g. npm:@scope/pkg//scripts/deploy.sh)", required: true },

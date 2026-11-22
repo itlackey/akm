@@ -9,10 +9,6 @@
  * migrated to `defineJsonCommand`, which wraps the body in `runWithJsonErrors`
  * and emits the same JSON envelope (stdout/stderr/exit-code) as the inline
  * `runWithJsonErrors` form it replaces.
- *
- * 0.9 CLI overhaul (S8): the former top-level `extract` and `propose`
- * commands are absorbed here as `extract` and `new` — no top-level
- * registration remains for either spelling.
  */
 
 import { parsePositiveIntFlag } from "../../cli/parse-args";
@@ -47,7 +43,7 @@ import { proposeCommand } from "./propose-cli";
 /**
  * Parse + validate the shared bulk-adjudication filter flags
  * (`--max-diff-lines`, `--older-than`). Extracted from the two verbatim
- * copies that lived in the accept and reject bulk branches (WI-6.6).
+ * copies that lived in the accept and reject bulk branches.
  */
 function parseBulkFilterFlags(args: Record<string, unknown>): { maxDiffLines?: number; olderThanMs?: number } {
   const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
@@ -171,7 +167,7 @@ const proposalAcceptCommand = defineJsonCommand({
       output("proposal-accept-batch", {
         accepted: count,
         results,
-        // S4: how many otherwise-matching proposals were skipped specifically
+        // how many otherwise-matching proposals were skipped specifically
         // because they carry retirement.continuityRisk — visible under
         // --dry-run and on a real run alike, distinct from an ordinary
         // --max-diff-lines/--older-than miss.
@@ -338,7 +334,7 @@ const proposalDiffCommand = defineJsonCommand({
   },
 });
 
-// Phase 6C (Advantage D6c): revert an accepted proposal.
+// revert an accepted proposal.
 //
 // Exit codes (mapped by `runWithJsonErrors` from the typed errors thrown by
 // `akmProposalRevert` / `revertProposal`):

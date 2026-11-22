@@ -13,8 +13,7 @@
  * Values and comment text are NEVER written to stdout or structured output —
  * only key NAMES are surfaced (comments routinely contain commented-out
  * credentials). akm does not manage individual entries;
- * you edit the `.env` file yourself and akm loads it. Replaced the deprecated
- * `vault` type (removed in 0.9.0).
+ * you edit the `.env` file yourself and akm loads it.
  */
 
 import fs from "node:fs";
@@ -254,7 +253,7 @@ async function runEnvInjected(
   }
 
   const result = await runProgram({ argv: command, env: mergedEnv, capture: false });
-  // R-067: was `process.exit(result.status ?? 0)`, which terminates the
+  // was `process.exit(result.status ?? 0)`, which terminates the
   // process synchronously and skips the `finally { disposeLlmUsageSink(); }`
   // block in src/cli.ts's `runCommand` — even
   // on the success path, since this call was unconditional. Setting

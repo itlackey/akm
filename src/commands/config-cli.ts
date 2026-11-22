@@ -176,9 +176,8 @@ export function akmConfigDiff(ref: string): { rows: ConfigDiffRow[] } {
 // migrated to `defineJsonCommand`, which emits the same JSON envelope
 // (stdout/stderr/exit-code) as the inline form.
 //
-// `akm config enable|disable` (a hardcoded alias for toggling the skills.sh
-// registry) was removed in 0.9.0 (C4). Use `akm registry add|remove`, the
-// general mechanism, instead.
+// There is no `akm config enable|disable`: add or remove a registry with
+// `akm registry add|remove`.
 
 export const configCommand = defineGroupCommand({
   meta: { name: "config", description: "Show and manage configuration" },

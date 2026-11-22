@@ -14,7 +14,7 @@
  * are NEVER written to stdout or structured output. The only value-use path is
  * `akm secret run` (injected into a child env var).
  *
- * `secret path` was REMOVED in 0.9.0 (R-027 / D-49) and `secret remove` with it: an
+ * There is no `secret path`: an
  * audit found `path` resolved the ref through the read-side, all-sources
  * resolver while `remove` resolved it through the write-target resolver, so the
  * two could silently name different files when a ref existed in more than one
@@ -206,7 +206,7 @@ const secretRunCommand = defineJsonCommand({
     });
 
     const result = await runProgram({ argv: command, env: mergedEnv, capture: false });
-    // R-067: was `process.exit(result.status ?? 0)`, unconditional even on
+    // was `process.exit(result.status ?? 0)`, unconditional even on
     // the success path — it skipped the `finally { disposeLlmUsageSink(); }`
     // cleanup in src/cli.ts's `runCommand`.
     // Setting `process.exitCode` and returning still exits with the child's

@@ -14,12 +14,9 @@
  * the inline `runWithJsonErrors` form rather than migrating to
  * `defineJsonCommand` (which is reserved for plain runWithJsonErrors+output
  * handlers). `process.exitCode` (not `process.exit()`) so the process still
- * exits via natural event-loop drain rather than skipping pending cleanup —
- * see R-067 / F4.
+ * exits via natural event-loop drain rather than skipping pending cleanup.
  *
- * NOTE: the asset-authoring `propose` verb (formerly here) moved to
- * `akm proposal new` (0.9 CLI overhaul, S8) — see
- * src/commands/proposal/propose-cli.ts.
+ * Asset authoring is `akm proposal new` (src/commands/proposal/propose-cli.ts).
  */
 
 import fs from "node:fs";
@@ -50,7 +47,7 @@ export const agentCommand = defineCommand({
   meta: {
     name: "agent",
     description:
-      "Dispatch an agent CLI (opencode, claude, …) with an optional agent persona and model defaults. Use --prompt for work; without one the harness starts interactively. Stored commands run through akm command run.",
+      "Deprecated, removed in 0.11: use `akm run <ref>` for agent assets, or the agent's own CLI. Dispatch an agent CLI (opencode, claude, …) with an optional agent persona and model defaults. Use --prompt for work; without one the harness starts interactively. Stored commands run through akm command run.",
   },
   args: {
     ...GLOBAL_OUTPUT_ARGS,
@@ -75,7 +72,10 @@ export const agentCommand = defineCommand({
       type: "string",
       description: "Timeout as a duration (30s, 2m) or milliseconds",
     },
-    "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
+    "timeout-ms": {
+      type: "string",
+      description: "Deprecated: use `--timeout`. Override the agent CLI timeout in milliseconds",
+    },
     "max-retries": { type: "string", hidden: true, description: "Run again up to N times when the agent fails" },
     cwd: {
       type: "string",
@@ -121,7 +121,7 @@ export const agentCommand = defineCommand({
       output("agent-result", result);
 
       if (!result.ok) {
-        // R-067-style fix: this used to call `process.exit(EXIT_GENERAL)`
+        // style fix: this used to call `process.exit(EXIT_GENERAL)`
         // directly, which terminates synchronously and skips any pending
         // `finally`/cleanup up the call stack (including the dispatched
         // agent process' own bookkeeping). `output()` has already run above,
@@ -143,7 +143,7 @@ export const lintCommand = defineCommand({
       "Scan bundle .md files for structural issues (unquoted colons, missing updated field, orphaned stubs, placeholder stubs, missing name/type, stale paths (paths the agent can find and correct; `--rule stale-path` lists them), tracked secrets, broken refs in body text and in refs/xrefs/supersededBy/contradictedBy frontmatter). Takes one file (`akm lint <file>`) or the whole bundle. Use --fix to auto-fix Tier 1 issues. Exits 0 on success regardless of findings; use --fail-on-flagged for CI fail-on-finding behavior.",
   },
   args: {
-    // R-051: `lint` is a raw `defineCommand` (not `defineJsonCommand`), so it
+    // `lint` is a raw `defineCommand` (not `defineJsonCommand`), so it
     // does not get `GLOBAL_OUTPUT_ARGS` for free. `--format`/`--detail`/
     // `--output` already parsed correctly here (this command has no
     // positional for a stray value to fall into), so this is purely a
@@ -163,7 +163,7 @@ export const lintCommand = defineCommand({
     // to fix. Two real boolean args, OR'd at the call site, work and render.
     "auto-fix": {
       type: "boolean",
-      description: "Apply auto-fixes in place (same as --fix)",
+      description: "Deprecated: use `--fix`. Apply auto-fixes in place",
       default: false,
     },
     file: {
@@ -190,7 +190,7 @@ export const lintCommand = defineCommand({
     },
     type: {
       type: "string",
-      description: "Only lint assets of this type (akm bundles only; e.g. workflows, tasks); with a file, its type",
+      description: "Only lint assets of this type (akm bundles only; e.g. skills, tasks); with a file, its type",
       default: undefined,
     },
     rule: {
