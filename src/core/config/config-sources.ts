@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { parseStoreDescriptor } from "../adapter/adapter-ids";
 import { ConfigError } from "../errors";
 import type { AkmConfig, BundleConfigEntry, ConfiguredSource, SourceConfigEntry, SourceSpec } from "./config-types";
 
@@ -95,6 +96,8 @@ export function bundleSourceId(config: AkmConfig, bundleId: string): string {
     source = { kind: "website", url: bundle.website.url };
   } else if (bundle.npm !== undefined) {
     source = { kind: "npm", locator: bundle.npm };
+  } else if (bundle.store !== undefined) {
+    source = { kind: "store", locator: bundle.store };
   } else {
     throw new ConfigError(`Bundle ${JSON.stringify(bundleId)} has no source descriptor.`, "INVALID_CONFIG_FILE");
   }
@@ -218,6 +221,9 @@ export function bundleEntryToSourceEntry(
     // Today's npm source carries the package spec in `path` (see parseSourceSpec).
     return { type: "npm", path: bundle.npm, ...base };
   }
+  if (typeof bundle.store === "string" && bundle.store.length > 0) {
+    return { type: "store", url: bundle.store, ...base };
+  }
   return undefined;
 }
 
@@ -305,6 +311,10 @@ export function parseSourceSpec(entry: SourceConfigEntry): SourceSpec | undefine
         : undefined;
     case "npm":
       return entry.path ? { type: "npm", package: entry.path } : undefined;
+    case "store": {
+      const store = entry.url ? parseStoreDescriptor(entry.url) : undefined;
+      return store && { type: "store", ...store };
+    }
     default:
       return undefined;
   }

@@ -89,6 +89,7 @@ export type SourceSpec =
   | { type: "npm"; package: string; version?: string }
   | { type: "github"; owner: string; repo: string; ref?: string }
   | { type: "website"; url: string; maxPages?: number }
+  | { type: "store"; adapterId: string; locator: string }
   | { type: "local"; path: string };
 
 /**

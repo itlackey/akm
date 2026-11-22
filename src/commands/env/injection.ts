@@ -15,11 +15,10 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ArgsDef } from "citty";
 import { getParsedInvocation, type ParsedInvocation } from "../../cli/invocation";
-import { makeSecretRef, resolveSecretPath } from "../../core/env-secret-ref";
+import { makeSecretRef, readSecret } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { parseSecretSpec } from "../../core/ref-token";
-import { readValue } from "../../core/secret-value";
 import { endBySignal } from "../../core/signal-observers";
 import { type ManagedSubprocessResult, runManagedSubprocess } from "../../core/subprocess";
 import { withRetries } from "../../execution/retry";
@@ -79,8 +78,7 @@ export function resolveInjectionRefs(refs: {
     secretValues.push(...binding.secretValues);
   }
   for (const { ref, variable } of secrets) {
-    const { conceptId, absPath, source } = resolveSecretPath(ref);
-    const value = readValue(absPath);
+    const { conceptId, source, value } = readSecret(ref);
     values[variable] = value;
     secretValues.push(value);
     appendEvent({ eventType: "secret_access", ref: makeSecretRef(conceptId, source), metadata: { var: variable } });

@@ -18,8 +18,8 @@
  * never silently drift without a loud failure.
  */
 
-/** Canonical, ordered list of valid adapter ids (matches `BUILTIN_ADAPTERS` order). */
-export const ADAPTER_ID_TABLE: readonly string[] = [
+/** The adapters of a directory bundle, in `BUILTIN_ADAPTERS` order: the values `components.*.adapter` takes. */
+export const VALID_ADAPTER_IDS: readonly [string, ...string[]] = [
   "website-snapshot",
   "agent-skills",
   "claude",
@@ -32,10 +32,22 @@ export const ADAPTER_ID_TABLE: readonly string[] = [
   "okf",
   "generic-files",
   "code-project",
-] as const;
-
-/** The dependency-free counterpart of `./registry.ts`'s `getAdapters().map(a => a.id)`. */
-export const VALID_ADAPTER_IDS: readonly [string, ...string[]] = ADAPTER_ID_TABLE as unknown as readonly [
-  string,
-  ...string[],
 ];
+
+/** The adapters of a secret store bundle: the values the adapter part of a bundle's `store` descriptor takes. */
+export const SECRET_STORE_ADAPTER_IDS: readonly [string, ...string[]] = ["secret-tool", "azure-key-vault"];
+
+/** Canonical, ordered list of every adapter id (matches `BUILTIN_ADAPTERS` order). */
+export const ADAPTER_ID_TABLE: readonly string[] = [...VALID_ADAPTER_IDS, ...SECRET_STORE_ADAPTER_IDS];
+
+/**
+ * A bundle's `store` descriptor is `<adapter>:<locator>`: the secret store
+ * adapter, then what that adapter opens (a keyring's name, a vault's name).
+ * Undefined when the adapter is not a secret store adapter or the locator is empty.
+ */
+export function parseStoreDescriptor(store: string): { adapterId: string; locator: string } | undefined {
+  const colon = store.indexOf(":");
+  const adapterId = store.slice(0, Math.max(colon, 0));
+  const locator = store.slice(colon + 1);
+  return SECRET_STORE_ADAPTER_IDS.includes(adapterId) && locator !== "" ? { adapterId, locator } : undefined;
+}

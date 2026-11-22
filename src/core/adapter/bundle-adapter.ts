@@ -11,6 +11,7 @@
  *   recognize ......................... REQUIRED
  *   validate .......................... REQUIRED
  *   readCandidates / directoryList / looksLikeRoot ... optional
+ *   secretStore ....................... optional
  *
  * `renderExecutionSource` and `readCandidates` are two independent optional
  * read/runtime facets: `renderExecutionSource` serves the agent/command design,
@@ -46,6 +47,7 @@ import type { AdapterRenderedExecutionSource } from "../../execution/source";
 // WI's test does).
 import type { FileContext } from "../../indexer/walk/file-context";
 import type { FileChange } from "../file-change";
+import type { SecretStore } from "./secret-store";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "./types";
 
 export interface AdapterReadCandidate {
@@ -97,6 +99,12 @@ export interface BundleAdapter {
   directoryList?(c: BundleComponent): string[];
   /** Install-time probe; ordered per §1.2. */
   looksLikeRoot?(root: string): boolean;
+
+  // OPTIONAL — the bundle is a secret store, not a directory. Its entries are
+  // the secrets of the store this opens for the bundle's locator: the core
+  // lists them in place of a walk, hands each to `recognize` as the file
+  // `secrets/<name>`, and reads and writes values through the store.
+  secretStore?(locator: string): SecretStore;
 
   // NOTE — the OPTIONAL authoring, export, and memory facet methods are
   // DEFERRED, not declared here: no adapter implements them, and every type they

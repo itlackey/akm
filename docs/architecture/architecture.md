@@ -149,6 +149,12 @@ Providers do **not** implement `search`, `show`, `canShow`, or any read method.
 The indexer walks `path()`, classifies files, and answers all queries from the
 local FTS5 index.
 
+A bundle can also be a **secret store** (a `store` descriptor in place of
+`path`, `git`, `website` or `npm`): one keyring or one vault, with no directory
+and no provider. Its adapter lists the store's secrets, and the indexer indexes
+each by name as it does a file under `secrets/`. See
+[Adapters: Secret store adapters](adapters.md#secret-store-adapters).
+
 File semantics are owned by the selected bundle adapter (see
 [Adapters](adapters.md)). OKF is the first-class least-common-denominator for
 Markdown path identity, open types, content, links, and heading fragments. The
@@ -373,7 +379,8 @@ not `false`. `options.pushOnCommit` is not supported: config load reports it
 (`src/core/config/schema/sources-bundles.ts`).
 
 `writable` is a config flag, not an interface concern. Defaults: `true` for
-`filesystem`, `false` for everything else. `writable: true` on `website` or
+`filesystem` and for a secret store, `false` for everything else. A secret
+store takes `akm secret set` and `akm secret remove` and no other write. `writable: true` on `website` or
 `npm` is rejected at config load — `sync()` would clobber edits on the next
 refresh.
 

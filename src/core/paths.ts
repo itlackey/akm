@@ -398,6 +398,16 @@ export function getUnresolvedSourcesDir(stashDir: string): string {
 }
 
 /**
+ * `$CACHE/index/stores/<bundle>` — the path a secret store bundle's entries are
+ * indexed under. A store has no directory and nothing is written here: this is
+ * only the bundle's stable `SearchSource.path`, under which each secret takes
+ * the path a file of its name would have.
+ */
+export function getStoreBundleRoot(bundle: string): string {
+  return path.join(getCacheDir(), "index", "stores", bundle);
+}
+
+/**
  * `$STATE/locks/<stash>/` — per-stash operational lock files for the improve
  * pipeline (e.g. `improve.lock`). Moved out of `$STASH/.akm/` (itlackey/akm#890).
  */

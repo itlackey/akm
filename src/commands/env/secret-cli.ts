@@ -28,11 +28,14 @@ import path from "node:path";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output, reportChildExit } from "../../cli/shared";
+import { secretStoreOf } from "../../core/adapter/registry";
+import { listSecretNames, secretConceptId } from "../../core/adapter/secret-store";
 import { refForFile } from "../../core/asset/asset-placement";
+import { toErrorMessage } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import {
   makeSecretRef,
-  resolveSecretPath,
+  readSecret,
   resolveSecretWriteTarget,
   sensitiveMarkerPath,
   withEnvSecretWrite,
@@ -40,6 +43,7 @@ import {
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { isTerminal, stderr } from "../../core/stdio";
+import { warn } from "../../core/warn";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { isFileOrFileSymlink } from "../../indexer/walk/walker";
 import { readStdin } from "../../runtime";
@@ -55,10 +59,25 @@ function parseKeyListFlag(raw: string | undefined): string[] | undefined {
   return keys.length > 0 ? keys : undefined;
 }
 
-/** Walk `secrets/` across all stashes, returning one entry per secret file. */
+/** One entry per secret across all bundles: each file under a directory bundle's `secrets/`, each secret of a store bundle. */
 function listSecretsRecursive(): Array<{ ref: string; path: string }> {
   const result: Array<{ ref: string; path: string }> = [];
   for (const source of resolveSourceEntries(undefined, loadConfig())) {
+    const store = secretStoreOf(source);
+    if (store) {
+      // One store that cannot be reached does not hide the secrets of the other bundles.
+      let names: string[] = [];
+      try {
+        names = listSecretNames(store);
+      } catch (error) {
+        warn(`Bundle "${source.registryId}" was not listed: ${toErrorMessage(error)}`);
+      }
+      for (const name of names) {
+        const conceptId = secretConceptId(name);
+        result.push({ ref: makeSecretRef(conceptId, source), path: path.join(source.path, conceptId) });
+      }
+      continue;
+    }
     const secretsDir = path.join(source.path, "secrets");
     if (!fs.existsSync(secretsDir)) continue;
     const walk = (dir: string): void => {
@@ -117,7 +136,7 @@ const secretSetCommand = defineJsonCommand({
   },
   async run({ args }) {
     const { setSecret } = await import("./secret.js");
-    const { name, absPath, target, ref } = resolveSecretWriteTarget(args.ref, args.bundle, {
+    const { name, absPath, target, ref, store } = resolveSecretWriteTarget(args.ref, args.bundle, {
       subPath: getStringArg(args, "path"),
     });
 
@@ -150,7 +169,8 @@ const secretSetCommand = defineJsonCommand({
       value = Buffer.from(stdinBuf.toString("utf8").replace(/\n$/, ""), "utf8");
     }
 
-    withEnvSecretWrite(target, { type: "secret", name }, "Update", [absPath], () => setSecret(absPath, value));
+    if (store) store.write(name, value);
+    else withEnvSecretWrite(target, { type: "secret", name }, "Update", [absPath], () => setSecret(absPath, value));
     output("secret-set", { ref });
   },
 });
@@ -188,15 +208,13 @@ const secretRunCommand = defineJsonCommand({
       throw new UsageError("Missing command. Usage: akm secret run <ref> <VAR> -- <command>");
     }
 
-    const { conceptId, absPath, source } = resolveSecretPath(args.ref);
-
-    const { readValue } = await import("../../core/secret-value.js");
+    const { conceptId, source, value } = readSecret(args.ref);
 
     const mergedEnv = buildChildEnv(process.env, {
       clean: args.clean === true,
       inherit: parseKeyListFlag(args.inherit) ?? [],
     });
-    mergedEnv[varName] = readValue(absPath);
+    mergedEnv[varName] = value;
 
     // Audit trail: record access by ref + var name only — never the value.
     appendEvent({
@@ -228,7 +246,7 @@ const secretRemoveCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const { name, absPath, target, ref } = resolveSecretWriteTarget(args.ref, args.bundle);
+    const { name, absPath, target, ref, store } = resolveSecretWriteTarget(args.ref, args.bundle);
     const { confirmDestructive } = await import("../../cli/confirm.js");
     const confirmed = await confirmDestructive(`Remove secret "${args.ref}"? This cannot be undone.`, {
       yes: args.yes === true,
@@ -237,17 +255,18 @@ const secretRemoveCommand = defineJsonCommand({
       stderr().write("Aborted.\n");
       return;
     }
-    if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Secret not found: ${ref}`);
-    }
     const { removeSecret } = await import("./secret.js");
-    const removed = withEnvSecretWrite(
-      target,
-      { type: "secret", name },
-      "Remove",
-      [absPath, sensitiveMarkerPath(absPath, "secret")],
-      () => removeSecret(absPath),
-    );
+    const removed = store
+      ? store.remove(name)
+      : fs.existsSync(absPath) &&
+        withEnvSecretWrite(
+          target,
+          { type: "secret", name },
+          "Remove",
+          [absPath, sensitiveMarkerPath(absPath, "secret")],
+          () => removeSecret(absPath),
+        );
+    if (!removed) throw new NotFoundError(`Secret not found: ${ref}`);
     output("secret-remove", { ref, removed });
   },
 });

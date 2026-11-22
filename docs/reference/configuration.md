@@ -927,8 +927,12 @@ the key is ignored, and enables nothing; `akm migrate apply` drops it.
 `bundles` (replacing the retired `stashDir`/`sources[]`/`installed[]` trio)
 and `defaultBundle` are the 0.9 source configuration shape — see
 [Concepts](../guides/concepts.md) and the [CLI reference](cli.md) for the
-full bundle model (`path`, `git`, `website`, `npm`, `writable`, `registryId`,
-`components`, `lint`). `defaultBundle` must name a key in `bundles` when set. A
+full bundle model (`path`, `git`, `website`, `npm`, `store`, `writable`, `registryId`,
+`components`, `lint`). A bundle carries exactly one of `path`, `git`, `website`,
+`npm` and `store`; `store` is `<adapter>:<locator>` and makes the bundle a
+[secret store](env-and-secrets.md#secret-store-bundles) (`secret-tool:<keyring>`
+or `azure-key-vault:<vault>`), which takes no `components`.
+`defaultBundle` must name a key in `bundles` when set. A
 bundle's `components.<id>.adapter` key pins it to a specific format adapter
 instead of relying on auto-detection — see [Bundle Types](bundle-types.md)
 for the full adapter list and what each one reads/writes.

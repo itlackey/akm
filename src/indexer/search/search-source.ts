@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { parseStoreDescriptor } from "../../core/adapter/adapter-ids";
 import { isWithin, relativeToRoot, resolveStashDir, safeRealpath, toErrorMessage } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import {
@@ -15,7 +16,7 @@ import {
   loadConfig,
 } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
-import { getUnresolvedSourcesDir } from "../../core/paths";
+import { getStoreBundleRoot, getUnresolvedSourcesDir } from "../../core/paths";
 import { warn } from "../../core/warn";
 import { resolveGitContentRoot, resolveWritable } from "../../core/write-source";
 import { lockContentRootFor } from "../../integrations/lockfile";
@@ -38,6 +39,11 @@ export interface SearchSource {
   adapterId?: string;
   /** Set when the source's provider/path could not be resolved this run: why, and its real directory when it has one. */
   unresolved?: { reason: string; path?: string };
+  /**
+   * Set for a secret store bundle: what its adapter opens (a keyring's name, a vault's name). `path` is then no
+   * directory, only the path the bundle's entries are indexed under.
+   */
+  locator?: string;
 }
 
 // ── Resolution ──────────────────────────────────────────────────────────────
@@ -140,6 +146,18 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
   // root can never escape its provider's materialized content root.
   for (const entry of configuredEntries) {
     if (entry.enabled === false) continue;
+    const store = entry.type === "store" && entry.url ? parseStoreDescriptor(entry.url) : undefined;
+    if (store && entry.name) {
+      sources.push({
+        path: safeRealpath(getStoreBundleRoot(entry.name)),
+        registryId: entry.name,
+        ...(entry.name === config.defaultBundle ? { isDefault: true } : {}),
+        writable: resolveWritable(entry),
+        type: entry.type,
+        ...store,
+      });
+      continue;
+    }
     const component = bundleComponentConfig(config.bundles?.[entry.name ?? ""]);
     const resolvedContent = resolveEntryContent(entry);
     if ("error" in resolvedContent) {

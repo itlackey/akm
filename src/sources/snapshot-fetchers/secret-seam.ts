@@ -2,8 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { resolveSecretPath } from "../../core/env-secret-ref";
-import { readValue } from "../../core/secret-value";
+import { readSecret } from "../../core/env-secret-ref";
 import type { SecretResolver } from "../provider";
 
 /**
@@ -17,14 +16,13 @@ import type { SecretResolver } from "../provider";
  * fetchers stay leaves while still reaching the store.
  *
  * Returns null for any failure — missing store, unresolvable ref, unreadable
- * file. The underlying error is deliberately not surfaced: it can embed
+ * file or secret store. The underlying error is deliberately not surfaced: it can embed
  * filesystem paths, and every failure means the same thing to a caller ("no
  * secret"). The value itself is never logged.
  */
 export function resolveSecretFromStore(ref: string): string | null {
   try {
-    const { absPath } = resolveSecretPath(ref);
-    return readValue(absPath) || null;
+    return readSecret(ref).value || null;
   } catch {
     return null;
   }

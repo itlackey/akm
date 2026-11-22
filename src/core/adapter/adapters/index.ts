@@ -23,6 +23,7 @@ import { agentSkillsAdapter } from "./agent-skills-adapter";
 import { akmAdapter } from "./akm-adapter";
 import { akmTaskAdapter } from "./akm-task-adapter";
 import { akmWorkflowAdapter } from "./akm-workflow-adapter";
+import { azureKeyVaultAdapter } from "./azure-key-vault-adapter";
 import { claudeAdapter } from "./claude-adapter";
 import { codeProjectAdapter } from "./code-project-adapter";
 import { dotenvAdapter } from "./dotenv-adapter";
@@ -30,12 +31,14 @@ import { genericFilesAdapter } from "./generic-files-adapter";
 import { llmWikiAdapter } from "./llm-wiki-adapter";
 import { okfAdapter } from "./okf-adapter";
 import { opencodeAdapter } from "./opencode-adapter";
+import { secretToolAdapter } from "./secret-tool-adapter";
 import { websiteSnapshotAdapter } from "./website-snapshot-adapter";
 
 export { agentSkillsAdapter } from "./agent-skills-adapter";
 export { akmAdapter } from "./akm-adapter";
 export { akmTaskAdapter } from "./akm-task-adapter";
 export { akmWorkflowAdapter } from "./akm-workflow-adapter";
+export { azureKeyVaultAdapter } from "./azure-key-vault-adapter";
 export { claudeAdapter } from "./claude-adapter";
 export { codeProjectAdapter } from "./code-project-adapter";
 export { dotenvAdapter } from "./dotenv-adapter";
@@ -43,6 +46,7 @@ export { genericFilesAdapter } from "./generic-files-adapter";
 export { llmWikiAdapter } from "./llm-wiki-adapter";
 export { okfAdapter } from "./okf-adapter";
 export { opencodeAdapter } from "./opencode-adapter";
+export { secretToolAdapter } from "./secret-tool-adapter";
 export { websiteSnapshotAdapter } from "./website-snapshot-adapter";
 
 /**
@@ -71,6 +75,8 @@ export { websiteSnapshotAdapter } from "./website-snapshot-adapter";
  *    fire on none of the other roots; they come at the front for clarity.
  *  - `generic-files` and `code-project` are EXPLICIT-CONFIG ONLY (neither can
  *    be auto-detected), so they are LAST and can never shadow anything.
+ *  - `secret-tool` and `azure-key-vault` are secret stores: a bundle's `store`
+ *    descriptor names one, and they have no directory to probe.
  */
 export const BUILTIN_ADAPTERS: readonly BundleAdapter[] = Object.freeze([
   // Specific, disjoint markers first.
@@ -91,6 +97,9 @@ export const BUILTIN_ADAPTERS: readonly BundleAdapter[] = Object.freeze([
   genericFilesAdapter,
   // Explicit-config only (`--adapter code-project`) — no probe, so order is moot.
   codeProjectAdapter,
+  // Secret stores: named by a bundle's `store` descriptor, and no directory to probe.
+  secretToolAdapter,
+  azureKeyVaultAdapter,
 ]);
 
 // Construction-time drift guard (#909): ../adapter-ids.ts's ADAPTER_ID_TABLE

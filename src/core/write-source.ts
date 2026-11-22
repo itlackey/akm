@@ -10,8 +10,9 @@
  *
  *  1. Resolve the destination: `--bundle` → `defaultWriteTarget` → working
  *     stash (`defaultBundle`). `writable` defaults to true on `filesystem` and
- *     false on `git`; `website` / `npm` are never writable (the config loader
- *     rejects `writable: true` on them).
+ *     `store`, and false on `git`; `website` / `npm` are never writable (the
+ *     config loader rejects `writable: true` on them). A `store` target takes
+ *     secret writes only, through its adapter.
  *  2. Publish: write the file atomically inside the bundle root, and for a
  *     git-backed target commit exactly the operation's paths once at the
  *     boundary ({@link commitWriteTargetBoundary} → `saveGitStash`), pushing
@@ -47,11 +48,12 @@ import { assetPathForName, stashDirFor } from "./asset/asset-placement";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
 import { deriveBundleId } from "./bundle-id";
-import { existingFileMode, isWithin, relativeToRoot, resolveStashDir, writeFileAtomic } from "./common";
+import { existingFileMode, isWithin, relativeToRoot, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
 import { bundleKeyForContentRoot, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
 import { ConfigError, UsageError } from "./errors";
 import { sanitizeCommitMessage } from "./git-message";
+import { getStoreBundleRoot } from "./paths";
 import { warn, warnOnce } from "./warn";
 import { recordWrittenPath } from "./write-provenance";
 
@@ -59,7 +61,7 @@ import { recordWrittenPath } from "./write-provenance";
 
 /** Minimal source shape the write helpers need. */
 export interface WriteTargetSource {
-  /** Discriminator for write dispatch (`"filesystem"` | `"git"`). */
+  /** Discriminator for write dispatch (`"filesystem"` | `"git"` | `"store"`). */
   readonly kind: string;
   /** Human-readable identifier surfaced in error messages. */
   readonly name: string;
@@ -69,6 +71,8 @@ export interface WriteTargetSource {
   readonly repoPath?: string;
   /** Bundle adapter that owns placement and authoring semantics. */
   readonly adapterId?: string;
+  /** Set for a secret store bundle (`kind: "store"`): what its adapter opens. `path` is then no directory. */
+  readonly locator?: string;
 }
 
 /** The chosen source plus the persisted config entry that drove the choice. */
@@ -82,10 +86,13 @@ export interface ResolvedWriteTarget {
 
 // ── Write-target resolution ─────────────────────────────────────────────────
 
-/** `writable` defaults to true on `filesystem` and false on every other kind. */
+/**
+ * `writable` defaults to true on `filesystem` and `store`, and false on every other kind. Only `akm secret set` and
+ * `akm secret remove` write a store, and only when the store is named.
+ */
 export function resolveWritable(entry: Pick<SourceConfigEntry, "type" | "writable">): boolean {
   if (typeof entry.writable === "boolean") return entry.writable;
-  return entry.type === "filesystem";
+  return entry.type === "filesystem" || entry.type === "store";
 }
 
 /**
@@ -233,6 +240,26 @@ export function resolveWorkingStashTarget(
  * `content/` convention.
  */
 function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
+  if (runtime.source.type === "store") {
+    // A secret store has no directory to write: it is the target of secret writes, which go through its adapter.
+    const { adapterId, locator } = runtime.source;
+    return {
+      selector: runtime.name,
+      source: {
+        kind: "store",
+        name: runtime.name,
+        path: safeRealpath(getStoreBundleRoot(runtime.name)),
+        adapterId,
+        locator,
+      },
+      config: {
+        type: "store",
+        name: runtime.name,
+        url: `${adapterId}:${locator}`,
+        ...(runtime.writable !== undefined ? { writable: runtime.writable } : {}),
+      },
+    };
+  }
   if (!isWriteCapableSourceKind(runtime.type)) {
     throw new ConfigError(
       `write-source: source "${runtime.name}" has unsupported kind "${runtime.type}" for writes. ` +
@@ -631,6 +658,7 @@ export function withWriteTargetMutation<T>(
   mutate: () => T,
 ): T {
   return withAssetMutationLeaseSync(options.purpose, () => {
+    assertSupportedKind(target.source);
     assertWritePathsInsideSource(target.source, paths);
     const result = mutate();
     commitWriteTargetBoundary(target, options.message, { paths });

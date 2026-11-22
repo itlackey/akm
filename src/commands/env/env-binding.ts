@@ -21,7 +21,6 @@ import { isInstalledBundle, makeEnvRef, resolveEnvPath, resolveRefOwner } from "
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { substituteRefTokens } from "../../core/ref-token";
-import { readValue } from "../../core/secret-value";
 import { stderr } from "../../core/stdio";
 import { warnOnce } from "../../core/warn";
 import { loadEnv } from "./env";
@@ -51,7 +50,7 @@ export function resolveRefToken(
   const owner = resolveRefOwner(ref);
   if (owner === undefined) return undefined;
   return owner.type === "secret"
-    ? { kind: "secret", value: readValue(owner.absPath) }
+    ? { kind: "secret", value: owner.secretValue() }
     : { kind: "path", path: owner.absPath };
 }
 

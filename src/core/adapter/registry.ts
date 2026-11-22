@@ -32,6 +32,7 @@
 
 import { BUILTIN_ADAPTERS } from "./adapters";
 import type { BundleAdapter } from "./bundle-adapter";
+import type { SecretStore } from "./secret-store";
 
 export { BUILTIN_ADAPTERS } from "./adapters";
 
@@ -51,4 +52,10 @@ export function getAdapters(): BundleAdapter[] {
 /** Look up an adapter by its own `id` (matches `BundleComponent.adapter`); `undefined` for an unknown id (the caller skips + warns). */
 export function adapterForId(id: string): BundleAdapter | undefined {
   return BY_ID.get(id);
+}
+
+/** The secret store behind a bundle, or undefined for a bundle that is a directory. */
+export function secretStoreOf(bundle: { adapterId?: string; locator?: string }): SecretStore | undefined {
+  if (bundle.adapterId === undefined || bundle.locator === undefined) return undefined;
+  return adapterForId(bundle.adapterId)?.secretStore?.(bundle.locator);
 }

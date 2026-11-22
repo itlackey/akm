@@ -70,6 +70,9 @@ export type ConfigErrorCode =
   // the named secret does not exist, or no store-backed resolver was wired at
   // the call site.
   | "SECRET_REFERENCE_UNRESOLVED"
+  // A secret store bundle (an OS keyring, a cloud vault) could not be used: its
+  // command-line client is not installed, or the store refused or failed the request.
+  | "SECRET_STORE_UNAVAILABLE"
   // A registry URL akm was asked to fetch is unusable before any request is
   // made: not http(s), carries userinfo, or `AKM_NPM_REGISTRY` does not parse.
   | "REGISTRY_URL_INVALID";

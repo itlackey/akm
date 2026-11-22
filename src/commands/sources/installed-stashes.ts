@@ -17,6 +17,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { parseStoreDescriptor } from "../../core/adapter/adapter-ids";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
@@ -25,6 +26,7 @@ import { AkmError, ConfigError, NotFoundError, UsageError } from "../../core/err
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath, getRegistryCacheDir } from "../../core/paths";
 import { warn } from "../../core/warn";
+import { resolveWritable } from "../../core/write-source";
 import {
   buildIndex,
   isSkippedIndexBuild,
@@ -149,6 +151,7 @@ function describeBundleSource(entry: BundleConfigEntry): SourceDescriptor {
       ...(entry.website.maxPages !== undefined ? { maxPages: entry.website.maxPages } : {}),
     };
   }
+  if (entry.store) return { kind: "store", locator: entry.store };
   return { kind: "npm", locator: entry.npm ?? "" };
 }
 
@@ -165,6 +168,9 @@ function describeBundleSource(entry: BundleConfigEntry): SourceDescriptor {
  * rather than probing a path that may not exist.
  */
 function describeComponents(entry: BundleConfigEntry, bundleRoot: string | undefined): SourceComponent[] {
+  // A secret store bundle's descriptor names its adapter, and it has no directory to probe.
+  const store = entry.store ? parseStoreDescriptor(entry.store) : undefined;
+  if (store) return [{ name: "main", adapter: store.adapterId, detected: false }];
   const configuredComponents = entry.components ?? {};
   const names = Object.keys(configuredComponents);
   if (names.length === 0) {
@@ -270,7 +276,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
       ...(lock ? { ref: lock.ref } : {}),
       provider: bundle.url != null ? bundle.type : undefined,
       ...(lock?.resolvedVersion !== undefined ? { version: lock.resolvedVersion } : {}),
-      writable: componentWritable ?? bundle.writable ?? kind === "filesystem",
+      writable: componentWritable ?? resolveWritable(bundle),
       ...(configured.registryId !== undefined ? { registryId: configured.registryId } : {}),
       components: describeComponents(configured, root || undefined),
       lock: describeLock(lock),
@@ -850,7 +856,7 @@ async function updateWebsiteSource(
   return buildUpdateResponse(stashDir, target, all, [], { plainSynced: [synced.item], index: synced.index });
 }
 
-/** Reconcile a filesystem source's current bytes without provider hydration. */
+/** Reconcile a filesystem source's current bytes, or a secret store's current entries, without provider hydration. */
 async function updateFilesystemSource(
   stashDir: string,
   target: string,
@@ -858,7 +864,6 @@ async function updateFilesystemSource(
   filesystemSource: ConfiguredSource,
 ): Promise<UpdateResponse> {
   const id = filesystemSource.name ?? filesystemSource.path ?? target;
-  const ref = filesystemSource.path ?? target;
   const index = await withIndexBuildLock((build) => build({ stashDir, hydrateSources: false }));
   if (isSkippedIndexBuild(index)) {
     return buildUpdateResponse(stashDir, target, all, [], { skipped: [skippedFilesystemOutcome(id)], index });
@@ -870,9 +875,18 @@ async function updateFilesystemSource(
     });
   }
   return buildUpdateResponse(stashDir, target, all, [], {
-    plainSynced: [{ id, kind: "filesystem", ref }],
+    plainSynced: [reconciledItem(filesystemSource, target)],
     index,
   });
+}
+
+/** What an index build reconciled for a source that needs no fetch: a directory, or a secret store. */
+function reconciledItem(source: ConfiguredSource, fallback = ""): UpdatePlainSyncedItem {
+  return {
+    id: source.name ?? source.path ?? fallback,
+    kind: source.type === "store" ? "store" : "filesystem",
+    ref: source.path ?? source.url ?? fallback,
+  };
 }
 
 /**
@@ -1118,8 +1132,9 @@ export async function akmUpdate(input?: {
       });
     }
 
+    // A directory or a secret store: an index build reconciles either, and nothing is fetched.
     const filesystemMatch = stashes.find((source) => {
-      if (source.type !== "filesystem") return false;
+      if (source.type !== "filesystem" && source.type !== "store") return false;
       if (source.name === target) return true;
       return resolvedPath !== undefined && source.path !== undefined && path.resolve(source.path) === resolvedPath;
     });
@@ -1194,13 +1209,7 @@ export async function akmUpdate(input?: {
             skipped.push(skippedFilesystemOutcome(source.name ?? source.path ?? ""));
           }
         } else if (latestIndex.scanComplete) {
-          for (const source of filesystemSources) {
-            plainSynced.push({
-              id: source.name ?? source.path ?? "",
-              kind: "filesystem",
-              ref: source.path ?? source.name ?? "",
-            });
-          }
+          for (const source of filesystemSources) plainSynced.push(reconciledItem(source));
         } else {
           for (const source of filesystemSources) {
             skipped.push(incompleteFilesystemOutcome(source.name ?? source.path ?? ""));

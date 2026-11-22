@@ -9,7 +9,9 @@ without you converting anything first.
 
 A directory AKM indexes this way is a **bundle**. AKM auto-detects which
 format a bundle uses — you never declare it yourself unless you want to pin
-one explicitly. AKM recognizes 12 formats.
+one explicitly. AKM recognizes 12 directory formats. A bundle can also be a
+secret store, which is not a directory: its config entry names the store, and
+AKM reads it through one of 2 store adapters.
 
 ## Format compatibility
 
@@ -27,6 +29,8 @@ one explicitly. AKM recognizes 12 formats.
 | `okf` | Frontmatter `type` (defaults to `knowledge`); name, description, tags, links, body | A root `index.md`, or any `.md` file anywhere carrying a non-empty frontmatter `type` | Read-only | The [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) — the portable baseline every markdown-based format here is a superset of |
 | `generic-files` | Files classified by extension: scripts, markdown/text as `document`, everything else as `file` | None — only claimed via an explicit `components.<id>.adapter: "generic-files"` config override | Read-only | A catch-all for a directory that doesn't match any other format |
 | `code-project` | One document per eligible file of a coding repository: source as `source` (language as a tag), Markdown/text as `doc`, a few named config files (`package.json`, `tsconfig*.json`, `Dockerfile`, ...) as `config`. Refs are the file's bundle-relative path, extension included | None — only claimed via an explicit `--adapter code-project` / `components.<id>.adapter: "code-project"` | Read-only | A source repository. A fixed allowlist skips binaries, lockfiles, `.env*`, keys, `*.min.js` and generated or vendored directories; `.gitignore` applies in a git repository (so an ignored `secrets/` is never indexed). If the embedding endpoint is remote, indexed source code is sent to it |
+| `secret-tool` | Every entry of one Secret Service keyring (KWallet, GNOME Keyring) as type `secret`, named by its label; never a value | None — a bundle's `store: "secret-tool:<keyring>"` config entry | Writable, narrowly — `akm secret set`/`secret remove` only | A dedicated OS keyring as a secrets bundle. Needs `secret-tool` (package `libsecret-tools`) and `busctl` |
+| `azure-key-vault` | Every secret of one Azure Key Vault as type `secret`, under the vault's name for it; never a value | None — a bundle's `store: "azure-key-vault:<vault>"` config entry | Writable, narrowly — `akm secret set`/`secret remove` only | A team's vault as a secrets bundle. Needs the Azure CLI, signed in with `az login` |
 
 **Read-only** here means AKM's own write commands (`akm remember`, `akm
 import`, `proposal accept`, and similar) won't create or edit files in a

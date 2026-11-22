@@ -6,12 +6,13 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AdapterReadCandidate, BundleAdapter } from "../../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
-import { adapterForId } from "../../core/adapter/registry";
+import { adapterForId, secretStoreOf } from "../../core/adapter/registry";
+import { listSecretNames, type SecretStore, secretNameOf } from "../../core/adapter/secret-store";
 import type { BundleComponent } from "../../core/adapter/types";
 import { assetPathForName, stashDirFor, stashDirNames } from "../../core/asset/asset-placement";
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
-import { compareCodePoints, hasErrnoCode } from "../../core/common";
+import { compareCodePoints, hasErrnoCode, safeRealpath } from "../../core/common";
 import { ConfigError, UsageError } from "../../core/errors";
 import { sensitiveMarkerPath } from "../../core/sensitive-marker-path";
 import { warnOnce } from "../../core/warn";
@@ -279,12 +280,11 @@ export function entryFromFiles(match: ConceptOwnerMatch): IndexEntry | undefined
   const { owner, source, bundleId, adapterId } = match;
   try {
     const adapter = adapterForId(adapterId);
-    if (
-      !adapter ||
-      !isWalkedFile(source.path, owner.path, { includeAllDirectories: adapter.walkMode === "all-directories" })
-    ) {
-      return undefined;
-    }
+    // A secret store's entries are listed, not walked.
+    const listed =
+      source.locator !== undefined ||
+      isWalkedFile(source.path, owner.path, { includeAllDirectories: adapter?.walkMode === "all-directories" });
+    if (!adapter || !listed) return undefined;
     const component: BundleComponent = { id: adapterId, adapter: adapterId, root: source.path, writable: false };
     const document = adapter.recognize(component, buildFileContext(source.path, owner.path));
     if (!document?.conceptId || !withMdVariants(owner.conceptId).includes(document.conceptId)) return undefined;
@@ -359,6 +359,23 @@ function warnOutdatedRef(outdated: string, current: string): void {
   );
 }
 
+/**
+ * A secret store bundle's owner of `conceptId`: the store holds a secret of
+ * that name. The owner's path is where the entry is indexed; no file is there.
+ * A ref that names no secret never reaches the store.
+ */
+function storeConceptOwner(
+  root: string,
+  adapterId: string,
+  store: SecretStore,
+  conceptId: string,
+): AdapterConceptOwner | undefined {
+  const name = secretNameOf(conceptId);
+  if (name === undefined || !listSecretNames(store).includes(name)) return undefined;
+  const entryPath = path.join(root, conceptId);
+  return { path: entryPath, realPath: entryPath, conceptId, adapterId };
+}
+
 function ownerAmong(
   ref: BundleRef,
   sources: readonly SearchSource[],
@@ -369,7 +386,10 @@ function ownerAmong(
     const bundleId = installations[index]?.id;
     if (!bundleId || (ref.bundle !== undefined && bundleId !== ref.bundle)) continue;
     const adapterId = source.adapterId ?? detectAdapterId(source.path);
-    const owner = resolveAdapterConceptOwner(source.path, adapterId, ref.conceptId, options);
+    const store = secretStoreOf(source);
+    const owner = store
+      ? storeConceptOwner(source.path, adapterId, store, ref.conceptId)
+      : resolveAdapterConceptOwner(source.path, adapterId, ref.conceptId, options);
     if (owner) return { owner, source, bundleId, adapterId };
   }
   return undefined;
@@ -377,11 +397,8 @@ function ownerAmong(
 
 export function indexedPathMatchesOwner(indexedPath: string, owner: AdapterConceptOwner): boolean {
   if (path.resolve(indexedPath) !== path.resolve(owner.path)) return false;
-  try {
-    return path.resolve(fs.realpathSync(indexedPath)) === path.resolve(owner.realPath);
-  } catch {
-    return false;
-  }
+  // A secret store entry has no file to resolve: its path is already the one it is indexed under.
+  return safeRealpath(indexedPath) === path.resolve(owner.realPath);
 }
 
 /**
