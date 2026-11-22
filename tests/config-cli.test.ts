@@ -86,6 +86,18 @@ describe("config CLI helpers", () => {
     ).toThrow("writable: true is only supported on path, git and location bundle sources");
   });
 
+  test("setConfigValue takes a location bundle, which names the adapter that reads it", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const keyring = { location: "akm", components: { main: { adapter: "secret-tool" } } };
+    expect(setConfigValue(base, "bundles", JSON.stringify({ keyring })).bundles?.keyring).toEqual(keyring);
+    expect(() => setConfigValue(base, "bundles", '{"k":{"location":"akm"}}')).toThrow(
+      "a location bundle names the adapter that reads it, in its one component's `adapter`",
+    );
+    expect(() => setConfigValue(base, "bundles", '{"k":{"location":"akm","path":"/tmp/k"}}')).toThrow(
+      "a bundle entry must carry exactly one source descriptor; got path, location",
+    );
+  });
+
   test("setConfigValue rejects empty and multi-entry component maps", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     expect(() => setConfigValue(base, "bundles", '{"empty":{"path":"/tmp/empty","components":{}}}')).toThrow(

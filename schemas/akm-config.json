@@ -463,6 +463,10 @@
             "type": "string",
             "minLength": 1
           },
+          "location": {
+            "type": "string",
+            "minLength": 1
+          },
           "credential": {
             "type": "string",
             "minLength": 1
@@ -2456,6 +2460,10 @@
                 "additionalProperties": {}
               },
               "npm": {
+                "type": "string",
+                "minLength": 1
+              },
+              "location": {
                 "type": "string",
                 "minLength": 1
               },

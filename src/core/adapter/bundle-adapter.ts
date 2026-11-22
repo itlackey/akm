@@ -91,6 +91,8 @@ export interface AssetChange {
   path: string;
   /** The files the write changed, for the bundle's commit boundary. Empty when the bundle is not a directory. */
   changed: string[];
+  /** The content the asset holds after the write. Absent after a retire. */
+  content?: string | Buffer;
 }
 
 export interface BundleAdapter {
@@ -129,9 +131,9 @@ export interface BundleAdapter {
   // updates and retires, and an adapter that lists any implements all three.
   // Without it the adapter is read-only.
   readonly writes?: readonly string[];
-  /** Create the asset; one of the same type and name is replaced. */
+  /** Create the asset, in the adapter's own form for its type; one of the same type and name is replaced. */
   create?(c: BundleComponent, asset: NewAsset): AssetChange;
-  /** Replace the content of the asset `conceptId` holds. */
+  /** Replace the content of the asset `conceptId` holds with exactly `content`. */
   update?(c: BundleComponent, conceptId: string, content: string | Buffer): AssetChange;
   /** Take the asset out of the bundle. */
   retire?(c: BundleComponent, conceptId: string): AssetChange;

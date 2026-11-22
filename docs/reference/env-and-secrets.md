@@ -225,6 +225,69 @@ secret; values are never indexed. `env list`, `env path`, `env export`,
 `secret list`, `akm exec` and `akm run`'s `--env` and `--secret` read the files
 directly and do not need the index.
 
+## Secrets kept by a secret manager
+
+A bundle can be one keyring of the desktop's Secret Service (KWallet,
+GNOME Keyring) or one Azure Key Vault, in place of a directory. Its config
+entry names the keyring or vault in `location` and the adapter that reads it
+in its component:
+
+```json
+"bundles": {
+  "keyring": { "location": "akm", "components": { "main": { "adapter": "secret-tool" } } },
+  "vault": { "location": "team-vault", "components": { "main": { "adapter": "azure-key-vault" } } }
+}
+```
+
+Every secret of the keyring or vault is a secret of the bundle, under
+`secrets/<name>`, and is used as a secret kept as a file is:
+
+```sh
+akm index                                             # entries are indexed by name; values never are
+akm secret list                                       # keyring//secrets/gh_token, vault//secrets/deploy-token, ...
+akm show keyring//secrets/gh_token                    # name only
+akm run --secret keyring//secrets/gh_token:GITHUB_TOKEN scripts/release.sh
+printf '%s' "$TOKEN" | akm secret set keyring//secrets/npm_token
+akm secret remove vault//secrets/deploy-token
+```
+
+A `${keyring//secrets/gh_token}` token in an env value or a git bundle's
+`credential` reads it the same way, and an unqualified `secrets/<name>` reaches
+such a bundle after the bundles before it in priority.
+
+| | `secret-tool` | `azure-key-vault` |
+| --- | --- | --- |
+| `location` | the keyring's name, as `secret-tool store --collection` takes it | the vault's name |
+| Needs | `secret-tool` (package `libsecret-tools`) and `busctl` (systemd), a running Secret Service, and the keyring to exist | the Azure CLI, signed in with `az login` |
+| A secret's name | the entry's label | the vault's name for the secret (letters, digits and `-`) |
+
+- akm reaches the keyring or vault through its command-line client on every
+  read and write, and keeps nothing of it on disk: the index holds each
+  secret's name. Reading a vault secret is one `az keyvault secret show`.
+- A keyring or vault that cannot be reached at `akm index` keeps the entries
+  the index had. `akm secret list` lists the other bundles and warns. A
+  command that needs it fails with `BUNDLE_UNREACHABLE`, naming the client and,
+  when it is not installed, what provides it.
+- Such a bundle is writable unless its entry sets `writable: false`. It takes
+  secrets only: `akm secret set` and `akm secret remove` write it, and every
+  other write command refuses it.
+- **`secret-tool`**: every entry of the keyring is listed, whoever stored it.
+  `secret-tool` finds an entry by its attributes, so akm reads and replaces a
+  value through the attributes the entry already has; an entry with no
+  attributes is listed but cannot be read until it has one. A lookup is not
+  limited to one keyring: when an entry of another keyring carries the same
+  attributes, `secret-tool` may return that one. An entry `akm secret set`
+  creates carries the attribute `akm` with the value `<keyring>/<name>`. akm
+  does not unlock a keyring; a process with no session bus (a scheduled task,
+  a container) cannot reach the Secret Service.
+- **`azure-key-vault`**: `akm secret set` passes the value to `az` in a
+  temporary file only your user can read, removed when `az` returns. `akm
+  secret remove` runs `az keyvault secret delete`; whether the secret can be
+  recovered is the vault's soft-delete setting.
+- `akm env` commands, `.sensitive` markers and the Desktop Files view apply to
+  directory bundles; the Desktop protected-file view shows, edits, creates and
+  deletes these secrets too.
+
 ## Write-target resolution
 
 Env and secret mutations (`env create`, `env remove`, `secret set`, `secret remove`) choose their
@@ -238,7 +301,7 @@ sources.
 ## Stability
 
 `env list`, `env path`, `env export` and `secret list` are Stable. `akm exec` is
-Experimental and off until `experimental.exec` is true. `env run` and `secret run` are Deprecated. `env create`, `env remove`, `secret set` and `secret remove` are Experimental. See
+Experimental and off until `experimental.exec` is true. `env run` and `secret run` are Deprecated. `env create`, `env remove`, `secret set` and `secret remove` are Experimental. Bundles kept by a secret manager are Experimental. See
 [STABILITY.md](../../STABILITY.md).
 
 ## See also

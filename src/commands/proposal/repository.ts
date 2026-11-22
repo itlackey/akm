@@ -48,6 +48,7 @@ import {
   type ResolvedWriteTarget,
   resolveWriteTarget,
   type WriteTargetSource,
+  writeAsset,
 } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
@@ -1445,7 +1446,7 @@ export function preflightProposalPromotion(
   if (!assetPath) {
     throw new UsageError(`Proposal ${proposal.id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
-  assertAdapterWrites(target.source);
+  assertAdapterWrites(target.source, ref.type);
   const markdown = assetPath.toLowerCase().endsWith(".md");
   let stampedContent = markdown
     ? stampProposalProvenance(repairedContent, prepared, options.gateDecision, ctx, nowIso(ctx))
@@ -1729,18 +1730,29 @@ async function promoteProposalWithLease(
   }
   const preflight = preflightProposalPromotion(config, proposal, { ...options, queueTarget: target }, ctx);
   const mutationTarget = prepareWriteTargetForMutation(target);
-  const assetPath = resolveAssetFilePathSafe(mutationTarget.source, proposal.ref);
-  if (!assetPath) throw new UsageError(`Cannot resolve proposal target ${proposal.ref}.`, "INVALID_PROPOSAL");
-  const backup = readFreshProposalTarget(proposal, assetPath, preflight.stampedContent);
-  assertAdapterWrites(mutationTarget.source);
+  const address = resolveAddressSafe(mutationTarget.source, proposal.ref);
+  const plannedPath = address?.path;
+  if (!address || !plannedPath)
+    throw new UsageError(`Cannot resolve proposal target ${proposal.ref}.`, "INVALID_PROPOSAL");
+  const backup = readFreshProposalTarget(proposal, plannedPath, preflight.stampedContent);
+  assertAdapterWrites(mutationTarget.source, address.type);
   const refIdentity = proposalRefIdentity(preflight.proposal.ref);
   const proposalForMutation: Proposal =
     refIdentity?.bundle === undefined
       ? { ...preflight.proposal, ref: `${target.source.name}//${refIdentity?.conceptId ?? ""}` }
       : preflight.proposal;
   const decidedAt = nowIso(ctx);
-  const content = preflight.stampedContent.endsWith("\n") ? preflight.stampedContent : `${preflight.stampedContent}\n`;
-  writeProposalAssetFile(assetPath, content);
+  const stamped = preflight.stampedContent.endsWith("\n") ? preflight.stampedContent : `${preflight.stampedContent}\n`;
+  // The bundle's adapter writes the asset: the published content, in place of the existing one or as a new asset.
+  const written = writeAsset(
+    mutationTarget.source,
+    mutationTarget.config,
+    backup !== undefined
+      ? { op: "update", conceptId: address.conceptId, content: stamped }
+      : { op: "create", asset: { type: address.type, name: address.name, content: stamped } },
+  );
+  const assetPath = written.path;
+  const content = String(written.content ?? stamped);
   const accepted = persistProposalDecision(
     stashDir,
     proposalForMutation,
@@ -2041,7 +2053,7 @@ async function retireProposalWithLease(
         "INVALID_FLAG_VALUE",
       );
     }
-    assertAdapterWrites(target.source);
+    assertAdapterWrites(target.source, ref.type);
     // Phase 1: record intent BEFORE any move, and BEFORE the supersede edge:
     // `backupContent` is `currentBytes`, read
     // above, before any mutation of this file. Recording first means a crash
@@ -2061,7 +2073,7 @@ async function retireProposalWithLease(
       }
     }
   } else {
-    assertAdapterWrites(target.source);
+    assertAdapterWrites(target.source, ref.type);
     assertRetiringTaskUnchanged(ref, intent, proposal);
     // Revalidate the survivor even after a partial archive. The recorded original
     // is the judged retired side when its file has already moved.
@@ -2820,8 +2832,15 @@ function matchesBeforeHash(proposal: Proposal, bytes: Buffer): boolean {
 
 /** The file a write to `ref` goes to in `source` (see {@link resolveWriteAddress}), or undefined. */
 function resolveAssetFilePathSafe(source: WriteTargetSource, ref: string): string | undefined {
+  return resolveAddressSafe(source, ref)?.path;
+}
+
+function resolveAddressSafe(
+  source: WriteTargetSource,
+  ref: string,
+): ReturnType<typeof resolveWriteAddress> | undefined {
   try {
-    return resolveWriteAddress(source.path, ref).path;
+    return resolveWriteAddress(source.path, ref);
   } catch {
     return undefined;
   }

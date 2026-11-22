@@ -470,7 +470,8 @@ export function writeAsset(
   config: SourceConfigEntry,
   operation: AssetOperation,
 ): AssetChange {
-  assertPlainWritable(source, config);
+  // The adapter writes the asset, however the bundle keeps it: the bundle need only take writes.
+  ensureWritable(source, config);
   const adapter = writerOf(source);
   const component = componentOf(source, adapter.id);
   const type =

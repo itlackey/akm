@@ -146,8 +146,14 @@ interface SourceProvider {
 ```
 
 Providers do **not** implement `search`, `show`, `canShow`, or any read method.
-The indexer walks `path()`, classifies files, and answers all queries from the
-local FTS5 index.
+The indexer lists each bundle through its adapter (for a directory bundle, a
+walk of `path()`), and answers all queries from the local FTS5 index.
+
+A bundle can also be kept by a secret manager rather than a directory: its
+config entry carries `location` (a keyring's or a vault's name) in place of
+`path`, `git`, `website` or `npm`, and names the adapter that reads it. It has
+no provider; its adapter lists, reads and writes it. See
+[Adapters](adapters.md#adapters-of-a-secret-manager).
 
 File semantics are owned by the selected bundle adapter (see
 [Adapters](adapters.md)). OKF is the first-class least-common-denominator for
@@ -350,17 +356,20 @@ kind for display (`targetKind: target.source.kind`) is not branching and stays
 in the command layer.
 
 ```ts
-writeAssetToSource(source, config, ref, content)
-deleteAssetFromSource(source, config, ref)
+writeAsset(source, config, { op: "create", asset } | { op: "update", conceptId, content } | { op: "retire", conceptId })
+changeAsset(target, operation, { purpose, message }) // writeAsset under the lease, committed at the boundary
+writeAssetToSource(source, config, ref, content)    // create, by ref
+deleteAssetFromSource(source, config, ref)          // retire, by ref
 ```
 
 The flow:
 
-1. Refuse if the source is not `writable`, is not a `filesystem` or `git`
-   source, or belongs to a bundle whose adapter is not on the write allowlist
-   (see [Adapters](adapters.md#write-allowlists)).
-2. Atomic filesystem write to `path.join(source.path, …)` with no commit. A git
-   target records the path for the boundary commit.
+1. Refuse if the source is not `writable`, or its bundle's adapter does not
+   write the asset's type (see [Adapters](adapters.md#writes)).
+2. The bundle's adapter makes the write (`create`, `update` or `retire`): a
+   directory adapter places the asset and writes it atomically inside the
+   bundle's root, with no commit. The files it changed are recorded for the
+   boundary commit of a git target.
 
 Git-backed targets are committed in a single batch at the operation boundary via
 `commitWriteTargetBoundary(target, message, { push })`, which delegates to
@@ -373,7 +382,7 @@ not `false`. `options.pushOnCommit` is not supported: config load reports it
 (`src/core/config/schema/sources-bundles.ts`).
 
 `writable` is a config flag, not an interface concern. Defaults: `true` for
-`filesystem`, `false` for everything else. `writable: true` on `website` or
+`filesystem` and `location`, `false` for everything else. `writable: true` on `website` or
 `npm` is rejected at config load — `sync()` would clobber edits on the next
 refresh.
 

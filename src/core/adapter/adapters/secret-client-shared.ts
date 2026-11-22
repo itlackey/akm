@@ -68,10 +68,10 @@ export function secretAsset(c: BundleComponent, name: string, read: () => string
   return { conceptId, file };
 }
 
-/** What a write did to the secret `name`: no file changed. */
-export function secretChange(c: BundleComponent, name: string): AssetChange {
+/** What a write did to the secret `name` (its `content` after a store): no file changed. */
+export function secretChange(c: BundleComponent, name: string, content?: string | Buffer): AssetChange {
   const conceptId = secretEntry(name);
-  return { conceptId, path: path.join(c.root, conceptId), changed: [] };
+  return { conceptId, path: path.join(c.root, conceptId), changed: [], ...(content !== undefined ? { content } : {}) };
 }
 
 /** List the bundle's secrets with `names`; a listing that fails leaves the bundle as the index last saw it. */

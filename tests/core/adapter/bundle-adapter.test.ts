@@ -26,7 +26,7 @@
 
 import { describe, expect, test } from "bun:test";
 import type { Stats } from "node:fs";
-import type { BundleAdapter } from "../../../src/core/adapter/bundle-adapter";
+import type { BundleAdapter, BundleAsset, BundleListing } from "../../../src/core/adapter/bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
 import type { FileChange } from "../../../src/core/file-change";
 import type { FileContext } from "../../../src/indexer/walk/file-context";
@@ -62,9 +62,9 @@ function makeValidateContext(): ValidateContext {
 
 /**
  * The stub itself: implements ONLY the required surface
- * (id/version/extensions/recognize/validate). This assignment is the
+ * (id/version/extensions/list/read/recognize/validate). This assignment is the
  * compile-time conformance check — `stubAdapter` must structurally satisfy
- * `BundleAdapter` with every OTHER member (renderExecutionSource, readCandidates, directoryList, looksLikeRoot) left absent, proving they are genuinely
+ * `BundleAdapter` with every OTHER member (writes/create/update/retire, renderExecutionSource, readCandidates, directoryList, looksLikeRoot) left absent, proving they are genuinely
  * optional per the transcription. (The spec's Tier-B authoring/export/memory
  * facet methods are deferred, not declared on the 0.9.0 contract — see the
  * interface docblock.)
@@ -73,6 +73,14 @@ const stubAdapter: BundleAdapter = {
   id: "stub",
   version: "0.0.0",
   extensions: [".md"],
+
+  list(): BundleListing {
+    return { files: [], complete: true };
+  },
+
+  read(): BundleAsset | undefined {
+    return undefined;
+  },
 
   recognize(_c: BundleComponent, file: FileContext): IndexDocument | null {
     if (file.ext !== ".md") return null;

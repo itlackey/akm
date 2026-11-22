@@ -71,7 +71,7 @@ export function directoryAdapter(format: DirectoryFormat): BundleAdapter {
       ? {
           writes: writes.types,
           create: (c, asset) => createAsset(adapter, writes, c, asset),
-          update: (c, conceptId, content) => updateAsset(adapter, writes, c, conceptId, content),
+          update: (c, conceptId, content) => updateAsset(adapter, c, conceptId, content),
           retire: (c, conceptId) => retireAsset(adapter, c, conceptId),
         }
       : {}),
@@ -269,15 +269,8 @@ export function assertWritableFile(root: string, bundle: string, file: string): 
 }
 
 /** The bytes and file mode a write gives a file. Env files and secrets are readable by their owner only. */
-function writeFile(
-  writes: DirectoryWrites,
-  c: BundleComponent,
-  type: string,
-  file: string,
-  content: string | Buffer,
-): void {
+function writeFile(c: BundleComponent, type: string, file: string, bytes: string | Buffer): void {
   assertWritableFile(c.root, c.id, file);
-  const bytes = writes.serialize ? writes.serialize(type, file, content) : content;
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const mode = type === "env" || type === "secret" ? 0o600 : existingFileMode(file);
   // Atomic: a crash or a full disk never leaves a half-written asset where a good one was.
@@ -296,7 +289,8 @@ function createAsset(
   const file = writes.place(c, asset);
   const entry = buildFileContext(c.root, file);
   const conceptId = adapter.recognize(c, { ...entry, content: () => String(asset.content) })?.conceptId;
-  writeFile(writes, c, asset.type, file, asset.content);
+  const content = writes.serialize ? writes.serialize(asset.type, file, asset.content) : asset.content;
+  writeFile(c, asset.type, file, content);
   const changed = [file];
   if (asset.sensitive) {
     // A sibling marker keeps an env file or secret out of the index and listings.
@@ -305,7 +299,7 @@ function createAsset(
     if (!fs.existsSync(marker)) writeFileAtomic(marker, "", 0o600);
     changed.push(marker);
   }
-  return { conceptId: conceptId ?? entry.relPath, path: file, changed };
+  return { conceptId: conceptId ?? entry.relPath, path: file, changed, content };
 }
 
 function existing(adapter: BundleAdapter, c: BundleComponent, conceptId: string): BundleAsset {
@@ -316,15 +310,14 @@ function existing(adapter: BundleAdapter, c: BundleComponent, conceptId: string)
 
 function updateAsset(
   adapter: BundleAdapter,
-  writes: DirectoryWrites,
   c: BundleComponent,
   conceptId: string,
   content: string | Buffer,
 ): AssetChange {
   const { file } = existing(adapter, c, conceptId);
   const type = declaredTypeForPath(file) ?? adapter.recognize(c, file)?.type ?? "";
-  writeFile(writes, c, type, file.absPath, content);
-  return { conceptId, path: file.absPath, changed: [file.absPath] };
+  writeFile(c, type, file.absPath, content);
+  return { conceptId, path: file.absPath, changed: [file.absPath], content };
 }
 
 function retireAsset(adapter: BundleAdapter, c: BundleComponent, conceptId: string): AssetChange {

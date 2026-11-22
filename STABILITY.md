@@ -158,6 +158,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm secret run` | Deprecated | Removed in 0.11: put the command in a script asset under scripts/, run with `akm run --secret <ref>:<VAR> scripts/<file>`. Read-and-inject surface. |
 | `akm secret set` | Experimental | Write verb. |
 | `akm secret remove` | Experimental | Write verb; restored in 0.10 after its 0.9.0 removal. |
+| Bundles kept by a secret manager (`location` with the `secret-tool` or `azure-key-vault` adapter) | Experimental | A bundle that is one Secret Service keyring or one Azure Key Vault in place of a directory; its secrets are indexed, listed, injected, set and removed as secret files are. The `location` key, the two adapters and how a keyring entry is named may change in any release. See [Environment & Secrets](docs/reference/env-and-secrets.md#secrets-kept-by-a-secret-manager). |
 
 ## 0.10 additions and scheduled 0.11 removals
 

@@ -367,11 +367,9 @@ export async function showLocal(input: {
   }
   enforceSensitiveFragmentPolicy(indexedEntry.type, parsed, input.contextMode, input.contextFlag);
 
-  try {
-    fs.accessSync(assetPath, fs.constants.R_OK);
-  } catch (error) {
-    throwIndexedPathNotFound(error, input.ref);
-  }
+  // The entry is the one the bundle's adapter read for the ref; an index row with no entry behind it is stale.
+  const owned = resolution.owner;
+  if (!owned) throwIndexedPathNotFound(Object.assign(new Error("no entry"), { code: "ENOENT" }), input.ref);
 
   const source = findSourceForPath(assetPath, allSources);
   const sourceStashDir = source?.path ?? allSourceDirs[0];
@@ -383,7 +381,7 @@ export async function showLocal(input: {
     );
   }
 
-  const fileCtx = buildFileContext(sourceStashDir, assetPath);
+  const fileCtx = owned.file;
   const presentedName = indexedEntry.name;
   const opaqueFragmentSelector = parsed.fragment?.startsWith("akm-fragment-") === true;
   // Friendly heading selectors retain the source-live exact response contract.

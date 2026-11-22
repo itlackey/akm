@@ -5,15 +5,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import workflowTemplate from "../../assets/workflows/workflow-template.md" with { type: "text" };
-import { ensureAkmMarkdownType } from "../../core/asset/akm-markdown";
 import { makeBundleRef } from "../../core/asset/asset-ref";
-import { isWithin, writeFileAtomic } from "../../core/common";
+import { isWithin } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { defaultBundleForTarget } from "../../core/mutation-target";
 import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../../core/recognition-util";
 import { warn } from "../../core/warn";
-import { prepareWriteTargetForMutation, resolveWriteTarget, withWriteTargetMutation } from "../../core/write-source";
+import { changeAsset, prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
 import { checkWorkflowPlan, compileWorkflowSource } from "../compile";
 import type { WorkflowError } from "../plan";
 
@@ -115,19 +114,18 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
 
   validateWorkflowContent(content, sourcePath);
 
-  const authoredContent = ensureAkmMarkdownType(content, "workflow");
-  const mode = fs.existsSync(assetPath) ? fs.lstatSync(assetPath).mode & 0o777 : 0o644;
-
   const defaultBundle = defaultBundleForTarget(config);
   const ref = makeBundleRef(target.source.name === defaultBundle ? undefined : target.source.name, conceptId);
-  withWriteTargetMutation(target, [assetPath], { purpose: "workflow-authoring", message: `Create ${ref}` }, () => {
-    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
-    writeFileAtomic(assetPath, authoredContent.endsWith("\n") ? authoredContent : `${authoredContent}\n`, mode);
-  });
+  // The bundle's adapter places the workflow and makes it a conformant akm document.
+  const written = changeAsset(
+    target,
+    { op: "create", asset: { type: "workflow", name: normalizedName, content } },
+    { purpose: "workflow-authoring", message: `Create ${ref}` },
+  );
 
   return {
     ref,
-    path: assetPath,
+    path: written.path,
     bundleDir,
   };
 }

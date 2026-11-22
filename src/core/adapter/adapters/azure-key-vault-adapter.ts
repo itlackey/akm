@@ -71,7 +71,7 @@ function store(c: BundleComponent, name: string, content: string | Buffer): Asse
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
-  return secretChange(c, name);
+  return secretChange(c, name, content);
 }
 
 export const azureKeyVaultAdapter: BundleAdapter = {

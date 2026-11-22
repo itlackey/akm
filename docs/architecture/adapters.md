@@ -1,11 +1,15 @@
 # Adapters
 
-A **`BundleAdapter`** (`src/core/adapter/bundle-adapter.ts`) is the code that
-decides what a bundle's files *are*, how they're indexed, how `akm lint`
-validates them, and where a new item would be placed. akm ships 11
-built-in adapters — one per format in
-[Supported Formats](../reference/supported-formats.md). This page is the
-write-path and internals reference; that page is the compatibility table.
+A **`BundleAdapter`** (`src/core/adapter/bundle-adapter.ts`) is the layer
+through which the rest of akm works with a bundle's assets, whatever keeps
+them. The adapter owns the mechanics of its bundles: how assets are listed,
+read, described for the index, created, updated and retired, and how `akm
+lint` validates them. Everything outside the adapter calls these members and
+does not ask which adapter it has or how the bundle is stored. akm ships 14
+built-in adapters: 12 read a directory, one per format in
+[Supported Formats](../reference/supported-formats.md), and 2 read a secret
+manager (an OS keyring, an Azure Key Vault). This page is the internals
+reference; that page is the compatibility table.
 
 For read-only native tool bundles, recognition is runtime translation, not
 conversion: the adapter projects native files into AKM's index/runtime shapes
@@ -48,6 +52,8 @@ akm                -- .stash marker, or 2+ native subdirs, or fallback
 okf                -- root index.md, or any .md with frontmatter type
 generic-files      -- never auto-selected; explicit config only
 code-project       -- never auto-selected; explicit config only
+secret-tool        -- no probe; a location bundle's configured adapter
+azure-key-vault    -- no probe; a location bundle's configured adapter
 ```
 
 The rationale for the ordering:
@@ -70,6 +76,43 @@ The rationale for the ordering:
 
 ---
 
+## Architecture
+
+```mermaid
+flowchart TD
+  CMD["Commands and the workspace API<br/>index, search, show, run, secret, env, proposal, workflow create, ..."]
+  subgraph CORE["Core: the only callers of the contract"]
+    IDX["Indexer<br/>list, then recognize"]
+    OWN["Ref lookup<br/>read"]
+    WR["write-source<br/>writes check, then create / update / retire,<br/>then the bundle's commit boundary"]
+  end
+  ADP["BundleAdapter<br/>list · read · recognize · validate<br/>writes · create · update · retire"]
+  subgraph ADAPTERS["Adapters"]
+    DIR["12 directory adapters<br/>built by directoryAdapter (directory-assets.ts)<br/>akm, dotenv and akm-workflow write"]
+    SEC["secret-tool, azure-key-vault<br/>built on secret-client-shared.ts"]
+  end
+  FILES[("Files under the bundle's root")]
+  KR[("Secret Service keyring")]
+  KV[("Azure Key Vault")]
+  CMD --> CORE
+  IDX --> ADP
+  OWN --> ADP
+  WR --> ADP
+  DIR -. implements .-> ADP
+  SEC -. implements .-> ADP
+  DIR --> FILES
+  SEC -->|"busctl, secret-tool"| KR
+  SEC -->|"az"| KV
+```
+
+A bundle's config entry says where it is (`path`, `git`, `website`, `npm`, or
+`location` for a bundle that is not a directory) and, through its one
+component, which adapter reads it. Core resolves the bundle to a
+`BundleComponent` (`componentOf`, `src/core/adapter/registry.ts`) and calls
+the adapter with it.
+
+---
+
 ## `BundleAdapter` interface contract
 
 Transcribed from `src/core/adapter/bundle-adapter.ts`:
@@ -80,59 +123,95 @@ interface BundleAdapter {
   readonly version: string;              // feeds incrementality + fingerprints
   readonly extensions: readonly string[]; // longest-match stripping + collision priority
 
-  // REQUIRED — single-file recognition primitive.
-  recognize(c: BundleComponent, file: FileContext): IndexDocument | null;
-
-  // REQUIRED — native validation (change-transaction pre-commit + lint --fix).
-  // Adapters do not write and do not read the live filesystem: ctx serves
-  // a run snapshot with pending changes overlaid, plus a read-only
-  // resolveRef for link/xref existence.
+  // REQUIRED — listing and reading.
+  list(c: BundleComponent): BundleListing;              // every entry, for the index
+  read(c: BundleComponent, conceptId: string, options?: AssetReadOptions): BundleAsset | undefined;
+  recognize(c: BundleComponent, file: FileContext): IndexDocument | null; // an entry's index metadata
   validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]>;
 
-  // OPTIONAL — runtime translation for executable agent/command assets: returns
-  // the frontmatter-free command or persona source the execution boundary uses.
+  // OPTIONAL — writing. `writes` lists the asset types the adapter writes; an
+  // adapter without it is read-only.
+  readonly writes?: readonly string[];
+  create?(c: BundleComponent, asset: NewAsset): AssetChange;   // in the adapter's own form for the type
+  update?(c: BundleComponent, conceptId: string, content: string | Buffer): AssetChange; // exactly `content`
+  retire?(c: BundleComponent, conceptId: string): AssetChange; // take it out of the bundle
+
+  // OPTIONAL — runtime translation for executable agent/command assets.
   renderExecutionSource?(c: BundleComponent, file: FileContext): AdapterRenderedExecutionSource | null;
 
-  // OPTIONAL — the CLOSED-FORM set of existing-file placements/read aliases
-  // that could own `conceptId`, used for first-owner arbitration without
-  // reading authored bytes or walking the bundle.
-  readCandidates?(c: BundleComponent, conceptId: string): AdapterReadCandidate[]; // { path, conceptId }
-
-  // OPTIONAL — discovery.
-  directoryList?(c: BundleComponent): string[];               // owned dirs; feeds git exact-path staging
-  looksLikeRoot?(root: string): boolean;                      // install-time probe
+  // OPTIONAL — directory adapters.
+  readCandidates?(c: BundleComponent, conceptId: string): AdapterReadCandidate[];
+  directoryList?(c: BundleComponent): string[];
+  looksLikeRoot?(root: string): boolean;
 }
 ```
 
-`recognize` and `validate` are required on every adapter; `renderExecutionSource`,
-`readCandidates`, `directoryList`, and `looksLikeRoot` are optional capability
-methods. The core walk drives `recognize()` once per file; incrementality comes
-from the indexer's per-directory fingerprints.
+An asset is addressed by its concept id, the ref without its bundle. An entry
+is the `FileContext` holding an asset: its `relPath` is the path it is
+indexed under and its `content()` reads it once, when asked. `read` returns
+the entry with the asset's concept id; `list` returns every entry, and the
+indexer describes each with `recognize`. A write returns an `AssetChange`:
+the asset's concept id and entry path, the files it changed (empty for a
+bundle that is not a directory) for the bundle's commit boundary, and the
+content the asset now holds.
+
+### Directory adapters
+
+`directoryAdapter` (`adapters/directory-assets.ts`) builds every directory
+adapter from its format: `recognize`, `validate`, `readCandidates` and, for a
+writable format, a `DirectoryWrites` (the types it writes, where a new asset
+goes, how its content is serialized). The builder adds the file mechanics
+every directory adapter shares:
+
+- `list` is the bundle walk (`walkStashFlatWithStatus`), with the adapter's
+  `walkMode`.
+- `read` finds the one file that holds a concept id without reading authored
+  bytes: workflow arbitration first, then every spelling `readCandidates`
+  inverts the id into (plus case-only siblings), each probed with a
+  byte-denying `FileContext` so the adapter's path-level abstention decides.
+  Two files for one id is an `AdapterConceptCollisionError` for a write and a
+  warning for a read (`mode: "read"`). A `.sensitive` env file or secret is
+  found only with `includeSensitive`.
+- `create` places and serializes the asset, `update` writes the content
+  given, and `retire` deletes the file and its `.sensitive` marker. Every
+  write is atomic and refuses a path that leaves the bundle or passes through
+  a symbolic link below its root (`assertWritableFile`). An env file or secret
+  is written at mode 0600.
 
 `readCandidates` is intentionally distinct from `extensions`: extensions are
 non-exhaustive walk hints. Read candidates preserve canonical directory
-manifests (for example `skills/<name>/SKILL.md`) so lookup, index-backed show, and workflow runtime share one
-physical-owner decision. Each candidate carries its canonical concept identity,
-so a byte-denying ownership probe never has to infer identity from the query.
-Path-derived recognition (`toCanonicalName`/`toAssetPath`, `src/core/asset/asset-placement.ts`)
-is a deterministic function of a file's path, so its inverse — every physical
-spelling that could own one conceptId — is computable in closed form. A ref is
-the file's path relative to the bundle root minus the type's own suffix
-(`refForFile`), wherever in the bundle the file sits; `filesForRef` inverts it
-over every placement spec, including type-specific dualities (for example
-`env`'s `.env`/`<name>.env` spellings for the "default" alias). A ref names no
-type, so every spec contributes its spelling and the adapter's recognition
-decides which file owns the ref.
-`readCandidates` enumerates the complete closed-form set directly from the
-conceptId; no bundle walk is needed, so no scan bound applies. The shared
-authority (`src/indexer/lookup/adapter-concept-owner.ts`) still probes every
-candidate with a byte-denying `FileContext` before trusting it, so an
-adapter returning a candidate the file does not actually own is harmless —
-it is simply filtered out.
+manifests (for example `skills/<name>/SKILL.md`) so lookup, index-backed show,
+and workflow runtime share one physical-owner decision. Path-derived
+recognition (`toCanonicalName`/`toAssetPath`,
+`src/core/asset/asset-placement.ts`) is a deterministic function of a file's
+path, so its inverse — every physical spelling that could own one conceptId —
+is computable in closed form, and no bundle walk is needed.
 
-The core walk — the live indexer's per-dir walk, drained by
-`drainDirDocuments` — is one implementation (symlink handling, skipped
-directories, git awareness); adapters do not reimplement it.
+### Adapters of a secret manager
+
+`secret-tool` and `azure-key-vault` implement the same contract over a
+secret manager's command-line client (`adapters/secret-client-shared.ts`).
+The bundle holds secrets only, as the entries `secrets/<name>`, the ref a
+secret file has in a directory bundle, so the rest of akm does not tell them
+apart. A bundle names the adapter in its component and the keyring or vault
+in `location`:
+
+```json
+"keyring": { "location": "akm", "components": { "main": { "adapter": "secret-tool" } } },
+"vault": { "location": "team-vault", "components": { "main": { "adapter": "azure-key-vault" } } }
+```
+
+| | `secret-tool` | `azure-key-vault` |
+| --- | --- | --- |
+| `list` | the keyring's entries over `busctl` (labels and attributes, never a value) | `az keyvault secret list` |
+| `read` | the entry by label; its value with `secret-tool lookup` when `content()` is asked | `az keyvault secret show`: finding a secret reads it |
+| `create` / `update` | `secret-tool store`, value on stdin, through the entry's own attributes | `az keyvault secret set --file`, a temporary file only the user can read |
+| `retire` | `Delete` on the entry's own object path (`secret-tool clear` would delete every match) | `az keyvault secret delete` |
+
+The value never reaches a client's command line. A client that is missing or
+fails raises `BUNDLE_UNREACHABLE`; a listing that fails is an incomplete walk,
+so the index keeps the entries it had. Such a bundle's entries are indexed
+under `$CACHE/index/bundles/<bundle>`, where nothing is written.
 
 Cross-component ref existence is a **core** base check, not an adapter
 concern.
@@ -141,44 +220,45 @@ concern.
 
 ## Placement
 
-Adapters do not place new items. AKM-native writes resolve through AKM's own
-flat type→directory placement table (`src/core/asset/asset-placement.ts`'s
-`PLACEMENT_SPECS`), which is correct for akm-layout bundles — the only bundles
-the write commands touch in practice. A per-adapter `placeNew()` existed
-through 0.9 but nothing called it, and it was removed in 0.10. Supporting
-writable bundles in another layout would need it back: see
-[#1163](https://github.com/itlackey/akm/issues/1163).
+The adapter places what it creates. akm's formats place each type in its own
+folder by the type's placement spec (`placeInTypeFolder`,
+`adapters/akm-writes.ts`); a standalone workflow bundle keeps each workflow
+at its root; a secret manager keeps a secret under its name.
 
 ---
 
-## Write allowlists
+## Writes
 
-Which bundles AKM-native write commands may touch is decided by a small
-allowlist check, `assertAkmAssetWrite` (`src/core/write-source.ts`), run before
-any write command touches the filesystem. It compares the target
-bundle's detected (or configured) adapter id against an allowlist and throws
-a `UsageError` on a miss.
+Which bundles take an asset write is the adapter's `writes`. Before a write,
+`assertAdapterWrites` (`src/core/write-source.ts`) refuses a bundle whose
+adapter writes nothing (`which does not support AKM asset writes`) or does not
+write the asset's type (`which does not write <type> assets`). The bundle's
+`writable` setting is checked as well.
 
-The default allowlist is `["akm"]`. Two command families widen it explicitly:
-
-| Command | Allowlist adds |
+| Adapter | `writes` |
 | --- | --- |
-| `akm env create` / `env remove` / `secret set` / `secret remove` | `dotenv` |
-| `akm workflow create` | `akm-workflow` |
+| `akm` | every type it has a folder for |
+| `dotenv` | `env`, `secret` |
+| `akm-workflow` | `workflow` |
+| `secret-tool`, `azure-key-vault` | `secret` |
+| every other adapter | none: read-only |
 
-Every other adapter (`agent-skills`, `claude`, `opencode`, `akm-task`,
-`generic-files`, and so on) is rejected by every AKM-native write command.
-`akm import --type task` in particular uses the *default* allowlist (`akm` only), so a
-standalone `akm-task` bundle is read-only through AKM-native write commands.
+Every asset write goes through `writeAsset` / `changeAsset`
+(`src/core/write-source.ts`), which check `writes`, call the adapter, and
+record the changed files for the bundle's commit boundary. An update or retire
+may name the `revision` (the SHA-256 of the content last read) and a create
+may be `exclusive`; both are checked with the content the write replaces.
 
-Reading, searching, and `akm lint` are unaffected by this allowlist — only
-creating, editing, or deleting through AKM's own commands is restricted.
-"Read-only" in [Supported Formats](../reference/supported-formats.md) means
-this write-command restriction, not a filesystem permission.
+The commands that go through it: `akm remember` and `akm import`, `akm
+workflow create`, `akm env create` / `env remove`, `akm secret set` / `secret
+remove`, proposal accept, `akm setup`'s tasks, memory inference's child
+writes, and the workspace's protected-file operations. Proposal retire and
+revert, the improve passes, `akm lint --fix`, feedback edits and `akm clone`
+still edit akm-format files in place, without the adapter.
 
-AKM retrieves and validates every supported format, but its own write
-commands mutate only the targets on the allowlist; being able to read a format
-does not add it.
+Reading, searching, and `akm lint` are unaffected by `writes`. "Read-only" in
+[Supported Formats](../reference/supported-formats.md) means an adapter
+without `writes`, not a filesystem permission.
 
 ---
 

@@ -22,7 +22,7 @@ import path from "node:path";
 
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import type { SourceConfigEntry } from "../../../src/core/config/config";
-import { ConfigError, UsageError } from "../../../src/core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../../../src/core/errors";
 import { sanitizeCommitMessage } from "../../../src/core/git-message";
 import {
   commitWriteTargetBoundary,
@@ -340,7 +340,9 @@ describe("deleteAssetFromSource", () => {
     const source: WriteTargetSource = { kind: "filesystem", name: "mine", path: dir };
     const config: SourceConfigEntry = { type: "filesystem", writable: true };
 
-    await expect(deleteAssetFromSource(source, config, { type: "memory", name: "ghost" })).rejects.toThrow(UsageError);
+    await expect(deleteAssetFromSource(source, config, { type: "memory", name: "ghost" })).rejects.toThrow(
+      NotFoundError,
+    );
   });
 
   test("refuses to delete from a non-writable source", async () => {

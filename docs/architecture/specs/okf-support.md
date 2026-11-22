@@ -40,8 +40,9 @@ For a bundle selected as `adapter: okf`:
 6. Markdown heading fragments are accepted as input-only selectors and do not
    become part of durable identity.
 7. AKM-native write commands refuse an OKF target before touching disk, because
-   the adapter has no authoring path (`assertAkmAssetWrite` in
-   `src/core/write-source.ts` allows only the `akm` adapter by default).
+   the adapter writes nothing: it declares no `writes`, and
+   `assertAdapterWrites` (`src/core/write-source.ts`) refuses an asset write to a
+   bundle whose adapter does not write the asset's type.
 
 The `okf` adapter is consumer-only. It does not infer task, command, script,
 environment, or secret capabilities from an arbitrary OKF `type` value. Its
@@ -114,5 +115,5 @@ later upstream changes automatically.
 ## See also
 
 - [Adapters](../adapters.md) describes the adapter contract, the probe order,
-  and the write allowlist.
+  and which adapters write.
 - [`ref.md`](./ref.md) defines the cross-format ref grammar.

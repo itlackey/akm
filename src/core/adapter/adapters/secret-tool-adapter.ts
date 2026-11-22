@@ -117,7 +117,7 @@ function store(c: BundleComponent, name: string, content: string | Buffer): Asse
     ["store", `--collection=${keyring}`, `--label=${name}`, ...attributePairs(item)],
     Buffer.from(content),
   );
-  return secretChange(c, name);
+  return secretChange(c, name, content);
 }
 
 export const secretToolAdapter: BundleAdapter = {
