@@ -17,6 +17,7 @@ import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
 import { okfAdapter } from "../../../src/core/adapter/adapters/okf-adapter";
 import { MEMORY_ARCHIVE_REL, resetArchiveCache } from "../../../src/core/adapter/directory-archive";
 import type { Bundle } from "../../../src/core/adapter/types";
+import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import { git, makeGitRepo } from "../../_helpers/git";
 import { sandboxStashDir } from "../../_helpers/sandbox";
 
@@ -60,10 +61,95 @@ describe("DirectoryArchive through the akm adapter", () => {
       {
         handle: retired.handle,
         conceptId: CONCEPT,
-        note: { archivedAt: expect.any(String), ...NOTE },
+        note: { archivedAt: expect.any(String), ...NOTE, ref: "stash//memories/old-note" },
         restorable: true,
       },
     ]);
+  });
+
+  test("a retirement is named by concept ids: a ref into the bundle loses its `bundle//`, another bundle's stays (N11)", () => {
+    createMemory();
+    const { handle } = akmAdapter.retire(bundle, CONCEPT, {
+      ...NOTE,
+      ref: "stash//memories/old-note",
+      parentRef: "stash//memories/parent",
+      survivorRef: "other//memories/survivor",
+      successorRefs: ["stash//memories/new-note", "other//memories/elsewhere"],
+    });
+
+    expect(handle).toMatch(/^\.akm\/memory-cleanup\/archive\/[^/]+-memories-old-note$/);
+    const tombstone = parseFrontmatter(fs.readFileSync(path.join(bundle.root, handle, "cleanup.md"), "utf8")).data;
+    expect(tombstone).toMatchObject({
+      ref: "memories/old-note",
+      parentRef: "memories/parent",
+      survivorRef: "other//memories/survivor",
+      successorRefs: ["memories/new-note", "other//memories/elsewhere"],
+    });
+    // Read back, every ref is qualified.
+    expect(akmAdapter.retired(bundle)[0]?.note).toMatchObject({
+      ref: "stash//memories/old-note",
+      parentRef: "stash//memories/parent",
+      survivorRef: "other//memories/survivor",
+      successorRefs: ["stash//memories/new-note", "other//memories/elsewhere"],
+    });
+  });
+
+  test("a retirement with no ref names its archive by the concept id and records none", () => {
+    createMemory();
+    const { handle } = akmAdapter.retire(bundle, CONCEPT, { reason: "duplicate" });
+    expect(handle).toMatch(/-memories-old-note$/);
+    expect(akmAdapter.retired(bundle)[0]?.note).not.toHaveProperty("ref");
+  });
+
+  test("a tombstone written before N11 (qualified refs, qualified directory name) is read as written, restored and forgotten", () => {
+    const file = createMemory();
+    const dirName = "2026-01-05T00-00-00-000Z-stash-memories-old-note";
+    const archivedRel = `${MEMORY_ARCHIVE_REL}/${dirName}/memories/old-note.md`;
+    fs.mkdirSync(path.dirname(path.join(bundle.root, archivedRel)), { recursive: true });
+    fs.renameSync(file, path.join(bundle.root, archivedRel));
+    fs.writeFileSync(
+      path.join(bundle.root, MEMORY_ARCHIVE_REL, dirName, "cleanup.md"),
+      [
+        "---",
+        "schemaVersion: 1",
+        "kind: memory-cleanup-archive",
+        "archivedAt: 2026-01-05T00:00:00.000Z",
+        "ref: stash//memories/old-note",
+        "successorRefs:",
+        "  - stash//memories/new-note",
+        "  - other//memories/elsewhere",
+        "originalPath: memories/old-note.md",
+        `archivedPath: ${archivedRel}`,
+        "---",
+        "",
+        "Archived derived memory for recoverable cleanup.",
+        "",
+      ].join("\n"),
+    );
+
+    const [only] = akmAdapter.retired(bundle);
+    expect(only).toMatchObject({
+      handle: `${MEMORY_ARCHIVE_REL}/${dirName}`,
+      conceptId: CONCEPT,
+      note: {
+        ref: "stash//memories/old-note",
+        successorRefs: ["stash//memories/new-note", "other//memories/elsewhere"],
+      },
+      restorable: true,
+    });
+    expect(akmAdapter.restore(bundle, only?.handle as string).file).toBe(file);
+    expect(fs.readFileSync(file, "utf8")).toBe(written);
+    akmAdapter.forget(bundle, only?.handle as string);
+    expect(akmAdapter.retired(bundle)).toEqual([]);
+  });
+
+  test("a note ref that is not of the ref grammar (a retired `memory:` spelling) is read as written", () => {
+    createMemory();
+    akmAdapter.retire(bundle, CONCEPT, { ref: "memory:old-note", survivorRef: "memory:new-note" });
+    expect(akmAdapter.retired(bundle)[0]?.note).toMatchObject({
+      ref: "memory:old-note",
+      survivorRef: "memory:new-note",
+    });
   });
 
   test("a crash between the tombstone and the move leaves the file in place, and restore then changes nothing", () => {

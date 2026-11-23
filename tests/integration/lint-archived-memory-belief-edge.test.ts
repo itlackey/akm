@@ -27,6 +27,7 @@ import { analyzeMemoryCleanup, applyMemoryCleanup } from "../../src/commands/imp
 import { akmLint } from "../../src/commands/lint";
 import { akmProposalAccept } from "../../src/commands/proposal/proposal";
 import { createRetireProposal } from "../../src/commands/proposal/repository";
+import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { resetMemoryArchiveCache } from "../../src/core/asset/memory-archive";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -52,11 +53,15 @@ function seedPrunableDuplicate(stashDir: string): string {
   return "memories/deploy-duplicate.derived";
 }
 
-/** Run the real prune. Returns the stash-relative original paths that were archived. */
+/** Run the real prune. Returns the stash-relative original paths that were archived (from each tombstone). */
 function prune(stashDir: string): string[] {
   const applied = applyMemoryCleanup(stashDir, analyzeMemoryCleanup(stashDir));
   resetMemoryArchiveCache(); // the sweep below must see the archive this call just wrote
-  return applied.archived.map((record) => record.originalPath);
+  return applied.archived.map(
+    (record) =>
+      parseFrontmatter(fs.readFileSync(path.join(stashDir, record.handle, "cleanup.md"), "utf8")).data
+        .originalPath as string,
+  );
 }
 
 describe("belief edges to a pruned memory resolve through the archive tombstone (#884)", () => {

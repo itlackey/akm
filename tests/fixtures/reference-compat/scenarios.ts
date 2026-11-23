@@ -14,6 +14,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { CorpusCase, Sandbox } from "./harness";
@@ -146,6 +147,74 @@ function storeProposals(sb: Sandbox, refs: string[]): void {
   } finally {
     db.close();
   }
+}
+
+/** One proposal's stored status and `metadata_json`, as the record (the string, so what akm stamped is normalised). */
+function proposalMetadata(sb: Sandbox, id: string): unknown {
+  const db = new Database(sb.stateDb, { readonly: true });
+  try {
+    const row = db.query("SELECT status, metadata_json FROM proposals WHERE id = ?").get(id) as {
+      status: string;
+      metadata_json: string;
+    } | null;
+    return row ?? "<no such proposal>";
+  } finally {
+    db.close();
+  }
+}
+
+/** Insert one proposal row in the shape an older akm stored it (files, not refs). */
+function insertOldProposal(
+  sb: Sandbox,
+  row: { id: string; ref: string; source: string; content: string; meta: unknown },
+): void {
+  const db = new Database(sb.stateDb);
+  try {
+    db.query(
+      `INSERT INTO proposals (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+       VALUES (?, ?, ?, 'pending', ?, '2026-01-30T10:00:00.000Z', '2026-01-30T10:00:00.000Z', ?, NULL, ?)`,
+    ).run(row.id, path.join(sb.fixture, "main"), row.ref, row.source, row.content, JSON.stringify(row.meta));
+  } finally {
+    db.close();
+  }
+}
+
+const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+
+/** A pending human retire of `memories/deploy-note` (its `.derived` twin goes with it); `intent`: an accept begun and not finished. */
+function retireProposal(sb: Sandbox, id: string, options: { intent?: boolean }): void {
+  const file = path.join(sb.fixture, "main/memories/deploy-note.md");
+  const bytes = fs.readFileSync(file, "utf8");
+  insertOldProposal(sb, {
+    id,
+    ref: "main//memories/deploy-note",
+    source: "propose",
+    content: "",
+    meta: {
+      changes: [{ path: "memories/deploy-note.md", op: "delete" }],
+      proposedTarget: { source: "main", root: path.join(sb.fixture, "main") },
+      beforeHash: sha256(bytes),
+      ...(options.intent ? { retireAcceptIntent: { assetPath: file, backupContent: bytes } } : {}),
+    },
+  });
+}
+
+/** A pending consolidate promotion of `memories/deploy-note` into `knowledge/promoted`; accepting it retires the source. */
+function promotionProposal(sb: Sandbox, id: string): void {
+  const source = fs.readFileSync(path.join(sb.fixture, "main/memories/deploy-note.md"), "utf8");
+  const body = source.replace(/^---[\s\S]*?---\n/, "").trim();
+  insertOldProposal(sb, {
+    id,
+    ref: "main//knowledge/promoted",
+    source: "consolidate",
+    content: "---\ndescription: Promoted deploy note\n---\n\nWarm the cache first.\n",
+    meta: {
+      changes: [{ path: "knowledge/promoted.md", op: "create" }],
+      proposedTarget: { source: "main", root: path.join(sb.fixture, "main") },
+      promotionSource: "main//memories/deploy-note",
+      promotionSourceHash: sha256(body),
+    },
+  });
 }
 
 const config = (sb: Sandbox) => JSON.parse(fs.readFileSync(sb.configFile, "utf8")) as Record<string, unknown>;
@@ -477,6 +546,73 @@ export const SCENARIOS: Scenario[] = [
         }
       },
     },
+  },
+  {
+    // The fixture's accepted retire (proposal 5) is in the shape an older akm wrote: `retiredArchive.dirs`, and a
+    // tombstone whose ref is bundle-qualified. `show` prints the record (P7: `retired: [{ ref, handle }]` for `dirs`),
+    // revert reads the tombstone and restores the file, and `migrate apply` rewrites the record (P5).
+    id: "old-shape retire record",
+    track: ["main"],
+    cases: [
+      c("proposal show full", ["proposal", "show", "00000000-0000-4000-8000-000000000005", "--detail", "full"]),
+      c("proposal list accepted full", ["proposal", "list", "--status", "accepted", "--detail", "full"]),
+      c("proposal revert", ["proposal", "revert", "00000000-0000-4000-8000-000000000005", "--detail", "full"]),
+      c("proposal show full after revert", [
+        "proposal",
+        "show",
+        "00000000-0000-4000-8000-000000000005",
+        "--detail",
+        "full",
+      ]),
+    ],
+    finals: { "retire record": (sb) => proposalMetadata(sb, "00000000-0000-4000-8000-000000000005") },
+  },
+  {
+    // The same record after `migrate apply`: reverts as it did, and prints the same.
+    id: "old-shape retire record after migrate",
+    track: ["main"],
+    prep: [["migrate", "apply"]],
+    cases: [
+      c("proposal show full", ["proposal", "show", "00000000-0000-4000-8000-000000000005", "--detail", "full"]),
+      c("proposal revert", ["proposal", "revert", "00000000-0000-4000-8000-000000000005", "--detail", "full"]),
+    ],
+    finals: { "retire record": (sb) => proposalMetadata(sb, "00000000-0000-4000-8000-000000000005") },
+  },
+  {
+    // A retire accepted, shown, accepted again and reverted: a pending retire proposal as an older akm stored it
+    // (`changes[].path`, `proposedTarget.root`). Accept archives the memory and its `.derived` twin; the tombstones
+    // (track) name the retirement by concept id (N11), the receipt lists the archives by handle (P7).
+    id: "retire accept and revert",
+    setup: (sb) => retireProposal(sb, "00000000-0000-4000-8000-000000000031", {}),
+    track: ["main"],
+    cases: [
+      c("proposal accept", ["proposal", "accept", "00000000-0000-4000-8000-000000000031", "--detail", "full"]),
+      c("proposal show full", ["proposal", "show", "00000000-0000-4000-8000-000000000031", "--detail", "full"]),
+      c("proposal accept again", ["proposal", "accept", "00000000-0000-4000-8000-000000000031"]),
+      c("lint", ["lint", "--format", "json"]),
+      c("proposal revert", ["proposal", "revert", "00000000-0000-4000-8000-000000000031", "--detail", "full"]),
+    ],
+    finals: { "retire record": (sb) => proposalMetadata(sb, "00000000-0000-4000-8000-000000000031") },
+  },
+  {
+    // A retire accept an older akm began (`retireAcceptIntent.assetPath`, the file still in place) and never finished.
+    id: "retire accept resumed",
+    setup: (sb) => retireProposal(sb, "00000000-0000-4000-8000-000000000032", { intent: true }),
+    track: ["main"],
+    cases: [
+      c("proposal accept", ["proposal", "accept", "00000000-0000-4000-8000-000000000032", "--detail", "full"]),
+      c("proposal show full", ["proposal", "show", "00000000-0000-4000-8000-000000000032", "--detail", "full"]),
+      c("proposal revert", ["proposal", "revert", "00000000-0000-4000-8000-000000000032", "--detail", "full"]),
+    ],
+    finals: { "retire record": (sb) => proposalMetadata(sb, "00000000-0000-4000-8000-000000000032") },
+  },
+  {
+    // Accepting a consolidate promotion retires its source memory (O1) into the archive: the tombstone's refs.
+    id: "promotion retires its source",
+    setup: (sb) => promotionProposal(sb, "00000000-0000-4000-8000-000000000033"),
+    track: ["main"],
+    cases: [c("proposal accept", ["proposal", "accept", "00000000-0000-4000-8000-000000000033", "--detail", "full"])],
+    finals: { "retire record": (sb) => proposalMetadata(sb, "00000000-0000-4000-8000-000000000033") },
   },
   {
     // A created asset is found by `search` before the next `index` (N14).

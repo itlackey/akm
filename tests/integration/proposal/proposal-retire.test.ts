@@ -209,8 +209,8 @@ describe("akm proposal accept on a retire proposal", () => {
     expect(fs.existsSync(filePath)).toBe(false);
 
     const archived = getProposal(storage.stashDir, proposal.id);
-    expect(archived.retiredArchive?.dirs).toHaveLength(1);
-    const archiveDir = path.join(storage.stashDir, archived.retiredArchive!.dirs[0]!);
+    expect(archived.retiredArchive?.retired).toHaveLength(1);
+    const archiveDir = path.join(storage.stashDir, archived.retiredArchive!.retired[0]!.handle);
     const tombstone = parseFrontmatter(fs.readFileSync(path.join(archiveDir, "cleanup.md"), "utf8")).data;
     expect(tombstone.reason).toBe("duplicate");
     expect(tombstone.successorRefs).toEqual(["memories/new-note"]);
@@ -248,7 +248,7 @@ describe("akm proposal accept on a retire proposal", () => {
     await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
 
     const archived = getProposal(storage.stashDir, proposal.id);
-    const archiveDir = path.join(storage.stashDir, archived.retiredArchive!.dirs[0]!);
+    const archiveDir = path.join(storage.stashDir, archived.retiredArchive!.retired[0]!.handle);
     const archivedBody = fs.readFileSync(path.join(archiveDir, "memories/old-note.md"), "utf8");
     const fm = parseFrontmatter(archivedBody).data;
     expect(fm.beliefState).toBe("superseded");
@@ -277,7 +277,7 @@ describe("akm proposal accept on a retire proposal", () => {
 
     expect(fs.existsSync(twinPath)).toBe(false);
     const archived = getProposal(storage.stashDir, proposal.id);
-    expect(archived.retiredArchive?.dirs).toHaveLength(2);
+    expect(archived.retiredArchive?.retired).toHaveLength(2);
   });
 
   test("a target that no longer exists fails cleanly (UsageError), not an unhandled throw", async () => {
@@ -341,11 +341,7 @@ describe("akm proposal accept on a retire proposal", () => {
       // Simulate the crash: phase 1 (record intent) finished, phase 2 (move) never started.
       const db = openStateDatabase();
       try {
-        upsertProposal(
-          db,
-          { ...proposal, retireAcceptIntent: { assetPath: oldPath, backupContent } },
-          storage.stashDir,
-        );
+        upsertProposal(db, { ...proposal, retireAcceptIntent: { backupContent } }, storage.stashDir);
       } finally {
         db.close();
       }
@@ -355,7 +351,7 @@ describe("akm proposal accept on a retire proposal", () => {
       const result = await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
       expect(result.proposal.status).toBe("accepted");
       expect(fs.existsSync(oldPath)).toBe(false);
-      expect(result.proposal.retiredArchive?.dirs).toHaveLength(1);
+      expect(result.proposal.retiredArchive?.retired).toHaveLength(1);
       expect(result.proposal.backupContent).toBe(backupContent);
     });
 
@@ -380,11 +376,7 @@ describe("akm proposal accept on a retire proposal", () => {
       const backupContent = fs.readFileSync(oldPath, "utf8");
       const db = openStateDatabase();
       try {
-        upsertProposal(
-          db,
-          { ...proposal, retireAcceptIntent: { assetPath: oldPath, backupContent } },
-          storage.stashDir,
-        );
+        upsertProposal(db, { ...proposal, retireAcceptIntent: { backupContent } }, storage.stashDir);
       } finally {
         db.close();
       }
@@ -408,7 +400,7 @@ describe("akm proposal accept on a retire proposal", () => {
       const result = await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
       expect(result.proposal.status).toBe("accepted");
       expect(fs.existsSync(twinPath)).toBe(false);
-      expect(result.proposal.retiredArchive?.dirs).toHaveLength(2);
+      expect(result.proposal.retiredArchive?.retired).toHaveLength(2);
       // Recovered from the recorded intent, never guessed from the archived copy.
       expect(result.proposal.backupContent).toBe(backupContent);
     });
@@ -457,11 +449,7 @@ describe("akm proposal accept on a retire proposal", () => {
       // has no edge yet.
       const db = openStateDatabase();
       try {
-        upsertProposal(
-          db,
-          { ...proposal, retireAcceptIntent: { assetPath: oldPath, backupContent: original } },
-          storage.stashDir,
-        );
+        upsertProposal(db, { ...proposal, retireAcceptIntent: { backupContent: original } }, storage.stashDir);
       } finally {
         db.close();
       }
@@ -495,11 +483,7 @@ describe("akm proposal accept on a retire proposal", () => {
       const aBackup = fs.readFileSync(aPath, "utf8");
       const db = openStateDatabase();
       try {
-        upsertProposal(
-          db,
-          { ...pAB, retireAcceptIntent: { assetPath: aPath, backupContent: aBackup } },
-          storage.stashDir,
-        );
+        upsertProposal(db, { ...pAB, retireAcceptIntent: { backupContent: aBackup } }, storage.stashDir);
       } finally {
         db.close();
       }
@@ -544,7 +528,7 @@ describe("akm proposal accept on a retire proposal", () => {
     const backupContent = fs.readFileSync(oldPath, "utf8");
     const db = openStateDatabase();
     try {
-      upsertProposal(db, { ...proposal, retireAcceptIntent: { assetPath: oldPath, backupContent } }, storage.stashDir);
+      upsertProposal(db, { ...proposal, retireAcceptIntent: { backupContent } }, storage.stashDir);
     } finally {
       db.close();
     }
@@ -1441,7 +1425,7 @@ describe("O1: an accepted promotion retires its source memory", () => {
     expect(dirs).toHaveLength(2); // source + twin
     const tombstone = parseFrontmatter(fs.readFileSync(path.join(archiveRoot, dirs[0]!, "cleanup.md"), "utf8")).data;
     expect(tombstone.reason).toBe("promoted");
-    expect(tombstone.successorRefs).toEqual([result.ref]);
+    expect(tombstone.successorRefs).toEqual(["knowledge/promoted-note"]);
   });
 
   test("B3: a source edited after the promotion was minted is left alone — not archived", async () => {

@@ -197,7 +197,7 @@ export async function retire(input: { ref: string; revision: string }) {
       proposalId: result.proposal.id,
       ref: canonical,
       bundle: target.source.name,
-      archiveDirs: result.proposal.retiredArchive?.dirs ?? [],
+      archiveDirs: result.proposal.retiredArchive?.retired.map(({ handle }) => handle) ?? [],
       warnings: result.warnings ?? [],
     };
   });

@@ -48,6 +48,7 @@ import {
   listTombstones,
   MEMORY_ARCHIVE_REL,
   noteOf,
+  qualifiedNote,
   readTombstone,
   restoreArchive,
   type Tombstone,
@@ -362,8 +363,12 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const file = entry.file as string;
     assertWritableFile(b.root, b.id, file);
     assertWritableFile(b.root, b.id, path.join(b.root, MEMORY_ARCHIVE_REL, "retirement"));
-    const ref = note.ref ?? `${b.id}//${canonical}`;
-    const written = archiveFile(b.root, file, { ref, archivedAt: new Date().toISOString(), note });
+    const written = archiveFile(b.root, file, {
+      ref: note.ref ?? canonical,
+      archivedAt: new Date().toISOString(),
+      note,
+      bundle: b.id,
+    });
     return { conceptId: canonical, changed: written.changed, handle: written.handle };
   }
 
@@ -371,7 +376,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return listTombstones(b.root).map((tombstone) => ({
       handle: tombstone.handle,
       conceptId: this.retiredConceptId(tombstone),
-      note: noteOf(tombstone),
+      note: qualifiedNote(b.id, noteOf(tombstone)),
       restorable: tombstone.archivedPath !== undefined && fs.existsSync(path.join(b.root, tombstone.archivedPath)),
     }));
   }

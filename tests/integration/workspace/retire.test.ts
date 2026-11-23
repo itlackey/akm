@@ -60,7 +60,7 @@ test("retire is an accepted retire proposal; revert restores bytes, mode and bel
   const row = getProposal(storage.stashDir, receipt.proposalId);
   expect(row).toMatchObject({ status: "accepted", source: "propose", ref });
   expect(row.retirement).toBeUndefined();
-  expect(row.retiredArchive?.dirs).toEqual(receipt.archiveDirs);
+  expect(row.retiredArchive?.retired.map(({ handle }) => handle)).toEqual(receipt.archiveDirs);
   expect(getProposal(storage.stashDir, pending.id).status).toBe("pending");
   const [dir] = archived(receipt);
   expect(fs.readFileSync(path.join(dir!, "memories/manual.md"), "utf8")).toBe(body);

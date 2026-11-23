@@ -381,13 +381,25 @@ describe("proposal repository — pure helpers (post-split)", () => {
     const proposal = proposalRowToProposal({
       ...terminalRow,
       metadata_json: JSON.stringify({
-        retiredArchive: { dirs: [".akm/memory-cleanup/archive/2026-09-28T00-00-00-000Z-memories-old-note"] },
+        retiredArchive: {
+          retired: [
+            {
+              ref: "team//memories/old-note",
+              handle: ".akm/memory-cleanup/archive/2026-09-28T00-00-00-000Z-memories-old-note",
+            },
+          ],
+        },
         promotionSource: "team//memories/promoted-source",
         promotionSourceHash: "c".repeat(64),
       }),
     });
     expect(proposal.retiredArchive).toEqual({
-      dirs: [".akm/memory-cleanup/archive/2026-09-28T00-00-00-000Z-memories-old-note"],
+      retired: [
+        {
+          ref: "team//memories/old-note",
+          handle: ".akm/memory-cleanup/archive/2026-09-28T00-00-00-000Z-memories-old-note",
+        },
+      ],
     });
     expect(proposal.promotionSource).toBe("team//memories/promoted-source");
     expect(proposal.promotionSourceHash).toBe("c".repeat(64));

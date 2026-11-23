@@ -148,7 +148,7 @@ describe("a proposal for a loose asset", () => {
     const config = makeConfig(stash);
     await akmProposalAccept({ stashDir: stash, id: proposal.id, config });
     expect(fs.existsSync(retired)).toBe(false);
-    expect(getProposal(stash, proposal.id).retiredArchive?.dirs).toHaveLength(1);
+    expect(getProposal(stash, proposal.id).retiredArchive?.retired).toHaveLength(1);
 
     await akmProposalRevert({ stashDir: stash, id: proposal.id, config });
     expect(fs.readFileSync(retired, "utf8")).toBe(NOTE);

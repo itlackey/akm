@@ -33,7 +33,7 @@ lives in `$STATE`, `$CACHE`, or `$DATA`.
 | Path | Contents |
 |---|---|
 | `memory-cleanup/belief-transitions.jsonl` | One line per memory belief-state transition: `appliedAt`, `ref`, `parentRef`, `fromState`, `toState`, `reason`, and `relatedRef`, `relatedRefs` and `currentBeliefRefs` when present. Written by the memory cleanup pass (`appendBeliefStateTransitionLog`). |
-| `memory-cleanup/archive/<stamp>-<ref>/` | A pruned or retired memory moved aside, plus a `cleanup.md` tombstone. Ref resolution reads the tombstones so an edge to a pruned memory reports "archived" instead of "missing" (`src/core/asset/memory-archive.ts`). `akm improve` deletes the archived files of a retirement 30 days after `retiredAt` when the bundle is a git repository and the files are tracked and clean; `cleanup.md` stays. |
+| `memory-cleanup/archive/<stamp>-<concept id>/` | A pruned or retired memory moved aside, plus a `cleanup.md` tombstone. Ref resolution reads the tombstones so an edge to a pruned memory reports "archived" instead of "missing" (`src/core/asset/memory-archive.ts`). `akm improve` deletes the archived files of a retirement 30 days after `retiredAt` when the bundle is a git repository and the files are tracked and clean; `cleanup.md` stays. |
 
 `<cwd>/.akm/config.json` is not read as configuration.
 
@@ -248,7 +248,11 @@ names assets by ref, never files: `changes` is `[{ ref, op, content? }]` (the pr
 change's content is the `content` column), `proposedTarget` is `{ source }` (the bundle),
 `acceptedTarget` is `{ bundle, ref, contentHash }`. A record an older akm wrote with
 `changes[].path`, `proposedTarget.root` or `acceptedTarget.root/path` is read as converted
-(`src/commands/proposal/legacy-records.ts`) and rewritten by `akm migrate apply`.
+(`src/commands/proposal/legacy-records.ts`) and rewritten by `akm migrate apply`. A retirement
+is recorded the same way: `retiredArchive` is `{ retired: [{ ref, handle }] }` (a handle is the
+opaque name of the retirement's archive) and `retireAcceptIntent` is `{ backupContent }`; the
+old `retiredArchive.dirs` and `retireAcceptIntent.assetPath` are read as converted and rewritten
+by the same step.
 
 Indexes: `idx_proposals_stash_status`, `idx_proposals_ref_status`,
 `idx_proposals_stash_status_ref_source`.

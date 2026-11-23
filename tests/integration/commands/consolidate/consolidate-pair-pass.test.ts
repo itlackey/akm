@@ -304,7 +304,7 @@ describe("complete retirement evidence (#1195)", () => {
     const accepted = getProposal(storage.stashDir, id);
     expect(accepted.status).toBe("accepted");
     expect(accepted.backupContent).toBe(raw[0]);
-    expect(accepted.retiredArchive?.dirs).toHaveLength(1);
+    expect(accepted.retiredArchive?.retired).toHaveLength(1);
     expect(fs.existsSync(paths[0])).toBe(false);
     expect(fs.readFileSync(paths[1], "utf8")).toBe(raw[1]!);
     // Repeated acceptance resumes the already-complete operation without another deletion.
@@ -2131,7 +2131,7 @@ describe("memory scope integrity (#1197)", () => {
                 db,
                 {
                   ...proposal,
-                  retireAcceptIntent: { assetPath: files[0], backupContent: fs.readFileSync(files[0], "utf8") },
+                  retireAcceptIntent: { backupContent: fs.readFileSync(files[0], "utf8") },
                 },
                 storage.stashDir,
               );
