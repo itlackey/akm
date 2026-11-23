@@ -7,7 +7,7 @@
  *
  * A difference is a node: the deepest place where the two results stop agreeing. Objects are walked key by key and
  * arrays of objects that each carry a unique `ref` (or `id`, or `file`+`issue`+`detail`) element by element, matched by that name, so a moved hit is
- * one node (`hits[order]`) and an added or removed one is a node of its own; other equal-length arrays are walked by
+ * one node (`hits[order]`; lint findings, whose order is the filesystem's, have none) and an added or removed one is a node of its own; other equal-length arrays are walked by
  * index. Anything else (a value, a type, an array that grew or shrank) is a node holding both sides. Two runs that
  * agree give no nodes. Each node is one entry of `differences.json`: its case, its path, the recorded value (`base`),
  * the working tree's value (`current`) and the `row` of the design's approved-changes register (§0.2) that approves
@@ -140,7 +140,10 @@ function walk(base: unknown, current: unknown, at: string, out: Found) {
       const common = (ids: string[], other: Map<string, unknown>) => ids.filter((id) => other.has(id));
       const was = common([...before.keys()], after);
       const now = common([...after.keys()], before);
-      if (JSON.stringify(was) !== JSON.stringify(now)) out.push({ path: `${at}[order]`, base: was, current: now });
+      // Lint findings (`file`+`issue`+`detail`) come in the order the filesystem lists the bundle, in the recorded release
+      // as now (ext4 and tmpfs differ), so their order is no part of the contract; a hit's order is.
+      if (!keys.includes("file") && JSON.stringify(was) !== JSON.stringify(now))
+        out.push({ path: `${at}[order]`, base: was, current: now });
       return;
     }
     if (base.length === current.length) {
