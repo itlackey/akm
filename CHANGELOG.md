@@ -52,6 +52,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `akm env create --sensitive` is removed, and with it the `.sensitive` marker file: an env file or secret is always listed (its values are still never printed in structured output). A `.sensitive` marker left in a bundle by an earlier release is ignored: an env file or secret it hid now appears in `akm env list`, `akm secret list` and the index, and the marker itself is not listed as a secret. Delete the marker files; to keep a value out of the index, keep it in a secret-manager bundle or outside the bundle.
 
+### Fixed
+
+- A git bundle's `credential` now reaches a private GitHub repository. akm sent the token to Git as `Authorization: Bearer`, which GitHub's Git endpoint refuses for a personal access token, so the clone failed with "repository not found or private". It is now sent as HTTP Basic auth (`x-access-token` and the token), which GitHub, Gitea, GitLab and Azure DevOps all accept, for clone, update, `akm sync` fetch and push alike.
+
 ## [0.10.261130] - 2026-11-22
 
 ### Added
@@ -5785,7 +5789,6 @@ reach 74 GB with nothing reporting it.
   ~60 lines of comment justifying it. `--format text` still renders the same
   summary through the same formatter; it is simply no longer the default.
 
-
 - **Search no longer truncates long queries (#892).** `MAX_LEXICAL_QUERY_TOKENS
   = 16` silently dropped every token past the sixteenth, and tokens are
   collected in order, so the discarded half was the tail — for
@@ -5933,7 +5936,6 @@ reach 74 GB with nothing reporting it.
   `bun run lint` failed locally while CI, which never has those files, stayed
   green.
 
-
 - **`akm task sync` no longer spawns `npm root --global` on every call** (#901).
   The npm-global-root probe behind `resolveAkmInvocation` is memoized for the
   process, so a `task sync --rebind` cycle spawns npm at most once instead of
@@ -5971,7 +5973,6 @@ reach 74 GB with nothing reporting it.
   backups already use. Nothing in the current code writes the legacy
   `backups/migrations`, `manual`, `releases`, or `operations` directories,
   so they are left alone; the new health advisory is what surfaces them.
-
 
 - **The incremental index no longer misses an edit whose timestamp did not move
   forward.** The per-directory freshness check summarised a directory as its
@@ -8660,7 +8661,6 @@ See `docs/migration/v0.8-to-v0.9.md` and
   conversion. **Existing website snapshots will change on their next refresh**
   — expect them to get shorter and cleaner. Link discovery still scans the
   whole page, so crawl coverage is unchanged.
-
 
 - **`website` sources now respect `robots.txt` by default.** Before crawling
   an origin, akm fetches and parses that origin's `/robots.txt` and skips

@@ -63,7 +63,7 @@ describe("validateGitUrl", () => {
 });
 
 describe("gitCredentialEnvironment", () => {
-  test("passes bearer credentials through child-process config instead of a URL or argv (#977)", () => {
+  test("passes the credential as Basic auth through child-process config instead of a URL or argv (#977)", () => {
     const env = withEnvSync(
       { GIT_CONFIG_COUNT: undefined, GIT_CONFIG_KEY_0: undefined, GIT_CONFIG_VALUE_0: undefined },
       () => gitCredentialEnvironment("secret-value"),
@@ -71,7 +71,9 @@ describe("gitCredentialEnvironment", () => {
 
     expect(env.GIT_CONFIG_COUNT).toBe("1");
     expect(env.GIT_CONFIG_KEY_0).toBe("http.extraHeader");
-    expect(env.GIT_CONFIG_VALUE_0).toBe("Authorization: Bearer secret-value");
+    expect(env.GIT_CONFIG_VALUE_0).toBe(
+      `Authorization: Basic ${Buffer.from("x-access-token:secret-value").toString("base64")}`,
+    );
   });
 
   test("appends to existing process-scoped Git config instead of replacing it", () => {
@@ -88,7 +90,21 @@ describe("gitCredentialEnvironment", () => {
     expect(env.GIT_CONFIG_KEY_0).toBe("url.file:///fixture/.insteadOf");
     expect(env.GIT_CONFIG_VALUE_0).toBe("https://fixture.invalid/repo.git");
     expect(env.GIT_CONFIG_KEY_1).toBe("http.extraHeader");
-    expect(env.GIT_CONFIG_VALUE_1).toBe("Authorization: Bearer secret-value");
+    expect(env.GIT_CONFIG_VALUE_1).toBe(
+      `Authorization: Basic ${Buffer.from("x-access-token:secret-value").toString("base64")}`,
+    );
+  });
+
+  test("sends the form GitHub's Git endpoint accepts: Basic x-access-token:<token>", () => {
+    const env = withEnvSync(
+      { GIT_CONFIG_COUNT: undefined, GIT_CONFIG_KEY_0: undefined, GIT_CONFIG_VALUE_0: undefined },
+      () => gitCredentialEnvironment("github_pat_example"),
+    );
+
+    const header = env.GIT_CONFIG_VALUE_0 ?? "";
+    expect(header.startsWith("Authorization: Basic ")).toBe(true);
+    const decoded = Buffer.from(header.slice("Authorization: Basic ".length), "base64").toString("utf8");
+    expect(decoded).toBe("x-access-token:github_pat_example");
   });
 
   test("rejects control characters in resolved credentials", () => {

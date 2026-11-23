@@ -343,7 +343,7 @@ exec "${real}" "$@"
     return { repo, remote, result, recorded: calls(shim.log) };
   }
 
-  const header = `Authorization: Bearer ${TOKEN}`;
+  const header = `Authorization: Basic ${Buffer.from(`x-access-token:${TOKEN}`).toString("base64")}`;
 
   test("a $VAR credential reaches both fetch and push, and never argv, output or git config", async () => {
     const { repo, result, recorded } = await syncWith("$AKM_TEST_GIT_TOKEN", [], (r) =>
