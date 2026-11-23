@@ -355,11 +355,6 @@
       "statSync": 1
     }
   },
-  "src/core/asset/type-keys.ts": {
-    "adapter-import": {
-      "src/core/adapter/adapters/akm-lint": 1
-    }
-  },
   "src/core/assets/read.ts": {
     "facade-export": {
       "FindOptions": 1,
