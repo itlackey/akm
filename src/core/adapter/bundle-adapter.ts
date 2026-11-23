@@ -83,6 +83,14 @@ export interface NewAsset {
   resources?: ReadonlyArray<{ path: string; content: Buffer }>;
 }
 
+/** One file of a package directory, non-asset files included. `path` is posix and inside the package; never persisted. */
+export interface PackageFile {
+  path: string;
+  bytes: Buffer;
+  /** Permission bits. */
+  mode: number;
+}
+
 /** What a write did. */
 export interface AssetChange {
   conceptId: string;
@@ -193,6 +201,23 @@ export interface BundleAdapter {
   ): AssetChange;
   /** Take the asset out of the bundle. `locator` (here, on `update` and on a replacing `create`): as on `read`. */
   delete(b: Bundle, conceptId: string, options?: { locator?: unknown }): AssetChange;
+  /**
+   * Every file under the directory of a package entry (a skill), non-assets included, with bytes and mode. Refused
+   * when the adapter keeps no packages.
+   */
+  packageFiles(b: Bundle, conceptId: string): PackageFile[];
+  /**
+   * Make the package `asset` places an exact mirror of `files`: overwrite what exists, add, and delete what `files`
+   * lacks; bytes and modes kept; staged and renamed into place, so a failure leaves the target as it was. An existing
+   * package is refused unless `replace`. One change per asset it added, changed or removed; the entry's change comes
+   * first and lists every file of the package, non-assets included.
+   */
+  mirrorPackage(
+    b: Bundle,
+    asset: Pick<NewAsset, "type" | "name">,
+    files: readonly PackageFile[],
+    options?: { replace?: boolean },
+  ): AssetChange[];
 
   /**
    * Take the asset out of the bundle recoverably, keeping `note` with it. The handle in the result names the

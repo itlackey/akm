@@ -13,13 +13,9 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  assertNoDestinationSymlinkParent,
-  listTreeFiles,
-  materializeFileLinks,
-  stampCloneOrigin,
-} from "../commands/sources/source-clone";
+import { assertNoDestinationSymlinkParent, stampedOrigin } from "../commands/sources/source-clone";
 import { managedFolderOf, protectedTypeOf } from "../core/adapter/directory/place-rules";
+import { isFileOrFileSymlink } from "../core/adapter/directory/walker";
 import { assertFlatAssetName, normalizeCreateSubPath } from "../core/asset/asset-create";
 import { indexFiles } from "../core/assets/files";
 import { isWithin, safeRealpath } from "../core/common";
@@ -139,4 +135,36 @@ export async function copyEntry(input: CopyEntryInput) {
     const indexed = await indexFiles(toBundle, files);
     return { bundle, from, toBundle, to, indexed };
   });
+}
+
+/** Merge the origin ref into the `sources:` frontmatter of the file at `filePath` ({@link stampedOrigin}). */
+function stampCloneOrigin(filePath: string, originRef: string | undefined): void {
+  if (!originRef) return;
+  const next = stampedOrigin(fs.readFileSync(filePath, "utf8"), originRef);
+  if (next !== undefined) fs.writeFileSync(filePath, next);
+}
+
+/** Replace each file symlink under `root` with a regular file holding its target's bytes. Directory links are left as links. */
+function materializeFileLinks(root: string): void {
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      materializeFileLinks(entryPath);
+    } else if (entry.isSymbolicLink() && isFileOrFileSymlink(entryPath)) {
+      const content = fs.readFileSync(entryPath);
+      const { mode } = fs.statSync(entryPath);
+      fs.rmSync(entryPath);
+      fs.writeFileSync(entryPath, content, { mode });
+    }
+  }
+}
+
+function listTreeFiles(root: string): string[] {
+  const files: string[] = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) files.push(...listTreeFiles(entryPath));
+    else files.push(entryPath);
+  }
+  return files;
 }

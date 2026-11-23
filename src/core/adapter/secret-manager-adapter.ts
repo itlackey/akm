@@ -25,6 +25,7 @@ import type {
   BundleAsset,
   BundleListing,
   NewAsset,
+  PackageFile,
   Retirement,
   RetireNote,
 } from "./bundle-adapter";
@@ -303,6 +304,23 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     if (!existing) throw assetNotFound(`${b.id}//${conceptId}`);
     this.writing(location, () => this.deleteSecret(location, existing));
     return this.change(name);
+  }
+
+  packageFiles(_b: Bundle, _conceptId: string): PackageFile[] {
+    return this.refusePackages();
+  }
+
+  mirrorPackage(
+    _b: Bundle,
+    _asset: Pick<NewAsset, "type" | "name">,
+    _files: readonly PackageFile[],
+    _options?: { replace?: boolean },
+  ): AssetChange[] {
+    return this.refusePackages();
+  }
+
+  private refusePackages(): never {
+    throw new Error(`Adapter "${this.id}" keeps no packages; the asset facade checks \`writes\` first.`);
   }
 
   retire(_b: Bundle, _conceptId: string, _note: RetireNote): AssetChange & { handle: string } {

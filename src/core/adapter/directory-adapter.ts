@@ -45,6 +45,7 @@ import type {
   BundleAsset,
   BundleListing,
   NewAsset,
+  PackageFile,
   Retirement,
   RetireNote,
 } from "./bundle-adapter";
@@ -409,12 +410,115 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return { conceptId: canonical, changed: [file], content };
   }
 
+  /** Deleting a package's entry deletes the package: its folder, resources and all (§8.3). */
   delete(b: Bundle, conceptId: string): AssetChange {
     const { conceptId: canonical, entry } = this.existing(b, conceptId);
     const file = entry.file as string;
     assertWritableFile(rootOf(b), b.id, file);
-    fs.rmSync(file);
-    return { conceptId: canonical, changed: [file] };
+    const dir = this.packageDir(buildFileContext(rootOf(b), file));
+    // A package at the bundle's root is not the bundle's to remove: only its entry goes.
+    if (dir === undefined || !isWithin(dir, rootOf(b)) || path.resolve(dir) === path.resolve(rootOf(b))) {
+      fs.rmSync(file);
+      return { conceptId: canonical, changed: [file] };
+    }
+    const files = filesBelow(dir);
+    fs.rmSync(dir, { recursive: true });
+    return { conceptId: canonical, changed: files };
+  }
+
+  /**
+   * The package a package entry holds. Found through its spellings when the walk does not reach it (a skill folder that
+   * is a link), because a clone reads the package a ref resolved to, by content.
+   */
+  packageFiles(b: Bundle, conceptId: string): PackageFile[] {
+    const root = rootOf(b);
+    const file =
+      this.read(b, conceptId)?.entry.file ??
+      this.spellings(conceptId)
+        .filter((relPath) => this.identify(relPath) !== null)
+        .map((relPath) => path.join(root, relPath))
+        .find((candidate) => fs.statSync(candidate, { throwIfNoEntry: false })?.isFile());
+    const dir = file === undefined ? undefined : this.packageDir(buildFileContext(root, file));
+    if (dir === undefined) throw new UsageError(`"${b.id}//${conceptId}" is not a package entry.`);
+    return filesBelow(dir)
+      .map((member) => ({
+        path: path.relative(dir, member).split(path.sep).join("/"),
+        bytes: fs.readFileSync(member),
+        mode: fs.statSync(member).mode & 0o777,
+      }))
+      .sort((left, right) => compareCodePoints(left.path, right.path));
+  }
+
+  mirrorPackage(
+    b: Bundle,
+    asset: Pick<NewAsset, "type" | "name">,
+    files: readonly PackageFile[],
+    options: { replace?: boolean } = {},
+  ): AssetChange[] {
+    if (!this.writes.includes(asset.type)) {
+      throw new Error(
+        `Adapter "${this.id}" does not write ${asset.type} assets in bundle "${b.id}"; the asset facade checks \`writes\` first.`,
+      );
+    }
+    const conceptId = this.place(b, asset);
+    const entry = buildFileContext(rootOf(b), this.placeFile(b, asset));
+    const dir = this.packageDir(entry);
+    if (dir === undefined) {
+      throw new UsageError(`Bundle "${b.id}" (adapter "${this.id}") does not keep ${asset.type} assets as packages.`);
+    }
+    const entryPath = path.relative(dir, entry.absPath).split(path.sep).join("/");
+    if (!files.some((file) => file.path === entryPath)) {
+      throw new UsageError(`The ${asset.type} package has no ${entryPath}, the file that makes it a ${asset.type}.`);
+    }
+    for (const file of files) {
+      if (!within(path.join(dir, file.path), dir) || path.isAbsolute(file.path)) {
+        throw new UsageError(`File path "${file.path}" leaves the ${asset.type} package.`, "PATH_ESCAPE_VIOLATION");
+      }
+    }
+    const staging = `${dir}.tmp-${randomUUID()}`;
+    // The folders above the package may not be links; the package folder itself may be one, which is replaced as an entry.
+    assertWritableFile(rootOf(b), b.id, staging, { replaceLink: true });
+    const existing = fs.lstatSync(dir, { throwIfNoEntry: false });
+    if (existing && !options.replace) {
+      throw new UsageError(
+        `Asset already exists in bundle "${b.id}": ${dir}. Use --force to overwrite.`,
+        "RESOURCE_ALREADY_EXISTS",
+      );
+    }
+    const before = existing?.isDirectory() ? filesBelow(dir) : [];
+    const backup = `${dir}.old-${randomUUID()}`;
+    try {
+      for (const file of files) {
+        const target = path.join(staging, file.path);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, file.bytes);
+        fs.chmodSync(target, file.mode);
+      }
+      if (existing) fs.renameSync(dir, backup);
+      try {
+        fs.renameSync(staging, dir);
+      } catch (error) {
+        if (existing) fs.renameSync(backup, dir);
+        throw error;
+      }
+    } catch (error) {
+      fs.rmSync(staging, { recursive: true, force: true });
+      throw error;
+    }
+    if (existing) fs.rmSync(backup, { recursive: true, force: true });
+    // The entry's change lists every file of the package; another asset the old or the new package held is its own change.
+    const after = filesBelow(dir);
+    const entryFile = files.find((file) => file.path === entryPath) as PackageFile;
+    const changes = new Map<string, AssetChange>([[conceptId, { conceptId, changed: [], content: entryFile.bytes }]]);
+    for (const file of new Set([...before, ...after])) {
+      const held = this.identify(this.relPathOf(b, file));
+      const key = held !== null && held !== conceptId ? held : conceptId;
+      const change = changes.get(key) ?? { conceptId: key, changed: [] };
+      change.changed.push(file);
+      changes.set(key, change);
+    }
+    const first = changes.get(conceptId) as AssetChange;
+    return [first, ...[...changes.values()].filter((change) => change !== first)];
   }
 
   retire(b: Bundle, conceptId: string, note: RetireNote): AssetChange & { handle: string } {
