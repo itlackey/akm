@@ -3,8 +3,11 @@
 AKM's bundle-format documentation is split in two: the public compatibility
 table lives at
 [Supported Formats](supported-formats.md), and the adapter internals — probe
-order, the `BundleAdapter` interface, and which adapters write — live at
-[Architecture → Adapters](../architecture/adapters.md).
+order, the `BundleAdapter` interface, the asset facade, identity, retire and
+delete, and which adapters write — live at
+[Architecture → Adapters](../architecture/adapters.md). The config shape of a
+bundle (`adapter`, `root`, `writable`, `location`) is in
+[Configuration](configuration.md#bundles-and-write-target).
 
 - [Supported Formats](supported-formats.md) — the format-by-format table:
   what AKM indexes, the auto-detection marker, current read/write support,

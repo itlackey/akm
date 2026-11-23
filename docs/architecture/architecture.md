@@ -107,9 +107,9 @@ written are in [Core Principles](akm-core-principles.md).
 
 ## Asset Types
 
-The `akm` adapter's fourteen built-in asset types (`skill`, `command`,
+The `akm` adapter's fifteen built-in asset types (`skill`, `command`,
 `agent`, `knowledge`, `instruction`, `workflow`, `script`, `memory`,
-`lesson`, `fact`, `env`, `secret`, `task`, `session`) each map to a
+`lesson`, `fact`, `rule`, `env`, `secret`, `task`, `session`) each map to a
 canonical source directory through `src/core/asset/asset-placement.ts`'s
 `PLACEMENT_SPECS` map. See
 [Bundle Types](../reference/bundle-types.md) for the full table.
@@ -363,11 +363,12 @@ writeAssets(target, { purpose, message? }, (w) => w.create(asset) | w.update(con
 The flow:
 
 1. Refuse if the source is not `writable`, or its bundle's adapter does not
-   write the asset's type (see [Adapters](adapters.md#writes)).
-2. The bundle's adapter makes the write (`create`, `update` or `delete`): a
-   directory adapter places the asset and writes it atomically inside the
-   bundle's root, with no commit. The files it changed are recorded for the
-   boundary commit of a git target.
+   write the asset's type (see [Adapters](adapters.md#write)).
+2. The bundle's adapter makes the write (`create`, `update`, `delete` or
+   `retire`): a directory adapter places the asset and writes it atomically
+   inside the bundle's root, with no commit. The files it changed are recorded
+   for the boundary commit of a git target, and the asset's index row is
+   refreshed or dropped.
 
 Git-backed targets are committed in a single batch at the operation boundary via
 `commitWriteTargetBoundary(target, message, { push })`, which delegates to
@@ -746,7 +747,8 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/cli/` | citty composition helpers |
 | `src/core/asset/asset-placement.ts` | asset type registry and canonical source directories (`PLACEMENT_SPECS`) |
 | `src/core/asset/asset-ref.ts` | asset ref parsing and normalization (`parseBundleRef`) |
-| `src/core/adapter/` | the `BundleAdapter` contract and the built-in adapters (see [Adapters](adapters.md)) |
+| `src/core/adapter/` | the `BundleAdapter` contract, the two bases (`DirectoryAdapterBase`, `SecretManagerAdapterBase`), the registry and the built-in adapters (see [Adapters](adapters.md)) |
+| `src/core/assets/` | the asset facade: the one way code outside `src/core/adapter/` finds, lists, types, validates and writes assets, whichever adapter holds them (`read.ts`, `type.ts`, `write.ts`, `validate.ts`, `gate.ts`). `scripts/lint-asset-io.ts` counts what still bypasses it (see [Adapters](adapters.md#the-facade-srccoreassets)) |
 | `src/core/config/config.ts` | config loading, validation, env resolution; the default connection and harness |
 | `src/core/config/credentials.ts` | `credentials.json` and the dispatch-time resolution of a connection's key (`$VAR`, else the stored entry) |
 | `src/core/config/convert-engines.ts` | the one conversion of the older `engines` / `defaults` form to `connections` / `harnesses`, called by the loader and by `akm migrate apply` |

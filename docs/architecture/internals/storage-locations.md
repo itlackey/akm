@@ -402,7 +402,8 @@ Subdirectories and file shapes come from `BUILTIN_PLACEMENT_SPECS`,
 | `sessions/<harness>/` | session | `<session-id>.md`; written by the extract pass |
 
 A bundle recognized by the `llm-wiki` adapter (a root with `schema.md` and
-`pages/`) is a wiki; `wikis/<name>/` is the usual place. See
+`pages/`) is a wiki, and a wiki is always a bundle of its own: a `wikis/`
+folder inside an `akm` bundle is ordinary `akm` files. See
 [Classification](classification.md).
 
 ## Locks and sentinels

@@ -263,9 +263,9 @@ such a bundle after the bundles before it in priority.
 
 | | `secret-tool` | `azure-key-vault` |
 | --- | --- | --- |
-| `location` | the keyring's alias, else the keyring whose label it is | the vault's name |
+| `location` | the keyring's alias, else the keyring whose label it is, else the keyring at `/org/freedesktop/secrets/collection/<location>` | the vault's name |
 | Needs | `secret-tool` (package `libsecret-tools`) and `busctl` (systemd), a running Secret Service, and the keyring to exist | the Azure CLI, signed in with `az login` |
-| A secret's name | the entry's label | the vault's name for the secret (letters, digits and `-`) |
+| A secret's name | the entry's label | the vault's name for the secret: 1 to 127 letters, digits and `-` |
 | Listed | every entry | every enabled secret that no Azure service manages |
 
 - akm reaches the keyring or vault through its command-line client on every
@@ -274,9 +274,10 @@ such a bundle after the bundles before it in priority.
   for (for a vault, one `az keyvault secret list` and one `az keyvault secret
   show`); what it listed is dropped when the command ends, or when akm stores
   or deletes in the store.
-- A name that is not a valid concept name (an empty label, one with a `#`, one
-  that starts or ends with a space, one with `..` in it) is not listed, and
-  `akm lint` reports it by ref. When more than one entry has a name, one wins:
+- A name that does not read back as the ref `secrets/<name>` (an empty label,
+  one with a `#`, a backslash, a `.` or `..` path segment, a leading or trailing
+  `/`, or trailing white space) is not listed, and `akm lint` reports it by ref
+  (`invalid-name`). When more than one entry has a name, one wins:
   the entry akm made, else the one with the lowest object path (a vault has one
   secret per name). `akm lint` reports the others as `shadowed-spelling`, and
   reads, replaces and removes act on the winner. `akm lint` without `--dir` or a
@@ -290,8 +291,9 @@ such a bundle after the bundles before it in priority.
   secrets only: `akm secret set` and `akm secret remove` write it, and every
   other write command refuses it.
 - **`secret-tool`**: `location` names the collection by its alias, else by its
-  label. akm finds the collection once and uses its
-  object path for every request. Every entry of the collection is listed,
+  label, else by its object path `/org/freedesktop/secrets/collection/<location>`
+  (how a collection was named before aliases). akm finds the collection once and
+  uses its object path for every request. Every entry of the collection is listed,
   whoever stored it. `secret-tool` finds an entry by its attributes, so akm
   reads and replaces a value through the attributes the entry already has; an
   entry with no attributes is listed but cannot be read until it has one. A
@@ -301,8 +303,8 @@ such a bundle after the bundles before it in priority.
   attributes find, and refuses, naming the other entry, unless the entry is the
   only one. An entry `akm secret set` creates carries the attribute `akm` with
   the value `<keyring>/<name>`. `secret-tool store` names its collection by
-  alias, so when only the label names the collection, akm gives it that alias
-  the first time it stores into it (listing and reading change nothing).
+  alias, so when the collection has no alias of that name, akm gives it one the
+  first time it stores into it (listing and reading change nothing).
   A locked keyring is unlocked on request when a person is at a terminal
   (stderr is one): the Secret Service shows its own prompt (KWallet, GNOME
   Keyring), akm says so on stderr and waits up to two minutes, and a dismissed
@@ -322,9 +324,11 @@ such a bundle after the bundles before it in priority.
   vault keeps the deleted secret until its retention period ends; until then
   `akm secret set` of that name fails with a hint to recover or purge it. A
   purge that meets the delete still going is tried again, up to five times a
-  second apart. A secret that is disabled is not listed; reading one that was
-  disabled after it was listed fails with that message, not as an unreachable
-  vault.
+  second apart. A secret that is disabled, or that another Azure service
+  manages, is not listed and not read. Reading one
+  that was disabled after it was listed fails with that message, not as an
+  unreachable vault. A secret name a vault cannot hold (not 1 to 127 letters, digits
+  and `-`) is refused by `akm secret set` before `az` runs.
 - `akm env` commands and the Desktop Files view apply to
   directory bundles; the Desktop protected-file view shows, edits, creates and
   deletes these secrets too.
