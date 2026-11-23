@@ -1828,7 +1828,7 @@ async function lookupBundleRefWithResolutionUsing(
     const inputRef = makeBundleRef(qualified ? ref.bundle : undefined, asset.conceptId);
     let entry: IndexEntry | null | undefined;
     try {
-      const id = db ? findEntryIdByRef(db, inputRef, bundleId) : undefined;
+      const id = db ? findEntryIdByRef(db, asset.ref) : undefined;
       entry = id !== undefined && db ? readLookupEntry(db, id, ref.conceptId, source.path) : undefined;
     } catch (error) {
       // An index a build is still creating or rewriting cannot answer; the owner's file can.

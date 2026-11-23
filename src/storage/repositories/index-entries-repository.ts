@@ -719,72 +719,18 @@ export function getAllEntries(db: Database, entryType?: string, excludeTypes?: s
 }
 
 /**
- * Resolve a single `entries.id` from a new-grammar `[bundle//]conceptId` ref,
- * keying on the canonical stored `item_ref` (ref-grammar decision D-R1/D-R4).
- * The optional `bundleId` scopes the match to one indexed bundle.
+ * Resolve a single `entries.id` from a qualified `bundle//conceptId` ref: the row whose canonical stored `item_ref` is
+ * that ref, exactly (§4.1). An unqualified ref is input sugar, qualified at the boundary by `qualifyRef`
+ * (`src/core/assets/read.ts`); it is refused here, never matched by suffix.
  */
-export function findEntryIdByRef(db: Database, ref: string, bundleId?: string): number | undefined {
-  return findEntryIdByBundleRef(db, ref, bundleId);
-}
-
-/**
- * Current (`[bundle//]conceptId`) id lookup: match `item_ref` exactly when
- * bundle-qualified or by `//conceptId` suffix when short.
- */
-function findEntryIdByBundleRef(db: Database, ref: string, bundleId?: string): number | undefined {
+export function findEntryIdByRef(db: Database, ref: string): number | undefined {
   const parsed = parseBundleRef(ref);
-  // item_ref is the canonical stored spelling: the ref is matched as written.
-  return matchIdByItemRef(db, parsed.bundle, parsed.conceptId, bundleId);
-}
-
-/**
- * Match a row `id` by `item_ref`: exact `bundle//conceptId` when `bundle` is
- * known, else the `//conceptId` SUFFIX (short ref — any bundle). The suffix
- * uses `substr(...) = ...` (never LIKE) so `_`/`%` in a conceptId are literal,
- * and includes the `//` boundary so a segment split never false-matches.
- *
- * ── Deterministic winner (`ORDER BY id ASC`) ──
- *
- * A SHORT ref can match one concept id across MULTIPLE bundles (e.g. the same
- * `knowledge/guide` in the primary stash and an installed source). The bare
- * `LIMIT 1` this replaced picked whichever row SQLite happened to visit first —
- * a nondeterministic winner when two bundles share a conceptId. We now impose a
- * total order (`ORDER BY id ASC`) so the winner is STABLE across runs.
- *
- * `id ASC` is also the SENSIBLE choice, not just a stable tiebreak: a full index
- * walks its sources in installation-precedence order (`resolveSourceEntries`,
- * primary stash first — the same order `resolveSourcesForOrigin` calls "local"),
- * so the highest-precedence source's rows carry the LOWEST ids. Ascending id
- * therefore prefers the primary/highest-precedence bundle — mirroring what a
- * precedence-ordered scan would pick — while staying a pure config-free leaf
- * (true installation-priority resolution against an injected bundle list is
- * `resolveRef`'s job; this DB helper takes no config handle). The exact-bundle
- * arm is single-row under the UNIQUE `item_ref` index.
- */
-function matchIdByItemRef(
-  db: Database,
-  bundle: string | undefined,
-  conceptId: string,
-  bundleId?: string,
-): number | undefined {
-  const scope = bundleId ? "AND bundle_id = ?" : "";
-  if (bundle !== undefined) {
-    const itemRef = `${bundle}//${conceptId}`;
-    const row = db
-      .prepare(`SELECT id FROM entries WHERE item_ref = ? ${scope} ORDER BY id ASC LIMIT 1`)
-      .get(itemRef, ...(bundleId ? [bundleId] : [])) as { id: number } | undefined;
-    return row?.id;
+  if (parsed.bundle === undefined) {
+    throw new Error(`findEntryIdByRef takes a qualified ref; "${ref}" is not: qualify it with qualifyRef first.`);
   }
-  const suffix = `//${conceptId}`;
-  const row = db
-    .prepare(
-      `SELECT id FROM entries
-       WHERE substr(item_ref, length(item_ref) - length(?) + 1) = ?
-         ${scope}
-       ORDER BY id ASC
-       LIMIT 1`,
-    )
-    .get(suffix, suffix, ...(bundleId ? [bundleId] : [])) as { id: number } | undefined;
+  const row = db.prepare("SELECT id FROM entries WHERE item_ref = ?").get(`${parsed.bundle}//${parsed.conceptId}`) as
+    | { id: number }
+    | undefined;
   return row?.id;
 }
 

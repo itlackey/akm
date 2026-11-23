@@ -17,14 +17,11 @@
  * other caller and was removed with it.
  */
 
-import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
-import { currentConceptId } from "../core/assets/read";
-import { type AkmConfig, loadConfig } from "../core/config/config";
-import { ConfigError, UsageError } from "../core/errors";
+import { qualifyRef } from "../core/assets/read";
+import { UsageError } from "../core/errors";
 import { type EventsContext, readEvents } from "../core/events";
 import type { EventEnvelope } from "../core/events-types";
 import { parseSinceToIso } from "../core/time";
-import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
 
 export interface EventsListOptions {
   since?: string;
@@ -94,23 +91,9 @@ function validateRef(ref: string | undefined): string | undefined {
   if (!trimmed) {
     throw new UsageError("--ref cannot be empty.", "INVALID_FLAG_VALUE");
   }
-  const parsed = parseBundleRef(trimmed);
-  const config = loadConfig();
-  // Deliberately shallow qualification: a bare conceptId is assumed to mean
-  // the default bundle, without the full priority-walk `resolveRef` performs —
-  // event refs are recorded fully qualified, so the default is the only
-  // spelling a short --ref can usefully mean here. An old spelling matches the
-  // events re-keyed to the asset's ref; with no bundle it is matched as written.
-  return makeBundleRef(parsed.bundle ?? config.defaultBundle, currentConceptId(parsed, logSources(config)));
-}
-
-function logSources(config: AkmConfig): SearchSource[] {
-  try {
-    return resolveSourceEntries(undefined, config);
-  } catch (error) {
-    if (error instanceof ConfigError) return [];
-    throw error;
-  }
+  // Event refs are recorded fully qualified. An unqualified one is qualified like `show`'s: the first bundle that holds
+  // it. An old spelling matches the events re-keyed to the asset's ref.
+  return qualifyRef(trimmed);
 }
 
 function validateRunId(run: string | undefined): string | undefined {

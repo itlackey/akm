@@ -44,7 +44,6 @@ import type { MemoryInferenceResult } from "../../../../src/indexer/passes/memor
 import type { Database } from "../../../../src/storage/database";
 import { insertEvent } from "../../../../src/storage/repositories/events-repository";
 import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
-import { getEntryByRef } from "../../../../src/storage/repositories/index-entries-repository";
 import { withImproveAutonomy, withTestImproveLlm } from "../../../_helpers/improve-config";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
@@ -203,7 +202,9 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
     // The derived file is indexed without a full reindex.
     const checkDb = openIndexDatabase(getDbPath());
     try {
-      expect(getEntryByRef(checkDb, "memories/alpha.derived")).not.toBeNull();
+      expect(
+        checkDb.prepare("SELECT 1 FROM entries WHERE concept_id = ?").get("memories/alpha.derived"),
+      ).not.toBeNull();
     } finally {
       closeDatabase(checkDb);
     }

@@ -98,6 +98,43 @@ function findAmong(ref: BundleRef, sources: readonly SearchSource[], quiet = fal
 }
 
 /**
+ * An input ref, qualified: the one place an unqualified ref is resolved to a bundle (§4.2). `input` is returned
+ * qualified, its outdated type-folder spelling (`knowledge/reports/x` for `reports/x.md`) mapped to the asset's current
+ * concept id with the warning; an unqualified one gets the first bundle, in the order `from`, the default bundle, the
+ * configured order, whose adapter reads it as written, else (the outdated spelling, with the warning) the first that
+ * reads it that way, else `<from or default>//<input>`. Reads no content. A source set that cannot be read leaves the
+ * ref as written (the lookup that follows reports why).
+ */
+export function qualifyRef(input: string, from?: { bundle: string }): string {
+  const parsed = parseBundleRef(input);
+  let sources: readonly SearchSource[];
+  let ids: string[];
+  try {
+    sources = defaultSources();
+    ids = deriveBundleIds([...sources]);
+  } catch (error) {
+    if (error instanceof ConfigError) return makeBundleRef(parsed.bundle, parsed.conceptId, parsed.fragment);
+    throw error;
+  }
+  const order = sources.flatMap((source, index) =>
+    source.unresolved ? [] : [{ source, bundle: ids[index] as string }],
+  );
+  if (from) order.sort((a, b) => Number(b.bundle === from.bundle) - Number(a.bundle === from.bundle));
+  const candidates = parsed.bundle === undefined ? order : order.filter(({ bundle }) => bundle === parsed.bundle);
+  const find = (conceptId: string): Asset | undefined => {
+    for (const { source, bundle } of candidates) {
+      const found = readExact(source, bundle, conceptId);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  const held = find(parsed.conceptId) ?? readOutdated(parsed.conceptId, find);
+  if (held) return makeBundleRef(held.bundle, held.conceptId, parsed.fragment);
+  const bundle = parsed.bundle ?? from?.bundle ?? ids[sources.findIndex((source) => source.isDefault)] ?? undefined;
+  return makeBundleRef(bundle, parsed.conceptId, parsed.fragment);
+}
+
+/**
  * The one "where is asset X right now?" lookup. The first source that holds the ref ends it; a qualified ref only
  * considers its own bundle. The asset comes back under its canonical ref, whichever spelling the adapter read.
  */

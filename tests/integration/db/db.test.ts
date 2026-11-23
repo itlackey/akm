@@ -203,7 +203,7 @@ describe("Entry CRUD", () => {
     }
   });
 
-  test("a short ref matching one conceptId across two bundles resolves deterministically (primary/lowest-id wins)", () => {
+  test("one conceptId in two bundles is two rows, each found by its exact ref; a short ref is refused", () => {
     // Two sources carry the SAME conceptId (`scripts/my-tool`) under different
     // bundle slugs → two `//scripts/my-tool`-suffixed item_refs. The short-ref
     // suffix match must pick a STABLE winner, not whichever row SQLite visits
@@ -232,10 +232,9 @@ describe("Entry CRUD", () => {
       expect(getEntryCount(db)).toBe(2);
       expect(primaryId).toBeLessThan(secondaryId);
 
-      // Short ref → lowest-id (primary) row, and the same answer every call.
-      expect(findEntryIdByRef(db, "scripts/my-tool")).toBe(primaryId);
-      expect(findEntryIdByRef(db, "scripts/my-tool")).toBe(primaryId);
-      // Bundle-qualified refs still address each row exactly.
+      // A short ref is not matched by suffix: it is qualified first (`qualifyRef`).
+      expect(() => findEntryIdByRef(db, "scripts/my-tool")).toThrow(/qualified ref/);
+      // Bundle-qualified refs address each row exactly.
       expect(findEntryIdByRef(db, "primary-kb//scripts/my-tool")).toBe(primaryId);
       expect(findEntryIdByRef(db, "zzz-source//scripts/my-tool")).toBe(secondaryId);
     } finally {

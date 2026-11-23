@@ -12,7 +12,6 @@ import { akmIndex } from "../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
 import { getWebsiteCachePaths } from "../../../src/sources/snapshot-fetchers/website-ingest";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
-import { getEntryByRef } from "../../../src/storage/repositories/index-entries-repository";
 import { writeMemory } from "../../_helpers/assets";
 import { makeProposal } from "../../_helpers/factories";
 import { withImproveAutonomy, withTestImproveLlm } from "../../_helpers/improve-config";
@@ -1229,7 +1228,7 @@ describe("akm improve memory cleanup", () => {
 
     const checkDb = openIndexDatabase(getDbPath());
     try {
-      expect(getEntryByRef(checkDb, "memories/vpn.derived")).not.toBeNull();
+      expect(checkDb.prepare("SELECT 1 FROM entries WHERE concept_id = ?").get("memories/vpn.derived")).not.toBeNull();
     } finally {
       closeDatabase(checkDb);
     }

@@ -20,6 +20,7 @@
 import fs from "node:fs";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { qualifyRef } from "../../core/assets/read";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { includesProposed, normalizeInclude } from "../../core/include";
@@ -437,7 +438,7 @@ async function enrichCuratedStashHit(
   eventSource?: UsageEventSource,
   policy?: EvidencePolicy,
 ): Promise<CuratedStashItem | undefined> {
-  const evidence = policy ? eligibleEvidence(hit.itemRef ?? hit.ref, policy) : undefined;
+  const evidence = policy ? eligibleEvidence(hit.itemRef ?? qualifyRef(hit.ref), policy) : undefined;
   if (policy && !evidence) return undefined;
   let shown: ShowResponse | undefined;
   try {
