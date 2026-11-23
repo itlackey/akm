@@ -64,7 +64,7 @@ export function isConceptName(name: string): boolean {
 }
 
 /** The secret `name` as an entry, whose value `read` returns, at most once and only when asked. */
-function secretEntry(name: string, read: () => string, store?: AssetEntry["store"]): AssetEntry {
+function secretEntry(name: string, read: () => string, locator?: unknown): AssetEntry {
   let content: string | undefined;
   const value = () => {
     content ??= read();
@@ -75,7 +75,7 @@ function secretEntry(name: string, read: () => string, store?: AssetEntry["store
     content: value,
     bytes: () => Buffer.from(value()),
     frontmatter: () => null,
-    ...(store !== undefined ? { store } : {}),
+    ...(locator !== undefined ? { locator } : {}),
   };
 }
 
@@ -85,8 +85,8 @@ export interface SecretItem {
   name: string;
   /** What tells items of one name apart: a keyring entry's object path, a vault secret's name. */
   id: string;
-  /** Where the store holds it, when the index records that (a keyring entry's object path and attributes). */
-  store?: AssetEntry["store"];
+  /** What finds it again in the store, when the index records that (a keyring entry's object path and attributes). */
+  locator?: unknown;
   /** The value. Called only when someone asks for it. */
   read(): string;
 }
@@ -210,9 +210,9 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   list(b: Bundle): BundleListing {
     const held = this.store(this.locationOf(b));
     return {
-      assets: [...held.winners.values()].map(({ name, read, store }) => ({
+      assets: [...held.winners.values()].map(({ name, read, locator }) => ({
         conceptId: secretEntryPath(name),
-        entry: secretEntry(name, read, store),
+        entry: secretEntry(name, read, locator),
       })),
       complete: true,
       findings: this.findings(b, held),
@@ -225,7 +225,7 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     const found = this.findSecret(this.locationOf(b), name, b);
     return found === undefined
       ? undefined
-      : { conceptId: secretEntryPath(name), entry: secretEntry(name, found.read, found.store) };
+      : { conceptId: secretEntryPath(name), entry: secretEntry(name, found.read, found.locator) };
   }
 
   /** A secret is described from its path alone: its name, and nothing of its value. */
@@ -237,11 +237,11 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
       bundle: b.id,
       conceptId: entry.key,
       // An entry is its name and where the store holds it: an unchanged listing rewrites no row.
-      hash: hashContent(entry.store === undefined ? entry.key : `${entry.key}\n${JSON.stringify(entry.store)}`),
+      hash: hashContent(entry.locator === undefined ? entry.key : `${entry.key}\n${JSON.stringify(entry.locator)}`),
       adapterId: this.id,
       type: "secret",
       name: name.split("/").pop() as string,
-      ...(entry.store !== undefined ? { store: entry.store } : {}),
+      ...(entry.locator !== undefined ? { locator: entry.locator } : {}),
     };
   }
 

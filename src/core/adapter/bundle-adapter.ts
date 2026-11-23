@@ -34,8 +34,8 @@ export interface AssetEntry {
   readonly key: string;
   /** The absolute file that holds the asset, when the adapter keeps it as a file. Display and handing to a program only. */
   readonly file?: string;
-  /** Where a secret manager's store holds the asset (see `IndexDocument.store`); the index records it. */
-  readonly store?: { item: string; attributes: Record<string, string> };
+  /** What the adapter needs to find the asset again in its storage (a keyring entry's object and attributes): a JSON value the index records (`IndexDocument.locator`) and hands back; only the adapter reads it. */
+  readonly locator?: unknown;
   /** When the asset last changed, when the adapter knows (a directory: the file's mtime). Callers never stat `file`. */
   modified?(): Date;
   /** The content as text, read once, when first asked. */

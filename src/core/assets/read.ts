@@ -179,7 +179,7 @@ function indexedAssets(held: AssetBundle): Asset[] {
 
 /** The entry of an index row: its key and what the adapter recorded of it; the value comes from the adapter's read. */
 function indexedEntry(held: AssetBundle, conceptId: string, documentJson: string): AssetEntry {
-  const { store } = JSON.parse(documentJson) as IndexDocument;
+  const { locator } = JSON.parse(documentJson) as IndexDocument;
   let read: AssetEntry | undefined;
   const live = (): AssetEntry => {
     read ??= held.read(conceptId)?.entry;
@@ -191,7 +191,7 @@ function indexedEntry(held: AssetBundle, conceptId: string, documentJson: string
     content: () => live().content(),
     bytes: () => live().bytes(),
     frontmatter: () => live().frontmatter(),
-    ...(store !== undefined ? { store } : {}),
+    ...(locator !== undefined ? { locator } : {}),
   };
 }
 

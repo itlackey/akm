@@ -262,6 +262,6 @@ export function fileContextOfEntry(root: string, entry: AssetEntry): FileContext
     content: () => entry.content(),
     bytes: () => entry.bytes(),
     frontmatter: () => entry.frontmatter(),
-    ...(entry.store !== undefined ? { store: entry.store } : {}),
+    ...(entry.locator !== undefined ? { locator: entry.locator } : {}),
   };
 }

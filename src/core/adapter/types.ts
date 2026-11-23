@@ -175,8 +175,8 @@ export interface IndexDocument {
    * no output prints that path.
    */
   fileless?: boolean;
-  /** Where a secret manager's store holds the entry (`item`: its object in the store), as the store reported it when it was indexed: a read goes by these, not by a fresh listing. */
-  store?: { item: string; attributes: Record<string, string> };
+  /** The entry's `locator` as its adapter listed it when it was indexed: a JSON value only that adapter reads. */
+  locator?: unknown;
   /**
    * Asset quality marker. Four values are well-known:
    * `"generated"` and `"curated"` are included in default search;

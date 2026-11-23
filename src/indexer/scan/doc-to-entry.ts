@@ -80,7 +80,7 @@ export function indexDocumentToStashEntry(doc: IndexDocument): IndexDocument {
   if (doc.contentTruncated !== undefined) entry.contentTruncated = doc.contentTruncated;
   if (hasMarkdownFragmentContent(doc)) setMarkdownFragmentContent(entry, getMarkdownFragmentContent(doc));
   if (doc.ownsPresentation !== undefined) entry.ownsPresentation = doc.ownsPresentation;
-  if (doc.store !== undefined) entry.store = doc.store;
+  if (doc.locator !== undefined) entry.locator = doc.locator;
   if (doc.updated !== undefined) entry.updated = doc.updated;
   if (doc.links !== undefined) entry.links = doc.links;
   if (doc.adapterId === "okf") {

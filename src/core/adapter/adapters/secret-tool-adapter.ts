@@ -48,6 +48,12 @@ const SERVICE = "org.freedesktop.secrets";
 /** The one pair `secret-tool store` requires of a new entry; nothing reads it back as meaning anything. */
 const CREATED_ATTRIBUTE = "akm";
 
+/** What the index records of an entry (its `locator`): its object path in the service and its attribute pairs. */
+interface KeyringLocator {
+  item: string;
+  attributes: Record<string, string>;
+}
+
 interface KeyringItem extends SecretItem {
   /** The item's object path in the service. */
   path: string;
@@ -167,7 +173,7 @@ function keyringItem(keyring: string, path: string, name: string, attributes: Re
     name,
     keyring,
     id: path,
-    store: { item: path, attributes },
+    locator: { item: path, attributes } satisfies KeyringLocator,
     read: () => lookup(item),
   };
   return item;
@@ -245,13 +251,16 @@ function recorded(keyring: string, name: string, b: Bundle): KeyringItem | undef
         | undefined,
     undefined,
   );
-  const store = (row ? (JSON.parse(row.document_json) as IndexDocument) : undefined)?.store;
-  return store ? keyringItem(keyring, store.item, name, store.attributes) : undefined;
+  const locator = (row ? (JSON.parse(row.document_json) as IndexDocument) : undefined)?.locator as
+    | KeyringLocator
+    | undefined;
+  return locator ? keyringItem(keyring, locator.item, name, locator.attributes) : undefined;
 }
 
 export class SecretToolAdapter extends SecretManagerAdapterBase {
   readonly id = ID;
-  readonly version = "0.10.0";
+  // 0.10.1: the index row records the entry's `locator`, so `akm index` rewrites rows that recorded it under another name.
+  readonly version = "0.10.1";
   protected readonly what = "a keyring";
 
   /** Forget the collections and entries read so far: the next request reads them again. */

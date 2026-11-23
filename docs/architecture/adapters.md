@@ -84,6 +84,7 @@ interface AssetEntry {
   bytes(): Buffer;
   frontmatter(): Record<string, unknown> | null;
   resources?(): ReadonlyArray<{ path: string; bytes(): Buffer }>; // a package's other files
+  readonly locator?: unknown; // what finds it again in its storage; the index records it, only the adapter reads it
 }
 
 interface BundleAdapter {
@@ -128,7 +129,9 @@ concept id, the asset's file when it has one, the files the write changed (empty
 for a bundle that is not a directory) for the bundle's commit boundary, and the
 content the asset now holds.
 
-`BundleListing` is `{ assets, complete, incompleteReason? }`. `complete: false`
+`BundleListing` is `{ assets, complete, incompleteReason?, findings? }`;
+`findings` are what is wrong with a store's entries (invalid or shared names),
+which `akm index` records and `akm lint` reads back. `complete: false`
 means part of the bundle could not be read: the indexer keeps the rows it had
 and the run warns. A store that cannot be reached at all is not a listing:
 `list` throws `BUNDLE_UNREACHABLE`.
