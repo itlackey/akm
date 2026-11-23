@@ -42,8 +42,3 @@ export function bundleStorageExists(source: GateSource): boolean {
 export function clearAdapterCaches(): void {
   clearRegistryCaches();
 }
-
-export {
-  allowPrompts as allowAdapterPrompts,
-  withoutPrompts as withoutAdapterPrompts,
-} from "../adapter/secret-manager-adapter";

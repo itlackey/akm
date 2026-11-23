@@ -307,9 +307,8 @@ Rules the base applies:
 - What the base read of a store lives for one command: `list` reads the store
   once, and a write drops it. The CLI (per command) and Desktop (per request)
   call `clearAdapterCaches()`.
-- The unlock prompt is off by default. The CLI turns it on only when stderr is
-  a terminal (`allowAdapterPrompts`); `akm lint` turns it off
-  (`withoutAdapterPrompts`).
+- A locked keyring is unlocked through the Secret Service's own prompt, in
+  every command and host.
 - Values reach a client on its standard input or in a file only the user can
   read, never in an argument.
 
@@ -361,7 +360,7 @@ the one its root's probe finds (`adapterIdOf`, `src/core/adapter/detect-adapter.
 | `type.ts` | `assetType`, `assetTypes`, `assetTypeFresh`, `indexAssets`, `refreshIndexedAsset`, `forgetIndexedAsset` |
 | `write.ts` | `writeAssets`, `addressOf`, `readAsset`, `legacyRefOf` |
 | `validate.ts` | `validateBundleAssets`: `akm lint`'s scan of a bundle |
-| `gate.ts` | what callers decide before they write or configure: `assertAdapterWrites`, `adapterWrites`, `refuseByAdapter`, `adapterAddressedBy`, `bundleStorageExists`, `clearAdapterCaches`, `allowAdapterPrompts`, `withoutAdapterPrompts` |
+| `gate.ts` | what callers decide before they write or configure: `assertAdapterWrites`, `adapterWrites`, `refuseByAdapter`, `adapterAddressedBy`, `bundleStorageExists`, `clearAdapterCaches` |
 | `adapter-skips.ts` | what a bundle's adapter skips (`akm doctor`, `akm bundle add`) |
 | `bundle.ts`, `asset.ts` | internal: `AssetBundle` (holds its adapter) and `Asset` |
 

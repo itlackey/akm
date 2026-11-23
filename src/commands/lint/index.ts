@@ -27,7 +27,6 @@ import {
 } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
-import { withoutAdapterPrompts } from "../../core/assets/gate";
 import { validateBundleAssets } from "../../core/assets/validate";
 import { deriveBundleIds } from "../../core/bundle-id";
 import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpath, samePath } from "../../core/common";
@@ -287,12 +286,9 @@ async function addStoreFindings(
     if (source.location === undefined || source.adapterId === undefined || source.unresolved) continue;
     const bundle = ids[index] as string;
     try {
-      // Lint runs in hooks and CI: a locked keyring is skipped like an unreachable one, never asked to unlock.
-      const diagnostics = await withoutAdapterPrompts(() =>
-        validateBundleAssets(
-          { name: bundle, path: source.path, location: source.location, adapterId: source.adapterId },
-          { ctx: { sources, config: cfg, readMoves: options.readMoves ?? readRecordedMoves } },
-        ),
+      const diagnostics = await validateBundleAssets(
+        { name: bundle, path: source.path, location: source.location, adapterId: source.adapterId },
+        { ctx: { sources, config: cfg, readMoves: options.readMoves ?? readRecordedMoves } },
       );
       for (const diagnostic of diagnostics) {
         const issue = { ...diagnosticToLintIssue(diagnostic), ref: diagnostic.ref };

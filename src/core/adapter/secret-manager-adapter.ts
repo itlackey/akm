@@ -76,29 +76,6 @@ function secretEntry(name: string, read: () => string): AssetEntry {
   };
 }
 
-let promptsAllowed = false;
-
-/** Whether an adapter may ask the user something (unlock a keyring). */
-export function mayPrompt(): boolean {
-  return promptsAllowed;
-}
-
-/** Let adapters ask the user something. Off by default: only the CLI, on a terminal, turns it on. */
-export function allowPrompts(allowed: boolean): void {
-  promptsAllowed = allowed;
-}
-
-/** Run `run` with every prompt off: a store that would need one is unreachable. For lint, which runs in hooks and CI. */
-export async function withoutPrompts<T>(run: () => Promise<T>): Promise<T> {
-  const before = promptsAllowed;
-  promptsAllowed = false;
-  try {
-    return await run();
-  } finally {
-    promptsAllowed = before;
-  }
-}
-
 /** One item of a store: what its manager holds under a name. Several items can share a name. */
 export interface SecretItem {
   /** The name the manager gives it (a keyring entry's label, a vault secret's name). */
