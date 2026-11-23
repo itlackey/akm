@@ -498,6 +498,31 @@ describe("schtasks backend signatures", () => {
     ]);
   });
 
+  test("a row in the id form differs from the ref form's signature, and a ref-form row is read with its bundle (A11, P11)", () => {
+    const legacy: SchedulerBinding = {
+      ...makeTask("*/5 * * * *"),
+      logicalSource: { kind: "task", ref: "work//tasks/ping" },
+      invocation: ["task", "run", "ping", "--bundle", "work", "--scheduled"],
+    };
+    const current: SchedulerBinding = { ...legacy, invocation: ["task", "run", "work//tasks/ping", "--scheduled"] };
+    const options = xmlOptions({ now: () => localDate(2026, 7, 13, 10, 2, 37) });
+    const backendFor = (task: SchedulerBinding) =>
+      SCHTASKS_BACKEND({
+        exec: queryExec(buildSchtasksXml(task, ["C:/akm.exe"], "C:/log", options)),
+        akmArgv: ["C:/akm.exe"],
+        logDir: "C:/log",
+        userSid: USER_SID,
+      });
+
+    const idForm = backendFor(legacy);
+    expect(listSync(idForm)[0]!.signature).toBe(idForm.expectedSignature?.(legacy));
+    expect(listSync(idForm)[0]!.signature).not.toBe(idForm.expectedSignature?.(current));
+
+    const refForm = backendFor(current);
+    expect(listSync(refForm)[0]).toMatchObject({ id: "ping", target: "work", invocation: current.invocation });
+    expect(listSync(refForm)[0]!.signature).toBe(refForm.expectedSignature?.(current));
+  });
+
   test("installed and expected signatures include enabled state", () => {
     const disabled = makeTask("*/5 * * * *", "ping", false);
     const installedXml = buildSchtasksXml(

@@ -21,7 +21,7 @@ describe("secret-free scheduler binding compiler", () => {
       source: "akm.schedule",
       ordinal: 0,
       enabled: true,
-      invocation: ["task", "run", "nightly", "--bundle", "team", "--scheduled"],
+      invocation: ["task", "run", "team//tasks/nightly", "--scheduled"],
     });
   });
 
@@ -39,8 +39,8 @@ describe("secret-free scheduler binding compiler", () => {
     expect(bindings[0]?.nativeId).toBe("nightly");
     expect(bindings[1]?.id).toMatch(/^task-[a-f0-9]{32}$/);
     expect(bindings[1]?.nativeId).toBe(bindings[1]?.id);
-    expect(bindings[0]?.invocation).toEqual(["task", "run", "nightly", "--bundle", "team", "--scheduled"]);
-    expect(bindings[1]?.invocation).toEqual(["task", "run", "nightly", "--bundle", "team", "--scheduled"]);
+    expect(bindings[0]?.invocation).toEqual(["task", "run", "team//tasks/nightly", "--scheduled"]);
+    expect(bindings[1]?.invocation).toEqual(["task", "run", "team//tasks/nightly", "--scheduled"]);
   });
 
   test("accepts a qualified standalone akm-task concept without inventing a tasks/ prefix", () => {
@@ -62,7 +62,7 @@ describe("secret-free scheduler binding compiler", () => {
     expect(binding).toMatchObject({
       id: "sub/deep/nightly",
       logicalSource: { kind: "task", ref: "team//sub/deep/nightly" },
-      invocation: ["task", "run", "sub/deep/nightly", "--bundle", "team", "--scheduled"],
+      invocation: ["task", "run", "team//sub/deep/nightly", "--scheduled"],
     });
   });
 

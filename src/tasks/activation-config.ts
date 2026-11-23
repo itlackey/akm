@@ -17,12 +17,14 @@
  */
 import fs from "node:fs";
 import { filesForRef } from "../core/asset/asset-placement";
-import { bundleRefToString, makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
+import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
+import { findAsset } from "../core/assets/read";
 import { type AkmConfig, mutateConfig, schedulerSourceIdFor } from "../core/config/config";
 import { bundleContentRoots, isBundleEnabled } from "../core/config/config-sources";
 import { UsageError } from "../core/errors";
 import { warnOnce } from "../core/warn";
 import type { InstalledSchedulerBinding } from "./scheduler-binding";
+import { findTask } from "./task-ref";
 
 export function canonicalSchedulerRef(ref: string): string {
   const parsed = parseBundleRef(ref);
@@ -131,14 +133,19 @@ function installedEntryRef(entry: InstalledSchedulerBinding, config: AkmConfig):
       return hasBackingFile(config, parsed.bundle, parsed.conceptId) ? ref : undefined;
     }
     if (invocation[0] !== "task" || invocation[1] !== "run" || !invocation[2]) return undefined;
+    const subject = invocation[2];
+    // A row names its task by ref; one written before 0.11 by its id, in the bundle it names (else the default one).
+    if (subject.includes("//")) {
+      const ref = canonicalSchedulerRef(subject);
+      const bundle = bundleOf(ref);
+      if (!bundle || !isBundleEnabled(config, bundle)) return undefined;
+      return findAsset(ref) ? ref : undefined;
+    }
     const bundleIndex = invocation.indexOf("--bundle", 3);
     const bundle = bundleIndex === -1 ? config.defaultBundle : invocation[bundleIndex + 1];
     if (!bundle || !isBundleEnabled(config, bundle)) return undefined;
-    const bundleConfig = config.bundles?.[bundle];
-    const adapter = bundleConfig?.adapter ?? "akm";
-    const conceptId = adapter === "akm-task" ? invocation[2] : `tasks/${invocation[2]}`;
-    if (!hasBackingFile(config, bundle, conceptId)) return undefined;
-    return canonicalSchedulerRef(makeBundleRef(bundle, conceptId));
+    const found = findTask({ bundle }, subject);
+    return found ? canonicalSchedulerRef(found.ref) : undefined;
   } catch {
     return undefined;
   }
@@ -148,6 +155,7 @@ function hasBackingFile(config: AkmConfig, bundle: string, conceptId: string): b
   const contentRoot = bundleContentRoots(config).find((entry) => entry.id === bundle)?.contentRoot;
   if (!contentRoot) return true;
   try {
+    // asset-io: deprecated workflow rows only
     return filesForRef(contentRoot, conceptId).some((file) => fs.existsSync(file) && fs.statSync(file).isFile());
   } catch {
     return false;

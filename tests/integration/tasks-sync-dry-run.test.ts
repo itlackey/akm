@@ -169,7 +169,7 @@ describe("akmTasksSyncPlan — dry-run", () => {
     // applied it.
     expect(exec.writeCalls).toBe(writesAfterInstall);
     expect(exec.current()).toBe(afterInstall);
-    expect(exec.current()).toContain("task run gamma");
+    expect(exec.current()).toContain("//tasks/gamma --scheduled");
   });
 
   test("a config without scheduler.enabled plans no removals and writes nothing on --dry-run", async () => {
@@ -179,7 +179,7 @@ describe("akmTasksSyncPlan — dry-run", () => {
     await akmTasksSync({ backend });
     const afterInstall = exec.current();
     const writesAfterInstall = exec.writeCalls;
-    expect(afterInstall).toContain("task run orphan");
+    expect(afterInstall).toContain("//tasks/orphan --scheduled");
 
     // A pre-0.9.17 config has no list at all: the installed row is the choice.
     const { scheduler: _dropped, ...withoutList } = loadConfig();
@@ -227,7 +227,7 @@ describe("akmTasksSyncPlan — dry-run", () => {
     await akmTasksSync({ backend });
 
     expect(exec.writeCalls).toBe(1);
-    expect(exec.current()).toContain("task run alpha");
+    expect(exec.current()).toContain("//tasks/alpha --scheduled");
   });
 
   // Real-world crash regression: an installed cron entry whose invocation
@@ -243,7 +243,7 @@ describe("akmTasksSyncPlan — dry-run", () => {
     const backend = backendFor(exec);
     writeTask("alpha", "*/15 * * * *");
     await akmTasksSync({ backend });
-    const stripped = exec.current().replace(/--bundle\s+\S+\s+/, "");
+    const stripped = exec.current().replace(/task run \S+\/\/tasks\/(\S+)/, "task run $1");
     expect(stripped).not.toBe(exec.current());
     exec.write(stripped);
     const beforePreview = exec.current();
@@ -333,6 +333,6 @@ describe("akmTasksSync / akmTasksSyncPlan — degrade on a bad source (#867)", (
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0]?.path).toContain("broken.yml");
     expect(exec.writeCalls).toBe(1);
-    expect(exec.current()).toContain("task run alpha");
+    expect(exec.current()).toContain("//tasks/alpha --scheduled");
   });
 });

@@ -476,7 +476,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
         envPath: false,
       });
       await akmTasksSync({ backend });
-      expect(exec.current()).toContain("task run orphan");
+      expect(exec.current()).toContain("//tasks/orphan --scheduled");
 
       // A pre-0.9.17 config has no list at all: the installed row IS the choice.
       const { scheduler: _dropped, ...withoutList } = loadConfig();
@@ -492,14 +492,14 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
         inspectInstalled: async () => ({ installed: await backend.list() }),
       });
 
-      expect(exec.current()).toContain("task run orphan");
+      expect(exec.current()).toContain("//tasks/orphan --scheduled");
       expect(schedulerEnabledRefs(loadConfig())).toContain("stash//tasks/orphan");
 
       // An explicit empty list is a choice, not a missing one: nothing is re-derived.
       saveConfig({ ...loadConfig(), scheduler: { enabled: [] } });
       resetConfigCache();
       await akmTasksSync({ backend });
-      expect(exec.current()).not.toContain("task run orphan");
+      expect(exec.current()).not.toContain("//tasks/orphan --scheduled");
       expect(schedulerEnabledRefs(loadConfig())).toEqual([]);
     } finally {
       storage.cleanup();
@@ -534,7 +534,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
       state.multiselectReturn = ["extract"];
       state.confirmReturn = true;
       await stepScheduledTasks(deps);
-      expect(exec.current()).toContain("task run extract");
+      expect(exec.current()).toContain("//tasks/extract --scheduled");
       expect(schedulerEnabledRefs(loadConfig())).toContain("stash//tasks/extract");
 
       // Second run: leave `extract` unchecked. Its YAML stays prepared on disk; the choice is the list.
@@ -544,7 +544,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
       await stepScheduledTasks(deps);
 
       expect(schedulerEnabledRefs(loadConfig())).not.toContain("stash//tasks/extract");
-      expect(exec.current()).not.toContain("task run extract");
+      expect(exec.current()).not.toContain("//tasks/extract --scheduled");
     } finally {
       storage.cleanup();
     }

@@ -332,41 +332,6 @@
       "detectAdapterId": 1
     }
   },
-  "src/commands/tasks/explain.ts": {
-    "adapter-id": {
-      "akm": 1,
-      "akm-task": 1
-    },
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "adapterIdOf": 1
-    },
-    "asset-io": {
-      "readFileSync": 1
-    },
-    "entry-file": {
-      "entry.file": 1
-    }
-  },
-  "src/commands/tasks/tasks.ts": {
-    "adapter-id": {
-      "akm": 4,
-      "akm-task": 1
-    },
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "adapterIdOf": 5,
-      "detectAdapterId": 1
-    },
-    "asset-io": {
-      "existsSync": 1,
-      "readFileSync": 1
-    }
-  },
   "src/core/asset/frontmatter.ts": {
     "asset-io": {
       "readFileSync": 1,
@@ -403,7 +368,6 @@
   },
   "src/core/assets/type.ts": {
     "facade-export": {
-      "assetTypes": 1,
       "forgetIndexedAsset": 1,
       "indexAssets": 1,
       "refreshIndexedAsset": 1
@@ -586,46 +550,9 @@
       "walkStashFlat": 1
     }
   },
-  "src/tasks/activation-config.ts": {
-    "adapter-id": {
-      "akm-task": 1
-    },
-    "asset-io": {
-      "existsSync": 1,
-      "statSync": 1
-    }
-  },
   "src/tasks/prepare/prepare.ts": {
     "asset-io": {
       "readFileSync": 2
-    }
-  },
-  "src/tasks/run/load-task.ts": {
-    "adapter-id": {
-      "akm": 1,
-      "akm-task": 1
-    },
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "detectAdapterId": 1
-    },
-    "asset-io": {
-      "readFileSync": 1
-    },
-    "entry-file": {
-      "entry.file": 3
-    }
-  },
-  "src/tasks/scheduler-sync.ts": {
-    "adapter-id": {
-      "akm": 1,
-      "akm-task": 3
-    },
-    "asset-io": {
-      "readdirSync": 1,
-      "statSync": 1
     }
   },
   "src/tasks/v5/check.ts": {

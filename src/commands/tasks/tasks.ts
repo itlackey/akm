@@ -20,11 +20,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { warnWorkflowUse } from "../../cli/deprecations";
-import { adapterIdOf, detectAdapterId } from "../../core/adapter/detect-adapter";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
-import { addressOf, readAsset, writeAssets } from "../../core/assets/write";
+import { addressOf, writeAssets } from "../../core/assets/write";
 import { isWithin, resolveStashDir } from "../../core/common";
 import {
   defaultConnection,
@@ -86,13 +85,13 @@ import {
   type SchedulerSyncOperation,
   type SchedulerSyncPlan,
   scheduledInvocationBundle,
-  taskIdClaimedByYml,
 } from "../../tasks/scheduler-sync";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
 import { parseTaskSourceV4 } from "../../tasks/source/task-source-v4";
 import type { TaskV3SourceDocument } from "../../tasks/source-v3";
 import { normaliseTaskConceptId, normaliseTaskId } from "../../tasks/task-id";
+import { resolveTask, taskFileOf, taskRefIn } from "../../tasks/task-ref";
 import { applyAutonomyGate, configuredDirectAutonomyLanes, describeGatedLanes } from "../improve/autonomy-gate";
 import { resolveImproveStrategy } from "../improve/improve-strategies";
 
@@ -318,13 +317,11 @@ export async function akmTasksRun(
   const startedAt = new Date();
   let parsed: ReturnType<typeof parseTaskRef> | undefined;
   let bundle: ReturnType<typeof resolveTaskReadBundle>;
-  let adapterId: string;
   let resolvedId: string;
   try {
     parsed = parseTaskRef(id);
     bundle = resolveTaskReadBundle(parsed.bundle, options.target);
-    adapterId = adapterIdOf(bundle.source);
-    resolvedId = taskIdForAdapter(parsed.id, adapterId);
+    resolvedId = resolveTask(bundle.source, parsed.id)?.id ?? parsed.id;
   } catch (failure) {
     if (scheduled) {
       recordTaskAttemptFailure({ taskId: parsed?.id ?? id, reason: "task_load_failed", failure, startedAt, scheduled });
@@ -350,7 +347,7 @@ export async function akmTasksRun(
   const runOptions: RunTaskOptions = {
     bundleDir: bundle.source.path,
     bundleName: bundle.source.name,
-    adapterId,
+    ...(bundle.source.adapterId !== undefined ? { adapterId: bundle.source.adapterId } : {}),
     scheduled,
     provenance,
     inputFlags: options.inputFlags,
@@ -385,11 +382,10 @@ function stepTaskRunner(scheduled: boolean): NonNullable<RunTaskOptions["taskSte
     check: async (ref) => {
       const parsed = parseTaskRef(ref);
       const bundle = resolveTaskReadBundle(parsed.bundle, undefined);
-      const adapterId = adapterIdOf(bundle.source);
-      const prepared = await loadPreparedTask(taskIdForAdapter(parsed.id, adapterId), {
+      const prepared = await loadPreparedTask(resolveTask(bundle.source, parsed.id)?.id ?? parsed.id, {
         bundleDir: bundle.source.path,
         bundleName: bundle.source.name,
-        adapterId,
+        ...(bundle.source.adapterId !== undefined ? { adapterId: bundle.source.adapterId } : {}),
       });
       if (prepared.kind === "v5") {
         throw new UsageError(
@@ -418,51 +414,27 @@ function resolveTaskActivation(
   requireSchedulable: boolean,
 ): {
   qualifiedRef: string;
-  sourcePath: string;
   bundleName: string;
   scope: SchedulerBundleScope;
 } {
   const parsed = parseTaskRef(ref);
   const bundle = resolveTaskReadBundle(parsed.bundle, target);
-  const adapterId = adapterIdOf(bundle.source);
-  const id = taskIdForAdapter(parsed.id, adapterId);
-  const conceptId = adapterId === "akm" ? `tasks/${id}` : id;
-  const sourcePath =
-    adapterId === "akm"
-      ? path.join(bundle.source.path, "tasks", `${id}.yml`)
-      : path.join(bundle.source.path, `${id}.yml`);
-  // The task as sync reads it: its `.yml`, else the file its asset is held in when that is an off-case `.yml` (F5).
-  let yaml: string | undefined;
-  let filePath = sourcePath;
+  const found = resolveTask(bundle.source, parsed.id);
+  const qualifiedRef = found?.asset.ref ?? taskRefIn(bundle.source, parsed.id);
   if (requireSchedulable) {
-    if (fs.existsSync(sourcePath)) {
-      yaml = fs.readFileSync(sourcePath, "utf8");
-    } else {
-      const held = readAsset(bundle.source, conceptId);
-      if (
-        held !== undefined &&
-        /\.yml$/i.test(held.entry.relPath) &&
-        !taskIdClaimedByYml(bundle.source.path, adapterId, id)
-      ) {
-        yaml = held.entry.content();
-        filePath = path.join(bundle.source.path, held.entry.relPath);
-      }
+    // The task as sync reads it: the asset the ref names, whichever file holds it (F5).
+    if (found === undefined) {
+      throw new NotFoundError(`Task ${JSON.stringify(qualifiedRef)} was not found.`);
     }
-    if (yaml === undefined) {
-      throw new NotFoundError(`Task ${JSON.stringify(makeBundleRef(bundle.source.name, conceptId))} was not found.`);
-    }
-  }
-  if (requireSchedulable && yaml !== undefined) {
-    const parsedSource = parseTaskSource({ yaml, filePath });
+    const parsedSource = parseTaskSource({ yaml: found.asset.entry.content(), filePath: taskFileOf(found.asset) });
     if (parsedSource.schedule.length === 0) {
       throw new UsageError(`Task ${JSON.stringify(ref)} has no schedule to enable.`, "INVALID_FLAG_VALUE");
     }
   }
   return {
-    qualifiedRef: makeBundleRef(bundle.source.name, conceptId),
-    sourcePath,
+    qualifiedRef,
     bundleName: bundle.source.name,
-    scope: { ...bundleScope(bundle.source.name, bundle.source.path), adapterId },
+    scope: { ...bundleScope(bundle.source.name, bundle.source.path), source: bundle.source },
   };
 }
 
@@ -566,8 +538,7 @@ export async function akmTasksHistory(input: {
   const limit = input.limit !== undefined && input.limit > 0 ? input.limit : 50;
   const parsed = input.id ? parseTaskRef(input.id) : undefined;
   const bundle = resolveTaskReadBundle(parsed?.bundle, input.target);
-  const adapterId = adapterIdOf(bundle.source);
-  const id = parsed ? taskIdForAdapter(parsed.id, adapterId) : undefined;
+  const id = parsed ? (resolveTask(bundle.source, parsed.id)?.id ?? parsed.id) : undefined;
   // A bundle named by `--bundle` or by the ref selects the rows that recorded that bundle.
   const named = parsed?.bundle !== undefined || input.target !== undefined;
   return { rows: readTaskHistory({ id, limit, ...(named ? { bundle: bundle.source.name } : {}) }) };
@@ -714,10 +685,9 @@ async function buildSchedulerSyncPlan(
     try {
       const resolved = resolveTaskReadBundle(undefined, name);
       const stashDir = resolved.source.path;
-      const adapterId = resolved.source.adapterId ?? detectAdapterId(stashDir);
       const compiled = await compileSchedulerSources({
         sourceRoot: stashDir,
-        adapterId,
+        ...(resolved.source.adapterId !== undefined ? { adapterId: resolved.source.adapterId } : {}),
         bundleName: resolved.source.name,
         backend: sched.name,
         config,
@@ -727,7 +697,7 @@ async function buildSchedulerSyncPlan(
       desired.push(...compiled.desired);
       failures.push(...compiled.failures);
       for (const failure of compiled.failures) if (failure.ref) keepRefs.add(failure.ref);
-      scopes.push({ ...bundleScope(resolved.source.name, stashDir), adapterId });
+      scopes.push({ ...bundleScope(resolved.source.name, stashDir), source: resolved.source });
     } catch (cause) {
       if (bundleTarget) throw cause;
       failures.push({ path: name ?? "(default bundle)", reason: errorMessage(cause) });
@@ -1083,7 +1053,7 @@ function inspectInstalledBinding(entry: InstalledSchedulerBinding): string[] {
   const status: string[] = [];
   const binding = entry.binding;
   if (isCheckoutInvocation(binding)) status.push("checkout");
-  if (binding.some((part) => part === "akm" || part === "bun" || part === "node")) status.push("path-selected");
+  if (binding.some((binary) => binary === "akm" || binary === "bun" || binary === "node")) status.push("path-selected");
   if (entry.contextPath !== undefined) {
     try {
       readLegacySchedulerContext(entry.contextPath);
@@ -1157,7 +1127,7 @@ export function resolveTaskReadBundle(
         kind: source.type ?? "filesystem",
         name: selector,
         path: source.path,
-        adapterId: adapterIdOf(source),
+        ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
       },
     };
   }
@@ -1309,20 +1279,4 @@ export function parseTaskRef(input: string): { id: string; bundle?: string } {
     throw new UsageError(`Expected a syntactically valid task concept id, got "${input}".`, "INVALID_FLAG_VALUE");
   }
   return { id: normaliseTaskId(trimmed) };
-}
-
-/** Exported for `src/commands/tasks/explain.ts` — see {@link resolveTaskReadBundle}'s header. */
-export function taskIdForAdapter(parsedId: string, adapterId: string): string {
-  if (adapterId === "akm-task") return normaliseTaskConceptId(parsedId);
-  if (adapterId === "akm") {
-    if (!parsedId.includes("/")) return normaliseTaskId(parsedId);
-    if (parsedId.startsWith("tasks/") && !parsedId.slice("tasks/".length).includes("/")) {
-      return normaliseTaskId(parsedId.slice("tasks/".length));
-    }
-    throw new UsageError(
-      `The native akm adapter accepts only a bare task id or tasks/<id>, got "${parsedId}".`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  throw new UsageError(`Bundle adapter "${adapterId}" does not define task runtime identity.`, "INVALID_FLAG_VALUE");
 }

@@ -74,6 +74,9 @@ export const APPROVED_ROWS: ReadonlySet<string> = new Set([
   "P6",
   // P7 (a retire's receipts carry refs and handles, not paths): owner "Approve"; shipped by 4d.3 with N11.
   "P7",
+  // P11 (an installed scheduler row in the id form is rewritten to the ref form by the next sync): owner "Rewrite on
+  // next sync"; shipped by 4e.3 with A11.
+  "P11",
   // P8 (state rows follow a bundle by its name, not its directory): owner "Approve"; shipped by 4d.4 with N10's state-unknown-bundle.
   "P8",
   // F1 is provisional: set by the coordinator while the owner is unattended (design §0.2), pending the owner's answer.

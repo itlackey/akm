@@ -10,8 +10,6 @@
  * records a failed scheduled activation if this rejects, or reserves an execution after it resolves.
  */
 
-import fs from "node:fs";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { makeBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { findAsset } from "../../core/assets/read";
@@ -41,7 +39,8 @@ import { scheduledTaskContextEnv } from "../scheduler-invocation";
 import { parseTaskSource, taskValueInputs } from "../source/parse-task-source";
 import { projectTaskSourceV4 } from "../source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
-import { validateTaskConceptId, validateTaskId } from "../task-id";
+import { validateTaskConceptId } from "../task-id";
+import { resolveTask } from "../task-ref";
 import type { PreparedTaskV5 } from "../v5/run";
 import type { RunTaskOptions } from "./task-result";
 
@@ -86,8 +85,10 @@ export function resolveBundleAsset(
   const conceptId = conceptIdFromTypeName(type, name);
   const sources = activeTaskSources(config);
   const asset = findAsset({ bundle, conceptId }, { sources });
-  if (asset?.entry.file !== undefined) {
-    return { file: asset.entry.file, bundleRoot: sourceOfBundle(sources, asset.bundle).path };
+  // asset-io: exec the file is handed to the script interpreter
+  const file = asset?.entry.file;
+  if (asset && file !== undefined) {
+    return { file, bundleRoot: sourceOfBundle(sources, asset.bundle).path };
   }
   if (asset) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
   if (resolveSourcesForOrigin(bundle, sources).length === 0) {
@@ -106,23 +107,24 @@ export async function loadPreparedTask(
   options: RunTaskOptions,
 ): Promise<PreparedTaskV3Execution | PreparedTaskV5> {
   const bundleDir = options.bundleDir;
-  const adapterId = options.adapterId ?? detectAdapterId(bundleDir);
-  if (adapterId === "akm-task") validateTaskConceptId(id);
-  else validateTaskId(id);
-  const taskConceptId = adapterId === "akm" ? `tasks/${id}` : id;
-  const asset = findAsset(
-    { conceptId: taskConceptId },
-    { sources: [{ path: bundleDir, registryId: options.bundleName ?? slugForPath(bundleDir), adapterId }] },
+  validateTaskConceptId(id);
+  const found = resolveTask(
+    {
+      name: options.bundleName ?? slugForPath(bundleDir),
+      path: bundleDir,
+      ...(options.adapterId !== undefined ? { adapterId: options.adapterId } : {}),
+    },
+    id,
   );
-  if (!asset) {
-    throw new NotFoundError(
-      `Task ${JSON.stringify(id)} was not found in the configured ${JSON.stringify(adapterId)} bundle.`,
-      "ASSET_NOT_FOUND",
-    );
+  if (!found) {
+    throw new NotFoundError(`Task ${JSON.stringify(id)} was not found in the bundle.`, "ASSET_NOT_FOUND");
   }
+  const { asset } = found;
+  const taskConceptId = asset.conceptId;
+  // asset-io: display the file names the task source in messages
   const filePath = asset.entry.file;
   if (filePath === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
-  const yaml = fs.readFileSync(filePath, "utf8");
+  const yaml = asset.entry.content();
   const parsed = parseTaskSource({ yaml, filePath });
   if (parsed.version !== 4) {
     return Object.freeze({

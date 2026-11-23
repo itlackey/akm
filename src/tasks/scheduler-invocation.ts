@@ -5,7 +5,7 @@
 /**
  * How a native scheduler row invokes akm.
  *
- * A row is `<launcher…> task run <id> --bundle <bundle> --scheduled
+ * A row is `<launcher…> task run <bundle//concept-id> --scheduled
  * [--<input> <value>…]`, or `<launcher…> workflow run <qualified-ref>`, and it
  * carries its own context: the environment the scheduled process needs,
  * set inline by the row itself (a cron `VAR=value` prefix, a launchd
@@ -26,6 +26,9 @@
  *
  * `PATH` is the scheduler's own: the crontab's `# akm:env` block, the plist's
  * `EnvironmentVariables`.
+ *
+ * A row written before 0.11 names its task by id, `task run <id> --bundle <bundle> --scheduled`; it is read until 0.11,
+ * and the next sync rewrites it.
  *
  * Rows written by 0.9.0 through 0.9.17-alpha.6 name a
  * `--scheduler-context <descriptor>` file instead. The CLI still accepts that
@@ -149,7 +152,7 @@ export interface ParsedScheduledInvocation {
   binding: string[];
   /** The public `task run …` / `workflow run …` tail. */
   invocation: string[];
-  /** Bundle the tail names: `--bundle <x>`, or a workflow ref's bundle. */
+  /** Bundle the tail names: a task or workflow ref's bundle, or a legacy row's `--bundle <x>`. */
   target?: string;
   /** A row written by 0.9.0 – 0.9.17-alpha.6: the descriptor it names. */
   contextPath?: string;
@@ -250,17 +253,31 @@ function parsePublicSchedulerInvocation(
   invocation: readonly string[],
 ): { invocation: string[]; target?: string } | undefined {
   if (invocation[0] === "task" && invocation[1] === "run" && invocation[2]) {
-    try {
-      if (normaliseTaskConceptId(invocation[2]) !== invocation[2]) return undefined;
-    } catch {
-      return undefined;
-    }
+    const subject = invocation[2];
     let index = 3;
     let target: string | undefined;
-    if (invocation[index] === "--bundle") {
-      target = invocation[index + 1];
-      if (!target) return undefined;
-      index += 2;
+    if (subject.includes("//")) {
+      // The current form: the task's own ref.
+      try {
+        const parsed = parseBundleRef(subject);
+        if (!parsed.bundle || parsed.fragment !== undefined || bundleRefToString(parsed) !== subject) return undefined;
+        if (normaliseTaskConceptId(parsed.conceptId) !== parsed.conceptId) return undefined;
+        target = parsed.bundle;
+      } catch {
+        return undefined;
+      }
+    } else {
+      // Before 0.11: the task's id, with the bundle it is in after it.
+      try {
+        if (normaliseTaskConceptId(subject) !== subject) return undefined;
+      } catch {
+        return undefined;
+      }
+      if (invocation[index] === "--bundle") {
+        target = invocation[index + 1];
+        if (!target) return undefined;
+        index += 2;
+      }
     }
     if (invocation[index] !== "--scheduled") return undefined;
     // Zero or more `--<name> <value>` schedule-supplied input flags may follow
@@ -333,7 +350,7 @@ function isValidSchedulerInputFlagTail(tail: readonly string[]): boolean {
 function invalidSchedulerInvocation(): ConfigError {
   return new ConfigError(
     "Invalid scheduler invocation; expected public " +
-      "`task run <id> [--bundle <bundle>] --scheduled [--<input> <value>…]` or `workflow run <qualified-ref>` argv.",
+      "`task run <bundle//concept-id> --scheduled [--<input> <value>…]` or `workflow run <qualified-ref>` argv.",
     "INVALID_CONFIG_FILE",
   );
 }

@@ -68,10 +68,7 @@
  * second resolver: it never re-derives connection, harness or model precedence itself.
  */
 
-import fs from "node:fs";
-import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { findAsset } from "../../core/assets/read";
 import { toErrorMessage } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
@@ -98,13 +95,13 @@ import { checkScheduleEntryV5 } from "../../tasks/scheduler-sync";
 import { parseTaskSource, taskValueInputs } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../../tasks/source/task-input-diagnostics";
-import { validateTaskConceptId, validateTaskId } from "../../tasks/task-id";
+import { resolveTask, taskFileOf } from "../../tasks/task-ref";
 import { checkTaskV5 } from "../../tasks/v5/check";
 import type { TaskV5Start } from "../../tasks/v5/flags";
 import { type TASK_SOURCE_V5_VERSION, type TaskSourceV5Document, taskV5StepKey } from "../../tasks/v5/source";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { prepareCommandInvocation } from "../command/command-execution";
-import { parseTaskRef, resolveTaskReadBundle, taskIdForAdapter } from "./tasks";
+import { parseTaskRef, resolveTaskReadBundle } from "./tasks";
 
 export interface TaskExplainOptions {
   readonly target?: string;
@@ -423,33 +420,14 @@ async function resolveExecutionSettings(
 export async function akmTaskExplain(ref: string, options: TaskExplainOptions = {}): Promise<TaskExplainEnvelope> {
   const parsedRef = parseTaskRef(ref);
   const bundle = resolveTaskReadBundle(parsedRef.bundle, options.target);
-  const adapterId = adapterIdOf(bundle.source);
-  const id = taskIdForAdapter(parsedRef.id, adapterId);
-  if (adapterId === "akm-task") validateTaskConceptId(id);
-  else validateTaskId(id);
-  const taskConceptId = adapterId === "akm" ? `tasks/${id}` : id;
-  const asset = findAsset(
-    { conceptId: taskConceptId },
-    {
-      sources: [
-        {
-          path: bundle.source.path,
-          registryId: bundle.source.name,
-          adapterId,
-          ...(bundle.source.location !== undefined ? { location: bundle.source.location } : {}),
-        },
-      ],
-    },
-  );
-  if (!asset) {
-    throw new NotFoundError(
-      `Task ${JSON.stringify(ref)} was not found in the configured ${JSON.stringify(adapterId)} bundle.`,
-      "ASSET_NOT_FOUND",
-    );
+  const found = resolveTask(bundle.source, parsedRef.id);
+  if (!found) {
+    throw new NotFoundError(`Task ${JSON.stringify(ref)} was not found in the bundle.`, "ASSET_NOT_FOUND");
   }
-  const sourcePath = asset.entry.file;
-  if (sourcePath === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
-  const yaml = fs.readFileSync(sourcePath, "utf8");
+  const { asset, id } = found;
+  const taskConceptId = asset.conceptId;
+  const sourcePath = taskFileOf(asset);
+  const yaml = asset.entry.content();
   const parsed = parseTaskSource({ yaml, filePath: sourcePath });
   if (parsed.version !== 4) {
     return explainV5(parsed.v5, {

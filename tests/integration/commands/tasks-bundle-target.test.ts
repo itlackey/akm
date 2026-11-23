@@ -114,13 +114,13 @@ describe("bundle-targeted tasks via --bundle", () => {
   test("sync of a task in a NON-default bundle carries --bundle through cron, and local disable removes it", async () => {
     writeTaskFile(work.dir, "foo", taskYaml());
 
-    // sync --bundle work → installs, cron line embeds `--bundle work`.
+    // sync --bundle work → installs, cron line embeds the ref `work//tasks/foo`.
     const synced = await akmTasksSync({ backend: cron() }, "work");
     expect(synced.installed).toEqual(["foo"]);
 
     const body = cronBody(exec.current(), "foo");
     expect(body).toBeDefined();
-    expect(body).toContain("task run foo --bundle work --scheduled");
+    expect(body).toContain("task run work//tasks/foo --scheduled");
     // The file must NOT have been written to the primary stash.
     expect(fs.existsSync(path.join(iso.stashDir, "tasks", "foo.yml"))).toBe(false);
 
@@ -290,7 +290,7 @@ describe("bundle-targeted tasks via --bundle", () => {
 
     const body = cronBody(exec.current(), "baz");
     expect(body).toBeDefined();
-    expect(body).toContain("task run baz --bundle stash --scheduled");
+    expect(body).toContain("task run stash//tasks/baz --scheduled");
 
     // New artifacts always persist the resolved primary owner explicitly.
     const task: SchedulerBinding = {
