@@ -27,6 +27,7 @@ import {
 } from "../../indexer/passes/metadata";
 import { buildFileContext, type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
 import { isWalkedFile, walkStashFlatWithStatus } from "../../indexer/walk/walker";
+import { stashDirFor } from "../asset/asset-placement";
 import { makeBundleRef } from "../asset/asset-ref";
 import { compareCodePoints, existingFileMode, hasErrnoCode, writeFileAtomic } from "../common";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
@@ -154,14 +155,32 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
       const ranked = [...files].sort((left, right) => this.compareSpellings(conceptId, left.relPath, right.relPath));
       winners.set(ranked[0] as FileContext, conceptId);
     }
+    // A folder the adapter places assets in that is a file holds none, and says so: the listing is not complete.
+    const blocked = walked.complete ? this.blockedTypeFolder(b) : undefined;
+    const incompleteReason = walked.incompleteReason ?? blocked;
     return {
       assets: walked.files.flatMap((file) => {
         const conceptId = winners.get(file);
         return conceptId === undefined ? [] : [{ conceptId, entry: this.entryOf(file) }];
       }),
-      complete: walked.complete,
-      ...(walked.incompleteReason !== undefined ? { incompleteReason: walked.incompleteReason } : {}),
+      complete: walked.complete && blocked === undefined,
+      ...(incompleteReason !== undefined ? { incompleteReason } : {}),
     };
+  }
+
+  /** Why a folder the adapter places assets in cannot be listed (it exists and is not a directory), else undefined. */
+  private blockedTypeFolder(b: Bundle): string | undefined {
+    for (const type of this.writes) {
+      const folder = stashDirFor(type);
+      if (folder === undefined) continue;
+      const dir = path.join(b.root, folder);
+      try {
+        if (!fs.statSync(dir).isDirectory()) return `ENOTDIR: not a directory, scandir '${dir}'`;
+      } catch {
+        // Absent: nothing placed there yet.
+      }
+    }
+    return undefined;
   }
 
   /** The entry's metadata, then the identity its storage key names, which `describe` cannot change. */

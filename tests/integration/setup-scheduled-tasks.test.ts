@@ -306,6 +306,22 @@ function managedPlans(ids: string[]): PreparedSetupTask[] {
 }
 
 describe("task definition preparation", () => {
+  test("a task held in an off-case file is listed under its id, which `task enable` takes through the F5 path", () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({ bundles: { stash: { path: storage.stashDir } }, defaultBundle: "stash" });
+      const taskDir = path.join(storage.stashDir, "tasks");
+      fs.mkdirSync(taskDir, { recursive: true });
+      fs.writeFileSync(path.join(taskDir, "Up.YML"), "version: 4\nrun: echo up\nschedule: '0 1 * * *'\n", "utf8");
+
+      const listed = listSetupTaskDefinitions();
+      expect(listed.map((task) => task.id)).toEqual(["Up"]);
+      expect(JSON.stringify(listed)).not.toContain("YML");
+    } finally {
+      storage.cleanup();
+    }
+  });
+
   test("setup accepts and preserves every valid schedule in a multi-schedule task", async () => {
     const storage = withIsolatedAkmStorage();
     try {

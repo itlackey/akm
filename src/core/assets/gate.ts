@@ -18,6 +18,11 @@ export function assertAdapterWrites(source: GateSource, type?: string): void {
   assetBundleOf(source).assertWrites(type);
 }
 
+/** The id of the adapter that holds the bundle, for a message that names it. */
+export function bundleAdapterId(source: GateSource): string {
+  return assetBundleOf(source).adapterId;
+}
+
 /** Whether the bundle's adapter writes assets of `type`: it holds them as its own, not as files it reads. */
 export function adapterWrites(source: GateSource, type: string): boolean {
   return assetBundleOf(source).writes(type);

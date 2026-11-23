@@ -23,6 +23,7 @@ import { warnWorkflowUse } from "../../cli/deprecations";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
+import { listAssets } from "../../core/assets/read";
 import { addressOf, writeAssets } from "../../core/assets/write";
 import { isWithin, resolveStashDir } from "../../core/common";
 import {
@@ -91,7 +92,15 @@ import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
 import { parseTaskSourceV4 } from "../../tasks/source/task-source-v4";
 import type { TaskV3SourceDocument } from "../../tasks/source-v3";
 import { normaliseTaskConceptId, normaliseTaskId } from "../../tasks/task-id";
-import { resolveTask, taskFileOf, taskRefIn } from "../../tasks/task-ref";
+import {
+  isShadowedByYml,
+  resolveTask,
+  taskFileOf,
+  taskNameOf,
+  taskRefIn,
+  taskScopeOf,
+  ymlHeldIds,
+} from "../../tasks/task-ref";
 import { applyAutonomyGate, configuredDirectAutonomyLanes, describeGatedLanes } from "../improve/autonomy-gate";
 import { resolveImproveStrategy } from "../improve/improve-strategies";
 
@@ -321,7 +330,7 @@ export async function akmTasksRun(
   try {
     parsed = parseTaskRef(id);
     bundle = resolveTaskReadBundle(parsed.bundle, options.target);
-    resolvedId = resolveTask(bundle.source, parsed.id)?.id ?? parsed.id;
+    resolvedId = resolveTask(bundle.source, parsed.id)?.id ?? taskNameOf(bundle.source, parsed.id);
   } catch (failure) {
     if (scheduled) {
       recordTaskAttemptFailure({ taskId: parsed?.id ?? id, reason: "task_load_failed", failure, startedAt, scheduled });
@@ -382,11 +391,14 @@ function stepTaskRunner(scheduled: boolean): NonNullable<RunTaskOptions["taskSte
     check: async (ref) => {
       const parsed = parseTaskRef(ref);
       const bundle = resolveTaskReadBundle(parsed.bundle, undefined);
-      const prepared = await loadPreparedTask(resolveTask(bundle.source, parsed.id)?.id ?? parsed.id, {
-        bundleDir: bundle.source.path,
-        bundleName: bundle.source.name,
-        ...(bundle.source.adapterId !== undefined ? { adapterId: bundle.source.adapterId } : {}),
-      });
+      const prepared = await loadPreparedTask(
+        resolveTask(bundle.source, parsed.id)?.id ?? taskNameOf(bundle.source, parsed.id),
+        {
+          bundleDir: bundle.source.path,
+          bundleName: bundle.source.name,
+          ...(bundle.source.adapterId !== undefined ? { adapterId: bundle.source.adapterId } : {}),
+        },
+      );
       if (prepared.kind === "v5") {
         throw new UsageError(
           `Task ${ref} is version 5, and a version 4 task step does not run one. Run \`akm migrate apply\` to convert the task that runs it.`,
@@ -422,8 +434,11 @@ function resolveTaskActivation(
   const found = resolveTask(bundle.source, parsed.id);
   const qualifiedRef = found?.asset.ref ?? taskRefIn(bundle.source, parsed.id);
   if (requireSchedulable) {
-    // The task as sync reads it: the asset the ref names, whichever file holds it (F5).
-    if (found === undefined) {
+    // The task as sync reads it: the asset the ref names, whichever file holds it (F5), unless a `.yml` claims its id.
+    const shadowed =
+      found !== undefined &&
+      isShadowedByYml(found.asset, found.id, ymlHeldIds(listAssets(taskScopeOf(bundle.source)), bundle.source));
+    if (found === undefined || shadowed) {
       throw new NotFoundError(`Task ${JSON.stringify(qualifiedRef)} was not found.`);
     }
     const parsedSource = parseTaskSource({ yaml: found.asset.entry.content(), filePath: taskFileOf(found.asset) });
@@ -538,7 +553,7 @@ export async function akmTasksHistory(input: {
   const limit = input.limit !== undefined && input.limit > 0 ? input.limit : 50;
   const parsed = input.id ? parseTaskRef(input.id) : undefined;
   const bundle = resolveTaskReadBundle(parsed?.bundle, input.target);
-  const id = parsed ? (resolveTask(bundle.source, parsed.id)?.id ?? parsed.id) : undefined;
+  const id = parsed ? (resolveTask(bundle.source, parsed.id)?.id ?? taskNameOf(bundle.source, parsed.id)) : undefined;
   // A bundle named by `--bundle` or by the ref selects the rows that recorded that bundle.
   const named = parsed?.bundle !== undefined || input.target !== undefined;
   return { rows: readTaskHistory({ id, limit, ...(named ? { bundle: bundle.source.name } : {}) }) };

@@ -366,6 +366,32 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     expect(proposals[0]?.payload.content).toContain("Authentication guide");
   });
 
+  test("runSchemaRepairPass reports a file no bundle holds as an error, not a skip", async () => {
+    const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
+    const stashDir = makeTempDir("akm-schema-repair-unheld-");
+    const strayFile = path.join(stashDir, "stray", "outside.md");
+    fs.mkdirSync(path.dirname(strayFile), { recursive: true });
+    fs.writeFileSync(strayFile, "---\n---\nStray content.\n", "utf8");
+    configureStash(stashDir);
+
+    const result = await runSchemaRepairPass([{ ref: "memories/not-held", reason: "missing description" }], {
+      startMs: Date.now(),
+      budgetMs: 30_000,
+      stashDir,
+      llmRunner: testLlmRunner({ endpoint: "http://localhost/v1/chat", model: "test" }),
+      findFilePath: async () => strayFile,
+      chatFn: async () => JSON.stringify({ description: "x" }),
+    });
+
+    expect(result.repairs).toEqual([
+      expect.objectContaining({
+        ref: "memories/not-held",
+        outcome: "error",
+        error: expect.stringContaining("not found"),
+      }),
+    ]);
+  });
+
   test("a queued schema repair carries a schema-repair run token (B10-31)", async () => {
     const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
     const { listProposals } = await import("../../../src/commands/proposal/repository");

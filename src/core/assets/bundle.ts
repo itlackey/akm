@@ -43,6 +43,11 @@ export class AssetBundle {
     return `${this.#adapter.id}@${this.#adapter.version}+`;
   }
 
+  /** The id of the adapter that holds this bundle, as recorded or, for a bundle with none, found. For messages. */
+  get adapterId(): string {
+    return this.#adapter.id;
+  }
+
   /** Whether this bundle's adapter writes assets of `type`: it holds them as its own, not as files it reads. */
   writes(type: string): boolean {
     return this.#adapter.writes.includes(type);

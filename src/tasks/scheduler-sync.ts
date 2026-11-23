@@ -17,7 +17,7 @@
 
 import path from "node:path";
 import { parseBundleRef } from "../core/asset/asset-ref";
-import { listAssets } from "../core/assets/read";
+import { listAssetsStrict } from "../core/assets/read";
 import { compareCodePoints, toPosix } from "../core/common";
 import type { AkmConfig } from "../core/config/config-types";
 import { UsageError } from "../core/errors";
@@ -40,7 +40,16 @@ import { parseTaskSource } from "./source/parse-task-source";
 import { projectTaskSourceV4 } from "./source/project-v4";
 import type { TaskSourceV4Document } from "./source/task-source-v4";
 import { taskSourceErrorDetail } from "./source-v3";
-import { type TaskBundleSource, taskAssetsAmong, taskFileOf, taskIdOf, taskRefIn, taskScopeOf } from "./task-ref";
+import {
+  isShadowedByYml,
+  type TaskBundleSource,
+  taskAssetsAmong,
+  taskFileOf,
+  taskIdOf,
+  taskRefIn,
+  taskScopeOf,
+  ymlHeldIds,
+} from "./task-ref";
 import { checkTaskV5 } from "./v5/check";
 import type { TaskSourceV5Document, TaskSourceV5ScheduleBinding } from "./v5/source";
 
@@ -100,13 +109,17 @@ async function compileTaskSources(
     path: input.sourceRoot,
     ...(input.adapterId !== undefined ? { adapterId: input.adapterId } : {}),
   };
-  const listed = listAssets(taskScopeOf(source)).filter(
-    (asset) => !input.enabledRefs || input.enabledRefs.has(asset.ref),
-  );
+  // An incomplete listing is the bundle's failure: its rows are left as they are.
+  const everything = listAssetsStrict(taskScopeOf(source));
+  const listed = everything.filter((asset) => !input.enabledRefs || input.enabledRefs.has(asset.ref));
+  // A task held in a `.yml` file claims its id (compared case-insensitively, as the scheduler compares them).
+  const claimed = ymlHeldIds(everything, source);
   const tasks = taskAssetsAmong(listed).sort((left, right) => compareCodePoints(taskFileOf(left), taskFileOf(right)));
   for (const asset of tasks) {
     const { ref, conceptId } = asset;
     const id = taskIdOf(asset, source);
+    // A task held in a file whose extension is in another case is a task source only when no `.yml` claims its id.
+    if (isShadowedByYml(asset, id, claimed)) continue;
     const file = taskFileOf(asset);
     try {
       const yaml = asset.entry.content();
@@ -458,7 +471,7 @@ export function installedRowRef(row: InstalledSchedulerBinding, scope: Scheduler
   if (verb !== "task") return undefined;
   // A row names its task by ref; one written before 0.11 by its id, in the bundle it names.
   if (subject.includes("//")) return subject;
-  return scope.source ? taskRefIn(scope.source, subject) : undefined;
+  return scope.source ? taskRefIn(scope.source, subject, { refuse: false }) : undefined;
 }
 
 /** Where an installed row was scheduled from, for messages. */

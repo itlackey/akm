@@ -340,8 +340,13 @@ function overlayOf(root: TaskFileRoot, overlay: string, replaced: ReadonlyMap<st
   const tasksDir = root.layout === "akm-task" ? root.root : path.join(root.root, "tasks");
   for (const entry of fs.readdirSync(root.root)) {
     // Copied, not linked: the check reads the overlay through its bundle's adapter, which does not follow a link out of it.
-    if (root.layout !== "akm-task" && entry !== "tasks")
-      fs.cpSync(path.join(root.root, entry), path.join(overlay, entry), { recursive: true, dereference: true });
+    if (root.layout !== "akm-task" && entry !== "tasks" && !entry.startsWith(".") && entry !== "node_modules") {
+      try {
+        fs.cpSync(path.join(root.root, entry), path.join(overlay, entry), { recursive: true, dereference: true });
+      } catch {
+        // What cannot be copied (a link that leads nowhere or loops) holds no asset a task could run.
+      }
+    }
   }
   const copy = (from: string, to: string): void => {
     fs.mkdirSync(to, { recursive: true });

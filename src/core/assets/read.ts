@@ -124,6 +124,22 @@ export function requireAsset(ref: string | BundleRef, options: FindOptions = {})
 export function listAssets(
   options: { sources?: readonly SearchSource[]; bundle?: string; type?: string } = {},
 ): Asset[] {
+  return collectAssets(options, false);
+}
+
+/**
+ * {@link listAssets} for a caller that acts on what is not there (a scheduler removes the rows of a task that is gone):
+ * a bundle listed incompletely fails with `BUNDLE_UNREACHABLE` instead of warning, and a bundle whose storage is not
+ * there lists nothing, with no warning.
+ */
+export function listAssetsStrict(options: { sources?: readonly SearchSource[]; bundle?: string } = {}): Asset[] {
+  return collectAssets(options, true);
+}
+
+function collectAssets(
+  options: { sources?: readonly SearchSource[]; bundle?: string; type?: string },
+  strict: boolean,
+): Asset[] {
   const sources = defaultSources(options);
   const ids = deriveBundleIds([...sources]);
   const found: Asset[] = [];
@@ -131,6 +147,7 @@ export function listAssets(
     const bundle = ids[index] as string;
     if (source.unresolved || (options.bundle !== undefined && bundle !== options.bundle)) continue;
     const held = bundleOfSource(source, bundle);
+    if (strict && !held.exists()) continue;
     let listing: BundleListing;
     try {
       listing = held.list();
@@ -143,6 +160,12 @@ export function listAssets(
       }
       warn(`Bundle "${source.registryId ?? source.path}" was not listed completely: ${toErrorMessage(error)}`);
       continue;
+    }
+    if (strict && !listing.complete) {
+      throw new ConfigError(
+        listing.incompleteReason ?? `Bundle "${bundle}" was not listed completely.`,
+        "BUNDLE_UNREACHABLE",
+      );
     }
     if (!listing.complete && listing.incompleteReason) {
       warn(`Bundle "${source.registryId ?? source.path}" was not listed completely: ${listing.incompleteReason}`);

@@ -88,7 +88,10 @@ async function loadSource(ref: string): Promise<{
   // The document is the one asset the target's adapter places under that type and name.
   const asset = findAsset(found.canonical);
   const placed = addressOf(found.target.source, conceptIdFromTypeName(found.type, found.name));
-  if (asset === undefined || asset.conceptId !== placed.conceptId)
+  // The writers keep a document at the file they place it in: one held in another spelling of it cannot be saved.
+  const placedElsewhere =
+    placed.file !== undefined && placed.placedFile !== undefined && placed.file !== placed.placedFile;
+  if (asset === undefined || asset.conceptId !== placed.conceptId || placedElsewhere)
     throw new UsageError(
       "The indexed source no longer matches the writable document target. Refresh the index before editing.",
     );

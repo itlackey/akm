@@ -91,7 +91,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
     expect(JSON.parse(stdout).result.status).toBe("completed");
   });
 
-  test("native akm finds a task by its bare id or its ref, and no other native-looking dir holds one", async () => {
+  test("native akm projects only bare or tasks/<id> refs and rejects other native-looking dirs", async () => {
     const stash = makeStashDir();
     fs.writeFileSync(
       path.join(stash, "tasks", "nightly.yml"),
@@ -103,11 +103,11 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
     expect(JSON.parse(canonical.stdout).result.id).toBe("nightly");
 
     const ambiguous = await runCli(["task", "run", "commands/nightly"], stash);
-    expect(ambiguous.status).toBe(1);
-    expect(JSON.parse(ambiguous.stderr)).toMatchObject({ ok: false, code: "ASSET_NOT_FOUND" });
+    expect(ambiguous.status).toBe(2);
+    expect(JSON.parse(ambiguous.stderr)).toMatchObject({ ok: false, code: "INVALID_FLAG_VALUE" });
   });
 
-  test("a bundle that holds no task is not found to hold a task-shaped public ref", async () => {
+  test("a non-task bundle adapter cannot claim a task-shaped public ref", async () => {
     const storage = withIsolatedAkmStorage();
     const bundle = makeSandboxDir("akm-workflow-bundle");
     disposers.push(bundle);
@@ -127,8 +127,8 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
       });
 
       const result = await runCliCapture(["task", "run", "tasks/nightly", "--bundle", "workflows", "--scheduled"]);
-      expect(result.code).toBe(1);
-      expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code: "ASSET_NOT_FOUND" });
+      expect(result.code).toBe(2);
+      expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code: "INVALID_FLAG_VALUE" });
     } finally {
       storage.cleanup();
     }

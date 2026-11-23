@@ -40,7 +40,7 @@ import { parseTaskSource, taskValueInputs } from "../source/parse-task-source";
 import { projectTaskSourceV4 } from "../source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
 import { validateTaskConceptId } from "../task-id";
-import { resolveTask } from "../task-ref";
+import { resolveTask, taskNameOf, taskNotFound } from "../task-ref";
 import type { PreparedTaskV5 } from "../v5/run";
 import type { RunTaskOptions } from "./task-result";
 
@@ -108,17 +108,13 @@ export async function loadPreparedTask(
 ): Promise<PreparedTaskV3Execution | PreparedTaskV5> {
   const bundleDir = options.bundleDir;
   validateTaskConceptId(id);
-  const found = resolveTask(
-    {
-      name: options.bundleName ?? slugForPath(bundleDir),
-      path: bundleDir,
-      ...(options.adapterId !== undefined ? { adapterId: options.adapterId } : {}),
-    },
-    id,
-  );
-  if (!found) {
-    throw new NotFoundError(`Task ${JSON.stringify(id)} was not found in the bundle.`, "ASSET_NOT_FOUND");
-  }
+  const taskSource = {
+    name: options.bundleName ?? slugForPath(bundleDir),
+    path: bundleDir,
+    ...(options.adapterId !== undefined ? { adapterId: options.adapterId } : {}),
+  };
+  const found = resolveTask(taskSource, id);
+  if (!found) throw taskNotFound(taskSource, taskNameOf(taskSource, id));
   const { asset } = found;
   const taskConceptId = asset.conceptId;
   // asset-io: display the file names the task source in messages

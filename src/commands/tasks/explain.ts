@@ -95,7 +95,7 @@ import { checkScheduleEntryV5 } from "../../tasks/scheduler-sync";
 import { parseTaskSource, taskValueInputs } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../../tasks/source/task-input-diagnostics";
-import { resolveTask, taskFileOf } from "../../tasks/task-ref";
+import { resolveTask, taskFileOf, taskNotFound } from "../../tasks/task-ref";
 import { checkTaskV5 } from "../../tasks/v5/check";
 import type { TaskV5Start } from "../../tasks/v5/flags";
 import { type TASK_SOURCE_V5_VERSION, type TaskSourceV5Document, taskV5StepKey } from "../../tasks/v5/source";
@@ -421,9 +421,7 @@ export async function akmTaskExplain(ref: string, options: TaskExplainOptions = 
   const parsedRef = parseTaskRef(ref);
   const bundle = resolveTaskReadBundle(parsedRef.bundle, options.target);
   const found = resolveTask(bundle.source, parsedRef.id);
-  if (!found) {
-    throw new NotFoundError(`Task ${JSON.stringify(ref)} was not found in the bundle.`, "ASSET_NOT_FOUND");
-  }
+  if (!found) throw taskNotFound(bundle.source, ref);
   const { asset, id } = found;
   const taskConceptId = asset.conceptId;
   const sourcePath = taskFileOf(asset);

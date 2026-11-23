@@ -8,13 +8,14 @@
  * No caller computes where an adapter keeps its tasks. This is the one function the ref qualifier replaces.
  */
 
-import { stashDirFor } from "../core/asset/asset-placement";
+import { stashDirFor, withoutTypeHead } from "../core/asset/asset-placement";
 import { makeBundleRef } from "../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
-import { adapterWrites } from "../core/assets/gate";
+import { adapterWrites, bundleAdapterId } from "../core/assets/gate";
 import { type Asset, listAssets, readFrom, requireAsset } from "../core/assets/read";
 import { assetTypes } from "../core/assets/type";
 import { addressOf } from "../core/assets/write";
+import { NotFoundError, UsageError } from "../core/errors";
 import type { SearchSource } from "../indexer/search/search-source";
 
 /** Where tasks are looked up: an explicit source, else the configured bundle with this id. */
@@ -106,26 +107,80 @@ export function findTask(scope: TaskScope, input: string): Asset | undefined {
   const listed = spellings.map((spelling) => named.find((asset) => asset.conceptId === spelling)).find(Boolean);
   const source = "sources" in scope ? scope.sources[0] : undefined;
   if (listed || !source?.registryId) return listed;
-  // A spelling the adapter reads but does not list under (another letter case, an outdated type-folder spelling).
+  // A spelling the adapter reads but does not list under (another letter case). One with a type folder in front is
+  // not tried: reading it would resolve an outdated spelling of another asset, with a warning.
   for (const spelling of spellings) {
+    if (withoutTypeHead(spelling) !== undefined) continue;
     const asset = readFrom(source, source.registryId, spelling);
     if (asset && taskAssetsAmong([asset]).length > 0) return asset;
   }
   return undefined;
 }
 
-/** The task `input` names in a source's bundle, with its id. */
+/**
+ * The name `input` gives a task in the bundle: the id without the prefix its adapter places tasks under. An adapter
+ * that places tasks names one by a bare id or by `tasks/<id>`, nothing deeper.
+ */
+export function taskNameOf(source: TaskBundleSource, input: string): string {
+  if (!adapterWrites(source, "task")) return input;
+  const prefix = taskPrefixIn(source);
+  const name = prefix !== "" && input.startsWith(prefix) ? input.slice(prefix.length) : input;
+  if (name.includes("/")) {
+    throw new UsageError(
+      `The native akm adapter accepts only a bare task id or tasks/<id>, got "${input}".`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  return name;
+}
+
+/** Refuse a bundle whose adapter holds no task: it defines no task identity. Asked only once a lookup found nothing. */
+function refuseWithoutTasks(source: TaskBundleSource): void {
+  if (adapterWrites(source, "task")) return;
+  if (taskAssetsAmong(listAssets(taskScopeOf(source))).length > 0) return;
+  throw new UsageError(
+    `Bundle adapter ${JSON.stringify(bundleAdapterId(source))} does not define task runtime identity.`,
+    "INVALID_FLAG_VALUE",
+  );
+}
+
+/** The task `input` names in a source's bundle, with its id; undefined when it holds none. Refuses what base refused. */
 export function resolveTask(source: TaskBundleSource, input: string): { asset: Asset; id: string } | undefined {
-  const asset = findTask(taskScopeOf(source), input);
-  return asset === undefined ? undefined : { asset, id: taskIdOf(asset, source) };
+  const asset = findTask(taskScopeOf(source), taskNameOf(source, input));
+  if (asset === undefined) {
+    refuseWithoutTasks(source);
+    return undefined;
+  }
+  return { asset, id: taskIdOf(asset, source) };
+}
+
+/** The sentence for a task a bundle does not hold, naming the id and the adapter. */
+export function taskNotFound(source: TaskBundleSource, shown: string): NotFoundError {
+  return new NotFoundError(
+    `Task ${JSON.stringify(shown)} was not found in the configured ${JSON.stringify(bundleAdapterId(source))} bundle.`,
+    "ASSET_NOT_FOUND",
+  );
+}
+
+/** The lowercase ids of the tasks held in a `.yml` file, among a bundle's `listing`: a task held in another spelling of the extension yields to them. */
+export function ymlHeldIds(listing: readonly Asset[], source: TaskBundleSource): Set<string> {
+  const held = listing.filter((asset) => taskFileOf(asset).endsWith(".yml"));
+  return new Set(taskAssetsAmong(held).map((asset) => taskIdOf(asset, source).toLowerCase()));
+}
+
+/** Whether `asset`, held in an off-case file, is shadowed by a `.yml`-held task of the same id (compared case-insensitively). */
+export function isShadowedByYml(asset: Asset, id: string, claimed: ReadonlySet<string>): boolean {
+  return !taskFileOf(asset).endsWith(".yml") && claimed.has(id.toLowerCase());
 }
 
 /**
  * The ref of the task `input` names in `source`'s bundle: the task's own, else the one a task of that id would have
  * (where its adapter would place it), so a task whose file is gone still has the ref its activation was stored under.
  */
-export function taskRefIn(source: TaskBundleSource, input: string): string {
-  const found = findTask(taskScopeOf(source), input);
+export function taskRefIn(source: TaskBundleSource, input: string, options: { refuse?: boolean } = {}): string {
+  const name = taskNameOf(source, input);
+  const found = findTask(taskScopeOf(source), name);
   if (found) return found.ref;
-  return makeBundleRef(source.name, addressOf(source, conceptIdFromTypeName("task", input)).conceptId);
+  if (options.refuse !== false) refuseWithoutTasks(source);
+  return makeBundleRef(source.name, addressOf(source, conceptIdFromTypeName("task", name)).conceptId);
 }

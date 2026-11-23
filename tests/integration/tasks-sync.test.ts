@@ -228,27 +228,27 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).toContain("//tasks/tt --scheduled");
   });
 
-  test("`b.yml` and `B.YML` both enabled: they are two assets whose scheduler ids collide, so neither is scheduled (a task is found by its ref, not by which file spells it)", async () => {
+  test("`b.yml` and `B.YML` both enabled: `b` is scheduled and `B` is not found, as before the facade", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
     const task = (id: string) => `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "0 3 * * *"\n`;
     fs.writeFileSync(path.join(tasksDir, "b.yml"), task("b"), "utf8");
     fs.writeFileSync(path.join(tasksDir, "B.YML"), task("B"), "utf8");
-    // Both spellings of one task: one asset, whichever order the directory lists them in.
+    // Both spellings of one task: the `.yml` file is the task, whichever order the directory lists them in.
     fs.writeFileSync(path.join(tasksDir, "c.yml"), task("c"), "utf8");
     fs.writeFileSync(path.join(tasksDir, "c.YML"), task("c"), "utf8");
     for (const ref of ["b", "B", "c"]) setSchedulerRefEnabled(`stash//tasks/${ref}`, true);
 
     const result = await akmTasksSync({ backend, commitBoundary() {} } as never);
 
+    expect(exec.current()).toContain("//tasks/b --scheduled");
     expect(exec.current()).toContain("//tasks/c --scheduled");
-    expect(exec.current()).not.toContain("//tasks/b --scheduled");
     expect(exec.current()).not.toContain("//tasks/B --scheduled");
-    expect(result.failures.map((failure) => failure.ref).sort()).toEqual(["stash//tasks/B", "stash//tasks/b"]);
-    expect(result.failures[0]?.reason).toContain("claimed by");
+    expect(result.failures.map((failure) => failure.ref)).toEqual(["stash//tasks/B"]);
+    expect(result.failures[0]?.reason).not.toContain("claimed by");
   });
 
-  test("`task enable` accepts a task held in an off-case file (F5)", async () => {
+  test("`task enable` accepts a task held in an off-case file with no `.yml` of its id, and not a `.yml`'s other spelling (F5)", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
     const task = (id: string) => `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "0 3 * * *"\n`;
@@ -262,8 +262,7 @@ describe("akmTasksSync — schedule drift", () => {
       expect(result.sync.failures).toEqual([]);
     }
     expect(exec.current()).toContain("//tasks/Up --scheduled");
-    // `B.YML` is the asset `tasks/B`, whatever else is spelled `b`.
-    await expect(akmTasksEnable("tasks/nosuch", {}, { backend } as never)).rejects.toThrow(/was not found/);
+    await expect(akmTasksEnable("tasks/B", {}, { backend } as never)).rejects.toThrow(/was not found/);
   });
 
   test("a config without scheduler.enabled takes the installed rows with a backing file as the host's choice", async () => {
@@ -415,6 +414,20 @@ describe("akmTasksSync — schedule drift", () => {
     const again = await akmTasksSync({ backend });
     expect(again.updated).toEqual([]);
     expect(again.unchanged).toEqual(["alpha"]);
+  });
+
+  test("`task disable tasks/<id>` and `task enable tasks/<id>` of a task whose file is gone name `<bundle>//tasks/<id>`", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("gone", "*/5 * * * *", true);
+    await akmTasksSync({ backend });
+    fs.rmSync(path.join(tasksDir, "gone.yml"));
+    const disabled = await akmTasksDisable("tasks/gone", {}, { backend });
+    expect(disabled.ref).toBe("stash//tasks/gone");
+    expect(schedulerEnabledRefs(loadConfig())).toEqual([]);
+    await expect(akmTasksEnable("tasks/nosuch", {}, { backend } as never)).rejects.toThrow(
+      /"stash\/\/tasks\/nosuch" was not found/,
+    );
   });
 
   test("a failed crontab write is reported, and the prior crontab stays active", async () => {
@@ -940,7 +953,7 @@ describe("akmTasksSync — one bundle's poisoned source set does not cost every 
     return { poisonedDir, cleanup: () => fs.rmSync(poisonedDir, { recursive: true, force: true }) };
   }
 
-  test("the healthy bundle still installs its task; the poisoned bundle is no cost to it", async () => {
+  test("the healthy bundle still installs its task; the poisoned bundle is reported, not thrown", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
     const poisoned = makePoisonedBundle();
@@ -959,14 +972,17 @@ describe("akmTasksSync — one bundle's poisoned source set does not cost every 
 
       expect(result.installed).toEqual(["alpha"]);
       expect(exec.current()).toContain("//tasks/alpha --scheduled");
-      // The bundle's adapter lists a `tasks` entry that is a file as a bundle with no tasks: nothing to report.
-      expect(result.failures).toEqual([]);
+      expect(
+        result.failures.some(
+          (failure) => failure.path === "poisoned" && /ENOTDIR|not a directory/i.test(failure.reason),
+        ),
+      ).toBe(true);
     } finally {
       poisoned.cleanup();
     }
   });
 
-  test("a sync scoped to a bundle whose tasks folder is a file reads it as a bundle with no tasks", async () => {
+  test("a sync scoped to the poisoned bundle rethrows its error instead of reporting it", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
     const poisoned = makePoisonedBundle();
@@ -980,15 +996,13 @@ describe("akmTasksSync — one bundle's poisoned source set does not cost every 
         defaultBundle: "stash",
       });
 
-      const result = await akmTasksSync({ backend }, "poisoned");
-      expect(result.installed).toEqual([]);
-      expect(result.failures).toEqual([]);
+      await expect(akmTasksSync({ backend }, "poisoned")).rejects.toThrow(/ENOTDIR|not a directory/i);
     } finally {
       poisoned.cleanup();
     }
   });
 
-  test("an unscoped sync whose only write-capable bundle has a file for a tasks folder plans nothing, instead of throwing", async () => {
+  test("an unscoped sync whose only write-capable bundle is poisoned returns a plan reporting it, instead of throwing", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);
     const poisoned = makePoisonedBundle();
@@ -1004,7 +1018,11 @@ describe("akmTasksSync — one bundle's poisoned source set does not cost every 
       const result = await akmTasksSync({ backend });
 
       expect(result.installed).toEqual([]);
-      expect(result.failures).toEqual([]);
+      expect(
+        result.failures.some(
+          (failure) => failure.path === "poisoned" && /ENOTDIR|not a directory/i.test(failure.reason),
+        ),
+      ).toBe(true);
     } finally {
       poisoned.cleanup();
     }
