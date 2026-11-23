@@ -41,6 +41,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { walkMarkdownFiles } from "../../core/adapter/directory/walker";
 import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import {
   parseFrontmatter,
@@ -68,7 +69,6 @@ import * as memoryInfer from "../../llm/memory-infer";
 import { computeBodyHash, getLlmCacheEntry } from "../../storage/repositories/index-llm-cache-repository";
 import { pkgVersion } from "../../version";
 import { withLlmCache } from "../db/llm-cache";
-import { walkMarkdownFiles } from "../walk/walker";
 import {
   applyProvenanceFrontmatter,
   type IndexDocument,

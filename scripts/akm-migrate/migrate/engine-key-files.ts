@@ -11,7 +11,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isFileOrFileSymlink } from "../../../src/indexer/walk/walker";
+import { isFileOrFileSymlink } from "../../../src/core/adapter/directory/walker";
 import type { EngineKeyChange, EngineKeyFileInput, EngineKeyRole, EngineKeysPlan } from "./engine-key-planner";
 import { replaceFilesWithBackups, type TaskFileRoot, walkRootFiles } from "./task-files";
 

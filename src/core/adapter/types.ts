@@ -47,14 +47,19 @@ export type ItemRef = string;
 export interface Bundle {
   /** The bundle's id: the prefix of every ref its adapter emits. */
   id: BundleId;
-  /** Absolute materialized root; workspace state NEVER written here. */
-  root: string;
+  /** Absolute content root, for a bundle kept in a directory; absent for a store. Workspace state is NEVER written here. */
+  root?: string;
   /**
    * Where the adapter finds a bundle that is not a directory (a keyring's name,
-   * a vault's name): the bundle's configured `location`. `root` is then only the
-   * path its entries are indexed under; nothing is there.
+   * a vault's name): the bundle's configured `location`. It has no `root`.
    */
   location?: string;
+}
+
+/** The directory a directory bundle is kept in. A directory adapter is only handed a bundle that has one. */
+export function rootOf(b: Bundle): string {
+  if (b.root === undefined) throw new Error(`Bundle "${b.id}" is not kept in a directory.`);
+  return b.root;
 }
 
 // ── Durable entry sub-shapes ────────────────────────────────────────────────

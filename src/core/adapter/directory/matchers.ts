@@ -10,9 +10,9 @@
  * `MatchResult` shape expected by the rest of the indexer.
  */
 
-import { isSecretSidecar } from "../../core/asset/asset-placement";
-import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
-import { presentationFor } from "../../core/type-presentation";
+import { isSecretSidecar } from "../../asset/asset-placement";
+import { SCRIPT_EXTENSIONS } from "../../recognition-util";
+import { presentationFor } from "../../type-presentation";
 import type { FileContext, MatchResult } from "./file-context";
 
 /** What a matcher may use: the path fields of a file, never its content. */

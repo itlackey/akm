@@ -11,10 +11,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { AssetEntry } from "../../core/adapter/bundle-adapter";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { toPosix } from "../../core/common";
-import type { ShowResponse, SourceSearchHit } from "../../sources/types";
+import type { ShowResponse, SourceSearchHit } from "../../../sources/types";
+import { parseFrontmatter } from "../../asset/frontmatter";
+import { toPosix } from "../../common";
+import type { AssetEntry } from "../bundle-adapter";
 
 // ── FileContext ──────────────────────────────────────────────────────────────
 
@@ -33,6 +33,8 @@ export interface FileContext extends AssetEntry {
   file: string;
   /** Path relative to the stash root (POSIX separators) */
   relPath: string;
+  /** The same path, as the entry's storage key. */
+  key: string;
   /** File extension including the dot, e.g. ".ts", ".md" */
   ext: string;
   /** File name including extension, e.g. "deploy.sh" */
@@ -91,6 +93,7 @@ export function buildFileContext(stashRoot: string, absPath: string): FileContex
     absPath,
     file: absPath,
     relPath,
+    key: relPath,
     ext,
     fileName,
     parentDir,
@@ -127,6 +130,10 @@ export function buildFileContext(stashRoot: string, absPath: string): FileContex
         cachedStat = fs.statSync(absPath);
       }
       return cachedStat;
+    },
+
+    modified(): Date {
+      return this.stat().mtime;
     },
   };
 }
@@ -195,7 +202,7 @@ const renderers = new Map<string, AssetRenderer>();
  * first use of getRenderer/getAllRenderers; idempotent.
  */
 async function ensureBuiltinsRegistered(): Promise<void> {
-  const { initIndexer } = await import("../init.js");
+  const { initIndexer } = await import("../../../indexer/init.js");
   await initIndexer();
 }
 
@@ -251,7 +258,7 @@ export function buildRenderContext(
 export function fileContextOfEntry(root: string, entry: AssetEntry): FileContext {
   if ("absPath" in entry) return entry as FileContext;
   return {
-    ...buildFileContext(root, path.join(root, entry.relPath)),
+    ...buildFileContext(root, path.join(root, entry.key)),
     content: () => entry.content(),
     bytes: () => entry.bytes(),
     frontmatter: () => entry.frontmatter(),

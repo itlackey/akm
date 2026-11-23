@@ -5,6 +5,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { BundleListing } from "../core/adapter/bundle-adapter";
+import { type FileContext, fileContextOfEntry } from "../core/adapter/directory/file-context";
+import {
+  INCOMPLETE_SOURCES_META_KEY,
+  type IncompleteIndexSource,
+  type IndexVerification,
+  type RemovedIndexSource,
+  SEMANTIC_SEARCH_META_KEY,
+  type SemanticSearchRecord,
+} from "../core/adapter/directory/index-context";
+import type { WalkStashFlatResult } from "../core/adapter/directory/walker";
 import type { Bundle } from "../core/adapter/types";
 import { type Asset, type BundleScan, lookupAsset, scanBundle } from "../core/assets/read";
 import { indexedPathOf } from "../core/assets/type";
@@ -122,16 +132,6 @@ import {
 import { drainDirDocuments } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
 import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
-import { type FileContext, fileContextOfEntry } from "./walk/file-context";
-import {
-  INCOMPLETE_SOURCES_META_KEY,
-  type IncompleteIndexSource,
-  type IndexVerification,
-  type RemovedIndexSource,
-  SEMANTIC_SEARCH_META_KEY,
-  type SemanticSearchRecord,
-} from "./walk/index-context";
-import type { WalkStashFlatResult } from "./walk/walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -1857,7 +1857,7 @@ async function lookupBundleRefWithResolutionUsing(
           assertIndexedWorkflowSourceIdentity(inputRef, entry.filePath, {
             path: ownerPath,
             realPath: safeRealpath(ownerPath),
-            relativePath: asset.entry.relPath,
+            relativePath: asset.entry.key,
             canonicalName: asset.conceptId,
           });
           if (entry.adapterId !== adapterId) {

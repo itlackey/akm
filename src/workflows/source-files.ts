@@ -12,12 +12,12 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { buildFileContext } from "../core/adapter/directory/file-context";
+import { declaredTypeForPath } from "../core/adapter/directory/matchers";
 import { compareCodePoints, toPosix } from "../core/common";
 import { UsageError, type UsageErrorCode } from "../core/errors";
 import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../core/recognition-util";
 import { warnOnce } from "../core/warn";
-import { buildFileContext } from "../indexer/walk/file-context";
-import { declaredTypeForPath } from "../indexer/walk/matchers";
 
 export interface WorkflowSourceFile {
   /** Path with its authored filename/extension spelling. */

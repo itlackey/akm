@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `isWalkedFile` (`src/indexer/walk/walker.ts`): the one predicate that says whether a full walk would list a
+ * `isWalkedFile` (`src/core/adapter/directory/walker.ts`): the one predicate that says whether a full walk would list a
  * file. `show` (from files) and write-through use it, so neither returns a file the index would not hold.
  * Each case is also checked against the real walk.
  */
@@ -12,10 +12,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { isWalkedFile, walkedFiles, walkStashFlat } from "../../../src/core/adapter/directory/walker";
 import { saveConfig } from "../../../src/core/config/config";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
-import { isWalkedFile, walkedFiles, walkStashFlat } from "../../../src/indexer/walk/walker";
 import { runCliCapture } from "../../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 

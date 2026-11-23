@@ -28,9 +28,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmAdapter, recognizeMatch } from "../../../../src/core/adapter/adapters/akm-adapter";
+import { buildFileContext, type FileContext } from "../../../../src/core/adapter/directory/file-context";
+import { walkStashFlat } from "../../../../src/core/adapter/directory/walker";
 import type { Bundle } from "../../../../src/core/adapter/types";
-import { buildFileContext, type FileContext } from "../../../../src/indexer/walk/file-context";
-import { walkStashFlat } from "../../../../src/indexer/walk/walker";
 
 const ALL_TYPES_ROOT = path.resolve(__dirname, "../../../fixtures/stashes/all-types");
 const BUNDLE_ID = "all-types";

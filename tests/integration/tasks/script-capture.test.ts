@@ -159,7 +159,7 @@ describe("scriptProgram: the command for a script asset", () => {
         bundle: "stash",
         conceptId: "scripts/a.sh",
         entry: {
-          relPath: "scripts/a.sh",
+          key: "scripts/a.sh",
           file,
           content: () => fs.readFileSync(file, "utf8"),
           bytes: () => fs.readFileSync(file),

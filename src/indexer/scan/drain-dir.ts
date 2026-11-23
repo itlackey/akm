@@ -28,11 +28,11 @@
 
 import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
 import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
-import type { Bundle, IndexDocument } from "../../core/adapter/types";
+import { buildFileContext, type FileContext } from "../../core/adapter/directory/file-context";
+import { type Bundle, type IndexDocument, rootOf } from "../../core/adapter/types";
 import { compileWorkflowSource } from "../../workflows/compile";
 import { isUsableWorkflowSource, workflowNameForSourcePath } from "../../workflows/source-files";
 import { buildMetadataSkipWarning, type StashFile } from "../passes/metadata";
-import { buildFileContext, type FileContext } from "../walk/file-context";
 import { indexDocumentToStashEntry } from "./doc-to-entry";
 
 /** The markdown-workflow renderer name the `akm` adapter carries on `documentJson.renderer`. */
@@ -103,8 +103,8 @@ export function drainDirDocuments(
       continue;
     }
     // A symlinked workflow source of another extension is warned about once, as the scan always has.
-    if (doc.type === "workflow" && workflowNameForSourcePath(bundle.root, adapter.id, file.absPath) !== undefined) {
-      isUsableWorkflowSource(bundle.root, file.absPath);
+    if (doc.type === "workflow" && workflowNameForSourcePath(rootOf(bundle), adapter.id, file.absPath) !== undefined) {
+      isUsableWorkflowSource(rootOf(bundle), file.absPath);
     }
 
     if (doc.hash !== undefined) hashByFile.set(file.absPath, doc.hash);

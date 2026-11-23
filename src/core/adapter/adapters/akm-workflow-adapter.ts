@@ -21,12 +21,12 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { NewAsset } from "../bundle-adapter";
+import type { FileContext } from "../directory/file-context";
 import type { FileChange } from "../file-change";
-import type { Bundle, IndexMetadata } from "../types";
+import { type Bundle, type IndexMetadata, rootOf } from "../types";
 import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { AkmFormatAdapterBase } from "./akm-format";
 import { perTypeDiagnostics } from "./akm-lint";
@@ -74,7 +74,7 @@ function describe(file: FileContext, conceptId: string): IndexMetadata {
 
 async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
   const diagnostics: FileDiagnostic[] = [];
-  const { check, rulesFor } = createBaseChecker(c.root, ctx);
+  const { check, rulesFor } = createBaseChecker(rootOf(c), ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
@@ -163,7 +163,7 @@ export class AkmWorkflowAdapter extends AkmFormatAdapterBase {
 
   /** A standalone workflow bundle keeps its workflows at its root, one Markdown file each. */
   protected override placeFile(b: Bundle, { name }: Pick<NewAsset, "type" | "name">): string {
-    return path.join(b.root, `${name}.md`);
+    return path.join(rootOf(b), `${name}.md`);
   }
 
   protected spellings(conceptId: string): string[] {

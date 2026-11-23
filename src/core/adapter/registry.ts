@@ -85,11 +85,10 @@ export function clearAdapterCaches(): void {
   for (const adapter of BUILTIN_ADAPTERS) if (adapter instanceof SecretManagerAdapterBase) adapter.clearCache();
 }
 
-/** The bundle its adapter is called with: its id (its config name), root, and `location` when it has one. */
+/** The bundle its adapter is called with: its id (its config name), and its `location` when it is a store, else its root. */
 export function bundleOf(source: { name: string; path: string; location?: string }): Bundle {
   return {
     id: source.name,
-    root: source.path,
-    ...(source.location ? { location: source.location } : {}),
+    ...(source.location ? { location: source.location } : { root: source.path }),
   };
 }

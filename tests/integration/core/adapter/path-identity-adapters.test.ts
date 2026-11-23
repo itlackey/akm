@@ -10,8 +10,8 @@ import os from "node:os";
 import path from "node:path";
 import { akmWorkflowAdapter } from "../../../../src/core/adapter/adapters/akm-workflow-adapter";
 import { websiteSnapshotAdapter } from "../../../../src/core/adapter/adapters/website-snapshot-adapter";
+import { buildFileContext } from "../../../../src/core/adapter/directory/file-context";
 import type { Bundle } from "../../../../src/core/adapter/types";
-import { buildFileContext } from "../../../../src/indexer/walk/file-context";
 import { checkChanges } from "../../../_helpers/adapter-hooks";
 
 const BUNDLE_ID = "sample";

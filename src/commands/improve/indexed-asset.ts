@@ -30,6 +30,15 @@ export function indexedContent(bundleId: string | undefined, conceptId: string):
   }
 }
 
+/** When the asset an index row names last changed (ms); undefined when it is gone or its bundle does not know. */
+export function indexedModifiedMs(bundleId: string | undefined, conceptId: string): number | undefined {
+  try {
+    return indexedAsset(bundleId, conceptId)?.entry.modified?.().getTime();
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The asset a planned ref names: its qualified spelling when the planner recorded one, else the ref as written (a
  * qualified spelling no bundle holds any more is gone, not another bundle's copy), in the bundles of `stashDir` when given.

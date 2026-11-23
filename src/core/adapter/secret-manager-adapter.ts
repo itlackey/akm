@@ -69,7 +69,7 @@ function secretEntry(name: string, read: () => string): AssetEntry {
     return content;
   };
   return {
-    relPath: secretEntryPath(name),
+    key: secretEntryPath(name),
     content: value,
     bytes: () => Buffer.from(value()),
     frontmatter: () => null,
@@ -226,14 +226,14 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
 
   /** A secret is described from its path alone: its name, and nothing of its value. */
   recognize(b: Bundle, entry: AssetEntry): IndexDocument | null {
-    const name = secretNameOf(entry.relPath);
+    const name = secretNameOf(entry.key);
     if (name === undefined) return null;
     return {
-      ref: `${b.id}//${entry.relPath}`,
+      ref: `${b.id}//${entry.key}`,
       bundle: b.id,
-      conceptId: entry.relPath,
+      conceptId: entry.key,
       // An entry is its name: an unchanged listing rewrites no row.
-      hash: hashContent(entry.relPath),
+      hash: hashContent(entry.key),
       adapterId: this.id,
       type: "secret",
       name: name.split("/").pop() as string,

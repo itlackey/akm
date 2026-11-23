@@ -1,4 +1,4 @@
-import { getMeta } from "../../storage/repositories/index-meta-repository";
+import { getMeta } from "../../../storage/repositories/index-meta-repository";
 
 /**
  * Live runtime state of semantic search, computed fresh at index-finalize

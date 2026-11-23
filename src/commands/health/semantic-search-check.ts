@@ -13,7 +13,7 @@ import {
   readSemanticSearchRecord,
   type SemanticSearchRecord,
   type SemanticSearchStatus,
-} from "../../indexer/walk/index-context";
+} from "../../core/adapter/directory/index-context";
 import { LOCAL_EMBEDDING_RUNTIME } from "../../llm/embedders/local";
 import { indexDbIsDamaged } from "../../storage/repositories/index-connection";
 import { getEmbeddableEntryCount } from "../../storage/repositories/index-entries-repository";

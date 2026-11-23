@@ -5,6 +5,7 @@ import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
 import { claudeAdapter } from "../../../src/core/adapter/adapters/claude-adapter";
 import { opencodeAdapter } from "../../../src/core/adapter/adapters/opencode-adapter";
 import type { BundleAdapter } from "../../../src/core/adapter/bundle-adapter";
+import { buildFileContext } from "../../../src/core/adapter/directory/file-context";
 import {
   executionDefaultsFromFrontmatter,
   parseExecutionMarkdown,
@@ -12,7 +13,6 @@ import {
 } from "../../../src/core/adapter/execution-source";
 import type { Bundle } from "../../../src/core/adapter/types";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
-import { buildFileContext } from "../../../src/indexer/walk/file-context";
 import {
   assertFixtureBytesUnchanged,
   captureFixtureBytes,

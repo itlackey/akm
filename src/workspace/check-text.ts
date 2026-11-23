@@ -14,6 +14,8 @@ import path from "node:path";
 import { parseDocument } from "yaml";
 import { lintDocumentText } from "../commands/lint";
 import { classifyAkmText } from "../core/adapter/adapters/akm-adapter";
+import { buildFileContext } from "../core/adapter/directory/file-context";
+import { protectedTypeOf } from "../core/adapter/directory/place-rules";
 import { adapterForId } from "../core/adapter/registry";
 import type { Bundle } from "../core/adapter/types";
 import { normalizeAkmMarkdown } from "../core/asset/akm-markdown";
@@ -25,8 +27,6 @@ import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { drainDirDocuments } from "../indexer/scan/drain-dir";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { buildFileContext } from "../indexer/walk/file-context";
-import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { folderBlocker } from "./file-actions";
 
 /** The line of a frontmatter YAML error in the file (the block starts on line 2), when the YAML parser gives one. */

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveRefToken } from "../../src/commands/env/env-binding";
 import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
+import { buildFileContext } from "../../src/core/adapter/directory/file-context";
 import {
   assetPathCandidatesForName,
   filesForRef,
@@ -16,7 +17,6 @@ import { resetConfigCache } from "../../src/core/config/config";
 import { isInstalledBundle, resolveEnvPath, resolveRefOwner } from "../../src/core/env-secret-ref";
 import { substituteRefTokens } from "../../src/core/ref-token";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
-import { buildFileContext } from "../../src/indexer/walk/file-context";
 import { configureBundles } from "../_helpers/bundle-config";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 import { withSeam } from "../_helpers/seams";

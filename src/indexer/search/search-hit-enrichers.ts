@@ -2,13 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { getRenderer } from "../../core/adapter/directory/file-context";
 import { displayRef } from "../../core/asset/resolve-ref";
 import { presentationFor } from "../../core/type-presentation";
 import type { SourceSearchHit } from "../../sources/types";
 import type { Database } from "../../storage/database";
 import { getDerivedForParent, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { extractDirTagsFromName, extractTagsFromPath, type IndexDocument } from "../passes/metadata";
-import { getRenderer } from "../walk/file-context";
 import { attachSearchHitAttribution } from "./search-attribution";
 
 export interface SearchHitContext {

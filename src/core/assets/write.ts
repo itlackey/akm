@@ -8,9 +8,8 @@
  * same order, whichever adapter holds the bundle, and its files are recorded for the target's boundary commit.
  */
 
-import fs from "node:fs";
 import { withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
-import type { AssetChange, NewAsset, Retirement, RetireNote } from "../adapter/bundle-adapter";
+import type { AssetChange, AssetPlacement, NewAsset, Retirement, RetireNote } from "../adapter/bundle-adapter";
 import { stashDirFor } from "../asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { parsePlacementRef } from "../asset/resolve-ref";
@@ -60,8 +59,8 @@ export interface AssetAddress {
    * keeps no file for it. Display only (§0.2 P13): never stored, never an identity.
    */
   file?: string;
-  /** The file a create of the ref writes when no asset holds it; differs from `file` when the asset is held under another spelling. */
-  placedFile?: string;
+  /** True when an asset holds the ref under another spelling than the one a create of the ref writes. */
+  heldElsewhere?: boolean;
 }
 
 /** What a write tells its caller: the asset's ref and the content it now holds (absent after a delete or retire). */
@@ -89,68 +88,64 @@ export interface AssetWriter {
   expireRetired(before: Date): void;
 }
 
-/** `gate`: refuse a new asset of a type the bundle's adapter does not write, as a write would. */
-function addressIn(held: AssetBundle, ref: string, gate: boolean): AssetAddress {
+/** Where a write to `ref` goes, refusing nothing a write would refuse. Only an invalid ref throws. */
+function addressIn(held: AssetBundle, ref: string): AssetAddress {
   const readIn = (id: string): Asset | undefined => readFrom(held, id);
   const { conceptId: written, fragment } = parseBundleRef(ref);
-  const holding = (found: Asset, placedFile: () => string | undefined): AssetAddress => {
+  const holding = (found: Asset, placement: AssetPlacement | undefined): AssetAddress => {
     const { conceptId } = found;
     const type = assetType(found);
     const typeDir = stashDirFor(type);
     const name =
       typeDir !== undefined && conceptId.startsWith(`${typeDir}/`) ? conceptId.slice(typeDir.length + 1) : conceptId;
-    const placedAt = placedFile();
     return {
       conceptId,
       type,
       name,
       exists: true,
       ...(found.entry.file !== undefined ? { file: found.entry.file } : {}),
-      ...(placedAt !== undefined ? { placedFile: placedAt } : {}),
+      // The asset is kept under a key other than the one a create of the ref writes.
+      ...(placement !== undefined && placement.key !== found.entry.key ? { heldElsewhere: true } : {}),
     };
   };
-  const found = fragment === undefined ? readIn(written) : undefined;
-  if (found) {
-    // Where a create of the ref would write, for a ref a create can place; the ref of any other asset has none.
-    return holding(found, () => {
-      try {
-        return held.placedFile(parsePlacementRef(ref));
-      } catch {
-        return undefined;
-      }
-    });
-  }
-  const placed = parsePlacementRef(ref);
-  const named = { type: placed.type, name: placed.name, exists: false };
-  if (!held.writes(placed.type)) {
-    if (gate) held.assertWrites(placed.type);
-    // Not a write: the asset is named as written; the file is only the display path the adapter would give it.
-    let shown: string | undefined;
+  /** Where a create of the ref is kept; undefined when it has none, and for a name that cannot be placed. */
+  const placementOf = (): AssetPlacement | undefined => {
     try {
-      shown = held.placedFile(placed);
+      return held.placement(parsePlacementRef(ref));
     } catch {
-      shown = undefined;
-    }
-    return { conceptId: written, ...named, ...(shown !== undefined ? { file: shown } : {}) };
-  }
-  // Placement can refuse (a name that would be kept where no asset is). A write refuses where it is made, so only a
-  // gated address does here; one that only says where an asset goes names it as written.
-  const attempt = <T>(place: () => T): T | undefined => {
-    try {
-      return place();
-    } catch (error) {
-      if (gate) throw error;
       return undefined;
     }
   };
-  const file = attempt(() => held.placedFile(placed));
-  const conceptId = attempt(() => held.place(placed)) ?? written;
+  const found = fragment === undefined ? readIn(written) : undefined;
+  // Where a create of the ref would write, for a ref a create can place; the ref of any other asset has none.
+  if (found) return holding(found, placementOf());
+  const placed = parsePlacementRef(ref);
+  const named = { type: placed.type, name: placed.name, exists: false };
+  const placement = placementOf();
+  const shown = placement?.file !== undefined ? { file: placement.file } : {};
+  // Not a write: the asset is named as written; the file is only the display path the adapter would give it.
+  if (!held.writes(placed.type)) return { conceptId: written, ...named, ...shown };
+  let conceptId = written;
+  try {
+    conceptId = held.place(placed);
+  } catch {
+    // A name that cannot be placed is named as written; a write refuses it where it is made.
+  }
   // A create replaces the asset at the concept it places (`env/default` is placed as the concept `env/.env` holds).
   const there = conceptId !== written && fragment === undefined ? readIn(conceptId) : undefined;
-  if (there) return holding(there, () => file);
-  // A directory, or any other entry no adapter reads as an asset, at the file a create writes holds the ref too.
-  const occupied = file !== undefined && fs.existsSync(file);
-  return { conceptId, ...named, exists: occupied, ...(file !== undefined ? { file } : {}) };
+  if (there) return holding(there, placement);
+  // A directory, or any other entry no adapter reads as an asset, where a create writes holds the ref too.
+  return { conceptId, ...named, exists: placement?.occupied === true, ...shown };
+}
+
+/** Where a write to `ref` goes, with the refusals a write makes: a type its adapter does not write, a name it cannot place. */
+function gatedAddressIn(held: AssetBundle, ref: string): AssetAddress {
+  const address = addressIn(held, ref);
+  if (address.exists) return address;
+  const placed = parsePlacementRef(ref);
+  held.assertWrites(placed.type);
+  held.place(placed);
+  return address;
 }
 
 /**
@@ -159,7 +154,7 @@ function addressIn(held: AssetBundle, ref: string, gate: boolean): AssetAddress 
  * written, so the write refuses where it is made. Only an invalid ref throws.
  */
 export function addressOf(bundle: string, ref: string): AssetAddress {
-  return addressIn(bundleFor(bundle), ref, false);
+  return addressIn(bundleFor(bundle), ref);
 }
 
 /**
@@ -168,7 +163,7 @@ export function addressOf(bundle: string, ref: string): AssetAddress {
  */
 export function fileOfRef(bundle: string, ref: string): string | undefined {
   const held = bundleFor(bundle);
-  return held.isStore ? undefined : addressIn(held, ref, false).file;
+  return held.isStore ? undefined : addressIn(held, ref).file;
 }
 
 /**
@@ -223,7 +218,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
   };
   return {
     read: (conceptId) => readFrom(held, conceptId),
-    address: (ref) => addressIn(held, ref, true),
+    address: (ref) => gatedAddressIn(held, ref),
     create(asset, options) {
       gate(source, config);
       held.assertWrites(asset.type);

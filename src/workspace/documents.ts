@@ -89,9 +89,7 @@ async function loadSource(ref: string): Promise<{
   const asset = findAsset(found.canonical);
   const placed = addressOf(found.target.source.name, conceptIdFromTypeName(found.type, found.name));
   // The writers keep a document at the file they place it in: one held in another spelling of it cannot be saved.
-  const placedElsewhere =
-    placed.file !== undefined && placed.placedFile !== undefined && placed.file !== placed.placedFile;
-  if (asset === undefined || asset.conceptId !== placed.conceptId || placedElsewhere)
+  if (asset === undefined || asset.conceptId !== placed.conceptId || placed.heldElsewhere === true)
     throw new UsageError(
       "The indexed source no longer matches the writable document target. Refresh the index before editing.",
     );

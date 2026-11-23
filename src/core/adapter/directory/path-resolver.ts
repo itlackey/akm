@@ -2,15 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { findAsset } from "../../core/assets/read";
-import { indexedPathOf } from "../../core/assets/type";
-import { bundleIdAt } from "../../core/bundle-at-dir";
-import { deriveBundleIds } from "../../core/bundle-id";
-import { safeRealpath } from "../../core/common";
-import { lookupBundleRef } from "../indexer";
-import { deriveInstallations, sourceOfBundle } from "../installations";
-import { resolveSourceEntries } from "../search/search-source";
+import { lookupBundleRef } from "../../../indexer/indexer";
+import { deriveInstallations, sourceOfBundle } from "../../../indexer/installations";
+import { resolveSourceEntries } from "../../../indexer/search/search-source";
+import { type BundleRef, makeBundleRef, parseBundleRef } from "../../asset/asset-ref";
+import { findAsset } from "../../assets/read";
+import { indexedPathOf } from "../../assets/type";
+import { bundleIdAt } from "../../bundle-at-dir";
+import { deriveBundleIds } from "../../bundle-id";
+import { safeRealpath } from "../../common";
 
 export interface ResolveAssetPathOptions {
   stashDir?: string;

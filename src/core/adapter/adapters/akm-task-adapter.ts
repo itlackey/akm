@@ -32,7 +32,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { readBoundedTaskSourceYaml } from "../../../tasks/source/bounded-document";
 import { parseTaskSource, peekTaskSourceVersion } from "../../../tasks/source/parse-task-source";
 import {
@@ -42,6 +41,7 @@ import {
   taskSourceErrorDetail,
 } from "../../../tasks/source-v3";
 import { toPosix } from "../../common";
+import type { FileContext } from "../directory/file-context";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import type { FileChange } from "../file-change";
 import type { Bundle, IndexMetadata } from "../types";

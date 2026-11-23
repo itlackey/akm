@@ -43,13 +43,7 @@
   "src/commands/improve/consolidate.ts": {
     "asset-io": {
       "existsSync": 1,
-      "readdirSync": 1,
-      "statSync": 2
-    }
-  },
-  "src/commands/improve/consolidate/pair-pass.ts": {
-    "asset-io": {
-      "statSync": 1
+      "readdirSync": 1
     }
   },
   "src/commands/improve/distill.ts": {
@@ -76,11 +70,6 @@
       "readFileSync": 3,
       "statSync": 2,
       "writeFileSync": 1
-    }
-  },
-  "src/commands/improve/preparation.ts": {
-    "asset-io": {
-      "statSync": 1
     }
   },
   "src/commands/improve/retrieval-scope.ts": {
@@ -299,30 +288,6 @@
   "src/indexer/search/db-search.ts": {
     "adapter-id": {
       ".fileless": 1
-    }
-  },
-  "src/indexer/walk/file-context.ts": {
-    "asset-io": {
-      "buildFileContext": 1,
-      "readFileSync": 2,
-      "statSync": 1
-    }
-  },
-  "src/indexer/walk/place-rules.ts": {
-    "asset-io": {
-      "buildFileContext": 1
-    }
-  },
-  "src/indexer/walk/walker.ts": {
-    "asset-io": {
-      "buildFileContext": 3,
-      "existsSync": 1,
-      "lstatSync": 2,
-      "readdirSync": 3,
-      "statSync": 3,
-      "walkStashFlatWithStatus": 1,
-      "walkStashGit": 1,
-      "walkStashManual": 1
     }
   },
   "src/output/renderers.ts": {

@@ -49,14 +49,14 @@
 
 import path from "node:path";
 import type { AdapterRenderedExecutionSource } from "../../../execution/source";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { AssetEntry } from "../bundle-adapter";
+import type { FileContext } from "../directory/file-context";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import type { FileChange } from "../file-change";
-import type { Bundle, IndexMetadata } from "../types";
+import { type Bundle, type IndexMetadata, rootOf } from "../types";
 import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { skillDirectoryDiagnostics } from "./akm-lint";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
@@ -134,7 +134,7 @@ export function identifyToolDir(layout: ToolDirLayout, relPath: string): string 
 
 /** describe() for a tool-dir adapter: derive the open `type`, project the OKF-shaped fields. */
 export function describeToolDir(layout: ToolDirLayout, file: FileContext): IndexMetadata {
-  const cls = classify(file.relPath, layout) as ToolDirClassification;
+  const cls = classify(file.key, layout) as ToolDirClassification;
 
   const raw = file.content();
   const parsed = parseFrontmatter(raw);
@@ -209,7 +209,7 @@ export async function validateToolDir(
 ): Promise<FileDiagnostic[]> {
   const diagnostics: FileDiagnostic[] = [];
   const seenSkillDirs = new Set<string>();
-  const { check } = createBaseChecker(c.root, ctx);
+  const { check } = createBaseChecker(rootOf(c), ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
@@ -241,7 +241,7 @@ export function renderToolDirExecutionSource(
   c: Bundle,
   file: AssetEntry,
 ): AdapterRenderedExecutionSource | null {
-  const cls = classify(file.relPath, layout);
+  const cls = classify(file.key, layout);
   if (cls?.type !== "command" && cls?.type !== "agent") return null;
   const raw = file.content();
   return renderMarkdownExecutionSource({
@@ -251,7 +251,7 @@ export function renderToolDirExecutionSource(
       ref: `${c.id}//${cls.conceptId}`,
       bundle: c.id,
       adapter: layout.adapterId,
-      file: file.relPath,
+      file: file.key,
     },
     defaults: (data) =>
       executionDefaultsFromFrontmatter(data, {

@@ -13,6 +13,7 @@ import { resolveSourceEntries, type SearchSource } from "../../indexer/search/se
 import type {
   AssetChange,
   AssetEntry,
+  AssetPlacement,
   BundleAdapter,
   BundleAsset,
   BundleListing,
@@ -150,9 +151,9 @@ export class AssetBundle {
   place(asset: Pick<NewAsset, "type" | "name">): string {
     return this.#adapter.place(this.#bundle, asset);
   }
-  /** The file a new asset would be kept at, when its adapter keeps assets as files and writes the type. Display only. */
-  placedFile(asset: Pick<NewAsset, "type" | "name">): string | undefined {
-    return this.#adapter.placedFile?.(this.#bundle, asset);
+  /** Where a create of the asset is kept, when its adapter keeps assets as files; undefined otherwise. */
+  placement(asset: Pick<NewAsset, "type" | "name">): AssetPlacement | undefined {
+    return this.#adapter.placement?.(this.#bundle, asset);
   }
   /** The concept id a stored key holds, from the key alone; null when it holds none or the adapter has no keys. */
   identifyKey(key: string): string | null {

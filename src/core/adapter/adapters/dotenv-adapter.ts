@@ -31,10 +31,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { assetPathCandidatesForName, isSecretSidecar } from "../../asset/asset-placement";
 import { isScratchPath } from "../../asset/scratch";
 import { scanEnvKeyNames, toPosix } from "../../common";
+import type { FileContext } from "../directory/file-context";
 import type { FileChange } from "../file-change";
 import type { Bundle, IndexMetadata } from "../types";
 import type { FileDiagnostic, FileValidateContext } from "../validate-context";

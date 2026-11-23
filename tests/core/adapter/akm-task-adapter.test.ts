@@ -15,11 +15,11 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmTaskAdapter } from "../../../src/core/adapter/adapters/akm-task-adapter";
+import { buildFileContext, type FileContext } from "../../../src/core/adapter/directory/file-context";
 import type { FileChange } from "../../../src/core/adapter/file-change";
 import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
 import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adapter/validate-context";
 import { presentationFor } from "../../../src/core/type-presentation";
-import { buildFileContext, type FileContext } from "../../../src/indexer/walk/file-context";
 import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/akm-task");

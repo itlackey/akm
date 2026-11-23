@@ -7,7 +7,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { resolveAssetPath } from "../../../src/indexer/walk/path-resolver";
+import { resolveAssetPath } from "../../../src/core/adapter/directory/path-resolver";
 import { makeSandboxDir, makeStashDir, type SandboxedDir } from "../../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];

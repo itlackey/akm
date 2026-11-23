@@ -23,9 +23,9 @@ import os from "node:os";
 import path from "node:path";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
 import { akmWorkflowAdapter } from "../../../src/core/adapter/adapters/akm-workflow-adapter";
+import { buildFileContext } from "../../../src/core/adapter/directory/file-context";
 import type { Bundle } from "../../../src/core/adapter/types";
 import { drainDirDocuments } from "../../../src/indexer/scan/drain-dir";
-import { buildFileContext } from "../../../src/indexer/walk/file-context";
 
 const VALID_WORKFLOW = `---
 type: workflow

@@ -5,6 +5,7 @@
 /** The refs an improve run may consider, read from the index, and the small predicates over them. */
 
 import path from "node:path";
+import { resolveAssetPath } from "../../core/adapter/directory/path-resolver";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef, resolveRef } from "../../core/asset/resolve-ref";
 import { findAsset } from "../../core/assets/read";
@@ -21,7 +22,6 @@ import { KNOWN_TYPES } from "../../core/recognition-util";
 import { warn } from "../../core/warn";
 import { deriveInstallations, deriveWritableBundleIds } from "../../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { Database } from "../../storage/database";
 import {
   closeDatabase,

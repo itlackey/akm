@@ -33,11 +33,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
+import { walkStashFlat } from "../../src/core/adapter/directory/walker";
 import type { Bundle, IndexDocument } from "../../src/core/adapter/types";
 import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
 import { indexDocumentToStashEntry } from "../../src/indexer/scan/doc-to-entry";
-import { walkStashFlat } from "../../src/indexer/walk/walker";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 

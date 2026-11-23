@@ -17,11 +17,11 @@ import { withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
 import { upsertIndexRows, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../../indexer/index-written-assets";
 import { embeddingInputCap } from "../../indexer/materialize-embeddings";
 import { brokenWorkflowWarning, indexRowEntry } from "../../indexer/scan/drain-dir";
-import { buildFileContext, fileContextOfEntry, type MatchResult } from "../../indexer/walk/file-context";
-import { declaredTypeForPath } from "../../indexer/walk/matchers";
 import { closeDatabase } from "../../storage/repositories/index-connection";
 import { deleteEntriesByIds } from "../../storage/repositories/index-entries-repository";
 import { hashContent } from "../adapter/adapters/shared";
+import { buildFileContext, fileContextOfEntry, type MatchResult } from "../adapter/directory/file-context";
+import { declaredTypeForPath } from "../adapter/directory/matchers";
 import { recognizeMatch } from "../adapter/recognize-match";
 import type { IndexDocument } from "../adapter/types";
 import { loadConfig } from "../config/config";
@@ -93,7 +93,7 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean)
           const held = bundleHolding(asset);
           // The scan drops a workflow that does not compile, so no ask of it records a row either.
           if (brokenWorkflowWarning(document, fileContextOfEntry(held.root, asset.entry)) !== null) continue;
-          const file = asset.entry.file ?? path.join(held.root, asset.entry.relPath);
+          const file = asset.entry.file ?? path.join(held.root, asset.entry.key);
           if (
             !supersede &&
             db.prepare("SELECT 1 FROM entries WHERE file_path = ? AND item_ref <> ?").get(file, asset.ref)
@@ -107,7 +107,7 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean)
               {
                 // The path the index keys the asset under: its file, else (no file holds it) a path inside the bundle.
                 file,
-                entry: indexRowEntry(document, path.basename(asset.entry.relPath)),
+                entry: indexRowEntry(document, path.basename(asset.entry.key)),
                 conceptId: document.conceptId as string,
                 contentHash: document.hash,
                 hasFile: asset.entry.file !== undefined,
@@ -228,11 +228,11 @@ export function assetTypeFresh(asset: Asset): string {
 }
 
 /**
- * The path the index keys an asset under: its file, else (for an asset no file holds) `<root>/<relPath>`, which is
+ * The path the index keys an asset under: its file, else (for an asset no file holds) `<root>/<key>`, which is
  * not a path to anything.
  */
 export function indexedPathOf(asset: Asset, source: { path: string }): string {
-  return asset.entry.file ?? path.join(source.path, asset.entry.relPath);
+  return asset.entry.file ?? path.join(source.path, asset.entry.key);
 }
 
 /**

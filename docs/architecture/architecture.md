@@ -769,7 +769,7 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/sources/resolve.ts` | filesystem path resolution for refs |
 | `src/storage/repositories/` | SQL for `index.db`, `state.db`, and `logs.db` (entries, FTS, proposals, task history, workflow runs, …) |
 | `src/indexer/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |
-| `src/indexer/walk/` | walker, matchers, path/file/index context — the walk phase |
+| `src/core/adapter/directory/` | walker, matchers, path/file/index context — the walk phase |
 | `src/indexer/db/` | `llm-cache` — the persistence phase (entries/embeddings persistence lives in `src/storage/repositories/`) |
 | `src/indexer/search/` | `db-search`, `fts-query`, ranking, search-fields, search-source, enrichers — the search phase |
 | `src/indexer/passes/` | memory-inference, dir-staleness, metadata — LLM/metadata passes |

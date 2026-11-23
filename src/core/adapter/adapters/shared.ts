@@ -25,7 +25,7 @@ import type { RuleScope } from "../../asset/lint-text";
 import { toPosix } from "../../common";
 import { loadConfig } from "../../config/config";
 import type { FileChange } from "../file-change";
-import type { Bundle } from "../types";
+import { type Bundle, rootOf } from "../types";
 import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 
 // ── Small pure helpers, reused across the concrete adapters ──────────────────
@@ -122,7 +122,7 @@ export async function validateChangesWithBaseChecks(
   ctx: FileValidateContext,
 ): Promise<FileDiagnostic[]> {
   const diagnostics: FileDiagnostic[] = [];
-  const { check } = createBaseChecker(c.root, ctx);
+  const { check } = createBaseChecker(rootOf(c), ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));

@@ -63,7 +63,7 @@ import { runConsolidatePairPass } from "./consolidate/pair-pass";
 import { sanitizeMergedContent } from "./consolidate/sanitize";
 import { contentHash } from "./content-hash";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
-import { indexedAsset, indexedContent } from "./indexed-asset";
+import { indexedAsset, indexedContent, indexedModifiedMs } from "./indexed-asset";
 import { isContentDrivenRow, isLedgerBlocked, ledgerKey, loadLedgerSnapshot, recordLedgerAttempt } from "./ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "./retrieval-scope";
 import { callStage, mintProposal, stageRunner } from "./stage";
@@ -529,13 +529,7 @@ function requireMemoryContent(memory: MemoryEntry): string {
   return requireAsset(makeBundleRef(memory.bundleId, memory.ref)).entry.content();
 }
 
-const mtimeMsOf = (memory: MemoryEntry): number => {
-  try {
-    return fs.statSync(memory.filePath).mtimeMs;
-  } catch {
-    return 0;
-  }
-};
+const mtimeMsOf = (memory: MemoryEntry): number => indexedModifiedMs(memory.bundleId, memory.ref) ?? 0;
 
 /**
  * The exact pool the live pass consumes, with no embedding, model call or
@@ -578,12 +572,8 @@ export function inspectConsolidationPool(
         }
         return row.contentHash !== bodyHash;
       }
-      let changedAt: string | undefined;
-      try {
-        changedAt = fs.statSync(memory.filePath).mtime.toISOString();
-      } catch {
-        changedAt = undefined;
-      }
+      const changedMs = indexedModifiedMs(memory.bundleId, memory.ref);
+      const changedAt = changedMs === undefined ? undefined : new Date(changedMs).toISOString();
       return !isLedgerBlocked(row, nowIso, changedAt);
     });
   }

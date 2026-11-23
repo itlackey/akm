@@ -63,10 +63,17 @@ const baselinePath = path.join(import.meta.dir, "lint-asset-io.baseline.json");
 
 const SCAN_ROOTS = ["src", "desktop/src/lib/server"];
 const ADAPTER_LAYER = ["src/core/adapter/", "src/core/assets/"];
-/** What may import `src/core/adapter/**` modules: the layer, and the walk and recognition helpers 4f.1 moves into it. */
-const ADAPTER_IMPORT_LAYER = [...ADAPTER_LAYER, "src/indexer/walk/", "src/indexer/passes/metadata.ts"];
-/** The adapter modules the rest of the code may import: the contract and the shared value types. */
-const IMPORTABLE_ADAPTER_MODULES = ["src/core/adapter/bundle-adapter", "src/core/adapter/types"];
+/** What may import `src/core/adapter/**` modules: the layer, and the recognition helpers in `src/indexer/passes/metadata.ts`. */
+const ADAPTER_IMPORT_LAYER = [...ADAPTER_LAYER, "src/indexer/passes/metadata.ts"];
+/**
+ * The adapter modules the rest of the code may import: the contract and the shared value types, and the directory
+ * walk (`directory/`), which phases 5-8b move their callers off.
+ */
+const IMPORTABLE_ADAPTER_MODULES = [
+  "src/core/adapter/bundle-adapter",
+  "src/core/adapter/types",
+  "src/core/adapter/directory/",
+];
 const FACADE_INTERNAL_MODULES = ["src/core/assets/bundle", "src/core/assets/asset"];
 
 /** The reasons an exemption may give, each with what it covers. Allowed path prefixes below use the same words. */
@@ -374,7 +381,9 @@ export function scan(root: string, adapterIds: readonly string[], exemptions: st
         if (
           !mayImportAdapter &&
           target.startsWith("src/core/adapter/") &&
-          !IMPORTABLE_ADAPTER_MODULES.includes(target)
+          !IMPORTABLE_ADAPTER_MODULES.some((module) =>
+            module.endsWith("/") ? target.startsWith(module) : target === module,
+          )
         ) {
           report(node, "adapter-import", target);
         }

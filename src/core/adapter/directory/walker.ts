@@ -13,11 +13,11 @@
 import { spawnSync as spawnSyncNode } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { isRelevantAssetFile } from "../../core/asset/asset-placement";
-import { isScratchPath } from "../../core/asset/scratch";
-import { toErrorMessage } from "../../core/common";
-import { WORKFLOW_EXTENSIONS } from "../../core/recognition-util";
-import { spawnSync } from "../../runtime";
+import { spawnSync } from "../../../runtime";
+import { isRelevantAssetFile } from "../../asset/asset-placement";
+import { isScratchPath } from "../../asset/scratch";
+import { toErrorMessage } from "../../common";
+import { WORKFLOW_EXTENSIONS } from "../../recognition-util";
 import { buildFileContext, type FileContext } from "./file-context";
 
 /** Directories akm and Git manage inside a bundle: never content, whatever a person or an adapter lists. */

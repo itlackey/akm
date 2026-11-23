@@ -12,6 +12,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { renderTaskYaml } from "../commands/tasks/tasks";
+import { buildFileContext } from "../core/adapter/directory/file-context";
+import { declaredTypeForPath } from "../core/adapter/directory/matchers";
 import { assertFlatAssetName, normalizeCreateSubPath } from "../core/asset/asset-create";
 import { documentStashDirFor, refForFile } from "../core/asset/asset-placement";
 import { serializeFrontmatter } from "../core/asset/asset-serialize";
@@ -29,8 +31,6 @@ import {
   writeSourceFile,
 } from "../core/write-source";
 import { indexWrittenAssets } from "../indexer/index-written-assets";
-import { buildFileContext } from "../indexer/walk/file-context";
-import { declaredTypeForPath } from "../indexer/walk/matchers";
 import { buildWorkflowTemplate } from "../workflows/authoring/authoring";
 import { type FileVerdict, folderBlocker, plainWriteBlocker, type WriteBlockers } from "./file-actions";
 import { interactive } from "./lease";

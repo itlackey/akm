@@ -6,8 +6,9 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
+import { buildFileContext, type FileContext } from "../../core/adapter/directory/file-context";
 import { adapterForId } from "../../core/adapter/registry";
-import type { Bundle } from "../../core/adapter/types";
+import { type Bundle, rootOf } from "../../core/adapter/types";
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { bundleAdapterId } from "../../core/assets/gate";
 import { isContainedResolvedPath, isWithin } from "../../core/common";
@@ -24,7 +25,6 @@ import type {
 import { type IndexEntry, lookupBundleRef } from "../../indexer/indexer";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveEntryContent, resolveSourceEntries } from "../../indexer/search/search-source";
-import { buildFileContext, type FileContext } from "../../indexer/walk/file-context";
 
 export type ExecutionSourceLookup = (ref: BundleRef) => Promise<IndexEntry | null>;
 
@@ -87,7 +87,7 @@ function implicitBundleForEntry(entry: IndexEntry, config: AkmConfig): Bundle | 
     if (installation.id !== entry.bundleId) continue;
     const source = sources[index];
     if (!source) continue;
-    const canonicalRoot = realDirectory(installation.root, `Canonical implicit source root for ${entry.bundleId}`);
+    const canonicalRoot = realDirectory(rootOf(installation), `Canonical implicit source root for ${entry.bundleId}`);
     const adapterId = bundleAdapterId(source);
     if (adapterId !== entry.adapterId) {
       warnOnce(

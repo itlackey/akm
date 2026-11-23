@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
+import { buildFileContext, type FileContext } from "../../../src/core/adapter/directory/file-context";
 import type { Asset } from "../../../src/core/assets/asset";
 import * as facade from "../../../src/core/assets/read";
 import { assetRevision } from "../../../src/core/assets/read";
@@ -35,7 +36,6 @@ import { beginWriteProvenance } from "../../../src/core/write-provenance";
 import { type ResolvedWriteTarget, resolveWriteTarget } from "../../../src/core/write-source";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { resolveSourceEntries, type SearchSource } from "../../../src/indexer/search/search-source";
-import { buildFileContext, type FileContext } from "../../../src/indexer/walk/file-context";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { configureBundles } from "../../_helpers/bundle-config";
 import { withFakeSecretStores } from "../../_helpers/fake-secret-stores";
@@ -112,6 +112,7 @@ describe("finding an asset in one bundle — closed-form candidates (#857)", () 
         absPath: target,
         file: target,
         relPath: "vendor/tools/deploy.md",
+        key: "vendor/tools/deploy.md",
         ext: ".md",
         fileName: "deploy.md",
         parentDir: "tools",

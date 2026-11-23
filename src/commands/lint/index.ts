@@ -12,6 +12,8 @@ import {
   perTypeChecks,
   perTypeFrontend,
 } from "../../core/adapter/adapters/akm-lint";
+import { type FileContext, fileContextOfEntry } from "../../core/adapter/directory/file-context";
+import { walkStashFlat } from "../../core/adapter/directory/walker";
 import { adapterForId } from "../../core/adapter/registry";
 import type { Diagnostic } from "../../core/adapter/types";
 import type { FileDiagnostic } from "../../core/adapter/validate-context";
@@ -38,8 +40,6 @@ import { defaultExcludedTypes } from "../../core/config/schema/search";
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
-import { walkStashFlat } from "../../indexer/walk/walker";
 import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../tasks/source-v3";
 import { isUsableWorkflowSource, isWorkflowSource, resolveWorkflowSourceDomains } from "../../workflows/source-files";
 import { runBaseChecks } from "./base-linter";

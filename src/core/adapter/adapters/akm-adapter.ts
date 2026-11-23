@@ -59,13 +59,6 @@ import {
   setMarkdownFragmentContent,
 } from "../../../indexer/passes/metadata";
 import {
-  buildFileContext,
-  type FileContext,
-  fileContextOfEntry,
-  type MatchResult,
-} from "../../../indexer/walk/file-context";
-import type { PathFileContext } from "../../../indexer/walk/matchers";
-import {
   assetPathCandidatesForName,
   deriveCanonicalAssetNameFromStashRoot,
   isSecretSidecar,
@@ -76,10 +69,12 @@ import {
 } from "../../asset/asset-placement";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import type { AssetEntry } from "../bundle-adapter";
+import { buildFileContext, type FileContext, fileContextOfEntry, type MatchResult } from "../directory/file-context";
+import type { PathFileContext } from "../directory/matchers";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import type { FileChange } from "../file-change";
 import { recognizeMatch, recognizeMatchByPath } from "../recognize-match";
-import type { Bundle, IndexDocument, IndexMetadata } from "../types";
+import { type Bundle, type IndexDocument, type IndexMetadata, rootOf } from "../types";
 import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { AkmFormatAdapterBase } from "./akm-format";
 import { derivedSiblingPath, perTypeDiagnostics, skillDirectoryDiagnostics, type TypeCheckInput } from "./akm-lint";
@@ -310,7 +305,7 @@ export function classifyAkmText(relPath: string, raw: string) {
 
 /** Render AKM-native command/agent Markdown into the shared execution source. */
 function renderExecutionSource(c: Bundle, entry: AssetEntry): AdapterRenderedExecutionSource | null {
-  const file = fileContextOfEntry(c.root, entry);
+  const file = fileContextOfEntry(rootOf(c), entry);
   const document = akmAdapter.recognize(c, file);
   if (document?.type !== "command" && document?.type !== "agent") return null;
   if (!document.ref) return null;
@@ -358,6 +353,7 @@ function buildOverlayContext(root: string, relPathInput: string, raw: string): F
     absPath,
     file: absPath,
     relPath,
+    key: relPath,
     ext,
     fileName,
     parentDir,
@@ -396,14 +392,14 @@ function buildOverlayContext(root: string, relPathInput: string, raw: string): F
 async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
   const diagnostics: FileDiagnostic[] = [];
   const seenSkillDirs = new Set<string>();
-  const { check, rulesFor } = createBaseChecker(c.root, ctx);
+  const { check, rulesFor } = createBaseChecker(rootOf(c), ctx);
 
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
     if (typeof raw !== "string") continue;
 
-    const overlay = buildOverlayContext(c.root, change.path, raw);
+    const overlay = buildOverlayContext(rootOf(c), change.path, raw);
     const match = recognizeMatch(overlay);
     const type = match?.type;
 

@@ -17,6 +17,8 @@
  */
 
 import fs from "node:fs";
+import { buildFileContext } from "../core/adapter/directory/file-context";
+import { walkedFiles } from "../core/adapter/directory/walker";
 import { adapterForId } from "../core/adapter/registry";
 import { bundleAdapterId } from "../core/assets/gate";
 import { loadConfig } from "../core/config/config";
@@ -34,8 +36,6 @@ import { embeddingInputCap, generateEmbeddingsForDb, publishTargetedEmbeddingMet
 import { type IndexDocument, withFileSize } from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
 import { resolveSourceEntries } from "./search/search-source";
-import { buildFileContext } from "./walk/file-context";
-import { walkedFiles } from "./walk/walker";
 
 /**
  * Busy-timeout (ms) for write-path index upserts. A real write — unlike the

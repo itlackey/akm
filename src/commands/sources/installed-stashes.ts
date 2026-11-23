@@ -17,6 +17,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { SemanticSearchStatus } from "../../core/adapter/directory/index-context";
 import { bundleStorageExists, detectBundleAdapter } from "../../core/assets/gate";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
@@ -35,7 +36,6 @@ import {
 } from "../../indexer/index-build";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import type { IndexOptions, IndexResponse } from "../../indexer/indexer";
-import type { SemanticSearchStatus } from "../../indexer/walk/index-context";
 import type { LockfileEntry } from "../../integrations/lockfile";
 import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
