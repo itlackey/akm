@@ -6,7 +6,7 @@ import type { Bundle } from "../../../../src/core/adapter/types";
 import type { FileValidateContext } from "../../../../src/core/adapter/validate-context";
 import { buildFileContext, type FileContext } from "../../../../src/indexer/walk/file-context";
 import { walkStashFlat } from "../../../../src/indexer/walk/walker";
-import { identify, spellings } from "../../../_helpers/adapter-hooks";
+import { checkChanges, identify, spellings } from "../../../_helpers/adapter-hooks";
 
 const ROOT = path.join(import.meta.dir, "../../../fixtures/bundles/code-project");
 const GOLDEN = JSON.parse(
@@ -113,7 +113,8 @@ describe("code-project validate", () => {
   };
 
   test("base checks do not run on source (no stale-path or ref misfires)", async () => {
-    const diagnostics = await codeProjectAdapter.validateChanges(
+    const diagnostics = await checkChanges(
+      codeProjectAdapter,
       bundle,
       [
         { path: "src/a.ts", op: "update", after: 'const p = "/tmp/x";' },

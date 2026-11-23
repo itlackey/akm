@@ -3,6 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { DirectoryAdapterBase } from "../../src/core/adapter/directory-adapter";
+import type { FileChange } from "../../src/core/adapter/file-change";
+import type { Bundle } from "../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../src/core/adapter/validate-context";
 
 interface Hooks {
   identify(relPath: string): string | null;
@@ -43,4 +46,21 @@ export function serialize(
   content: string | Buffer,
 ): string | Buffer {
   return (adapter as unknown as WriteHooks).serialize(type, file, content);
+}
+
+interface CheckHooks {
+  checkChanges(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]>;
+}
+
+/**
+ * A directory adapter's protected file-level checks over a hand-built file view, for the tests that pin one check's
+ * findings on virtual files. The public path is `validate(edits)`.
+ */
+export function checkChanges(
+  adapter: DirectoryAdapterBase,
+  b: Bundle,
+  changes: FileChange[],
+  ctx: FileValidateContext,
+): Promise<FileDiagnostic[]> {
+  return (adapter as unknown as CheckHooks).checkChanges(b, changes, ctx);
 }

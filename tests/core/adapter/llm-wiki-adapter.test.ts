@@ -23,6 +23,7 @@ import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adap
 import type { FileChange } from "../../../src/core/file-change";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/llm-wiki");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/llm-wiki");
@@ -157,7 +158,7 @@ describe("llm-wiki adapter — lint golden (native wiki validation)", () => {
   };
 
   test("the whole-wiki validate produces exactly the golden's one broken-xref finding", async () => {
-    const diags = await llmWikiAdapter.validateChanges(bundle(), makeChanges(), ctx);
+    const diags = await checkChanges(llmWikiAdapter, bundle(), makeChanges(), ctx);
     // Only pages/orphan.md's broken xref surfaces; everything else is clean.
     expect(diags).toEqual([
       {
@@ -172,7 +173,7 @@ describe("llm-wiki adapter — lint golden (native wiki validation)", () => {
   });
 
   test("per-type golden issue codes match", async () => {
-    const diags = await llmWikiAdapter.validateChanges(bundle(), makeChanges(), ctx);
+    const diags = await checkChanges(llmWikiAdapter, bundle(), makeChanges(), ctx);
     const byFile = new Map<string, FileDiagnostic[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d]);
 
@@ -190,7 +191,8 @@ describe("llm-wiki adapter — lint golden (native wiki validation)", () => {
   });
 
   test("reserved files (schema/index/log) get no page checks", async () => {
-    const diags = await llmWikiAdapter.validateChanges(
+    const diags = await checkChanges(
+      llmWikiAdapter,
       bundle(),
       [{ path: "schema.md", op: "update", after: fs.readFileSync(path.join(FIXTURE_ROOT, "schema.md"), "utf8") }],
       ctx,

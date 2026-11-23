@@ -4,7 +4,7 @@
 
 /**
  * The ONE core `ValidateContext` implementation (`core/adapter/validate-context.ts`)
- * — the overlay `BundleAdapter.validateChanges()`'s interface contract mandates
+ * — the overlay `checkChanges(BundleAdapter, )`'s interface contract mandates
  * ("one core overlay implementation, not one per adapter"). Exercised in
  * isolation here (real disk, a tmpdir per test) so the overlay semantics are
  * pinned independently of any one adapter's own test suite.
@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { createFileValidateContext } from "../../../../src/core/adapter/validate-context";
 import type { FileChange } from "../../../../src/core/file-change";
+import { checkChanges } from "../../../_helpers/adapter-hooks";
 
 function makeRoot(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-validate-ctx-"));

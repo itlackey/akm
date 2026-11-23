@@ -24,6 +24,7 @@ import { agentSkillsAdapter } from "../../src/core/adapter/adapters/agent-skills
 import { skillDirectoryDiagnostics } from "../../src/core/adapter/adapters/akm-lint";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
 import { createFileValidateContext } from "../../src/core/adapter/validate-context";
+import { checkChanges } from "../_helpers/adapter-hooks";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -86,7 +87,8 @@ describe("agent-skills: a package directory with no SKILL.md is flagged (issue #
     // the group dir itself must not be reported for having no manifest of its own.
     write(root, "team/pdf-processing/SKILL.md", skillManifest("pdf-processing"));
 
-    const diagnostics = await agentSkillsAdapter.validateChanges(
+    const diagnostics = await checkChanges(
+      agentSkillsAdapter,
       { id: "grouped", root },
       [{ path: "team/pdf-processing/SKILL.md", op: "update" }],
       createFileValidateContext({ root }),
@@ -102,7 +104,8 @@ describe("agent-skills: a package directory with no SKILL.md is flagged (issue #
     write(root, "team/pdf-processing/SKILL.md", skillManifest("pdf-processing"));
     write(root, "team/half-built/reference/NOTES.md", "# Notes\n");
 
-    const diagnostics = await agentSkillsAdapter.validateChanges(
+    const diagnostics = await checkChanges(
+      agentSkillsAdapter,
       { id: "mixed-grouped", root },
       [{ path: "team/pdf-processing/SKILL.md", op: "update" }],
       createFileValidateContext({ root }),
@@ -125,7 +128,8 @@ describe("agent-skills: a package directory with no SKILL.md is flagged (issue #
     write(root, "pdf-processing/SKILL.md", skillManifest("pdf-processing"));
     write(root, ".github/workflows/ci.yml", "name: ci\n");
 
-    const diagnostics = await agentSkillsAdapter.validateChanges(
+    const diagnostics = await checkChanges(
+      agentSkillsAdapter,
       { id: "dotted", root },
       [{ path: "pdf-processing/SKILL.md", op: "update" }],
       createFileValidateContext({ root }),

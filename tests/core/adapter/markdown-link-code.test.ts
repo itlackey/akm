@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { resolveBodyLinks } from "../../../src/core/adapter/adapters/llm-wiki-adapter";
 import { okfAdapter, resolveOkfLinks } from "../../../src/core/adapter/adapters/okf-adapter";
 import type { FileValidateContext } from "../../../src/core/adapter/validate-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const codeExamples = [
   "`[example](./missing.md)`",
@@ -115,7 +116,8 @@ test("OKF code examples produce no broken-link diagnostic; a real missing link r
       return { exists: false };
     },
   };
-  const diagnostics = await okfAdapter.validateChanges(
+  const diagnostics = await checkChanges(
+    okfAdapter,
     { id: "sample", root: "/sample" },
     [
       {

@@ -28,6 +28,7 @@ import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
 import type { FileValidateContext } from "../../../src/core/adapter/validate-context";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/website-snapshot");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/website-snapshot");
@@ -117,7 +118,8 @@ describe("website-snapshot adapter — lint golden (base checks only; read-only 
   test("every snapshot page validates clean ([])", async () => {
     for (const entry of Object.values(perType)) {
       const raw = fs.readFileSync(path.join(FIXTURE_ROOT, entry.relPath), "utf8");
-      const diags = await websiteSnapshotAdapter.validateChanges(
+      const diags = await checkChanges(
+        websiteSnapshotAdapter,
         bundle(),
         [{ path: entry.relPath, op: "update", after: raw }],
         ctx,

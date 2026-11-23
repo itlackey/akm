@@ -22,6 +22,7 @@ import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adap
 import type { FileChange } from "../../../src/core/file-change";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/claude");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/claude");
@@ -110,7 +111,7 @@ describe("claude adapter — lint golden (lenient tool-dir validation)", () => {
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await claudeAdapter.validateChanges(bundle(), changes, ctx);
+    const diags = await checkChanges(claudeAdapter, bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {
@@ -120,7 +121,8 @@ describe("claude adapter — lint golden (lenient tool-dir validation)", () => {
 
   test("a skill directory with no SKILL.md emits missing-skill-md (the one coded skill check)", async () => {
     const emptyCtx: FileValidateContext = { ...ctx, readFile: async () => null };
-    const diags = await claudeAdapter.validateChanges(
+    const diags = await checkChanges(
+      claudeAdapter,
       bundle(),
       [{ path: "skills/csv-cleanup/reference.md", op: "update", after: "resource" }],
       emptyCtx,

@@ -20,6 +20,7 @@ import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adap
 import type { FileChange } from "../../../src/core/file-change";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext, type FileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/akm-task");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/akm-task");
@@ -113,7 +114,7 @@ describe("akm-task adapter — strict task source validation", () => {
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await akmTaskAdapter.validateChanges(bundle(), changes, ctx);
+    const diags = await checkChanges(akmTaskAdapter, bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {
@@ -123,7 +124,8 @@ describe("akm-task adapter — strict task source validation", () => {
 
   test("two-targets.yml is the sole invalid-task-yaml (`uses` plus `run`)", async () => {
     const raw = fs.readFileSync(path.join(FIXTURE_ROOT, "two-targets.yml"), "utf8");
-    const diags = await akmTaskAdapter.validateChanges(
+    const diags = await checkChanges(
+      akmTaskAdapter,
       bundle(),
       [{ path: "two-targets.yml", op: "update", after: raw }],
       ctx,
@@ -143,11 +145,7 @@ describe("akm-task adapter — strict task source validation", () => {
       ["alias.yml", "version: 4\nrun: &shared echo okay\nname: *shared\n", "anchors"],
     ] as const;
     for (const [file, raw, detail] of cases) {
-      const diagnostics = await akmTaskAdapter.validateChanges(
-        bundle(),
-        [{ path: file, op: "update", after: raw }],
-        ctx,
-      );
+      const diagnostics = await checkChanges(akmTaskAdapter, bundle(), [{ path: file, op: "update", after: raw }], ctx);
       expect(diagnostics).toHaveLength(1);
       expect(diagnostics[0]).toMatchObject({ file, issue: "invalid-task-yaml", fixed: false });
       expect(diagnostics[0]?.detail).toContain(detail);
@@ -156,7 +154,8 @@ describe("akm-task adapter — strict task source validation", () => {
 
   test("keeps `.yaml` as a reported near miss and never validates it as a task", async () => {
     const raw = "version: 4\nrun: echo okay\n";
-    const diagnostics = await akmTaskAdapter.validateChanges(
+    const diagnostics = await checkChanges(
+      akmTaskAdapter,
       bundle(),
       [{ path: "misnamed.yaml", op: "update", after: raw }],
       ctx,

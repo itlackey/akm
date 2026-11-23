@@ -23,6 +23,7 @@ import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adap
 import type { FileChange } from "../../../src/core/file-change";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/dotenv");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/dotenv");
@@ -142,7 +143,7 @@ describe("dotenv adapter — lint golden (dangerous-env-key, .env-suffix-narrow)
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await dotenvAdapter.validateChanges(bundle(), changes, ctx);
+    const diags = await checkChanges(dotenvAdapter, bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {
@@ -156,9 +157,9 @@ describe("dotenv adapter — lint golden (dangerous-env-key, .env-suffix-narrow)
       op: "update",
       after: fs.readFileSync(path.join(FIXTURE_ROOT, rel), "utf8"),
     });
-    const dangerous = await dotenvAdapter.validateChanges(bundle(), [mk("env/dangerous.env")], ctx);
+    const dangerous = await checkChanges(dotenvAdapter, bundle(), [mk("env/dangerous.env")], ctx);
     expect(dangerous.map((d) => d.issue)).toEqual(["dangerous-env-key", "dangerous-env-key"]);
-    const bareSecret = await dotenvAdapter.validateChanges(bundle(), [mk("secrets/deploy-key")], ctx);
+    const bareSecret = await checkChanges(dotenvAdapter, bundle(), [mk("secrets/deploy-key")], ctx);
     expect(bareSecret).toEqual([]);
   });
 });

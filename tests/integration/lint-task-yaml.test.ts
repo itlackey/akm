@@ -29,6 +29,7 @@ import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
 import { akmTaskAdapter } from "../../src/core/adapter/adapters/akm-task-adapter";
 import type { Bundle } from "../../src/core/adapter/types";
 import { createFileValidateContext } from "../../src/core/adapter/validate-context";
+import { checkChanges } from "../_helpers/adapter-hooks";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -155,7 +156,8 @@ describe("akm adapter validate() — malformed task YAML (issue #760)", () => {
     storage = withIsolatedAkmStorage();
     writeTask(storage.stashDir, "broken.yml", MALFORMED_TASK);
 
-    const diagnostics = await akmAdapter.validateChanges(
+    const diagnostics = await checkChanges(
+      akmAdapter,
       bundle(storage.stashDir),
       [{ path: "tasks/broken.yml", op: "update" }],
       createFileValidateContext({ root: storage.stashDir }),
@@ -175,7 +177,8 @@ describe("akm-task adapter validate() — malformed task YAML (issue #760)", () 
     fs.mkdirSync(root, { recursive: true });
     fs.writeFileSync(path.join(root, "broken.yml"), MALFORMED_TASK, "utf8");
 
-    const diagnostics = await akmTaskAdapter.validateChanges(
+    const diagnostics = await checkChanges(
+      akmTaskAdapter,
       bundle(root),
       [{ path: "broken.yml", op: "update" }],
       createFileValidateContext({ root }),
@@ -191,7 +194,8 @@ describe("akm-task adapter validate() — malformed task YAML (issue #760)", () 
     fs.mkdirSync(root, { recursive: true });
     fs.writeFileSync(path.join(root, "misnamed.yaml"), VALID_TASK, "utf8");
 
-    const diagnostics = await akmTaskAdapter.validateChanges(
+    const diagnostics = await checkChanges(
+      akmTaskAdapter,
       bundle(root),
       [{ path: "misnamed.yaml", op: "update" }],
       createFileValidateContext({ root }),

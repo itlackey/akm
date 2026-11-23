@@ -702,6 +702,8 @@ async function addAdapterFindings(
   };
   const seen = new Set([...found.fixed, ...found.flagged, ...found.warnings].map(lintIssueDedupeKey));
   for (const issue of await adapterFindings(adapter.id, stashRoot, inSweep, sources, cfg, options)) {
+    // A skill directory's check belongs to the skills sweep: `--type knowledge` does not report it.
+    if (issue.issue === "missing-skill-md" && !dirs.has("skills")) continue;
     const key = lintIssueDedupeKey(issue);
     if (seen.has(key)) continue;
     seen.add(key);

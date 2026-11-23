@@ -22,6 +22,7 @@ import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adap
 import type { FileChange } from "../../../src/core/file-change";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/generic-files");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/generic-files");
@@ -103,7 +104,7 @@ describe("generic-files adapter — lint golden (base checks only)", () => {
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await genericFilesAdapter.validateChanges(bundle(), changes, ctx);
+    const diags = await checkChanges(genericFilesAdapter, bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {

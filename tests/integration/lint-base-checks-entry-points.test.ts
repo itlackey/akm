@@ -18,6 +18,7 @@ import { okfAdapter } from "../../src/core/adapter/adapters/okf-adapter";
 import { createFileValidateContext } from "../../src/core/adapter/validate-context";
 import { loadConfig } from "../../src/core/config/config";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
+import { checkChanges } from "../_helpers/adapter-hooks";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -175,7 +176,8 @@ describe("the base checks give the same findings through the lint sweep and thro
 
     const sweep = (await akmLint({ dir: root, config })).flagged;
     const ctx = createFileValidateContext({ root, sources: resolveSourceEntries(root, config) });
-    const validated = await akmAdapter.validateChanges(
+    const validated = await checkChanges(
+      akmAdapter,
       { id: "stash", root },
       FIXTURE.map((file) => ({ path: file.rel, op: "update" as const })),
       ctx,
@@ -269,7 +271,8 @@ describe("a ref a file declares is checked wherever it points", () => {
       "---\ntype: concept\ntitle: A\nxrefs:\n  - concepts/there\n  - concepts/gone\n---\n\nBody.\n",
     );
     const config = loadConfig();
-    const found = await okfAdapter.validateChanges(
+    const found = await checkChanges(
+      okfAdapter,
       { id: "okf", root },
       [{ path: "concepts/a.md", op: "update" }],
       createFileValidateContext({ root, sources: [{ path: root }], config }),

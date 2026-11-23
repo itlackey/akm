@@ -178,21 +178,23 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
    * root, that a full listing reaches and that `identify` gives a concept id. The asset comes back under that id.
    */
   read(b: Bundle, conceptId: string): BundleAsset | undefined {
-    const held = this.holders(b, conceptId);
-    return held && { conceptId: held.conceptId, entry: this.entryOf(held.files[0] as FileContext) };
+    const held = this.holders(liveView(b), conceptId);
+    const first = held?.files[0];
+    const file = first === undefined ? undefined : buildFileContext(b.root, path.join(b.root, first));
+    return held && file && { conceptId: held.conceptId, entry: this.entryOf(file) };
   }
 
   /**
    * Native validation of `edits`, by ref. The edits become file changes over the bundle's snapshot (the files on disk
-   * with the pending edits overlaid) and are checked there, so nothing here resolves a spelling on the live tree.
+   * with the pending edits overlaid) and are checked there. An edit's file and the files a concept is held by are
+   * found by {@link holders}, the function `read` uses, over a view of the live tree or of the snapshot.
    */
   async validate(b: Bundle, edits: AssetEdit[], ctx: ValidateContext): Promise<Diagnostic[]> {
     const base = { root: b.root, sources: ctx.sources, config: ctx.config, readMoves: ctx.readMoves };
-    const disk = createFileValidateContext(base);
+    const live = liveView(b);
     const changes: FileChange[] = [];
     for (const edit of edits) {
-      const relPath =
-        (await this.snapshotSpellings(b, disk, edit.conceptId, []))[0] ?? this.spellings(edit.conceptId)[0];
+      const relPath = this.holders(live, edit.conceptId)?.files[0] ?? this.spellings(edit.conceptId)[0];
       if (relPath === undefined) continue;
       changes.push(
         edit.op === "delete"
@@ -200,7 +202,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
           : { path: relPath, op: edit.op, ...(edit.content === undefined ? {} : { after: edit.content.toString() }) },
       );
     }
-    const found = await this.validateChanges(b, changes, createFileValidateContext({ ...base, changes }));
+    const found = await this.checkChanges(b, changes, createFileValidateContext({ ...base, changes }));
     return found.map((diagnostic) => ({
       ...diagnostic,
       ref: `${b.id}//${this.identify(diagnostic.file) ?? diagnostic.file}`,
@@ -212,14 +214,15 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
    * (`skills/x.md` and `skills/x/SKILL.md`): reads and writes act on the winner, so the ignored files are only visible
    * here.
    */
-  async validateChanges(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  protected async checkChanges(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     const diagnostics = await this.validateFiles(b, changes, ctx);
+    const view = snapshotView(b, changes);
     const seen = new Set<string>();
     for (const change of changes) {
       const conceptId = this.identify(change.path);
       if (conceptId === null || seen.has(conceptId)) continue;
       seen.add(conceptId);
-      const files = await this.snapshotSpellings(b, ctx, conceptId, changes);
+      const files = this.holders(view, conceptId)?.files ?? [];
       if (files.length < 2) continue;
       const [winner, ...ignored] = files;
       diagnostics.push({
@@ -233,70 +236,37 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   }
 
   /**
-   * The files of the snapshot that spell `conceptId` (case variants included), that `identify` maps to it and that a
-   * walk reaches, in spelling order. A file of the working tree the walk does not reach is no spelling; only duplicates
-   * are worth asking git, and a file a pending change creates is judged by its path alone.
-   */
-  private async snapshotSpellings(
-    b: Bundle,
-    ctx: FileValidateContext,
-    conceptId: string,
-    pending: readonly FileChange[],
-  ): Promise<string[]> {
-    const normalized = normalizedConceptId(conceptId);
-    if (!normalized) return [];
-    const found = new Set<string>();
-    for (const spelling of this.spellings(normalized)) {
-      for (const relPath of await snapshotVariants(ctx, spelling)) {
-        if (this.identify(relPath) === normalized) found.add(relPath);
-      }
-    }
-    if (found.size < 2) return [...found];
-    const walked = (relPath: string): boolean =>
-      pending.some((change) => change.path === relPath && change.op !== "delete") ||
-      isWalkedFile(b.root, path.join(b.root, relPath), this.walkOptions());
-    return [...found].filter(walked);
-  }
-
-  /**
-   * The files that hold the asset `asked` names, the winner first, and the concept id they hold. Existence checks
-   * and directory listings only. Undefined: the root is gone or no spelling of it exists.
+   * The files (bundle-relative) that hold the asset `asked` names, the winner first, and the concept id they hold,
+   * as `view` shows them: the one place that decides which file holds a concept, for `read` (the live tree) and for
+   * `validate` (the snapshot). Existence checks and directory listings only. Undefined: the root is gone or no spelling of it exists.
    *
    * `asked` may be a file's name (`tasks/dup.md`) rather than a concept id. The first existing spelling's file then
    * holds some concept, and that concept's winner is the answer, so a file name never reaches a file the concept's
    * own spelling order ranks below another (`tasks/dup.md` and `tasks/dup` are the same asset).
    */
-  private holders(b: Bundle, asked: string): { conceptId: string; files: FileContext[] } | undefined {
+  private holders(view: FileView, asked: string): { conceptId: string; files: string[] } | undefined {
     const normalized = normalizedConceptId(asked);
-    if (!normalized) return undefined;
-    try {
-      fs.realpathSync(b.root);
-    } catch (error) {
-      // A root that is gone holds nothing. Any other failure (EACCES) is not "nothing": say the root is unreadable.
-      if (hasErrnoCode(error, "ENOENT")) return undefined;
-      throw new ConfigError(`Unable to read bundle directory at "${b.root}".`, "STASH_DIR_UNREADABLE");
-    }
-    const spelled = this.existingSpellings(b, normalized);
+    if (!normalized || !view.rootExists()) return undefined;
+    const spelled = this.existingSpellings(view, normalized);
     const first = spelled[0];
     if (!first) return undefined;
-    const conceptId = this.identify(first.relPath) as string;
-    const held = conceptId === normalized ? spelled : this.existingSpellings(b, conceptId);
-    const files = held.filter((file) => this.identify(file.relPath) === conceptId);
+    const conceptId = this.identify(first) as string;
+    const held = conceptId === normalized ? spelled : this.existingSpellings(view, conceptId);
+    const files = held.filter((file) => this.identify(file) === conceptId);
     return { conceptId, files: files.length > 0 ? files : [first] };
   }
 
   /** The files that exist at a spelling of `conceptId` (case variants included) and that a listing reaches and `identify` maps to a concept, in spelling order. */
-  private existingSpellings(b: Bundle, conceptId: string): FileContext[] {
-    const found = new Map<string, FileContext>();
+  private existingSpellings(view: FileView, conceptId: string): string[] {
+    const found = new Set<string>();
     for (const spelling of this.spellings(conceptId)) {
-      for (const relPath of caseVariants(b.root, spelling)) {
-        const file = candidateFile(b, path.join(b.root, relPath));
-        if (!file || found.has(file.absPath) || this.identify(file.relPath) === null) continue;
-        if (!isWalkedFile(b.root, file.absPath, this.walkOptions())) continue;
-        found.set(file.absPath, file);
+      for (const relPath of caseVariants(view, spelling)) {
+        if (found.has(relPath) || this.identify(relPath) === null) continue;
+        if (!view.isFile(relPath) || !view.isWalked(relPath, this.walkOptions())) continue;
+        found.add(relPath);
       }
     }
-    return [...found.values()];
+    return [...found];
   }
 
   /** Which of two files that hold `conceptId` wins: the earlier spelling, the exact one before its case variants. */
@@ -532,48 +502,86 @@ function isCaseVariant(spelling: string, other: string): boolean {
   );
 }
 
-/** The files of a snapshot named `spelling`, or by it with the case of its extension changed: the exact one first, then by code point. */
-async function snapshotVariants(ctx: FileValidateContext, spelling: string): Promise<string[]> {
-  const dir = path.posix.dirname(spelling);
-  const named = (await ctx.list(dir))
-    .map((name) => (dir === "." ? name : `${dir}/${name}`))
-    .filter((relPath) => relPath === spelling || isCaseVariant(spelling, relPath));
-  return [
-    ...named.filter((relPath) => relPath === spelling),
-    ...named.filter((relPath) => relPath !== spelling).sort(compareCodePoints),
-  ];
+/** What decides which files hold a concept: the names in a folder, which of them are files, and which a walk reaches. */
+interface FileView {
+  /** False when the bundle's root is gone; refuses when it cannot be read. */
+  rootExists(): boolean;
+  /** The names directly inside the bundle-relative `dir`. */
+  list(dir: string): string[];
+  /** Whether `relPath` is a file, or a link to one, inside the bundle. */
+  isFile(relPath: string): boolean;
+  /** Whether a full walk reaches `relPath`. */
+  isWalked(relPath: string, options: { includeAllDirectories: boolean }): boolean;
+}
+
+/** The bundle's files as they are on disk. */
+function liveView(b: Bundle): FileView {
+  return {
+    rootExists() {
+      try {
+        fs.realpathSync(b.root);
+        return true;
+      } catch (error) {
+        // A root that is gone holds nothing. Any other failure (EACCES) is not "nothing": say the root is unreadable.
+        if (hasErrnoCode(error, "ENOENT")) return false;
+        throw new ConfigError(`Unable to read bundle directory at "${b.root}".`, "STASH_DIR_UNREADABLE");
+      }
+    },
+    list(dir) {
+      try {
+        return fs.readdirSync(path.join(b.root, dir));
+      } catch {
+        return [];
+      }
+    },
+    isFile(relPath) {
+      const authored = path.resolve(b.root, relPath);
+      if (!within(authored, b.root)) return false;
+      try {
+        const stat = fs.lstatSync(authored);
+        if (!stat.isFile() && !stat.isSymbolicLink()) return false;
+        return fs.statSync(fs.realpathSync(authored)).isFile();
+      } catch {
+        return false;
+      }
+    },
+    isWalked: (relPath, options) => isWalkedFile(b.root, path.join(b.root, relPath), options),
+  };
+}
+
+/** The bundle's files with `changes` laid over them: a created or updated file is there, a deleted one is not. */
+function snapshotView(b: Bundle, changes: readonly FileChange[]): FileView {
+  const live = liveView(b);
+  const pending = new Map(changes.map((change) => [change.path, change.op !== "delete"]));
+  return {
+    rootExists: live.rootExists,
+    list(dir) {
+      const names = new Set(live.list(dir));
+      for (const [relPath, present] of pending) {
+        if (path.posix.dirname(relPath) !== dir) continue;
+        const name = path.posix.basename(relPath);
+        if (present) names.add(name);
+        else names.delete(name);
+      }
+      return [...names];
+    },
+    isFile: (relPath) => pending.get(relPath) ?? live.isFile(relPath),
+    isWalked: (relPath, options) =>
+      pending.get(relPath) === true || (!pending.has(relPath) && live.isWalked(relPath, options)),
+  };
 }
 
 /** `spelling` and the names in its folder that differ from it only in the case of the extension: the exact one first, then by code point. */
-function caseVariants(root: string, spelling: string): string[] {
+function caseVariants(view: FileView, spelling: string): string[] {
   const extension = path.posix.extname(spelling);
   if (!extension) return [spelling];
-  let names: string[];
-  try {
-    names = fs.readdirSync(path.join(root, path.posix.dirname(spelling)));
-  } catch {
-    return [spelling];
-  }
   const dir = path.posix.dirname(spelling);
-  const variants = names
+  const variants = view
+    .list(dir)
     .map((name) => (dir === "." ? name : `${dir}/${name}`))
     .filter((relPath) => relPath !== spelling && isCaseVariant(spelling, relPath))
     .sort(compareCodePoints);
   return [spelling, ...variants];
-}
-
-/** The file a candidate names, when it is a file (or a link to one) inside the bundle. */
-function candidateFile(b: Bundle, candidatePath: string): FileContext | undefined {
-  const authored = path.resolve(candidatePath);
-  if (!within(authored, b.root)) return undefined;
-  try {
-    const stat = fs.lstatSync(authored);
-    if (!stat.isFile() && !stat.isSymbolicLink()) return undefined;
-    if (!fs.statSync(fs.realpathSync(authored)).isFile()) return undefined;
-  } catch {
-    return undefined;
-  }
-  return buildFileContext(b.root, authored);
 }
 
 /** Every file under `dir`, links to files included and links to directories left alone, as the walk does. */

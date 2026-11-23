@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../../../src/core/adapter/adapters/akm-adapter";
+import { akmWorkflowAdapter } from "../../../../src/core/adapter/adapters/akm-workflow-adapter";
+import { genericFilesAdapter } from "../../../../src/core/adapter/adapters/generic-files-adapter";
+import { okfAdapter } from "../../../../src/core/adapter/adapters/okf-adapter";
 import type { Bundle } from "../../../../src/core/adapter/types";
 import { validateBundleAssets } from "../../../../src/core/assets/validate";
 import { sandboxStashDir } from "../../../_helpers/sandbox";
@@ -63,26 +65,64 @@ describe("validate checks asset edits by ref", () => {
     expect(found.filter((d) => d.issue === "shadowed-spelling")).toEqual([]);
   });
 
-  test("it does not resolve spellings on the live tree: no realpath, lstat or process", async () => {
-    write("knowledge/guide.md");
-    const refuse = (what: string) => () => {
-      throw new Error(`${what} is a read of the live tree`);
-    };
-    const spies = [
-      spyOn(fs, "realpathSync").mockImplementation(refuse("realpath") as never),
-      spyOn(fs, "lstatSync").mockImplementation(refuse("lstat") as never),
-      spyOn(childProcess, "spawnSync").mockImplementation(refuse("a process") as never),
-    ];
+  test("it reads no file's content to find the files that hold a concept", async () => {
+    write("tasks/twin.yml", "name: twin\n");
+    write("tasks/twin.md", "# twin\n");
+    const protectedFiles = new Set(["tasks/twin.yml", "tasks/twin.md"].map((rel) => path.join(sandbox.dir, rel)));
+    const original = fs.readFileSync;
+    const spy = spyOn(fs, "readFileSync").mockImplementation(((candidate: unknown, options: unknown) => {
+      if (typeof candidate === "string" && protectedFiles.has(path.resolve(candidate))) {
+        throw new Error(`the content of ${candidate} must not be read`);
+      }
+      return (original as (...args: unknown[]) => unknown)(candidate, options);
+    }) as typeof fs.readFileSync);
     try {
+      // The pending content is checked; the stored files are only looked for.
       const found = await akmAdapter.validate(
         b,
-        [{ conceptId: "knowledge/guide", op: "update", content: NO_UPDATED }],
+        [{ conceptId: "tasks/twin", op: "update", content: "name: twin\n" }],
         {},
       );
-      expect(found.map((d) => d.issue)).toContain("missing-updated");
+      expect(found.filter((d) => d.issue === "shadowed-spelling")).toHaveLength(1);
     } finally {
-      for (const spy of spies) spy.mockRestore();
+      spy.mockRestore();
     }
+  });
+});
+
+describe("only files hold a concept: a folder, a link to a folder or a broken link is no spelling", () => {
+  test("generic-files: guide.md beside a guide/ folder keeps guide.md's own findings and no shadow", async () => {
+    write("guide.md", "---\ntitle: g\n---\nbody\n");
+    write("guide/inner.md");
+    const found = await genericFilesAdapter.validate(b, [{ conceptId: "guide", op: "update" }], {});
+    expect(found.filter((d) => d.issue === "shadowed-spelling")).toEqual([]);
+    expect(found).toContainEqual(expect.objectContaining({ file: "guide.md", issue: "missing-updated" }));
+  });
+
+  test("generic-files: a link to a folder is no spelling either", async () => {
+    write("guide.md", "---\ntitle: g\n---\nbody\n");
+    write("realdir/x.md");
+    fs.symlinkSync("realdir", path.join(sandbox.dir, "guide.markdown"));
+    const found = await genericFilesAdapter.validate(b, [{ conceptId: "guide", op: "update" }], {});
+    expect(found.filter((d) => d.issue === "shadowed-spelling")).toEqual([]);
+    expect(found).toContainEqual(expect.objectContaining({ file: "guide.md", issue: "missing-updated" }));
+  });
+
+  test("okf: y.MD beside a broken y.md link is checked as y.MD", async () => {
+    write("y.MD", "---\ntype: concept\n---\nsee [x](nope-thing.md)\n");
+    fs.symlinkSync("nowhere.md", path.join(sandbox.dir, "y.md"));
+    const found = await okfAdapter.validate(b, [{ conceptId: "y", op: "update" }], {});
+    expect(found.filter((d) => d.issue === "shadowed-spelling")).toEqual([]);
+    expect(found).toContainEqual(expect.objectContaining({ file: "y.MD", issue: "missing-ref" }));
+  });
+
+  test("akm-workflow: z.md beside a z.MD/ folder is checked as z.md", async () => {
+    write("z.md", "# z\n");
+    write("z.MD/in.md");
+    const found = await akmWorkflowAdapter.validate(b, [{ conceptId: "z", op: "update" }], {});
+    expect(found.filter((d) => d.issue === "shadowed-spelling")).toEqual([]);
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.every((d) => d.file === "z.md")).toBe(true);
   });
 });
 
