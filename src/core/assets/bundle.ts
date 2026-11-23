@@ -80,6 +80,10 @@ export class AssetBundle {
     throw new UsageError(`Bundle "${this.name}" (adapter "${this.#adapter.id}") does not retire assets.`);
   }
 
+  /** Whether the bundle is a store (a keyring, a vault) rather than a directory. */
+  get isStore(): boolean {
+    return this.#adapter.addressedBy === "location";
+  }
   /** Whether the bundle's storage is there. */
   exists(): boolean {
     return this.#adapter.exists(this.#bundle);

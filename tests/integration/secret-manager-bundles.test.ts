@@ -27,6 +27,7 @@ import { clearAdapterCaches } from "../../src/core/adapter/registry";
 import { clientFailure } from "../../src/core/adapter/secret-manager-adapter";
 import { parseBundleRef } from "../../src/core/asset/asset-ref";
 import { assetBundleOf } from "../../src/core/assets/bundle";
+import { allowAdapterPrompts } from "../../src/core/assets/gate";
 import { ConfigError } from "../../src/core/errors";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { akmIndex } from "../../src/indexer/indexer";
@@ -66,7 +67,10 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => storage.cleanup());
+afterEach(() => {
+  allowAdapterPrompts(false);
+  storage.cleanup();
+});
 
 /** Run the CLI and parse what it printed: its JSON result, or on failure its JSON error. */
 async function akm(...args: string[]): Promise<{ code: number; json: Record<string, unknown> }> {
@@ -107,6 +111,7 @@ describe("secret manager bundles", () => {
       expect(refs).toEqual(["keyring//secrets/gh_token", "vault//secrets/deploy-token"]);
 
       const shown = await akm("show", "keyring//secrets/wifi");
+      expect(String(shown.json.error ?? "")).toBe("");
       expect(shown.code).toBe(0);
       expect(shown.json).toMatchObject({ type: "secret", name: "wifi" });
       expect(JSON.stringify([search.json, shown.json])).not.toContain("hunter2");
@@ -123,6 +128,7 @@ describe("secret manager bundles", () => {
       for (const hit of hits) expect(hit).not.toHaveProperty("path");
 
       const shown = await akm("show", "keyring//secrets/wifi");
+      expect(String(shown.json.error ?? "")).toBe("");
       expect(shown.code).toBe(0);
       expect(shown.json).not.toHaveProperty("path");
     });
@@ -585,6 +591,7 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
   const b = { id: "keyring", root: "/x", location: "akm" };
 
   test("a locked keyring asks to be unlocked, then is listed and read", async () => {
+    allowAdapterPrompts(true);
     await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
       const listed = secretToolAdapter.list(b).assets.map((asset) => asset.conceptId);
       expect(listed).toEqual(["secrets/gh_token", "secrets/wifi"]);
@@ -597,6 +604,7 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
   });
 
   test("a keyring whose unlock prompt is dismissed is unreachable, and says so", async () => {
+    allowAdapterPrompts(true);
     await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"], unlockDenied: ["akm"] } as never, async () => {
       let failure: unknown;
       try {
@@ -874,7 +882,7 @@ describe("keyring and vault bundles in config and commands (P3, N3, N5, N6)", ()
         issue.file?.startsWith("keyring//"),
       );
       expect(issues.map((issue) => `${issue.file} ${issue.issue}`).sort()).toEqual([
-        "keyring//secrets/has#hash adapter-diagnostic",
+        "keyring//secrets/has#hash invalid-name",
         "keyring//secrets/twice shadowed-spelling",
       ]);
     });
@@ -893,6 +901,111 @@ describe("lint never asks to unlock (N3)", () => {
       expect(linted.code).toBe(0);
       expect(stores.state().calls.some((call) => call.includes("Unlock"))).toBe(false);
       expect(stores.state().locked).toEqual(["akm"]);
+    });
+  });
+});
+
+describe("review fixes (K gate)", () => {
+  const b = { id: "keyring", root: "/x", location: "login" };
+
+  test("a location still matches the collection's own object-path name, after the alias and the label", async () => {
+    const login = {
+      login: [{ ...keyringItem(1, "wifi", "w", { a: "1" }), path: "/org/freedesktop/secrets/collection/login/1" }],
+    };
+    await withFakeSecretStores(
+      { keyrings: login, labels: { login: "Login" }, unaliased: ["login"] } as never,
+      async () => {
+        expect(secretToolAdapter.read(b, "secrets/wifi")?.entry.content()).toBe("w");
+      },
+    );
+  });
+
+  test("akm lint skips a store that fails in an ordinary way, silently", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, vaults: VAULT, listFails: ["team-vault"] } as never, async () => {
+      const linted = await runCliCapture(["lint", "--format", "json"]);
+      expect(linted.code).toBe(0);
+      expect(linted.stderr).not.toContain("did not check");
+    });
+  });
+
+  test("keyring findings follow lint's --type, carry their ref, and invalid-name is its own code", async () => {
+    const entries = {
+      akm: [
+        keyringItem(1, "has#hash", "h", { a: "1" }),
+        keyringItem(2, "twice", "x", { a: "2" }),
+        keyringItem(3, "twice", "y", { a: "3" }),
+      ],
+    };
+    await withFakeSecretStores({ keyrings: entries, vaults: VAULT }, async () => {
+      const stored = (json: Record<string, unknown>) =>
+        (json.flagged as Array<{ file: string; issue: string; ref?: string }>).filter((i) =>
+          i.file.startsWith("keyring//"),
+        );
+      expect(stored((await akm("lint", "--type", "knowledge")).json)).toEqual([]);
+      const secrets = stored((await akm("lint", "--type", "secrets")).json);
+      expect(secrets.map((i) => i.issue).sort()).toEqual(["invalid-name", "shadowed-spelling"]);
+      expect(secrets.every((i) => i.ref === i.file)).toBe(true);
+    });
+  });
+
+  test("a managed vault secret cannot be read, set over or removed by name", async () => {
+    await withFakeSecretStores(
+      { vaults: { "team-vault": { mgd: "m" } }, managed: { "team-vault": ["mgd"] } } as never,
+      async () => {
+        const v = { id: "vault", root: "/x", location: "team-vault" };
+        expect(azureKeyVaultAdapter.read(v, "secrets/mgd")).toBeUndefined();
+        expect(() => azureKeyVaultAdapter.delete(v, "secrets/mgd")).toThrow();
+      },
+    );
+  });
+
+  test("a bundle that does not fit does not stop config set on anything else, and its own edits are refused", async () => {
+    writeSandboxConfig({
+      bundles: {
+        stash: { path: storage.stashDir, writable: true },
+        bad: { path: storage.root, adapter: "secret-tool" },
+      },
+      defaultBundle: "stash",
+    });
+    expect((await akm("config", "set", "semanticSearchMode", "off")).code).toBe(0);
+    expect((await akm("config", "set", "bundles.stash.writable", "true")).code).toBe(0);
+    const refused = await akm("config", "set", "bundles.bad.writable", "true");
+    expect(refused.code).not.toBe(0);
+    expect(String(refused.json.error)).toContain("in place of its path");
+    expect(String(refused.json.error)).not.toContain("set `bundles.bad.location`");
+  });
+});
+
+describe("unlock prompts only for a person at a terminal (F3)", () => {
+  const asked = (stores: { state(): { calls: string[][] } }) =>
+    stores.state().calls.some((call) => call.includes("Unlock"));
+
+  test("a CLI run that is not on a terminal never asks, and says the keyring is locked (exit 78)", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
+      const listed = await akm("show", "keyring//secrets/wifi");
+      expect(listed.code).toBe(78);
+      expect(String(listed.json.error)).toContain(
+        'Keyring "akm" is locked, and this command does not ask to unlock it.',
+      );
+      expect(asked(stores)).toBe(false);
+    });
+  });
+
+  test("a run the dispatcher allowed to prompt (stderr is a terminal) asks, and lists after the unlock", async () => {
+    // The dispatcher (`runCliInvocation`) calls `allowAdapterPrompts(isTerminal(2))`; the in-process runner skips it.
+    allowAdapterPrompts(true);
+    await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
+      const shown = await akm("show", "keyring//secrets/wifi");
+      expect(shown.code).toBe(0);
+      expect(asked(stores)).toBe(true);
+    });
+  });
+
+  test("a workspace host never asks", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
+      const failure = await code(Promise.resolve().then(() => sensitive.describe({ ref: "keyring//secrets/wifi" })));
+      expect(failure).toBe("BUNDLE_UNREACHABLE");
+      expect(asked(stores)).toBe(false);
     });
   });
 });

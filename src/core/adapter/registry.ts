@@ -62,7 +62,7 @@ export function requireAdapter(bundle: string, id: string, address?: { location:
   }
   if (address && adapter.addressedBy === "location" && !address.location) {
     throw new ConfigError(
-      `Bundle "${bundle}" uses adapter "${id}", which reads a store named by \`location\`: set \`bundles.${bundle}.location\`.`,
+      `Bundle "${bundle}" uses adapter "${id}", which reads a store named by \`location\`, but the bundle has none: give it a \`location\` in place of its path, git, website or npm, or use an adapter that reads a directory.`,
       "INVALID_CONFIG_FILE",
     );
   }

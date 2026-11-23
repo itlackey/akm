@@ -7,7 +7,7 @@
  * the desktop's Secret Service (KWallet on KDE, GNOME Keyring).
  *
  * The bundle's `location` names the collection: the alias of that name, else the
- * collection labelled so. akm resolves it once to the collection's object path and
+ * collection labelled so, else the collection whose object path ends in it. akm resolves it once to the collection's object path and
  * uses that path for every request. Every entry of the collection is a secret of
  * the bundle, `secrets/<label>`.
  *
@@ -99,6 +99,11 @@ function resolveCollection(location: string): Collection | undefined {
         break;
       }
     }
+  }
+  // Before the alias and the label, a collection was named by its own object path: `/collection/<location>` still is.
+  if (!found) {
+    const own = `/org/freedesktop/secrets/collection/${location}`;
+    if (collectionPaths(reading).includes(own)) found = { path: own, aliased: false };
   }
   if (found) collections.set(location, found);
   return found;

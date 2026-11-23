@@ -26,7 +26,9 @@ const name = option("name") as string;
 const missing = (): never =>
   fail(`ERROR: (SecretNotFound) A secret with (name/id) ${name} was not found in this key vault.`, 3);
 
-if (verb === "list") {
+if (verb === "list" && (state.listFails ?? []).includes(vaultName)) {
+  fail("ERROR: (InternalServerError) The service failed.", 3);
+} else if (verb === "list") {
   // A query that asks for what is enabled and unmanaged leaves out the secrets that are not.
   const excluded = option("query")?.includes("managed")
     ? [...(state.disabled?.[vaultName] ?? []), ...(state.managed?.[vaultName] ?? [])]
@@ -36,7 +38,10 @@ if (verb === "list") {
   if (!(name in vault)) missing();
   if (state.disabled?.[vaultName]?.includes(name))
     fail("ERROR: (Forbidden) Operation get is not allowed on a disabled secret.\nCode: SecretDisabled", 3);
-  process.stdout.write(`${JSON.stringify(vault[name])}\n`);
+  const managed = (state.managed?.[vaultName] ?? []).includes(name);
+  process.stdout.write(
+    `${JSON.stringify(option("query")?.includes("managed") ? [vault[name], managed] : vault[name])}\n`,
+  );
 } else if (verb === "set") {
   if (!/^[0-9a-zA-Z-]+$/.test(name)) fail(`ERROR: (BadParameter) The request URI contains an invalid name: ${name}`, 3);
   if (state.deleted?.[vaultName]?.[name] !== undefined)

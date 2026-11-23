@@ -43,4 +43,7 @@ export function clearAdapterCaches(): void {
   clearRegistryCaches();
 }
 
-export { withoutPrompts as withoutAdapterPrompts } from "../adapter/secret-manager-adapter";
+export {
+  allowPrompts as allowAdapterPrompts,
+  withoutPrompts as withoutAdapterPrompts,
+} from "../adapter/secret-manager-adapter";

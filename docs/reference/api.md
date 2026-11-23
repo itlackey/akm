@@ -131,7 +131,7 @@ are ignored) and returns plain JSON-safe data without a CLI envelope; failures r
 | `activity` | `overview`, `pulse`, `health`, `retrievalTrend`, `improveImpact`, `improveRun`, `taskHistory`, `meta` |
 
 Also exported: `AkmError`, `UsageError`, `NotFoundError`, `ConfigError`, `TransientError`, the
-`AkmErrorKind` type, `CONFLICT_CODES`, `scrubUrlCredentials`, `clearAdapterCaches()` (a host that
+`AkmErrorKind` type, `CONFLICT_CODES`, `scrubUrlCredentials`, `clearAdapterCaches()` (Experimental; a host that
 serves many requests calls it at the start of each, so a keyring or vault that changed in between is
 read afresh) and `indexWrittenAssets(bundleRoot,
 files, {bundleId?})`, which refreshes the index rows for files a host edited inside a bundle itself

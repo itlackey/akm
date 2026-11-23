@@ -303,9 +303,12 @@ such a bundle after the bundles before it in priority.
   the value `<keyring>/<name>`. `secret-tool store` names its collection by
   alias, so when only the label names the collection, akm gives it that alias
   the first time it stores into it (listing and reading change nothing).
-  A locked keyring is unlocked on request: the Secret Service shows its own
-  prompt (KWallet, GNOME Keyring), akm waits up to two minutes for it, and a
-  dismissed prompt leaves the keyring locked and the bundle unreachable. The
+  A locked keyring is unlocked on request when a person is at a terminal
+  (stderr is one): the Secret Service shows its own prompt (KWallet, GNOME
+  Keyring), akm says so on stderr and waits up to two minutes, and a dismissed
+  prompt leaves the keyring locked and the bundle unreachable. Hooks, CI,
+  `akm lint` and Desktop never ask: a locked keyring is unreachable there
+  (`Keyring "<x>" is locked, and this command does not ask to unlock it.`). The
   keyring must exist, and `secret-tool` cannot create it: create the wallet or
   keyring named in `location` in your keyring manager (KWalletManager,
   Seahorse). A missing one is refused naming the keyrings the service has. A

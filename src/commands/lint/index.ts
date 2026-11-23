@@ -236,6 +236,7 @@ const KNOWN_ADAPTER_ISSUE_TYPES: ReadonlySet<string> = new Set<LintIssueType>([
   "broken-xref",
   "broken-source",
   "shadowed-spelling",
+  "invalid-name",
   "type-from-content",
   "invalid-workflow-structure",
   "workflow-warning",
@@ -287,7 +288,8 @@ async function addStoreFindings(
   cfg: AkmConfig,
   options: AkmLintOptions,
 ): Promise<void> {
-  if (options.stores !== true) return;
+  // Secrets are the stores' only type: a `--type` for another one leaves them out.
+  if (options.stores !== true || (options.typeFilter !== undefined && options.typeFilter !== "secrets")) return;
   const ids = deriveBundleIds(sources);
   for (const [index, source] of sources.entries()) {
     if (source.location === undefined || source.adapterId === undefined || source.unresolved) continue;
@@ -300,13 +302,12 @@ async function addStoreFindings(
           { ctx: { sources, config: cfg, readMoves: options.readMoves ?? readRecordedMoves } },
         ),
       );
-      for (const issue of diagnostics.map(diagnosticToLintIssue)) {
+      for (const diagnostic of diagnostics) {
+        const issue = { ...diagnosticToLintIssue(diagnostic), ref: diagnostic.ref };
         (isAdvisoryLintIssue(issue) ? found.warnings : found.flagged).push(issue);
       }
-    } catch (error) {
-      if (!(error instanceof ConfigError && error.code === "BUNDLE_UNREACHABLE")) {
-        warn(`Warning: lint did not check bundle "${bundle}": ${toErrorMessage(error)}`);
-      }
+    } catch {
+      // A store that cannot be reached or fails has nothing to check: lint skips it silently, as in hooks and CI.
     }
   }
 }

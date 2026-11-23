@@ -49,12 +49,15 @@ function secretArgs(verb: string, vault: string, name: string): string[] {
   return ["keyvault", "secret", verb, "--vault-name", vault, "--name", name];
 }
 
-/** The secret's value, or undefined when the vault has no secret of that name. */
+/** The secret's value, or undefined when the vault has no secret of that name (a managed one is not akm's). */
 function show(vault: string, name: string): string | undefined {
   // A name the vault cannot hold names no secret.
   if (!VALID_NAME.test(name)) return undefined;
-  const result = runClient(AZ, [...secretArgs("show", vault, name), "--query", "value", "--output", "json"]);
-  if (result.status === 0) return JSON.parse(result.stdout) as string;
+  const result = runClient(AZ, [...secretArgs("show", vault, name), "--query", "[value, managed]", "--output", "json"]);
+  if (result.status === 0) {
+    const [value, managed] = JSON.parse(result.stdout) as [string, boolean | null];
+    return managed ? undefined : value;
+  }
   if (result.stderr.includes(NOT_FOUND)) return undefined;
   // The vault answers a disabled secret with "Forbidden", which is no sign the account is refused.
   if (DISABLED.test(result.stderr)) {

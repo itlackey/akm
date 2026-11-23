@@ -44,6 +44,7 @@ export const LINT_RULES = [
   "broken-source",
   /** A concept stored under more than one spelling: the first is used and the others ignored (`BundleAdapter.read`). */
   "shadowed-spelling",
+  "invalid-name",
   /** An akm asset whose content suggests another type than its path gives: akm goes by the path. */
   "type-from-content",
   /**

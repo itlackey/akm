@@ -20,7 +20,7 @@
  *
  * Every entry the run makes starts with `akm-k-` and is removed at the end, also when a step fails. The "locked wallet"
  * step locks the wallet and then needs you: the keyring manager shows its password prompt, and you answer it within
- * two minutes.
+ * two minutes. That step runs akm on a pseudo-terminal with `script` (util-linux), since akm asks only at a terminal.
  */
 
 import { spawnSync } from "node:child_process";
@@ -91,6 +91,11 @@ class Akm {
       // Not JSON: the caller reads stderr.
     }
     return { code: ran.status, body, stderr: ran.stderr };
+  }
+  /** Run akm on a pseudo-terminal, as a person at a shell does: only then is a locked keyring asked to unlock. Its exit code. */
+  onTerminal(args: string[]): number {
+    const line = ["bun", "src/cli.ts", ...args].map((arg) => `'${arg.replace(/'/g, "'\\''")}'`).join(" ");
+    return run("script", ["-qec", line, "/dev/null"], this.env).status;
   }
   secretRefs(): string[] {
     const listed = this.json(["secret", "list"]);
@@ -274,7 +279,7 @@ function keyringSteps(akm: Akm, keyring: Keyring, options: Options): void {
     );
   });
 
-  step("keyring: a locked wallet asks to be unlocked, then lists", () => {
+  step("keyring: a locked wallet is asked to unlock only on a terminal, then lists", () => {
     keyring.lock();
     expect(keyring.isLocked(), "the wallet did not lock");
     console.log(
@@ -282,6 +287,10 @@ function keyringSteps(akm: Akm, keyring: Keyring, options: Options): void {
         ? "     (the fake keyring answers its own prompt)"
         : `     Answer the keyring manager's password prompt for "${options.keyring}" within two minutes.`,
     );
+    // A hook or CI run is never asked: the locked wallet is unreachable and stays locked.
+    expect(akm.json(["secret", "list"]).code !== 0, "a run with no terminal listed a locked wallet");
+    expect(keyring.isLocked(), "a run with no terminal unlocked the wallet");
+    expect(akm.onTerminal(["secret", "list"]) === 0, "the run on a terminal failed");
     expect(akm.secretRefs().includes(ref(`${PROBE}-foreign`)), "the secrets are not listed after the unlock");
     expect(!keyring.isLocked(), "the wallet is still locked");
   });

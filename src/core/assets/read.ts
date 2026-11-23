@@ -136,6 +136,7 @@ export function listAssets(
       listing = held.list();
     } catch (error) {
       // A bundle that cannot be reached is not a shorter list: when it holds what is asked for, the command fails.
+      if (!held.isStore) throw error;
       const unreachable = error instanceof ConfigError && error.code === "BUNDLE_UNREACHABLE";
       if (unreachable && (options.type === undefined || held.writes(options.type))) {
         throw new ConfigError(`Bundle "${bundle}" cannot be reached: ${toErrorMessage(error)}`, "BUNDLE_UNREACHABLE");

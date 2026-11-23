@@ -76,11 +76,16 @@ function secretEntry(name: string, read: () => string): AssetEntry {
   };
 }
 
-let promptsAllowed = true;
+let promptsAllowed = false;
 
 /** Whether an adapter may ask the user something (unlock a keyring). */
 export function mayPrompt(): boolean {
   return promptsAllowed;
+}
+
+/** Let adapters ask the user something. Off by default: only the CLI, on a terminal, turns it on. */
+export function allowPrompts(allowed: boolean): void {
+  promptsAllowed = allowed;
 }
 
 /** Run `run` with every prompt off: a store that would need one is unreachable. For lint, which runs in hooks and CI. */

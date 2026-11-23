@@ -1032,6 +1032,7 @@ function listOrKeep(adapter: BundleAdapter, bundle: Bundle): BundleListing {
   try {
     return adapter.list(bundle);
   } catch (error) {
+    if (adapter.addressedBy !== "location") throw error;
     // Any failure, not only BUNDLE_UNREACHABLE: a store that errors (a bad `az` reply) must not stop the whole index,
     // and a failed listing is the same "keep last-known-good rows" case as an unreachable one.
     return { assets: [], complete: false, incompleteReason: toErrorMessage(error) };

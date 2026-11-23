@@ -38,6 +38,8 @@ export interface FakeStoreState {
   disabled?: Record<string, string[]>;
   /** Azure Key Vault secrets another Azure service manages, by vault. */
   managed?: Record<string, string[]>;
+  /** Vaults whose `list` fails in an ordinary way (a server error). */
+  listFails?: string[];
   /** How many `purge` calls per vault still answer a conflict (the delete is still going on). */
   purgeConflicts?: Record<string, number>;
   /** Azure Key Vault secrets that are deleted but recoverable, by vault, then name. */
