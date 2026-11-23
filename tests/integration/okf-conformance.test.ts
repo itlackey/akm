@@ -96,7 +96,9 @@ describe("OKF first-class conformance", () => {
   test("preserves every path identity, open type, normalized field, and generic show behavior", async () => {
     const sources = resolveSourceEntries();
     expect(sources.find((source) => source.registryId === "adversarial")?.adapterId).toBe("okf");
-    expect(sources.find((source) => source.registryId === "noindex")?.adapterId).toBeUndefined();
+    // An entry without `adapter` is detected once when the config is read (design §4.3); only `akm index` persists it.
+    expect(sources.find((source) => source.registryId === "noindex")?.adapterId).toBe("okf");
+    expect(loadConfig().bundles?.noindex?.adapter).toBeUndefined();
 
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
