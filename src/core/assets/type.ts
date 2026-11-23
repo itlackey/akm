@@ -11,6 +11,7 @@
  */
 
 import path from "node:path";
+import { addIndexOnMissRefs } from "../../indexer/index-on-miss";
 import { openUsableIndex, readUsableIndex } from "../../indexer/index-readiness";
 import { withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
 import { upsertIndexRows, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../../indexer/index-written-assets";
@@ -95,6 +96,7 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean)
       const { db } = usable;
       const cap = embeddingInputCap(loadConfig());
       db.transaction(() => {
+        const written: string[] = [];
         for (const [asset, document] of documents) {
           const source = sourceOf(asset);
           // The scan drops a workflow that does not compile, so no ask of it records a row either.
@@ -121,7 +123,10 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean)
             ],
             cap,
           );
+          // A row written for a read that found none: the next `akm index` still sees the asset as new (a moved file).
+          if (!supersede) written.push(asset.ref);
         }
+        addIndexOnMissRefs(db, written);
       })();
     } finally {
       closeDatabase(usable.db);

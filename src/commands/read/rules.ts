@@ -13,6 +13,7 @@ import path from "node:path";
 import { getStringArg, PROJECT_ARG } from "../../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
 import type { IndexDocument } from "../../core/adapter/types";
+import { stashDirFor } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { adapterWrites } from "../../core/assets/gate";
@@ -74,6 +75,8 @@ function bundleNames(from: string | string[] | undefined): string[] | undefined 
   return names.length > 0 ? names : undefined;
 }
 
+const RULES_PREFIX = `${stashDirFor("rule")}/`;
+
 /** What the asset's adapter says about it now, with nothing recorded; undefined when the adapter abstains on it. */
 function describeNow(asset: Asset): IndexDocument | undefined {
   try {
@@ -118,7 +121,10 @@ export function akmRules(input: {
     const bundle = installations[sources.indexOf(source)];
     if (!bundle || source.unresolved || !adapterWrites({ ...source, name: bundle.id }, "rule")) continue;
     bundles.push(bundle.id);
-    for (const asset of listAssets({ sources, bundle: bundle.id, type: "rule" })) {
+    // Only the rules folder decides a rule (as the walk always read it), so only its assets are described.
+    for (const asset of listAssets({ sources, bundle: bundle.id }).filter(({ conceptId }) =>
+      conceptId.startsWith(RULES_PREFIX),
+    )) {
       // Read as the adapter describes it now, so a rule edited since the last index applies as written.
       const document = describeNow(asset);
       if (document?.type !== "rule") continue;

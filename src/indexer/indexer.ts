@@ -90,6 +90,7 @@ import {
   workflowNameForSourcePath,
 } from "../workflows/source-files";
 import { reclassifyIndexDbContention } from "./index-db-contention";
+import { clearIndexOnMissRefs, readIndexOnMissRefs } from "./index-on-miss";
 import { deriveEntryProvenance, deriveInstallations, sourceOfBundle } from "./installations";
 import { legacyRefMove, rekeyLegacyEntry } from "./legacy-refs";
 import { entryOnMiss, indexedPathMatchesOwner, indexedPathOf } from "./lookup/indexed-owner";
@@ -1444,6 +1445,8 @@ function persistDirRecords(
   let pairing: MovePairing = { pairs: [], unpaired: [] };
   const movedRefs = new Set<string>();
 
+  const onMissRefs = readIndexOnMissRefs(db);
+  const scannedRefs = new Set<string>();
   const pairMoves = (): MovePairing => {
     const stored: StoredEntry[] = [];
     const fresh: NewEntry[] = [];
@@ -1456,7 +1459,11 @@ function persistDirRecords(
         if ("problem" in found) continue;
         kept.add(found.provenance.itemRef);
         const contentHash = record.hashByFile?.get(found.entryPath);
-        if (contentHash !== undefined && !findPersisted.get(found.provenance.itemRef))
+        // A row index-on-miss wrote since the last scan is a new file too: it may be a vanished entry's move.
+        if (
+          contentHash !== undefined &&
+          (!findPersisted.get(found.provenance.itemRef) || onMissRefs.has(found.provenance.itemRef))
+        )
           fresh.push({ filePath: found.entryPath, provenance: found.provenance, contentHash });
       }
       stored.push(
@@ -1480,6 +1487,11 @@ function persistDirRecords(
     setMeta(db, "stashDirs", JSON.stringify(library.sourceDirs));
     pairing = pairMoves();
     for (const pair of pairing.pairs) {
+      // The row index-on-miss wrote for the moved file gives way to the vanished entry's, which keeps its history.
+      const onMiss = onMissRefs.has(pair.entry.provenance.itemRef)
+        ? (findPersisted.get(pair.entry.provenance.itemRef) as { id: number } | null)
+        : null;
+      if (onMiss) deleteEntriesByIds(db, [onMiss.id]);
       repointEntry(db, pair.id, pair.entry);
       rekeyLlmCache(db, pair.oldFilePath, pair.entry.filePath);
       movedRefs.add(pair.entry.provenance.itemRef);
@@ -1560,6 +1572,7 @@ function persistDirRecords(
           // The adapter lists one entry per ref (the spelling it reads wins), so the ref has one holder.
           const holder = (findPersisted.get(provenance.itemRef) as PersistedEntryRow | null) ?? undefined;
           keptItemRefs.add(provenance.itemRef);
+          scannedRefs.add(provenance.itemRef);
           persistedRows++;
 
           const previous = sameVariant ? holder : undefined;
@@ -1610,6 +1623,7 @@ function persistDirRecords(
       });
       if (persistedRows === 0) warnVerbose(`[index] zero-row ${dirPath}: ${persistedReason}`);
     }
+    clearIndexOnMissRefs(db, scannedRefs);
     // Atomicity observation point: the new generation is fully written but
     // uncommitted, so it must still be invisible to other connections.
     indexTransactionHookForTests?.("records-persisted");
