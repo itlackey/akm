@@ -55,6 +55,7 @@ function unreadableReason(
   }
   if (taskFinding !== undefined) return { reason: taskFinding };
   const scratchBundle: Bundle = { id: bundle, root: scratchRoot };
+  // asset-io: scratch checked text
   const file = buildFileContext(scratchRoot, path.join(scratchRoot, relative));
   const adapter = adapterForId("akm");
   const drained = adapter ? drainDirDocuments(adapter, scratchBundle, [file]) : undefined;
@@ -94,9 +95,11 @@ export function withScratchFile<T>(relative: string, content: string, fn: (root:
     const scratchFile = path.join(scratch, relative);
     if (!isWithin(scratchFile, scratch)) throw new UsageError("Use a path inside the bundle.");
     fs.mkdirSync(path.dirname(scratchFile), { recursive: true });
+    // asset-io: scratch checked text
     fs.writeFileSync(scratchFile, content);
     return fn(scratch, scratchFile);
   } finally {
+    // asset-io: scratch checked text
     fs.rmSync(scratch, { recursive: true, force: true });
   }
 }

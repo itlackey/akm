@@ -337,6 +337,7 @@ async function addRegistryStash(
   // (including one just promoted to writable, #1296) is.
   if (!existingWritable && priorLocalRoot && path.resolve(priorLocalRoot) !== path.resolve(synced.contentDir)) {
     try {
+      // asset-io: install
       fs.rmSync(priorLocalRoot, { recursive: true, force: true });
     } catch {
       // Best-effort cleanup only.

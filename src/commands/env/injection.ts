@@ -117,13 +117,17 @@ function refuseWorkingFolder(folder: string, code: string | undefined, where: st
  */
 export function assertWorkingFolderCanBeMade(cwd: string): string {
   const folder = path.resolve(cwd);
+  // asset-io: user-input --cwd folder
   if (fs.existsSync(folder)) {
+    // asset-io: user-input --cwd folder
     if (!fs.statSync(folder).isDirectory()) throw new UsageError("--cwd <path> is not a folder", "INVALID_FLAG_VALUE");
     return folder;
   }
   let ancestor = path.dirname(folder);
+  // asset-io: user-input --cwd folder
   while (!fs.existsSync(ancestor)) ancestor = path.dirname(ancestor);
   try {
+    // asset-io: user-input --cwd folder
     if (!fs.statSync(ancestor).isDirectory()) throw Object.assign(new Error("not a folder"), { code: "ENOTDIR" });
     fs.accessSync(ancestor, fs.constants.W_OK | fs.constants.X_OK);
   } catch (error) {

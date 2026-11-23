@@ -823,13 +823,16 @@ function lintAkmSweep(
 function containingBundleRoot(file: string, roots: readonly string[]): string | undefined {
   const real = (p: string): string => fs.realpathSync(p);
   const target = real(file);
-  return roots
-    .filter((root) => fs.existsSync(root))
-    .filter((root) => {
-      const rel = path.relative(real(root), target);
-      return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
-    })
-    .sort((a, b) => b.length - a.length)[0];
+  return (
+    roots
+      // asset-io: bundle-root root probe
+      .filter((root) => fs.existsSync(root))
+      .filter((root) => {
+        const rel = path.relative(real(root), target);
+        return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+      })
+      .sort((a, b) => b.length - a.length)[0]
+  );
 }
 
 /**
@@ -876,6 +879,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
       const result = await lintViaAdapter(
         adapterId,
         root,
+        // asset-io: bundle-root root probe
         sources.map((s) => s.path).filter((p) => p !== root && fs.existsSync(p)),
         sources,
         cfg,
@@ -1062,6 +1066,7 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   // Fail closed on a mistyped invocation (§24.2 "Lint" release gate): a
   // nonexistent --dir used to walk nothing and report a clean
   // `ok:true, flagged:0`, silently passing scripted --fail-on-flagged gates.
+  // asset-io: user-input --dir
   if (options.dir !== undefined && !fs.statSync(options.dir, { throwIfNoEntry: false })?.isDirectory()) {
     throw new UsageError(`lint: --dir "${options.dir}" is not a directory.`, "INVALID_FLAG_VALUE");
   }
@@ -1078,6 +1083,7 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   const sources = resolveSourceEntries(stashRoot, cfg);
   const configuredAdapter = sources.find((source) => samePath(source.path, stashRoot))?.adapterId;
   const adapterId = configuredAdapter ?? detectAdapterId(stashRoot);
+  // asset-io: bundle-root root probe
   const extraStashRoots = sources.map((s) => s.path).filter((p) => p !== stashRoot && fs.existsSync(p));
 
   if (adapterId !== "akm") {

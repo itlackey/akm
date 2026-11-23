@@ -682,6 +682,7 @@ async function stageManagedUpdate(
     const stagingParent = createStagingParent(path.dirname(liveRepo));
     const stagedRepo = path.join(stagingParent, path.basename(liveRepo));
     try {
+      // asset-io: install
       fs.cpSync(liveRepo, stagedRepo, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
       const stagedRoot = path.join(stagedRepo, path.relative(liveRepo, fs.realpathSync(managed.localRoot)));
       const fetched = await syncFromRef(managed.ref, {
@@ -779,8 +780,10 @@ async function syncGitPlainSource(
     const stagedPaths = getCachePaths(canonicalUrl, stagingParent);
     // A writable mirror may carry local commits: pull into a copy, then
     // fast-forward the live checkout to it.
+    // asset-io: install
     const liveCheckout = writable && fs.existsSync(livePaths.repoDir);
     const expectedUpstream = liveCheckout ? originUpstream(livePaths.repoDir) : undefined;
+    // asset-io: install
     if (liveCheckout) fs.cpSync(livePaths.rootDir, stagedPaths.rootDir, { recursive: true, preserveTimestamps: true });
     await syncMirroredRepo(gitSource, {
       force: true,
@@ -1008,6 +1011,7 @@ function pruneOlderRevisions(previousRoot: string, currentCacheDir: string): voi
   const keep = new Set([previousDir, path.resolve(currentCacheDir)]);
   const config = loadConfig();
   const locks = readLockfile();
+  // asset-io: install
   for (const entry of fs.readdirSync(installDir, { withFileTypes: true })) {
     const dir = path.join(installDir, entry.name);
     if (!entry.isDirectory() || keep.has(dir)) continue;
@@ -1265,6 +1269,7 @@ function selectManagedTargets(
  */
 function cleanupDirectoryBestEffort(target: string, context: string): void {
   try {
+    // asset-io: install
     fs.rmSync(target, { recursive: true, force: true });
   } catch (err) {
     warn(
@@ -1276,6 +1281,7 @@ function cleanupDirectoryBestEffort(target: string, context: string): void {
 
 function directoryExists(target: string): boolean {
   try {
+    // asset-io: install
     return fs.statSync(target).isDirectory();
   } catch {
     return false;

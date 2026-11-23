@@ -203,6 +203,7 @@ export function parseScheduledInvocationArgv(argv: readonly string[]): ParsedSch
 export function readLegacySchedulerContext(file: string): Record<string, string> {
   let parsed: unknown;
   try {
+    // asset-io: state scheduler context file
     parsed = JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (error) {
     throw new ConfigError(

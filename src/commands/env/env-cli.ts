@@ -90,9 +90,11 @@ const envCreateCommand = defineJsonCommand({
         );
       }
       if (fromFile !== undefined) {
+        // asset-io: user-input --from-file, --out
         if (!fs.existsSync(fromFile)) {
           throw new NotFoundError(`Source file not found: ${fromFile}`, "FILE_NOT_FOUND");
         }
+        // asset-io: user-input --from-file, --out
         content = fs.readFileSync(fromFile, "utf8");
       } else {
         const buf = await readStdin();
@@ -180,6 +182,7 @@ const envExportCommand = defineJsonCommand({
     const { written, asset } = resolveEnvPath(args.ref);
     const { buildShellExportScript } = await import("./env.js");
     const resolvedOut = path.resolve(outPath);
+    // asset-io: user-input --from-file, --out
     writeFileAtomic(resolvedOut, buildShellExportScript(asset.entry.content()), 0o600);
     output("env-export", { ref: makeEnvRef(written, asset.bundle), out: resolvedOut });
   },

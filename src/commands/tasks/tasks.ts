@@ -842,6 +842,7 @@ function classifyPruneCandidate(entry: InstalledSchedulerBinding): TasksPruneRea
   } else {
     bundleDir = entry.environment?.AKM_BUNDLE_DIR;
   }
+  // asset-io: bundle-root root probe
   if (bundleDir !== undefined && !fs.existsSync(bundleDir)) return "dead-bundle-path";
   return undefined;
 }
@@ -1072,6 +1073,7 @@ function inspectInstalledBinding(entry: InstalledSchedulerBinding): string[] {
     }
   }
   const absolutePaths = binding.filter((part) => path.isAbsolute(part));
+  // asset-io: host scheduler binding path
   if (absolutePaths.some((part) => !fs.existsSync(part))) status.push("missing-path");
   if (status.length === 0) status.push("ok");
   return status;

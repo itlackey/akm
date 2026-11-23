@@ -132,6 +132,7 @@ export function ledgerKey(source: string, ref: string): string {
 
 /** Read state.db through `fn` without creating it: `undefined` when there is none yet. */
 export function readLedgerDb<T>(access: LedgerAccess | undefined, fn: (db: Database) => T): T | undefined {
+  // asset-io: state
   if (!access?.eventsCtx?.db && !fs.existsSync(ledgerDbPath(access) ?? getStateDbPath())) return undefined;
   return withLedgerDb(access, fn);
 }

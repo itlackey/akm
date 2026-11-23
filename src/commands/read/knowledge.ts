@@ -120,6 +120,7 @@ export function readKnowledgeContent(source: string): { content: string; preferr
   const resolvedSource = path.resolve(source);
   let stat: fs.Stats;
   try {
+    // asset-io: user-input source file or directory the user named
     stat = fs.statSync(resolvedSource);
   } catch {
     throw new UsageError(`Knowledge source not found: "${source}". Pass a readable file path or "-" for stdin.`);
@@ -128,6 +129,7 @@ export function readKnowledgeContent(source: string): { content: string; preferr
     throw new UsageError(`Knowledge source must be a file: "${source}".`);
   }
   return {
+    // asset-io: user-input source file or directory the user named
     content: fs.readFileSync(resolvedSource, "utf8"),
     preferredName: path.basename(resolvedSource, path.extname(resolvedSource)),
   };
@@ -268,10 +270,12 @@ function resolveWriteRefRoots(target?: string, targetFlag?: string): { roots: Wr
     }),
   );
   const otherSources = namedSources.filter(
+    // asset-io: bundle-root root probe
     (s) => !mutableRoots.some((m) => samePath(m, s.path)) && fs.existsSync(s.path),
   );
   const roots = [
     ...mutableRoots
+      // asset-io: bundle-root root probe
       .filter((p) => fs.existsSync(p))
       .map((p) => {
         const source = namedSources.find((candidate) => samePath(candidate.path, p));

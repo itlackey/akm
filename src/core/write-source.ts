@@ -300,6 +300,7 @@ function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
 /** Resolve the asset root inside a git checkout while preserving root-layout repos. */
 export function resolveGitContentRoot(repoPath: string): string {
   const contentPath = path.join(repoPath, "content");
+  // asset-io: bundle-root git checkout layout
   return fs.existsSync(contentPath) && fs.statSync(contentPath).isDirectory() ? contentPath : repoPath;
 }
 

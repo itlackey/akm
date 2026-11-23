@@ -42,6 +42,7 @@ export async function withFreshnessCache(options: FreshnessCacheOptions): Promis
 
   let materialized = false;
   try {
+    // asset-io: install refresh marker
     fs.statSync(options.markerPath);
     materialized = true;
   } catch {

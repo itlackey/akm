@@ -24,7 +24,9 @@ function releaseNotesDir(): string {
 function loadChangelog(): string | undefined {
   try {
     const changelogPath = path.resolve(getDirname(import.meta.url), "../../../CHANGELOG.md");
+    // asset-io: shipped release notes
     if (fs.existsSync(changelogPath)) {
+      // asset-io: shipped release notes
       return fs.readFileSync(changelogPath, "utf8");
     }
   } catch {
@@ -47,9 +49,12 @@ function loadReleaseNote(version: string): string | undefined {
   if (!isSafeVersionComponent(version)) return undefined;
   const notePath = path.join(releaseNotesDir(), `${version}.md`);
   try {
+    // asset-io: shipped release notes
     if (!fs.existsSync(notePath)) return undefined;
+    // asset-io: shipped release notes
     const stat = fs.statSync(notePath);
     if (!stat.isFile()) return undefined;
+    // asset-io: shipped release notes
     return fs.readFileSync(notePath, "utf8");
   } catch {
     return undefined;
@@ -152,7 +157,9 @@ export function renderMigrationHelp(versionInput: string, changelogText = loadCh
 export function listBundledReleaseVersions(): string[] {
   try {
     const dir = releaseNotesDir();
+    // asset-io: shipped release notes
     if (!fs.existsSync(dir)) return [];
+    // asset-io: shipped release notes
     return fs
       .readdirSync(dir)
       .filter((name) => name.endsWith(".md") && name !== "README.md")

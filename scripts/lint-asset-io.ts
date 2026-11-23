@@ -83,6 +83,7 @@ export const REASONS = {
   exec: "entry.file handed to a program",
   "files-view": "the Desktop Files view on a directory bundle",
   "bundle-meta": ".meta/ documents of a directory bundle (not assets)",
+  "bundle-root": "checks a configured bundle's root (exists, readable, is a git checkout); reads no asset",
   deprecated: "workflow code (deprecated, removed in 0.11): not migrated, its exemptions go with the feature",
 } as const;
 type Reason = keyof typeof REASONS;

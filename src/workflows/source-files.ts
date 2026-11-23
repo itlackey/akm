@@ -134,6 +134,7 @@ export class WorkflowSourceLinkResolutionError extends WorkflowSourceRejectionEr
  */
 function ownsWorkflowFile(sourceRoot: string, adapterId: string, absPath: string): boolean {
   if (adapterId === "akm-workflow") return true;
+  // asset-io: deprecated
   return adapterId === "akm" && declaredTypeForPath(buildFileContext(sourceRoot, absPath)) === "workflow";
 }
 
@@ -299,6 +300,7 @@ function inspectWorkflowSourceCandidate(
 
   let authoredStat: fs.Stats;
   try {
+    // asset-io: deprecated
     authoredStat = fs.lstatSync(candidate.path);
   } catch {
     issues.push(new WorkflowSourceLinkResolutionError(candidate.relativePath));
@@ -324,6 +326,7 @@ function inspectWorkflowSourceCandidate(
     issues.push(new WorkflowSourceLinkIdentityError(candidate.relativePath, targetPath));
   }
   try {
+    // asset-io: deprecated
     if (!fs.statSync(realPath).isFile()) issues.push(new WorkflowSourceLinkResolutionError(candidate.relativePath));
   } catch {
     issues.push(new WorkflowSourceLinkResolutionError(candidate.relativePath));

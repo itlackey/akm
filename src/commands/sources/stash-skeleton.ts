@@ -32,6 +32,7 @@ export function copyStashSkeleton(stashDir: string): void {
 function copySkeletonDir(srcDir: string, destDir: string): void {
   let entries: fs.Dirent[];
   try {
+    // asset-io: shipped bundle skeleton
     entries = fs.readdirSync(srcDir, { withFileTypes: true });
   } catch {
     return;
@@ -44,9 +45,11 @@ function copySkeletonDir(srcDir: string, destDir: string): void {
       copySkeletonDir(src, dest);
       continue;
     }
+    // asset-io: shipped bundle skeleton
     if (fs.existsSync(dest)) continue;
     try {
       fs.mkdirSync(path.dirname(dest), { recursive: true });
+      // asset-io: shipped bundle skeleton
       fs.copyFileSync(src, dest);
     } catch {
       // Non-fatal — stash is usable without skeleton files
@@ -66,9 +69,11 @@ function copySkeletonDir(srcDir: string, destDir: string): void {
 export function scaffoldStashMeta(stashDir: string): void {
   const metaDir = path.join(stashDir, ".meta");
   const indexPath = path.join(metaDir, "index.md");
+  // asset-io: shipped bundle skeleton
   if (fs.existsSync(indexPath)) return;
   try {
     fs.mkdirSync(metaDir, { recursive: true });
+    // asset-io: shipped bundle skeleton
     fs.writeFileSync(indexPath, STASH_META_INDEX_TEMPLATE);
   } catch {
     // Non-fatal — stash is usable without the .meta orientation doc
@@ -82,9 +87,11 @@ export function scaffoldStashMeta(stashDir: string): void {
  */
 export function scaffoldScratch(stashDir: string): void {
   const readmePath = path.join(stashDir, SCRATCH_DIR, "README.md");
+  // asset-io: shipped bundle skeleton
   if (fs.existsSync(readmePath)) return;
   try {
     fs.mkdirSync(path.dirname(readmePath), { recursive: true });
+    // asset-io: shipped bundle skeleton
     fs.copyFileSync(SCRATCH_README, readmePath);
   } catch {
     // Non-fatal — the bundle is usable without the scratch scaffold.
@@ -95,10 +102,12 @@ export function scaffoldScratch(stashDir: string): void {
 export function ensureScratchGitignore(stashDir: string): void {
   try {
     const gitignorePath = path.join(stashDir, ".gitignore");
+    // asset-io: shipped bundle skeleton
     const existing = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
     // `.scratch`, `/.scratch`, `.scratch/` and `/.scratch/` all already ignore the root directory.
     if (existing.split(/\r?\n/).some((line) => line.trim().replace(/^\/|\/$/g, "") === SCRATCH_DIR)) return;
     const gap = existing.length === 0 ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
+    // asset-io: shipped bundle skeleton
     fs.writeFileSync(gitignorePath, `${existing}${gap}# Local scratch material\n${SCRATCH_GITIGNORE_RULE}\n`);
   } catch {
     // Non-fatal — the bundle is usable without the ignore scaffold.
@@ -115,9 +124,11 @@ const SCRATCH_GITIGNORE_RULE = `/${SCRATCH_DIR}/`;
 export function ensureStashGitignore(stashDir: string): void {
   try {
     const gitignorePath = path.join(stashDir, ".gitignore");
+    // asset-io: shipped bundle skeleton
     const existing = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
     if (existing.includes("env/") || existing.includes("secrets/")) return;
     const gap = existing.length === 0 ? "" : existing.endsWith("\n") ? "" : "\n";
+    // asset-io: shipped bundle skeleton
     fs.writeFileSync(gitignorePath, `${existing}${gap}env/\nsecrets/\n`);
   } catch {
     // Non-fatal — the stash is usable without the ignore scaffold.

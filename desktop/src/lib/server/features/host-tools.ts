@@ -128,6 +128,7 @@ export async function hostEnvironment(
   if (platform === "win32") extra.push(cliDirectory(platform, next, home).path);
   try {
     const nvm = path.join(next.NVM_DIR || path.join(home, ".nvm"), "versions/node");
+    // asset-io: host host tool probe
     const versions = (await readdir(nvm))
       .filter((item) => /^v\d+\.\d+\.\d+$/.test(item))
       .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
@@ -145,6 +146,7 @@ export const findProgram: Find = async (name, env = process.env) => {
   for (const directory of (env.PATH ?? "").split(path.delimiter).filter((item) => path.isAbsolute(item))) {
     for (const file of names.map((item) => path.join(directory, item))) {
       try {
+        // asset-io: host host tool probe
         await access(file, constants.X_OK);
         return file;
       } catch {
@@ -240,6 +242,7 @@ async function openCodePlugin(env: Env, home: string, major: number) {
   for (const file of files) {
     let text: string;
     try {
+      // asset-io: install harness plugin config
       text = await readFile(file as string, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
@@ -398,6 +401,7 @@ export class HostTools {
     const target = cliDirectory(this.platform, env, this.home).path;
     const file = path.join(target, this.platform === "win32" ? "akm.exe" : "akm");
     // Desktop's own install is a regular file where its installer puts it, and a standalone binary as akm itself reports (so only after a check): a link, or a file akm has not yet reported as a standalone binary, is not Desktop's to replace.
+    // asset-io: host host tool probe
     const stat = await lstat(file).catch(() => undefined);
     const method = this.state.upgrade?.installMethod;
     const cliManaged = cli.path === file && stat?.isFile() === true && method === "binary";
@@ -586,8 +590,10 @@ export class HostTools {
         `akm is installed at ${detected.path}, not as a standalone binary Desktop put in ${target.shown}. Update or repair it with the installer that owns it (for example your package manager); Desktop will not replace it.`,
       );
     await mkdir(directory, { recursive: true });
+    // asset-io: host host tool probe
     await access(directory, constants.W_OK);
     // A binary already in the install directory (even off PATH, or one that does not run) is replaced only on request.
+    // asset-io: host host tool probe
     const found = await lstat(targetFile).catch((error) => {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       return undefined;
@@ -623,6 +629,7 @@ export class HostTools {
     const temporary = await mkdtemp(path.join(os.tmpdir(), "akm-desktop-install-"));
     const file = path.join(temporary, script);
     try {
+      // asset-io: scratch downloaded installer
       await writeFile(file, text, { mode: 0o600 });
       const installEnv = { ...env, AKM_INSTALL_DIR: directory };
       if (windows) {
@@ -639,6 +646,7 @@ export class HostTools {
         await this.invoke("/bin/bash", [file, ...tag], installEnv, 10 * 60_000);
       }
     } finally {
+      // asset-io: scratch downloaded installer
       await rm(temporary, { recursive: true, force: true });
     }
     const installed = await this.detect("akm", env);

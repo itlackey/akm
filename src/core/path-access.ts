@@ -61,6 +61,7 @@ function errnoOf(error: unknown): string | undefined {
  */
 export function classifyPathAccess(target: string): PathAccessResult {
   try {
+    // asset-io: host access diagnostics
     fs.statSync(target);
   } catch (error) {
     const code = errnoOf(error);
@@ -93,6 +94,7 @@ export function describeInaccessiblePath(target: string, code?: string): string 
   const parts: string[] = [target];
   if (code) parts.push(`(${code})`);
   try {
+    // asset-io: host access diagnostics
     const stat = fs.statSync(target);
     parts.push(`mode ${(stat.mode & 0o777).toString(8).padStart(3, "0")}, owner uid ${stat.uid}`);
   } catch {
@@ -101,6 +103,7 @@ export function describeInaccessiblePath(target: string, code?: string): string 
     const parent = target.slice(0, Math.max(0, target.lastIndexOf("/")));
     if (parent) {
       try {
+        // asset-io: host access diagnostics
         const stat = fs.statSync(parent);
         parts.push(
           `parent ${parent} is mode ${(stat.mode & 0o777).toString(8).padStart(3, "0")}, owner uid ${stat.uid}`,

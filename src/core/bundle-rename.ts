@@ -226,6 +226,7 @@ async function buildPlan(
   let taskHistoryRefs = 0;
   let workflowRunRefs = 0;
   let activeWorkflowRuns: BundleRenamePlan["activeWorkflowRuns"] = [];
+  // asset-io: state
   if (fs.existsSync(getStateDbPath())) {
     withStateDb((db) => {
       const counts = countProposalsForBundleRename(db, oldId);
@@ -348,6 +349,7 @@ export async function renameBundle(
   // learned history keyed by item ref: usage_events.entry_ref (search ranking
   // counts feedback by it), events.ref and improve_ledger.ref (improve reads
   // feedback and its own attempts by them), and asset_salience/asset_outcome.asset_ref.
+  // asset-io: state
   if (fs.existsSync(getStateDbPath())) {
     withStateDb((db) => {
       renameProposalsBundleRef(db, oldId, newId);

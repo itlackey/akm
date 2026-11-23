@@ -252,6 +252,7 @@ export function taskRunLog(input: { taskId?: string; startedAt?: string }) {
   if (!taskId || !startedAt)
     throw new UsageError("A taskId and the run's startedAt are required.", "MISSING_REQUIRED_ARGUMENT");
   const dbPath = getLogsDbPath();
+  // asset-io: state
   if (!fs.existsSync(dbPath)) return { available: false as const, reason: "absent" as const };
   const db = openDatabase(dbPath, { readonly: true, create: false });
   try {

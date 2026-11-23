@@ -337,6 +337,7 @@ async function workflowSourceDriftWarning(
   }
   let current: string;
   try {
+    // asset-io: deprecated
     current = createHash("sha256").update(fs.readFileSync(sourcePath)).digest("hex");
   } catch {
     return `Workflow run ${runId}: ${sourcePath} is no longer readable; continuing with the frozen plan.`;
