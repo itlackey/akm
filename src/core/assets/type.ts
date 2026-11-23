@@ -21,10 +21,12 @@ import { closeDatabase } from "../../storage/repositories/index-connection";
 import { deleteEntriesByIds } from "../../storage/repositories/index-entries-repository";
 import { bundleVariantKey, getMeta } from "../../storage/repositories/index-meta-repository";
 import { hashContent } from "../adapter/adapters/shared";
+import type { AssetEntry } from "../adapter/bundle-adapter";
 import { buildFileContext, fileContextOfEntry, type MatchResult } from "../adapter/directory/file-context";
 import { declaredTypeForPath } from "../adapter/directory/matchers";
 import { recognizeMatch } from "../adapter/recognize-match";
 import type { IndexDocument } from "../adapter/types";
+import { parseFrontmatter } from "../asset/frontmatter";
 import { loadConfig } from "../config/config";
 import { assetNotFound } from "../errors";
 import { isPathAbsent } from "../path-access";
@@ -32,7 +34,7 @@ import { getDbPath } from "../paths";
 import { presentationFor } from "../type-presentation";
 import { warnVerbose } from "../warn";
 import { type Asset, bundleHolding } from "./asset";
-import type { AssetBundle } from "./bundle";
+import { type AssetBundle, bundleFor } from "./bundle";
 
 /**
  * Recognize each of `assets` once and, when `persist` is set and a usable index serves their bundles, record the rows:
@@ -229,6 +231,43 @@ export function assetTypeFresh(asset: Asset): string {
   );
   if (recorded?.content_hash === hashContent(asset.entry.content())) return assetType(asset);
   return indexAsset(asset, { persist: true, onMiss: true }).type;
+}
+
+/**
+ * What the adapter of `bundle` makes of `content` as the text stored under `key` (the path inside a directory bundle),
+ * for a caller that holds text which is not saved (the workspace's check of an edit): the type it would be indexed
+ * under, and, when the index would drop it (a workflow that does not compile), the warning the scan gives. Nothing is
+ * read from the bundle or stored. Null: the adapter holds no asset there.
+ */
+export function recognizeContent(
+  bundle: string,
+  key: string,
+  content: string,
+): { type: string; dropped?: string } | null {
+  const entry: AssetEntry = {
+    key,
+    content: () => content,
+    bytes: () => Buffer.from(content),
+    frontmatter: () => {
+      const { data } = parseFrontmatter(content);
+      return Object.keys(data).length > 0 ? data : null;
+    },
+  };
+  let document: IndexDocument | null;
+  try {
+    document = bundleFor(bundle).recognize(entry);
+  } catch {
+    // A path the adapter places but whose content it cannot describe is no asset.
+    return null;
+  }
+  if (!document?.conceptId) return null;
+  const dropped = brokenWorkflowWarning(document, { content: entry.content, relPath: key, absPath: key });
+  return { type: document.type, ...(dropped !== null ? { dropped } : {}) };
+}
+
+/** The type the adapter of `bundle` gives `content` stored under `key`, or null when it holds no asset there. */
+export function typeOfContent(bundle: string, key: string, content: string): string | null {
+  return recognizeContent(bundle, key, content)?.type ?? null;
 }
 
 /**

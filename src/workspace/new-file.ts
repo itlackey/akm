@@ -18,6 +18,7 @@ import { assertFlatAssetName, normalizeCreateSubPath } from "../core/asset/asset
 import { documentStashDirFor, refForFile } from "../core/asset/asset-placement";
 import { serializeFrontmatter } from "../core/asset/asset-serialize";
 import { frontmatterKeysFor } from "../core/asset/type-keys";
+import { indexFiles } from "../core/assets/files";
 import { isWithin } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
@@ -30,7 +31,6 @@ import {
   prepareWriteTargetForMutation,
   writeSourceFile,
 } from "../core/write-source";
-import { indexWrittenAssets } from "../indexer/index-written-assets";
 import { buildWorkflowTemplate } from "../workflows/authoring/authoring";
 import { type FileVerdict, folderBlocker, plainWriteBlocker, type WriteBlockers } from "./file-actions";
 import { interactive } from "./lease";
@@ -150,7 +150,7 @@ export async function createFile(input: CreateFileInput) {
     const content = input.content ?? (type === null ? "" : startingText(type, stem));
     writeSourceFile(target.source, file, content, relative, type ?? undefined);
     commitWriteTargetBoundary(target, `Create ${relative}`);
-    const indexed = await indexWrittenAssets(root, [file], { bundleId: bundle });
+    const indexed = await indexFiles(bundle, [file]);
     const concept = type === null ? undefined : refForFile(type, root, file);
     const ref = concept === undefined ? null : `${bundle}//${concept}`;
     appendEvent({

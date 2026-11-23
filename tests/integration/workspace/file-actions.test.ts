@@ -13,7 +13,7 @@ import path from "node:path";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
-import { assets, documents } from "../../../src/workspace";
+import { assets, documents, indexFiles } from "../../../src/workspace";
 import type { FileActions } from "../../../src/workspace/file-actions";
 import { makeConfig } from "../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
@@ -227,6 +227,10 @@ describe("a bundle akm does not write", () => {
 
     const found = (await assets.search({ q: "zirconmarker" })) as { hits: Array<{ ref?: string; path?: string }> };
     expect(found.hits.length).toBeGreaterThan(0);
+  });
+
+  test("indexFiles fails open: an unknown bundle gives false, not a rejection", async () => {
+    expect(await indexFiles("no-such-bundle", [path.join(claude, "x.md")])).toBe(false);
   });
 });
 
