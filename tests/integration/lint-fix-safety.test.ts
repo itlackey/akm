@@ -20,7 +20,7 @@
  * Both are pinned here against the real `akmLint()` entry point.
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { parseDocument } from "yaml";
@@ -29,6 +29,7 @@ import { akmLint } from "../../src/commands/lint/index";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import { UsageError } from "../../src/core/errors";
+import * as indexWriterLock from "../../src/indexer/index-writer-lock";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -259,5 +260,47 @@ describe("akm lint --fix preserves multiline descriptions", () => {
     const secondPass = await akmLint({ fix: true, config: makeConfig(storage.stashDir) });
     expect(secondPass.fixed.filter((issue) => issue.issue === "unquoted-colon")).toEqual([]);
     expect(secondPass.flagged.filter((issue) => issue.issue === "unquoted-colon")).toEqual([]);
+  });
+});
+
+describe("akm lint takes the mutation lease only to make a change", () => {
+  let storage: IsolatedAkmStorage;
+  afterEach(() => storage?.cleanup());
+
+  const CLEAN = "---\nname: note\ntype: memory\nupdated: 2026-09-19\n---\n\nSome content.\n";
+
+  test("a read-only run and a --fix with nothing to fix take no lease and write nothing", async () => {
+    storage = withIsolatedAkmStorage();
+    const clean = path.join(storage.stashDir, "memories", "clean.md");
+    fs.mkdirSync(path.dirname(clean), { recursive: true });
+    fs.writeFileSync(clean, CLEAN);
+    const dirty = writeMemory(storage.stashDir, "dirty");
+    const lease = spyOn(indexWriterLock, "withAssetMutationLeaseSync");
+    const snapshot = () => [clean, dirty].map((file) => [fs.readFileSync(file, "utf8"), fs.statSync(file).mtimeMs]);
+    const before = snapshot();
+    try {
+      await akmLint({ dir: storage.stashDir, config: makeConfig(storage.stashDir) });
+      expect(snapshot()).toEqual(before);
+
+      // Only the clean file is in scope for this run: nothing in it is fixable.
+      fs.rmSync(dirty);
+      await akmLint({ fix: true, dir: storage.stashDir, config: makeConfig(storage.stashDir) });
+      expect(lease).not.toHaveBeenCalled();
+      expect(fs.readFileSync(clean, "utf8")).toBe(CLEAN);
+    } finally {
+      lease.mockRestore();
+    }
+  });
+
+  test("a fix that changes a file does take it", async () => {
+    storage = withIsolatedAkmStorage();
+    writeMemory(storage.stashDir, "dirty");
+    const lease = spyOn(indexWriterLock, "withAssetMutationLeaseSync");
+    try {
+      await akmLint({ fix: true, dir: storage.stashDir, config: makeConfig(storage.stashDir) });
+      expect(lease).toHaveBeenCalled();
+    } finally {
+      lease.mockRestore();
+    }
   });
 });

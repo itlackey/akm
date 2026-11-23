@@ -184,6 +184,11 @@
       "refreshIndexedAsset": 1
     }
   },
+  "src/core/assets/write.ts": {
+    "facade-export": {
+      "AssetWriter": 1
+    }
+  },
   "src/core/env-secret-ref.ts": {
     "entry-file": {
       "entry.file": 4

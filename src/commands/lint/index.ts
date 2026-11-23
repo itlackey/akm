@@ -38,7 +38,7 @@ import {
   perTypeFrontend,
   validateBundleAssets,
 } from "../../core/assets/validate";
-import { type AssetWriter, writeAssets } from "../../core/assets/write";
+import { writeAssets } from "../../core/assets/write";
 import { bundleSourceAt } from "../../core/bundle-at-dir";
 import { deriveBundleIds } from "../../core/bundle-id";
 import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpath, samePath } from "../../core/common";
@@ -599,7 +599,7 @@ function sweepFileOf(
   bundle: LintBundle,
   filePath: string,
   asset: Asset | undefined,
-  writer: AssetWriter | undefined,
+  writer: LintWriter | undefined,
 ): SweepFile {
   const current = (held: Asset): Asset => (writer ? (assetAtKey(bundle, held.entry.key) ?? held) : held);
   return {
@@ -834,7 +834,7 @@ function lintAkmSweep(
   const writes = fix || options.pruneDanglingEdges === true || options.fixMovedRefs === true;
   if (writes) assertFixTargetWritable(stashRoot, sources);
   const bundle = lintBundleOf(adapterId, stashRoot, sources);
-  const sweep = (writer: AssetWriter | undefined): LintFindings => {
+  const sweep = (writer: LintWriter | undefined): LintFindings => {
     const fixed: LintIssue[] = [];
     const flagged: LintIssue[] = [];
     const warnings: LintIssue[] = [];
@@ -913,7 +913,24 @@ function lintAkmSweep(
     //      a successful-but-flagged run from a hard error by inspecting fields.
     return { fixed, flagged, warnings };
   };
-  return writes ? writeAssets(fixTarget(bundle), { purpose: "lint-fix" }, sweep) : sweep(undefined);
+  return sweep(writes ? writerOf(bundle) : undefined);
+}
+
+/**
+ * What a fix does to an asset. Each change is its own write session, so the asset-mutation lease is taken only when a
+ * change is made: a run with nothing to fix (or none asked for) takes none and writes nothing.
+ */
+interface LintWriter {
+  update(conceptId: string, content: string, options: { throughLink: boolean }): void;
+  delete(conceptId: string): void;
+}
+
+function writerOf(bundle: LintBundle): LintWriter {
+  return {
+    update: (conceptId, content, options) =>
+      void writeAssets(fixTarget(bundle), { purpose: "lint-fix" }, (w) => w.update(conceptId, content, options)),
+    delete: (conceptId) => void writeAssets(fixTarget(bundle), { purpose: "lint-fix" }, (w) => w.delete(conceptId)),
+  };
 }
 
 /** The write target of the bundle a fix repairs: its policy was checked by {@link assertFixTargetWritable}, which lint owns. */
@@ -1068,15 +1085,8 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
   if (root && realRoot) {
     const bundle = lintBundleOf(bundleSourceAt(root, cfg).adapterId, root, resolveSourceEntries(root, cfg));
     const asset = assetAtKey(bundle, path.relative(realRoot, absFile).split(path.sep).join("/"));
-    const lintOne = (writer: AssetWriter | undefined): void =>
-      lintSweepFile(
-        { ...sweepFileOf({ ...bundle, path: realRoot }, absFile, asset, writer) },
-        subdir as string,
-        scope,
-        sinks,
-      );
-    if (scope.fix || scope.fixMovedRefs) writeAssets(fixTarget(bundle), { purpose: "lint-fix" }, lintOne);
-    else lintOne(undefined);
+    const writer = scope.fix || scope.fixMovedRefs ? writerOf(bundle) : undefined;
+    lintSweepFile(sweepFileOf({ ...bundle, path: realRoot }, absFile, asset, writer), subdir as string, scope, sinks);
   } else {
     // A file outside every bundle is no asset: the one the user named is read and, under `--fix`, saved as it lies.
     lintSweepFile(
