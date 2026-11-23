@@ -170,8 +170,8 @@ export interface IndexDocument {
    * no output prints that path.
    */
   fileless?: boolean;
-  /** Where a secret manager's store holds the entry, as the store reported it when it was indexed: a read goes by these, not by a fresh listing. */
-  store?: { path: string; attributes: Record<string, string> };
+  /** Where a secret manager's store holds the entry (`item`: its object in the store), as the store reported it when it was indexed: a read goes by these, not by a fresh listing. */
+  store?: { item: string; attributes: Record<string, string> };
   /**
    * Asset quality marker. Four values are well-known:
    * `"generated"` and `"curated"` are included in default search;

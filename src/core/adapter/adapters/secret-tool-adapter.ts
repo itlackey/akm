@@ -167,7 +167,7 @@ function keyringItem(keyring: string, path: string, name: string, attributes: Re
     name,
     keyring,
     id: path,
-    store: { path, attributes },
+    store: { item: path, attributes },
     read: () => lookup(item),
   };
   return item;
@@ -246,7 +246,7 @@ function recorded(keyring: string, name: string, b: Bundle): KeyringItem | undef
     undefined,
   );
   const store = (row ? (JSON.parse(row.document_json) as IndexDocument) : undefined)?.store;
-  return store ? keyringItem(keyring, store.path, name, store.attributes) : undefined;
+  return store ? keyringItem(keyring, store.item, name, store.attributes) : undefined;
 }
 
 export class SecretToolAdapter extends SecretManagerAdapterBase {

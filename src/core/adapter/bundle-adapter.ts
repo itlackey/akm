@@ -35,7 +35,7 @@ export interface AssetEntry {
   /** The absolute file that holds the asset, when the adapter keeps it as a file. Absent: no file holds it. */
   readonly file?: string;
   /** Where a secret manager's store holds the asset (see `IndexDocument.store`); the index records it. */
-  readonly store?: { path: string; attributes: Record<string, string> };
+  readonly store?: { item: string; attributes: Record<string, string> };
   /** The content as text, read once, when first asked. */
   content(): string;
   /** The content as bytes, read once, when first asked. */
