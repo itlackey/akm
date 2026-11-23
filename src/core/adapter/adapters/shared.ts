@@ -24,8 +24,9 @@ import { parseFrontmatter } from "../../asset/frontmatter";
 import type { RuleScope } from "../../asset/lint-text";
 import { toPosix } from "../../common";
 import { loadConfig } from "../../config/config";
-import type { FileChange } from "../../file-change";
-import type { Bundle, Diagnostic, ValidateContext } from "../types";
+import type { FileChange } from "../file-change";
+import type { Bundle } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 
 // ── Small pure helpers, reused across the concrete adapters ──────────────────
 
@@ -73,13 +74,13 @@ const noMoves = (): [] => [];
 /** The base checks of one bundle's files. */
 export interface BaseChecker {
   /** What `runBaseChecks` reports for one file; `skip` is the rules this adapter leaves out for it, on top of the bundle's `lint.skip`. */
-  check(relPath: string, parsed: ParsedForValidate, skip?: readonly string[]): Diagnostic[];
+  check(relPath: string, parsed: ParsedForValidate, skip?: readonly string[]): FileDiagnostic[];
   /** What decides whether a rule applies to the file, for the rules an adapter runs itself (see `ruleApplies`). */
   rulesFor(relPath: string, skip?: readonly string[]): RuleScope;
 }
 
 /** The base checks for the files of the bundle at `bundleRoot`, among the bundles and with the settings `ctx` names (the settings are read once, here, only when `ctx` carries none). The scope (other bundles, moved refs, stale-path roots) is read once. */
-export function createBaseChecker(bundleRoot: string, ctx: ValidateContext): BaseChecker {
+export function createBaseChecker(bundleRoot: string, ctx: FileValidateContext): BaseChecker {
   const scope = lintScope(bundleRoot, ctx.config ?? loadConfig(), ctx.sources ?? [], ctx.readMoves ?? noMoves);
   const rulesFor = (relPath: string, skip: readonly string[] = []): RuleScope => ({
     relPath,
@@ -118,9 +119,9 @@ export function createBaseChecker(bundleRoot: string, ctx: ValidateContext): Bas
 export async function validateChangesWithBaseChecks(
   c: Bundle,
   changes: FileChange[],
-  ctx: ValidateContext,
-): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+  ctx: FileValidateContext,
+): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
   const { check } = createBaseChecker(c.root, ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;

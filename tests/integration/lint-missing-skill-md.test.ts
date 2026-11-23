@@ -23,7 +23,8 @@ import { akmLint } from "../../src/commands/lint/index";
 import { agentSkillsAdapter } from "../../src/core/adapter/adapters/agent-skills-adapter";
 import { skillDirectoryDiagnostics } from "../../src/core/adapter/adapters/akm-lint";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
-import { createValidateContext } from "../../src/core/adapter/validate-context";
+import { createFileValidateContext } from "../../src/core/adapter/validate-context";
+import { checkChanges } from "../_helpers/adapter-hooks";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -86,10 +87,11 @@ describe("agent-skills: a package directory with no SKILL.md is flagged (issue #
     // the group dir itself must not be reported for having no manifest of its own.
     write(root, "team/pdf-processing/SKILL.md", skillManifest("pdf-processing"));
 
-    const diagnostics = await agentSkillsAdapter.validate(
+    const diagnostics = await checkChanges(
+      agentSkillsAdapter,
       { id: "grouped", root },
       [{ path: "team/pdf-processing/SKILL.md", op: "update" }],
-      createValidateContext({ root }),
+      createFileValidateContext({ root }),
     );
 
     expect(diagnostics.filter((d) => d.issue === "missing-skill-md")).toEqual([]);
@@ -102,10 +104,11 @@ describe("agent-skills: a package directory with no SKILL.md is flagged (issue #
     write(root, "team/pdf-processing/SKILL.md", skillManifest("pdf-processing"));
     write(root, "team/half-built/reference/NOTES.md", "# Notes\n");
 
-    const diagnostics = await agentSkillsAdapter.validate(
+    const diagnostics = await checkChanges(
+      agentSkillsAdapter,
       { id: "mixed-grouped", root },
       [{ path: "team/pdf-processing/SKILL.md", op: "update" }],
-      createValidateContext({ root }),
+      createFileValidateContext({ root }),
     );
 
     expect(diagnostics.filter((d) => d.issue === "missing-skill-md")).toEqual([
@@ -125,10 +128,11 @@ describe("agent-skills: a package directory with no SKILL.md is flagged (issue #
     write(root, "pdf-processing/SKILL.md", skillManifest("pdf-processing"));
     write(root, ".github/workflows/ci.yml", "name: ci\n");
 
-    const diagnostics = await agentSkillsAdapter.validate(
+    const diagnostics = await checkChanges(
+      agentSkillsAdapter,
       { id: "dotted", root },
       [{ path: "pdf-processing/SKILL.md", op: "update" }],
-      createValidateContext({ root }),
+      createFileValidateContext({ root }),
     );
 
     expect(diagnostics.filter((d) => d.issue === "missing-skill-md")).toEqual([]);
@@ -161,7 +165,7 @@ describe("agent-skills: a package directory with no SKILL.md is flagged (issue #
     write(root, "skills/personal/b/x.md", "# X\n");
 
     const seen = new Set<string>();
-    const ctx = createValidateContext({ root });
+    const ctx = createFileValidateContext({ root });
     const diagnostics = (await Promise.all(changed.map((file) => skillDirectoryDiagnostics(file, seen, ctx)))).flat();
 
     expect(diagnostics.map((d) => d.file)).toEqual(["skills/personal/b"]);
@@ -174,7 +178,7 @@ describe("agent-skills: a package directory with no SKILL.md is flagged (issue #
     write(root, "skills/incomplete/more.md", "# More\n");
 
     const seen = new Set<string>();
-    const ctx = createValidateContext({ root });
+    const ctx = createFileValidateContext({ root });
     const first = await skillDirectoryDiagnostics("skills/incomplete/notes.md", seen, ctx);
     const second = await skillDirectoryDiagnostics("skills/incomplete/more.md", seen, ctx);
 

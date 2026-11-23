@@ -5,7 +5,8 @@
 import { describe, expect, test } from "bun:test";
 import { resolveBodyLinks } from "../../../src/core/adapter/adapters/llm-wiki-adapter";
 import { okfAdapter, resolveOkfLinks } from "../../../src/core/adapter/adapters/okf-adapter";
-import type { ValidateContext } from "../../../src/core/adapter/types";
+import type { FileValidateContext } from "../../../src/core/adapter/validate-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const codeExamples = [
   "`[example](./missing.md)`",
@@ -107,7 +108,7 @@ test("code examples inside real link labels do not create extra targets", () => 
 
 test("OKF code examples produce no broken-link diagnostic; a real missing link remains tolerant", async () => {
   const visited: string[] = [];
-  const ctx: ValidateContext = {
+  const ctx: FileValidateContext = {
     readFile: async () => null,
     list: async () => [],
     resolveRef: async (ref) => {
@@ -115,7 +116,8 @@ test("OKF code examples produce no broken-link diagnostic; a real missing link r
       return { exists: false };
     },
   };
-  const diagnostics = await okfAdapter.validate(
+  const diagnostics = await checkChanges(
+    okfAdapter,
     { id: "sample", root: "/sample" },
     [
       {

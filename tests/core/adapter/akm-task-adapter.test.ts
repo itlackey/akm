@@ -15,10 +15,12 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmTaskAdapter } from "../../../src/core/adapter/adapters/akm-task-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
+import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adapter/validate-context";
 import type { FileChange } from "../../../src/core/file-change";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext, type FileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/akm-task");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/akm-task");
@@ -36,7 +38,7 @@ function recognizeRel(relPath: string): IndexDocument | null {
   return akmTaskAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
-const ctx: ValidateContext = {
+const ctx: FileValidateContext = {
   readFile: async (p) => {
     try {
       return fs.readFileSync(path.join(FIXTURE_ROOT, p), "utf8");
@@ -104,7 +106,7 @@ describe("akm-task adapter — renderer golden", () => {
 });
 
 describe("akm-task adapter — strict task source validation", () => {
-  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: Diagnostic[] }>;
+  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: FileDiagnostic[] }>;
 
   test("each task validates to exactly the golden's issue codes", async () => {
     const changes: FileChange[] = Object.values(perType).map((e) => ({
@@ -112,7 +114,7 @@ describe("akm-task adapter — strict task source validation", () => {
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await akmTaskAdapter.validate(bundle(), changes, ctx);
+    const diags = await checkChanges(akmTaskAdapter, bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {
@@ -122,7 +124,12 @@ describe("akm-task adapter — strict task source validation", () => {
 
   test("two-targets.yml is the sole invalid-task-yaml (`uses` plus `run`)", async () => {
     const raw = fs.readFileSync(path.join(FIXTURE_ROOT, "two-targets.yml"), "utf8");
-    const diags = await akmTaskAdapter.validate(bundle(), [{ path: "two-targets.yml", op: "update", after: raw }], ctx);
+    const diags = await checkChanges(
+      akmTaskAdapter,
+      bundle(),
+      [{ path: "two-targets.yml", op: "update", after: raw }],
+      ctx,
+    );
     expect(diags.map((d) => d.issue)).toEqual(["invalid-task-yaml"]);
     expect(diags[0]?.detail).toContain("exactly one executable selector");
   });
@@ -138,7 +145,7 @@ describe("akm-task adapter — strict task source validation", () => {
       ["alias.yml", "version: 4\nrun: &shared echo okay\nname: *shared\n", "anchors"],
     ] as const;
     for (const [file, raw, detail] of cases) {
-      const diagnostics = await akmTaskAdapter.validate(bundle(), [{ path: file, op: "update", after: raw }], ctx);
+      const diagnostics = await checkChanges(akmTaskAdapter, bundle(), [{ path: file, op: "update", after: raw }], ctx);
       expect(diagnostics).toHaveLength(1);
       expect(diagnostics[0]).toMatchObject({ file, issue: "invalid-task-yaml", fixed: false });
       expect(diagnostics[0]?.detail).toContain(detail);
@@ -147,7 +154,8 @@ describe("akm-task adapter — strict task source validation", () => {
 
   test("keeps `.yaml` as a reported near miss and never validates it as a task", async () => {
     const raw = "version: 4\nrun: echo okay\n";
-    const diagnostics = await akmTaskAdapter.validate(
+    const diagnostics = await checkChanges(
+      akmTaskAdapter,
       bundle(),
       [{ path: "misnamed.yaml", op: "update", after: raw }],
       ctx,

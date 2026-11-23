@@ -35,17 +35,10 @@ import { parseFrontmatter } from "../../asset/frontmatter";
 import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { isScratchPath } from "../../asset/scratch";
 import { isRecord, toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
 import { DirectoryAdapterBase } from "../directory-adapter";
-import type {
-  Bundle,
-  Diagnostic,
-  IndexDocument,
-  IndexMetadata,
-  OkfSourceEntry,
-  OkfVerifiedEntry,
-  ValidateContext,
-} from "../types";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexDocument, IndexMetadata, OkfSourceEntry, OkfVerifiedEntry } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
 /** v0.2 frontmatter keys consumed into first-class fields below (§0.1) — excluded from the generic `documentJson` extras fold alongside the v0.1 five, so nothing is duplicated between a first-class field and the opaque extras bag. */
@@ -263,8 +256,8 @@ function describe(file: FileContext, conceptId: string): IndexMetadata {
   return doc;
 }
 
-async function validate(c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
   const { check } = createBaseChecker(c.root, ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;
@@ -322,7 +315,7 @@ export class OkfAdapter extends DirectoryAdapterBase {
     return describe(file, conceptId);
   }
 
-  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     return validate(b, changes, ctx);
   }
 

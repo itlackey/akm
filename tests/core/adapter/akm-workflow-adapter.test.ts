@@ -14,10 +14,12 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmWorkflowAdapter } from "../../../src/core/adapter/adapters/akm-workflow-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
+import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adapter/validate-context";
 import type { FileChange } from "../../../src/core/file-change";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/akm-workflow");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/akm-workflow");
@@ -35,7 +37,7 @@ function recognizeRel(relPath: string): IndexDocument | null {
   return akmWorkflowAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
-const ctx: ValidateContext = {
+const ctx: FileValidateContext = {
   readFile: async (p) => {
     try {
       return fs.readFileSync(path.join(FIXTURE_ROOT, p), "utf8");
@@ -93,7 +95,7 @@ describe("akm-workflow adapter — renderer golden", () => {
 });
 
 describe("akm-workflow adapter — lint golden", () => {
-  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues?: Diagnostic[] }>;
+  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues?: FileDiagnostic[] }>;
 
   test("the markdown workflow validates clean ([])", async () => {
     const md = perType.workflowMd;
@@ -102,7 +104,7 @@ describe("akm-workflow adapter — lint golden", () => {
       op: "update",
       after: fs.readFileSync(path.join(FIXTURE_ROOT, md!.relPath), "utf8"),
     };
-    const diags = await akmWorkflowAdapter.validate(bundle(), [change], ctx);
+    const diags = await checkChanges(akmWorkflowAdapter, bundle(), [change], ctx);
     expect(diags.map((d) => d.issue)).toEqual((md!.issues ?? []).map((i) => i.issue));
   });
 });

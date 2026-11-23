@@ -35,8 +35,9 @@ import type { FileContext } from "../../../indexer/walk/file-context";
 import { assetPathCandidatesForName, isSecretSidecar } from "../../asset/asset-placement";
 import { isScratchPath } from "../../asset/scratch";
 import { scanEnvKeyNames, toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
-import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { AkmFormatAdapterBase } from "./akm-format";
 import { dangerousEnvKeyDiagnostics } from "./akm-lint";
 import { hashContent } from "./shared";
@@ -88,8 +89,8 @@ function describe(file: FileContext, conceptId: string): IndexMetadata {
   return { hash: hashContent(raw), type: "secret", name: conceptId.split("/").pop() ?? conceptId };
 }
 
-async function validate(_c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+async function validate(_c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
@@ -123,7 +124,7 @@ export class DotenvAdapter extends AkmFormatAdapterBase {
     return type;
   }
 
-  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     return validate(b, changes, ctx);
   }
 

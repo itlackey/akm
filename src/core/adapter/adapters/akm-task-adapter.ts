@@ -42,9 +42,10 @@ import {
   taskSourceErrorDetail,
 } from "../../../tasks/source-v3";
 import { toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
 import { DirectoryAdapterBase } from "../directory-adapter";
-import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { hashContent } from "./shared";
 
 /** The task YAML extension. */
@@ -57,9 +58,9 @@ function describe(file: FileContext, conceptId: string): IndexMetadata {
 
 /**
  * Every `.yaml` file of the bundle, by path. A `.yaml` file is no task, so the bundle does not list it and no change
- * names it: it is found by scanning the bundle through {@link ValidateContext.list}, to say what it is (issue #760).
+ * names it: it is found by scanning the bundle through {@link FileValidateContext.list}, to say what it is (issue #760).
  */
-async function nearMissFiles(ctx: ValidateContext, dir = "."): Promise<string[]> {
+async function nearMissFiles(ctx: FileValidateContext, dir = "."): Promise<string[]> {
   const found: string[] = [];
   for (const name of await ctx.list(dir)) {
     if (name.startsWith(".") || name === "node_modules") continue;
@@ -70,8 +71,8 @@ async function nearMissFiles(ctx: ValidateContext, dir = "."): Promise<string[]>
   return found;
 }
 
-async function validate(_c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+async function validate(_c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
   const changed = new Set(changes.map((change) => toPosix(change.path)));
   for (const relPath of await nearMissFiles(ctx)) {
     if (changed.has(relPath)) continue; // reported with the changes below
@@ -133,7 +134,7 @@ export class AkmTaskAdapter extends DirectoryAdapterBase {
     return describe(file, conceptId);
   }
 
-  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     return validate(b, changes, ctx);
   }
 

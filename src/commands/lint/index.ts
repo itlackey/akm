@@ -12,11 +12,10 @@ import {
   perTypeChecks,
   perTypeFrontend,
 } from "../../core/adapter/adapters/akm-lint";
-import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
-import type { Bundle, Diagnostic } from "../../core/adapter/types";
-import { createValidateContext } from "../../core/adapter/validate-context";
+import type { Diagnostic } from "../../core/adapter/types";
+import type { FileDiagnostic } from "../../core/adapter/validate-context";
 import {
   documentFormatForStashDir,
   documentStashDirFor,
@@ -28,6 +27,7 @@ import {
 } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
+import { validateBundleAssets } from "../../core/assets/validate";
 import { deriveBundleIds } from "../../core/bundle-id";
 import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpath, samePath } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
@@ -35,7 +35,6 @@ import { loadConfig, primaryBundlePath } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import { defaultExcludedTypes } from "../../core/config/schema/search";
 import { UsageError } from "../../core/errors";
-import type { FileChange } from "../../core/file-change";
 import { warn } from "../../core/warn";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
@@ -230,18 +229,19 @@ const KNOWN_ADAPTER_ISSUE_TYPES: ReadonlySet<string> = new Set<LintIssueType>([
 ]);
 
 /** Map one adapter {@link Diagnostic} onto a {@link LintIssue} — see `types.ts`'s `"adapter-diagnostic"` doc comment for the open→closed reconciliation. */
-export function diagnosticToLintIssue(diag: Diagnostic): LintIssue {
-  if (KNOWN_ADAPTER_ISSUE_TYPES.has(diag.issue)) return { ...diag, issue: diag.issue as LintIssueType };
-  return { ...diag, issue: "adapter-diagnostic", detail: `[${diag.issue}] ${diag.detail}` };
+export function diagnosticToLintIssue({ ref, ...diag }: Diagnostic): LintIssue {
+  const issue = { ...diag, file: diag.file ?? ref };
+  if (KNOWN_ADAPTER_ISSUE_TYPES.has(issue.issue)) return { ...issue, issue: issue.issue as LintIssueType };
+  return { ...issue, issue: "adapter-diagnostic", detail: `[${issue.issue}] ${issue.detail}` };
 }
 
 /**
  * What the adapter's `validate()` reports for the assets of the bundle at `stashRoot` that `keep` admits (all of them
- * by default), as lint findings. The changes are the assets the adapter lists (one per concept): `validate` finds the
+ * by default), as lint findings. The edits are the assets the adapter lists (one per concept): `validate` finds the
  * files it ignores itself.
  */
 async function adapterFindings(
-  adapter: BundleAdapter,
+  adapterId: string,
   stashRoot: string,
   keep: ((file: FileContext) => boolean) | undefined,
   sources: SearchSource[],
@@ -250,24 +250,17 @@ async function adapterFindings(
 ): Promise<LintIssue[]> {
   const ids = deriveBundleIds(sources);
   const sourceIndex = sources.findIndex((s) => samePath(s.path, stashRoot));
-  const bundle: Bundle = {
-    id: sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot,
-    root: stashRoot,
-  };
-  const changes: FileChange[] = adapter
-    .list(bundle)
-    .assets // akm's own resolved registry-cache copies are not the bundle's content.
-    .filter(({ entry }) => entry.file === undefined || !isAkmRegistryCachePath(entry.file))
-    .filter(({ entry }) => keep === undefined || keep(fileContextOfEntry(stashRoot, entry)))
-    .map(({ entry }) => ({ path: entry.relPath, op: "update" }));
-
-  const ctx = createValidateContext({
-    root: stashRoot,
-    sources,
-    config: cfg,
-    readMoves: options.readMoves ?? readRecordedMoves,
-  });
-  return (await adapter.validate(bundle, changes, ctx)).map(diagnosticToLintIssue);
+  const found = await validateBundleAssets(
+    { name: sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot, path: stashRoot, adapterId },
+    {
+      // akm's own resolved registry-cache copies are not the bundle's content.
+      keep: (entry) =>
+        (entry.file === undefined || !isAkmRegistryCachePath(entry.file)) &&
+        (keep === undefined || keep(fileContextOfEntry(stashRoot, entry))),
+      ctx: { sources, config: cfg, readMoves: options.readMoves ?? readRecordedMoves },
+    },
+  );
+  return found.map(diagnosticToLintIssue);
 }
 
 /**
@@ -306,7 +299,7 @@ async function lintViaAdapter(
     );
   }
 
-  const mapped = await adapterFindings(adapter, stashRoot, undefined, sources, cfg, options);
+  const mapped = await adapterFindings(adapter.id, stashRoot, undefined, sources, cfg, options);
 
   // Advisory diagnostics travel in their own channel — never `flagged`, so a
   // `--fail-on-flagged` gate is not tripped by a non-fatal warning. Classified
@@ -476,7 +469,7 @@ function containsSkillManifest(dir: string, depth: number): boolean {
 }
 
 /** Under `--fix`, a stub the per-type checks found is deleted; the finding then says so, or says why not. */
-function deleteStubWhenFixing(ctx: LintContext, found: Diagnostic): LintIssue {
+function deleteStubWhenFixing(ctx: LintContext, found: FileDiagnostic): LintIssue {
   const issue = found as LintIssue;
   if (!ctx.fix || (issue.issue !== "orphaned-stub" && issue.issue !== "placeholder-stub")) return issue;
   try {
@@ -713,7 +706,9 @@ async function addAdapterFindings(
     return dir !== undefined && dirs.has(dir);
   };
   const seen = new Set([...found.fixed, ...found.flagged, ...found.warnings].map(lintIssueDedupeKey));
-  for (const issue of await adapterFindings(adapter, stashRoot, inSweep, sources, cfg, options)) {
+  for (const issue of await adapterFindings(adapter.id, stashRoot, inSweep, sources, cfg, options)) {
+    // A skill directory's check belongs to the skills sweep: `--type knowledge` does not report it.
+    if (issue.issue === "missing-skill-md" && !dirs.has("skills")) continue;
     const key = lintIssueDedupeKey(issue);
     if (seen.has(key)) continue;
     seen.add(key);

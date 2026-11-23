@@ -19,10 +19,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { okfAdapter, resolveOkfLinks } from "../../../../src/core/adapter/adapters/okf-adapter";
-import type { Bundle, Diagnostic, ValidateContext } from "../../../../src/core/adapter/types";
+import type { Bundle } from "../../../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../../../src/core/adapter/validate-context";
 import type { FileChange } from "../../../../src/core/file-change";
 import { presentationFor } from "../../../../src/core/type-presentation";
 import { buildFileContext, type FileContext } from "../../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../../fixtures/bundles/okf-sample");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../../fixtures/format-family-goldens/okf");
@@ -60,7 +62,7 @@ function synthetic(relPath: string, content: string): FileContext {
   };
 }
 
-function makeValidateContext(overrides: Partial<ValidateContext> = {}): ValidateContext {
+function makeValidateContext(overrides: Partial<FileValidateContext> = {}): FileValidateContext {
   return {
     readFile: async () => null,
     list: async () => [],
@@ -528,7 +530,8 @@ function readFixture(relPath: string): string {
 
 describe("okf adapter — validate is LENIENT (§5)", () => {
   test("missing `type` => an INFO diagnostic (issue `missing-type`), never an error", async () => {
-    const diags = await okfAdapter.validate(
+    const diags = await checkChanges(
+      okfAdapter,
       bundle(),
       [change("guides/onboarding.md", readFixture("guides/onboarding.md"))],
       makeValidateContext({ resolveRef: async () => ({ exists: true }) }),
@@ -541,7 +544,8 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("a concept WITH a `type` does not get a missing-type diagnostic", async () => {
-    const diags = await okfAdapter.validate(
+    const diags = await checkChanges(
+      okfAdapter,
       bundle(),
       [change("tables/orders.md", readFixture("tables/orders.md"))],
       makeValidateContext({ resolveRef: async () => ({ exists: true }) }),
@@ -550,7 +554,8 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("a broken OKF link => a non-blocking WARNING (issue `missing-ref`)", async () => {
-    const diags = await okfAdapter.validate(
+    const diags = await checkChanges(
+      okfAdapter,
       bundle(),
       [change("tables/orders.md", readFixture("tables/orders.md"))],
       makeValidateContext({ resolveRef: async () => ({ exists: false }) }),
@@ -565,7 +570,8 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("resolvable OKF links produce no missing-ref diagnostics", async () => {
-    const diags = await okfAdapter.validate(
+    const diags = await checkChanges(
+      okfAdapter,
       bundle(),
       [change("tables/orders.md", readFixture("tables/orders.md"))],
       makeValidateContext({ resolveRef: async () => ({ exists: true }) }),
@@ -574,7 +580,8 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("a `timestamp` satisfies the freshness check — no `missing-updated` (§0.1, legacy v0.1 fallback)", async () => {
-    const diags = await okfAdapter.validate(
+    const diags = await checkChanges(
+      okfAdapter,
       bundle(),
       [change("tables/orders.md", readFixture("tables/orders.md"))],
       makeValidateContext({ resolveRef: async () => ({ exists: true }) }),
@@ -583,7 +590,8 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("a v0.2 `generated.at` (no legacy timestamp) ALSO satisfies the freshness check — no `missing-updated`", async () => {
-    const diags = await okfAdapter.validate(
+    const diags = await checkChanges(
+      okfAdapter,
       bundle(),
       [
         change(
@@ -597,7 +605,8 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("missing optional timestamp never produces AKM's `missing-updated` diagnostic", async () => {
-    const diags = await okfAdapter.validate(
+    const diags = await checkChanges(
+      okfAdapter,
       bundle(),
       [change("notes/stale.md", "---\ntype: knowledge\ntitle: Stale\n---\n\nbody\n")],
       makeValidateContext({ resolveRef: async () => ({ exists: true }) }),
@@ -606,7 +615,8 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("neither timestamp nor generated present — still no `missing-updated` (both remain fully optional under v0.2)", async () => {
-    const diags = await okfAdapter.validate(
+    const diags = await checkChanges(
+      okfAdapter,
       bundle(),
       [change("reports/neither.md", "---\ntype: Report\n---\n\nbody\n")],
       makeValidateContext({ resolveRef: async () => ({ exists: true }) }),
@@ -615,7 +625,8 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("unknown frontmatter keys never fail; delete changes are skipped; validate does not throw", async () => {
-    const diags = await okfAdapter.validate(
+    const diags = await checkChanges(
+      okfAdapter,
       bundle(),
       [
         change("notes/extra.md", "---\ntype: knowledge\ntimestamp: 2026-01-01\nproducerKey: anything\n---\n\nbody\n"),
@@ -624,11 +635,12 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
       makeValidateContext({ resolveRef: async () => ({ exists: true }) }),
     );
     // No diagnostic keyed on the unknown `producerKey`; nothing thrown.
-    expect(diags.every((d: Diagnostic) => !d.detail.includes("producerKey"))).toBe(true);
+    expect(diags.every((d: FileDiagnostic) => !d.detail.includes("producerKey"))).toBe(true);
   });
 
   test("reserved index.md is not treated as a concept (no missing-type)", async () => {
-    const diags = await okfAdapter.validate(
+    const diags = await checkChanges(
+      okfAdapter,
       bundle(),
       [change("index.md", readFixture("index.md"))],
       makeValidateContext({ resolveRef: async () => ({ exists: false }) }),
@@ -698,7 +710,7 @@ describe("okf adapter — renderer golden (presentationFor is adapter-agnostic, 
 
 describe("okf adapter — lint golden", () => {
   const golden = loadGolden("lint");
-  const perType = golden.perType as Record<string, { relPath: string; issues: Diagnostic[] }>;
+  const perType = golden.perType as Record<string, { relPath: string; issues: FileDiagnostic[] }>;
 
   test("each fixture file validates to exactly the golden's issue list", async () => {
     const changes: FileChange[] = Object.values(perType).map((e) => ({
@@ -706,14 +718,15 @@ describe("okf adapter — lint golden", () => {
       op: "update" as const,
       after: readFixture(e.relPath),
     }));
-    const diags = await okfAdapter.validate(
+    const diags = await checkChanges(
+      okfAdapter,
       bundle(),
       changes,
       makeValidateContext({
         resolveRef: async (ref) => ({ exists: fs.existsSync(path.join(FIXTURE_ROOT, `${ref}.md`)) }),
       }),
     );
-    const byFile = new Map<string, Diagnostic[]>();
+    const byFile = new Map<string, FileDiagnostic[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d]);
     for (const entry of Object.values(perType)) {
       expect(byFile.get(entry.relPath) ?? [], entry.relPath).toEqual(entry.issues ?? []);

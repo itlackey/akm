@@ -79,13 +79,7 @@ describe("DirectoryAdapterBase", () => {
         .filter((rel) => rel.startsWith("tasks/same.")),
     ).toEqual(["tasks/same.yml"]);
 
-    const diagnostics = await akmAdapter.validate(
-      bundle,
-      [{ path: "tasks/same.md", op: "delete" }] as never,
-      {
-        readFile: async (file: string) => fs.readFileSync(path.join(bundle.root, file), "utf8"),
-      } as never,
-    );
+    const diagnostics = await akmAdapter.validate(bundle, [{ conceptId: "tasks/same", op: "update" }], {});
     expect(diagnostics.filter((d) => d.issue === "shadowed-spelling")).toEqual([
       expect.objectContaining({ file: "tasks/same.yml", detail: expect.stringContaining("tasks/same.md") }),
     ]);

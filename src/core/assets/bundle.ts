@@ -20,7 +20,7 @@ import type {
 } from "../adapter/bundle-adapter";
 import { adapterIdOf } from "../adapter/detect-adapter";
 import { bundleOf, requireAdapter } from "../adapter/registry";
-import type { Bundle, IndexDocument } from "../adapter/types";
+import type { AssetEdit, Bundle, Diagnostic, IndexDocument, ValidateContext } from "../adapter/types";
 import { UsageError, type UsageErrorCode } from "../errors";
 
 type BundleSource = { name: string; path: string; location?: string; adapterId?: string };
@@ -88,6 +88,9 @@ export class AssetBundle {
   }
   recognize(entry: AssetEntry): IndexDocument | null {
     return this.#adapter.recognize(this.#bundle, entry);
+  }
+  validate(edits: AssetEdit[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    return this.#adapter.validate(this.#bundle, edits, ctx);
   }
   place(asset: Pick<NewAsset, "type" | "name">): string {
     return this.#adapter.place(this.#bundle, asset);

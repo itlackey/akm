@@ -373,39 +373,42 @@ export interface BundleSourceRef {
   registryId?: string;
 }
 
-// ── §12.1 (normative) — ValidateContext ─────────────────────────────────────
+// ── ValidateContext ─────────────────────────────────────────────────────────
 
 /**
- * Not part of the adapter spec's own §2 code block — defined only in the
- * normative spec, `akm-format-neutral-bundle-workspace-spec.md:562-569`.
- * Transcribed verbatim from there.
+ * What the run gives `validate` besides the edits: the settings, the configured bundles and the recorded moves. The
+ * base checks (a link to another bundle's asset, a stale absolute path) still look at the other bundles' roots, so
+ * `sources` stays until `read(ref)` and `exists(ref)` replace it in 4e.2, with the refs inside content they serve.
  */
 export interface ValidateContext {
   /** The configured bundles this run resolves refs against, the validated bundle among them. */
   readonly sources?: readonly BundleSourceRef[];
   /** How the recorded `moved` events are read, when a ref does not resolve; absent when the caller has none to offer. */
   readonly readMoves?: () => readonly EventEnvelope[];
-  /** The settings this run was given; the base checks read stale-path roots and `lint.skip` from them. */
+  /** The settings this run was given; the base checks read stale-path roots, `lint.skip` and the configured bundles from them. */
   readonly config?: AkmConfig;
-  /**
-   * Reads served from the run's snapshot WITH the pending changes overlaid —
-   * one core overlay implementation, not one per adapter.
-   */
-  readFile(path: string): Promise<string | Uint8Array | null>;
-  list(dir: string): Promise<string[]>;
-  /** Read-only index lookup for link/xref existence checks (not search). */
-  resolveRef(ref: string): Promise<{ exists: boolean; path?: string }>;
 }
 
-// ── Diagnostic — MINTED, no spec shape exists (see file header) ────────────
+/** A pending change `validate` checks: the asset by its concept id, with the content it would hold. */
+export interface AssetEdit {
+  conceptId: string;
+  op: "create" | "update" | "delete";
+  /** The content the asset would hold. Absent for `delete`; absent for an `update` that checks what is stored. */
+  content?: string | Buffer;
+}
+
+// ── Diagnostic ──────────────────────────────────────────────────────────────
 
 /**
- * MINTED per decision D1-1 — no spec document declares `Diagnostic`'s
- * shape. Modeled on `LintIssue` (`src/commands/lint/types.ts:19-25`) with
- * `issue` generalized to an open string (see file header for rationale).
+ * What `validate` reports. Modeled on `LintIssue` (`src/commands/lint/types.ts`) with `issue` generalized to an open
+ * string (see the file header for the rationale). `ref` names the asset; `file` is the display file, absent for an
+ * asset that has none.
  */
 export interface Diagnostic extends Partial<StalePathFields> {
-  file: string;
+  /** The asset the finding is about, `<bundle>//<conceptId>`. */
+  ref: string;
+  /** The file to show for it, when it has one. */
+  file?: string;
   issue: string;
   detail: string;
   /** `true` = fix applied; `false` = not fixable or no fix requested; `"failed"` = fix attempted but threw. */

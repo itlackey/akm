@@ -75,11 +75,12 @@ import {
   typeForStashDir,
 } from "../../asset/asset-placement";
 import { parseFrontmatter } from "../../asset/frontmatter";
-import type { FileChange } from "../../file-change";
 import type { AssetEntry } from "../bundle-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
+import type { FileChange } from "../file-change";
 import { recognizeMatch, recognizeMatchByPath } from "../recognize-match";
-import type { Bundle, Diagnostic, IndexDocument, IndexMetadata, ValidateContext } from "../types";
+import type { Bundle, IndexDocument, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { AkmFormatAdapterBase } from "./akm-format";
 import { derivedSiblingPath, perTypeDiagnostics, skillDirectoryDiagnostics, type TypeCheckInput } from "./akm-lint";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "./akm-metadata";
@@ -392,8 +393,8 @@ function buildOverlayContext(root: string, relPathInput: string, raw: string): F
  * Base checks (shared) then the per-type extra checks run; a `skills/` directory
  * pass reproduces `SkillLinter.lintDirectory` across the change set.
  */
-async function validate(c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
   const seenSkillDirs = new Set<string>();
   const { check, rulesFor } = createBaseChecker(c.root, ctx);
 
@@ -506,7 +507,7 @@ export class AkmAdapter extends AkmFormatAdapterBase {
     return renderExecutionSource(b, entry);
   }
 
-  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     return validate(b, changes, ctx);
   }
 

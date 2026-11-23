@@ -12,6 +12,7 @@ import { akmWorkflowAdapter } from "../../../../src/core/adapter/adapters/akm-wo
 import { websiteSnapshotAdapter } from "../../../../src/core/adapter/adapters/website-snapshot-adapter";
 import type { Bundle } from "../../../../src/core/adapter/types";
 import { buildFileContext } from "../../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../../_helpers/adapter-hooks";
 
 const BUNDLE_ID = "sample";
 const ctx = {
@@ -52,7 +53,12 @@ describe("akm-workflow adapter — every Markdown file but a README is a workflo
         conceptId: "doc",
       });
       expect(akmWorkflowAdapter.list(b).assets.map((asset) => asset.conceptId)).toEqual(["doc"]);
-      const diagnostics = await akmWorkflowAdapter.validate(b, [{ path: "doc.md", op: "update", after: raw }], ctx);
+      const diagnostics = await checkChanges(
+        akmWorkflowAdapter,
+        b,
+        [{ path: "doc.md", op: "update", after: raw }],
+        ctx,
+      );
       expect(diagnostics.filter((d) => d.issue === "type-from-content")).toEqual([
         expect.objectContaining({ file: "doc.md", detail: expect.stringContaining('type "knowledge"') }),
       ]);

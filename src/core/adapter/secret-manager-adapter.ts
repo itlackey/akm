@@ -16,7 +16,6 @@
 import { spawnSync } from "node:child_process";
 import { toErrorMessage } from "../common";
 import { assetNotFound, ConfigError } from "../errors";
-import type { FileChange } from "../file-change";
 import { hashContent } from "./adapters/shared";
 import type {
   AssetChange,
@@ -28,7 +27,7 @@ import type {
   Retirement,
   RetireNote,
 } from "./bundle-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "./types";
+import type { AssetEdit, Bundle, Diagnostic, IndexDocument, ValidateContext } from "./types";
 
 const SECRETS_DIR = "secrets";
 
@@ -150,7 +149,7 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     };
   }
 
-  async validate(_b: Bundle, _changes: FileChange[], _ctx: ValidateContext): Promise<Diagnostic[]> {
+  async validate(_b: Bundle, _edits: AssetEdit[], _ctx: ValidateContext): Promise<Diagnostic[]> {
     return [];
   }
 

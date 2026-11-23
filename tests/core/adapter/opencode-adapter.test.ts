@@ -13,10 +13,12 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { opencodeAdapter } from "../../../src/core/adapter/adapters/opencode-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
+import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adapter/validate-context";
 import type { FileChange } from "../../../src/core/file-change";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/opencode");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/opencode");
@@ -34,7 +36,7 @@ function recognizeRel(relPath: string): IndexDocument | null {
   return opencodeAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
-const ctx: ValidateContext = {
+const ctx: FileValidateContext = {
   readFile: async (p) => {
     try {
       return fs.readFileSync(path.join(FIXTURE_ROOT, p), "utf8");
@@ -96,7 +98,7 @@ describe("opencode adapter — renderer golden", () => {
 });
 
 describe("opencode adapter — lint golden (lenient tool-dir validation)", () => {
-  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: Diagnostic[] }>;
+  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: FileDiagnostic[] }>;
 
   test("every recognized fixture file validates to exactly the golden's issue codes", async () => {
     const relPaths = Object.values(perType).map((e) => e.relPath);
@@ -105,7 +107,7 @@ describe("opencode adapter — lint golden (lenient tool-dir validation)", () =>
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, rel), "utf8"),
     }));
-    const diags = await opencodeAdapter.validate(bundle(), changes, ctx);
+    const diags = await checkChanges(opencodeAdapter, bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {

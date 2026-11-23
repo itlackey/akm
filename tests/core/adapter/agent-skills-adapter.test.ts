@@ -15,10 +15,12 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { agentSkillsAdapter } from "../../../src/core/adapter/adapters/agent-skills-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
+import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adapter/validate-context";
 import type { FileChange } from "../../../src/core/file-change";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/agent-skills");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/agent-skills");
@@ -36,7 +38,7 @@ function recognizeRel(relPath: string): IndexDocument | null {
   return agentSkillsAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
-const ctx: ValidateContext = {
+const ctx: FileValidateContext = {
   readFile: async (p) => {
     try {
       return fs.readFileSync(path.join(FIXTURE_ROOT, p), "utf8");
@@ -95,7 +97,7 @@ describe("agent-skills adapter — renderer golden (renders regardless of validi
 });
 
 describe("agent-skills adapter — lint golden (Agent Skills §4.5 hard rules)", () => {
-  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: Diagnostic[] }>;
+  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: FileDiagnostic[] }>;
 
   test("each SKILL.md validates to exactly the golden's issue codes", async () => {
     const changes: FileChange[] = Object.values(perType).map((e) => ({
@@ -103,7 +105,7 @@ describe("agent-skills adapter — lint golden (Agent Skills §4.5 hard rules)",
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await agentSkillsAdapter.validate(bundle(), changes, ctx);
+    const diags = await checkChanges(agentSkillsAdapter, bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {
@@ -117,11 +119,11 @@ describe("agent-skills adapter — lint golden (Agent Skills §4.5 hard rules)",
       op: "update",
       after: fs.readFileSync(path.join(FIXTURE_ROOT, rel), "utf8"),
     });
-    const bad = await agentSkillsAdapter.validate(bundle(), [mk("Data_Analysis/SKILL.md")], ctx);
+    const bad = await checkChanges(agentSkillsAdapter, bundle(), [mk("Data_Analysis/SKILL.md")], ctx);
     expect(bad.map((d) => d.issue)).toEqual(["skill-name-invalid"]);
-    const overlong = await agentSkillsAdapter.validate(bundle(), [mk("overlong-summary/SKILL.md")], ctx);
+    const overlong = await checkChanges(agentSkillsAdapter, bundle(), [mk("overlong-summary/SKILL.md")], ctx);
     expect(overlong.map((d) => d.issue)).toEqual(["skill-description-too-long"]);
-    const clean = await agentSkillsAdapter.validate(bundle(), [mk("pdf-processing/SKILL.md")], ctx);
+    const clean = await checkChanges(agentSkillsAdapter, bundle(), [mk("pdf-processing/SKILL.md")], ctx);
     expect(clean).toEqual([]);
   });
 });

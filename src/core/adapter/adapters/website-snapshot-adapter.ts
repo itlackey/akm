@@ -31,9 +31,10 @@ import { parse as parseYaml } from "yaml";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
 import { DirectoryAdapterBase } from "../directory-adapter";
-import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate } from "./shared";
 
 /** The crawl page root the snapshot writer materializes pages under. */
@@ -94,8 +95,8 @@ function describe(file: FileContext, conceptId: string): IndexMetadata {
   return doc;
 }
 
-async function validate(c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
   const { check } = createBaseChecker(c.root, ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;
@@ -123,7 +124,7 @@ export class WebsiteSnapshotAdapter extends DirectoryAdapterBase {
     return describe(file, conceptId);
   }
 
-  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     return validate(b, changes, ctx);
   }
 

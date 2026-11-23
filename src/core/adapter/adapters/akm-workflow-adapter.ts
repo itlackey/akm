@@ -24,9 +24,10 @@ import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
 import type { NewAsset } from "../bundle-adapter";
-import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { AkmFormatAdapterBase } from "./akm-format";
 import { perTypeDiagnostics } from "./akm-lint";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, readTags } from "./shared";
@@ -71,8 +72,8 @@ function describe(file: FileContext, conceptId: string): IndexMetadata {
   return doc;
 }
 
-async function validate(c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
   const { check, rulesFor } = createBaseChecker(c.root, ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;
@@ -156,7 +157,7 @@ export class AkmWorkflowAdapter extends AkmFormatAdapterBase {
     return "workflow";
   }
 
-  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     return validate(b, changes, ctx);
   }
 

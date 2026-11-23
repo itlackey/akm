@@ -16,7 +16,7 @@
  * structurally satisfy `BundleAdapter` given only its required members —
  * which in turn proves the whole D1-1 type family (`Bundle`,
  * `IndexDocument`, `Diagnostic`, `ValidateContext`, ...) compiles and is
- * usable together with `FileChange` (reused from `core/file-change.ts`) and
+ * usable together with `AssetEdit` and
  * the type-only `FileContext` import (D1-3, `indexer/walk/file-context.ts`).
  * The tests below are the RUNTIME half: the required methods are present
  * and callable, and behave sanely against fixture inputs.
@@ -35,8 +35,7 @@ import type {
   BundleListing,
   Retirement,
 } from "../../../src/core/adapter/bundle-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
-import type { FileChange } from "../../../src/core/file-change";
+import type { AssetEdit, Bundle, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
 import type { FileContext } from "../../../src/indexer/walk/file-context";
 
 function makeFileContext(overrides: Partial<FileContext> = {}): FileContext {
@@ -60,14 +59,6 @@ function makeFileContext(overrides: Partial<FileContext> = {}): FileContext {
 
 function makeComponent(overrides: Partial<Bundle> = {}): Bundle {
   return { id: "main", root: "/bundle", ...overrides };
-}
-
-function makeValidateContext(): ValidateContext {
-  return {
-    readFile: async () => null,
-    list: async () => [],
-    resolveRef: async () => ({ exists: false }),
-  };
 }
 
 /**
@@ -108,7 +99,7 @@ const stubAdapter: BundleAdapter = {
     };
   },
 
-  async validate(_c: Bundle, _changes: FileChange[], _ctx: ValidateContext): Promise<Diagnostic[]> {
+  async validate(_c: Bundle, _edits: AssetEdit[], _ctx: ValidateContext): Promise<Diagnostic[]> {
     return [];
   },
 
@@ -166,7 +157,7 @@ describe("BundleAdapter type-level conformance (WI-1.1)", () => {
   });
 
   test("validate is callable and resolves a Diagnostic[]", async () => {
-    const diagnostics = await stubAdapter.validate(makeComponent(), [], makeValidateContext());
+    const diagnostics = await stubAdapter.validate(makeComponent(), [], {});
     expect(Array.isArray(diagnostics)).toBe(true);
     expect(diagnostics).toEqual([]);
   });
