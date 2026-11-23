@@ -650,8 +650,9 @@ function packageResources(dir: string, entryFile: string): AssetResource[] {
 /**
  * Refuse a write to `file` that leaves the bundle's root, or passes through a
  * symbolic link below it: a write never follows a link out of the bundle.
- * With `replaceLink`, `file` itself may be a link to a file inside the bundle:
- * the write replaces the link and leaves what it pointed at.
+ * With `replaceLink`, `file` itself may be a link to a file inside the bundle
+ * (the write replaces the link and leaves what it pointed at), and a folder
+ * above it may be a link to a folder inside the bundle (the write goes through).
  */
 export function assertWritableFile(
   root: string,
@@ -678,16 +679,20 @@ export function assertWritableFile(
     const stat = fs.lstatSync(current, { throwIfNoEntry: false });
     if (!stat) break;
     if (stat.isSymbolicLink()) {
-      if (options.replaceLink && index === segments.length - 1 && linksInside(current, realRoot)) break;
+      if (options.replaceLink && linksInside(current, realRoot, index === segments.length - 1)) {
+        if (index === segments.length - 1) break;
+        continue;
+      }
       throw new UsageError(`Write path contains a symbolic link below source "${bundle}": ${relative}`);
     }
   }
 }
 
-/** Whether the symbolic link `link` points at an existing file inside `root`. */
-function linksInside(link: string, root: string): boolean {
+/** Whether the symbolic link `link` points at an existing file (a folder, when not `file`) inside `root`. */
+function linksInside(link: string, root: string, file: boolean): boolean {
   try {
-    return fs.statSync(link).isFile() && isWithin(link, root);
+    const stat = fs.statSync(link);
+    return (file ? stat.isFile() : stat.isDirectory()) && isWithin(link, root);
   } catch {
     return false;
   }
