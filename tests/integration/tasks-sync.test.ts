@@ -222,6 +222,26 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).toContain("task run tt --bundle stash --scheduled");
   });
 
+  test("`b.yml` and `B.YML` both enabled: `b` is scheduled and `B` is not found, as before the facade", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    const task = (id: string) => `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "0 3 * * *"\n`;
+    fs.writeFileSync(path.join(tasksDir, "b.yml"), task("b"), "utf8");
+    fs.writeFileSync(path.join(tasksDir, "B.YML"), task("B"), "utf8");
+    // Both spellings of one task: the `.yml` file is the task, whichever order the directory lists them in.
+    fs.writeFileSync(path.join(tasksDir, "c.yml"), task("c"), "utf8");
+    fs.writeFileSync(path.join(tasksDir, "c.YML"), task("c"), "utf8");
+    for (const ref of ["b", "B", "c"]) setSchedulerRefEnabled(`stash//tasks/${ref}`, true);
+
+    const result = await akmTasksSync({ backend, commitBoundary() {} } as never);
+
+    expect(exec.current()).toContain("task run b --bundle stash --scheduled");
+    expect(exec.current()).toContain("task run c --bundle stash --scheduled");
+    expect(exec.current()).not.toContain("task run B ");
+    expect(result.failures.map((failure) => failure.ref)).toEqual(["stash//tasks/B"]);
+    expect(result.failures[0]?.reason).not.toContain("claimed by");
+  });
+
   test("a config without scheduler.enabled takes the installed rows with a backing file as the host's choice", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);

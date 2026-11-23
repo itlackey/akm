@@ -1043,11 +1043,18 @@ export function validateCompleteConfig(config: AkmConfig, current?: AkmConfig): 
 }
 
 function assertNoNewBundleOverlap(next: AkmConfig, current: AkmConfig): void {
-  const keyOf = (overlap: { bundles: readonly string[]; kind: string }) =>
-    `${[...overlap.bundles].sort().join("\0")}|${overlap.kind}`;
-  const present = new Set(bundleOverlaps(current).map(keyOf));
+  // An existing overlap is told by its two roots and kind, not bundle ids: renaming a bundle of an existing pair
+  // keeps the pair. Counted, so a second bundle at the same roots is still a new overlap.
+  const keyOf = (overlap: { roots: readonly string[]; kind: string }) =>
+    `${[...overlap.roots].sort().join("\0")}|${overlap.kind}`;
+  const present = new Map<string, number>();
+  for (const overlap of bundleOverlaps(current)) present.set(keyOf(overlap), (present.get(keyOf(overlap)) ?? 0) + 1);
   for (const overlap of bundleOverlaps(next)) {
-    if (present.has(keyOf(overlap))) continue;
+    const left = present.get(keyOf(overlap)) ?? 0;
+    if (left > 0) {
+      present.set(keyOf(overlap), left - 1);
+      continue;
+    }
     const [first, second] = overlap.bundles;
     const [firstRoot, secondRoot] = overlap.roots;
     const [inner, outer] = overlap.inner === first ? [first, second] : [second, first];
@@ -1059,7 +1066,7 @@ function assertNoNewBundleOverlap(next: AkmConfig, current: AkmConfig): void {
     throw new ConfigError(
       `Refusing to save config: ${what}.`,
       "INVALID_CONFIG_FILE",
-      "Bundles that overlap share files, so both list them. Add the directory only once, or keep the directories apart " +
+      "Bundles that overlap share files, and the index files each shared file under the bundle configured first. Add the directory only once, or keep the directories apart " +
         "(a wiki folder inside a bundle becomes its own bundle once moved out). A symbolic-link alias of a bundle's " +
         "directory is not a separate bundle.",
     );

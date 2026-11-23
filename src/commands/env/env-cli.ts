@@ -23,6 +23,8 @@ import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output, reportChildExit } from "../../cli/shared";
 import { writeFileAtomic } from "../../core/common";
 import {
+  assertEnvSecretFileWritable,
+  findCreateTargetAsset,
   findWriteTargetAsset,
   heldUnderOtherSpelling,
   listEnvsRecursive,
@@ -71,7 +73,7 @@ const envCreateCommand = defineJsonCommand({
     // `--path` is the subdirectory; `--bundle` selects the writable destination bundle.
     const resolution = resolveEnvWriteTarget(args.name, args.bundle, { subPath: getStringArg(args, "path") });
     const { ref } = resolution;
-    const held = findWriteTargetAsset(resolution);
+    const held = findCreateTargetAsset(resolution);
     const exists = held !== undefined;
 
     const fromFile = args["from-file"];
@@ -111,6 +113,9 @@ const envCreateCommand = defineJsonCommand({
     }
     if (!exists || content !== undefined) {
       writeEnvSecret(resolution, { op: "create", content: content ?? "" });
+    } else {
+      // Left as it is, but a file the write would have refused (a symbolic link) is refused still.
+      assertEnvSecretFileWritable(resolution);
     }
     output("env-create", { ref });
   },

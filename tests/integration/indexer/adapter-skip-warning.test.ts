@@ -81,15 +81,17 @@ describe("an adapter that skips akm content (#908, N18)", () => {
     expect(result.stderr).not.toContain("adapter skipped");
   }, 60_000);
 
-  test("`akm doctor` warns for the explicit `agent-skills` adapter, with the same text, and exits 4", async () => {
+  test("`akm doctor` reports the explicit `agent-skills` adapter's skips as information, with the same text, and its exit code is unchanged", async () => {
     configureMixedBundle("agent-skills");
 
     const result = await runCliCapture(["doctor", "--no-probe", "--format", "json"]);
 
     const check = doctorSkip(result.stdout);
-    expect(check?.status).toBe("warn");
+    expect(check?.status).toBe("pass");
     expect(check?.message).toContain('bundle "mixed": agent-skills adapter skipped 5 files');
-    expect(result.code).toBe(4);
+    // No other advisory is raised by this bundle, so the code is what `akm` (which skips nothing) gets.
+    configureMixedBundle("akm");
+    expect(result.code).toBe((await runCliCapture(["doctor", "--no-probe", "--format", "json"])).code);
   }, 60_000);
 
   test("`akm doctor` is silent when the bundle's adapter is `akm`", async () => {

@@ -10299,6 +10299,112 @@
         }
       }
     },
+    "env create default :: env/default.env --from-file": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/default.env",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "env/default.env": "REPLACED=1\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "env create default :: env/default --from-file": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Env \"env/default\" already exists. Remove it first (`akm env remove`) or edit the file directly.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create default :: env/default": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/default",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create default :: env/default.env": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/default.env",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create default :: main//env/default.env": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/default.env",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create default :: env/lnk": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Write path contains a symbolic link below source \"main\": env/lnk.env",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create default :: env/lnk.env": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Write path contains a symbolic link below source \"main\": env/lnk.env",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
     "log after use :: run --env env/app.env": {
       "exit": 0,
       "stdout": [

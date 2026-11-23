@@ -73,7 +73,8 @@ export function collectAdapterSkipCheck(readConfig: () => AkmConfig = loadConfig
     name: "adapter-skipped-content",
     kind: "deterministic",
     confidence: "high",
-    status: "warn",
+    // Information, not a finding: `akm doctor` exited 0 for such a bundle before the warning moved here (§0.2 N18).
+    status: "pass",
     message: skips.map(({ bundle, ...skip }) => adapterSkipMessage(bundle, skip)).join("; "),
     evidence: { skips },
   };

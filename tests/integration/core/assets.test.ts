@@ -583,7 +583,11 @@ describe("writeAssets", () => {
     const created = writeAssets(target, { purpose: "test" }, (w) =>
       w.create({ type: "knowledge", name: "note", content: "---\ndescription: n\n---\nBody\n" }),
     );
-    expect(created).toEqual({ ref: "stash//knowledge/note", content: "---\ndescription: n\n---\nBody\n" });
+    expect(created).toEqual({
+      ref: "stash//knowledge/note",
+      file: path.join(stash.path, "knowledge", "note.md"),
+      content: "---\ndescription: n\n---\nBody\n",
+    });
     expect(fs.existsSync(path.join(stash.path, "knowledge", "note.md"))).toBe(true);
 
     writeAssets(target, { purpose: "test" }, (w) => {
@@ -593,7 +597,7 @@ describe("writeAssets", () => {
     expect(fs.readFileSync(path.join(stash.path, "knowledge", "note.md"), "utf8")).toContain("Changed");
 
     const deleted = writeAssets(target, { purpose: "test" }, (w) => w.delete("knowledge/note"));
-    expect(deleted).toEqual({ ref: "stash//knowledge/note" });
+    expect(deleted).toEqual({ ref: "stash//knowledge/note", file: path.join(stash.path, "knowledge", "note.md") });
     expect(fs.existsSync(path.join(stash.path, "knowledge", "note.md"))).toBe(false);
   });
 

@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `bundle-shared-path` for `akm doctor`: a bundle whose content root is inside another bundle's. They share files, so
- * both list them. A config write refuses a new overlap; an existing one keeps working and is reported here. Equal
+ * `bundle-shared-path` for `akm doctor`: a bundle whose content root is inside another bundle's. They share files; the index
+ * files each under the bundle configured first. A config write refuses a new overlap; an existing one keeps working and is reported here. Equal
  * roots never reach this check: config load refuses them.
  */
 
@@ -32,7 +32,7 @@ export function collectBundleSharedPathCheck(readConfig: () => AkmConfig = loadC
     status: "warn",
     message:
       `${pairs.map(({ inner, outer }) => `bundle "${inner}" is inside bundle "${outer}"`).join("; ")}: they share files, ` +
-      "so both list them. Move one directory out of the other, or remove one bundle (a wiki folder inside a bundle " +
+      "and the index files each shared file under the bundle configured first. Move one directory out of the other, or remove one bundle (a wiki folder inside a bundle " +
       "should be its own bundle, moved out).",
     evidence: { pairs },
   };
