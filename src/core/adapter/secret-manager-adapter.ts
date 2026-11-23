@@ -376,7 +376,8 @@ export interface ClientResult {
  * argument, where other processes could read it.
  */
 export function runClient(client: Client, args: readonly string[], input?: Buffer): ClientResult {
-  const result = spawnSync(client.command, [...args], { encoding: "utf8", input });
+  // The environment as it is now: Bun 1.3 finds the program on the PATH the process started with unless it is given.
+  const result = spawnSync(client.command, [...args], { encoding: "utf8", input, env: process.env });
   if (result.error) {
     const missing = (result.error as NodeJS.ErrnoException).code === "ENOENT";
     throw new ConfigError(
