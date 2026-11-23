@@ -121,14 +121,14 @@ describe("secret indexer safety", () => {
     }
   });
 
-  test("a sibling .sensitive marker excludes the secret from indexing", async () => {
+  test("a leftover .sensitive marker is ignored: the secret is indexed, the marker is not", async () => {
     const stashDir = currentStashDir;
-    const fp = path.join(stashDir, "secrets", "hidden");
+    const fp = path.join(stashDir, "secrets", "kept");
     writeSecretFile(fp, Buffer.from("v"));
     fs.writeFileSync(`${fp}.sensitive`, "");
 
     const result = await akmIndex({ stashDir, full: true });
-    expect(result.totalEntries).toBe(0);
+    expect(result.totalEntries).toBe(1);
   });
 
   test("`akm show` never emits the secret value", async () => {

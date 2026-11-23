@@ -405,16 +405,16 @@ describe("shared adapter physical-owner authority", () => {
     expect((await loadWorkflowAsset(conceptId)).path).toBe(laterPath);
   });
 
-  test("a sensitive env file keeps its ref: a later bundle's asset does not take it over", async () => {
+  test("an env file keeps its ref, a leftover `.sensitive` marker beside it ignored: a later bundle's asset does not take it over", async () => {
     const early = fixture("early-sensitive-dotenv", "dotenv");
     const later = fixture("later-sensitive-dotenv", "akm-workflow");
-    write(early.root, "env/prod.env", "TOKEN=hidden\n");
+    const envPath = write(early.root, "env/prod.env", "TOKEN=hidden\n");
     write(early.root, "env/prod.sensitive", "");
     write(later.root, "env/prod.md", getWorkflowTemplate());
     configure(early, later);
     await akmIndex({ stashDir: early.root, full: true });
 
-    expect(await lookupBundleRef(parseBundleRef("env/prod"))).toBeNull();
+    expect(await lookupBundleRef(parseBundleRef("env/prod"))).toMatchObject({ filePath: envPath });
   });
 
   test.each([

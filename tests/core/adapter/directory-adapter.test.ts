@@ -151,27 +151,28 @@ describe("DirectoryAdapterBase", () => {
     expect(fs.existsSync(path.join(bundle.root, "skills", "demo"))).toBe(false);
   });
 
-  test("an unlisted env file has a marker: read still finds it, as not listed, and delete removes both", () => {
-    const created = akmAdapter.create(bundle, { type: "env", name: "prod", content: "A=1\n", unlisted: true });
+  test("an env file is private, read as listed, and a leftover `.sensitive` marker beside it changes nothing", () => {
+    const created = akmAdapter.create(bundle, { type: "env", name: "prod", content: "A=1\n" });
     const file = path.join(bundle.root, "env", "prod.env");
     const marker = path.join(bundle.root, "env", "prod.sensitive");
-    expect(created.changed).toEqual([file, marker]);
+    expect(created.changed).toEqual([file]);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    fs.writeFileSync(marker, "");
 
     const read = akmAdapter.read(bundle, "env/prod");
-    expect(read?.listed).toBe(false);
+    expect(read?.listed).toBe(true);
     expect(read?.type).toBe("env");
 
-    expect(akmAdapter.delete(bundle, "env/prod").changed).toEqual([file, marker]);
-    expect(fs.existsSync(marker)).toBe(false);
+    // Delete removes the asset's file only: a marker left in the bundle is not the asset's.
+    expect(akmAdapter.delete(bundle, "env/prod").changed).toEqual([file]);
+    expect(fs.existsSync(marker)).toBe(true);
   });
 
-  test("a listed asset is read as listed, and a type with no marker cannot be unlisted", () => {
+  test("an asset in a directory a full walk skips is read as not listed", () => {
+    fs.mkdirSync(path.join(bundle.root, "knowledge", ".hidden"), { recursive: true });
+    fs.writeFileSync(path.join(bundle.root, "knowledge", ".hidden", "idea.md"), "x\n");
     akmAdapter.create(bundle, { type: "knowledge", name: "idea", content: "x\n" });
     expect(akmAdapter.read(bundle, "knowledge/idea")?.listed).toBe(true);
-    expect(() => akmAdapter.create(bundle, { type: "knowledge", name: "other", content: "x", unlisted: true })).toThrow(
-      /cannot be marked sensitive/,
-    );
-    expect(fs.existsSync(path.join(bundle.root, "knowledge", "other.md"))).toBe(false);
+    expect(akmAdapter.read(bundle, "knowledge/.hidden/idea")?.listed).toBe(false);
   });
 });

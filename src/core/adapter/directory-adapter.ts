@@ -100,10 +100,6 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   protected fileMode(_type: string): number | undefined {
     return undefined;
   }
-  /** The marker file whose presence keeps `file` out of listings, when the adapter has one for it. */
-  protected unlistedMarker(_file: FileContext): string | undefined {
-    return undefined;
-  }
   /** The type `file`'s location declares, for a file `recognizeFile` abstains on. */
   protected declaredType(_file: FileContext): string | undefined {
     return undefined;
@@ -175,8 +171,8 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
       conceptId: resolved,
       type,
       entry,
-      // Not listed: a marker hides it, or a full walk would not reach it (a skipped or ignored directory).
-      listed: !this.isMarkedUnlisted(file) && this.walksFile(b, file.absPath),
+      // Not listed: a full walk would not reach it (a skipped or ignored directory).
+      listed: this.walksFile(b, file.absPath),
     };
   }
 
@@ -240,7 +236,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
       if (!file) continue;
       const claim = this.claimsWithoutContent(b, file, resolved);
       if (claim?.type !== undefined) pathTypes.set(file, claim.type);
-      if (claim || this.isMarkedUnlisted(file)) owners.set(key, file);
+      if (claim) owners.set(key, file);
     }
     const found = [...owners.values()].sort((left, right) => compareCodePoints(left.absPath, right.absPath));
     return { resolved, found, pathTypes };
@@ -278,20 +274,11 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     }
     const file = this.placeFile(b, asset);
     const entry = buildFileContext(b.root, file);
-    // A sibling marker keeps an env file or secret out of the index and listings.
-    const marker = asset.unlisted ? this.unlistedMarker(entry) : undefined;
-    if (asset.unlisted && marker === undefined) {
-      throw new UsageError(`A ${asset.type} asset cannot be marked sensitive.`);
-    }
     const conceptId = this.placedConceptId(b, asset, String(asset.content));
     const content = this.serialize(asset.type, file, asset.content);
     const changed = asset.resources?.length
       ? this.writePackage(b, asset, entry, content, asset.resources)
       : this.writeFile(b, asset.type, file, content);
-    if (marker !== undefined) {
-      if (!fs.existsSync(marker)) writeFileAtomic(marker, "", 0o600);
-      changed.push(marker);
-    }
     return { conceptId, file, changed, content: asset.content };
   }
 
@@ -306,15 +293,8 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const { entry } = this.existing(b, conceptId);
     const file = entry.file as string;
     assertWritableFile(b.root, b.id, file);
-    const changed = [file];
     fs.rmSync(file);
-    // An env file's or secret's `.sensitive` marker goes with it.
-    const marker = this.unlistedMarker(buildFileContext(b.root, file));
-    if (marker !== undefined && fs.existsSync(marker)) {
-      fs.rmSync(marker);
-      changed.push(marker);
-    }
-    return { conceptId, file, changed };
+    return { conceptId, file, changed: [file] };
   }
 
   retire(b: Bundle, conceptId: string, note: RetireNote): AssetChange & { handle: string } {
@@ -404,11 +384,6 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
 
   private walkOptions() {
     return { includeAllDirectories: this.walkMode === "all-directories" };
-  }
-
-  private isMarkedUnlisted(file: FileContext): boolean {
-    const marker = this.unlistedMarker(file);
-    return marker !== undefined && fs.existsSync(marker);
   }
 
   /** The document the adapter gives `file` from its path alone: undefined when it needs the file's bytes to say. */

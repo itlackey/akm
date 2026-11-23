@@ -63,8 +63,7 @@ skips, using path and `stat` checks (`akmStashAbstains`,
 `src/core/adapter/adapters/akm-adapter.ts`):
 
 - the bundle's root `README.md`;
-- an `env/` `.env` file with a sibling `.sensitive` marker;
-- a `secrets/` file that is a `.sensitive` or `.lock` marker, or that has a sibling `<name>.sensitive` marker;
+- a `secrets/` file that is a `.sensitive` or `.lock` sidecar (`.sensitive` is a retired marker, ignored);
 - the root-level `schema.md`, `index.md`, and `log.md` of a `wikis/<name>/` directory.
 
 The walker itself skips VCS internals. It indexes a symlink to a file like any other file and never descends a symlinked directory.

@@ -379,13 +379,13 @@ function bytesForbiddenContext(root: string, relPath: string): FileContext {
 }
 
 describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files", () => {
-  test("env `.env` with a sibling `.sensitive` marker is abstained (recognize → null)", () => {
+  test("env `.env` with a leftover `.sensitive` sibling is recognized: the retired marker is ignored", () => {
     const root = makeStashWith({
       "env/ci.env": "API_KEY=secret-token\n",
       "env/ci.sensitive": "",
     });
     const c = bundle({ root, id: "s" });
-    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "env/ci.env")))).toBeNull();
+    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "env/ci.env")))?.type).toBe("env");
   });
 
   test("env `.env` WITHOUT a sibling marker is still recognized (type env)", () => {
@@ -408,20 +408,21 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/key.lock")))).toBeNull();
   });
 
-  test("a secret with a sibling `<name>.sensitive` marker is abstained; a bare secret is recognized", () => {
+  test("a secret with a leftover sibling `<name>.sensitive` is recognized; the leftover file is not", () => {
     const root = makeStashWith({
       "secrets/deploy-key": "cred-value\n",
       "secrets/deploy-key.sensitive": "",
       "secrets/plain-token": "cred-value\n",
     });
     const c = bundle({ root, id: "s" });
-    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/deploy-key")))).toBeNull();
+    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/deploy-key")))?.type).toBe("secret");
+    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/deploy-key.sensitive")))).toBeNull();
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "secrets/plain-token")))?.type).toBe(
       "secret",
     );
   });
 
-  test("a NESTED env `.env` and secret with sibling `.sensitive` markers are abstained", () => {
+  test("a NESTED env `.env` and secret with leftover `.sensitive` siblings are recognized; the siblings are not", () => {
     const root = makeStashWith({
       "projects/openpalm/env/prod.env": "API_KEY=x\n",
       "projects/openpalm/env/prod.sensitive": "",
@@ -429,13 +430,12 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
       "projects/openpalm/secrets/deploy-key.sensitive": "",
     });
     const c = bundle({ root, id: "s" });
-    for (const rel of [
-      "projects/openpalm/env/prod.env",
-      "projects/openpalm/secrets/deploy-key",
-      "projects/openpalm/secrets/deploy-key.sensitive",
-    ]) {
-      expect(akmAdapter.recognize(c, bytesForbiddenContext(root, rel))).toBeNull();
+    for (const rel of ["projects/openpalm/env/prod.env", "projects/openpalm/secrets/deploy-key"]) {
+      expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, rel)))).not.toBeNull();
     }
+    expect(
+      akmAdapter.recognize(c, bytesForbiddenContext(root, "projects/openpalm/secrets/deploy-key.sensitive")),
+    ).toBeNull();
   });
 
   test("a `wikis/<name>/` root-level infra file (schema.md) is abstained", () => {
@@ -467,16 +467,13 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
     });
   });
 
-  test("bytes-never-read: the sensitive/vaults abstention never calls content() or frontmatter()", () => {
+  test("bytes-never-read: the sidecar/vaults abstention never calls content() or frontmatter()", () => {
     const root = makeStashWith({
-      "env/ci.env": "API_KEY=secret\n",
-      "env/ci.sensitive": "",
       "secrets/key.sensitive": "",
       "vaults/prod/api.env": "K=V\n",
     });
     const c = bundle({ root, id: "s" });
     // Each of these abstains via path/stat only — a content()/frontmatter() read would THROW.
-    expect(akmAdapter.recognize(c, bytesForbiddenContext(root, "env/ci.env"))).toBeNull();
     expect(akmAdapter.recognize(c, bytesForbiddenContext(root, "secrets/key.sensitive"))).toBeNull();
     expect(akmAdapter.recognize(c, bytesForbiddenContext(root, "vaults/prod/api.env"))).toBeNull();
   });

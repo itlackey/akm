@@ -105,7 +105,7 @@ import type { AdapterReadCandidate } from "../directory-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import { recognizeMatch } from "../recognize-match";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { AkmFormatAdapterBase, sensitiveMarkerPath } from "./akm-format";
+import { AkmFormatAdapterBase } from "./akm-format";
 import { derivedSiblingPath, perTypeDiagnostics, skillDirectoryDiagnostics, type TypeCheckInput } from "./akm-lint";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "./akm-metadata";
 import { createBaseChecker, hashContent, type ParsedForValidate, parseForValidate, RESERVED_FILES } from "./shared";
@@ -141,9 +141,7 @@ const WIKI_INFRA_FILES = new Set(["schema.md", "index.md", "log.md"]);
  * PATH/STAT-based ONLY — never reads `file.content()`, so the bytes-never-read
  * invariant for sensitive env/secret files holds by construction. Returns `true`
  * when the `akm` adapter must ABSTAIN (recognize → null):
- *   - a `.env` file under any `env/` ancestor with a sibling `.sensitive` marker;
- *   - a `.sensitive`/`.lock` marker under any `secrets/` ancestor, or a secret
- *     there with a sibling `<name>.sensitive` marker;
+ *   - a `.sensitive`/`.lock` sidecar under any `secrets/` ancestor (`.sensitive` is a retired marker);
  *   - a `wikis/<name>/` root-level infra file (schema.md/index.md/log.md).
  */
 function akmStashAbstains(root: string, absPath: string): boolean {
@@ -162,18 +160,9 @@ function akmStashAbstains(root: string, absPath: string): boolean {
   // nested `projects/x/env/` or `projects/x/secrets/` honors its markers too.
   const ancestorDirs = segments.slice(0, -1);
 
-  // Skip env `.env` files that have a sibling `.sensitive` marker file.
-  if (ancestorDirs.includes("env") && (absPath.endsWith(".env") || path.basename(absPath) === ".env")) {
-    if (fs.existsSync(sensitiveMarkerPath(absPath, "env"))) return true;
-  }
-
-  // Skip secret files that are themselves a `.sensitive` marker, or that have a
-  // sibling `<name>.sensitive` marker. Secrets are otherwise indexed by name
+  // Skip `.sensitive`/`.lock` sidecars under `secrets/`. Secrets are otherwise indexed by name
   // only (their bytes are never read for classification here).
-  if (ancestorDirs.includes("secrets")) {
-    if (absPath.endsWith(".sensitive") || absPath.endsWith(".lock")) return true;
-    if (fs.existsSync(sensitiveMarkerPath(absPath, "secret"))) return true;
-  }
+  if (ancestorDirs.includes("secrets") && (absPath.endsWith(".sensitive") || absPath.endsWith(".lock"))) return true;
 
   // Inside a `wikis/<name>/` directory, the root-level infrastructure files
   // schema.md / index.md / log.md are excluded.

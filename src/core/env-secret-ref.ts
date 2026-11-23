@@ -238,7 +238,7 @@ export function findWriteTargetAsset(resolution: EnvSecretWriteResolution): Asse
 export function writeEnvSecret(
   resolution: EnvSecretWriteResolution,
   operation:
-    | { op: "create"; content: string | Buffer; sensitive?: boolean; exclusive?: boolean }
+    | { op: "create"; content: string | Buffer; exclusive?: boolean }
     | { op: "update"; content: string | Buffer; revision?: string }
     | { op: "delete"; revision?: string },
 ): WriteResult {
@@ -252,10 +252,7 @@ export function writeEnvSecret(
     },
     (w) =>
       operation.op === "create"
-        ? w.create(
-            { type, name, content: operation.content, unlisted: operation.sensitive },
-            { exclusive: operation.exclusive },
-          )
+        ? w.create({ type, name, content: operation.content }, { exclusive: operation.exclusive })
         : operation.op === "update"
           ? w.update(conceptId, operation.content, { revision: operation.revision })
           : w.delete(conceptId, { revision: operation.revision }),

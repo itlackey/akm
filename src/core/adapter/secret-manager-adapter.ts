@@ -154,7 +154,6 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
 
   create(b: Bundle, asset: NewAsset): AssetChange {
     const name = this.secretNameFor(asset);
-    if (asset.unlisted) throw new UsageError(`The ${this.id} adapter cannot mark a secret sensitive.`);
     this.storeSecret(this.locationOf(b), name, Buffer.from(asset.content));
     return this.change(name, asset.content);
   }

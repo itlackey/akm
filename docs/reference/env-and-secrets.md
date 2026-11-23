@@ -197,9 +197,8 @@ is there too:
 Env files live under `env/` and secrets under `secrets/` in the target bundle,
 with mode 0600. `akm secret set` reads the value from stdin by default,
 or from `--from-file` (byte-exact, multi-line allowed) or `--from-env <VAR>`,
-so the value is not on the command line. `akm env create --sensitive` adds a
-sibling `.sensitive` marker; an env file or secret with that marker is left
-out of `list` output and the search index, and `run` still works on it.
+so the value is not on the command line. A `.sensitive` marker file left in a
+bundle by an older release is ignored (it is not listed as a secret).
 
 An env file or secret may be a symlink to a file anywhere else, such as a
 container's `/run/secrets/<name>`: `akm env`, `akm secret`, `${secrets/name}`
@@ -294,7 +293,7 @@ such a bundle after the bundles before it in priority.
   permission, or purge protection), the remove still completes and akm says the
   vault keeps the deleted secret until its retention period ends; until then
   `akm secret set` of that name fails with a hint to recover or purge it.
-- `akm env` commands, `.sensitive` markers and the Desktop Files view apply to
+- `akm env` commands and the Desktop Files view apply to
   directory bundles; the Desktop protected-file view shows, edits, creates and
   deletes these secrets too.
 

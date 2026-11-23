@@ -65,7 +65,7 @@ export interface BundleAsset {
   /** The asset's type, as the adapter knows it, also for an asset `list` leaves out. */
   type: string;
   entry: AssetEntry;
-  /** Whether `list` lists it. False for an env file or secret kept out of listings (`.sensitive`). */
+  /** Whether `list` lists it. False when a full walk would not reach it (a skipped or ignored directory). */
   listed: boolean;
 }
 
@@ -76,8 +76,6 @@ export interface NewAsset {
   content: string | Buffer;
   /** Files that belong to the asset (a skill package's resources), by path below the asset's folder. */
   resources?: ReadonlyArray<{ path: string; content: Buffer }>;
-  /** Keep it out of listings (`env create --sensitive`). Refused by an adapter that cannot. */
-  unlisted?: boolean;
 }
 
 /** What a write did. */

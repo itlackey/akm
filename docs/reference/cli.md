@@ -3069,7 +3069,7 @@ Subcommands:
 | `create <ref>` | Create an env file (a full ref such as `env/prod`). Empty by default; seed with `--from-file <path>` or `--from-stdin` |
 | `path <ref>` | Print the absolute env file path (Docker `_FILE` / `--env-file` / direct editing). `--quiet` suppresses the warning |
 | `export <ref> --out <file>` | Write a safe sourceable `export` script to a file (never to stdout) |
-| `remove <ref>` | Delete an env file (and its `.sensitive` marker) |
+| `remove <ref>` | Delete an env file |
 
 > **Removed in 0.9.0:** `akm env set`/`akm env unset`. akm does not manage
 > individual keys — edit the `.env` file directly.
@@ -3120,7 +3120,6 @@ akm env create env/prod                   # empty
 akm env create env/prod --from-file ./.env  # seed from an existing .env (byte-for-byte)
 printf 'A=1\nB=2\n' | akm env create env/prod --from-stdin
 akm env create env/prod --path staging    # creates env/staging/prod.env
-akm env create env/prod --sensitive       # hidden from `env list` and the search index
 akm env create env/prod --bundle team     # write to the `team` source
 ```
 
@@ -3129,12 +3128,11 @@ akm env create env/prod --bundle team     # write to the `team` source
 | `--path <dir>` | Relative subdirectory under `env/` to place the file in. The filename comes from `<name>`. |
 | `--from-file <path>` | Seed the env file from an existing `.env` at this path |
 | `--from-stdin` | Seed the env file from stdin |
-| `--sensitive` | Exclude this env file from `env list` output and the search index |
 | `--bundle <source>` | Override the write destination (falls back to `defaultWriteTarget` then the working bundle) |
 
 Creates `env/prod.env` with mode 0600. Empty `create` is a no-op if the file
 exists; `--from-file`/`--from-stdin` **refuse to clobber** an existing env (remove
-it first). `--sensitive` hides the file from `env list` and the search index.
+it first).
 
 #### env list
 
@@ -3221,7 +3219,7 @@ Subcommands:
 | `list` | List all secrets across all bundles by name (contents never shown) |
 | `set <ref>` | Create/overwrite a secret — value from stdin (default), `--from-file`, or `--from-env` |
 | `run <ref> <VAR> -- <command>` | Run a command with the secret value injected into `$VAR` in the child only |
-| `remove <ref>` | Remove a secret file (and its `.sensitive` marker). `--yes` skips the prompt; `--bundle` picks the write target |
+| `remove <ref>` | Remove a secret file. `--yes` skips the prompt; `--bundle` picks the write target |
 
 > **Removed in 0.9.0: `secret path`.** It exits 2 with `Unknown command`. A ref's
 > file lives at `<bundle>/secrets/<name>` (run `akm bundle list` for bundle
@@ -3281,12 +3279,6 @@ through in clean mode.
 > (`<bundle>/secrets/<name>`) so the value never sits in an environment
 > variable. Avoid commands that print the environment in agent contexts unless
 > you explicitly intend to expose the child environment.
-
-#### Sensitive marker
-
-A sibling `<name>.sensitive` marker file excludes a secret from `secret list`
-**and** from indexing entirely (parallel to env files). The secret remains usable
-via `secret run`.
 
 ### Wikis (no dedicated command)
 

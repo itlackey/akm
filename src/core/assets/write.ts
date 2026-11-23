@@ -114,7 +114,7 @@ export function addressOf(source: WriteSource, ref: string): AssetAddress {
   return addressIn(assetBundleOf(source), source, ref);
 }
 
-/** The asset `conceptId` names in `source`'s bundle, read outside a write session; `unlisted` finds one `list` leaves out. */
+/** The asset `conceptId` names in `source`'s bundle, read outside a write session. */
 export function readAsset(source: WriteSource, conceptId: string): Asset | undefined {
   return readFrom(searchSourceOf(source), source.name, conceptId);
 }

@@ -179,7 +179,7 @@ export async function save(input: SensitiveSelector & { content: string; revisio
   return { ...result, revision: currentRevision(resolution) ?? digest(content) };
 }
 
-/** Delete the file and its sensitive marker, if it is still the `revision` the owner last saw. */
+/** Delete the file, if it is still the `revision` the owner last saw. */
 export async function remove(input: SensitiveSelector & { revision: string }) {
   if (typeof input.revision !== "string" || !input.revision)
     throw new UsageError("Provide the file and its current revision.");

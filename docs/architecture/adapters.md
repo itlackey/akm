@@ -172,10 +172,10 @@ every directory adapter shares:
   id, one rule picks the winner for every caller: the spelling `place` gives for
   the asset's type and name, else the first by code point. `list` returns only
   the winner, and `validate` reports the ignored files (`shadowed-spelling`,
-  shown by `akm lint`). An asset a `.sensitive` marker hides, or a full walk
-  would not reach, reads with `listed: false`.
+  shown by `akm lint`). An asset a full walk
+  would not reach reads with `listed: false`.
 - `create` places and serializes the asset, `update` writes the content
-  given, and `retire` deletes the file and its `.sensitive` marker. Every
+  given, and `delete` removes the file. Every
   write is atomic and refuses a path that leaves the bundle or passes through
   a symbolic link below its root (`assertWritableFile`). An env file or secret
   is written at mode 0600.

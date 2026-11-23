@@ -61,11 +61,6 @@ const envCreateCommand = defineJsonCommand({
     },
     "from-file": { type: "string", description: "Seed the env file from an existing .env at this path" },
     "from-stdin": { type: "boolean", description: "Seed the env file from stdin", default: false },
-    sensitive: {
-      type: "boolean",
-      description: "Exclude this env file from env list output and the search index",
-      default: false,
-    },
     bundle: {
       type: "string",
       description: "Write destination: a source name (default: defaultWriteTarget)",
@@ -105,7 +100,7 @@ const envCreateCommand = defineJsonCommand({
 
     // Without content, an existing env file is left as it is.
     if (!exists || content !== undefined) {
-      writeEnvSecret(resolution, { op: "create", content: content ?? "", sensitive: args.sensitive === true });
+      writeEnvSecret(resolution, { op: "create", content: content ?? "" });
     }
     output("env-create", { ref });
   },
@@ -304,7 +299,7 @@ const envRunCommand = defineJsonCommand({
 });
 
 const envRemoveCommand = defineJsonCommand({
-  meta: { name: "remove", description: "Remove an env file (and its .sensitive marker, if any)" },
+  meta: { name: "remove", description: "Remove an env file" },
   args: {
     ref: { type: "positional", description: "Env ref", required: true },
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },

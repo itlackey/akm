@@ -33,7 +33,7 @@ export interface Asset {
   readonly type: string;
   /** `entry.file`, `entry.content()`, `entry.bytes()`, `entry.frontmatter()`. */
   readonly entry: AssetEntry;
-  /** Whether `listAssets` lists it. False for an env file or secret kept out of listings (`.sensitive`). */
+  /** Whether `listAssets` lists it. False when a full walk would not reach it (a skipped or ignored directory). */
   readonly listed: boolean;
 }
 
@@ -125,7 +125,7 @@ export function assetOfEntry(
 
 /**
  * Every listed asset across the sources, as each bundle's adapter lists and recognizes it, sorted by the file
- * it is held in. An asset a `.sensitive` marker hides is not listed. A bundle that cannot be listed completely is
+ * it is held in. A bundle that cannot be listed completely is
  * reported with a warning naming it.
  */
 export function listAssets(

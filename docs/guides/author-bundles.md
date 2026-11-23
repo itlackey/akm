@@ -259,10 +259,7 @@ file; a file with only key names and comments produces no findings. Suppress a
 single key with a `# akm-lint-ok: dangerous-env-key` comment on the preceding
 line.
 
-Key names are listed by `akm env list` and appear in search results. The
-`--sensitive` flag on `akm env create` leaves a file out of `env list` and the
-search index; its key names then appear only when the file is shown directly
-by ref.
+Key names are listed by `akm env list` and appear in search results; values never do.
 
 ## Project Rules
 

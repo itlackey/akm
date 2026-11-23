@@ -317,10 +317,8 @@ describe("conformance — read candidates and recognition are two-way canonical 
         path: defaultEnv,
         conceptId: "env/default",
       });
-      fs.writeFileSync(path.join(dotenvRoot, "env", ".sensitive"), "");
-      expect(dotenvAdapter.recognize(dotenvComponent, buildFileContext(dotenvRoot, defaultEnv))).toBeNull();
       expect(findInBundle({ name: "test", path: dotenvRoot }, "dotenv", "env/default")).toMatchObject({
-        listed: false,
+        listed: true,
       });
 
       const toolComponent = bundle("tool", toolRoot);

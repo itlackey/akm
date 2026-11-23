@@ -170,11 +170,10 @@ describe("secret list", () => {
 
 // `akm secret remove` was removed in 0.9.0 (R-027 / D-49) and is back, shaped like `akm env remove`.
 describe("secret remove", () => {
-  test("removes the secret file and its .sensitive marker, and reports it", async () => {
+  test("removes the secret file and reports it", async () => {
     const stashDir = makeStash();
     const fp = path.join(stashDir, "secrets", "demo");
     writeSecretFile(fp, Buffer.from("topsecret-value"));
-    fs.writeFileSync(`${fp}.sensitive`, "");
 
     const { stdout, status } = await runCli(["secret", "remove", "secrets/demo", "--yes", "--format", "json"], {
       AKM_BUNDLE_DIR: stashDir,
@@ -185,7 +184,6 @@ describe("secret remove", () => {
     expect(JSON.parse(stdout).ref).toEndWith("//secrets/demo");
     expect(stdout).not.toContain("topsecret-value");
     expect(fs.existsSync(fp)).toBe(false);
-    expect(fs.existsSync(`${fp}.sensitive`)).toBe(false);
   });
 
   test("a secret that does not exist is a not-found error and nothing else is touched", async () => {

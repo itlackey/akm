@@ -6,8 +6,7 @@
  * The base of the adapters of the akm formats (`akm`, `dotenv`, `akm-workflow`):
  * how they place and serialize the assets they write. Each type goes in its own
  * folder (`knowledge/`, `env/`, `secrets/`, ...), named by the type's placement
- * spec, and Markdown is made a conformant akm document. An env file's or
- * secret's `.sensitive` marker keeps it out of listings.
+ * spec, and Markdown is made a conformant akm document.
  */
 
 import path from "node:path";
@@ -95,14 +94,6 @@ export function serializeAkmContent(type: string, file: string, content: string 
   return text;
 }
 
-/**
- * The path of the sibling marker file that keeps an env file or secret out of
- * listings: `<name>.sensitive` for an env file, `<secret>.sensitive` for a secret.
- */
-export function sensitiveMarkerPath(assetPath: string, type: "env" | "secret"): string {
-  return type === "env" ? assetPath.replace(/\.env$/, ".sensitive") : `${assetPath}.sensitive`;
-}
-
 export abstract class AkmFormatAdapterBase extends DirectoryAdapterBase {
   /** Everything it writes is retired, not deleted, except an env file or a secret: those are always deleted. */
   override get retires(): readonly string[] {
@@ -120,13 +111,6 @@ export abstract class AkmFormatAdapterBase extends DirectoryAdapterBase {
   /** Env files and secrets are readable by their owner only. */
   protected override fileMode(type: string): number | undefined {
     return type === "env" || type === "secret" ? 0o600 : undefined;
-  }
-
-  protected override unlistedMarker(file: FileContext): string | undefined {
-    const type = declaredTypeForPath(file);
-    if (type !== "env" && type !== "secret") return undefined;
-    const marker = sensitiveMarkerPath(file.absPath, type);
-    return marker === file.absPath ? undefined : marker;
   }
 
   protected override declaredType(file: FileContext): string | undefined {

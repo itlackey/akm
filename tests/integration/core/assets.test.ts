@@ -351,7 +351,7 @@ describe("findAsset", () => {
     expect(found?.entry.content()).toContain("Body");
   });
 
-  test("an env file marked sensitive is found, and says it is not listed", () => {
+  test("a `.sensitive` marker left in a bundle is ignored: its env file and secret are found and listed", () => {
     const stash = bundleOf("stash", {
       "env/prod.env": "A=1\n",
       "env/prod.sensitive": "",
@@ -360,10 +360,13 @@ describe("findAsset", () => {
     });
 
     const env = findAsset("env/prod", { sources: [stash] });
-    expect(env).toMatchObject({ type: "env", listed: false });
+    expect(env).toMatchObject({ type: "env", listed: true });
     expect(env?.entry.file).toBe(path.join(stash.path, "env", "prod.env"));
-    expect(findAsset("secrets/token", { sources: [stash] })?.type).toBe("secret");
-    expect(listAssets({ sources: [stash] }).map((asset) => asset.ref)).toEqual([]);
+    expect(findAsset("secrets/token", { sources: [stash] })).toMatchObject({ type: "secret", listed: true });
+    expect(listAssets({ sources: [stash] }).map((asset) => asset.ref)).toEqual([
+      "stash//env/prod",
+      "stash//secrets/token",
+    ]);
   });
 
   test("nothing is found for a missing concept or an unknown bundle", () => {
@@ -404,11 +407,9 @@ describe("findAsset", () => {
 });
 
 describe("listAssets, currentConceptId, assetRevision", () => {
-  test("lists the assets of a type across bundles, hiding a sensitive one, sorted by where it is held", () => {
+  test("lists the assets of a type across bundles, sorted by where it is held", () => {
     const first = bundleOf("first", {
       "secrets/b": "1",
-      "secrets/hidden": "2",
-      "secrets/hidden.sensitive": "",
       "knowledge/k.md": "# k\n",
     });
     const second = bundleOf("second", { "secrets/a": "3" });

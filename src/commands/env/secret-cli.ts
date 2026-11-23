@@ -178,7 +178,7 @@ const secretRunCommand = defineJsonCommand({
 });
 
 const secretRemoveCommand = defineJsonCommand({
-  meta: { name: "remove", description: "Remove a secret file (and its .sensitive marker, if any)" },
+  meta: { name: "remove", description: "Remove a secret file" },
   args: {
     ref: { type: "positional", description: "Secret ref", required: true },
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },

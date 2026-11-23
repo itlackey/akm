@@ -37,7 +37,7 @@ import { scanEnvKeyNames, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { AdapterReadCandidate } from "../directory-adapter";
 import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { AkmFormatAdapterBase, sensitiveMarkerPath } from "./akm-format";
+import { AkmFormatAdapterBase } from "./akm-format";
 import { dangerousEnvKeyDiagnostics } from "./akm-lint";
 import { hashContent } from "./shared";
 
@@ -45,7 +45,7 @@ import { hashContent } from "./shared";
 const ENV_DIR = "env";
 /** The `secrets/` content subdir (whole-file secrets). */
 const SECRETS_DIR = "secrets";
-/** Non-secret marker suffixes under `secrets/`. */
+/** Sidecar suffixes under `secrets/` that are not secrets (`.sensitive` is a retired marker, left in older bundles). */
 const SECRET_SKIP_SUFFIXES = [".lock", ".sensitive"];
 
 type DotenvType = "env" | "secret";
@@ -66,26 +66,6 @@ function classify(relPath: string): DotenvType | null {
   return null;
 }
 
-/**
- * True when `--sensitive` marked this asset, via the sibling marker file that
- * `akm env create --sensitive` / `akm secret create --sensitive` writes:
- * `env/<name>.sensitive` for `env/<name>.env`, `secrets/<name>.sensitive` for
- * `secrets/<name>`.
- *
- * The flag documents itself as excluding the asset from BOTH `env list` output
- * and the search index. Indexing filters are adapter-owned (the walk no longer
- * pre-filters), and the akm adapter abstains on the marker — but this adapter
- * only skipped files whose OWN name ended in `.sensitive`. A dotenv bundle is a
- * legal env/secret write target, so a marked `env/prod.env` there was still
- * indexed with every KEY NAME as a hint and a marked secret still indexed by
- * name, while `env list` / `secret list` correctly hid them. The two surfaces
- * disagreed about a documented promise.
- */
-function hasSensitiveMarker(absPath: string, type: DotenvType): boolean {
-  const marker = sensitiveMarkerPath(absPath, type === "env" ? "env" : "secret");
-  return marker !== absPath && fs.existsSync(marker);
-}
-
 function conceptIdForPath(type: DotenvType, relativePath: string): string {
   const posix = toPosix(relativePath);
   if (type === "secret") return posix;
@@ -96,7 +76,6 @@ function conceptIdForPath(type: DotenvType, relativePath: string): string {
 function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   const type = classify(file.relPath);
   if (type === null) return null;
-  if (hasSensitiveMarker(file.absPath, type)) return null;
   const posix = toPosix(file.relPath);
   const raw = file.content();
 
@@ -165,18 +144,11 @@ export class DotenvAdapter extends AkmFormatAdapterBase {
    * Closed-form owner candidates (#857): the ref is the file's path under the
    * bundle root (`conceptIdForPath`), so it is inverted for the two types
    * this adapter recognizes. `assetPathCandidatesForName` expands `env`'s
-   * `.env`/`<name>.env` duality; the sensitive-marker sibling spellings are then
-   * layered on each. `recognize` decides which candidate really owns the ref.
+   * `.env`/`<name>.env` duality. `recognize` decides which candidate really owns the ref.
    */
   protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
     const posix = toPosix(conceptId);
-    const expanded = (["env", "secret"] as const).flatMap((type) =>
-      assetPathCandidatesForName(type, c.root, posix).flatMap((primary) =>
-        type === "env"
-          ? [primary, sensitiveMarkerPath(primary, "env")]
-          : [primary, sensitiveMarkerPath(primary, "secret"), `${primary}.lock`],
-      ),
-    );
+    const expanded = (["env", "secret"] as const).flatMap((type) => assetPathCandidatesForName(type, c.root, posix));
     return [...new Set(expanded)].map((candidatePath) => ({ path: candidatePath, conceptId: posix }));
   }
 
