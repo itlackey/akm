@@ -357,6 +357,21 @@ describe("akmClone", () => {
     expect(fs.readFileSync(path.join(stashDir, "scripts", "deploy.sh"), "utf8")).toBe("echo updated\n");
   });
 
+  test("force replaces a file destination symlink without writing through it", async () => {
+    const victim = path.join(createStashDir("akm-clone-symlink-victim-"), "victim.sh");
+    const destination = path.join(stashDir, "scripts", "deploy.sh");
+    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo updated\n");
+    writeFile(victim, "echo victim\n");
+    fs.symlinkSync(victim, destination);
+
+    const result = await akmClone({ sourceRef: `${searchPathDir}//scripts/deploy.sh`, force: true });
+
+    expect(result.overwritten).toBe(true);
+    expect(fs.lstatSync(destination).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(destination, "utf8")).toBe("echo updated\n");
+    expect(fs.readFileSync(victim, "utf8")).toBe("echo victim\n");
+  });
+
   test("force replaces a file destination symlink that leads inside the bundle without writing through it", async () => {
     const kept = path.join(stashDir, "scripts", "kept.sh");
     const destination = path.join(stashDir, "scripts", "deploy.sh");
@@ -370,21 +385,6 @@ describe("akmClone", () => {
     expect(fs.lstatSync(destination).isSymbolicLink()).toBe(false);
     expect(fs.readFileSync(destination, "utf8")).toBe("echo updated\n");
     expect(fs.readFileSync(kept, "utf8")).toBe("echo kept\n");
-  });
-
-  test("a file destination symlink that leaves the bundle is refused and nothing is written through it", async () => {
-    const victim = path.join(createStashDir("akm-clone-symlink-victim-"), "victim.sh");
-    const destination = path.join(stashDir, "scripts", "deploy.sh");
-    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo updated\n");
-    writeFile(victim, "echo victim\n");
-    fs.symlinkSync(victim, destination);
-
-    await expect(akmClone({ sourceRef: `${searchPathDir}//scripts/deploy.sh`, force: true })).rejects.toThrow(
-      /symbolic link/i,
-    );
-
-    expect(fs.lstatSync(destination).isSymbolicLink()).toBe(true);
-    expect(fs.readFileSync(victim, "utf8")).toBe("echo victim\n");
   });
 
   test("force replaces a skill destination symlink without removing its target", async () => {
@@ -449,6 +449,27 @@ describe("akmClone", () => {
     expect(fs.readFileSync(path.join(dest, "references", "guide.md"), "utf8")).toBe("# Guide\r\n  trailing  ");
     expect(fs.statSync(path.join(dest, "scripts", "run.sh")).mode & 0o777).toBe(0o755);
     expect(fs.readdirSync(path.join(stashDir, "skills")).filter((name) => name.includes(".tmp-"))).toEqual([]);
+  });
+
+  test("a script clone keeps the source's executable mode", async () => {
+    const source = path.join(searchPathDir, "scripts", "run.sh");
+    writeFile(source, "#!/bin/sh\necho hi\n");
+    fs.chmodSync(source, 0o755);
+
+    const result = await akmClone({ sourceRef: `${searchPathDir}//scripts/run.sh` });
+
+    expect(fs.statSync(result.destination.path).mode & 0o777).toBe(0o755);
+    expect(fs.readFileSync(result.destination.path, "utf8")).toBe("#!/bin/sh\necho hi\n");
+  });
+
+  test("a skill clone onto a folder without SKILL.md says it already exists in the working stash", async () => {
+    writeFile(path.join(searchPathDir, "skills", "pkg", "SKILL.md"), "# New\n");
+    writeFile(path.join(stashDir, "skills", "pkg", "mine.txt"), "mine");
+
+    await expect(akmClone({ sourceRef: `${searchPathDir}//skills/pkg` })).rejects.toThrow(
+      `Asset already exists in working stash: ${path.join(stashDir, "skills", "pkg")}. Use --force to overwrite.`,
+    );
+    expect(fs.readFileSync(path.join(stashDir, "skills", "pkg", "mine.txt"), "utf8")).toBe("mine");
   });
 
   test("a skill clone without --force leaves the existing package as it was and says it already exists", async () => {
@@ -917,22 +938,21 @@ describe("akmClone opaque refs and provenance", () => {
     expect(fs.readFileSync(externalSkill).equals(before)).toBe(true);
   });
 
-  test("a skill with a nested directory link to itself clones without traversing or copying the link", async () => {
+  test("a skill with a nested directory link to itself clones without traversing the link", async () => {
     writeFile(path.join(searchPathDir, "skills", "loopy", "SKILL.md"), "---\ndescription: loopy\n---\n# Loopy\n");
     fs.symlinkSync(".", path.join(searchPathDir, "skills", "loopy", "loop"), "dir");
 
     await akmClone({ sourceRef: "searchpath//skills/loopy" });
 
     const destination = path.join(stashDir, "skills", "loopy");
-    // A directory link is no file of the package: it is neither followed nor carried over.
-    expect(fs.existsSync(path.join(destination, "loop"))).toBe(false);
+    expect(fs.lstatSync(path.join(destination, "loop")).isSymbolicLink()).toBe(true);
     expect(fs.lstatSync(path.join(destination, "SKILL.md")).isSymbolicLink()).toBe(false);
     expect(fs.readFileSync(path.join(destination, "SKILL.md"), "utf8")).toContain(
       "sources:\n  - searchpath//skills/loopy\n",
     );
   });
 
-  test("a skill with a directory link to an ancestor clones without traversing or copying the link", async () => {
+  test("a skill with a directory link to an ancestor clones without traversing the link", async () => {
     writeFile(path.join(searchPathDir, "skills", "up", "SKILL.md"), "---\ndescription: up\n---\n# Up\n");
     writeFile(path.join(searchPathDir, "skills", "up", "refs", "note.md"), "# Note\n");
     fs.symlinkSync("../../..", path.join(searchPathDir, "skills", "up", "refs", "root"), "dir");
@@ -940,7 +960,7 @@ describe("akmClone opaque refs and provenance", () => {
     await akmClone({ sourceRef: "searchpath//skills/up" });
 
     const destination = path.join(stashDir, "skills", "up");
-    expect(fs.existsSync(path.join(destination, "refs", "root"))).toBe(false);
+    expect(fs.lstatSync(path.join(destination, "refs", "root")).isSymbolicLink()).toBe(true);
     expect(fs.readFileSync(path.join(destination, "refs", "note.md"), "utf8")).toBe("# Note\n");
   });
 

@@ -377,7 +377,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   create(
     b: Bundle,
     asset: NewAsset,
-    options: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean } = {},
+    options: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any" } = {},
   ): AssetChange {
     if (!this.writes.includes(asset.type)) {
       throw new Error(
@@ -397,7 +397,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const content = options.verbatim ? asset.content : this.serialize(asset.type, file, asset.content);
     const changed = asset.resources?.length
       ? this.writePackage(b, asset, entry, content, asset.resources)
-      : this.writeFile(b, asset.type, file, content, options.replaceLink);
+      : this.writeFile(b, asset.type, file, content, options.replaceLink, options.verbatim ? asset.mode : undefined);
     return { conceptId, changed, content: asset.content };
   }
 
@@ -440,13 +440,21 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
         .find((candidate) => fs.statSync(candidate, { throwIfNoEntry: false })?.isFile());
     const dir = file === undefined ? undefined : this.packageDir(buildFileContext(root, file));
     if (dir === undefined) throw new UsageError(`"${b.id}//${conceptId}" is not a package entry.`);
-    return filesBelow(dir)
-      .map((member) => ({
-        path: path.relative(dir, member).split(path.sep).join("/"),
+    const relative = (member: string): string => path.relative(dir, member).split(path.sep).join("/");
+    const links = directoryLinksBelow(dir).map((link) => ({
+      path: relative(link),
+      bytes: Buffer.alloc(0),
+      mode: 0,
+      link: path.resolve(path.dirname(link), fs.readlinkSync(link)),
+    }));
+    return [
+      ...filesBelow(dir).map((member) => ({
+        path: relative(member),
         bytes: fs.readFileSync(member),
         mode: fs.statSync(member).mode & 0o777,
-      }))
-      .sort((left, right) => compareCodePoints(left.path, right.path));
+      })),
+      ...links,
+    ].sort((left, right) => compareCodePoints(left.path, right.path));
   }
 
   mirrorPackage(
@@ -491,6 +499,10 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
       for (const file of files) {
         const target = path.join(staging, file.path);
         fs.mkdirSync(path.dirname(target), { recursive: true });
+        if (file.link !== undefined) {
+          fs.symlinkSync(file.link, target, "dir");
+          continue;
+        }
         fs.writeFileSync(target, file.bytes);
         fs.chmodSync(target, file.mode);
       }
@@ -604,11 +616,18 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   }
 
   /** The bytes and file mode a write gives a file. */
-  private writeFile(b: Bundle, type: string, file: string, bytes: string | Buffer, replaceLink = false): string[] {
+  private writeFile(
+    b: Bundle,
+    type: string,
+    file: string,
+    bytes: string | Buffer,
+    replaceLink: boolean | "any" = false,
+    mode?: number,
+  ): string[] {
     assertWritableFile(rootOf(b), b.id, file, { replaceLink });
     fs.mkdirSync(path.dirname(file), { recursive: true });
     // Atomic: a crash or a full disk never leaves a half-written asset where a good one was.
-    writeFileAtomic(file, bytes, this.fileMode(type) ?? existingFileMode(file));
+    writeFileAtomic(file, bytes, mode ?? this.fileMode(type) ?? existingFileMode(file));
     return [file];
   }
 
@@ -788,6 +807,19 @@ function filesBelow(dir: string): string[] {
   return files;
 }
 
+/** The links to directories under `dir` (not followed, as the walk does), at any depth. */
+function directoryLinksBelow(dir: string): string[] {
+  const links: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) links.push(...directoryLinksBelow(entryPath));
+    else if (entry.isSymbolicLink() && fs.statSync(entryPath, { throwIfNoEntry: false })?.isDirectory()) {
+      links.push(entryPath);
+    }
+  }
+  return links;
+}
+
 /** The files of the package in `dir` besides its entry, by path below `dir`. */
 function packageResources(dir: string, entryFile: string): AssetResource[] {
   return filesBelow(dir)
@@ -811,7 +843,7 @@ export function assertWritableFile(
   root: string,
   bundle: string,
   file: string,
-  options: { replaceLink?: boolean } = {},
+  options: { replaceLink?: boolean | "any" } = {},
 ): void {
   const lexicalRoot = path.resolve(root);
   // A path under another spelling of the root (a symlinked spelling of the library) is inside it.
@@ -832,8 +864,11 @@ export function assertWritableFile(
     const stat = fs.lstatSync(current, { throwIfNoEntry: false });
     if (!stat) break;
     if (stat.isSymbolicLink()) {
-      if (options.replaceLink && linksInside(current, realRoot, index === segments.length - 1)) {
-        if (index === segments.length - 1) break;
+      const last = index === segments.length - 1;
+      // `"any"`: the file itself may be a link to anywhere (or to nothing): it is replaced, never written through.
+      if (options.replaceLink === "any" && last) break;
+      if (options.replaceLink && linksInside(current, realRoot, last)) {
+        if (last) break;
         continue;
       }
       throw new UsageError(`Write path contains a symbolic link below source "${bundle}": ${relative}`);

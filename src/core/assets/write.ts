@@ -84,9 +84,13 @@ export interface AssetWriter {
   address(ref: string): AssetAddress;
   /**
    * `exclusive`: refuse an existing asset. `verbatim`: keep `content` exactly, not in the adapter's form for the type.
-   * `replaceLink`: an asset file that is a symbolic link to a file inside the bundle is replaced by a regular file.
+   * `replaceLink`: an asset file that is a symbolic link to a file inside the bundle is replaced by a regular file;
+   * `"any"`: a link to anywhere (or to nothing) is replaced, and what it led to is not written (clone, as base).
    */
-  create(asset: NewAsset, options?: { exclusive?: boolean; verbatim?: boolean; replaceLink?: boolean }): WriteResult;
+  create(
+    asset: NewAsset,
+    options?: { exclusive?: boolean; verbatim?: boolean; replaceLink?: boolean | "any" },
+  ): WriteResult;
   update(
     conceptId: string,
     content: string | Buffer,

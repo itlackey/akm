@@ -262,6 +262,22 @@ describe("DirectoryAdapterBase", () => {
       expect(fs.existsSync(dir())).toBe(false);
     });
 
+    test("a link to a directory is carried as a link, never followed", () => {
+      akmAdapter.mirrorPackage(bundle, skill, [entry("x\n")]);
+      fs.mkdirSync(path.join(dir(), "refs"));
+      fs.symlinkSync("..", path.join(dir(), "refs", "up"), "dir");
+      const files = akmAdapter.packageFiles(bundle, "skills/demo");
+      expect(files.find((file) => file.path === "refs/up")?.link).toBe(dir());
+      akmAdapter.mirrorPackage(bundle, skill, files, { replace: true });
+      expect(fs.lstatSync(path.join(dir(), "refs", "up")).isSymbolicLink()).toBe(true);
+      expect(fs.readdirSync(dir()).sort()).toEqual(["SKILL.md", "refs"]);
+    });
+
+    test("a verbatim create keeps the mode it is given", () => {
+      akmAdapter.create(bundle, { type: "script", name: "run.sh", content: "echo\n", mode: 0o755 }, { verbatim: true });
+      expect(fs.statSync(path.join(bundle.root, "scripts", "run.sh")).mode & 0o777).toBe(0o755);
+    });
+
     test("deleting a package entry deletes the package, resources and all", () => {
       akmAdapter.mirrorPackage(bundle, skill, [
         entry("x\n"),

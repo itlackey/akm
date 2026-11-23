@@ -199,7 +199,10 @@ export class AssetBundle {
   identifyKey(key: string): string | null {
     return this.#adapter.identifyKey?.(this.#bundle, key) ?? null;
   }
-  create(asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean }): AssetChange {
+  create(
+    asset: NewAsset,
+    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any" },
+  ): AssetChange {
     const locator = this.isStore ? this.#locator(this.place(asset)) : undefined;
     return this.#adapter.create(this.#bundle, asset, { ...options, ...(locator !== undefined ? { locator } : {}) });
   }

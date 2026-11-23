@@ -38,6 +38,8 @@ export interface AssetEntry {
   readonly locator?: unknown;
   /** When the asset last changed, when the adapter knows (a directory: the file's mtime). Callers never stat `file`. */
   modified?(): Date;
+  /** The permission bits of the file that holds the asset, when the adapter keeps one (a directory). */
+  mode?(): number;
   /** The content as text, read once, when first asked. */
   content(): string;
   /** The content as bytes, read once, when first asked. */
@@ -79,6 +81,8 @@ export interface NewAsset {
   type: string;
   name: string;
   content: string | Buffer;
+  /** The permission bits of the file, honoured for a verbatim create by an adapter that keeps files; else its own. */
+  mode?: number;
   /** Files that belong to the asset (a skill package's resources), by path below the asset's folder. */
   resources?: ReadonlyArray<{ path: string; content: Buffer }>;
 }
@@ -89,6 +93,8 @@ export interface PackageFile {
   bytes: Buffer;
   /** Permission bits. */
   mode: number;
+  /** A link to a directory, which the package carries as the link (absolute target) and never follows; `bytes` is empty. */
+  link?: string;
 }
 
 /** What a write did. */
@@ -186,7 +192,7 @@ export interface BundleAdapter {
   create(
     b: Bundle,
     asset: NewAsset,
-    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean; locator?: unknown },
+    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any"; locator?: unknown },
   ): AssetChange;
   /**
    * Replace the content of the asset `conceptId` holds with exactly `content`. With `throughLink`, an asset file reached

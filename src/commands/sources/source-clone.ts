@@ -249,7 +249,9 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
         file.path === "SKILL.md" ? { ...file, bytes: stampMarkdown(file.bytes) } : file,
       )
     : [];
-  const sourceBytes = isSkill ? undefined : assetAtKey(sourceBundle, key)?.entry.bytes();
+  const sourceEntry = isSkill ? undefined : assetAtKey(sourceBundle, key)?.entry;
+  const sourceBytes = sourceEntry?.bytes();
+  const sourceMode = sourceEntry?.mode?.();
   if (!isSkill && !sourceBytes) {
     throw new NotFoundError(`Source asset not found for ref: ${options.sourceRef}`, "ASSET_NOT_FOUND");
   }
@@ -268,7 +270,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     let overwritten: boolean;
     if (!writeTarget) {
       // `--dest`: a directory the user named, outside every bundle: no adapter places, no index row follows.
-      overwritten = copyUnmanaged(destRoot, unplaced, isSkill ? files : content, {
+      overwritten = copyUnmanaged(destRoot, unplaced, isSkill ? files : content, sourceMode, {
         force: options.force === true,
         refused,
       });
@@ -280,11 +282,20 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
         destPath = placed.file ?? unplaced;
         held = placed.exists;
         if (held && !options.force) throw refused(isSkill ? path.dirname(destPath) : destPath);
-        if (isSkill) w.mirrorPackage({ type: cloneType, name }, files, { replace: options.force === true });
-        else
+        if (isSkill) {
+          try {
+            w.mirrorPackage({ type: cloneType, name }, files, { replace: options.force === true });
+          } catch (error) {
+            // A folder without SKILL.md is no asset to the check above; the refusal is still today's.
+            if (error instanceof UsageError && error.code === "RESOURCE_ALREADY_EXISTS") {
+              throw refused(path.dirname(destPath));
+            }
+            throw error;
+          }
+        } else
           w.create(
-            { type: cloneType, name, content },
-            { exclusive: !options.force, verbatim: true, replaceLink: true },
+            { type: cloneType, name, content, ...(sourceMode !== undefined ? { mode: sourceMode } : {}) },
+            { exclusive: !options.force, verbatim: true, replaceLink: "any" },
           );
       });
       overwritten = held;
@@ -311,6 +322,7 @@ function copyUnmanaged(
   destRoot: string,
   entryPath: string,
   what: PackageFile[] | Buffer,
+  mode: number | undefined,
   options: { force: boolean; refused: (at: string) => UsageError },
 ): boolean {
   const target = Array.isArray(what) ? path.dirname(entryPath) : entryPath;
@@ -324,11 +336,16 @@ function copyUnmanaged(
       for (const file of what) {
         const at = path.join(staging, file.path);
         fs.mkdirSync(path.dirname(at), { recursive: true }); // asset-io: user-input
+        if (file.link !== undefined) {
+          fs.symlinkSync(file.link, at, "dir"); // asset-io: user-input
+          continue;
+        }
         fs.writeFileSync(at, file.bytes, { mode: file.mode }); // asset-io: user-input
         fs.chmodSync(at, file.mode); // asset-io: user-input
       }
     } else {
-      fs.writeFileSync(staging, what, { flag: "wx" }); // asset-io: user-input
+      fs.writeFileSync(staging, what, { flag: "wx", mode }); // asset-io: user-input
+      if (mode !== undefined) fs.chmodSync(staging, mode); // asset-io: user-input
     }
     // A final symlink is removed as an entry, never traversed.
     if (existing) fs.rmSync(target, { recursive: true, force: true }); // asset-io: user-input
