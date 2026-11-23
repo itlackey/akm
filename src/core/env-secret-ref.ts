@@ -18,7 +18,7 @@ import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
 import { type Asset, findAsset, listAssets } from "./assets/read";
 import { assetType } from "./assets/type";
-import { addressOf, readAsset, type WriteResult, writeAssets } from "./assets/write";
+import { fileOfRef, readAsset, type WriteResult, writeAssets } from "./assets/write";
 import { deriveBundleIds } from "./bundle-id";
 import { isWithin, scanEnvKeyNames } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
@@ -214,8 +214,7 @@ function resolveEnvSecretWriteTarget(
   // The file the name is kept in (a link included) must stay in the type's folder; a store keeps no file to look up.
   const { source } = resolved.target;
   const folder = stashDirFor(type);
-  const file =
-    source.location === undefined ? addressOf(source, conceptIdFromTypeName(type, parsed.name)).file : undefined;
+  const file = fileOfRef(source, conceptIdFromTypeName(type, parsed.name));
   if (file !== undefined && folder !== undefined && !isWithin(file, path.join(source.path, folder))) {
     throw new UsageError(
       `${type === "env" ? "Env" : "Secret"} name "${parsed.name}" escapes the ${folder === "env" ? "env" : "secrets"} directory.`,

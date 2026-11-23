@@ -4,13 +4,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { BundleAdapter, BundleListing } from "../core/adapter/bundle-adapter";
-import { adapterIdOf, detectAdapterId } from "../core/adapter/detect-adapter";
-import { requireAdapter } from "../core/adapter/registry";
+import type { BundleListing } from "../core/adapter/bundle-adapter";
+import { detectAdapterId } from "../core/adapter/detect-adapter";
 import type { Bundle } from "../core/adapter/types";
-import { type Asset, findAsset } from "../core/assets/read";
+import { type Asset, type BundleScan, findAsset, scanBundle } from "../core/assets/read";
 import { isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
+import { ConfigError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
@@ -609,6 +609,7 @@ function isReadableDirectory(root: string): boolean {
   try {
     // asset-io: bundle-root root probe
     if (!fs.statSync(root).isDirectory()) return false;
+    // asset-io: bundle-root root probe
     fs.readdirSync(root); // probe readability, not just existence
     return true;
   } catch {
@@ -959,7 +960,10 @@ function buildIndexedSourceOwners(sources: readonly SearchSource[]): Map<string,
   return new Map(
     sources.map((source, index) => [
       path.resolve(source.path),
-      { bundleId: (bundles[index] as Bundle).id, adapterId: adapterIdOf(source) },
+      {
+        bundleId: (bundles[index] as Bundle).id,
+        adapterId: scanBundle(source, (bundles[index] as Bundle).id).adapterId,
+      },
     ]),
   );
 }
@@ -967,7 +971,7 @@ function buildIndexedSourceOwners(sources: readonly SearchSource[]): Map<string,
 type SourceScanPlan = {
   currentStashDir: string;
   bundle: Bundle;
-  adapter?: BundleAdapter;
+  scan?: BundleScan;
   dirGroups: Map<string, FileContext[]>;
   removals: Array<DirRecord & { reason: DirScanReason }>;
   walkComplete: boolean;
@@ -1027,14 +1031,12 @@ function sourceSnapshotRemovals(
     }));
 }
 
-/** The bundle's listing; a store that cannot be listed (unreachable or failing) is an incomplete one: one bundle never stops the index, which keeps the rows it had. */
-function listOrKeep(adapter: BundleAdapter, bundle: Bundle): BundleListing {
+/** The bundle's listing; a store that cannot be reached is an incomplete one: one bundle never stops the index, which keeps the rows it had. */
+function listOrKeep(scan: BundleScan): BundleListing {
   try {
-    return adapter.list(bundle);
+    return scan.list();
   } catch (error) {
-    if (adapter.addressedBy !== "location") throw error;
-    // Any failure, not only BUNDLE_UNREACHABLE: a store that errors (a bad `az` reply) must not stop the whole index,
-    // and a failed listing is the same "keep last-known-good rows" case as an unreachable one.
+    if (!(error instanceof ConfigError && error.code === "BUNDLE_UNREACHABLE")) throw error;
     return { assets: [], complete: false, incompleteReason: toErrorMessage(error) };
   }
 }
@@ -1066,7 +1068,7 @@ function buildSourceScanPlans(
       return {
         currentStashDir,
         bundle,
-        adapter: undefined,
+        scan: undefined,
         dirGroups: new Map(),
         removals: [],
         walkComplete: false,
@@ -1075,13 +1077,13 @@ function buildSourceScanPlans(
       };
     }
     // A bundle that names an adapter akm does not have stops the index before it changes anything.
-    const adapter = requireAdapter(bundle.id, adapterIdOf(sourceAdded), { location: bundle.location !== undefined });
-    const walked = walkResultOf(listOrKeep(adapter, bundle), currentStashDir);
+    const scan = scanBundle(sourceAdded, bundle.id);
+    const walked = walkResultOf(listOrKeep(scan), currentStashDir);
     const dirGroups = groupFileContextsByDir(walked.files);
     return {
       currentStashDir,
       bundle,
-      adapter,
+      scan,
       dirGroups,
       removals: [],
       walkComplete: walked.complete,
@@ -1107,7 +1109,7 @@ function buildSourceScanPlans(
     handoffDirs.add(resolvedDir);
   };
 
-  const allComplete = plans.every((plan) => plan.walkComplete && plan.adapter !== undefined);
+  const allComplete = plans.every((plan) => plan.walkComplete && plan.scan !== undefined);
 
   // Reconcile departed directories for every source that produced a
   // trustworthy snapshot; a source that was not walked completely keeps its
@@ -1122,7 +1124,7 @@ function buildSourceScanPlans(
       }
     }
     for (const plan of plans) {
-      if (!plan.walkComplete || !plan.adapter) continue;
+      if (!plan.walkComplete || !plan.scan) continue;
       const currentDirs = new Set([...plan.dirGroups.keys()].map((dirPath) => path.resolve(dirPath)));
       for (const removal of sourceSnapshotRemovals(
         db,
@@ -1223,13 +1225,13 @@ async function scanSourceDirs(
   };
 
   for (const plan of plans) {
-    const { currentStashDir, bundle, adapter, dirGroups, removals, walkComplete } = plan;
+    const { currentStashDir, bundle, scan, dirGroups, removals, walkComplete } = plan;
     processedDirs++;
     reportScanProgress(
       `Processed ${processedDirs}/${allSourceEntries.length} source${allSourceEntries.length === 1 ? "" : "s"}.`,
     );
 
-    if (!walkComplete || adapter === undefined) {
+    if (!walkComplete || scan === undefined) {
       for (const dirPath of dirGroups.keys()) seenPaths.add(path.resolve(dirPath));
       const reason = plan.incompleteReason ?? "the scan did not complete";
       incompleteSources.push({
@@ -1244,7 +1246,7 @@ async function scanSourceDirs(
     // Owner ruling 2026-07-21: dispatch each bundle's DETECTED adapter (§4).
     // The content projection's version is part of the variant: a change to what Markdown bodies index re-projects
     // every directory once instead of keeping the old text for unchanged files.
-    const indexVariant = `${adapter.id}@${adapter.version}+content${CONTENT_PROJECTION_VERSION}`;
+    const indexVariant = `${scan.variantPrefix}content${CONTENT_PROJECTION_VERSION}`;
 
     for (const removal of removals) {
       dirRecords.push(removal);
@@ -1296,7 +1298,11 @@ async function scanSourceDirs(
       // bundle's dispatched `adapter.recognize` (broken workflows dropped-with-
       // warning at the drain layer) and reconstruct the durable `IndexDocument`s.
       drainObserverForTests?.(dirPath, ctxs.length);
-      const drained = drainDirDocuments(adapter, bundle, ctxs);
+      const drained = drainDirDocuments(
+        { id: scan.adapterId, recognize: (_bundle, entry) => scan.recognize(entry) },
+        bundle,
+        ctxs,
+      );
       if (drained.warnings.length) warnings.push(...drained.warnings);
       generatedCount += drained.entries.length;
       const stash = drained.entries.length > 0 ? { entries: drained.entries } : null;
@@ -1353,7 +1359,7 @@ async function scanSourceDirs(
     skippedDirs,
     generatedCount,
     warnings,
-    complete: plans.every((plan) => plan.walkComplete && plan.adapter !== undefined),
+    complete: plans.every((plan) => plan.walkComplete && plan.scan !== undefined),
     incompleteSources,
   };
 }
@@ -1361,6 +1367,7 @@ async function scanSourceDirs(
 function requiresWorkflowSourcePreflight(ctxs: readonly FileContext[]): boolean {
   return ctxs.some((ctx) => {
     try {
+      // asset-io: deprecated a symlinked workflow source is warned about by the workflow code
       return fs.lstatSync(ctx.absPath).isSymbolicLink();
     } catch {
       return true;
@@ -1816,7 +1823,7 @@ async function lookupBundleRefWithResolutionUsing(
     if (!asset) return resolved(null);
     const bundleId = asset.bundle;
     const source = sourceOfBundle(sources, bundleId);
-    const adapterId = adapterIdOf(source);
+    const adapterId = scanBundle(source, bundleId).adapterId;
     const ownerPath = indexedPathOf(asset, source);
     // A workflow source that is a symlink to a file of another extension is warned about once, as before.
     if (workflowNameForSourcePath(source.path, adapterId, ownerPath) !== undefined) {

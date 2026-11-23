@@ -17,16 +17,19 @@ import { upsertIndexRows, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../../indexer
 import { embeddingInputCap } from "../../indexer/materialize-embeddings";
 import { brokenWorkflowWarning, indexRowEntry } from "../../indexer/scan/drain-dir";
 import type { SearchSource } from "../../indexer/search/search-source";
-import { fileContextOfEntry } from "../../indexer/walk/file-context";
+import { buildFileContext, fileContextOfEntry, type MatchResult } from "../../indexer/walk/file-context";
+import { declaredTypeForPath } from "../../indexer/walk/matchers";
 import { closeDatabase } from "../../storage/repositories/index-connection";
 import { deleteEntriesByIds } from "../../storage/repositories/index-entries-repository";
 import { hashContent } from "../adapter/adapters/shared";
 import { adapterIdOf } from "../adapter/detect-adapter";
+import { recognizeMatch } from "../adapter/recognize-match";
 import type { IndexDocument } from "../adapter/types";
 import { loadConfig } from "../config/config";
 import { assetNotFound } from "../errors";
 import { isPathAbsent } from "../path-access";
 import { getDbPath } from "../paths";
+import { presentationFor } from "../type-presentation";
 import { warnVerbose } from "../warn";
 import { type Asset, sourceOf } from "./asset";
 import { assetBundleOf } from "./bundle";
@@ -229,4 +232,39 @@ export function assetTypeFresh(asset: Asset): string {
   );
   if (recorded?.content_hash === hashContent(asset.entry.content())) return assetType(asset);
   return indexAsset(asset, { persist: true, supersede: false }).type;
+}
+
+/**
+ * How `akm show` presents an asset whose index row says `row`: `"projection"` when its adapter presents it itself,
+ * else the renderer match. An akm asset is matched live, on the bytes the file has now (so an edit made outside akm is
+ * shown as the next index would type it); a workflow bundle's is the workflow renderer; any other adapter's is its
+ * type's renderer, and an asset of a type with none is matched live too. `null`: nothing claims the asset.
+ */
+export function presentationOf(
+  asset: Asset,
+  row: { type: string; adapterId?: string; ownsPresentation?: boolean },
+): MatchResult | "projection" | null {
+  if (row.ownsPresentation === true) return "projection";
+  const renderer =
+    row.adapterId === undefined || row.adapterId === "akm"
+      ? undefined
+      : row.adapterId === "akm-workflow"
+        ? "workflow-md"
+        : presentationFor(row.type).renderer;
+  if (renderer !== undefined) {
+    return { type: row.type, specificity: Number.MAX_SAFE_INTEGER, renderer };
+  }
+  return recognizeMatch(fileContextOfEntry(sourceOf(asset).path, asset.entry));
+}
+
+/**
+ * The type the folder an indexed file sits in declares for it (`memories/` declares memory), from the folder rules alone:
+ * no bytes are read and the row's type is not asked. Only an akm bundle's folders declare types; a file outside the bundle
+ * root, or in a folder that declares none, has no declared type.
+ */
+export function typeDeclaredByLocation(file: { adapterId: string; root: string; path: string }): string | undefined {
+  if (file.adapterId !== "akm" || !file.root) return undefined;
+  const rel = path.relative(file.root, file.path);
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return undefined;
+  return declaredTypeForPath(buildFileContext(file.root, file.path));
 }

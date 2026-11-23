@@ -44,15 +44,6 @@
       "src/core/adapter/registry": 1
     }
   },
-  "src/commands/health/type-directory-check.ts": {
-    "adapter-id": {
-      "akm": 1
-    },
-    "asset-io": {
-      "buildFileContext": 1,
-      "readFileSync": 1
-    }
-  },
   "src/commands/improve/consolidate.ts": {
     "adapter-import": {
       "src/core/adapter/detect-adapter": 1
@@ -201,11 +192,6 @@
       "writeFileSync": 1
     }
   },
-  "src/commands/read/curate.ts": {
-    "asset-io": {
-      "readFileSync": 1
-    }
-  },
   "src/commands/read/knowledge.ts": {
     "adapter-id": {
       "akm": 2
@@ -226,31 +212,12 @@
       "existsSync": 1
     }
   },
-  "src/commands/read/rules.ts": {
+  "src/commands/read/show.ts": {
     "adapter-id": {
       "akm": 1
     },
     "adapter-import": {
-      "src/core/adapter/adapters/akm-adapter": 1,
       "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "adapterIdOf": 1
-    },
-    "asset-io": {
-      "buildFileContext": 1,
-      "walkStash": 1
-    }
-  },
-  "src/commands/read/show.ts": {
-    "adapter-id": {
-      ".fileless": 1,
-      "akm": 2,
-      "akm-workflow": 1
-    },
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1,
-      "src/core/adapter/recognize-match": 1
     },
     "adapter-probe": {
       "adapterIdOf": 1
@@ -258,8 +225,6 @@
     "asset-io": {
       "buildFileContext": 2,
       "lstatSync": 1,
-      "readFile": 1,
-      "readFileSync": 1,
       "statSync": 1
     }
   },
@@ -454,16 +419,10 @@
   },
   "src/indexer/indexer.ts": {
     "adapter-import": {
-      "src/core/adapter/detect-adapter": 1,
-      "src/core/adapter/registry": 1
+      "src/core/adapter/detect-adapter": 1
     },
     "adapter-probe": {
-      "adapterIdOf": 3,
       "detectAdapterId": 1
-    },
-    "asset-io": {
-      "lstatSync": 1,
-      "readdirSync": 1
     }
   },
   "src/indexer/lookup/indexed-owner.ts": {
@@ -554,8 +513,7 @@
   },
   "src/output/renderers.ts": {
     "asset-io": {
-      "existsSync": 2,
-      "readFileSync": 1
+      "existsSync": 1
     }
   },
   "src/setup/steps/tasks.ts": {

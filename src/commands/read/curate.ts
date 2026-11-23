@@ -17,9 +17,9 @@
  * drive `curateSearchResults` with a fixture search response.
  */
 
-import fs from "node:fs";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { findAsset } from "../../core/assets/read";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { includesProposed, normalizeInclude } from "../../core/include";
@@ -300,7 +300,9 @@ function eligibleEvidence(ref: string, policy: EvidencePolicy): { itemRef: strin
     if (!row || id === undefined) return undefined;
     let raw: string;
     try {
-      raw = fs.readFileSync(row.filePath, "utf8");
+      const asset = findAsset(row.itemRef);
+      if (!asset) return undefined;
+      raw = asset.entry.content();
     } catch {
       return undefined;
     }

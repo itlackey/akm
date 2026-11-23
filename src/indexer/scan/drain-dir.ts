@@ -78,7 +78,7 @@ export interface DrainedDir {
  * legacy flat-walk pass's "no matcher claims the file" case had.
  */
 export function drainDirDocuments(
-  adapter: BundleAdapter,
+  adapter: Pick<BundleAdapter, "id" | "recognize">,
   bundle: Bundle,
   fileContexts: readonly FileContext[],
 ): DrainedDir {

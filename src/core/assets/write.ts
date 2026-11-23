@@ -158,6 +158,14 @@ export function addressOf(source: WriteSource, ref: string): AssetAddress {
 }
 
 /**
+ * The file `ref` is kept in (the existing asset's, else the one a create would write) in a bundle that keeps assets as
+ * files; undefined for a store, which keeps none and is not asked. For checks on where a name lands, never to find it.
+ */
+export function fileOfRef(source: WriteSource, ref: string): string | undefined {
+  return assetBundleOf(source).isStore ? undefined : addressOf(source, ref).file;
+}
+
+/**
  * The ref of the asset an old stored record named by a bundle-relative path (`changes[].path`), for converters only
  * (§8.4). Valid when no file holds the asset any more; undefined when the path is no asset's.
  */
