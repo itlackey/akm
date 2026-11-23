@@ -15,6 +15,7 @@ import { findAsset } from "../../../src/core/assets/read";
 import { addressOf } from "../../../src/core/assets/write";
 import { bundleIdAt } from "../../../src/core/bundle-at-dir";
 import { saveConfig } from "../../../src/core/config/config";
+import { akmIndex } from "../../../src/indexer/indexer";
 import { taskScopeOf } from "../../../src/tasks/task-ref";
 import { withFakeSecretStores } from "../../_helpers/fake-secret-stores";
 import { makeSandboxDir, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -83,6 +84,8 @@ test("a task source naming a configured bundle never replaces it: its adapter an
       },
     },
     async () => {
+      // A keyring entry is read by what the index recorded of it.
+      await akmIndex({ stashDir: files.dir, full: true });
       // What a task prepare and a v5 check do: name the bundle by the source they hold, without its adapter or location.
       taskScopeOf({ name: "docs", path: files.dir });
       taskScopeOf({ name: "keyring", path: path.join(files.dir, "elsewhere") });
