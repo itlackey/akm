@@ -169,20 +169,18 @@ export interface CapturedScriptTarget {
 }
 
 /**
- * Read a script's bytes off disk (or the caller's own read seam, following a
- * symlink to wherever it points) and freeze the digest shape every script
- * dispatch needs, refusing a script `scriptCommand` cannot start. `ref` is used
- * only in that refusal — it is the script's own qualified ref, never a synthetic
- * task ref. `bundleRoot` is the script's working directory.
+ * Read a script's bytes by its ref (the caller's own read seam, or the asset's) and freeze the digest shape every
+ * script dispatch needs, refusing a script `scriptCommand` cannot start. `ref` is the script's own qualified ref, never
+ * a synthetic task ref. `file` gives the extension and `bundleRoot` is the script's working directory.
  */
 export function captureScriptTarget(
   ref: string,
   file: string,
   bundleRoot: string,
-  readFile: (file: string, bundleRoot?: string) => Uint8Array,
+  read: (ref: string) => Uint8Array,
 ): CapturedScriptTarget {
   const extension = path.extname(file).toLowerCase();
-  const raw = readFile(file, bundleRoot);
+  const raw = read(ref);
   const bytes = Uint8Array.from(raw);
   scriptCommand({ ref, bytes, extension }, file, []);
   return Object.freeze({

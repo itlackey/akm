@@ -93,6 +93,7 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
       "WORKFLOW_SOURCE_INVALID",
     );
   }
+  // asset-io: deprecated workflows are not read through the adapters
   const assetPath = asset.entry.file;
   if (assetPath === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
   // A symlink to a file of another extension, or a file no workflow folder owns (a loose `.md` with `type: workflow`),

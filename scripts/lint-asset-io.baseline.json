@@ -263,14 +263,6 @@
       "statSync": 1
     }
   },
-  "src/commands/run-cli.ts": {
-    "asset-io": {
-      "readFileSync": 1
-    },
-    "entry-file": {
-      "entry.file": 1
-    }
-  },
   "src/commands/sources/add-cli.ts": {
     "adapter-import": {
       "src/core/adapter/registry": 1
@@ -362,8 +354,7 @@
   },
   "src/core/assets/read.ts": {
     "facade-export": {
-      "FindOptions": 1,
-      "requireAsset": 1
+      "FindOptions": 1
     }
   },
   "src/core/assets/type.ts": {
@@ -524,9 +515,6 @@
   },
   "src/setup/steps/tasks.ts": {
     "asset-io": {
-      "existsSync": 2,
-      "readFileSync": 2,
-      "readdirSync": 1,
       "writeFileSync": 1
     }
   },
@@ -548,37 +536,6 @@
       "existsSync": 1,
       "statSync": 2,
       "walkStashFlat": 1
-    }
-  },
-  "src/tasks/prepare/prepare.ts": {
-    "asset-io": {
-      "readFileSync": 2
-    }
-  },
-  "src/tasks/v5/check.ts": {
-    "asset-io": {
-      "readFileSync": 1
-    }
-  },
-  "src/tasks/v5/run.ts": {
-    "asset-io": {
-      "readFileSync": 1
-    }
-  },
-  "src/workflows/authoring/authoring.ts": {
-    "adapter-id": {
-      "akm-workflow": 1
-    }
-  },
-  "src/workflows/runtime/workflow-asset-loader.ts": {
-    "entry-file": {
-      "entry.file": 1
-    }
-  },
-  "src/workflows/source-files.ts": {
-    "adapter-id": {
-      "akm": 2,
-      "akm-workflow": 3
     }
   },
   "src/workspace/check-text.ts": {

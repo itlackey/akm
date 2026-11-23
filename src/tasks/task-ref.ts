@@ -12,7 +12,7 @@ import { stashDirFor } from "../core/asset/asset-placement";
 import { makeBundleRef } from "../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
 import { adapterWrites } from "../core/assets/gate";
-import { type Asset, listAssets, readFrom } from "../core/assets/read";
+import { type Asset, listAssets, readFrom, requireAsset } from "../core/assets/read";
 import { assetTypes } from "../core/assets/type";
 import { addressOf } from "../core/assets/write";
 import type { SearchSource } from "../indexer/search/search-source";
@@ -29,7 +29,7 @@ export interface TaskBundleSource {
 }
 
 /** The scope of one source, under the id its refs use. */
-export function taskScopeOf(source: TaskBundleSource): TaskScope {
+export function taskScopeOf(source: TaskBundleSource): { sources: readonly SearchSource[] } {
   return {
     sources: [
       {
@@ -46,6 +46,11 @@ export function taskScopeOf(source: TaskBundleSource): TaskScope {
 export function taskFileOf(asset: Asset): string {
   // asset-io: display
   return asset.entry.file ?? asset.ref;
+}
+
+/** The asset `ref` names in the bundle held at `source`; a `NotFoundError` when it holds none. */
+export function requireAssetIn(source: TaskBundleSource, ref: string): Asset {
+  return requireAsset(ref, { sources: taskScopeOf(source).sources });
 }
 
 /** The task assets of `candidates` (a listing made without a type), typed by the index. */
