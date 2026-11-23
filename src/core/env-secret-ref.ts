@@ -10,17 +10,18 @@
  */
 
 import path from "node:path";
+import { readUsableIndex } from "../indexer/index-readiness";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
 import { assetPathForName, stashDirFor } from "./asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
-import { type Asset, findAsset, listAssets } from "./assets/read";
+import { type Asset, findAsset, listAssets, scanBundle } from "./assets/read";
 import { assetType } from "./assets/type";
 import { fileOfRef, readAsset, type WriteResult, writeAssets } from "./assets/write";
 import { deriveBundleIds } from "./bundle-id";
-import { isWithin, scanEnvKeyNames } from "./common";
+import { compareCodePoints, isWithin, scanEnvKeyNames } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
 import { resolveMutationTarget } from "./mutation-target";
@@ -28,13 +29,31 @@ import { assertWritePathsInsideSource, formatRefForMessage, type ResolvedWriteTa
 
 /**
  * The secrets in the type's folder (`secrets/`): the refs the secret commands accept. A file elsewhere that is typed
- * the same (`team/secrets/token`, which may be another bundle's `secrets/token`) is not listed.
+ * the same (`team/secrets/token`, which may be another bundle's `secrets/token`) is not listed. A keyring's or vault's
+ * secrets come from the index (`akm index` refreshes them), so listing never reaches, or unlocks, the store.
  */
-function listSecretsInFolder(config: AkmConfig): Asset[] {
+function listSecretsInFolder(config: AkmConfig): Array<{ conceptId: string; bundle: string; entry?: Asset["entry"] }> {
   const prefix = `${stashDirFor("secret")}/`;
-  return listAssets({ sources: resolveSourceEntries(undefined, config), type: "secret" }).filter(({ conceptId }) =>
-    conceptId.startsWith(prefix),
+  const sources = resolveSourceEntries(undefined, config);
+  const ids = deriveBundleIds(sources);
+  const indexed = readUsableIndex(
+    (db) =>
+      (db.prepare("SELECT item_ref FROM entries WHERE type = 'secret'").all() as Array<{ item_ref: string }>).map(
+        (row) => row.item_ref,
+      ),
+    [] as string[],
   );
+  return sources.flatMap((source, index) => {
+    const bundle = ids[index] as string;
+    if (source.unresolved) return [];
+    if (scanBundle(source, bundle).isStore) {
+      return indexed
+        .filter((ref) => ref.startsWith(`${bundle}//${prefix}`))
+        .map((ref) => ({ conceptId: ref.slice(bundle.length + 2), bundle }))
+        .sort((left, right) => compareCodePoints(left.conceptId, right.conceptId));
+    }
+    return listAssets({ sources, bundle, type: "secret" }).filter(({ conceptId }) => conceptId.startsWith(prefix));
+  });
 }
 
 /**
@@ -55,7 +74,13 @@ export function listEnvsRecursive(
       .filter((relative) => relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative))
       .map((relative) => `${relative.split(path.sep).join("/")}/`),
   );
-  return listAssets({ sources, type: "env" })
+  // A keyring or vault holds secrets only: `env list` never reaches it.
+  return sources
+    .flatMap((source, index) =>
+      source.unresolved || scanBundle(source, ids[index] as string).isStore
+        ? []
+        : listAssets({ sources, bundle: ids[index] as string, type: "env" }),
+    )
     .filter(({ bundle, conceptId }) => !nested[ids.indexOf(bundle)]?.some((folder) => conceptId.startsWith(folder)))
     .map(({ conceptId, bundle, entry }) => ({
       ref: makeEnvRef(conceptId, bundle, config),
@@ -68,7 +93,7 @@ export function listEnvsRecursive(
 export function listSecrets(config: AkmConfig = loadConfig()): Array<{ ref: string; path?: string }> {
   return listSecretsInFolder(config).map(({ conceptId, bundle, entry }) => ({
     ref: makeSecretRef(conceptId, bundle),
-    ...(entry.file !== undefined ? { path: entry.file } : {}),
+    ...(entry?.file !== undefined ? { path: entry.file } : {}),
   }));
 }
 

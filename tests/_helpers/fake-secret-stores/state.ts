@@ -22,10 +22,14 @@ export interface FakeStoreState {
   keyrings: Record<string, FakeKeyringItem[]>;
   /** Azure Key Vaults by name, each a map of secret name to value. */
   vaults: Record<string, Record<string, string>>;
-  /** Names of keyrings that are locked: their `Items` read as empty, as KWallet's does. */
+  /** Names of keyrings that are locked: their items still list, and `secret-tool` unlocks one in-process. */
   locked?: string[];
   /** Keyrings whose unlock prompt the user dismisses: they stay locked. */
   unlockDenied?: string[];
+  /** Locked keyrings whose `Items` read empty, as a closed KWallet's does. */
+  hidesLocked?: string[];
+  /** Keyrings whose `Item.Delete` answers "/" and keeps the entry, as KWallet's does. */
+  deleteKeeps?: string[];
   /** A keyring's label, by name: default, its name. */
   labels?: Record<string, string>;
   /** Keyrings with no alias of their own name (default: every keyring is the alias of its name). */
@@ -34,8 +38,6 @@ export interface FakeStoreState {
   anyAlias?: boolean;
   /** Aliases set at run time (`SetAlias`), by alias, to a keyring name. */
   aliases?: Record<string, string>;
-  /** Keyrings whose unlock prompt is open. */
-  prompts?: string[];
   /** Azure Key Vault secrets that are disabled, by vault: listed by name only when asked for everything, and refused when read. */
   disabled?: Record<string, string[]>;
   /** Azure Key Vault secrets another Azure service manages, by vault. */

@@ -10,6 +10,7 @@ import { type Asset, type BundleScan, findAsset, scanBundle } from "../core/asse
 import { indexedPathOf } from "../core/assets/type";
 import { isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
+import { StoreLockedError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
@@ -1035,7 +1036,7 @@ function listOrKeep(scan: BundleScan): BundleListing {
     return scan.list();
   } catch (error) {
     // C2 for the indexer (BUNDLE_UNREACHABLE alone, no kind test) waits on one store-failure signal (4e.2).
-    if (!scan.isStore) throw error;
+    if (!scan.isStore || error instanceof StoreLockedError) throw error;
     // Any failure, not only BUNDLE_UNREACHABLE: a store that errors (a bad `az` reply) must not stop the whole index.
     return { assets: [], complete: false, incompleteReason: toErrorMessage(error) };
   }

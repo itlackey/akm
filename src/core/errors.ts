@@ -384,6 +384,9 @@ export class ConfigError extends AkmError {
   }
 }
 
+/** A locked store that lists nothing: unlike other unreachable stores, `akm index` fails on it instead of keeping its rows and going on. */
+export class StoreLockedError extends ConfigError {}
+
 /** Raised when the user supplies invalid arguments or input. */
 export class UsageError extends AkmError {
   readonly kind = "usage" as const;

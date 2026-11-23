@@ -18,9 +18,11 @@
  * `--vault-managed <secret>`: a secret an Azure service manages in that vault, which must not be listed (one cannot be
  * made by hand, so the step is skipped without it).
  *
- * Every entry the run makes starts with `akm-k-` and is removed at the end, also when a step fails. The "locked wallet"
- * step locks the wallet and then needs you: the keyring manager shows its password prompt, and you answer it within
- * two minutes. That step runs akm on a pseudo-terminal with `script` (util-linux), since akm asks only at a terminal.
+ * Every entry the run makes starts with `akm-k-` and is removed at the end, also when a step fails; the run then lists
+ * the wallet again by label and fails, naming them, if any is left. The "locked wallet" step locks the wallet, runs
+ * `akm secret list` (it lists from the index: no prompt) and then an akm read, which needs you: `secret-tool` makes the
+ * keyring manager show its password prompt, and you answer it. A wallet still locked at cleanup is unlocked the same
+ * way (`secret-tool lookup`), so that prompt may appear once more.
  */
 
 import { spawnSync } from "node:child_process";
@@ -92,12 +94,15 @@ class Akm {
     }
     return { code: ran.status, body, stderr: ran.stderr };
   }
-  secretRefs(): string[] {
+  /** `secret list`: from the index, which `fresh` first refreshes with `akm index`. */
+  secretRefs(fresh = true): string[] {
+    if (fresh) this.json(["index"]);
     const listed = this.json(["secret", "list"]);
     return ((listed.body.secrets ?? []) as Array<{ ref: string }>).map((secret) => secret.ref);
   }
-  /** A secret's value, through the same injection a script gets. */
-  value(ref: string): string {
+  /** A secret's value, through the same injection a script gets. A read goes by what the index recorded, so `fresh` runs `akm index` first. */
+  value(ref: string, fresh = true): string {
+    if (fresh) this.json(["index"]);
     const ran = run("bun", ["src/cli.ts", "exec", "--secret", `${ref}:V`, "--", "printenv", "V"], this.env);
     if (ran.status !== 0) throw new Error(`exec could not read ${ref}: ${ran.stderr.trim() || ran.stdout.trim()}`);
     return ran.stdout.replace(/\n$/, "");
@@ -158,23 +163,45 @@ class Keyring {
     );
     if (ran.status !== 0) throw new Error(`secret-tool store: ${ran.stderr.trim()}`);
   }
-  /** Every entry this run made, found by its probe attribute, whichever program stored it. */
-  removeProbeEntries(): void {
-    const found = this.bus([
-      "call",
-      SERVICE,
-      SERVICE_PATH,
-      SERVICE_INTERFACE,
-      "SearchItems",
-      "a{ss}",
-      "1",
-      "akm-probe",
-      PROBE,
-    ]);
-    if (found.status !== 0) return;
-    const [unlocked, locked] = (JSON.parse(found.stdout) as { data: [string[], string[]] }).data;
-    for (const item of [...unlocked, ...locked])
-      this.bus(["call", SERVICE, item, "org.freedesktop.Secret.Item", "Delete"]);
+  /** Every entry of the collection whose label starts with this run's probe name, whichever program stored it. */
+  probeEntries(): Array<{ path: string; label: string }> {
+    const paths = this.data<string[]>(
+      this.bus(["get-property", SERVICE, this.path(), COLLECTION_INTERFACE, "Items"]),
+      "Items",
+    );
+    return paths
+      .map((item) => {
+        const [properties] = this.data<[{ Label: { data: string } }]>(
+          this.bus([
+            "call",
+            SERVICE,
+            item,
+            "org.freedesktop.DBus.Properties",
+            "GetAll",
+            "s",
+            "org.freedesktop.Secret.Item",
+          ]),
+          "GetAll",
+        );
+        return { path: item, label: properties.Label.data };
+      })
+      .filter((entry) => entry.label.startsWith(PROBE));
+  }
+  /** Remove this run's entries and list again: the labels of any that remain. A locked wallet is unlocked in `secret-tool` first, which prompts. */
+  removeProbeEntries(): string[] {
+    try {
+      if (this.isLocked()) {
+        console.log(
+          `\nThe wallet is locked at cleanup: \`secret-tool lookup\` unlocks it, so answer the prompt for "${this.name}".`,
+        );
+        run("secret-tool", ["lookup", "akm-probe", PROBE], this.env);
+      }
+      for (const entry of this.probeEntries())
+        this.bus(["call", SERVICE, entry.path, "org.freedesktop.Secret.Item", "Delete"]);
+      return this.probeEntries().map((entry) => entry.label);
+    } catch (error) {
+      return [`(cleanup could not verify: ${error instanceof Error ? error.message : String(error)})`];
+    }
   }
 }
 
@@ -258,15 +285,23 @@ function keyringSteps(akm: Akm, keyring: Keyring, options: Options): void {
     );
   });
 
-  step("keyring: a locked wallet is asked to unlock, then lists", () => {
+  step("keyring: a locked wallet lists without a prompt, and a read asks the keyring manager to unlock", () => {
     keyring.lock();
     expect(keyring.isLocked(), "the wallet did not lock");
+    expect(
+      akm.secretRefs(false).includes(ref(`${PROBE}-foreign`)),
+      "secret list does not show the secrets of a locked wallet",
+    );
+    expect(keyring.isLocked(), "listing unlocked the wallet");
     console.log(
       options.fake
         ? "     (the fake keyring answers its own prompt)"
-        : `     Answer the keyring manager's password prompt for "${options.keyring}" within two minutes.`,
+        : `     Answer the keyring manager's password prompt for "${options.keyring}".`,
     );
-    expect(akm.secretRefs().includes(ref(`${PROBE}-foreign`)), "the secrets are not listed after the unlock");
+    expect(
+      akm.value(ref(`${PROBE}-foreign`), false) === "from-elsewhere",
+      "the read after the unlock has the wrong value",
+    );
     expect(!keyring.isLocked(), "the wallet is still locked");
   });
 }
@@ -352,19 +387,22 @@ async function main(options: Options, clientEnv: NodeJS.ProcessEnv): Promise<voi
   console.log(`akm run in ${home} (a throwaway config; your own is not touched); probes are named ${PROBE}-*\n`);
   const akm = new Akm(env);
   const keyring = options.keyring ? new Keyring(options.keyring, env) : undefined;
+  let left: string[] = [];
   try {
     if (keyring) keyringSteps(akm, keyring, options);
     if (options.vault) vaultSteps(akm, options, env);
   } finally {
-    keyring?.removeProbeEntries();
-    if (keyring && options.fake === false)
-      console.log(`\nEntries named ${PROBE}-* were removed from "${options.keyring}".`);
+    left = keyring?.removeProbeEntries() ?? [];
+    if (left.length > 0)
+      console.log(`\nFAIL cleanup: ${left.length} entries are left in "${options.keyring}": ${left.join(", ")}`);
+    else if (keyring)
+      console.log(`\nEntries named ${PROBE}-* were removed from "${options.keyring}" (listed again: none left).`);
     fs.rmSync(home, { recursive: true, force: true });
   }
   const failed = results.filter((result) => result.outcome === "FAIL").length;
   const skipped = results.filter((result) => result.outcome === "SKIP").length;
   console.log(`\n${results.length - failed - skipped} passed, ${failed} failed, ${skipped} skipped`);
-  process.exitCode = failed === 0 ? 0 : 1;
+  process.exitCode = failed === 0 && left.length === 0 ? 0 : 1;
 }
 
 const options = parseOptions(process.argv.slice(2));

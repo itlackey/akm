@@ -268,23 +268,30 @@ such a bundle after the bundles before it in priority.
 | A secret's name | the entry's label | the vault's name for the secret: 1 to 127 letters, digits and `-` |
 | Listed | every entry | every enabled secret that no Azure service manages |
 
-- akm reaches the keyring or vault through its command-line client on every
-  read and write, and keeps nothing of it on disk: the index holds each
-  secret's name. A command lists the store once, and reads the secret it asks
-  for (for a vault, one `az keyvault secret list` and one `az keyvault secret
-  show`); what it listed is dropped when the command ends, or when akm stores
-  or deletes in the store.
+- The metadata of a keyring or vault lives in the index, and akm keeps no
+  secret on disk. `akm index` lists the store and records each secret's name;
+  for a keyring entry it also records the entry's object path and the attribute
+  pairs the keyring reports for it. At run time the only thing akm asks the
+  store for is a value, by those recorded pairs: for a keyring one
+  `SearchItems` (to confirm the entry is the only match) and one
+  `secret-tool lookup`, for a vault one `az keyvault secret show` by name. A
+  keyring that has since rewritten an entry's pairs (KWallet does when a wallet
+  is reopened) is refused with `Keyring "<x>" no longer holds "<name>" as
+  indexed: run akm index.` `akm secret set` and `akm secret remove` act on the
+  recorded entry, and refresh its index row. A new keyring entry is stored with
+  the single pair `akm <keyring>/<name>`, which `secret-tool store` requires and
+  nothing else reads.
 - A name that does not read back as the ref `secrets/<name>` (an empty label,
   one with a `#`, a backslash, a `.` or `..` path segment, a leading or trailing
   `/`, or trailing white space) is not listed, and `akm lint` reports it by ref
-  (`invalid-name`). When more than one entry has a name, one wins:
-  the entry akm made, else the one with the lowest object path (a vault has one
-  secret per name). `akm lint` reports the others as `shadowed-spelling`, and
+  (`invalid-name`). When more than one entry has a name, the one with the
+  lowest object path wins (a vault has one secret per name). `akm lint` reports the others as `shadowed-spelling`, and
   reads, replaces and removes act on the winner. `akm lint` without `--dir` or a
   file checks the keyrings and vaults among the bundles too; one it cannot reach
   is skipped.
 - A keyring or vault that cannot be reached at `akm index` keeps the entries
-  the index had. `akm secret list` lists the other bundles and warns. A
+  the index had. `akm secret list` reads a keyring's or vault's entries from
+  the index, so it needs no unlock and never reaches the store. A
   command that needs it fails with `BUNDLE_UNREACHABLE`, naming the client and,
   when it is not installed, what provides it.
 - Such a bundle is writable unless its entry sets `writable: false`. It takes
@@ -305,11 +312,15 @@ such a bundle after the bundles before it in priority.
   the value `<keyring>/<name>`. `secret-tool store` is given the collection's
   object path, so akm makes no alias. A client that does not answer within
   60 seconds fails the command with `BUNDLE_UNREACHABLE`.
-  A locked keyring is unlocked on request: the Secret Service shows its own
-  prompt (KWallet, GNOME Keyring), akm says so on stderr and waits up to two
-  minutes, and a dismissed prompt leaves the keyring locked and the bundle
-  unreachable. Every command asks, `akm lint` and workspace hosts such as
-  Desktop included. The keyring must exist, and `secret-tool` cannot create it: create the wallet or
+  A locked keyring is unlocked by your keyring manager, not by akm: when akm
+  reads, stores or deletes in it, `secret-tool` makes the manager show its own
+  prompt and waits up to two minutes for the answer, and akm prints
+  `Keyring "<x>" is locked: unlock it in the prompt your keyring manager shows.`
+  to stderr first. Listing needs no unlock (it reads the index). Where a locked
+  keyring lists no entries until it is unlocked (a closed KWallet), `akm index`
+  fails, telling you to unlock it and run `akm index` again; the entries the
+  index had stay. KWallet may replace an entry's attributes when it is reopened;
+  akm reads them afresh before each read and store. The keyring must exist, and `secret-tool` cannot create it: create the wallet or
   keyring named in `location` in your keyring manager (KWalletManager,
   Seahorse). A missing one is refused naming the keyrings the service has. A
   process with no session bus (a scheduled task, a container) cannot reach the

@@ -4,7 +4,8 @@
 
 /**
  * A stand-in for `secret-tool`: `lookup` and `store`, with the real tool's
- * rules. An entry is found by attribute pairs, in any keyring; `store` reads the
+ * rules. A request into a locked keyring "prompts" in this process, as the real tool does: the fake answers its
+ * own prompt (unlocking the keyring, unless `unlockDenied` names it) and then goes on. An entry is found by attribute pairs, in any keyring; `store` reads the
  * value from stdin and replaces the entry of its keyring that has the same attributes.
  */
 
@@ -23,19 +24,30 @@ if (pairs.length === 0 || pairs.length % 2 !== 0) fail("secret-tool: must specif
 const wanted: Record<string, string> = {};
 for (let i = 0; i < pairs.length; i += 2) wanted[pairs[i] as string] = pairs[i + 1] as string;
 
+function unlock(keyring: string): void {
+  if (!(state.locked ?? []).includes(keyring)) return;
+  if ((state.unlockDenied ?? []).includes(keyring)) fail("secret-tool: Cannot get secret of a locked object");
+  state.locked = (state.locked ?? []).filter((name) => name !== keyring);
+  saveState(state);
+}
+
 const hasAll = (item: FakeKeyringItem) =>
   Object.entries(wanted).every(([key, value]) => item.attributes[key] === value);
 
 if (verb === "lookup") {
-  const item = Object.values(state.keyrings).flat().find(hasAll);
-  if (!item) process.exit(1);
-  process.stdout.write(item.secret);
+  const found = Object.entries(state.keyrings)
+    .flatMap(([keyring, items]) => items.map((item) => ({ keyring, item })))
+    .find(({ item }) => hasAll(item));
+  if (!found) process.exit(1);
+  unlock(found.keyring);
+  process.stdout.write(found.item.secret);
 } else if (verb === "store") {
   // `--collection` takes an alias or an object path.
   const keyring = keyringOfCollection(state, options.collection as string);
   const items = keyring === undefined ? undefined : state.keyrings[keyring];
   if (keyring === undefined || !items)
     fail(`secret-tool: No such secret collection at path: ${COLLECTION_PREFIX}${options.collection}`);
+  unlock(keyring);
   const same = (item: FakeKeyringItem) => JSON.stringify(item.attributes) === JSON.stringify(wanted);
   const next = Math.max(0, ...items.map((item) => Number(item.path.split("/").pop()))) + 1;
   const stored: FakeKeyringItem = {

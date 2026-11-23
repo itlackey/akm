@@ -774,6 +774,7 @@ describe("a keyring bundle behind the facade", () => {
           },
         },
         async () => {
+          await akmIndex({ stashDir: storage.stashDir, full: true });
           const sources = resolveSourceEntries(undefined, loadConfig());
           const found = findAsset("keyring//secrets/gh_token", { sources });
           expect(found).toMatchObject({ bundle: "keyring" });

@@ -10,7 +10,6 @@
 import { beginCall, fail, keyringOfAlias, saveState } from "./state";
 
 const COLLECTION_PREFIX = "/org/freedesktop/secrets/collection/";
-const PROMPT_PREFIX = "/org/freedesktop/secrets/prompt/";
 
 const state = beginCall("busctl");
 const [verb, , objectPath = "", ...rest] = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
@@ -57,22 +56,11 @@ if (verb === "get-property" && rest.join(" ") === "org.freedesktop.Secret.Servic
     fail(
       `Failed to get property Items on interface org.freedesktop.Secret.Collection: Unknown object '${objectPath}'.`,
     );
-  // A locked collection reads as empty.
+  // A locked collection still lists its items: their labels and attributes read, and each is `Locked`.
   reply(
     "ao",
-    (isLocked(name) ? [] : items).map((item) => item.path),
+    (isLocked(name) && (state.hidesLocked ?? []).includes(name) ? [] : items).map((item) => item.path),
   );
-} else if (verb === "call" && rest[0] === "org.freedesktop.Secret.Service" && rest[1] === "Unlock") {
-  // `ao`, the count, then the paths: a locked collection answers with the prompt that unlocks it.
-  const path = rest[4] as string;
-  const name = keyringAt(path);
-  if (!state.keyrings[name]) fail(`Call failed: Unknown object '${path}'.`);
-  if (!isLocked(name)) reply("aoo", [[path], "/"]);
-  else {
-    state.prompts = [...(state.prompts ?? []), name];
-    saveState(state);
-    reply("aoo", [[], `${PROMPT_PREFIX}${name}`]);
-  }
 } else if (verb === "call" && rest[0] === "org.freedesktop.Secret.Service" && rest[1] === "Lock") {
   // `ao`, the count, then the paths: the keyrings lock at once.
   const path = rest[4] as string;
@@ -80,45 +68,46 @@ if (verb === "get-property" && rest.join(" ") === "org.freedesktop.Secret.Servic
   state.locked = [...new Set([...(state.locked ?? []), keyringAt(path)])];
   saveState(state);
   reply("aoo", [[path], "/"]);
-} else if (verb === "call" && rest.join(" ").startsWith("org.freedesktop.Secret.Prompt Prompt")) {
-  // The user answers the prompt: it unlocks the keyring, or is dismissed. Either way it is gone.
-  const name = objectPath.slice(PROMPT_PREFIX.length);
-  if (!(state.prompts ?? []).includes(name)) fail(`Call failed: Unknown object '${objectPath}'.`);
-  state.prompts = (state.prompts ?? []).filter((open) => open !== name);
-  if (!(state.unlockDenied ?? []).includes(name)) state.locked = (state.locked ?? []).filter((open) => open !== name);
-  saveState(state);
-  reply("", []);
-} else if (verb === "introspect") {
-  if (!(state.prompts ?? []).includes(objectPath.slice(PROMPT_PREFIX.length)))
-    fail(`Failed to introspect object ${objectPath}: Unknown object '${objectPath}'.`);
-  process.stdout.write("NAME TYPE\n");
 } else if (verb === "call" && rest[0] === "org.freedesktop.Secret.Service" && rest[1] === "SearchItems") {
   // `a{ss}`, the pair count, then the pairs: every item of every keyring whose attributes include them.
   const flat = rest.slice(4);
   const wanted: Record<string, string> = {};
   for (let i = 0; i < flat.length; i += 2) wanted[flat[i] as string] = flat[i + 1] as string;
-  const data = Object.values(state.keyrings)
-    .flat()
-    .filter((item) => Object.entries(wanted).every(([key, value]) => item.attributes[key] === value))
-    .map((item) => item.path);
-  reply("aoao", [data, []]);
+  // As the service answers: the matches in unlocked collections, then those in locked ones.
+  const found = Object.entries(state.keyrings).flatMap(([keyring, items]) =>
+    items
+      .filter((item) => Object.entries(wanted).every(([key, value]) => item.attributes[key] === value))
+      .map((item) => ({ path: item.path, locked: isLocked(keyring) })),
+  );
+  reply("aoao", [
+    found.filter((item) => !item.locked).map((item) => item.path),
+    found.filter((item) => item.locked).map((item) => item.path),
+  ]);
 } else if (
   verb === "call" &&
   rest.join(" ") === "org.freedesktop.DBus.Properties GetAll s org.freedesktop.Secret.Item"
 ) {
-  const item = Object.values(state.keyrings)
-    .flat()
-    .find((candidate) => candidate.path === objectPath);
-  if (!item) fail(`Call failed: Unknown object '${objectPath}'.`);
+  const owner = Object.entries(state.keyrings).find(([, items]) => items.some((item) => item.path === objectPath));
+  const item = owner?.[1].find((candidate) => candidate.path === objectPath);
+  if (!owner || !item) fail(`Call failed: Unknown object '${objectPath}'.`);
   const properties = {
-    Locked: { type: "b", data: false },
+    Locked: { type: "b", data: isLocked(owner[0]) },
     Attributes: { type: "a{ss}", data: item.attributes },
     Label: { type: "s", data: item.label },
   };
   reply("a{sv}", [properties]);
 } else if (verb === "call" && rest.join(" ") === "org.freedesktop.Secret.Item Delete") {
-  for (const [keyring, items] of Object.entries(state.keyrings)) {
-    state.keyrings[keyring] = items.filter((item) => item.path !== objectPath);
+  // A locked collection answers with the prompt the delete needs, which this connection cannot show; it deletes nothing.
+  const owner = Object.entries(state.keyrings).find(([, items]) => items.some((item) => item.path === objectPath));
+  if (owner && isLocked(owner[0])) {
+    reply("o", ["/org/freedesktop/secrets/prompt/p1"]);
+    process.exit(0);
+  }
+  // KWallet's reply can be "/" with the entry still there.
+  if (!(owner && (state.deleteKeeps ?? []).includes(owner[0]))) {
+    for (const [keyring, items] of Object.entries(state.keyrings)) {
+      state.keyrings[keyring] = items.filter((item) => item.path !== objectPath);
+    }
   }
   saveState(state);
   reply("o", ["/"]);

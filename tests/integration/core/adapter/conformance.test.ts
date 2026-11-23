@@ -650,6 +650,8 @@ describe("conformance — create, place and read agree", () => {
         [azureKeyVaultAdapter, "vault"],
       ] as const) {
         const b: Bundle = { id: "managed", root: "/not/a/directory", location };
+        // A keyring entry is read by what a listing (the index's) recorded of it.
+        adapter.list(b);
         expect(() => adapter.create(b, { type: "secret", name: "t", content: "v2" }), adapter.id).toThrow(
           /over an existing secret/,
         );

@@ -94,7 +94,7 @@ export class AzureKeyVaultAdapter extends SecretManagerAdapterBase {
   protected findSecret(vault: string, name: string): SecretItem | undefined {
     if (!VALID_NAME.test(name)) return undefined;
     const value = show(vault, name);
-    return value === undefined ? undefined : { name, id: name, preferred: true, read: () => value };
+    return value === undefined ? undefined : { name, id: name, read: () => value };
   }
 
   protected listSecrets(vault: string): SecretItem[] {
@@ -112,7 +112,6 @@ export class AzureKeyVaultAdapter extends SecretManagerAdapterBase {
     return (JSON.parse(names) as string[]).map((name) => ({
       name,
       id: name,
-      preferred: true,
       read: () => {
         const value = show(vault, name);
         if (value === undefined) throw new Error(`Vault "${vault}" no longer holds a secret named "${name}".`);

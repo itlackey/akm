@@ -51,7 +51,7 @@ function requireSecretName(bundle: string, conceptId: string): string {
 }
 
 /** Whether `name` is a secret's name as a concept id: the one `secrets/<name>` that parses as a ref and reads back as itself. */
-function isConceptName(name: string): boolean {
+export function isConceptName(name: string): boolean {
   if (name === "" || name.endsWith("/")) return false;
   try {
     const parsed = parseBundleRef(`b//${secretEntryPath(name)}`);
@@ -62,7 +62,7 @@ function isConceptName(name: string): boolean {
 }
 
 /** The secret `name` as an entry, whose value `read` returns, at most once and only when asked. */
-function secretEntry(name: string, read: () => string): AssetEntry {
+function secretEntry(name: string, read: () => string, store?: AssetEntry["store"]): AssetEntry {
   let content: string | undefined;
   const value = () => {
     content ??= read();
@@ -73,6 +73,7 @@ function secretEntry(name: string, read: () => string): AssetEntry {
     content: value,
     bytes: () => Buffer.from(value()),
     frontmatter: () => null,
+    ...(store !== undefined ? { store } : {}),
   };
 }
 
@@ -82,8 +83,8 @@ export interface SecretItem {
   name: string;
   /** What tells items of one name apart: a keyring entry's object path, a vault secret's name. */
   id: string;
-  /** Set for an item akm made: it wins among items of one name. */
-  preferred: boolean;
+  /** Where the store holds it, when the index records that (a keyring entry's object path and attributes). */
+  store?: AssetEntry["store"];
   /** The value. Called only when someone asks for it. */
   read(): string;
 }
@@ -95,7 +96,7 @@ interface Store {
   invalid: SecretItem[];
 }
 
-/** One winner per name: the item akm made, else the lowest id by code point. */
+/** One winner per name: the lowest id by code point. */
 function classify(items: readonly SecretItem[]): Store {
   const byName = new Map<string, SecretItem[]>();
   const invalid: SecretItem[] = [];
@@ -106,9 +107,7 @@ function classify(items: readonly SecretItem[]): Store {
   const winners = new Map<string, SecretItem>();
   const shadowed: Store["shadowed"] = [];
   for (const [name, held] of byName) {
-    const ranked = [...held].sort(
-      (left, right) => Number(right.preferred) - Number(left.preferred) || compareCodePoints(left.id, right.id),
-    );
+    const ranked = [...held].sort((left, right) => compareCodePoints(left.id, right.id));
     winners.set(name, ranked[0] as SecretItem);
     if (ranked.length > 1) shadowed.push({ name, winner: ranked[0] as SecretItem, ignored: ranked.slice(1) });
   }
@@ -133,8 +132,8 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   protected abstract storeSecret(location: string, name: string, value: Buffer, existing?: SecretItem): void;
   /** Delete `item`. */
   protected abstract deleteSecret(location: string, item: SecretItem): void;
-  /** The item that holds `name`, or undefined. By default the winner of one listing; a store whose names are unique can ask for it directly. */
-  protected findSecret(location: string, name: string): SecretItem | undefined {
+  /** The item that holds `name`, or undefined. By default the winner of one listing; a store can ask for it directly (a vault by name, a keyring by what the index recorded of it). */
+  protected findSecret(location: string, name: string, _b: Bundle): SecretItem | undefined {
     return this.store(location).winners.get(name);
   }
   /** Refuse a name the store cannot hold, before anything is asked of it. */
@@ -209,9 +208,9 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   list(b: Bundle): BundleListing {
     const { winners } = this.store(this.locationOf(b));
     return {
-      assets: [...winners.values()].map(({ name, read }) => ({
+      assets: [...winners.values()].map(({ name, read, store }) => ({
         conceptId: secretEntryPath(name),
-        entry: secretEntry(name, read),
+        entry: secretEntry(name, read, store),
       })),
       complete: true,
     };
@@ -220,8 +219,10 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   read(b: Bundle, conceptId: string): BundleAsset | undefined {
     const name = secretNameOf(conceptId);
     if (name === undefined) return undefined;
-    const found = this.findSecret(this.locationOf(b), name);
-    return found === undefined ? undefined : { conceptId: secretEntryPath(name), entry: secretEntry(name, found.read) };
+    const found = this.findSecret(this.locationOf(b), name, b);
+    return found === undefined
+      ? undefined
+      : { conceptId: secretEntryPath(name), entry: secretEntry(name, found.read, found.store) };
   }
 
   /** A secret is described from its path alone: its name, and nothing of its value. */
@@ -232,11 +233,12 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
       ref: `${b.id}//${entry.relPath}`,
       bundle: b.id,
       conceptId: entry.relPath,
-      // An entry is its name: an unchanged listing rewrites no row.
-      hash: hashContent(entry.relPath),
+      // An entry is its name and where the store holds it: an unchanged listing rewrites no row.
+      hash: hashContent(entry.store === undefined ? entry.relPath : `${entry.relPath}\n${JSON.stringify(entry.store)}`),
       adapterId: this.id,
       type: "secret",
       name: name.split("/").pop() as string,
+      ...(entry.store !== undefined ? { store: entry.store } : {}),
     };
   }
 
@@ -276,7 +278,7 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   create(b: Bundle, asset: NewAsset, options: { replace?: boolean; verbatim?: boolean } = {}): AssetChange {
     const name = this.secretNameFor(asset);
     const location = this.locationOf(b);
-    const existing = this.findSecret(location, name);
+    const existing = this.findSecret(location, name, b);
     if (existing && !options.replace) {
       throw new Error(
         `Adapter "${this.id}" will not create "${b.id}//${secretEntryPath(name)}" over an existing secret without \`replace\`; the asset facade checks \`exclusive\` first.`,
@@ -289,7 +291,7 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   update(b: Bundle, conceptId: string, content: string | Buffer): AssetChange {
     const location = this.locationOf(b);
     const name = requireSecretName(b.id, conceptId);
-    const existing = this.findSecret(location, name);
+    const existing = this.findSecret(location, name, b);
     if (!existing) throw assetNotFound(`${b.id}//${conceptId}`);
     this.writing(location, () => this.storeSecret(location, name, Buffer.from(content), existing));
     return this.change(name, content);
@@ -298,7 +300,7 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   delete(b: Bundle, conceptId: string): AssetChange {
     const location = this.locationOf(b);
     const name = requireSecretName(b.id, conceptId);
-    const existing = this.findSecret(location, name);
+    const existing = this.findSecret(location, name, b);
     if (!existing) throw assetNotFound(`${b.id}//${conceptId}`);
     this.writing(location, () => this.deleteSecret(location, existing));
     return this.change(name);
@@ -355,22 +357,24 @@ const CLIENT_TIMEOUT_MS = 60_000;
  * written to its stdin, which is how a value reaches a client: never as an
  * argument, where other processes could read it.
  */
-export function runClient(client: Client, args: readonly string[], input?: Buffer): ClientResult {
+export function runClient(
+  client: Client,
+  args: readonly string[],
+  input?: Buffer,
+  timeoutMs = CLIENT_TIMEOUT_MS,
+): ClientResult {
   // The environment as it is now: Bun 1.3 finds the program on the PATH the process started with unless it is given.
   const result = spawnSync(client.command, [...args], {
     encoding: "utf8",
     input,
     env: process.env,
-    timeout: CLIENT_TIMEOUT_MS,
+    timeout: timeoutMs,
     killSignal: "SIGKILL",
   });
   if (result.error) {
     const missing = (result.error as NodeJS.ErrnoException).code === "ENOENT";
     if ((result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
-      throw new ConfigError(
-        `"${client.command}" did not answer within ${CLIENT_TIMEOUT_MS / 1000} s.`,
-        "BUNDLE_UNREACHABLE",
-      );
+      throw new ConfigError(`"${client.command}" did not answer within ${timeoutMs / 1000} s.`, "BUNDLE_UNREACHABLE");
     }
     throw new ConfigError(
       missing
@@ -398,8 +402,14 @@ export function clientFailure(client: Client, action: string, result: ClientResu
 }
 
 /** Run a client request that must succeed, and return what it printed. */
-export function requireClient(client: Client, action: string, args: readonly string[], input?: Buffer): string {
-  const result = runClient(client, args, input);
+export function requireClient(
+  client: Client,
+  action: string,
+  args: readonly string[],
+  input?: Buffer,
+  timeoutMs?: number,
+): string {
+  const result = runClient(client, args, input, timeoutMs);
   if (result.status !== 0) throw clientFailure(client, action, result);
   return result.stdout;
 }
