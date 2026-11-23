@@ -375,6 +375,20 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // A task held in an off-case file with no `.yml` of its id (F5): `1f2e58c9` found it at neither enable nor sync.
+    id: "task in an off-case file",
+    setup: (sb) => {
+      fs.copyFileSync(path.join(sb.fixture, "main/tasks/nightly.yml"), path.join(sb.fixture, "main/tasks/Up.YML"));
+    },
+    prep: [["index", "--quiet"]],
+    cases: [
+      c("task enable tasks/Up", ["task", "enable", "tasks/Up"]),
+      c("task enable Up", ["task", "enable", "Up"]),
+      c("doctor scheduler sync --dry-run", ["doctor", "scheduler", "sync", "--dry-run"]),
+      c("task disable tasks/Up", ["task", "disable", "tasks/Up"]),
+    ],
+  },
+  {
     // The events log after an env or secret is used through a file spelling (N21).
     id: "log after use",
     cases: [

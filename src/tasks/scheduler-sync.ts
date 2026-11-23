@@ -93,10 +93,7 @@ async function compileTaskSources(
   failures: SchedulerSourceFailure[],
 ): Promise<void> {
   const candidates = taskSourceFiles(input.sourceRoot, input.adapterId);
-  const idOf = (candidate: string): string =>
-    input.adapterId === "akm-task"
-      ? toPosix(path.relative(input.sourceRoot, candidate)).replace(/\.yml$/i, "")
-      : path.basename(candidate).replace(/\.yml$/i, "");
+  const idOf = (candidate: string): string => taskIdOfFile(input.sourceRoot, input.adapterId, candidate);
   // A `.yml` file claims its scheduler id (compared case-insensitively, as the scheduler compares them).
   const claimed = new Set(
     candidates.filter((candidate) => candidate.endsWith(".yml")).map((c) => idOf(c).toLowerCase()),
@@ -217,6 +214,19 @@ function scheduleStartFlags(entry: TaskSourceV5ScheduleBinding): SchedulerStartF
     ...(entry.secret !== undefined && entry.secret.length > 0 ? { secret: entry.secret } : {}),
     ...(entry.timeout !== undefined ? { timeout: entry.timeout } : {}),
   };
+}
+
+function taskIdOfFile(sourceRoot: string, adapterId: string, file: string): string {
+  return adapterId === "akm-task"
+    ? toPosix(path.relative(sourceRoot, file)).replace(/\.yml$/i, "")
+    : path.basename(file).replace(/\.yml$/i, "");
+}
+
+/** Whether a `.yml` file claims `id` (compared case-insensitively), so a task held in an off-case file is not found. */
+export function taskIdClaimedByYml(sourceRoot: string, adapterId: string, id: string): boolean {
+  return taskSourceFiles(sourceRoot, adapterId).some(
+    (file) => file.endsWith(".yml") && taskIdOfFile(sourceRoot, adapterId, file).toLowerCase() === id.toLowerCase(),
+  );
 }
 
 /**
