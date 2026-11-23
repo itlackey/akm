@@ -101,7 +101,7 @@ export abstract class AkmFormatAdapterBase extends DirectoryAdapterBase {
 
   /** Display only: the type's folder holds the file even for a type this adapter does not write (a write refuses it). */
   override placedFile(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string | undefined {
-    return placeInTypeFolder(b, asset);
+    return this.writes.includes(asset.type) ? this.placeFile(b, asset) : placeInTypeFolder(b, asset);
   }
 
   /** A name some tooling treats specially is warned about only when its asset is placed, never before a refusal. */
