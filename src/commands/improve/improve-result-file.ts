@@ -9,9 +9,10 @@
  */
 
 import crypto from "node:crypto";
+import { stateBundleId } from "../../core/bundle-at-dir";
 import { decodeImproveResult } from "../../core/improve-result";
 import { redactSensitiveValue } from "../../core/redaction";
-import { stateBundleId, withImmediateTransaction, withStateDb } from "../../core/state-db";
+import { withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { recordImproveRun } from "../../storage/repositories/improve-runs-repository";
 import type { AkmImproveResult } from "./improve";
 

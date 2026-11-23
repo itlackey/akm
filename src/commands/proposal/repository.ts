@@ -32,19 +32,14 @@ import { stalePathRoots } from "../../core/asset/stale-path";
 import { assertAdapterWrites } from "../../core/assets/gate";
 import { currentConceptId } from "../../core/assets/read";
 import { type AssetAddress, addressOf, legacyRefOf, readAsset, writeAssets } from "../../core/assets/write";
+import { stateBundleId } from "../../core/bundle-at-dir";
 import { slugForPath } from "../../core/bundle-id";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import type { MemoryPruneCandidate } from "../../core/improve-types";
 import { canonicalBundleIdForTarget, resolveBundleWriteTarget } from "../../core/mutation-target";
-import {
-  getStateDbPath,
-  openStateReadSnapshot,
-  stateBundleId,
-  withImmediateTransaction,
-  withStateDb,
-} from "../../core/state-db";
+import { getStateDbPath, openStateReadSnapshot, withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import {

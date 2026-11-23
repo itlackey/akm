@@ -9,14 +9,9 @@
  */
 
 import fs from "node:fs";
+import { stateBundleId } from "../../core/bundle-at-dir";
 import type { EventsContext } from "../../core/events";
-import {
-  getStateDbPath,
-  openStateReadSnapshot,
-  stateBundleId,
-  withImmediateTransaction,
-  withStateDb,
-} from "../../core/state-db";
+import { getStateDbPath, openStateReadSnapshot, withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import type { Database } from "../../storage/database";
 import {

@@ -11,9 +11,9 @@
 import { metricsWindow, readLlmRows, readUsageRows } from "../commands/metrics/metrics-cli";
 import type { MetricsUsageRow } from "../commands/metrics/types";
 import { proposalWaitingSince } from "../commands/proposal/proposal-types";
+import { stateBundleId } from "../core/bundle-at-dir";
 import { resolveStashDir } from "../core/common";
 import { defaultConnection, loadConfig } from "../core/config/config";
-import { stateBundleId } from "../core/state-db";
 import { learningStatus } from "../setup/learning";
 import { queryImproveRuns } from "../storage/repositories/improve-runs-repository";
 import { listStateProposals } from "../storage/repositories/proposals-repository";

@@ -4,8 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
 import { createProposal, listProposals, resolveProposalId } from "../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { type AkmConfig, resetConfigCache } from "../../../src/core/config/config";
-import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { durableItemRef } from "../../_helpers/durable-ref";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 

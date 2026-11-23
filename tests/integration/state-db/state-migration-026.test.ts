@@ -17,12 +17,13 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import {
   getStateMigrationSafety,
   STATE_MIGRATION_SAFETY_BY_ID,
   STATE_MIGRATIONS,
 } from "../../../src/core/state/migrations";
-import { getStateDbPath, openStateDatabase, stateBundleId } from "../../../src/core/state-db";
+import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { _resetWarnOnceForTests } from "../../../src/core/warn";
 import { openDatabase } from "../../../src/storage/database";
 import { listStateProposals } from "../../../src/storage/repositories/proposals-repository";

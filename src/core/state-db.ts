@@ -75,11 +75,9 @@ import {
 import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 import { openSqliteReadSnapshot } from "../storage/sqlite-read-snapshot";
 import { pkgVersion } from "../version";
-import { bundleKeyForDir } from "./bundle-at-dir";
-import { type AkmConfig, loadConfig } from "./config/config";
 import { ConfigError, rethrowIfTestIsolationError } from "./errors";
 import { getDataDir } from "./paths";
-import { convertPathBundleIds } from "./state/bundle-id-conversion";
+import { type BundleAtDir, convertPathBundleIds } from "./state/bundle-id-conversion";
 import { getStateMigrationSafety, STATE_MIGRATIONS } from "./state/migrations";
 import { warnOnce } from "./warn";
 
@@ -102,13 +100,20 @@ export function getStateDbPath(): string {
 }
 
 /**
- * The `bundle_id` state rows (proposals, improve runs, the improve ledger) are filed under for the bundle at `dir`:
- * its id, so rows follow a bundle by its name and not by where its directory is (§0.2 P8); the directory's own path
- * when no configured bundle is there. A command that has the bundle's directory (the working stash, `--dir`) asks
- * here, with the config it holds; everything below takes the key.
+ * How the state opener finds the bundle at a root (`bundleAtDir`, src/core/bundle-at-dir.ts). That module cannot be
+ * imported here: it reaches the adapter registry, whose adapters reach `core/events`, which reaches this module. It
+ * registers itself when it loads, and every caller that files rows by bundle (`stateBundleId`) has loaded it, so the
+ * rows it filed under a path are re-filed by the next open that follows.
  */
-export function stateBundleId(dir: string, config: AkmConfig = loadConfig()): string {
-  return bundleKeyForDir(config, dir);
+let bundleAtDirResolver: BundleAtDir | undefined;
+
+export function registerBundleAtDir(resolve: BundleAtDir): void {
+  bundleAtDirResolver = resolve;
+}
+
+/** Re-file rows still keyed by a directory a configured bundle is at, when `bundleAtDir` is known. */
+function convertPathKeys(db: Database): void {
+  if (bundleAtDirResolver) convertPathBundleIds(db, bundleAtDirResolver);
 }
 
 // ── Database open ────────────────────────────────────────────────────────────
@@ -165,7 +170,7 @@ function migrateStateDatabase(db: Database, dbPath: string): StateDatabaseMigrat
   warnNewerStateLedger(ledger);
   const pending = STATE_MIGRATIONS.slice(ledger.migrationIds.length);
   if (pending.length === 0) {
-    convertPathBundleIds(db);
+    convertPathKeys(db);
     return { applied: [] };
   }
   // A database with no applied migration holds nothing akm wrote: a fresh
@@ -173,7 +178,7 @@ function migrateStateDatabase(db: Database, dbPath: string): StateDatabaseMigrat
   const fresh = ledger.migrationIds.length === 0;
   const backupPath = fresh ? undefined : backupBeforeDestructiveMigration(db, dbPath, pending);
   const applied = runMigrations(db, STATE_MIGRATIONS);
-  convertPathBundleIds(db);
+  convertPathKeys(db);
   // The registry creates tables that later migrations drop (018, 028), which
   // leaves free pages behind; a database created by this open starts compact.
   if (fresh && applied.length > 0) db.exec("VACUUM");
@@ -254,7 +259,7 @@ export function openStateReadSnapshot(dbPath: string = getStateDbPath()): Databa
       try {
         const ledger = assertMigrationLedger(copy, STATE_MIGRATIONS);
         if (ledger.migrationIds.length < STATE_MIGRATIONS.length) runMigrations(copy, STATE_MIGRATIONS);
-        convertPathBundleIds(copy);
+        convertPathKeys(copy);
       } catch (error) {
         // Read what the copy holds: a ledger this akm refuses fails the real open with its own message.
         rethrowIfTestIsolationError(error);

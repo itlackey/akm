@@ -19,6 +19,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { stateBundleId } from "../../core/bundle-at-dir";
 import { daysToMs } from "../../core/common";
 import type { ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -31,7 +32,7 @@ import type {
   ImproveExecutionPlan,
   ImprovePlanGate,
 } from "../../core/improve-types";
-import { stateBundleId, withStateDb } from "../../core/state-db";
+import { withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { isSkippedIndexBuild } from "../../indexer/index-build";
 import {

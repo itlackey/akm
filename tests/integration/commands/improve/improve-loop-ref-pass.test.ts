@@ -24,11 +24,12 @@ import {
 } from "../../../../src/commands/improve/loop-stages";
 import type { Proposal } from "../../../../src/commands/proposal/repository";
 import { typeForStashDir } from "../../../../src/core/asset/asset-placement";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { UsageError } from "../../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../../src/core/events";
 import type { AkmReflectResult, ImproveEligibleRef } from "../../../../src/core/improve-types";
-import { openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
+import { openStateDatabase } from "../../../../src/core/state-db";
 import type { RunnerSpec } from "../../../../src/integrations/agent/runner";
 import { getImproveLedgerRow } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { testLlmRunner } from "../../../_helpers/llm-runner";

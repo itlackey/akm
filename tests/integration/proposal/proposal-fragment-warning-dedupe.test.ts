@@ -19,7 +19,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { getStateDbPath, openStateDatabase, stateBundleId } from "../../../src/core/state-db";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
+import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import { listStateProposals } from "../../../src/storage/repositories/proposals-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";

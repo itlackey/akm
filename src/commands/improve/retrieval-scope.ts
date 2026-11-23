@@ -13,8 +13,8 @@
  */
 
 import fs from "node:fs";
+import { stateBundleId } from "../../core/bundle-at-dir";
 import { daysToMs } from "../../core/common";
-import { stateBundleId } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import { listUsedEntryRefs, USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
 import { listImproveLedgerRows } from "../../storage/repositories/improve-ledger-repository";

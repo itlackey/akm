@@ -38,9 +38,10 @@ import {
   listProposals,
   recordGateDecision,
 } from "../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { NotFoundError, UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
-import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
 import { makeConfig } from "../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";

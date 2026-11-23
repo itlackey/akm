@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getStateMigrationSafety, STATE_MIGRATIONS } from "../../../src/core/state/migrations";
+import "../../../src/core/bundle-at-dir"; // registers how the state opener finds a bundle by directory
 import { openStateDatabase, openStateReadSnapshot } from "../../../src/core/state-db";
 import { STATE_BUNDLE_ID_COLUMNS } from "../../../src/storage/bundle-id-columns";
 import { openDatabase } from "../../../src/storage/database";

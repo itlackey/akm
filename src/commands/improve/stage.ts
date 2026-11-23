@@ -10,13 +10,13 @@
  */
 
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { stateBundleId } from "../../core/bundle-at-dir";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
 import type { EventsContext } from "../../core/events";
 import { effectiveRequestFields, thinkingSetting } from "../../core/llm-inference";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
-import { stateBundleId } from "../../core/state-db";
 import type { Parsed } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { NoticeSink } from "../../execution/notices";

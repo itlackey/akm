@@ -4,8 +4,9 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readImproveRows, summarizeImproveRuns } from "../../../src/commands/health/improve-metrics";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import type { ImproveResultEnvelope } from "../../../src/core/improve-result";
-import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 

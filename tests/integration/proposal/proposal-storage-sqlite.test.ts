@@ -32,7 +32,8 @@ import {
   type Proposal,
   resolveProposalId,
 } from "../../../src/commands/proposal/repository";
-import { getStateDbPath, openStateDatabase, stateBundleId } from "../../../src/core/state-db";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
+import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { makeConfig } from "../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 

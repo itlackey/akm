@@ -14,9 +14,11 @@
 import { STATE_BUNDLE_ID_COLUMNS } from "../../storage/bundle-id-columns";
 import type { Database } from "../../storage/database";
 import { withImmediateTransaction } from "../../storage/sqlite-transaction";
-import { bundleAtDir } from "../bundle-at-dir";
-import { loadConfig } from "../config/config";
+import { type AkmConfig, loadConfig } from "../config/config";
 import { rethrowIfTestIsolationError } from "../errors";
+
+/** `bundleAtDir`: the configured bundle whose resolved root is `root`. */
+export type BundleAtDir = (config: AkmConfig, root: string) => string | undefined;
 
 /** A value holding a path separator or a drive colon: a root, never a bundle id. */
 const PATH_VALUED = (column: string) => `${column} GLOB '*[/\\:]*'`;
@@ -33,7 +35,7 @@ function hasPathValuedRows(db: Database): boolean {
  * root no configured bundle is at stays as it is, and is looked at again on a later open (the directory may be
  * configured by then); so do all rows when the config cannot be read. Writes nothing when no root matches.
  */
-export function convertPathBundleIds(db: Database): void {
+export function convertPathBundleIds(db: Database, bundleAtDir: BundleAtDir): void {
   if (!hasPathValuedRows(db)) return;
   let config: ReturnType<typeof loadConfig>;
   try {

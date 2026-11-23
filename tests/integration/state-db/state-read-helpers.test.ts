@@ -18,7 +18,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { listExistingTableNames, openStateDatabase, stateBundleId } from "../../../src/core/state-db";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
+import { listExistingTableNames, openStateDatabase } from "../../../src/core/state-db";
 import type { Database } from "../../../src/storage/database";
 import { queryImproveRuns, recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
 import {

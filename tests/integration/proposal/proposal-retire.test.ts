@@ -51,9 +51,10 @@ import {
 import { akmCurate } from "../../../src/commands/read/curate";
 import { akmSearch } from "../../../src/commands/read/search";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { saveConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
-import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
 import { upsertProposal } from "../../../src/storage/repositories/proposals-repository";

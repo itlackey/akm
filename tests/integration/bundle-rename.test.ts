@@ -20,10 +20,11 @@ import { listProposals } from "../../src/commands/proposal/repository";
 import { akmSearch } from "../../src/commands/read/search";
 import { akmShowUnified as akmShow } from "../../src/commands/read/show";
 import { akmTasksSync, type TasksSyncResult } from "../../src/commands/tasks/tasks";
+import { stateBundleId } from "../../src/core/bundle-at-dir";
 import { renameBundle } from "../../src/core/bundle-rename";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { NotFoundError, UsageError } from "../../src/core/errors";
-import { openStateDatabase, stateBundleId } from "../../src/core/state-db";
+import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
 import {
   countFeedbackSignalsByRef,

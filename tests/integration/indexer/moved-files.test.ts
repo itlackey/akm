@@ -11,10 +11,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import { getDbPath } from "../../../src/core/paths";
-import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { insertUsageEvent } from "../../../src/indexer/usage/usage-events";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";

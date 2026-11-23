@@ -12,10 +12,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { akmImprove } from "../../../src/commands/improve/improve";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent } from "../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../src/core/improve-types";
-import { getStateDbPath, openStateDatabase, stateBundleId } from "../../../src/core/state-db";
+import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { listImproveLedgerRows } from "../../../src/storage/repositories/improve-ledger-repository";
 import { withImproveAutonomy, withTestImproveLlm } from "../../_helpers/improve-config";

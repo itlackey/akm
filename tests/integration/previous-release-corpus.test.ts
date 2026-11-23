@@ -104,6 +104,7 @@ import { inspectTaskFilesMigration } from "../../scripts/akm-migrate/task-migrat
 import { akmHealth } from "../../src/commands/health";
 import { createProposal as createProposalImpl } from "../../src/commands/proposal/repository";
 import { akmTasksSync, akmTasksSyncPlan } from "../../src/commands/tasks/tasks";
+import { stateBundleId } from "../../src/core/bundle-at-dir";
 import {
   loadConfig,
   normalizeConfigFile,
@@ -112,7 +113,7 @@ import {
   updateConfig,
 } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
-import { openStateDatabase, stateBundleId } from "../../src/core/state-db";
+import { openStateDatabase } from "../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, resetQuiet, setQuiet } from "../../src/core/warn";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embeddings";

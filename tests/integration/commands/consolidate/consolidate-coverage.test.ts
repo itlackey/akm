@@ -22,9 +22,10 @@ import { PAIR_NEIGHBOR_FETCH_K } from "../../../../src/commands/improve/consolid
 import { contentHash } from "../../../../src/commands/improve/content-hash";
 import { drainProposals } from "../../../../src/commands/proposal/drain";
 import { createProposal, listProposals } from "../../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { getDbPath } from "../../../../src/core/paths";
-import { openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
+import { openStateDatabase } from "../../../../src/core/state-db";
 import { resolveWriteTarget } from "../../../../src/core/write-source";
 import type { IndexDocument } from "../../../../src/indexer/passes/metadata";
 import { getImproveLedgerRow } from "../../../../src/storage/repositories/improve-ledger-repository";

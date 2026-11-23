@@ -37,8 +37,9 @@ import {
 import { contentHash } from "../../../../src/commands/improve/content-hash";
 import { akmProposalAccept, akmProposalReject, akmProposalReopen } from "../../../../src/commands/proposal/proposal";
 import { getProposal, listProposals, recordGateDecision } from "../../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
-import { openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
+import { openStateDatabase } from "../../../../src/core/state-db";
 import { resolveWriteTarget } from "../../../../src/core/write-source";
 import {
   getImproveLedgerRow,

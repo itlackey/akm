@@ -11,8 +11,8 @@
 import { metricsWindow, readLlmRows, readUsageRows } from "../commands/metrics/metrics-cli";
 import type { MetricsUsageRow } from "../commands/metrics/types";
 import { isRetireProposal, type Proposal } from "../commands/proposal/proposal-types";
+import { stateBundleId } from "../core/bundle-at-dir";
 import { resolveStashDir } from "../core/common";
-import { stateBundleId } from "../core/state-db";
 import { USAGE_EVENT_RETENTION_DAYS } from "../indexer/usage/usage-events";
 import { readStateEvents } from "../storage/repositories/events-repository";
 import { listIndexCompletedEvents } from "../storage/repositories/metrics-repository";

@@ -14,8 +14,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { writeQualityRejection } from "../../../../src/commands/improve/distill";
 import { getProposal, listProposals } from "../../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import { readEvents } from "../../../../src/core/events";
-import { openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
+import { openStateDatabase } from "../../../../src/core/state-db";
 import { getImproveLedgerRow } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { makeSandboxDir } from "../../../_helpers/sandbox";
 

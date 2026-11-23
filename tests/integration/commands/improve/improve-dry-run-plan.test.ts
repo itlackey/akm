@@ -18,13 +18,14 @@ import { computeSafeChunkSize } from "../../../../src/commands/improve/consolida
 import { akmImprove } from "../../../../src/commands/improve/improve";
 import type { ImproveProcessName } from "../../../../src/commands/improve/improve-strategies";
 import { upsertAssetSalience } from "../../../../src/commands/improve/salience";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { saveConfig } from "../../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../../src/core/events";
 import { decodeImproveResult } from "../../../../src/core/improve-result";
 import type { AkmDistillResult, AkmReflectResult } from "../../../../src/core/improve-types";
 import { getDbPath, getStashLocksDir } from "../../../../src/core/paths";
-import { getStateDbPath, openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
+import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../../../src/core/warn";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import { OpenCodeProvider } from "../../../../src/integrations/harnesses/opencode/session-log";

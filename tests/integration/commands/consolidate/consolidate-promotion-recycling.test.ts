@@ -24,8 +24,9 @@ import { contentHash } from "../../../../src/commands/improve/content-hash";
 import { recordLedgerAttempt } from "../../../../src/commands/improve/ledger";
 import { akmProposalReject } from "../../../../src/commands/proposal/proposal";
 import { createProposal } from "../../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
-import { openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
+import { openStateDatabase } from "../../../../src/core/state-db";
 import { getImproveLedgerRow } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, withMockedFetch } from "../../../_helpers/sandbox";
 

@@ -31,11 +31,12 @@ import { validateProposal } from "../../../src/commands/proposal/validators/prop
 import { serializeFrontmatter } from "../../../src/core/asset/asset-serialize";
 import { parseFrontmatter, replaceFrontmatterBlocks } from "../../../src/core/asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../../src/core/asset/frontmatter-lint";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { type AkmConfig, resetConfigCache } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
 import { getDbPath, getIndexRebuildLockPath, getIndexWriterLockPath } from "../../../src/core/paths";
-import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";

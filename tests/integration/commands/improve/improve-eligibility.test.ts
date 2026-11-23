@@ -32,11 +32,12 @@ import {
   DEFAULT_TYPE_ENCODING_WEIGHTS,
   isContentEncodingRow,
 } from "../../../../src/commands/improve/salience";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import { saveConfig } from "../../../../src/core/config/config";
 import type { ConfigError } from "../../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../../src/core/improve-types";
-import { openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
+import { openStateDatabase } from "../../../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../../../src/core/warn";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import {

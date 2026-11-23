@@ -23,9 +23,10 @@ import { splitFrontmatter } from "../../../../src/commands/improve/reflect-noise
 import { drainProposals } from "../../../../src/commands/proposal/drain";
 import { akmProposalAccept } from "../../../../src/commands/proposal/proposal";
 import { createProposal, listProposals } from "../../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../../src/core/events";
-import { openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
+import { openStateDatabase } from "../../../../src/core/state-db";
 import { REFLECT_TRUNCATION_MARKER } from "../../../../src/integrations/agent/prompts";
 import { LlmCallError } from "../../../../src/llm/client";
 import { formatGateDecisionSummary } from "../../../../src/output/text/proposal-format";

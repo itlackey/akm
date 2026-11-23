@@ -24,9 +24,10 @@ import {
   recordGateDecision,
 } from "../../../src/commands/proposal/repository";
 import { writeSalienceToFrontmatter } from "../../../src/core/asset/frontmatter";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../src/core/config/config";
 import type { EventsContext } from "../../../src/core/events";
-import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
+import { openStateDatabase } from "../../../src/core/state-db";
 import type { RunnerSpec } from "../../../src/integrations/agent/runner";
 import type { ChatCompletionConfig } from "../../../src/llm/client";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";

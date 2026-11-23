@@ -24,10 +24,11 @@ import {
   isValidWhenToUse,
 } from "../../src/commands/proposal/validators/proposal-quality-validators";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+import { stateBundleId } from "../../src/core/bundle-at-dir";
 import { type AkmConfig, saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import { validateJsonSchemaSubset } from "../../src/core/json-schema";
-import { getStateDbPath, openStateDatabase, stateBundleId } from "../../src/core/state-db";
+import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";

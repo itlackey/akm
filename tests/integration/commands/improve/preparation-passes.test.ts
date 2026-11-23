@@ -26,10 +26,11 @@ import {
 } from "../../../../src/commands/improve/preparation";
 import { archiveProposal, createProposal } from "../../../../src/commands/proposal/repository";
 import { typeForStashDir } from "../../../../src/core/asset/asset-placement";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { appendEvent } from "../../../../src/core/events";
 import type { ImproveEligibleRef } from "../../../../src/core/improve-types";
-import { openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
+import { openStateDatabase } from "../../../../src/core/state-db";
 import { nextEligibleAt, recordImproveLedger } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../../../_helpers/sandbox";
 
