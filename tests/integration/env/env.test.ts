@@ -382,6 +382,48 @@ describe("env list", () => {
   });
 });
 
+describe("an env file outside the top-level env/ folder is an env asset (§0.2 N24)", () => {
+  function stashWithNestedEnv(): string {
+    const stashDir = makeTempDir("akm-envcli-nested-");
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.mkdirSync(path.join(stashDir, "x", "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "top.env"), "TOP=1\n", "utf8");
+    fs.writeFileSync(path.join(stashDir, "x", "env", "app.env"), "NEST=2\n", "utf8");
+    return stashDir;
+  }
+
+  test("env list lists it, with its key names", async () => {
+    const stashDir = stashWithNestedEnv();
+    const result = await runCli(["env", "list", "--format", "json"], { AKM_BUNDLE_DIR: stashDir });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim()).envs).toEqual([
+      expect.objectContaining({ ref: "env/top", keys: ["TOP"] }),
+      expect.objectContaining({ ref: "x/env/app", keys: ["NEST"] }),
+    ]);
+  });
+
+  test("env run, env path and show accept what env list lists, in either spelling", async () => {
+    const stashDir = stashWithNestedEnv();
+    const file = path.join(stashDir, "x", "env", "app.env");
+    for (const ref of ["x/env/app", "x/env/app.env"]) {
+      const out = path.join(stashDir, `out-${ref.endsWith(".env") ? "file" : "name"}.txt`);
+      const ran = await runCli(["env", "run", ref, "--", "sh", "-c", `printf %s "$NEST" > "${out}"`], {
+        AKM_BUNDLE_DIR: stashDir,
+      });
+      expect(ran.status).toBe(0);
+      expect(fs.readFileSync(out, "utf8")).toBe("2");
+
+      const where = await runCli(["env", "path", ref, "--quiet"], { AKM_BUNDLE_DIR: stashDir });
+      expect(where.stdout.trim()).toBe(file);
+
+      const shown = await runCli(["show", ref, "--format", "json"], { AKM_BUNDLE_DIR: stashDir });
+      expect(shown.status).toBe(0);
+      expect(JSON.parse(shown.stdout.trim())).toMatchObject({ type: "env", ref: "x/env/app", keys: ["NEST"] });
+      expect(shown.stdout).not.toContain('"2"');
+    }
+  });
+});
+
 describe("env export / path (read-path safety)", () => {
   test("env export writes safe single-quoted lines to --out, never to stdout", async () => {
     const stashDir = makeTempDir("akm-envcli-stash-");
