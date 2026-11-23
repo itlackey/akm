@@ -262,7 +262,7 @@ export class SecretToolAdapter extends SecretManagerAdapterBase {
     return resolveCollection(keyring) !== undefined;
   }
 
-  /** For `akm index` and `akm lint`: the one place the service is listed. */
+  /** For `akm index`: the one place the service is listed. */
   protected listSecrets(keyring: string): SecretItem[] {
     const collection = requireCollection(keyring);
     const reading = `read keyring "${keyring}"`;

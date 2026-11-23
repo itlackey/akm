@@ -64,7 +64,7 @@ export function listEnvsRecursive(
 }
 
 /** Every listed secret, by ref. Its value is not read. */
-export function listSecrets(config: AkmConfig = loadConfig()): Array<{ ref: string; path?: string }> {
+export function listSecrets(): Array<{ ref: string; path?: string }> {
   return listSecretsInFolder().map(({ conceptId, bundle, entry }) => ({
     ref: makeSecretRef(conceptId, bundle),
     ...(entry.file !== undefined ? { path: entry.file } : {}),

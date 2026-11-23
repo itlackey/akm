@@ -17,7 +17,6 @@ import { spawnSync } from "../../../runtime";
 import { isRelevantAssetFile } from "../../asset/asset-placement";
 import { isScratchPath } from "../../asset/scratch";
 import { toErrorMessage, toPosix } from "../../common";
-import { WORKFLOW_EXTENSIONS } from "../../recognition-util";
 import { buildFileContext, type FileContext } from "./file-context";
 
 /** Directories akm and Git manage inside a bundle: never content, whatever a person or an adapter lists. */

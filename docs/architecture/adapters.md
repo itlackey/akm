@@ -72,20 +72,24 @@ From `src/core/adapter/bundle-adapter.ts` and `src/core/adapter/types.ts`:
 /** A bundle as its adapter is handed it. */
 interface Bundle {
   id: string;        // the config name; the prefix of every ref its assets have
-  root: string;      // absolute content root; for a location bundle, only where its entries are indexed
+  root?: string;     // directory bundles only: the absolute content root
   location?: string; // location bundles: the keyring's or vault's name
 }
 
 /** One asset as its adapter holds it. */
 interface AssetEntry {
-  readonly relPath: string;   // POSIX path inside the bundle; the index keys the entry under it
-  readonly file?: string;     // the file that holds it; absent when no file does
+  readonly key: string;       // the adapter's storage key (directory: POSIX path inside the root; store: `secrets/<name>`)
+  readonly file?: string;     // the file that holds it, for display and handing to a program; absent when no file does
+  readonly locator?: unknown; // what finds it again in its storage; the index records it, only the adapter reads it
+  modified?(): Date;          // when it last changed, when the adapter knows; callers never stat `file`
   content(): string;          // read once, when asked
   bytes(): Buffer;
   frontmatter(): Record<string, unknown> | null;
   resources?(): ReadonlyArray<{ path: string; bytes(): Buffer }>; // a package's other files
-  readonly locator?: unknown; // what finds it again in its storage; the index records it, only the adapter reads it
 }
+
+/** One asset per concept; `findings`: what is wrong with a store's entries, which `akm index` records. */
+interface BundleListing { assets: BundleAsset[]; complete: boolean; incompleteReason?: string; findings?: Diagnostic[] }
 
 interface BundleAdapter {
   readonly id: string;
@@ -95,15 +99,17 @@ interface BundleAdapter {
   readonly retires: readonly string[];         // subset of writes it retires recoverably; never env or secret
 
   exists(b: Bundle): boolean;                  // storage is there; reads no asset, never prompts
-  list(b: Bundle): BundleListing;              // one asset per concept; assets only; reads no content
-  read(b: Bundle, conceptId: string): BundleAsset | undefined;   // any spelling in, canonical id out
+  list(b: Bundle, type?: string): BundleListing; // one asset per concept; assets only; reads no content
+  read(b: Bundle, conceptId: string, locator?: unknown): BundleAsset | undefined; // any spelling in, canonical id out
   recognize(b: Bundle, entry: AssetEntry): IndexDocument | null; // the only producer of a type
   validate(b: Bundle, edits: AssetEdit[], ctx: ValidateContext): Promise<Diagnostic[]>;
 
   place(b: Bundle, asset: { type; name }): string;               // the concept id a create would give
-  create(b: Bundle, asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean }): AssetChange;
-  update(b: Bundle, conceptId: string, content: string | Buffer): AssetChange;
-  delete(b: Bundle, conceptId: string): AssetChange;
+  create(b: Bundle, asset: NewAsset,
+    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean; locator?: unknown }): AssetChange;
+  update(b: Bundle, conceptId: string, content: string | Buffer,
+    options?: { throughLink?: boolean; locator?: unknown }): AssetChange;
+  delete(b: Bundle, conceptId: string, options?: { locator?: unknown }): AssetChange;
   retire(b: Bundle, conceptId: string, note: RetireNote): AssetChange & { handle: string };
   retired(b: Bundle): Retirement[];
   restore(b: Bundle, handle: string, fallback?: string | Buffer): AssetChange;
@@ -113,12 +119,16 @@ interface BundleAdapter {
   // Optional.
   renderExecutionSource?(b: Bundle, entry: AssetEntry): AdapterRenderedExecutionSource | null;
   looksLikeRoot?(root: string): boolean;       // install-time probe only
-  placedFile?(b: Bundle, asset: { type; name }): string | undefined; // display only
-  identifyKey?(b: Bundle, key: string): string | null;               // converters of old stored records only
+  contentType?(b: Bundle, entry: AssetEntry): string | undefined;      // the type the bytes give, without describing
+  placement?(b: Bundle, asset: { type; name }): AssetPlacement | undefined; // where a create is kept, for a file adapter
+  identifyKey?(b: Bundle, key: string): string | null;                 // converters of old stored records only
 }
 ```
 
-<!-- 4f.1: AssetEntry.relPath becomes `key` (the adapter's storage key); Bundle.root becomes optional (directory bundles only); AssetChange.file goes; AssetEntry gains modified(); placedFile/identifyKey are re-checked -->
+An adapter never reads the index. For a store, the facade looks up the `locator` the index recorded for an entry and
+hands it to `read` and to a replacing `create`, `update` and `delete`, and adds the `findings` the last `akm index`
+recorded to what `validate` returns.
+
 <!-- 9: delete returns one change per asset of a package; packageFiles and mirrorPackage are added; AssetEntry.resources, NewAsset.resources and the writePackage path go -->
 <!-- 10: retire returns one change per asset of a package -->
 <!-- 4e.2: ValidateContext.sources goes; ctx gets read(ref) and exists(ref) -->
@@ -129,14 +139,13 @@ concept id, the asset's file when it has one, the files the write changed (empty
 for a bundle that is not a directory) for the bundle's commit boundary, and the
 content the asset now holds.
 
-`BundleListing` is `{ assets, complete, incompleteReason?, findings? }`;
 `findings` are what is wrong with a store's entries (invalid or shared names),
 which `akm index` records and `akm lint` reads back. `complete: false`
 means part of the bundle could not be read: the indexer keeps the rows it had
 and the run warns. A store that cannot be reached at all is not a listing:
 `list` throws `BUNDLE_UNREACHABLE`.
 
-Every member except the last four is required. A base class implements the
+Every member except the last five is required. A base class implements the
 members its adapters do not support by refusing. `writes` is per type because
 "a secret is deleted, never archived" is a fact about a type, which the adapter
 owns. `create` writes the adapter's own form of the type, or with `verbatim`
