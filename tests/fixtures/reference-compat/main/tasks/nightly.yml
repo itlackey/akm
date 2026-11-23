@@ -1,0 +1,5 @@
+version: 4
+name: nightly
+description: Runs the ship workflow every night
+uses: workflows/ship
+schedule: "0 4 * * *"

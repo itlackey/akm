@@ -1,0 +1,12 @@
+# akm:env BEGIN
+PATH=@PATH@
+# akm:env END
+# akm:task nightly BEGIN
+0 4 * * * AKM_BUNDLE_DIR=@FIXTURE@/main AKM_CONFIG_DIR=@CONFIG@ AKM_DATA_DIR=@DATA@ AKM_CACHE_DIR=@CACHE@ AKM_STATE_DIR=@STATE@ @BUN@ @AKM@ task run nightly --bundle main --scheduled > @CACHE@/tasks/logs/nightly.log 2>&1
+# akm:task nightly END
+# akm:task team-task BEGIN
+0 12 * * * AKM_BUNDLE_DIR=@FIXTURE@/main AKM_CONFIG_DIR=@CONFIG@ AKM_DATA_DIR=@DATA@ AKM_CACHE_DIR=@CACHE@ AKM_STATE_DIR=@STATE@ @BUN@ @AKM@ task run team-task --bundle team --scheduled > @CACHE@/tasks/logs/team-task.log 2>&1
+# akm:task team-task END
+# akm:task report BEGIN
+0 9 * * 1 AKM_BUNDLE_DIR=@FIXTURE@/main AKM_CONFIG_DIR=@CONFIG@ AKM_DATA_DIR=@DATA@ AKM_CACHE_DIR=@CACHE@ AKM_STATE_DIR=@STATE@ @BUN@ @AKM@ task run report --scheduled > @CACHE@/tasks/logs/report.log 2>&1
+# akm:task report END

@@ -1,0 +1,21 @@
+{
+  "configVersion": "0.9.0",
+  "defaultBundle": "main",
+  "defaultWriteTarget": "main",
+  "semanticSearchMode": "off",
+  "usage": { "capture": false, "report": false },
+  "connections": {
+    "default": { "endpoint": "http://127.0.0.1:1/v1", "models": { "fast": "m", "balanced": "m", "reasoning": "m" } }
+  },
+  "bundles": {
+    "main": { "path": "@FIXTURE@/main", "writable": true },
+    "team": { "path": "@FIXTURE@/team", "writable": true },
+    "files": {
+      "path": "@FIXTURE@/files",
+      "components": { "main": { "root": ".", "adapter": "generic-files" } }
+    }
+  },
+  "scheduler": {
+    "enabled": ["main//tasks/nightly", "team//tasks/team-task", "main//tasks/report"]
+  }
+}

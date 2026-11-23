@@ -13,6 +13,9 @@
  * older file on its own, naming `akm migrate apply`, which owns the
  * deterministic v2/v3 -> v4 rewrite and removal of v4 source enablement.
  *
+ * Its fixtures are per-format. The cross-cutting guard, that every ref spelling users write in their assets, config
+ * and stored state keeps resolving to the same asset, is `tests/integration/reference-compat.test.ts`.
+ *
  * Every fixture below is a REAL-SHAPED artifact from a prior release — not a
  * synthetic minimal case. When a future schema bump lands, add the OLD shape
  * here BEFORE shipping. If this suite fails, an upgrade break was about to
