@@ -14,8 +14,6 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readUsableIndex } from "../../indexer/index-readiness";
-import { getStoreFindings } from "../../storage/repositories/index-meta-repository";
 import { parseBundleRef } from "../asset/asset-ref";
 import { compareCodePoints } from "../common";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
@@ -134,8 +132,8 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   protected abstract storeSecret(location: string, name: string, value: Buffer, existing?: SecretItem): void;
   /** Delete `item`. */
   protected abstract deleteSecret(location: string, item: SecretItem): void;
-  /** The item that holds `name`, or undefined. By default the winner of one listing; a store can ask for it directly (a vault by name, a keyring by what the index recorded of it). */
-  protected findSecret(location: string, name: string, _b: Bundle): SecretItem | undefined {
+  /** The item that holds `name`, or undefined. By default the winner of one listing; a store can ask for it directly (a vault by name, a keyring by the `locator` the index recorded). */
+  protected findSecret(location: string, name: string, _locator?: unknown): SecretItem | undefined {
     return this.store(location).winners.get(name);
   }
   /** Refuse a name the store cannot hold, before anything is asked of it. */
@@ -219,10 +217,10 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     };
   }
 
-  read(b: Bundle, conceptId: string): BundleAsset | undefined {
+  read(b: Bundle, conceptId: string, locator?: unknown): BundleAsset | undefined {
     const name = secretNameOf(conceptId);
     if (name === undefined) return undefined;
-    const found = this.findSecret(this.locationOf(b), name, b);
+    const found = this.findSecret(this.locationOf(b), name, locator);
     return found === undefined
       ? undefined
       : { conceptId: secretEntryPath(name), entry: secretEntry(name, found.read, found.locator) };
@@ -263,19 +261,23 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     ];
   }
 
-  /** What the last `akm index` found wrong with the store: lint never lists the store. Nothing when it was never indexed. */
-  async validate(b: Bundle, _edits: AssetEdit[], _ctx: ValidateContext): Promise<Diagnostic[]> {
-    return readUsableIndex((db) => getStoreFindings(db, b.id) ?? [], []);
+  /** Nothing is checked live: lint never lists the store. What `akm index` found (`findings`) the facade adds from the index. */
+  async validate(_b: Bundle, _edits: AssetEdit[], _ctx: ValidateContext): Promise<Diagnostic[]> {
+    return [];
   }
 
   place(_b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {
     return secretEntryPath(this.secretNameFor(asset));
   }
 
-  create(b: Bundle, asset: NewAsset, options: { replace?: boolean; verbatim?: boolean } = {}): AssetChange {
+  create(
+    b: Bundle,
+    asset: NewAsset,
+    options: { replace?: boolean; verbatim?: boolean; locator?: unknown } = {},
+  ): AssetChange {
     const name = this.secretNameFor(asset);
     const location = this.locationOf(b);
-    const existing = this.findSecret(location, name, b);
+    const existing = this.findSecret(location, name, options.locator);
     if (existing && !options.replace) {
       throw new Error(
         `Adapter "${this.id}" will not create "${b.id}//${secretEntryPath(name)}" over an existing secret without \`replace\`; the asset facade checks \`exclusive\` first.`,
@@ -285,19 +287,19 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     return this.change(name, asset.content);
   }
 
-  update(b: Bundle, conceptId: string, content: string | Buffer): AssetChange {
+  update(b: Bundle, conceptId: string, content: string | Buffer, options: { locator?: unknown } = {}): AssetChange {
     const location = this.locationOf(b);
     const name = requireSecretName(b.id, conceptId);
-    const existing = this.findSecret(location, name, b);
+    const existing = this.findSecret(location, name, options.locator);
     if (!existing) throw assetNotFound(`${b.id}//${conceptId}`);
     this.writing(location, () => this.storeSecret(location, name, Buffer.from(content), existing));
     return this.change(name, content);
   }
 
-  delete(b: Bundle, conceptId: string): AssetChange {
+  delete(b: Bundle, conceptId: string, options: { locator?: unknown } = {}): AssetChange {
     const location = this.locationOf(b);
     const name = requireSecretName(b.id, conceptId);
-    const existing = this.findSecret(location, name, b);
+    const existing = this.findSecret(location, name, options.locator);
     if (!existing) throw assetNotFound(`${b.id}//${conceptId}`);
     this.writing(location, () => this.deleteSecret(location, existing));
     return this.change(name);

@@ -144,9 +144,11 @@ export interface BundleAdapter {
   /**
    * The asset `conceptId` names, or undefined when the bundle has none (an asset a full listing would not reach is
    * none). When storage holds the concept under more than one spelling the adapter picks the first by its spelling
-   * order, the same for every caller and without reading content; `validate` reports the rest.
+   * order, the same for every caller and without reading content; `validate` reports the rest. `locator`: the entry's
+   * locator as the index recorded it, which the facade hands back to an adapter that lists one; the adapter never reads
+   * the index itself.
    */
-  read(b: Bundle, conceptId: string): BundleAsset | undefined;
+  read(b: Bundle, conceptId: string, locator?: unknown): BundleAsset | undefined;
   /**
    * An entry's metadata for the index, the only place a type is given; null when it is no asset. The concept id is the
    * one the entry's storage key names. May read content.
@@ -176,16 +178,21 @@ export interface BundleAdapter {
   create(
     b: Bundle,
     asset: NewAsset,
-    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean },
+    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean; locator?: unknown },
   ): AssetChange;
   /**
    * Replace the content of the asset `conceptId` holds with exactly `content`. With `throughLink`, an asset file reached
    * through a symbolic link whose target is a file inside the bundle is written where the link leads and the link is kept;
    * a link to nothing or to a file outside the bundle is still refused.
    */
-  update(b: Bundle, conceptId: string, content: string | Buffer, options?: { throughLink?: boolean }): AssetChange;
-  /** Take the asset out of the bundle. */
-  delete(b: Bundle, conceptId: string): AssetChange;
+  update(
+    b: Bundle,
+    conceptId: string,
+    content: string | Buffer,
+    options?: { throughLink?: boolean; locator?: unknown },
+  ): AssetChange;
+  /** Take the asset out of the bundle. `locator` (here, on `update` and on a replacing `create`): as on `read`. */
+  delete(b: Bundle, conceptId: string, options?: { locator?: unknown }): AssetChange;
 
   /**
    * Take the asset out of the bundle recoverably, keeping `note` with it. The handle in the result names the

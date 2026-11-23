@@ -23,7 +23,6 @@
  * prompt to that process, which waits for the answer.
  */
 
-import { readUsableIndex } from "../../../indexer/index-readiness";
 import { compareCodePoints } from "../../common";
 import { ConfigError, UsageError } from "../../errors";
 import { warn } from "../../warn";
@@ -37,7 +36,6 @@ import {
   type SecretItem,
   SecretManagerAdapterBase,
 } from "../secret-manager-adapter";
-import type { Bundle, IndexDocument } from "../types";
 
 const ID = "secret-tool";
 const SECRET_TOOL: Client = { command: "secret-tool", install: "the libsecret-tools package" };
@@ -240,20 +238,10 @@ function lookup(item: KeyringItem): string {
 /** The entries listed or written this command, by `<keyring>/<name>`: a write's index row is refreshed from them, before the next `akm index`. */
 const written = new Map<string, KeyringItem>();
 
-/** The entry `name` of `keyring` as this command wrote it, else as the index recorded it. */
-function recorded(keyring: string, name: string, b: Bundle): KeyringItem | undefined {
+/** The entry `name` of `keyring` as this command wrote it, else as the index recorded it (`locator`, from the facade). */
+function recorded(keyring: string, name: string, locator: KeyringLocator | undefined): KeyringItem | undefined {
   const fresh = written.get(`${keyring}/${name}`);
   if (fresh) return fresh;
-  const row = readUsableIndex(
-    (db) =>
-      db.prepare("SELECT document_json FROM entries WHERE item_ref = ?").get(`${b.id}//secrets/${name}`) as
-        | { document_json: string }
-        | undefined,
-    undefined,
-  );
-  const locator = (row ? (JSON.parse(row.document_json) as IndexDocument) : undefined)?.locator as
-    | KeyringLocator
-    | undefined;
   return locator ? keyringItem(keyring, locator.item, name, locator.attributes) : undefined;
 }
 
@@ -294,8 +282,8 @@ export class SecretToolAdapter extends SecretManagerAdapterBase {
     return items;
   }
 
-  protected override findSecret(keyring: string, name: string, b: Bundle): SecretItem | undefined {
-    return recorded(keyring, name, b);
+  protected override findSecret(keyring: string, name: string, locator?: unknown): SecretItem | undefined {
+    return recorded(keyring, name, locator as KeyringLocator | undefined);
   }
 
   /** Store `value` as the secret `name`: into its existing entry, or a new one akm can find again. */

@@ -866,7 +866,13 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
       expect(secretToolAdapter.list(b).assets.map((asset) => asset.conceptId)).toEqual(["secrets/dup", "secrets/solo"]);
       // The lowest object path wins.
       expect(secretToolAdapter.read(b, "secrets/dup")?.entry.content()).toBe("first-value");
-      const found = await secretToolAdapter.validate(b, [], {});
+      // What `akm index` recorded, which the facade adds to the adapter's own findings.
+      const found = await assetBundleOf({
+        name: "keyring",
+        path: storage.stashDir,
+        location: "akm",
+        adapterId: "secret-tool",
+      }).validate([], {});
       expect(found).toHaveLength(1);
       expect(found[0]).toMatchObject({ ref: "keyring//secrets/dup", issue: "shadowed-spelling", fixed: false });
       expect(found[0]?.detail).toContain(`${KEYRING_PATH}/1 is used and ${KEYRING_PATH}/2, ${KEYRING_PATH}/3 ignored`);
@@ -900,7 +906,13 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
         expect(secretToolAdapter.read(b, conceptId)?.conceptId).toBe(conceptId);
       }
       expect(secretToolAdapter.read(b, "secrets/has#hash")).toBeUndefined();
-      const found = await secretToolAdapter.validate(b, [], {});
+      // What `akm index` recorded, which the facade adds to the adapter's own findings.
+      const found = await assetBundleOf({
+        name: "keyring",
+        path: storage.stashDir,
+        location: "akm",
+        adapterId: "secret-tool",
+      }).validate([], {});
       expect(found.map((diagnostic) => diagnostic.ref).sort()).toEqual([
         "keyring//secrets/",
         "keyring//secrets/ padded ",

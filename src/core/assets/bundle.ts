@@ -9,7 +9,9 @@
  */
 
 import fs from "node:fs";
+import { readUsableIndex } from "../../indexer/index-readiness";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import { getStoreFindings } from "../../storage/repositories/index-meta-repository";
 import type {
   AssetChange,
   AssetEntry,
@@ -160,7 +162,17 @@ export class AssetBundle {
     return this.#adapter.list(this.#bundle, type);
   }
   read(conceptId: string): BundleAsset | undefined {
-    return this.#adapter.read(this.#bundle, conceptId);
+    return this.#adapter.read(this.#bundle, conceptId, this.#locator(conceptId));
+  }
+  /** What the index recorded of a store's entry for its adapter to find it by; a directory's entries need none. */
+  #locator(conceptId: string): unknown {
+    if (!this.isStore) return undefined;
+    return readUsableIndex((db) => {
+      const row = db
+        .prepare("SELECT document_json FROM entries WHERE item_ref = ?")
+        .get(`${this.name}//${conceptId}`) as { document_json: string } | undefined;
+      return row ? (JSON.parse(row.document_json) as IndexDocument).locator : undefined;
+    }, undefined);
   }
   recognize(entry: AssetEntry): IndexDocument | null {
     return this.#adapter.recognize(this.#bundle, entry);
@@ -169,8 +181,11 @@ export class AssetBundle {
   contentType(entry: AssetEntry): string | undefined {
     return this.#adapter.contentType?.(this.#bundle, entry);
   }
-  validate(edits: AssetEdit[], ctx: ValidateContext): Promise<Diagnostic[]> {
-    return this.#adapter.validate(this.#bundle, edits, ctx);
+  /** The adapter's findings, and for a store what the last `akm index` found wrong with it (none when never indexed). */
+  async validate(edits: AssetEdit[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    const found = await this.#adapter.validate(this.#bundle, edits, ctx);
+    if (!this.isStore) return found;
+    return [...found, ...readUsableIndex((db) => getStoreFindings(db, this.name) ?? [], [])];
   }
   place(asset: Pick<NewAsset, "type" | "name">): string {
     return this.#adapter.place(this.#bundle, asset);
@@ -184,13 +199,19 @@ export class AssetBundle {
     return this.#adapter.identifyKey?.(this.#bundle, key) ?? null;
   }
   create(asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean }): AssetChange {
-    return this.#adapter.create(this.#bundle, asset, options);
+    const locator = this.isStore ? this.#locator(this.place(asset)) : undefined;
+    return this.#adapter.create(this.#bundle, asset, { ...options, ...(locator !== undefined ? { locator } : {}) });
   }
   update(conceptId: string, content: string | Buffer, options?: { throughLink?: boolean }): AssetChange {
-    return this.#adapter.update(this.#bundle, conceptId, content, options);
+    const locator = this.#locator(conceptId);
+    return this.#adapter.update(this.#bundle, conceptId, content, {
+      ...options,
+      ...(locator !== undefined ? { locator } : {}),
+    });
   }
   delete(conceptId: string): AssetChange {
-    return this.#adapter.delete(this.#bundle, conceptId);
+    const locator = this.#locator(conceptId);
+    return this.#adapter.delete(this.#bundle, conceptId, locator !== undefined ? { locator } : {});
   }
   retire(conceptId: string, note: RetireNote): AssetChange & { handle: string } {
     return this.#adapter.retire(this.#bundle, conceptId, note);
