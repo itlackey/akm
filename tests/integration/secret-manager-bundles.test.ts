@@ -920,6 +920,33 @@ describe("review fixes (K gate)", () => {
     );
   });
 
+  test("a store that fails to list with an unrecognised error keeps its indexed rows, and akm index completes", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, vaults: VAULT }, async () => {
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+    });
+    const warnings: string[] = [];
+    _setWarnSinkForTests((_level, args) => warnings.push(args.join(" ")));
+    try {
+      await withFakeSecretStores({ keyrings: KEYRING, vaults: VAULT, listFails: ["team-vault"] } as never, async () => {
+        const result = await akmIndex({ stashDir: storage.stashDir });
+        expect(result.incompleteSources?.map((source) => source.bundle)).toEqual(["vault"]);
+        const search = await akm("search", "token", "--type", "secret");
+        expect((search.json.hits as Array<{ ref: string }>).map((hit) => hit.ref)).toContain(
+          "vault//secrets/deploy-token",
+        );
+      });
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    expect(
+      warnings.some(
+        (w) =>
+          w.includes('source "vault" was not scanned completely; preserving its last-known-good rows') &&
+          w.includes("InternalServerError"),
+      ),
+    ).toBe(true);
+  });
+
   test("akm lint skips a store that fails in an ordinary way, silently", async () => {
     await withFakeSecretStores({ keyrings: KEYRING, vaults: VAULT, listFails: ["team-vault"] } as never, async () => {
       const linted = await runCliCapture(["lint", "--format", "json"]);

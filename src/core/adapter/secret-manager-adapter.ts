@@ -228,9 +228,15 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     }
   }
 
-  /** List the bundle's secrets. A store that cannot be reached throws `BUNDLE_UNREACHABLE`: the index keeps its rows. */
+  /** List the bundle's secrets. A store that cannot be listed, for whatever reason, throws `BUNDLE_UNREACHABLE` (with its own message): the index keeps its rows. */
   list(b: Bundle): BundleListing {
-    const { winners } = this.store(this.locationOf(b));
+    let winners: Store["winners"];
+    try {
+      ({ winners } = this.store(this.locationOf(b)));
+    } catch (error) {
+      if (error instanceof ConfigError && error.code === "BUNDLE_UNREACHABLE") throw error;
+      throw new ConfigError(error instanceof Error ? error.message : String(error), "BUNDLE_UNREACHABLE");
+    }
     return {
       assets: [...winners.values()].map(({ name, read }) => ({
         conceptId: secretEntryPath(name),
