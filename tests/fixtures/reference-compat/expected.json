@@ -8146,6 +8146,3409 @@
         "# akm:task report END",
         ""
       ]
+    },
+    "loose workflow :: show": {
+      "exit": 0,
+      "stdout": {
+        "type": "workflow",
+        "name": "notes/loose-flow",
+        "ref": "notes/loose-flow",
+        "origin": "main",
+        "action": "Start or resume execution with `akm run 'notes/loose-flow'`.",
+        "description": "Loose flow",
+        "toc": [
+          {
+            "level": 1,
+            "text": "Loose flow",
+            "slug": "loose-flow",
+            "startLine": 11
+          },
+          {
+            "level": 2,
+            "text": "only",
+            "slug": "only",
+            "startLine": 13
+          }
+        ],
+        "content": "12 chars sha256:94c6e9202f9a26d70b82926b17b745dc5c8f49f184dbb3394c2dfb6579116d8c",
+        "workflowTitle": "notes/loose-flow",
+        "steps": [
+          {
+            "id": "only",
+            "title": "only",
+            "instructions": "Do it.",
+            "sequenceIndex": 0,
+            "orchestration": {
+              "exec": {
+                "command": [
+                  "true"
+                ]
+              }
+            }
+          }
+        ],
+        "path": "<SANDBOX>/fixture/main/notes/loose-flow.md",
+        "editable": true
+      }
+    },
+    "loose workflow :: search": {
+      "exit": 0,
+      "stdout": {
+        "hits": [
+          {
+            "type": "workflow",
+            "name": "notes/loose-flow",
+            "ref": "notes/loose-flow",
+            "action": "Start or resume execution with `akm run 'notes/loose-flow'`.",
+            "estimatedTokens": 37
+          }
+        ],
+        "searchMode": "keyword"
+      }
+    },
+    "loose workflow :: workflow plan": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm workflow plan is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Bundle \"main\" uses adapter \"akm\", which does not support native workflow execution.",
+        "code": "WORKFLOW_SOURCE_INVALID",
+        "hint": "Run `akm lint` to see the failing source location, or `akm doctor explain <ref>` to compile it without writing."
+      }
+    },
+    "loose workflow :: workflow run": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm workflow run is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Bundle \"main\" uses adapter \"akm\", which does not support native workflow execution.",
+        "code": "WORKFLOW_SOURCE_INVALID",
+        "hint": "Run `akm lint` to see the failing source location, or `akm doctor explain <ref>` to compile it without writing."
+      }
+    },
+    "loose workflow :: workflow status": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm workflow status is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Bundle \"main\" uses adapter \"akm\", which does not support native workflow execution.",
+        "code": "WORKFLOW_SOURCE_INVALID",
+        "hint": "Run `akm lint` to see the failing source location, or `akm doctor explain <ref>` to compile it without writing."
+      }
+    },
+    "loose workflow :: run": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] running workflow notes/loose-flow is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Bundle \"main\" uses adapter \"akm\", which does not support native workflow execution.",
+        "code": "WORKFLOW_SOURCE_INVALID",
+        "hint": "Run `akm lint` to see the failing source location, or `akm doctor explain <ref>` to compile it without writing."
+      }
+    },
+    "loose workflow :: task add": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Invalid task source v4 at <SANDBOX>/fixture/main/tasks/lf.yml:2: uses \"notes/loose-flow\" is not an executable task source v4 target. Use a canonical commands/, scripts/, or workflows/ ref, or akm/command, instead.",
+        "code": "TASK_SOURCE_INVALID",
+        "hint": "Fix the task source at the reported path and line, then re-run."
+      }
+    },
+    "loose workflow :: lint": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "fixed": [],
+        "flagged": [
+          {
+            "file": "commands/release.md",
+            "issue": "missing-name-or-type",
+            "detail": "missing fields: name, type; suggested slug: release",
+            "fixed": false,
+            "ref": "commands/release"
+          },
+          {
+            "file": "knowledge/acts-like-command.md",
+            "issue": "missing-name-or-type",
+            "detail": "missing fields: name, type; suggested slug: acts-like-command",
+            "fixed": false,
+            "ref": "knowledge/acts-like-command"
+          },
+          {
+            "file": "agents/reviewer.md",
+            "issue": "missing-name-or-type",
+            "detail": "missing fields: name, type; suggested slug: reviewer",
+            "fixed": false,
+            "ref": "agents/reviewer"
+          },
+          {
+            "file": "knowledge/guide.md",
+            "issue": "missing-ref",
+            "detail": "missing ref: team//knowledge/ghost-note (resolved to knowledge/ghost-note.md)",
+            "fixed": false,
+            "ref": "knowledge/guide"
+          },
+          {
+            "file": "knowledge/guide.md",
+            "issue": "missing-ref",
+            "detail": "missing ref: knowledge/ghost (frontmatter xrefs; resolved to knowledge/ghost.md)",
+            "fixed": false,
+            "ref": "knowledge/guide"
+          },
+          {
+            "file": "memories/successor.md",
+            "issue": "missing-ref",
+            "detail": "missing ref: main//memories/gone-for-good (frontmatter supersededBy; resolved to memories/gone-for-good.md)",
+            "fixed": false,
+            "ref": "memories/successor"
+          }
+        ],
+        "warnings": [],
+        "summary": {
+          "fixed": 0,
+          "flagged": 6,
+          "warnings": 0
+        },
+        "byRule": {
+          "missing-name-or-type": {
+            "findings": 3,
+            "assets": 3
+          },
+          "missing-ref": {
+            "findings": 3,
+            "assets": 2
+          }
+        },
+        "shape": "lint",
+        "schemaVersion": 1
+      }
+    },
+    "loose workflow :: lint type workflows": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "fixed": [],
+        "flagged": [],
+        "warnings": [],
+        "summary": {
+          "fixed": 0,
+          "flagged": 0,
+          "warnings": 0
+        },
+        "byRule": {},
+        "shape": "lint",
+        "schemaVersion": 1
+      }
+    },
+    "symlinked workflow :: show before index": {
+      "exit": 0,
+      "stdout": {
+        "type": "workflow",
+        "name": "linked",
+        "ref": "workflows/linked",
+        "origin": "main",
+        "action": "Start or resume execution with `akm run 'workflows/linked'`.",
+        "description": "Linked",
+        "toc": [
+          {
+            "level": 1,
+            "text": "Linked",
+            "slug": "linked",
+            "startLine": 11
+          },
+          {
+            "level": 2,
+            "text": "only",
+            "slug": "only",
+            "startLine": 13
+          }
+        ],
+        "content": "8 chars sha256:1d0a333e3da40e787205e2616ef60c380a78ab4b6ec74c5ba31be366f237602e",
+        "workflowTitle": "linked",
+        "steps": [
+          {
+            "id": "only",
+            "title": "only",
+            "instructions": "Do it.",
+            "sequenceIndex": 0,
+            "orchestration": {
+              "exec": {
+                "command": [
+                  "true"
+                ]
+              }
+            }
+          }
+        ],
+        "path": "<SANDBOX>/fixture/main/workflows/linked.md",
+        "editable": true
+      },
+      "stderr": [
+        "Workflow source workflows/linked.md resolves through a symlink to ../../work/real.txt with a different extension. The authored workflow path and resolved source must both be .md."
+      ]
+    },
+    "symlinked workflow :: index": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "stashDir": "<SANDBOX>/fixture/main",
+        "totalEntries": 55,
+        "generatedMetadata": 56,
+        "indexPath": "<SANDBOX>/data/akm/index.db",
+        "mode": "full",
+        "directoriesScanned": 38,
+        "directoriesSkipped": 0,
+        "scanComplete": true,
+        "incompleteSources": [],
+        "warnings": [
+          "Two files claim team//tasks/twin: indexed <SANDBOX>/fixture/team/tasks/twin.md, skipped <SANDBOX>/fixture/team/tasks/twin.yml."
+        ],
+        "configUpdated": {
+          "detectedAdapters": {
+            "main": "akm",
+            "team": "akm"
+          }
+        },
+        "verification": {
+          "ok": true,
+          "message": "Keyword index ready. Semantic search is disabled.",
+          "semanticSearchEnabled": false,
+          "semanticSearchMode": "off",
+          "semanticStatus": "disabled",
+          "embeddingProvider": "local",
+          "entryCount": 55,
+          "embeddingCount": 0
+        },
+        "timing": {
+          "totalMs": "<DURATION>",
+          "walkMs": "<DURATION>",
+          "llmMs": "<DURATION>",
+          "embedMs": "<DURATION>",
+          "ftsMs": "<DURATION>",
+          "finalizeMs": "<DURATION>",
+          "cleanMs": "<DURATION>",
+          "preflightMs": "<DURATION>",
+          "sourceCacheMs": "<DURATION>",
+          "endToEndMs": "<DURATION>"
+        },
+        "shape": "index",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[index:preflight] Validating durable state.",
+        "[index:preflight] Hydrating source caches.",
+        "[index] Detected adapters for main → akm, team → akm; persisted to config.json (bundles.<id>.components.<component>.adapter).",
+        "[index:preflight] Resolved 7 stash sources.",
+        "[index:summary] Starting full index (7 stash sources, semantic search: disabled).",
+        "[index:scan] [1/7] Processed 1/7 sources.",
+        "Workflow source workflows/linked.md resolves through a symlink to ../../work/real.txt with a different extension. The authored workflow path and resolved source must both be .md.",
+        "[index:scan] [2/7] Processed 2/7 sources.",
+        "[index:scan] [3/7] Processed 3/7 sources.",
+        "[index:scan] [4/7] Processed 4/7 sources.",
+        "[index:scan] [5/7] Processed 5/7 sources.",
+        "[index:scan] [6/7] Processed 6/7 sources.",
+        "[index:scan] [7/7] Processed 7/7 sources.",
+        "[index:scan] Scanned 38 directories and skipped 0.",
+        "[index:embeddings] Semantic search disabled; skipping embeddings.",
+        "[index:finalize] Verifying semantic search state.",
+        "[index:verify] Keyword index ready. Semantic search is disabled.",
+        "[index:finalize] Grouping assets by meaning.",
+        "[index:fts] Full-text search index is current.",
+        "[index:finalize] Relinking usage events.",
+        "[index:finalize] Recomputing utility scores.",
+        "[index:finalize] Clearing stale LLM cache entries."
+      ]
+    },
+    "symlinked workflow :: show": {
+      "exit": 0,
+      "stdout": {
+        "type": "workflow",
+        "name": "linked",
+        "ref": "workflows/linked",
+        "origin": "main",
+        "action": "Start or resume execution with `akm run 'workflows/linked'`.",
+        "description": "Linked",
+        "toc": [
+          {
+            "level": 1,
+            "text": "Linked",
+            "slug": "linked",
+            "startLine": 11
+          },
+          {
+            "level": 2,
+            "text": "only",
+            "slug": "only",
+            "startLine": 13
+          }
+        ],
+        "content": "8 chars sha256:1d0a333e3da40e787205e2616ef60c380a78ab4b6ec74c5ba31be366f237602e",
+        "workflowTitle": "linked",
+        "steps": [
+          {
+            "id": "only",
+            "title": "only",
+            "instructions": "Do it.",
+            "sequenceIndex": 0,
+            "orchestration": {
+              "exec": {
+                "command": [
+                  "true"
+                ]
+              }
+            }
+          }
+        ],
+        "path": "<SANDBOX>/fixture/main/workflows/linked.md",
+        "editable": true
+      },
+      "stderr": [
+        "Workflow source workflows/linked.md resolves through a symlink to ../../work/real.txt with a different extension. The authored workflow path and resolved source must both be .md."
+      ]
+    },
+    "symlinked workflow :: workflow plan": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm workflow plan is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md.",
+        "Workflow source workflows/linked.md resolves through a symlink to ../../work/real.txt with a different extension. The authored workflow path and resolved source must both be .md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Bundle \"main\" uses adapter \"akm\", which does not support native workflow execution.",
+        "code": "WORKFLOW_SOURCE_INVALID",
+        "hint": "Run `akm lint` to see the failing source location, or `akm doctor explain <ref>` to compile it without writing."
+      }
+    },
+    "symlinked workflow :: workflow run": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm workflow run is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md.",
+        "Workflow source workflows/linked.md resolves through a symlink to ../../work/real.txt with a different extension. The authored workflow path and resolved source must both be .md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Bundle \"main\" uses adapter \"akm\", which does not support native workflow execution.",
+        "code": "WORKFLOW_SOURCE_INVALID",
+        "hint": "Run `akm lint` to see the failing source location, or `akm doctor explain <ref>` to compile it without writing."
+      }
+    },
+    "symlinked workflow :: lint": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "fixed": [],
+        "flagged": [
+          {
+            "file": "commands/release.md",
+            "issue": "missing-name-or-type",
+            "detail": "missing fields: name, type; suggested slug: release",
+            "fixed": false,
+            "ref": "commands/release"
+          },
+          {
+            "file": "knowledge/acts-like-command.md",
+            "issue": "missing-name-or-type",
+            "detail": "missing fields: name, type; suggested slug: acts-like-command",
+            "fixed": false,
+            "ref": "knowledge/acts-like-command"
+          },
+          {
+            "file": "agents/reviewer.md",
+            "issue": "missing-name-or-type",
+            "detail": "missing fields: name, type; suggested slug: reviewer",
+            "fixed": false,
+            "ref": "agents/reviewer"
+          },
+          {
+            "file": "knowledge/guide.md",
+            "issue": "missing-ref",
+            "detail": "missing ref: team//knowledge/ghost-note (resolved to knowledge/ghost-note.md)",
+            "fixed": false,
+            "ref": "knowledge/guide"
+          },
+          {
+            "file": "knowledge/guide.md",
+            "issue": "missing-ref",
+            "detail": "missing ref: knowledge/ghost (frontmatter xrefs; resolved to knowledge/ghost.md)",
+            "fixed": false,
+            "ref": "knowledge/guide"
+          },
+          {
+            "file": "memories/successor.md",
+            "issue": "missing-ref",
+            "detail": "missing ref: main//memories/gone-for-good (frontmatter supersededBy; resolved to memories/gone-for-good.md)",
+            "fixed": false,
+            "ref": "memories/successor"
+          }
+        ],
+        "warnings": [],
+        "summary": {
+          "fixed": 0,
+          "flagged": 6,
+          "warnings": 0
+        },
+        "byRule": {
+          "missing-name-or-type": {
+            "findings": 3,
+            "assets": 3
+          },
+          "missing-ref": {
+            "findings": 3,
+            "assets": 2
+          }
+        },
+        "shape": "lint",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "Workflow source workflows/linked.md resolves through a symlink to ../../work/real.txt with a different extension. The authored workflow path and resolved source must both be .md."
+      ]
+    },
+    "symlinked workflow :: index --full": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "stashDir": "<SANDBOX>/fixture/main",
+        "totalEntries": 55,
+        "generatedMetadata": 56,
+        "indexPath": "<SANDBOX>/data/akm/index.db",
+        "mode": "full",
+        "directoriesScanned": 38,
+        "directoriesSkipped": 0,
+        "scanComplete": true,
+        "incompleteSources": [],
+        "warnings": [
+          "Two files claim team//tasks/twin: indexed <SANDBOX>/fixture/team/tasks/twin.md, skipped <SANDBOX>/fixture/team/tasks/twin.yml."
+        ],
+        "verification": {
+          "ok": true,
+          "message": "Keyword index ready. Semantic search is disabled.",
+          "semanticSearchEnabled": false,
+          "semanticSearchMode": "off",
+          "semanticStatus": "disabled",
+          "embeddingProvider": "local",
+          "entryCount": 55,
+          "embeddingCount": 0
+        },
+        "timing": {
+          "totalMs": "<DURATION>",
+          "walkMs": "<DURATION>",
+          "llmMs": "<DURATION>",
+          "embedMs": "<DURATION>",
+          "ftsMs": "<DURATION>",
+          "finalizeMs": "<DURATION>",
+          "cleanMs": "<DURATION>",
+          "preflightMs": "<DURATION>",
+          "sourceCacheMs": "<DURATION>",
+          "endToEndMs": "<DURATION>"
+        },
+        "shape": "index",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[index:preflight] Validating durable state.",
+        "[index:preflight] Hydrating source caches.",
+        "[index:preflight] Resolved 7 stash sources.",
+        "[index:summary] Starting full index (7 stash sources, semantic search: disabled).",
+        "[index:scan] [1/7] Processed 1/7 sources.",
+        "Workflow source workflows/linked.md resolves through a symlink to ../../work/real.txt with a different extension. The authored workflow path and resolved source must both be .md.",
+        "[index:scan] [2/7] Processed 2/7 sources.",
+        "[index:scan] [3/7] Processed 3/7 sources.",
+        "[index:scan] [4/7] Processed 4/7 sources.",
+        "[index:scan] [5/7] Processed 5/7 sources.",
+        "[index:scan] [6/7] Processed 6/7 sources.",
+        "[index:scan] [7/7] Processed 7/7 sources.",
+        "[index:scan] Scanned 38 directories and skipped 0.",
+        "[index:embeddings] Semantic search disabled; skipping embeddings.",
+        "[index:finalize] Verifying semantic search state.",
+        "[index:verify] Keyword index ready. Semantic search is disabled.",
+        "[index:finalize] Grouping assets by meaning.",
+        "[index:fts] Rebuilt the full-text search index to recompute its totals.",
+        "[index:finalize] Relinking usage events.",
+        "[index:finalize] Recomputing utility scores.",
+        "[index:finalize] Clearing stale LLM cache entries."
+      ]
+    },
+    "workflow bundle with no adapter :: workflow plan": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "wf//deploy",
+        "title": "deploy",
+        "sourceFormat": "markdown",
+        "sourcePath": "<SANDBOX>/fixture/wf/deploy.md",
+        "irVersion": 8,
+        "planHash": "<HASH>",
+        "published": false,
+        "execution": {
+          "maxConcurrency": 2
+        },
+        "steps": [
+          {
+            "stepId": "only",
+            "sequenceIndex": 0,
+            "kind": "unit",
+            "targetKind": "shell",
+            "inputs": [],
+            "orchestration": {
+              "exec": {
+                "command": [
+                  "true"
+                ]
+              },
+              "refs": []
+            },
+            "environment": [],
+            "gate": {
+              "criteria": [],
+              "maxLoops": 1,
+              "judgeEngine": null
+            },
+            "expansion": {
+              "via": "direct"
+            }
+          }
+        ],
+        "notices": [],
+        "warnings": [],
+        "shape": "workflow-plan",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm workflow plan is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ]
+    },
+    "workflow bundle with no adapter :: run": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "run": {
+          "id": "<ID>",
+          "workflowRef": "wf//deploy",
+          "workflowEntryId": null,
+          "workflowTitle": "deploy",
+          "status": "completed",
+          "currentStepId": null,
+          "createdAt": "<TIME>",
+          "updatedAt": "<TIME>",
+          "completedAt": "<TIME>",
+          "params": {},
+          "agentHarness": null,
+          "agentSessionId": null,
+          "planIrVersion": 8
+        },
+        "executed": [
+          {
+            "stepId": "only",
+            "ok": true,
+            "unitCount": 1,
+            "failedUnits": 0,
+            "summary": "Executed 1 unit(s) for step \"only\" via workflow orchestration: 1 succeeded, 0 failed."
+          }
+        ],
+        "stepsProcessed": 1,
+        "done": true,
+        "shape": "workflow-run",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] running workflow wf//deploy is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ]
+    },
+    "workflow bundle with no adapter :: show": {
+      "exit": 0,
+      "stdout": {
+        "type": "workflow",
+        "name": "deploy",
+        "ref": "wf//deploy",
+        "origin": "wf",
+        "action": "Start or resume execution with `akm run 'wf//deploy'`.",
+        "description": "Deploy",
+        "toc": [
+          {
+            "level": 1,
+            "text": "Deploy",
+            "slug": "deploy",
+            "startLine": 11
+          },
+          {
+            "level": 2,
+            "text": "only",
+            "slug": "only",
+            "startLine": 13
+          }
+        ],
+        "content": "8 chars sha256:6bb135eeeff94e0e72479e59796ec87ede1be5f425946c882691498957c21568",
+        "workflowTitle": "deploy",
+        "steps": [
+          {
+            "id": "only",
+            "title": "only",
+            "instructions": "Do it.",
+            "sequenceIndex": 0,
+            "orchestration": {
+              "exec": {
+                "command": [
+                  "true"
+                ]
+              }
+            }
+          }
+        ],
+        "path": "<SANDBOX>/fixture/wf/deploy.md",
+        "editable": true
+      }
+    },
+    "workflow bundle with no adapter :: index": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "stashDir": "<SANDBOX>/fixture/main",
+        "totalEntries": 55,
+        "generatedMetadata": 56,
+        "indexPath": "<SANDBOX>/data/akm/index.db",
+        "mode": "full",
+        "directoriesScanned": 39,
+        "directoriesSkipped": 0,
+        "scanComplete": true,
+        "incompleteSources": [],
+        "warnings": [
+          "Two files claim team//tasks/twin: indexed <SANDBOX>/fixture/team/tasks/twin.md, skipped <SANDBOX>/fixture/team/tasks/twin.yml."
+        ],
+        "configUpdated": {
+          "detectedAdapters": {
+            "main": "akm",
+            "team": "akm",
+            "wf": "akm-workflow"
+          }
+        },
+        "verification": {
+          "ok": true,
+          "message": "Keyword index ready. Semantic search is disabled.",
+          "semanticSearchEnabled": false,
+          "semanticSearchMode": "off",
+          "semanticStatus": "disabled",
+          "embeddingProvider": "local",
+          "entryCount": 55,
+          "embeddingCount": 0
+        },
+        "timing": {
+          "totalMs": "<DURATION>",
+          "walkMs": "<DURATION>",
+          "llmMs": "<DURATION>",
+          "embedMs": "<DURATION>",
+          "ftsMs": "<DURATION>",
+          "finalizeMs": "<DURATION>",
+          "cleanMs": "<DURATION>",
+          "preflightMs": "<DURATION>",
+          "sourceCacheMs": "<DURATION>",
+          "endToEndMs": "<DURATION>"
+        },
+        "shape": "index",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[index:preflight] Validating durable state.",
+        "[index:preflight] Hydrating source caches.",
+        "[index] Detected adapters for main → akm, team → akm, wf → akm-workflow; persisted to config.json (bundles.<id>.components.<component>.adapter).",
+        "[index:preflight] Resolved 8 stash sources.",
+        "[index:summary] Starting full index (8 stash sources, semantic search: disabled).",
+        "[index:scan] [1/8] Processed 1/8 sources.",
+        "[index:scan] [2/8] Processed 2/8 sources.",
+        "[index:scan] [3/8] Processed 3/8 sources.",
+        "[index:scan] [4/8] Processed 4/8 sources.",
+        "[index:scan] [5/8] Processed 5/8 sources.",
+        "[index:scan] [6/8] Processed 6/8 sources.",
+        "[index:scan] [7/8] Processed 7/8 sources.",
+        "[index:scan] [8/8] Processed 8/8 sources.",
+        "[index:scan] Scanned 39 directories and skipped 0.",
+        "[index:embeddings] Semantic search disabled; skipping embeddings.",
+        "[index:finalize] Verifying semantic search state.",
+        "[index:verify] Keyword index ready. Semantic search is disabled.",
+        "[index:finalize] Grouping assets by meaning.",
+        "[index:fts] Full-text search index is current.",
+        "[index:finalize] Relinking usage events.",
+        "[index:finalize] Recomputing utility scores.",
+        "[index:finalize] Clearing stale LLM cache entries."
+      ]
+    },
+    "workflow bundle with no adapter :: workflow run": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "run": {
+          "id": "<ID>",
+          "workflowRef": "wf//deploy",
+          "workflowEntryId": null,
+          "workflowTitle": "deploy",
+          "status": "completed",
+          "currentStepId": null,
+          "createdAt": "<TIME>",
+          "updatedAt": "<TIME>",
+          "completedAt": "<TIME>",
+          "params": {},
+          "agentHarness": null,
+          "agentSessionId": null,
+          "planIrVersion": 8
+        },
+        "executed": [
+          {
+            "stepId": "only",
+            "ok": true,
+            "unitCount": 1,
+            "failedUnits": 0,
+            "summary": "Executed 1 unit(s) for step \"only\" via workflow orchestration: 1 succeeded, 0 failed."
+          }
+        ],
+        "stepsProcessed": 1,
+        "done": true,
+        "shape": "workflow-run",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm workflow run is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ]
+    },
+    "workflow bundle with no adapter :: config.json": {
+      "value": {
+        "configVersion": "0.9.0",
+        "defaultBundle": "main",
+        "defaultWriteTarget": "main",
+        "semanticSearchMode": "off",
+        "usage": {
+          "capture": false,
+          "report": false
+        },
+        "connections": {
+          "default": {
+            "endpoint": "http://127.0.0.1:1/v1",
+            "models": {
+              "fast": "m",
+              "balanced": "m",
+              "reasoning": "m"
+            }
+          }
+        },
+        "bundles": {
+          "main": {
+            "path": "<SANDBOX>/fixture/main",
+            "writable": true,
+            "components": {
+              "main": {
+                "adapter": "akm"
+              }
+            }
+          },
+          "team": {
+            "path": "<SANDBOX>/fixture/team",
+            "writable": true,
+            "components": {
+              "main": {
+                "adapter": "akm"
+              }
+            }
+          },
+          "files": {
+            "path": "<SANDBOX>/fixture/files",
+            "components": {
+              "main": {
+                "root": ".",
+                "adapter": "generic-files"
+              }
+            }
+          },
+          "okf": {
+            "path": "<SANDBOX>/fixture/okf",
+            "components": {
+              "main": {
+                "adapter": "okf"
+              }
+            }
+          },
+          "wiki": {
+            "path": "<SANDBOX>/fixture/wiki",
+            "components": {
+              "main": {
+                "adapter": "llm-wiki"
+              }
+            }
+          },
+          "snapshot": {
+            "path": "<SANDBOX>/fixture/snapshot",
+            "components": {
+              "main": {
+                "adapter": "website-snapshot"
+              }
+            }
+          },
+          "flows": {
+            "path": "<SANDBOX>/fixture/flows",
+            "components": {
+              "main": {
+                "adapter": "akm-workflow"
+              }
+            }
+          },
+          "wf": {
+            "path": "<SANDBOX>/fixture/wf",
+            "components": {
+              "main": {
+                "adapter": "akm-workflow"
+              }
+            }
+          }
+        },
+        "scheduler": {
+          "enabled": [
+            "main//tasks/nightly",
+            "team//tasks/team-task",
+            "main//tasks/report"
+          ]
+        }
+      }
+    },
+    "index verbose :: index --full --verbose": {
+      "exit": 0,
+      "stdout": [
+        "Indexed 54 entries from 38 directories (mode: full)",
+        "Warnings (1):",
+        "  - Two files claim team//tasks/twin: indexed <SANDBOX>/fixture/team/tasks/twin.md, skipped <SANDBOX>/fixture/team/tasks/twin.yml.",
+        "Timing: total <DURATION>, preflight <DURATION>, walk <DURATION>, llm <DURATION>, embeddings <DURATION>, fts <DURATION>, finalize <DURATION>, clean <DURATION>, end-to-end <DURATION>"
+      ],
+      "stderr": [
+        "[index:preflight] Validating durable state.",
+        "[index:preflight] Hydrating source caches.",
+        "[index] Detected adapters for main → akm, team → akm; persisted to config.json (bundles.<id>.components.<component>.adapter).",
+        "[index:preflight] Resolved 7 stash sources.",
+        "[index:summary] Starting full index (7 stash sources, semantic search: disabled).",
+        "[index:scan] [1/7] Processed 1/7 sources.",
+        "[index:scan] [1/7] Rescanning commands from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning reports from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning memories from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning knowledge from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning knowledge/api from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning wikis/lab from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning wikis/lab/pages from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning wikis/lab/raw from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning secrets from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning scripts from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning env from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning workflows from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning tasks from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning agents from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning skills from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning skills/twinned from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning skills/deploy from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [1/7] Rescanning lessons from <SANDBOX>/fixture/main: full-rebuild; previous rows=0",
+        "[index:scan] [2/7] Processed 2/7 sources.",
+        "[index:scan] [2/7] Rescanning memories from <SANDBOX>/fixture/team: full-rebuild; previous rows=0",
+        "[index:scan] [2/7] Rescanning knowledge from <SANDBOX>/fixture/team: full-rebuild; previous rows=0",
+        "[index:scan] [2/7] Rescanning secrets from <SANDBOX>/fixture/team: full-rebuild; previous rows=0",
+        "[index:scan] [2/7] Rescanning scripts from <SANDBOX>/fixture/team: full-rebuild; previous rows=0",
+        "[index:scan] [2/7] Rescanning env from <SANDBOX>/fixture/team: full-rebuild; previous rows=0",
+        "[index:scan] [2/7] Rescanning workflows from <SANDBOX>/fixture/team: full-rebuild; previous rows=0",
+        "[index:scan] [2/7] Rescanning tasks from <SANDBOX>/fixture/team: full-rebuild; previous rows=0",
+        "[index:scan] [2/7] Rescanning skills/review from <SANDBOX>/fixture/team: full-rebuild; previous rows=0",
+        "[index:scan] [3/7] Processed 3/7 sources.",
+        "[index:scan] [3/7] Rescanning docs from <SANDBOX>/fixture/files: full-rebuild; previous rows=0",
+        "[index:scan] [3/7] Rescanning data from <SANDBOX>/fixture/files: full-rebuild; previous rows=0",
+        "[index:scan] [3/7] Rescanning scripts from <SANDBOX>/fixture/files: full-rebuild; previous rows=0",
+        "[index:scan] [3/7] Rescanning notes from <SANDBOX>/fixture/files: full-rebuild; previous rows=0",
+        "[index:scan] [4/7] Processed 4/7 sources.",
+        "[index:scan] [4/7] Rescanning . from <SANDBOX>/fixture/okf: full-rebuild; previous rows=0",
+        "[index:scan] [4/7] Rescanning concepts from <SANDBOX>/fixture/okf: full-rebuild; previous rows=0",
+        "[index:scan] [5/7] Processed 5/7 sources.",
+        "[index:scan] [5/7] Rescanning . from <SANDBOX>/fixture/wiki: full-rebuild; previous rows=0",
+        "[index:scan] [5/7] Rescanning pages from <SANDBOX>/fixture/wiki: full-rebuild; previous rows=0",
+        "[index:scan] [5/7] Rescanning raw from <SANDBOX>/fixture/wiki: full-rebuild; previous rows=0",
+        "[index:scan] [6/7] Processed 6/7 sources.",
+        "[index:scan] [6/7] Rescanning . from <SANDBOX>/fixture/snapshot: full-rebuild; previous rows=0",
+        "[index:scan] [6/7] Rescanning stash/knowledge/example-com from <SANDBOX>/fixture/snapshot: full-rebuild; previous rows=0",
+        "[index:scan] [7/7] Processed 7/7 sources.",
+        "[index:scan] [7/7] Rescanning . from <SANDBOX>/fixture/flows: full-rebuild; previous rows=0",
+        "[index] zero-row <SANDBOX>/fixture/main/wikis/lab: empty-generated-set",
+        "[index] zero-row <SANDBOX>/fixture/main/skills: empty-generated-set",
+        "[index] zero-row <SANDBOX>/fixture/okf: empty-generated-set",
+        "[index] zero-row <SANDBOX>/fixture/wiki: empty-generated-set",
+        "[index] zero-row <SANDBOX>/fixture/snapshot: empty-generated-set",
+        "[index:scan] Scanned 38 directories and skipped 0.",
+        "[index:embeddings] Semantic search disabled; skipping embeddings.",
+        "[index:finalize] Verifying semantic search state.",
+        "[index:verify] Keyword index ready. Semantic search is disabled.",
+        "[index:finalize] Grouping assets by meaning.",
+        "[index:fts] Full-text search index is current.",
+        "[index:finalize] Relinking usage events.",
+        "[index:finalize] Recomputing utility scores.",
+        "[index:finalize] Clearing stale LLM cache entries."
+      ]
+    },
+    "index verbose :: index --verbose": {
+      "exit": 0,
+      "stdout": [
+        "Indexed 54 entries from 1 directories (mode: incremental)",
+        "Warnings (1):",
+        "  - Two files claim team//tasks/twin: indexed <SANDBOX>/fixture/team/tasks/twin.md, skipped <SANDBOX>/fixture/team/tasks/twin.yml.",
+        "Timing: total <DURATION>, preflight <DURATION>, walk <DURATION>, llm <DURATION>, embeddings <DURATION>, fts <DURATION>, finalize <DURATION>, clean <DURATION>, end-to-end <DURATION>"
+      ],
+      "stderr": [
+        "[index:preflight] Validating durable state.",
+        "[index:preflight] Hydrating source caches.",
+        "[index:preflight] Resolved 7 stash sources.",
+        "[index:summary] Starting incremental index (7 stash sources, semantic search: disabled).",
+        "[index:scan] [1/7] Processed 1/7 sources.",
+        "[index:scan] [1/7] Skipping commands from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=1",
+        "[index:scan] [1/7] Skipping reports from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=1",
+        "[index:scan] [1/7] Skipping memories from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=3",
+        "[index:scan] [1/7] Skipping knowledge from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=6",
+        "[index:scan] [1/7] Skipping knowledge/api from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=1",
+        "[index:scan] [1/7] Skipping wikis/lab from <SANDBOX>/fixture/main: cached-zero-row-state (empty-generated-set); previous rows=0",
+        "[index:scan] [1/7] Skipping wikis/lab/pages from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=1",
+        "[index:scan] [1/7] Skipping wikis/lab/raw from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=1",
+        "[index:scan] [1/7] Skipping secrets from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=2",
+        "[index:scan] [1/7] Skipping scripts from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=4",
+        "[index:scan] [1/7] Skipping env from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=1",
+        "[index:scan] [1/7] Skipping workflows from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=2",
+        "[index:scan] [1/7] Skipping tasks from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=5",
+        "[index:scan] [1/7] Skipping agents from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=1",
+        "[index:scan] [1/7] Skipping skills from <SANDBOX>/fixture/main: cached-zero-row-state (empty-generated-set); previous rows=0",
+        "[index:scan] [1/7] Skipping skills/twinned from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=1",
+        "[index:scan] [1/7] Skipping skills/deploy from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=1",
+        "[index:scan] [1/7] Skipping lessons from <SANDBOX>/fixture/main: unchanged-precheck; previous rows=1",
+        "[index:scan] [2/7] Processed 2/7 sources.",
+        "[index:scan] [2/7] Skipping memories from <SANDBOX>/fixture/team: unchanged-precheck; previous rows=1",
+        "[index:scan] [2/7] Skipping knowledge from <SANDBOX>/fixture/team: unchanged-precheck; previous rows=2",
+        "[index:scan] [2/7] Skipping secrets from <SANDBOX>/fixture/team: unchanged-precheck; previous rows=2",
+        "[index:scan] [2/7] Skipping scripts from <SANDBOX>/fixture/team: unchanged-precheck; previous rows=1",
+        "[index:scan] [2/7] Skipping env from <SANDBOX>/fixture/team: unchanged-precheck; previous rows=1",
+        "[index:scan] [2/7] Skipping workflows from <SANDBOX>/fixture/team: unchanged-precheck; previous rows=1",
+        "[index:scan] [2/7] Rescanning tasks from <SANDBOX>/fixture/team: file-set-changed (2 -> 3 files); previous rows=2",
+        "[index:scan] [2/7] Skipping skills/review from <SANDBOX>/fixture/team: unchanged-precheck; previous rows=1",
+        "[index:scan] [3/7] Processed 3/7 sources.",
+        "[index:scan] [3/7] Skipping docs from <SANDBOX>/fixture/files: unchanged-precheck; previous rows=1",
+        "[index:scan] [3/7] Skipping data from <SANDBOX>/fixture/files: unchanged-precheck; previous rows=1",
+        "[index:scan] [3/7] Skipping scripts from <SANDBOX>/fixture/files: unchanged-precheck; previous rows=1",
+        "[index:scan] [3/7] Skipping notes from <SANDBOX>/fixture/files: unchanged-precheck; previous rows=1",
+        "[index:scan] [4/7] Processed 4/7 sources.",
+        "[index:scan] [4/7] Skipping . from <SANDBOX>/fixture/okf: cached-zero-row-state (empty-generated-set); previous rows=0",
+        "[index:scan] [4/7] Skipping concepts from <SANDBOX>/fixture/okf: unchanged-precheck; previous rows=2",
+        "[index:scan] [5/7] Processed 5/7 sources.",
+        "[index:scan] [5/7] Skipping . from <SANDBOX>/fixture/wiki: cached-zero-row-state (empty-generated-set); previous rows=0",
+        "[index:scan] [5/7] Skipping pages from <SANDBOX>/fixture/wiki: unchanged-precheck; previous rows=2",
+        "[index:scan] [5/7] Skipping raw from <SANDBOX>/fixture/wiki: unchanged-precheck; previous rows=1",
+        "[index:scan] [6/7] Processed 6/7 sources.",
+        "[index:scan] [6/7] Skipping . from <SANDBOX>/fixture/snapshot: cached-zero-row-state (empty-generated-set); previous rows=0",
+        "[index:scan] [6/7] Skipping stash/knowledge/example-com from <SANDBOX>/fixture/snapshot: unchanged-precheck; previous rows=1",
+        "[index:scan] [7/7] Processed 7/7 sources.",
+        "[index:scan] [7/7] Skipping . from <SANDBOX>/fixture/flows: unchanged-precheck; previous rows=1",
+        "[index:scan] Scanned 1 directory and skipped 37.",
+        "[index:embeddings] Semantic search disabled; skipping embeddings.",
+        "[index:finalize] Verifying semantic search state.",
+        "[index:verify] Keyword index ready. Semantic search is disabled.",
+        "[index:finalize] Grouping assets by meaning.",
+        "[index:fts] Full-text search index is current.",
+        "[index:finalize] Relinking usage events.",
+        "[index:finalize] Recomputing utility scores.",
+        "[index:finalize] Clearing stale LLM cache entries."
+      ]
+    },
+    "index verbose :: index layout": {
+      "value": {
+        "userVersion": 0,
+        "metaVersion": "26",
+        "columns": {
+          "asset_links": [
+            "entry_id",
+            "ord",
+            "kind",
+            "raw",
+            "dst_bundle",
+            "dst_concept"
+          ],
+          "duplicate_pairs": [
+            "rank",
+            "a",
+            "b",
+            "cosine"
+          ],
+          "embeddings": [
+            "id",
+            "embedding",
+            "model"
+          ],
+          "entries": [
+            "id",
+            "item_ref",
+            "bundle_id",
+            "component_id",
+            "concept_id",
+            "adapter_id",
+            "type",
+            "file_path",
+            "content_hash",
+            "document_json",
+            "derived_from",
+            "embed_hash"
+          ],
+          "entries_fts": [
+            "entry_id",
+            "name",
+            "description",
+            "tags",
+            "hints",
+            "content"
+          ],
+          "entry_fragments": [
+            "entry_id",
+            "safe_markdown"
+          ],
+          "entry_layout": [
+            "entry_id",
+            "grp",
+            "x",
+            "y",
+            "z"
+          ],
+          "index_dir_state": [
+            "dir_path",
+            "file_set_hash",
+            "file_mtime_max_ms",
+            "reason",
+            "updated_at",
+            "row_count",
+            "index_variant"
+          ],
+          "index_meta": [
+            "key",
+            "value"
+          ],
+          "llm_enrichment_cache": [
+            "asset_ref",
+            "cache_variant",
+            "body_hash",
+            "result_json",
+            "updated_at"
+          ],
+          "registry_index_cache": [
+            "registry_url",
+            "fetched_at",
+            "etag",
+            "last_modified",
+            "index_json"
+          ],
+          "sqlite_sequence": [
+            "name",
+            "seq"
+          ],
+          "utility_scores": [
+            "entry_id",
+            "utility",
+            "show_count",
+            "search_count",
+            "select_rate",
+            "last_used_at",
+            "updated_at"
+          ]
+        }
+      }
+    },
+    "proposal refs :: list --ref knowledge/guide": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 0,
+        "proposals": []
+      }
+    },
+    "proposal refs :: list --ref knowledge/guide.md": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 3,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000100",
+            "ref": "main//knowledge/guide.md",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000106",
+            "ref": "stash//knowledge/guide.md",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000107",
+            "ref": "knowledge/guide.md",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "proposal refs :: list --ref main//knowledge/guide": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 0,
+        "proposals": []
+      }
+    },
+    "proposal refs :: list --ref stash//knowledge/guide.md": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 1,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000106",
+            "ref": "stash//knowledge/guide.md",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "proposal refs :: list --ref reports/quarterly": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 0,
+        "proposals": []
+      }
+    },
+    "proposal refs :: list --ref knowledge/reports/quarterly": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 0,
+        "proposals": []
+      },
+      "stderr": [
+        "Ref \"knowledge/reports/quarterly\" is outdated: refs are the path inside the bundle, so it is now \"reports/quarterly\". Resolved it to that asset."
+      ]
+    },
+    "proposal refs :: list --ref skills/deploy": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 0,
+        "proposals": []
+      }
+    },
+    "proposal refs :: list --ref tasks/nightly": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 0,
+        "proposals": []
+      }
+    },
+    "proposal refs :: list --ref Knowledge/GUIDE": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 0,
+        "proposals": []
+      }
+    },
+    "proposal refs :: list --ref Knowledge/Guide": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 1,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000101",
+            "ref": "main//Knowledge/Guide",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "proposal refs :: list --ref knowledge:guide": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Invalid asset-ref filter \"knowledge:guide\". Use the 0.9.0 grammar [bundle//]conceptId, e.g. knowledge/guide.md or lessons/deploy.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "proposal refs :: list --ref nosuch//knowledge/guide": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 0,
+        "proposals": []
+      }
+    },
+    "proposal refs :: list --ref knowledge/new-note": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 1,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "ref": "main//knowledge/new-note",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "proposal refs :: list": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 10,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "ref": "main//knowledge/new-note",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000100",
+            "ref": "main//knowledge/guide.md",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000101",
+            "ref": "main//Knowledge/Guide",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000102",
+            "ref": "main//knowledge/reports/quarterly",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000103",
+            "ref": "main//reports/quarterly.md",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000104",
+            "ref": "main//skills/deploy/SKILL.md",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000105",
+            "ref": "main//tasks/nightly.yml",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000106",
+            "ref": "stash//knowledge/guide.md",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000107",
+            "ref": "knowledge/guide.md",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000108",
+            "ref": "knowledge:guide",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "proposal refs :: diff knowledge/guide": {
+      "exit": 70,
+      "errorJson": {
+        "ok": false,
+        "error": "Proposal primary change has no content."
+      }
+    },
+    "proposal refs :: show knowledge/guide.md": {
+      "exit": 0,
+      "stdout": {
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000100",
+          "ref": "main//knowledge/guide.md",
+          "status": "pending",
+          "source": "reflect",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "2026-01-30T10:00:00.000Z",
+          "confidence": 0.8
+        },
+        "validation": {
+          "ok": true,
+          "findings": []
+        }
+      }
+    },
+    "proposal refs :: show Knowledge/Guide": {
+      "exit": 0,
+      "stdout": {
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000101",
+          "ref": "main//Knowledge/Guide",
+          "status": "pending",
+          "source": "reflect",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "2026-01-30T10:00:00.000Z",
+          "confidence": 0.8
+        },
+        "validation": {
+          "ok": false,
+          "findings": [
+            {
+              "kind": "promotion",
+              "message": "Proposal 00000000-0000-4000-8000-000000000101 targets unknown asset type \"Knowledge\"."
+            }
+          ]
+        }
+      }
+    },
+    "create over existing :: remember new": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "memories/dupmem",
+        "path": "<SANDBOX>/fixture/main/memories/dupmem.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "remember",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "memories/dupmem.md": "---\ndescription: a new fact\ncaptureMode: hot\nbeliefState: asserted\ntype: memory\nupdated: <DATE>\n---\na new fact\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: remember existing": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Memory \"dupmem\" already exists. Re-run with --force to overwrite it.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: remember existing --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "memories/dupmem",
+        "path": "<SANDBOX>/fixture/main/memories/dupmem.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "remember",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "memories/dupmem.md": "---\ndescription: forced fact\ncaptureMode: hot\nbeliefState: asserted\ntype: memory\nupdated: <DATE>\n---\nforced fact\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: remember off-case existing": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "memories/mm",
+        "path": "<SANDBOX>/fixture/main/memories/mm.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "remember",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "memories/mm.md": "---\ndescription: second fact\ncaptureMode: hot\nbeliefState: asserted\ntype: memory\nupdated: <DATE>\n---\nsecond fact\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: remember off-case existing --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "memories/mm",
+        "path": "<SANDBOX>/fixture/main/memories/mm.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "remember",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "memories/mm.md": "---\ndescription: forced second fact\ncaptureMode: hot\nbeliefState: asserted\ntype: memory\nupdated: <DATE>\n---\nforced second fact\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: remember standard spelling existing": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Memory \"deploy-note\" already exists. Re-run with --force to overwrite it.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: remember standard spelling existing --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "memories/deploy-note",
+        "path": "<SANDBOX>/fixture/main/memories/deploy-note.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "remember",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "memories/deploy-note.md": "---\ndescription: forced third fact\ncaptureMode: hot\nbeliefState: asserted\ntype: memory\nupdated: <DATE>\n---\nforced third fact\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: import existing": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Knowledge \"doc\" already exists. Re-run with --force to overwrite it.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: import existing --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": "doc.md",
+        "ref": "knowledge/doc",
+        "path": "<SANDBOX>/fixture/main/knowledge/doc.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "import",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "knowledge/doc.md": "---\ndescription: imported doc\ntype: knowledge\nupdated: <DATE>\n---\n# Imported\n\nSome imported text.\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: import off-case existing": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": "kk.md",
+        "ref": "knowledge/kk",
+        "path": "<SANDBOX>/fixture/main/knowledge/kk.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "import",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "knowledge/kk.md": "---\ndescription: imported kk\ntype: knowledge\nupdated: <DATE>\n---\n# KK\n\nNew kk text.\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: import off-case existing --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": "kk.md",
+        "ref": "knowledge/kk",
+        "path": "<SANDBOX>/fixture/main/knowledge/kk.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "import",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: import task existing": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Task \"nightly\" already exists. Pass --force to overwrite.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: import task existing --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": "t.yml",
+        "path": "<SANDBOX>/fixture/main/tasks/nightly.yml",
+        "ref": "main//tasks/nightly",
+        "shape": "import",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: task add existing": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Task \"nightly\" already exists. Pass --force to overwrite, or delete its file and run `akm doctor scheduler sync` first.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: task add existing --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "id": "nightly",
+        "ref": "tasks/nightly",
+        "path": "<SANDBOX>/fixture/main/tasks/nightly.yml",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "schedule": "@daily",
+        "enabled": true,
+        "backend": "cron",
+        "target": {
+          "kind": "run",
+          "run": "echo again"
+        },
+        "shape": "task-add",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md."
+      ],
+      "changes": {
+        "main": {
+          "written": {
+            "tasks/nightly.yml": "version: 4\nrun: echo again\nschedule: \"@daily\"\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: task add off-case existing": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "id": "tt",
+        "ref": "tasks/tt",
+        "path": "<SANDBOX>/fixture/main/tasks/tt.yml",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "schedule": "@daily",
+        "enabled": true,
+        "backend": "cron",
+        "target": {
+          "kind": "run",
+          "run": "echo x"
+        },
+        "shape": "task-add",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md.",
+        "Scheduled tasks now run akm from a source checkout (<BUN> <TREE>/src/cli.ts); they run whatever the checkout holds when they fire. Install akm with `npm install --global akm-cli` or a standalone release, then run `akm doctor scheduler sync --rebind`."
+      ],
+      "changes": {
+        "main": {
+          "written": {
+            "tasks/tt.yml": "version: 4\nrun: echo x\nschedule: \"@daily\"\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: task add off-case existing --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "id": "tt",
+        "ref": "tasks/tt",
+        "path": "<SANDBOX>/fixture/main/tasks/tt.yml",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "schedule": "@daily",
+        "enabled": true,
+        "backend": "cron",
+        "target": {
+          "kind": "run",
+          "run": "echo x"
+        },
+        "shape": "task-add",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md."
+      ],
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: task add new": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "id": "newt",
+        "ref": "tasks/newt",
+        "path": "<SANDBOX>/fixture/main/tasks/newt.yml",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "schedule": "@daily",
+        "enabled": true,
+        "backend": "cron",
+        "target": {
+          "kind": "run",
+          "run": "echo new"
+        },
+        "shape": "task-add",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md.",
+        "Scheduled tasks now run akm from a source checkout (<BUN> <TREE>/src/cli.ts); they run whatever the checkout holds when they fire. Install akm with `npm install --global akm-cli` or a standalone release, then run `akm doctor scheduler sync --rebind`."
+      ],
+      "changes": {
+        "main": {
+          "written": {
+            "tasks/newt.yml": "version: 4\nrun: echo new\nschedule: \"@daily\"\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: workflow create existing": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm workflow create is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Workflow \"ship\" already exists. Re-run with --force to overwrite it.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: workflow create existing --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "workflows/ship",
+        "path": "<SANDBOX>/fixture/main/workflows/ship.md",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "shape": "workflow-create",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm workflow create is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ],
+      "changes": {
+        "main": {
+          "written": {
+            "workflows/ship.md": "---\ntype: workflow\ndescription: One-sentence summary of what this workflow accomplishes.\nupdated: 2026-01-01\ntags: [example]\nparams:\n  example_param: { type: string, description: Explain this parameter }\nsteps:\n  - id: first-step\n  - id: second-step\n    inputs: [steps.first-step.output]\n---\n\n# Ship\n\n> Deprecated: workflows are removed in 0.11. Write a task for new ordered steps.\n\nFree preamble prose describing what this workflow does. It is indexed for\nsearch and shown in `akm show`, but it is never dispatched to a step.\n\nLevel-2 (`##`) headings below are step ids and must exactly match one\ndeclared in `steps:` above — for cross-cutting notes that aren't a step\n(shared context, prerequisites), use a level-3 (`###`) heading instead.\n\n## first-step\n\nDescribe what to do in this step. Refer to run parameters in plain\nlanguage — for example, \"read the value given by the `example_param`\nparameter\" — never as a template expression like `{{ example_param }}`.\n\n## second-step\n\nDescribe what happens next, using the first step's artifact — attached to\nthis unit as context because this step declares\n`inputs: [steps.first-step.output]` above — referred to in prose as \"the\nfirst step's attached artifact.\"\n\n### gate\n\nA `### gate` sub-heading is the step's completion rubric: the judge\nreceives this whole section byte-exact. Omit the heading or leave its text\nempty to skip validation. A non-empty rubric needs a connection or a harness\nto judge it; verifier failures and malformed verdicts reject the\ngate rather than silently skipping it.\n\n- Confirm the step accomplished what it set out to do.\n- Confirm nothing required was silently skipped.\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: workflow create off-case existing": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm workflow create is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Workflow name must start with a lowercase letter or digit and contain only lowercase letters, digits, hyphens, dots, underscores, and slashes.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: workflow create off-case existing --force": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm workflow create is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Workflow name must start with a lowercase letter or digit and contain only lowercase letters, digits, hyphens, dots, underscores, and slashes.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: workflow create new": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "workflows/shipnew",
+        "path": "<SANDBOX>/fixture/main/workflows/shipnew.md",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "shape": "workflow-create",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm workflow create is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ],
+      "changes": {
+        "main": {
+          "written": {
+            "workflows/shipnew.md": "---\ntype: workflow\ndescription: One-sentence summary of what this workflow accomplishes.\nupdated: 2026-01-01\ntags: [example]\nparams:\n  example_param: { type: string, description: Explain this parameter }\nsteps:\n  - id: first-step\n  - id: second-step\n    inputs: [steps.first-step.output]\n---\n\n# Shipnew\n\n> Deprecated: workflows are removed in 0.11. Write a task for new ordered steps.\n\nFree preamble prose describing what this workflow does. It is indexed for\nsearch and shown in `akm show`, but it is never dispatched to a step.\n\nLevel-2 (`##`) headings below are step ids and must exactly match one\ndeclared in `steps:` above — for cross-cutting notes that aren't a step\n(shared context, prerequisites), use a level-3 (`###`) heading instead.\n\n## first-step\n\nDescribe what to do in this step. Refer to run parameters in plain\nlanguage — for example, \"read the value given by the `example_param`\nparameter\" — never as a template expression like `{{ example_param }}`.\n\n## second-step\n\nDescribe what happens next, using the first step's artifact — attached to\nthis unit as context because this step declares\n`inputs: [steps.first-step.output]` above — referred to in prose as \"the\nfirst step's attached artifact.\"\n\n### gate\n\nA `### gate` sub-heading is the step's completion rubric: the judge\nreceives this whole section byte-exact. Omit the heading or leave its text\nempty to skip validation. A non-empty rubric needs a connection or a harness\nto judge it; verifier failures and malformed verdicts reject the\ngate rather than silently skipping it.\n\n- Confirm the step accomplished what it set out to do.\n- Confirm nothing required was silently skipped.\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: remember index": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "memories/index",
+        "path": "<SANDBOX>/fixture/main/memories/index.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "remember",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "Concept name \"index\" collides with a reserved word some tooling treats specially; writing it anyway."
+      ],
+      "changes": {
+        "main": {
+          "written": {
+            "memories/index.md": "---\ndescription: x\ncaptureMode: hot\nbeliefState: asserted\ntype: memory\nupdated: <DATE>\n---\nx\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: secret set x.lock": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "secrets/x.lock",
+        "shape": "secret-set",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "secrets/x.lock": "value"
+          },
+          "removed": []
+        }
+      }
+    },
+    "create over existing :: env create x.lock": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/x.lock",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "env/x.lock.env": ""
+          },
+          "removed": []
+        }
+      }
+    },
+    "env create :: env/app": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/app",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        },
+        "team": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create :: env/app.env": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/app.env",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        },
+        "team": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create :: env/App": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/App",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "env/App.env": ""
+          },
+          "removed": []
+        },
+        "team": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create :: main//env/app": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/app",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        },
+        "team": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create :: env/odd": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/Odd",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "env/Odd.env": ""
+          },
+          "removed": []
+        },
+        "team": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create :: env/app from stdin": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Env \"env/app\" already exists. Remove it first (`akm env remove`) or edit the file directly.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        },
+        "team": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create :: env list before": {
+      "exit": 0,
+      "stdout": {
+        "envs": [
+          {
+            "ref": "env/App",
+            "keys": []
+          },
+          {
+            "ref": "env/default",
+            "keys": [
+              "DEFAULT"
+            ]
+          },
+          {
+            "ref": "env/app",
+            "keys": [
+              "PLAIN",
+              "TOKEN",
+              "TEAM_KEY",
+              "SHARED",
+              "SCRIPT",
+              "HOME_COPY",
+              "SHELLISH"
+            ]
+          },
+          {
+            "ref": "env/Odd",
+            "keys": []
+          },
+          {
+            "ref": "team//env/team",
+            "keys": [
+              "TEAM_SECRET",
+              "TEAM_ONLY",
+              "MAIN_TOKEN"
+            ]
+          }
+        ],
+        "shape": "env-list",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        },
+        "team": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create :: main//env/default": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/default",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "env/.env": ""
+          },
+          "removed": []
+        },
+        "team": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create :: env/default": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/default",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        },
+        "team": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create :: env/team": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/team",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "env/team.env": ""
+          },
+          "removed": []
+        },
+        "team": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create :: env/brandnew": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/brandnew",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "env/brandnew.env": ""
+          },
+          "removed": []
+        },
+        "team": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "log after use :: run --env env/app.env": {
+      "exit": 0,
+      "stdout": [
+        "PLAIN=value",
+        "TOKEN=main-api-token",
+        "TEAM_KEY=team-key-value",
+        "SHARED=main-shared-secret",
+        "SCRIPT=<SANDBOX>/fixture/main/scripts/hello.sh",
+        "HOME_COPY=${HOME}",
+        "SHELLISH=${PATH//:/ }",
+        "TEAM_SECRET=<unset>",
+        "TEAM_ONLY=<unset>",
+        "MAIN_TOKEN=<unset>",
+        "MYTOK=<unset>",
+        "TK=<unset>"
+      ]
+    },
+    "log after use :: run --secret secrets/api-token.": {
+      "exit": 0,
+      "stdout": [
+        "PLAIN=<unset>",
+        "TOKEN=<unset>",
+        "TEAM_KEY=<unset>",
+        "SHARED=<unset>",
+        "SCRIPT=<unset>",
+        "HOME_COPY=<unset>",
+        "SHELLISH=<unset>",
+        "TEAM_SECRET=<unset>",
+        "TEAM_ONLY=<unset>",
+        "MAIN_TOKEN=<unset>",
+        "MYTOK=main-api-token",
+        "TK=<unset>"
+      ]
+    },
+    "log after use :: log": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 2,
+        "events": [
+          {
+            "eventType": "env_access",
+            "ref": "env/app.env",
+            "ts": "<TIME>"
+          },
+          {
+            "eventType": "secret_access",
+            "ref": "secrets/api-token",
+            "ts": "<TIME>"
+          }
+        ],
+        "nextOffset": 2
+      },
+      "stderr": [
+        "[deprecated] akm log is deprecated and is removed in 0.11: use `akm doctor log`. See STABILITY.md."
+      ]
+    },
+    "log after use :: log --ref env/app": {
+      "exit": 0,
+      "stdout": {
+        "ref": "main//env/app",
+        "totalCount": 0,
+        "events": [],
+        "nextOffset": 0
+      },
+      "stderr": [
+        "[deprecated] akm log is deprecated and is removed in 0.11: use `akm doctor log`. See STABILITY.md."
+      ]
+    },
+    "log after use :: log --ref env/app.env": {
+      "exit": 0,
+      "stdout": {
+        "ref": "main//env/app.env",
+        "totalCount": 0,
+        "events": [],
+        "nextOffset": 0
+      },
+      "stderr": [
+        "[deprecated] akm log is deprecated and is removed in 0.11: use `akm doctor log`. See STABILITY.md."
+      ]
+    },
+    "nested bundles :: index": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "stashDir": "<SANDBOX>/fixture/main",
+        "totalEntries": 58,
+        "generatedMetadata": 59,
+        "indexPath": "<SANDBOX>/data/akm/index.db",
+        "mode": "full",
+        "directoriesScanned": 42,
+        "directoriesSkipped": 0,
+        "scanComplete": true,
+        "incompleteSources": [],
+        "warnings": [
+          "Two files claim team//tasks/twin: indexed <SANDBOX>/fixture/team/tasks/twin.md, skipped <SANDBOX>/fixture/team/tasks/twin.yml."
+        ],
+        "configUpdated": {
+          "detectedAdapters": {
+            "main": "akm",
+            "team": "akm",
+            "a": "akm",
+            "s": "akm"
+          }
+        },
+        "verification": {
+          "ok": true,
+          "message": "Keyword index ready. Semantic search is disabled.",
+          "semanticSearchEnabled": false,
+          "semanticSearchMode": "off",
+          "semanticStatus": "disabled",
+          "embeddingProvider": "local",
+          "entryCount": 58,
+          "embeddingCount": 0
+        },
+        "timing": {
+          "totalMs": "<DURATION>",
+          "walkMs": "<DURATION>",
+          "llmMs": "<DURATION>",
+          "embedMs": "<DURATION>",
+          "ftsMs": "<DURATION>",
+          "finalizeMs": "<DURATION>",
+          "cleanMs": "<DURATION>",
+          "preflightMs": "<DURATION>",
+          "sourceCacheMs": "<DURATION>",
+          "endToEndMs": "<DURATION>"
+        },
+        "shape": "index",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[index:preflight] Validating durable state.",
+        "[index:preflight] Hydrating source caches.",
+        "[index] Detected adapters for main → akm, team → akm, a → akm, s → akm; persisted to config.json (bundles.<id>.components.<component>.adapter).",
+        "[index:preflight] Resolved 9 stash sources.",
+        "[index:summary] Starting full index (9 stash sources, semantic search: disabled).",
+        "[index:scan] [1/9] Processed 1/9 sources.",
+        "[index:scan] [2/9] Processed 2/9 sources.",
+        "[index:scan] [3/9] Processed 3/9 sources.",
+        "[index:scan] [4/9] Processed 4/9 sources.",
+        "[index:scan] [5/9] Processed 5/9 sources.",
+        "[index:scan] [6/9] Processed 6/9 sources.",
+        "[index:scan] [7/9] Processed 7/9 sources.",
+        "[index:scan] [8/9] Processed 8/9 sources.",
+        "[index:scan] [9/9] Processed 9/9 sources.",
+        "[index:scan] Scanned 42 directories and skipped 0.",
+        "[index:embeddings] Semantic search disabled; skipping embeddings.",
+        "[index:finalize] Verifying semantic search state.",
+        "[index:verify] Keyword index ready. Semantic search is disabled.",
+        "[index:finalize] Grouping assets by meaning.",
+        "[index:fts] Full-text search index is current.",
+        "[index:finalize] Relinking usage events.",
+        "[index:finalize] Recomputing utility scores.",
+        "[index:finalize] Clearing stale LLM cache entries."
+      ]
+    },
+    "nested bundles :: env list": {
+      "exit": 0,
+      "stdout": {
+        "envs": [
+          {
+            "ref": "env/app",
+            "keys": [
+              "PLAIN",
+              "TOKEN",
+              "TEAM_KEY",
+              "SHARED",
+              "SCRIPT",
+              "HOME_COPY",
+              "SHELLISH"
+            ]
+          },
+          {
+            "ref": "team//env/team",
+            "keys": [
+              "TEAM_SECRET",
+              "TEAM_ONLY",
+              "MAIN_TOKEN"
+            ]
+          },
+          {
+            "ref": "a//env/outer",
+            "keys": [
+              "OUTER"
+            ]
+          },
+          {
+            "ref": "s//env/inner",
+            "keys": [
+              "INNER"
+            ]
+          }
+        ],
+        "shape": "env-list",
+        "schemaVersion": 1
+      }
+    },
+    "nested bundles :: show outer": {
+      "exit": 0,
+      "stdout": {
+        "type": "knowledge",
+        "name": "outer",
+        "ref": "a//knowledge/outer",
+        "origin": "a",
+        "action": "Reference material - read the content below. For a large document, run `akm show <ref> --outline` for its outline (`toc`, no body), then `akm show <ref>#<slug>` for only the sections you need.",
+        "content": "40 chars sha256:50d5c4cb4aa9a50d92f43e4bde2a0cf6a51ee7423ea706e6daece61881782fce",
+        "path": "<SANDBOX>/fixture/st/knowledge/outer.md",
+        "editable": true
+      }
+    },
+    "nested bundles :: show inner": {
+      "exit": 0,
+      "stdout": {
+        "type": "knowledge",
+        "name": "inner",
+        "ref": "s//knowledge/inner",
+        "origin": "s",
+        "action": "Reference material - read the content below. For a large document, run `akm show <ref> --outline` for its outline (`toc`, no body), then `akm show <ref>#<slug>` for only the sections you need.",
+        "content": "40 chars sha256:f32abbf544eb248229fef3adc49d9e47b2fe863ca56c4e28a2bf37fee35e6779",
+        "path": "<SANDBOX>/fixture/st/team/knowledge/inner.md",
+        "editable": true
+      }
+    },
+    "nested bundles :: show s//inner": {
+      "exit": 0,
+      "stdout": {
+        "type": "knowledge",
+        "name": "inner",
+        "ref": "s//knowledge/inner",
+        "origin": "s",
+        "action": "Reference material - read the content below. For a large document, run `akm show <ref> --outline` for its outline (`toc`, no body), then `akm show <ref>#<slug>` for only the sections you need.",
+        "content": "40 chars sha256:f32abbf544eb248229fef3adc49d9e47b2fe863ca56c4e28a2bf37fee35e6779",
+        "path": "<SANDBOX>/fixture/st/team/knowledge/inner.md",
+        "editable": true
+      }
+    },
+    "nested bundles :: search note": {
+      "exit": 0,
+      "stdout": {
+        "hits": [
+          {
+            "type": "note",
+            "name": "note",
+            "ref": "wiki//pages/note",
+            "action": "akm show wiki//pages/note",
+            "estimatedTokens": 21
+          },
+          {
+            "type": "memory",
+            "name": "deploy-note",
+            "ref": "memories/deploy-note",
+            "action": "akm show memories/deploy-note -> recall context",
+            "estimatedTokens": 36
+          },
+          {
+            "type": "memory",
+            "name": "team-note",
+            "ref": "team//memories/team-note",
+            "action": "akm show team//memories/team-note -> recall context",
+            "estimatedTokens": 24
+          },
+          {
+            "type": "knowledge",
+            "name": "outer",
+            "ref": "a//knowledge/outer",
+            "action": "akm show a//knowledge/outer -> read reference material",
+            "estimatedTokens": 10
+          },
+          {
+            "type": "document",
+            "name": "n",
+            "ref": "files//notes/n",
+            "action": "akm show files//notes/n",
+            "estimatedTokens": 11
+          },
+          {
+            "type": "knowledge",
+            "name": "tasks/twin",
+            "ref": "team//tasks/twin",
+            "action": "akm show team//tasks/twin -> read reference material",
+            "estimatedTokens": 29
+          },
+          {
+            "type": "knowledge",
+            "name": "team/knowledge/inner",
+            "ref": "a//team/knowledge/inner",
+            "action": "akm show a//team/knowledge/inner -> read reference material",
+            "estimatedTokens": 10
+          },
+          {
+            "type": "knowledge",
+            "name": "shared",
+            "ref": "team//knowledge/shared",
+            "action": "akm show team//knowledge/shared -> read reference material",
+            "estimatedTokens": 50
+          },
+          {
+            "type": "knowledge",
+            "name": "guide",
+            "ref": "knowledge/guide",
+            "action": "akm show knowledge/guide -> read reference material",
+            "estimatedTokens": 147
+          },
+          {
+            "type": "knowledge",
+            "name": "declares-lesson",
+            "ref": "knowledge/declares-lesson",
+            "action": "akm show knowledge/declares-lesson -> read reference material",
+            "estimatedTokens": 46
+          },
+          {
+            "type": "knowledge",
+            "name": "api/auth",
+            "ref": "knowledge/api/auth",
+            "action": "akm show knowledge/api/auth -> read reference material",
+            "estimatedTokens": 45
+          },
+          {
+            "type": "command",
+            "name": "knowledge/acts-like-command",
+            "ref": "knowledge/acts-like-command",
+            "action": "akm show knowledge/acts-like-command -> fill placeholders and dispatch",
+            "estimatedTokens": 45
+          }
+        ],
+        "searchMode": "keyword"
+      }
+    },
+    "nested bundles :: feedback inner": {
+      "exit": 1,
+      "errorJson": {
+        "ok": false,
+        "error": "Ref \"s//knowledge/inner\" is not in the index. Run 'akm search' to verify the asset exists, then 'akm index' if it was recently added.",
+        "code": "ASSET_NOT_FOUND",
+        "hint": "Run `akm search <query>` or `akm index` to refresh the index."
+      }
+    },
+    "nested bundles :: index again": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "stashDir": "<SANDBOX>/fixture/main",
+        "totalEntries": 58,
+        "generatedMetadata": 3,
+        "indexPath": "<SANDBOX>/data/akm/index.db",
+        "mode": "incremental",
+        "directoriesScanned": 1,
+        "directoriesSkipped": 41,
+        "scanComplete": true,
+        "incompleteSources": [],
+        "warnings": [
+          "Two files claim team//tasks/twin: indexed <SANDBOX>/fixture/team/tasks/twin.md, skipped <SANDBOX>/fixture/team/tasks/twin.yml."
+        ],
+        "verification": {
+          "ok": true,
+          "message": "Keyword index ready. Semantic search is disabled.",
+          "semanticSearchEnabled": false,
+          "semanticSearchMode": "off",
+          "semanticStatus": "disabled",
+          "embeddingProvider": "local",
+          "entryCount": 58,
+          "embeddingCount": 0
+        },
+        "timing": {
+          "totalMs": "<DURATION>",
+          "walkMs": "<DURATION>",
+          "llmMs": "<DURATION>",
+          "embedMs": "<DURATION>",
+          "ftsMs": "<DURATION>",
+          "finalizeMs": "<DURATION>",
+          "cleanMs": "<DURATION>",
+          "preflightMs": "<DURATION>",
+          "sourceCacheMs": "<DURATION>",
+          "endToEndMs": "<DURATION>"
+        },
+        "shape": "index",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[index:preflight] Validating durable state.",
+        "[index:preflight] Hydrating source caches.",
+        "[index:preflight] Resolved 9 stash sources.",
+        "[index:summary] Starting incremental index (9 stash sources, semantic search: disabled).",
+        "[index:scan] [1/9] Processed 1/9 sources.",
+        "[index:scan] [2/9] Processed 2/9 sources.",
+        "[index:scan] [3/9] Processed 3/9 sources.",
+        "[index:scan] [4/9] Processed 4/9 sources.",
+        "[index:scan] [5/9] Processed 5/9 sources.",
+        "[index:scan] [6/9] Processed 6/9 sources.",
+        "[index:scan] [7/9] Processed 7/9 sources.",
+        "[index:scan] [8/9] Processed 8/9 sources.",
+        "[index:scan] [9/9] Processed 9/9 sources.",
+        "[index:scan] Scanned 1 directory and skipped 41.",
+        "[index:embeddings] Semantic search disabled; skipping embeddings.",
+        "[index:finalize] Verifying semantic search state.",
+        "[index:verify] Keyword index ready. Semantic search is disabled.",
+        "[index:finalize] Grouping assets by meaning.",
+        "[index:fts] Full-text search index is current.",
+        "[index:finalize] Relinking usage events.",
+        "[index:finalize] Recomputing utility scores.",
+        "[index:finalize] Clearing stale LLM cache entries."
+      ]
+    },
+    "nested bundles :: search note after": {
+      "exit": 0,
+      "stdout": {
+        "hits": [
+          {
+            "type": "note",
+            "name": "note",
+            "ref": "wiki//pages/note",
+            "action": "akm show wiki//pages/note",
+            "estimatedTokens": 21
+          },
+          {
+            "type": "memory",
+            "name": "deploy-note",
+            "ref": "memories/deploy-note",
+            "action": "akm show memories/deploy-note -> recall context",
+            "estimatedTokens": 36
+          },
+          {
+            "type": "memory",
+            "name": "team-note",
+            "ref": "team//memories/team-note",
+            "action": "akm show team//memories/team-note -> recall context",
+            "estimatedTokens": 24
+          },
+          {
+            "type": "knowledge",
+            "name": "outer",
+            "ref": "a//knowledge/outer",
+            "action": "akm show a//knowledge/outer -> read reference material",
+            "estimatedTokens": 10
+          },
+          {
+            "type": "document",
+            "name": "n",
+            "ref": "files//notes/n",
+            "action": "akm show files//notes/n",
+            "estimatedTokens": 11
+          },
+          {
+            "type": "knowledge",
+            "name": "tasks/twin",
+            "ref": "team//tasks/twin",
+            "action": "akm show team//tasks/twin -> read reference material",
+            "estimatedTokens": 29
+          },
+          {
+            "type": "knowledge",
+            "name": "team/knowledge/inner",
+            "ref": "a//team/knowledge/inner",
+            "action": "akm show a//team/knowledge/inner -> read reference material",
+            "estimatedTokens": 10
+          },
+          {
+            "type": "knowledge",
+            "name": "shared",
+            "ref": "team//knowledge/shared",
+            "action": "akm show team//knowledge/shared -> read reference material",
+            "estimatedTokens": 50
+          },
+          {
+            "type": "knowledge",
+            "name": "guide",
+            "ref": "knowledge/guide",
+            "action": "akm show knowledge/guide -> read reference material",
+            "estimatedTokens": 147
+          },
+          {
+            "type": "knowledge",
+            "name": "declares-lesson",
+            "ref": "knowledge/declares-lesson",
+            "action": "akm show knowledge/declares-lesson -> read reference material",
+            "estimatedTokens": 46
+          },
+          {
+            "type": "knowledge",
+            "name": "api/auth",
+            "ref": "knowledge/api/auth",
+            "action": "akm show knowledge/api/auth -> read reference material",
+            "estimatedTokens": 45
+          },
+          {
+            "type": "command",
+            "name": "knowledge/acts-like-command",
+            "ref": "knowledge/acts-like-command",
+            "action": "akm show knowledge/acts-like-command -> fill placeholders and dispatch",
+            "estimatedTokens": 45
+          }
+        ],
+        "searchMode": "keyword"
+      }
+    },
+    "nested bundles :: index rows": {
+      "value": [
+        {
+          "item_ref": "a//env/outer",
+          "type": "env",
+          "file_path": "<SANDBOX>/fixture/st/env/outer.env"
+        },
+        {
+          "item_ref": "a//knowledge/outer",
+          "type": "knowledge",
+          "file_path": "<SANDBOX>/fixture/st/knowledge/outer.md"
+        },
+        {
+          "item_ref": "a//team/env/inner",
+          "type": "env",
+          "file_path": "<SANDBOX>/fixture/st/team/env/inner.env"
+        },
+        {
+          "item_ref": "a//team/knowledge/inner",
+          "type": "knowledge",
+          "file_path": "<SANDBOX>/fixture/st/team/knowledge/inner.md"
+        },
+        {
+          "item_ref": "files//data/table.json",
+          "type": "file",
+          "file_path": "<SANDBOX>/fixture/files/data/table.json"
+        },
+        {
+          "item_ref": "files//docs/readme",
+          "type": "document",
+          "file_path": "<SANDBOX>/fixture/files/docs/readme.txt"
+        },
+        {
+          "item_ref": "files//notes/n",
+          "type": "document",
+          "file_path": "<SANDBOX>/fixture/files/notes/n.md"
+        },
+        {
+          "item_ref": "files//scripts/tool.py",
+          "type": "script",
+          "file_path": "<SANDBOX>/fixture/files/scripts/tool.py"
+        },
+        {
+          "item_ref": "flows//deploy",
+          "type": "workflow",
+          "file_path": "<SANDBOX>/fixture/flows/deploy.md"
+        },
+        {
+          "item_ref": "main//agents/reviewer",
+          "type": "agent",
+          "file_path": "<SANDBOX>/fixture/main/agents/reviewer.md"
+        },
+        {
+          "item_ref": "main//commands/release",
+          "type": "command",
+          "file_path": "<SANDBOX>/fixture/main/commands/release.md"
+        },
+        {
+          "item_ref": "main//env/app",
+          "type": "env",
+          "file_path": "<SANDBOX>/fixture/main/env/app.env"
+        },
+        {
+          "item_ref": "main//knowledge/Case-Variant",
+          "type": "knowledge",
+          "file_path": "<SANDBOX>/fixture/main/knowledge/Case-Variant.md"
+        },
+        {
+          "item_ref": "main//knowledge/acts-like-command",
+          "type": "command",
+          "file_path": "<SANDBOX>/fixture/main/knowledge/acts-like-command.md"
+        },
+        {
+          "item_ref": "main//knowledge/api/auth",
+          "type": "knowledge",
+          "file_path": "<SANDBOX>/fixture/main/knowledge/api/auth.md"
+        },
+        {
+          "item_ref": "main//knowledge/declares-lesson",
+          "type": "knowledge",
+          "file_path": "<SANDBOX>/fixture/main/knowledge/declares-lesson.md"
+        },
+        {
+          "item_ref": "main//knowledge/dup",
+          "type": "knowledge",
+          "file_path": "<SANDBOX>/fixture/main/knowledge/dup.md"
+        },
+        {
+          "item_ref": "main//knowledge/guide",
+          "type": "knowledge",
+          "file_path": "<SANDBOX>/fixture/main/knowledge/guide.md"
+        },
+        {
+          "item_ref": "main//knowledge/old-guide",
+          "type": "knowledge",
+          "file_path": "<SANDBOX>/fixture/main/knowledge/old-guide.md"
+        },
+        {
+          "item_ref": "main//lessons/retry",
+          "type": "lesson",
+          "file_path": "<SANDBOX>/fixture/main/lessons/retry.md"
+        },
+        {
+          "item_ref": "main//memories/deploy-note",
+          "type": "memory",
+          "file_path": "<SANDBOX>/fixture/main/memories/deploy-note.md"
+        },
+        {
+          "item_ref": "main//memories/deploy-note.derived",
+          "type": "memory",
+          "file_path": "<SANDBOX>/fixture/main/memories/deploy-note.derived.md"
+        },
+        {
+          "item_ref": "main//memories/successor",
+          "type": "memory",
+          "file_path": "<SANDBOX>/fixture/main/memories/successor.md"
+        },
+        {
+          "item_ref": "main//reports/quarterly",
+          "type": "knowledge",
+          "file_path": "<SANDBOX>/fixture/main/reports/quarterly.md"
+        },
+        {
+          "item_ref": "main//scripts/deploy.sh",
+          "type": "script",
+          "file_path": "<SANDBOX>/fixture/main/scripts/deploy.sh"
+        },
+        {
+          "item_ref": "main//scripts/greet.sh",
+          "type": "script",
+          "file_path": "<SANDBOX>/fixture/main/scripts/greet.sh"
+        },
+        {
+          "item_ref": "main//scripts/hello.sh",
+          "type": "script",
+          "file_path": "<SANDBOX>/fixture/main/scripts/hello.sh"
+        },
+        {
+          "item_ref": "main//scripts/printenv.sh",
+          "type": "script",
+          "file_path": "<SANDBOX>/fixture/main/scripts/printenv.sh"
+        },
+        {
+          "item_ref": "main//secrets/api-token",
+          "type": "secret",
+          "file_path": "<SANDBOX>/fixture/main/secrets/api-token"
+        },
+        {
+          "item_ref": "main//secrets/shared-secret",
+          "type": "secret",
+          "file_path": "<SANDBOX>/fixture/main/secrets/shared-secret"
+        },
+        {
+          "item_ref": "main//skills/deploy",
+          "type": "skill",
+          "file_path": "<SANDBOX>/fixture/main/skills/deploy/SKILL.md"
+        },
+        {
+          "item_ref": "main//skills/twinned",
+          "type": "skill",
+          "file_path": "<SANDBOX>/fixture/main/skills/twinned/SKILL.md"
+        },
+        {
+          "item_ref": "main//tasks/greet",
+          "type": "task",
+          "file_path": "<SANDBOX>/fixture/main/tasks/greet.yml"
+        },
+        {
+          "item_ref": "main//tasks/inline",
+          "type": "task",
+          "file_path": "<SANDBOX>/fixture/main/tasks/inline.yml"
+        },
+        {
+          "item_ref": "main//tasks/nightly",
+          "type": "task",
+          "file_path": "<SANDBOX>/fixture/main/tasks/nightly.yml"
+        },
+        {
+          "item_ref": "main//tasks/report",
+          "type": "task",
+          "file_path": "<SANDBOX>/fixture/main/tasks/report.yml"
+        },
+        {
+          "item_ref": "main//tasks/shell",
+          "type": "task",
+          "file_path": "<SANDBOX>/fixture/main/tasks/shell.yml"
+        },
+        {
+          "item_ref": "main//wikis/lab/pages/attention",
+          "type": "knowledge",
+          "file_path": "<SANDBOX>/fixture/main/wikis/lab/pages/attention.md"
+        },
+        {
+          "item_ref": "main//wikis/lab/raw/snapshot",
+          "type": "wiki-source",
+          "file_path": "<SANDBOX>/fixture/main/wikis/lab/raw/snapshot.md"
+        },
+        {
+          "item_ref": "main//workflows/inner",
+          "type": "workflow",
+          "file_path": "<SANDBOX>/fixture/main/workflows/inner.md"
+        },
+        {
+          "item_ref": "main//workflows/ship",
+          "type": "workflow",
+          "file_path": "<SANDBOX>/fixture/main/workflows/ship.md"
+        },
+        {
+          "item_ref": "okf//concepts/ada",
+          "type": "person",
+          "file_path": "<SANDBOX>/fixture/okf/concepts/ada.md"
+        },
+        {
+          "item_ref": "okf//concepts/plain",
+          "type": "knowledge",
+          "file_path": "<SANDBOX>/fixture/okf/concepts/plain.md"
+        },
+        {
+          "item_ref": "snapshot//example-com/tagged",
+          "type": "website",
+          "file_path": "<SANDBOX>/fixture/snapshot/stash/knowledge/example-com/tagged.md"
+        },
+        {
+          "item_ref": "team//env/team",
+          "type": "env",
+          "file_path": "<SANDBOX>/fixture/team/env/team.env"
+        },
+        {
+          "item_ref": "team//knowledge/dup",
+          "type": "knowledge",
+          "file_path": "<SANDBOX>/fixture/team/knowledge/dup.md"
+        },
+        {
+          "item_ref": "team//knowledge/shared",
+          "type": "knowledge",
+          "file_path": "<SANDBOX>/fixture/team/knowledge/shared.md"
+        },
+        {
+          "item_ref": "team//memories/team-note",
+          "type": "memory",
+          "file_path": "<SANDBOX>/fixture/team/memories/team-note.md"
+        },
+        {
+          "item_ref": "team//scripts/greet.sh",
+          "type": "script",
+          "file_path": "<SANDBOX>/fixture/team/scripts/greet.sh"
+        },
+        {
+          "item_ref": "team//secrets/shared-secret",
+          "type": "secret",
+          "file_path": "<SANDBOX>/fixture/team/secrets/shared-secret"
+        },
+        {
+          "item_ref": "team//secrets/team-key",
+          "type": "secret",
+          "file_path": "<SANDBOX>/fixture/team/secrets/team-key"
+        },
+        {
+          "item_ref": "team//skills/review",
+          "type": "skill",
+          "file_path": "<SANDBOX>/fixture/team/skills/review/SKILL.md"
+        },
+        {
+          "item_ref": "team//tasks/team-task",
+          "type": "task",
+          "file_path": "<SANDBOX>/fixture/team/tasks/team-task.yml"
+        },
+        {
+          "item_ref": "team//tasks/twin",
+          "type": "knowledge",
+          "file_path": "<SANDBOX>/fixture/team/tasks/twin.md"
+        },
+        {
+          "item_ref": "team//workflows/release",
+          "type": "workflow",
+          "file_path": "<SANDBOX>/fixture/team/workflows/release.md"
+        },
+        {
+          "item_ref": "wiki//pages/attention",
+          "type": "concept",
+          "file_path": "<SANDBOX>/fixture/wiki/pages/attention.md"
+        },
+        {
+          "item_ref": "wiki//pages/note",
+          "type": "note",
+          "file_path": "<SANDBOX>/fixture/wiki/pages/note.md"
+        },
+        {
+          "item_ref": "wiki//raw/source",
+          "type": "wiki-source",
+          "file_path": "<SANDBOX>/fixture/wiki/raw/source.md"
+        }
+      ]
+    },
+    "embeddings :: index --full": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "stashDir": "<SANDBOX>/fixture/main",
+        "totalEntries": 54,
+        "generatedMetadata": 55,
+        "indexPath": "<SANDBOX>/data/akm/index.db",
+        "mode": "full",
+        "directoriesScanned": 38,
+        "directoriesSkipped": 0,
+        "scanComplete": true,
+        "incompleteSources": [],
+        "warnings": [
+          "Two files claim team//tasks/twin: indexed <SANDBOX>/fixture/team/tasks/twin.md, skipped <SANDBOX>/fixture/team/tasks/twin.yml."
+        ],
+        "configUpdated": {
+          "detectedAdapters": {
+            "main": "akm",
+            "team": "akm"
+          }
+        },
+        "verification": {
+          "ok": true,
+          "message": "Semantic search ready (54/54 embeddings).",
+          "semanticSearchEnabled": true,
+          "semanticSearchMode": "auto",
+          "semanticStatus": "ready-js",
+          "embeddingProvider": "remote",
+          "entryCount": 54,
+          "embeddingCount": 54
+        },
+        "timing": {
+          "totalMs": "<DURATION>",
+          "walkMs": "<DURATION>",
+          "llmMs": "<DURATION>",
+          "embedMs": "<DURATION>",
+          "ftsMs": "<DURATION>",
+          "finalizeMs": "<DURATION>",
+          "cleanMs": "<DURATION>",
+          "preflightMs": "<DURATION>",
+          "sourceCacheMs": "<DURATION>",
+          "endToEndMs": "<DURATION>"
+        },
+        "shape": "index",
+        "schemaVersion": 1
+      },
+      "value": {
+        "memories/remembered": "not indexed",
+        "knowledge/doc": "not indexed",
+        "knowledge/guide-copy": "not indexed",
+        "knowledge/new-note": "not indexed",
+        "tasks/newtask": "not indexed",
+        "tasks/imported-task": "not indexed",
+        "env/newone": "not indexed",
+        "secrets/newsec": "not indexed",
+        "workflows/newflow": "not indexed"
+      }
+    },
+    "embeddings :: remember": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "memories/remembered",
+        "path": "<SANDBOX>/fixture/main/memories/remembered.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "remember",
+        "schemaVersion": 1
+      },
+      "value": {
+        "memories/remembered": "vector",
+        "knowledge/doc": "not indexed",
+        "knowledge/guide-copy": "not indexed",
+        "knowledge/new-note": "not indexed",
+        "tasks/newtask": "not indexed",
+        "tasks/imported-task": "not indexed",
+        "env/newone": "not indexed",
+        "secrets/newsec": "not indexed",
+        "workflows/newflow": "not indexed"
+      }
+    },
+    "embeddings :: import": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": "doc.md",
+        "ref": "knowledge/doc",
+        "path": "<SANDBOX>/fixture/main/knowledge/doc.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "import",
+        "schemaVersion": 1
+      },
+      "value": {
+        "memories/remembered": "vector",
+        "knowledge/doc": "vector",
+        "knowledge/guide-copy": "not indexed",
+        "knowledge/new-note": "not indexed",
+        "tasks/newtask": "not indexed",
+        "tasks/imported-task": "not indexed",
+        "env/newone": "not indexed",
+        "secrets/newsec": "not indexed",
+        "workflows/newflow": "not indexed"
+      }
+    },
+    "embeddings :: clone": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": {
+          "path": "<SANDBOX>/fixture/main/knowledge/guide.md",
+          "registryId": "main"
+        },
+        "destination": {
+          "path": "<SANDBOX>/fixture/main/knowledge/guide-copy.md",
+          "ref": "knowledge/guide-copy"
+        },
+        "overwritten": false,
+        "shape": "clone",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm clone is deprecated and is removed in 0.11: use `akm import <ref> --asset-ref`. See STABILITY.md."
+      ],
+      "value": {
+        "memories/remembered": "vector",
+        "knowledge/doc": "vector",
+        "knowledge/guide-copy": "vector",
+        "knowledge/new-note": "not indexed",
+        "tasks/newtask": "not indexed",
+        "tasks/imported-task": "not indexed",
+        "env/newone": "not indexed",
+        "secrets/newsec": "not indexed",
+        "workflows/newflow": "not indexed"
+      }
+    },
+    "embeddings :: proposal accept": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "id": "00000000-0000-4000-8000-000000000002",
+        "ref": "main//knowledge/new-note",
+        "assetPath": "<SANDBOX>/fixture/main/knowledge/new-note.md",
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "ref": "main//knowledge/new-note",
+          "status": "accepted",
+          "source": "reflect",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "<TIME>",
+          "confidence": 0.8,
+          "review": {
+            "outcome": "accepted",
+            "decidedAt": "<TIME>",
+            "decidedBy": "human"
+          }
+        }
+      },
+      "value": {
+        "memories/remembered": "vector",
+        "knowledge/doc": "vector",
+        "knowledge/guide-copy": "vector",
+        "knowledge/new-note": "vector",
+        "tasks/newtask": "not indexed",
+        "tasks/imported-task": "not indexed",
+        "env/newone": "not indexed",
+        "secrets/newsec": "not indexed",
+        "workflows/newflow": "not indexed"
+      }
+    },
+    "embeddings :: task add": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "id": "newtask",
+        "ref": "tasks/newtask",
+        "path": "<SANDBOX>/fixture/main/tasks/newtask.yml",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "schedule": "@daily",
+        "enabled": true,
+        "backend": "cron",
+        "target": {
+          "kind": "run",
+          "run": "echo hi"
+        },
+        "shape": "task-add",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md.",
+        "Scheduled tasks now run akm from a source checkout (<BUN> <TREE>/src/cli.ts); they run whatever the checkout holds when they fire. Install akm with `npm install --global akm-cli` or a standalone release, then run `akm doctor scheduler sync --rebind`."
+      ],
+      "value": {
+        "memories/remembered": "vector",
+        "knowledge/doc": "vector",
+        "knowledge/guide-copy": "vector",
+        "knowledge/new-note": "vector",
+        "tasks/newtask": "not indexed",
+        "tasks/imported-task": "not indexed",
+        "env/newone": "not indexed",
+        "secrets/newsec": "not indexed",
+        "workflows/newflow": "not indexed"
+      }
+    },
+    "embeddings :: import task": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": "t.yml",
+        "path": "<SANDBOX>/fixture/main/tasks/imported-task.yml",
+        "ref": "main//tasks/imported-task",
+        "shape": "import",
+        "schemaVersion": 1
+      },
+      "value": {
+        "memories/remembered": "vector",
+        "knowledge/doc": "vector",
+        "knowledge/guide-copy": "vector",
+        "knowledge/new-note": "vector",
+        "tasks/newtask": "not indexed",
+        "tasks/imported-task": "not indexed",
+        "env/newone": "not indexed",
+        "secrets/newsec": "not indexed",
+        "workflows/newflow": "not indexed"
+      }
+    },
+    "embeddings :: env create": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/newone",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "value": {
+        "memories/remembered": "vector",
+        "knowledge/doc": "vector",
+        "knowledge/guide-copy": "vector",
+        "knowledge/new-note": "vector",
+        "tasks/newtask": "not indexed",
+        "tasks/imported-task": "not indexed",
+        "env/newone": "not indexed",
+        "secrets/newsec": "not indexed",
+        "workflows/newflow": "not indexed"
+      }
+    },
+    "embeddings :: secret set": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "secrets/newsec",
+        "shape": "secret-set",
+        "schemaVersion": 1
+      },
+      "value": {
+        "memories/remembered": "vector",
+        "knowledge/doc": "vector",
+        "knowledge/guide-copy": "vector",
+        "knowledge/new-note": "vector",
+        "tasks/newtask": "not indexed",
+        "tasks/imported-task": "not indexed",
+        "env/newone": "not indexed",
+        "secrets/newsec": "not indexed",
+        "workflows/newflow": "not indexed"
+      }
+    },
+    "embeddings :: workflow create": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "workflows/newflow",
+        "path": "<SANDBOX>/fixture/main/workflows/newflow.md",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "shape": "workflow-create",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm workflow create is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ],
+      "value": {
+        "memories/remembered": "vector",
+        "knowledge/doc": "vector",
+        "knowledge/guide-copy": "vector",
+        "knowledge/new-note": "vector",
+        "tasks/newtask": "not indexed",
+        "tasks/imported-task": "not indexed",
+        "env/newone": "not indexed",
+        "secrets/newsec": "not indexed",
+        "workflows/newflow": "not indexed"
+      }
+    },
+    "embeddings :: index": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "stashDir": "<SANDBOX>/fixture/main",
+        "totalEntries": 63,
+        "generatedMetadata": 31,
+        "indexPath": "<SANDBOX>/data/akm/index.db",
+        "mode": "incremental",
+        "directoriesScanned": 7,
+        "directoriesSkipped": 31,
+        "scanComplete": true,
+        "incompleteSources": [],
+        "warnings": [
+          "Two files claim team//tasks/twin: indexed <SANDBOX>/fixture/team/tasks/twin.md, skipped <SANDBOX>/fixture/team/tasks/twin.yml."
+        ],
+        "verification": {
+          "ok": true,
+          "message": "Semantic search ready (63/63 embeddings).",
+          "semanticSearchEnabled": true,
+          "semanticSearchMode": "auto",
+          "semanticStatus": "ready-js",
+          "embeddingProvider": "remote",
+          "entryCount": 63,
+          "embeddingCount": 63
+        },
+        "timing": {
+          "totalMs": "<DURATION>",
+          "walkMs": "<DURATION>",
+          "llmMs": "<DURATION>",
+          "embedMs": "<DURATION>",
+          "ftsMs": "<DURATION>",
+          "finalizeMs": "<DURATION>",
+          "cleanMs": "<DURATION>",
+          "preflightMs": "<DURATION>",
+          "sourceCacheMs": "<DURATION>",
+          "endToEndMs": "<DURATION>"
+        },
+        "shape": "index",
+        "schemaVersion": 1
+      },
+      "value": {
+        "memories/remembered": "vector",
+        "knowledge/doc": "vector",
+        "knowledge/guide-copy": "vector",
+        "knowledge/new-note": "vector",
+        "tasks/newtask": "vector",
+        "tasks/imported-task": "vector",
+        "env/newone": "vector",
+        "secrets/newsec": "vector",
+        "workflows/newflow": "vector"
+      }
+    },
+    "created assets are searchable :: env create": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/newone",
+        "shape": "env-create",
+        "schemaVersion": 1
+      }
+    },
+    "created assets are searchable :: secret set": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "secrets/newsec",
+        "shape": "secret-set",
+        "schemaVersion": 1
+      }
+    },
+    "created assets are searchable :: task add": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "id": "newtask",
+        "ref": "tasks/newtask",
+        "path": "<SANDBOX>/fixture/main/tasks/newtask.yml",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "schedule": "@daily",
+        "enabled": true,
+        "backend": "cron",
+        "target": {
+          "kind": "run",
+          "run": "echo hi"
+        },
+        "shape": "task-add",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md.",
+        "Scheduled tasks now run akm from a source checkout (<BUN> <TREE>/src/cli.ts); they run whatever the checkout holds when they fire. Install akm with `npm install --global akm-cli` or a standalone release, then run `akm doctor scheduler sync --rebind`."
+      ]
+    },
+    "created assets are searchable :: workflow create": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "workflows/newflow",
+        "path": "<SANDBOX>/fixture/main/workflows/newflow.md",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "shape": "workflow-create",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm workflow create is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ]
+    },
+    "created assets are searchable :: search newone": {
+      "exit": 0,
+      "stdout": {
+        "hits": [],
+        "searchMode": "keyword",
+        "tip": "No matching stash assets were found. Try a different query or run 'akm index' to rebuild."
+      }
+    },
+    "created assets are searchable :: search newsec": {
+      "exit": 0,
+      "stdout": {
+        "hits": [],
+        "searchMode": "keyword",
+        "tip": "No matching stash assets were found. Try a different query or run 'akm index' to rebuild."
+      }
+    },
+    "created assets are searchable :: search newtask": {
+      "exit": 0,
+      "stdout": {
+        "hits": [],
+        "searchMode": "keyword",
+        "tip": "No matching stash assets were found. Try a different query or run 'akm index' to rebuild."
+      }
+    },
+    "created assets are searchable :: search newflow": {
+      "exit": 0,
+      "stdout": {
+        "hits": [],
+        "searchMode": "keyword",
+        "tip": "No matching stash assets were found. Try a different query or run 'akm index' to rebuild."
+      }
+    },
+    "created assets are searchable :: env list": {
+      "exit": 0,
+      "stdout": {
+        "envs": [
+          {
+            "ref": "env/newone",
+            "keys": []
+          },
+          {
+            "ref": "env/app",
+            "keys": [
+              "PLAIN",
+              "TOKEN",
+              "TEAM_KEY",
+              "SHARED",
+              "SCRIPT",
+              "HOME_COPY",
+              "SHELLISH"
+            ]
+          },
+          {
+            "ref": "team//env/team",
+            "keys": [
+              "TEAM_SECRET",
+              "TEAM_ONLY",
+              "MAIN_TOKEN"
+            ]
+          }
+        ],
+        "shape": "env-list",
+        "schemaVersion": 1
+      }
     }
   }
 }

@@ -19,6 +19,12 @@
  * unapproved change is found, and it is not weakened, skipped or allow-listed to pass. Resolve a failure by
  * reverting the change, or by registering it as approved and adding its row.
  *
+ * Cases that need a fixture or configuration of their own (a loose workflow, a symlink, a bundle with no adapter,
+ * stored proposals in several spellings, creating over an existing file, embeddings on, nested bundles) are the
+ * `SCENARIOS` of `tests/fixtures/reference-compat/scenarios.ts`, each in a fresh sandbox and recorded as
+ * `<scenario> :: <case>`. A difference found by review that no approved row covers yet is listed in `findings.json`:
+ * its case still fails and its message begins `OPEN FINDING`.
+ *
  * `tests/integration/previous-release-corpus.test.ts` is the per-format upgrade guard; this one is cross-cutting.
  */
 
@@ -45,6 +51,11 @@ const registry = JSON.parse(
   fs.readFileSync(path.join(FIXTURE_DIR, "differences.json"), "utf8"),
 ) as RegisteredDifference[];
 const stateSql = fs.readFileSync(path.join(FIXTURE_DIR, "state.sql"), "utf8");
+/** Differences found by review that no approved row covers yet: the case still fails, and its message says why. */
+const findings = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, "findings.json"), "utf8")) as Array<{
+  case: string;
+  note: string;
+}>;
 
 let actual: Record<string, CorpusResult> = {};
 let nodes: DifferenceNode[] = [];
@@ -72,8 +83,9 @@ describe(`references written before the adapter refactor resolve to the same ass
     test(id, () => {
       const unapproved = nodes.filter((n) => n.case === id && !approvedBy(n, registry));
       if (unapproved.length > 0) {
+        const finding = findings.find((f) => caseCovers(f.case, id));
         throw new Error(
-          `${unapproved.length} difference(s) from ${expectedFile.recordedFrom.slice(0, 8)} that no approved §0.2 row covers:\n${unapproved.map(describeNode).join("\n")}`,
+          `${finding ? `OPEN FINDING (no approved row covers it): ${finding.note}\n` : ""}${unapproved.length} difference(s) from ${expectedFile.recordedFrom.slice(0, 8)} that no approved §0.2 row covers:\n${unapproved.map(describeNode).join("\n")}`,
         );
       }
     });

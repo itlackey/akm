@@ -1,0 +1,26 @@
+[
+  {
+    "case": "create over existing :: task add off-case existing*",
+    "note": "`task add tt` with `tasks/tt.YML` present: 1f2e58c9 writes the twin tasks/tt.yml and exits 0; the working tree rewrites tt.YML, then exits 78 (INVALID_CONFIG_FILE: \"Enabled ref main//tasks/tt was not found\") while naming tasks/tt.yml as the written path; without --force it overwrites the existing task with no refusal. No approved row (N19 covers --force rewriting in place, not the failure or the unforced overwrite)."
+  },
+  {
+    "case": "create over existing :: remember off-case existing",
+    "note": "`remember --name mm` without --force with `memories/mm.MD` present: 1f2e58c9 wrote memories/mm.md beside it; the working tree overwrites mm.MD with no --force (the standard spelling is refused, exit 2). N19 covers --force only."
+  },
+  {
+    "case": "create over existing :: import off-case existing",
+    "note": "`import kk.md` without --force with `knowledge/kk.MD` present: 1f2e58c9 wrote knowledge/kk.md beside it; the working tree overwrites kk.MD with no --force (the standard spelling is refused, exit 2). N19 covers --force only."
+  },
+  {
+    "case": "env create :: main//env/default",
+    "note": "`env create main//env/default` with `env/default.env` present: 1f2e58c9 writes env/.env and exits 0; the working tree exits 0 and writes nothing. The approved N20 (refuse with RESOURCE_ALREADY_EXISTS) is not built yet, so no approved row covers a silent no-op."
+  },
+  {
+    "case": "symlinked workflow :: lint",
+    "note": "`akm lint` flags workflows/linked.md (a symlink to a .txt file) for `missing-updated`; 1f2e58c9 does not lint it. No approved row."
+  },
+  {
+    "case": "nested bundles :: *",
+    "note": "Bundle `a` at st/ with bundle `s` at st/team/: 1f2e58c9 files the nested files under `a` only (a//team/knowledge/inner, a//team/env/inner; `feedback s//knowledge/inner` exits 1, not in the index); the working tree finds the knowledge note as s//knowledge/inner, lists the env twice (a//team/env/inner and s//env/inner), and its second `index` scans 4 directories where 1f2e58c9 scans 1 (it rebuilds the full-text index). No approved row covers it (N22 covers config writes only); a regression D.4 restores."
+  }
+]

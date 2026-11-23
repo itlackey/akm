@@ -37,11 +37,14 @@ import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { SCENARIOS, type Scenario } from "./scenarios";
 import { dumpState, seedState } from "./seed-state";
 
 export const FIXTURE_DIR = import.meta.dir;
 /** The oldest timestamp the normaliser treats as written by the run; the fixture's own are all earlier. */
 const RUN_EPOCH = "2026-02-01";
+/** The one warning a config in the retired `bundles.<n>.components` form gets on every command (§0.2 A2). */
+const RETIRED_COMPONENTS_WARNING = /uses the retired bundles\.<name>\.components form/;
 
 export interface CorpusCase {
   id: string;
@@ -62,7 +65,9 @@ export interface CorpusResult {
   /** The JSON error object a failing command prints on stderr, parsed. */
   errorJson?: unknown;
   files?: Record<string, string>;
-  /** Rows, files or text a non-command probe read (state tables, the config file, the bundle trees). */
+  /** What the command changed in the bundles a scenario tracks (see `Scenario.track`). */
+  changes?: Record<string, { written: Record<string, string>; removed: string[] }>;
+  /** Rows, files or text a non-command probe read (state tables, the config file, the bundle trees, a scenario's probe). */
   value?: unknown;
 }
 
@@ -395,6 +400,8 @@ export interface Sandbox {
   env: Record<string, string>;
   stateDb: string;
   configFile: string;
+  /** The SQL `state.db` was built from, so a scenario can build a sandbox of its own. */
+  stateSql: string;
 }
 
 function copyDir(from: string, to: string): void {
@@ -467,7 +474,7 @@ export function buildSandbox(root: string, tree: string, stateSql: string): Sand
     LANG: "C.UTF-8",
     NO_COLOR: "1",
   };
-  return { root, tree, fixture, out, env, stateDb, configFile };
+  return { root, tree, fixture, out, env, stateDb, configFile, stateSql };
 }
 
 /** Build the pre-refactor tree's `state.db` in a scratch directory and freeze it, with the corpus rows, as SQL. */
@@ -499,11 +506,12 @@ function sha(text: string): string {
   return `sha256:${createHash("sha256").update(text).digest("hex")}`;
 }
 
-function normaliser(sandbox: Sandbox) {
+function normaliser(sandbox: Sandbox, port?: number) {
   const literals: Array<[string, string]> = [
     [sandbox.root, "<SANDBOX>"],
     [sandbox.tree, "<TREE>"],
     [process.execPath, "<BUN>"],
+    ...(port === undefined ? [] : ([[`127.0.0.1:${port}`, "127.0.0.1:<PORT>"]] as Array<[string, string]>)),
   ];
   const run = new Date(`${RUN_EPOCH}T00:00:00Z`).getTime();
   const isoRe = /\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z/g;
@@ -625,47 +633,52 @@ const STATE_PROBES: Array<{ id: string; sql: string }> = [
   { id: "task_history", sql: "SELECT task_id, status, target_kind, target_ref FROM task_history ORDER BY id" },
 ];
 
+/** Run one command of the corpus on `sandbox` and return what a user of it sees, normalised. */
+function runCase(sandbox: Sandbox, norm: ReturnType<typeof normaliser>, c: CorpusCase, quietA2 = false): CorpusResult {
+  const fill1 = (arg: string) =>
+    arg.split("{OUT}").join(sandbox.out).split("{BUNDLE_MAIN}").join(path.join(sandbox.fixture, "main"));
+  const res = spawn(sandbox, c.args.map(fill1), c.stdin);
+  const result: CorpusResult = { exit: res.exitCode };
+  const trimmed = res.stdout.trim();
+  let parsed: unknown;
+  if (trimmed.length > 0) {
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      parsed = undefined;
+    }
+    result.stdout =
+      parsed !== undefined
+        ? norm.value(c.args[0] === "show" ? hashContent(parsed) : parsed)
+        : norm.text(trimmed).split("\n");
+  }
+  const err = splitStderr(res.stderr);
+  const lines = quietA2 ? err.lines.filter((l) => !RETIRED_COMPONENTS_WARNING.test(l)) : err.lines;
+  if (lines.length > 0) result.stderr = lines.map((l) => norm.text(l));
+  if (err.json !== undefined) result.errorJson = norm.value(err.json);
+  if (c.readFiles) {
+    result.files = {};
+    for (const f of c.readFiles) {
+      const file = path.join(sandbox.out, f);
+      result.files[f] = fs.existsSync(file) ? norm.text(fs.readFileSync(file, "utf8")) : "<not written>";
+    }
+  }
+  // A task run names its log; what the task printed is what shows which asset a `uses:` ref resolved to.
+  const log = (parsed as { result?: { log?: unknown } } | undefined)?.result?.log;
+  const logFile = typeof log === "string" ? log : undefined;
+  if (logFile && fs.existsSync(logFile)) {
+    result.files = { ...result.files, "task log": norm.text(fs.readFileSync(logFile, "utf8")) };
+  }
+  return result;
+}
+
 /** Run every case of the corpus on `sandbox`'s tree, in order, and return the normalised results by case id. */
 export function runCorpus(sandbox: Sandbox, onCase?: (id: string) => void): Record<string, CorpusResult> {
   const norm = normaliser(sandbox);
   const results: Record<string, CorpusResult> = {};
-  const fill1 = (arg: string) =>
-    arg.split("{OUT}").join(sandbox.out).split("{BUNDLE_MAIN}").join(path.join(sandbox.fixture, "main"));
-
   for (const c of corpusCases()) {
     onCase?.(c.id);
-    const res = spawn(sandbox, c.args.map(fill1), c.stdin);
-    const result: CorpusResult = { exit: res.exitCode };
-    const trimmed = res.stdout.trim();
-    let parsed: unknown;
-    if (trimmed.length > 0) {
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch {
-        parsed = undefined;
-      }
-      result.stdout =
-        parsed !== undefined
-          ? norm.value(c.args[0] === "show" ? hashContent(parsed) : parsed)
-          : norm.text(trimmed).split("\n");
-    }
-    const err = splitStderr(res.stderr);
-    if (err.lines.length > 0) result.stderr = err.lines.map((l) => norm.text(l));
-    if (err.json !== undefined) result.errorJson = norm.value(err.json);
-    if (c.readFiles) {
-      result.files = {};
-      for (const f of c.readFiles) {
-        const file = path.join(sandbox.out, f);
-        result.files[f] = fs.existsSync(file) ? norm.text(fs.readFileSync(file, "utf8")) : "<not written>";
-      }
-    }
-    // A task run names its log; what the task printed is what shows which asset a `uses:` ref resolved to.
-    const log = (parsed as { result?: { log?: unknown } } | undefined)?.result?.log;
-    const logFile = typeof log === "string" ? log : undefined;
-    if (logFile && fs.existsSync(logFile)) {
-      result.files = { ...result.files, "task log": norm.text(fs.readFileSync(logFile, "utf8")) };
-    }
-    results[c.id] = result;
+    results[c.id] = runCase(sandbox, norm, c);
   }
 
   // What the run left behind: the config file, the stored rows, the files each bundle gained, changed or lost, the scheduler table.
@@ -684,5 +697,90 @@ export function runCorpus(sandbox: Sandbox, onCase?: (id: string) => void): Reco
   results["file crontab"] = {
     value: fs.existsSync(crontab) ? norm.text(fs.readFileSync(crontab, "utf8")).split("\n") : "<none>",
   };
+  for (const scenario of SCENARIOS) Object.assign(results, runScenario(sandbox, scenario, onCase));
   return results;
+}
+
+/** A fake OpenAI-compatible embeddings server in a process of its own (the corpus runs commands synchronously). */
+function startEmbeddingsServer(dir: string): { port: number; stop: () => void } {
+  const portFile = path.join(dir, "embeddings.port");
+  const proc = Bun.spawn([process.execPath, path.join(FIXTURE_DIR, "fake-embeddings.ts"), portFile], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  for (let waited = 0; !fs.existsSync(portFile) || fs.readFileSync(portFile, "utf8").length === 0; waited += 20) {
+    if (waited > 10_000) {
+      proc.kill();
+      throw new Error("the fake embeddings server did not start");
+    }
+    Bun.sleepSync(20);
+  }
+  return { port: Number(fs.readFileSync(portFile, "utf8")), stop: () => proc.kill() };
+}
+
+/**
+ * Run one scenario in a sandbox of its own, beside the main one, and return its results keyed `<scenario> :: <case>`.
+ * A scenario's stderr leaves out the A2 config warning: the main run's every case already shows it, and here it would
+ * add a line to each case that has warnings of its own.
+ */
+export function runScenario(
+  main: Sandbox,
+  scenario: Scenario,
+  onCase?: (id: string) => void,
+): Record<string, CorpusResult> {
+  const sandbox = buildSandbox(
+    path.join(path.dirname(main.root), `scenario-${scenario.id.replace(/\W+/g, "-")}`),
+    main.tree,
+    main.stateSql,
+  );
+  const server = scenario.embeddings ? startEmbeddingsServer(sandbox.root) : undefined;
+  try {
+    if (server) {
+      const cfg = JSON.parse(fs.readFileSync(sandbox.configFile, "utf8"));
+      cfg.semanticSearchMode = "auto";
+      cfg.embedding = {
+        endpoint: `http://127.0.0.1:${server.port}/v1`,
+        model: "fake",
+        dimension: 8,
+        provider: "openai",
+      };
+      fs.writeFileSync(sandbox.configFile, JSON.stringify(cfg, null, 2));
+    }
+    scenario.setup?.(sandbox);
+    for (const args of scenario.prep ?? []) spawn(sandbox, args);
+    const pristine = path.join(sandbox.root, "pristine");
+    // What a case changed is measured from the bundles as they stood before it ran.
+    const snapshot = () => {
+      fs.rmSync(pristine, { recursive: true, force: true });
+      for (const bundle of scenario.track ?? [])
+        copyDir(path.join(sandbox.fixture, bundle), path.join(pristine, bundle));
+    };
+
+    const norm = normaliser(sandbox, server?.port);
+    const results: Record<string, CorpusResult> = {};
+    for (const c of scenario.cases) {
+      const id = `${scenario.id} :: ${c.id}`;
+      onCase?.(id);
+      snapshot();
+      const result = runCase(sandbox, norm, c, true);
+      if (scenario.track) {
+        result.changes = {};
+        for (const bundle of scenario.track) {
+          result.changes[bundle] = bundleChanges(
+            path.join(sandbox.fixture, bundle),
+            path.join(pristine, bundle),
+            norm.text,
+          );
+        }
+      }
+      if (scenario.after) result.value = norm.value(scenario.after(sandbox));
+      results[id] = result;
+    }
+    for (const [name, read] of Object.entries(scenario.finals ?? {})) {
+      results[`${scenario.id} :: ${name}`] = { value: norm.value(read(sandbox)) };
+    }
+    return results;
+  } finally {
+    server?.stop();
+  }
 }
