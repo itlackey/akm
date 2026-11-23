@@ -52,14 +52,15 @@ $EDITOR "$(akm env path env/prod --quiet)"
 akm env list
 akm show env/prod                         # key names only (see "Indexing" below)
 
-# Inject the whole .env into a subprocess:
-akm exec --env env/prod -- ./deploy.sh
+# Inject the whole .env into a script asset's process:
+akm run --env env/prod scripts/deploy.sh
+akm run tasks/deploy --env env/prod       # the same, for a task
+# Any other program: akm exec (Experimental; off until experimental.exec is true)
 akm exec --env env/prod -- $SHELL         # interactive session with the env loaded
-akm run tasks/deploy --env env/prod       # the same, for an akm asset
 
 # Store a single credential as a secret:
 printf '%s' "$TOKEN" | akm secret set secrets/deploy-token
-akm exec --secret secrets/deploy-token:GITHUB_TOKEN -- gh release create v1.0.0
+akm run --secret secrets/deploy-token:GITHUB_TOKEN scripts/release.sh
 
 # Write into a specific source instead of the working bundle:
 akm secret set secrets/deploy-token --bundle team --from-file ./token
@@ -119,10 +120,11 @@ migrate apply` rewrites it as `${secrets/name}`.
 ## Running commands
 
 `akm exec` is Experimental and off by default; `akm config set experimental.exec
-true` turns it on. `akm exec [--env <ref>]... [--secret <ref>:<VAR>]... -- <command>` spawns the
-command directly (no shell) with the values added to its environment. It exits
+true` turns it on. `akm exec [--env <ref>]... [--secret <ref>:<VAR>]... -- <command>` runs the
+command with the values added to its environment: one argument is a shell line,
+several are a program and its arguments (see [CLI: exec](cli.md#exec)). It exits
 with the command's status and is exempt from `--format`. `akm run <ref>` takes
-the same two flags and runs an agent, command, task or workflow with them (see
+the same two flags and runs a script, agent, command, task or workflow with them (see
 [CLI: run](cli.md#run)).
 
 - Both flags repeat. Env assets apply in the order given, then secrets over
@@ -132,12 +134,17 @@ the same two flags and runs an agent, command, task or workflow with them (see
   logs, agent replies, the workflow journal). `akm exec` hands the command the
   terminal, so its output is not scrubbed.
 - `akm env run <ref> -- <command>` and `akm secret run <ref> <VAR> -- <command>`
-  are Deprecated and removed in 0.11; use `akm exec`. `env run --only` and
-  `--except` have no `exec` form: keep the variables a command needs in an env
-  asset of their own.
+  are Deprecated and removed in 0.11: put the command in a script asset under
+  `scripts/` and run it with `akm run --env <ref> scripts/<file>` or
+  `akm run --secret <ref>:<VAR> scripts/<file>`. `env run --only` and `--except`
+  have no `run` form: keep the variables a command needs in an env asset of their
+  own.
 - `--clean` starts the child with a minimal inherited environment (`PATH`,
-  `HOME`, locale and terminal basics) instead of the full parent environment;
-  `--inherit NAME,NAME` adds parent variables back (only with `--clean`).
+  `HOME`, locale and terminal basics, and akm's own location variables
+  `AKM_CONFIG_DIR`, `AKM_CONFIG_FILE`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and
+  `AKM_STATE_DIR`) instead of the full parent environment; `--inherit NAME,NAME`
+  adds parent variables back. `--inherit` alone starts the child clean with those
+  variables. `akm run` takes `--clean` and `--inherit` the same way.
 - A value in an env file may contain a `${ref}` token, which injection replaces
   (see [The `${ref}` token](#the-ref-token)).
 - Injected values stay in the child's environment for its whole lifetime, so its
@@ -151,6 +158,39 @@ the same two flags and runs an agent, command, task or workflow with them (see
   non-blocking) so an author can review their own files.
 - Each run records an `env_access` or `secret_access` event with the key or
   variable names.
+
+## Secrets in a version 5 task
+
+A [version 5 task](tasks.md#task-source-v5-experimental) starts each script and
+`exec:` step in a clean environment, so a secret reaches only the steps it is
+given to. An agent step runs your harness in akm's environment as it is, with
+what the task, step and run name set over it, so what akm's own environment holds
+is there too:
+
+- A secret reaches a step through `secret:` or `--secret`, or through an env
+  asset that binds it to a variable. A task file names a secret only by its ref,
+  and only under `secret:`; a `${secrets/...}` in a command, a prompt, `args:` or
+  an `env:` value is refused before anything runs. A secret is not an input: a
+  task that needs one names it, and a caller cannot pass one in `args:`.
+- Before a step's result enters the run's state, and so before a later prompt can
+  contain it, akm replaces each secret value set for that run with `[REDACTED]`.
+  It does the same for logs and for a failed step's reason. A secret value is
+  what akm treats as one elsewhere: a secret's value, and the value, when it has
+  8 characters or more, of a variable whose name has `KEY`, `APIKEY`, `TOKEN`,
+  `SECRET`, `PASSWORD`, `PASSWD`, `PASS`, `PAT`, `CREDENTIAL`, `CREDENTIALS` or
+  `AUTH` as one of its `_`-separated parts, or is `PGPASSWORD` or `MYSQL_PWD`.
+- A credential kept under a plain name, such as a webhook address in
+  `NOTIFY_URL`, is not protected. Store it as a secret and give it with
+  `secret:`.
+- An agent that has a secret in its environment can print it with a command and
+  read it; akm cannot prevent that. Give a secret to the step that needs it, not
+  to the whole task or run.
+- akm removes secret values from results and logs, not from files. A script that
+  has a secret can write it into a file in the working folder, and an agent step
+  that reads the file sees it.
+- A bundle keeps its secrets and env assets as files. An agent that works in a
+  bundle can open them, and what it reads that way is not removed from its
+  reply. A run does not work in a bundle unless `cwd:` or `--cwd` names it.
 
 ## Files and storage
 
@@ -197,7 +237,7 @@ sources.
 
 ## Stability
 
-`env list`, `env path`, `env export` and `secret list` are Stable. `akm exec` is
+`env list`, `env path` and `secret list` are Stable. `env export` and `akm exec` are
 Experimental and off until `experimental.exec` is true. `env run` and `secret run` are Deprecated. `env create`, `env remove`, `secret set` and `secret remove` are Experimental. See
 [STABILITY.md](../../STABILITY.md).
 

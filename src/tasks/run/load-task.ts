@@ -35,10 +35,11 @@ import { assertBundleNotDisabled } from "../../sources/write-source";
 import type { TaskInvocation } from "../model/invocation";
 import { prepareTaskExecution } from "../prepare/prepare";
 import type { PreparedTaskExecution } from "../prepare/prepared-execution";
-import { parseTaskSource } from "../source/parse-task-source";
+import { parseTaskSource, taskValueInputs } from "../source/parse-task-source";
 import { projectTaskSourceV4 } from "../source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
 import { validateTaskConceptId, validateTaskId } from "../task-id";
+import type { PreparedTaskV5 } from "../v5/run";
 import type { RunTaskOptions } from "./task-result";
 
 /**
@@ -93,7 +94,10 @@ export function resolveBundleAsset(
 }
 
 /** Resolve, parse, and project one task asset into a frozen, executable projection. */
-export async function loadPreparedTask(id: string, options: RunTaskOptions): Promise<PreparedTaskExecution> {
+export async function loadPreparedTask(
+  id: string,
+  options: RunTaskOptions,
+): Promise<PreparedTaskExecution | PreparedTaskV5> {
   const bundleDir = options.bundleDir;
   const adapterId = options.adapterId ?? detectAdapterId(bundleDir);
   if (adapterId === "akm-task") validateTaskConceptId(id);
@@ -109,6 +113,18 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
   const filePath = owner.path;
   const yaml = fs.readFileSync(filePath, "utf8");
   const parsed = parseTaskSource({ yaml, filePath });
+  if (parsed.version !== 4) {
+    return Object.freeze({
+      kind: "v5" as const,
+      taskId: id,
+      ref: taskConceptId,
+      valueInputs: taskValueInputs(parsed),
+      bundle: Object.freeze({
+        name: options.bundleName ?? loadConfig().defaultBundle ?? DEFAULT_BUNDLE_NAME,
+        dir: bundleDir,
+      }),
+    });
+  }
   const source = projectTaskSourceV4(parsed.v4);
   const requiresCommandConfig =
     (source.target.kind === "uses" &&
@@ -131,13 +147,11 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
   // `--resume` is a flag of a steps task only (such a task cannot declare an input named `resume`);
   // for every other task it stays an ordinary input flag.
   const isStepsTask = source.target.kind === "steps";
+  const givenFlags = options.inputFlags?.(taskValueInputs(parsed)) ?? [];
   const resumeRequested =
-    isStepsTask &&
-    (options.inputFlags ?? []).some((flag) => flag.name === "resume" && flag.value !== false && flag.value !== "false");
-  const inputFlags = isStepsTask
-    ? (options.inputFlags ?? []).filter((flag) => flag.name !== "resume")
-    : options.inputFlags;
-  const materializedInputs = materializeInputFlags(inputContract, inputFlags ?? [], TASK_INPUT_DIAGNOSTICS);
+    isStepsTask && givenFlags.some((flag) => flag.name === "resume" && flag.value !== false && flag.value !== "false");
+  const inputFlags = isStepsTask ? givenFlags.filter((flag) => flag.name !== "resume") : givenFlags;
+  const materializedInputs = materializeInputFlags(inputContract, inputFlags, TASK_INPUT_DIAGNOSTICS);
   const defaultedInputs = applyInputDefaults(inputContract, materializedInputs);
   const requiredErrors = validateInputs(inputContract, defaultedInputs);
   if (requiredErrors.length > 0) throw TASK_INPUT_DIAGNOSTICS.contractViolation(requiredErrors);

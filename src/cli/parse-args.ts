@@ -12,11 +12,11 @@
 import type { StashEntryScope } from "../core/adapter/types";
 import { UsageError } from "../core/errors";
 import type { ResolvedProject } from "../core/projects";
+import { EXECUTION_MAX_TIMEOUT_MS } from "../execution/limits";
 
 // findCittyTopLevelCommand(Index) + CittyArg(s)DefinitionForScan moved to
-// ./invocation (chunk-9 WI-9.9 argv-normalization fold — that cluster had no
-// internal imports, so it relocated cleanly); re-exported here so existing
-// importers (tests/tasks-core.test.ts, commands/read/show.ts) are unaffected.
+// ./invocation (argv normalization); re-exported here so existing
+// importers (tests/integration/tasks-core.test.ts, commands/read/show.ts) are unaffected.
 export {
   type CittyArgDefinitionForScan,
   type CittyArgsDefinitionForScan,
@@ -70,30 +70,40 @@ export function parsePositiveIntFlag(raw: string | undefined, flagName = "--limi
 }
 
 /**
-/**
  * Parse an integer flag value: digits only (so `3x`, `3.5` and `-1` are
- * rejected, not truncated), within `minimum` and the optional `maximum`.
+ * rejected, not truncated), at least `minimum`.
  * Returns `undefined` when the flag was not supplied.
  */
-export function parseIntegerFlag(
-  raw: string | undefined,
-  name: string,
-  minimum: number,
-  maximum?: number,
-): number | undefined {
+export function parseIntegerFlag(raw: string | undefined, name: string, minimum: number): number | undefined {
   if (raw === undefined) return undefined;
   const value = Number.parseInt(raw, 10);
-  if (!/^\d+$/.test(raw) || value < minimum || (maximum !== undefined && value > maximum)) {
-    const range = maximum === undefined ? `at least ${minimum}` : `from ${minimum} through ${maximum}`;
-    throw new UsageError(`${name} must be an integer ${range}, got "${raw}".`, "INVALID_FLAG_VALUE");
+  if (!/^\d+$/.test(raw) || value < minimum) {
+    throw new UsageError(`${name} must be an integer at least ${minimum}, got "${raw}".`, "INVALID_FLAG_VALUE");
   }
   return value;
 }
 
 /**
- * The one `--timeout` grammar: bare N is milliseconds, or N with `ms`, `s`, `m`,
- * `h` or `d`. Private to `--timeout` flags; asset `timeout:` fields and
- * `--since`/`--expires` keep the shared duration grammar in core/time.
+ * Parse a `--max-retries`-style flag value into a whole number, 0 or more, as `max-retries:` is read in a task file.
+ * Returns `undefined` when the flag was not supplied.
+ */
+export function parseNonNegativeIntFlag(raw: string | undefined, flagName: string): number | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (!/^\d+$/.test(trimmed) || !Number.isSafeInteger(Number(trimmed))) {
+    throw new UsageError(
+      `Invalid ${flagName} value: "${raw}". Must be a whole number, 0 or more.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  return Number(trimmed);
+}
+
+/**
+ * The one timeout grammar, for `--timeout` flags and asset `timeout:` fields: bare N
+ * is milliseconds, or N with `ms`, `s`, `m`, `h` or `d`. `--since`/`--expires` use the
+ * shared duration grammar in core/time.
  */
 const TIMEOUT_UNITS: Readonly<Record<string, number>> = {
   ms: 1,
@@ -103,13 +113,26 @@ const TIMEOUT_UNITS: Readonly<Record<string, number>> = {
   d: 86_400_000,
 };
 
+/** A timeout in the `--timeout` grammar as milliseconds, or null when it is not in the grammar. Zero is read as zero. */
+export function timeoutMilliseconds(raw: string): number | null {
+  const match = /^(\d+)(ms|s|m|h|d)?$/.exec(raw.trim());
+  if (!match) return null;
+  const milliseconds = Number(match[1]) * (TIMEOUT_UNITS[match[2] ?? "ms"] as number);
+  return Number.isSafeInteger(milliseconds) ? milliseconds : null;
+}
+
 /** Parse one `--timeout` value to positive milliseconds, or throw a usage error. */
 export function parseTimeoutValue(raw: string, flagName = "--timeout"): number {
-  const match = /^(\d+)(ms|s|m|h|d)?$/.exec(raw.trim());
-  const parsed = match ? Number(match[1]) * (TIMEOUT_UNITS[match[2] ?? "ms"] as number) : Number.NaN;
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+  const parsed = timeoutMilliseconds(raw);
+  if (parsed === null || parsed <= 0) {
     throw new UsageError(
       `Invalid ${flagName} value: "${raw}". Expected a positive number: bare N is milliseconds, or N with ms, s, m, h or d (30s, 2m, 1h, 7d).`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  if (parsed > EXECUTION_MAX_TIMEOUT_MS) {
+    throw new UsageError(
+      `Invalid ${flagName} value: "${raw}". A timeout is at most ${EXECUTION_MAX_TIMEOUT_MS} milliseconds (24 days).`,
       "INVALID_FLAG_VALUE",
     );
   }
@@ -139,6 +162,12 @@ export function getStringArg(args: unknown, key: string): string | undefined {
   if (typeof val !== "string") return undefined;
   const trimmed = val.trim();
   return trimmed || undefined;
+}
+
+/** A string argument exactly as given: an empty or blank one is kept, so the command that needs text can refuse it. */
+export function getExactStringArg(args: unknown, key: string): string | undefined {
+  const val = (args as Record<string, unknown>)[key];
+  return typeof val === "string" ? val : undefined;
 }
 
 /** `--project`: the configured project to use instead of the one the working directory selects (`none`: no project). */

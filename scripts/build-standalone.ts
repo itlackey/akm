@@ -25,6 +25,10 @@ if (!values.outfile) {
 
 const result = await Bun.build({
   entrypoints: ["./scripts/akm-standalone.ts"],
+  // Splitting keeps the dynamically imported prompt library (src/cli/clack.ts) out of the startup chunk. A single
+  // bundle hoists its imports even for a dynamic import, and clack's `node:process` import would make an
+  // inherited pipe non-blocking at startup.
+  splitting: true,
   compile: { outfile: values.outfile, ...(values.target ? { target: values.target as never } : {}) },
   ...(values.version ? { define: { AKM_VERSION: JSON.stringify(values.version) } } : {}),
 });

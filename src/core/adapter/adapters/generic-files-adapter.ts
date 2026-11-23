@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `generic-files` adapter — akm 0.9.0 format-family work item (#46).
+ * The `generic-files` adapter.
  *
  * The AKM-native FALLBACK family. Any leftover file is classified by
  * extension:

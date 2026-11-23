@@ -16,6 +16,7 @@ import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { readLockfile } from "../../src/integrations/lockfile";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
+import { type GitDaemon, startGitDaemon } from "../_helpers/git-daemon";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, withTTY } from "../_helpers/sandbox";
 
 const NAMES = ["big", "small", "wr"] as const;
@@ -23,7 +24,7 @@ type Name = (typeof NAMES)[number];
 // big and small are read-only installs reached through a Git insteadOf rule. A writable checkout compares its
 // origin with the ref, and `git remote get-url` applies insteadOf, so wr is served by a loopback git daemon instead.
 let wrUrl = "";
-let daemon: ReturnType<typeof Bun.spawn> | undefined;
+let daemon: GitDaemon | undefined;
 const url = (name: Name) => (name === "wr" ? wrUrl : `https://git.example.test/acme/${name}.git`);
 
 let storage: IsolatedAkmStorage;
@@ -108,25 +109,6 @@ beforeEach(async () => {
     env[`GIT_CONFIG_KEY_${i}`] = `url.${pathToFileURL(dir).href}.insteadOf`;
     env[`GIT_CONFIG_VALUE_${i}`] = url(name);
   });
-  // The daemon must be a separate process: akm's synchronous git calls would deadlock an in-process server.
-  const probe = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
-  const port = probe.port;
-  probe.stop(true);
-  wrUrl = `git://127.0.0.1:${port}/remote-wr`;
-  daemon = Bun.spawn(
-    [
-      "git",
-      "daemon",
-      "--reuseaddr",
-      "--listen=127.0.0.1",
-      `--port=${port}`,
-      `--base-path=${storage.root}`,
-      "--export-all",
-      storage.root,
-    ],
-    { stdout: "ignore", stderr: "ignore" },
-  );
-
   for (let i = 0; i < 20; i++) write("big", `big-${i}.md`, `big note ${i}`);
   commit("big", "big");
   write("small", "keep.md", "keep");
@@ -136,8 +118,9 @@ beforeEach(async () => {
   commit("small", "small v1");
   write("wr", "note.md", "writable note");
   commit("wr", "wr v1");
-  for (let attempt = 0; attempt < 50 && spawnSync("git", ["ls-remote", wrUrl]).status !== 0; attempt++)
-    Bun.sleepSync(100);
+  const served = startGitDaemon(storage.root, "remote-wr");
+  daemon = served;
+  wrUrl = `${served.baseUrl}/remote-wr`;
   await akm("bundle", "add", `git+${url("big")}`, "--name", "big");
   await akm("bundle", "add", `git+${url("small")}`, "--name", "small");
   await akm("bundle", "add", `git+${url("wr")}`, "--name", "wr", "--writable");
@@ -145,7 +128,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  daemon?.kill();
+  daemon?.stop();
   storage.cleanup();
 });
 

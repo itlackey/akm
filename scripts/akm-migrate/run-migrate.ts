@@ -14,30 +14,41 @@
  * older data is listed in docs/architecture/persisted-data-compat.md.
  */
 
+import { describeRemainingWorkflowFiles, type WorkflowFilesOfBundle } from "../../src/commands/health/workflow-files";
 import { akmTasksSync, akmTasksSyncPlan, type TasksSyncResult } from "../../src/commands/tasks/tasks";
 import { resetConfigCache } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
 import { getConfigPath } from "../../src/core/paths";
-import { listPendingStateMigrations, stateDatabaseFloorBlocker, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
-import { resolveSecretFromStore } from "../../src/sources/snapshot-fetchers/secret-seam";
-import { type ConfigFileNormalization, normalizeConfigFile } from "./config/normalize";
-import { type RetiredEnvironment, retiredEnvironment } from "./retired-locations";
 import {
-  applyEngineKeysMigration,
-  type EngineKeysMigrationStatus,
-  inspectEngineKeysMigration,
-} from "./engine-key-migrate";
-import { legacyTasks as findLegacyTasks } from "./legacy-task-check";
+  listPendingStateMigrations,
+  stateDatabaseFloorBlocker,
+  upgradeHistoricalStateDatabase,
+} from "../../src/core/state-db";
+import { resolveSecretFromStore } from "../../src/sources/snapshot-fetchers/secret-seam";
+import {
+  applyBundlePolicyMigration,
+  type BundlePolicyMigrationStatus,
+  inspectBundlePolicyMigration,
+} from "./bundle-policy-migrate";
+import { type ConfigFileNormalization, normalizeConfigFile } from "./config/normalize";
 import {
   applyContentRefsMigration,
   type ContentRefsMigrationStatus,
   inspectContentRefsMigration,
 } from "./content-ref-migrate";
 import {
-  applyBundlePolicyMigration,
-  type BundlePolicyMigrationStatus,
-  inspectBundlePolicyMigration,
-} from "./bundle-policy-migrate";
+  applyEngineKeysMigration,
+  type EngineKeysMigrationStatus,
+  inspectEngineKeysMigration,
+} from "./engine-key-migrate";
+import { legacyTasks as findLegacyTasks } from "./legacy-task-check";
+import { type RetiredEnvironment, retiredEnvironment } from "./retired-locations";
+import {
+  applyTaskFilesV5Migration,
+  inspectTaskFilesV5Migration,
+  remainingWorkflowFiles,
+  type TaskFilesV5MigrationStatus,
+} from "./task-migrate";
 
 export type MigrationStatus = "current" | "ready" | "blocked";
 
@@ -86,6 +97,11 @@ export interface CombinedMigrationPlan {
    * rows with it in one write (what `akm task sync` does).
    */
   scheduler?: TasksSyncResult;
+  /** Present when task files were named for conversion to version 5: each file's outcome, and what to change by hand. */
+  taskFilesV5?: TaskFilesV5MigrationStatus["files"];
+  taskFilesV5BackupPath?: string;
+  /** Present when workflow files remain in writable bundles: they are removed in 0.11 and convert only when named. */
+  workflowFiles?: { bundles: WorkflowFilesOfBundle[]; message: string };
   /** Task sources below version 4 that no `scheduler.enabled` entry names: nothing runs from them, so no blocker. */
   legacyTaskWarnings?: string[];
 }
@@ -172,8 +188,13 @@ export async function migrationStep<T>(
  * read-only (`status`); `apply: true` mutates, each step
  * under its own lock and backup.
  */
-export async function runMigration(options: { apply: boolean }): Promise<CombinedMigrationPlan> {
+export async function runMigration(options: {
+  apply: boolean;
+  /** Task files to convert to task source v5; no other file is converted. */
+  taskFiles?: readonly string[];
+}): Promise<CombinedMigrationPlan> {
   const { apply } = options;
+  const named = options.taskFiles ?? [];
   const configPath = getConfigPath();
   // A state.db below the floor is refused before any step runs, so nothing is half-migrated.
   const floorBlocker = stateDatabaseFloorBlocker();
@@ -197,6 +218,15 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     () => (apply ? applyStateMigrations() : { pending: listPendingStateMigrations() }),
     apply ? () => ({ pending: listPendingStateMigrations() }) : undefined,
   );
+  const taskFilesV5 =
+    named.length === 0
+      ? undefined
+      : await migrationStep(
+          failedSteps,
+          "taskFilesV5",
+          () => (apply ? applyTaskFilesV5Migration(named) : inspectTaskFilesV5Migration(named)),
+          apply ? () => inspectTaskFilesV5Migration(named) : undefined,
+        );
   // After the config (the names an engine had before its conversion come from that step's result).
   // A config the step could not read or write leaves the names unsettled, so the assets wait for a run that can.
   const configFailed = failedSteps.some((failure) => failure.step.startsWith("configFile"));
@@ -222,12 +252,19 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     () => (apply ? applyBundlePolicyMigration() : inspectBundlePolicyMigration()),
     apply ? () => inspectBundlePolicyMigration() : undefined,
   );
+  // After the named conversions, so a workflow file removed since is not counted. Not a migration step of its own:
+  // apply converts a workflow only when it is named, so what remains is reported, never changed.
+  const workflowFiles = await migrationStep(failedSteps, "workflowFiles", () => {
+    const bundles = remainingWorkflowFiles();
+    return bundles.length > 0 ? { bundles, message: describeRemainingWorkflowFiles(bundles) } : undefined;
+  });
   // Last: it reads the config the steps above settled. Needs `crontab`/`launchctl`/`schtasks` only when it has
   // something to write; an installation that moves its locations leaves the OS scheduler alone.
   // A file that could not take `paths` or the working bundle leaves the host's locations out of it: an entry written now would run
   // `akm task dispatch` against the default locations, so none is written until the file names them.
   const hostLocations = configFile && { ...configFile.bundle };
-  const pathsUnwritten = apply && hostLocations !== undefined && Object.keys(hostLocations).length > 0 && !configFile?.applied;
+  const pathsUnwritten =
+    apply && hostLocations !== undefined && Object.keys(hostLocations).length > 0 && !configFile?.applied;
   const scheduler = pathsUnwritten
     ? undefined
     : await migrationStep(
@@ -247,26 +284,32 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const bundlePolicyStatus: MigrationStatus = bundlePolicy?.status ?? "current";
   const legacyTasksStatus: MigrationStatus = legacyTasks && legacyTasks.blockers.length > 0 ? "blocked" : "current";
   const schedulerStatus: MigrationStatus =
-    !apply && scheduler && (scheduler.removedLegacy.length > 0 || scheduler.entry === "installed" || scheduler.entry === "removed")
+    !apply &&
+    scheduler &&
+    (scheduler.removedLegacy.length > 0 || scheduler.entry === "installed" || scheduler.entry === "removed")
       ? "ready"
       : "current";
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
-      ([
-        stateStatus,
-        configFileStatus,
-        engineKeysStatus,
-        contentRefsStatus,
-        bundlePolicyStatus,
-        schedulerStatus,
-        legacyTasksStatus,
-        pathsUnwritten ? "blocked" : "current",
-      ] satisfies MigrationStatus[]).reduce(worstStatus, "current"),
+      (
+        [
+          stateStatus,
+          configFileStatus,
+          engineKeysStatus,
+          contentRefsStatus,
+          bundlePolicyStatus,
+          schedulerStatus,
+          legacyTasksStatus,
+          taskFilesV5?.status ?? "current",
+          pathsUnwritten ? "blocked" : "current",
+        ] satisfies MigrationStatus[]
+      ).reduce(worstStatus, "current"),
       failedSteps,
     ),
     blockers: [
       ...(legacyTasks?.blockers ?? []),
+      ...(taskFilesV5?.blockers ?? []),
       ...failedStepBlockers(failedSteps),
       ...(pathsUnwritten
         ? [
@@ -279,6 +322,9 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     ...(retiredEnvironment() !== undefined ? { environment: retiredEnvironment() } : {}),
     ...(configFile !== undefined ? { configFile } : {}),
     ...(stateMigrations !== undefined ? { stateMigrations } : {}),
+    ...(taskFilesV5 !== undefined ? { taskFilesV5: taskFilesV5.files } : {}),
+    ...(taskFilesV5?.backupPath !== undefined ? { taskFilesV5BackupPath: taskFilesV5.backupPath } : {}),
+    ...(workflowFiles !== undefined ? { workflowFiles } : {}),
     ...(assetEngineKeys !== undefined ? { assetEngineKeys: assetEngineKeys.assetEngineKeys } : {}),
     ...(assetContentRefs !== undefined ? { assetContentRefs: assetContentRefs.assetContentRefs } : {}),
     ...(bundlePolicy !== undefined ? { bundlePolicy: bundlePolicy.bundlePolicy } : {}),

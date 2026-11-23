@@ -23,6 +23,6 @@ on their names alone; inspect their current readers before changing launchers,
 attribution, or test fixtures. Their presence here does not assert that every
 variable is still read by every release.
 
-`AKM_STATE_DIR` was also in that list. It is a live 0.10 location override and is
-now listed with the other deprecated path overrides in the stability policy, so
-an installation using it has an explicit 0.11 migration path.
+`AKM_STATE_DIR` is not one of them: with `AKM_CONFIG_DIR`, `AKM_DATA_DIR` and
+`AKM_CACHE_DIR` it is a Stable location override (see
+[STABILITY.md](../../STABILITY.md#environment-overrides)).

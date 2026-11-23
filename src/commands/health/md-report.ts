@@ -10,7 +10,7 @@
  * input rows alone, so the tables are byte-identical for identical inputs.
  */
 
-import type { DeltaEntry, ImproveRunSummary, WindowResult } from "./types";
+import type { DeltaEntry, HealthCheckResult, HealthReportContext, ImproveRunSummary, WindowResult } from "./types";
 import { INTERESTING_DELTA_PATHS, readNumericPath } from "./windows";
 
 function padRight(s: string, width: number): string {
@@ -25,6 +25,25 @@ function renderTable(headers: string[], rows: string[][]): string {
     lines.push(row.map((cell, i) => padRight(cell ?? "", widths[i] ?? 0)).join("  "));
   }
   return lines.join("\n");
+}
+
+/** The checks, one row each: name, status (`unknown` with its reason) and message. */
+export function renderChecksMd(checks: readonly HealthCheckResult[]): string {
+  const rows = checks.map((check) => [
+    check.name,
+    check.status === "unknown" ? `unknown (${check.reason})` : check.status,
+    check.message.replace(/\s+/g, " "),
+  ]);
+  return renderTable(["check", "status", "message"], rows);
+}
+
+/** The pending proposal queue, one row each. */
+export function renderPendingProposalsMd(proposals: HealthReportContext["pendingProposals"]): string {
+  if (proposals.length === 0) return "No pending proposals.";
+  return renderTable(
+    ["ref", "source", "created"],
+    proposals.map((proposal) => [proposal.ref, proposal.source, proposal.createdAt]),
+  );
 }
 
 /**
@@ -105,7 +124,7 @@ export function renderWindowCompareMd(windows: WindowResult[], deltas: Record<st
     ...INTERESTING_DELTA_PATHS,
   ];
   for (const path of paths) {
-    const values = windows.map((w) => String(readNumericPath(w, path)));
+    const values = windows.map((w) => String(readNumericPath(w, path) ?? "unknown"));
     const delta = deltas?.[path];
     let deltaStr = "—";
     if (delta) {

@@ -111,12 +111,13 @@ export const rememberCommand = defineJsonCommand({
     },
     auto: {
       type: "boolean",
-      description: "Tag heuristically from the body",
+      description: "Deprecated, removed in 0.11 with no replacement: tag heuristically from the body",
       default: false,
     },
     enrich: {
       type: "boolean",
-      description: "Propose tags and description with the configured LLM",
+      description:
+        "Deprecated, removed in 0.11 with no replacement: propose tags and description with the configured LLM",
       default: false,
     },
     bundle: {

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { shouldBypassConfigStartup } from "../../src/cli";
+import { createParsedInvocation } from "../../src/cli/invocation";
 import { getConfigPath } from "../../src/core/paths";
 import { assertSetupConfigPreflight, runSetupWithDefaults } from "../../src/setup/setup";
 import { runCliCapture } from "../_helpers/cli";
@@ -39,14 +40,20 @@ describe("raw recovery startup", () => {
       ["bun", "cli.ts", "setup"],
       ["bun", "cli.ts", "workflow", "--help"],
     ]) {
-      expect(shouldBypassConfigStartup(args)).toBe(true);
+      expect(shouldBypassConfigStartup(createParsedInvocation(args))).toBe(true);
     }
   });
 
   test("help and version config bypass ignores child flags after `--`", () => {
-    expect(shouldBypassConfigStartup(["bun", "cli.ts", "env", "run", "env/prod", "--", "tool", "--help"])).toBe(false);
     expect(
-      shouldBypassConfigStartup(["bun", "cli.ts", "secret", "run", "secrets/token", "TOKEN", "--", "tool", "-v"]),
+      shouldBypassConfigStartup(
+        createParsedInvocation(["bun", "cli.ts", "env", "run", "env/prod", "--", "tool", "--help"]),
+      ),
+    ).toBe(false);
+    expect(
+      shouldBypassConfigStartup(
+        createParsedInvocation(["bun", "cli.ts", "secret", "run", "secrets/token", "TOKEN", "--", "tool", "-v"]),
+      ),
     ).toBe(false);
   });
 

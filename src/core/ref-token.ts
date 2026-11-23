@@ -58,6 +58,14 @@ export function isSecretRefToken(value: string): boolean {
   );
 }
 
+/** `<secret ref>:<VAR>`, as `--secret` and `secret:` take it; undefined when it is not that shape. */
+export function parseSecretSpec(spec: string): { ref: string; variable: string } | undefined {
+  const colon = spec.lastIndexOf(":");
+  const variable = spec.slice(colon + 1);
+  if (colon <= 0 || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(variable)) return undefined;
+  return { ref: spec.slice(0, colon), variable };
+}
+
 export interface RefTokenResolution {
   values: Record<string, string>;
   /** Refs no bundle owns, de-duplicated in first-seen order. Callers treat a non-empty list as a hard error and inject nothing. */

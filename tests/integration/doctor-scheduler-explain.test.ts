@@ -119,6 +119,37 @@ describe.skipIf(process.platform !== "linux")("doctor scheduler and explain", ()
     expect(run(["doctor", "explain", "missing"]).status).toBe(run(["task", "explain", "missing"]).status);
   });
 
+  test("doctor explain <version 5 task> runs the check a start makes with the flags given, and lists the steps", () => {
+    write("env/lab.env", "REGION=eu\n");
+    write("scripts/look.sh", "#!/bin/sh\necho hi\n");
+    write(
+      "tasks/demo.yml",
+      [
+        "version: 5-beta.1",
+        "inputs:",
+        "  scope: { type: string, default: a }",
+        "steps:",
+        "  - name: look",
+        "    run: scripts/look.sh",
+        "",
+      ].join("\n"),
+    );
+    const ok = run(["doctor", "explain", "demo", "--scope", "b", "--env", "env/lab"]);
+    expect(ok.status).toBe(0);
+    const explained = JSON.parse(ok.stdout);
+    expect(explained.sourceVersion).toBe("5-beta.1");
+    expect(explained.steps).toEqual([{ name: "look", kind: "run", ref: "scripts/look.sh" }]);
+    expect(Object.keys(explained.inputDeclarations)).toEqual(["scope"]);
+    const taskExplain = run(["task", "explain", "demo", "--scope", "b", "--env", "env/lab"]);
+    expect(taskExplain.stdout).toBe(ok.stdout);
+    // The flag a start would be refused for is refused here.
+    const bad = run(["doctor", "explain", "demo", "--env", "env/missing"]);
+    expect(bad.status).not.toBe(0);
+    expect(bad.stderr + bad.stdout).toContain("env/missing");
+    const unknown = run(["doctor", "explain", "demo", "--nope", "1"]);
+    expect(unknown.status).not.toBe(0);
+  });
+
   test("doctor explain <workflow> is workflow plan, and writes nothing", () => {
     write(
       "workflows/flow.md",

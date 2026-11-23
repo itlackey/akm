@@ -28,10 +28,10 @@ export const EmbeddingConnectionConfigSchema = z
     localModel: z.string().min(1).optional(),
     /**
      * Per-document token cap applied BEFORE batching (default 512,
-     * `DEFAULT_MAX_INPUT_TOKENS` in `src/llm/embedders/remote.ts`, #956).
+     * `DEFAULT_MAX_INPUT_TOKENS` in `src/llm/embedders/remote.ts`).
      * The materializer truncates a document's embedded text to
      * this cap (head only, unicode-safe) instead of skipping it outright, so
-     * one oversized entry can no longer fail a whole batch. Distinct from
+     * one oversized entry cannot fail a whole batch. Distinct from
      * `maxTokens` below, which bounds a whole HTTP REQUEST (many documents);
      * this bounds one DOCUMENT.
      */
@@ -45,11 +45,10 @@ export const EmbeddingConnectionConfigSchema = z
     maxTokens: positiveInt.optional(),
     batchSize: positiveInt.optional(),
     /**
-     * Ollama's `num_ctx` ONLY (#956) — sent verbatim as
-     * `options.num_ctx` on the native `/api/embed` request. It no longer also
-     * feeds the client-side request token budget (`maxTokens` above): the two
-     * used to share this one field, so setting it for the server's context
-     * window silently changed request batching too.
+     * Ollama's `num_ctx` ONLY — sent verbatim as
+     * `options.num_ctx` on the native `/api/embed` request. It does not feed
+     * the client-side request token budget (`maxTokens` above), so setting it
+     * for the server's context window does not change request batching.
      */
     contextLength: positiveInt.optional(),
     /**

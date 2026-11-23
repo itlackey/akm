@@ -55,7 +55,7 @@ export interface ImproveReportResult {
  * recomputed cross-tab can include LLM calls that other akm processes made
  * during the run's window. `eventsCtx` threads the state.db connection
  * `runImproveReportQuery` already holds via `withStateDb`, so a `--since`
- * window with several pre-0.9.15 or undecodable rows reads through that one
+ * window with several undecodable rows or rows recorded before eligibility reasons were kept reads through that one
  * open connection instead of each row opening and closing its own.
  */
 function crossTabFromEvents(
@@ -146,7 +146,7 @@ export function runImproveReportQuery(options: { runId?: string; since?: string 
   }
   return withStateDb((db) => {
     // Thread this already-open connection into every reader below, so a
-    // `--since` window with several pre-0.9.15 or undecodable rows reads
+    // `--since` window with several undecodable rows or rows recorded before eligibility reasons were kept reads
     // through it instead of each row opening and closing its own.
     const eventsCtx: EventsContext = { db };
     if (options.since !== undefined) {

@@ -29,12 +29,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isRecord } from "../../../src/core/common";
+import { type CredentialSlot, slotStanding } from "../../../src/core/config/credentials";
+import { isEnvReference } from "../../../src/core/config/schema/primitives";
 import { sameEndpoint } from "../../../src/core/endpoint-url";
 import { redactUrlCredentials } from "../../../src/core/redaction";
 import { isSecretRefToken } from "../../../src/core/ref-token";
 import type { ConvertEnginesResult } from "./convert-engines";
-import { type CredentialSlot, slotStanding } from "../../../src/core/config/credentials";
-import { isEnvReference } from "../../../src/core/config/schema/primitives";
 
 type Dict = Record<string, unknown>;
 

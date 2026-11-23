@@ -18,21 +18,24 @@ import {
   withMetricsHistory,
 } from "../../storage/repositories/metrics-rollup-repository";
 import { queryTaskHistory, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
+import { classifyAttempt, hereNow } from "../../tasks/run/attempt-liveness";
 import {
+  agentDispatches,
   buildImproveSkipSummary,
   computeWallTimeStats,
   computeWindowProposalCoverage,
   countAgentFailureReasons,
+  countTaskRuns,
+  decodeTaskRows,
   type ImproveRunOutcomes,
-  isAgentTaskHistoryRow,
-  roundRate,
+  readImproveRows,
+  roundOrNull,
   summarizeImproveRuns,
-  taskFailureDetail,
+  type TaskRunCounts,
 } from "./improve-metrics";
 import { oldestTs, readLlmUsageAggregate } from "./llm-usage";
 import { buildPerRunSummaries } from "./task-runs";
 import {
-  ACTIVE_RUN_WARN_MS,
   type DeltaEntry,
   type HealthMetrics,
   IMPROVE_COMPLETED_EVENT,
@@ -126,21 +129,28 @@ export const INTERESTING_DELTA_PATHS = [
   "metrics.llmUsage.failures",
 ] as const;
 
-export function readNumericPath(obj: unknown, path: string): number {
-  const parts = path.split(".");
+/** The number at `path`; `null` when the value, or a parent on the way to it, is unknown (null). A missing key is 0. */
+export function readNumericPath(obj: unknown, path: string): number | null {
   let cursor: unknown = obj;
-  for (const part of parts) {
-    if (typeof cursor !== "object" || cursor === null) return 0;
+  for (const part of path.split(".")) {
+    if (cursor === null) return null;
+    if (typeof cursor !== "object") return 0;
     cursor = (cursor as Record<string, unknown>)[part];
   }
+  if (cursor === null) return null;
   return typeof cursor === "number" && Number.isFinite(cursor) ? cursor : 0;
 }
 
+/** The change of each listed metric between two windows; a metric unknown in either window has an `unknown` change. */
 export function computeDeltas(first: WindowResult, last: WindowResult): Record<string, DeltaEntry> {
   const out: Record<string, DeltaEntry> = {};
   for (const path of INTERESTING_DELTA_PATHS) {
     const from = readNumericPath(first, path);
     const to = readNumericPath(last, path);
+    if (from === null || to === null) {
+      out[path] = { from, to, pctChange: "unknown" };
+      continue;
+    }
     if (from === 0 && to === 0) continue;
     let pctChange: number | string;
     if (from === 0) {
@@ -160,41 +170,50 @@ interface WindowMetricsBundle {
 }
 
 export interface TaskWindowRates {
-  taskFailRate: number;
-  agentFailureRate: number;
+  /** Failed share of the window's runs; null when there were none. */
+  taskFailRate: number | null;
+  /** Failed share of the window's agent dispatches; null when there were none. */
+  agentFailureRate: number | null;
   agentFailureReasonCounts: Record<string, number>;
+  taskRuns: TaskRunCounts;
+  /** Active rows whose owner process is provably gone (`classifyAttempt`). */
   stuckActiveRuns: number;
   /** Rows behind `stuckActiveRuns` — the main health path (`health.ts`) names each one; window-compare only needs the count. */
   stuckActiveRows: TaskHistoryRow[];
+  /** Active rows whose owner cannot be told apart from a live one (another host, no liveness evidence). */
+  unverifiedActiveRows: TaskHistoryRow[];
 }
 
 /**
  * Task-history-derived rates, shared by the main health path
  * (`health.ts`'s `gatherTaskHistoryPhase`) and {@link buildWindowMetrics}
- * below — previously computed twice with the only difference being whether
- * the caller had already bounded `taskRows` by an `until`. Pure projection of
+ * below — the only difference is whether the caller has already bounded
+ * `taskRows` by an `until`. Pure projection of
  * already-queried rows; callers own the `since`/`until` query. The main health
- * check supplies all still-active rows independently of its history window.
+ * check supplies all still-active rows independently of its history window. Whether an active row's run is still
+ * there is `classifyAttempt`'s answer, never its age.
  */
 export function computeTaskWindowRates(
   taskRows: readonly TaskHistoryRow[],
-  now: () => number,
   activeTaskRows: readonly TaskHistoryRow[] = taskRows,
 ): TaskWindowRates {
   const failedTaskRows = taskRows.filter((row) => row.status === "failed");
   const activeRows = activeTaskRows.filter((row) => row.status === "active" && row.completed_at === null);
-  const stuckActiveRows = activeRows.filter((row) => now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS);
-  const agentRows = taskRows.filter((row) => isAgentTaskHistoryRow(row));
-  const agentFailures = agentRows.filter((row) => {
-    const detail = taskFailureDetail(row);
-    return typeof detail?.reason === "string" && detail.reason.length > 0;
-  });
+  const here = hereNow();
+  const liveness = activeRows.map((row) => ({ row, state: classifyAttempt(row, here) }));
+  const stuckActiveRows = liveness.filter(({ state }) => state === "interrupted").map(({ row }) => row);
+  const unverifiedActiveRows = liveness.filter(({ state }) => state === "indeterminate").map(({ row }) => row);
+  const decoded = decodeTaskRows(taskRows);
+  const dispatches = agentDispatches(decoded);
+  const failedDispatches = dispatches.filter((reason) => reason !== undefined);
   return {
-    taskFailRate: taskRows.length === 0 ? 0 : failedTaskRows.length / taskRows.length,
-    agentFailureRate: agentRows.length === 0 ? 0 : agentFailures.length / agentRows.length,
-    agentFailureReasonCounts: countAgentFailureReasons(agentFailures),
+    taskRuns: countTaskRuns(decoded),
+    taskFailRate: taskRows.length === 0 ? null : failedTaskRows.length / taskRows.length,
+    agentFailureRate: dispatches.length === 0 ? null : failedDispatches.length / dispatches.length,
+    agentFailureReasonCounts: countAgentFailureReasons(dispatches),
     stuckActiveRuns: stuckActiveRows.length,
     stuckActiveRows,
+    unverifiedActiveRows,
   };
 }
 
@@ -225,7 +244,8 @@ export function buildImproveWindowSummary(
     readEvents({ since, type }, { dbPath: stateDbPath, readOnly }).events.filter(
       (event) => new Date(event.ts ?? since).getTime() < untilMs,
     );
-  const { metrics: improve, runCount, outcomes } = summarizeImproveRuns(db, since, until);
+  const improveRows = readImproveRows(db, since, until);
+  const { metrics: improve, runCount, outcomes } = summarizeImproveRuns(improveRows);
   const invoked = eventsBeforeUntil("improve_invoked");
   const completed = eventsBeforeUntil(IMPROVE_COMPLETED_EVENT);
   const skipped = eventsBeforeUntil("improve_skipped");
@@ -248,7 +268,7 @@ export function buildImproveWindowSummary(
   improve.skipReasons = skipSummary.skipReasons;
   // Wall times come from the same improve-runs window as the per-run
   // reporting so counts and percentiles stay aligned with it.
-  const perRunSummaries = buildPerRunSummaries(db, since, until);
+  const perRunSummaries = buildPerRunSummaries(db, improveRows, since, until);
   improve.wallTime = computeWallTimeStats(
     perRunSummaries.map((run) => run.wallTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0),
   );
@@ -262,7 +282,6 @@ export function buildWindowMetrics(
   stateDbPath: string,
   since: string,
   until: string,
-  now: () => number = () => Date.now(),
   readOnly = false,
 ): WindowMetricsBundle {
   const untilMs = new Date(until).getTime();
@@ -270,12 +289,12 @@ export function buildWindowMetrics(
     const startMs = new Date(row.started_at).getTime();
     return !Number.isFinite(untilMs) || startMs < untilMs;
   });
-  const rates = computeTaskWindowRates(taskRows, now);
+  const rates = computeTaskWindowRates(taskRows);
   const { improve, runCount } = buildImproveWindowSummary(db, stateDbPath, since, until, readOnly);
 
   const metrics: HealthMetrics = {
-    taskFailRate: roundRate(rates.taskFailRate),
-    agentFailureRate: roundRate(rates.agentFailureRate),
+    taskFailRate: roundOrNull(rates.taskFailRate),
+    agentFailureRate: roundOrNull(rates.agentFailureRate),
     agentFailureReasonCounts: rates.agentFailureReasonCounts,
     stuckActiveRuns: rates.stuckActiveRuns,
     llmUsage: readLlmUsageAggregate(stateDbPath, since, until, readOnly),

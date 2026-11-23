@@ -7,7 +7,7 @@ restore it from.
 1. **Install the CLI.** Prebuilt binary (no runtime needed):
    `curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash`
    (Windows: `irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex`).
-   Or the npm package, which needs Node.js 22 or later: `npm install -g akm-cli`.
+   Or the npm package, which needs Node.js 22.15 or later: `npm install -g akm-cli`.
    A working Bun 1.0 or later on `PATH` is optional and preferred over Node.
 2. **Confirm the binary resolves:** `akm --version`.
 3. **Restore `config.json`.** akm reads one user config at

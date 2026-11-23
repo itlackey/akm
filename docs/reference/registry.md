@@ -162,7 +162,7 @@ akm import "npm:@scope/my-bundle//scripts/deploy.sh" --asset-ref --dest ./projec
 
 `--dest` copies into a directory instead of a bundle; the type directory is
 appended, so the last example writes `./project/.claude/scripts/deploy.sh`. If
-the origin in the ref is not installed, `clone` fetches it to the cache and
+the origin in the ref is not installed, `import --asset-ref` fetches it to the cache and
 extracts the one asset without adding the package as a bundle.
 
 A short ref such as `scripts/deploy.sh` resolves against the default bundle

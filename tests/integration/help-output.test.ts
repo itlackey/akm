@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { createParsedInvocation } from "../../src/cli/invocation";
 import { getConfigPath } from "../../src/core/paths";
 import { runCliCapture } from "../_helpers/cli";
 import {
@@ -112,13 +113,13 @@ describe("shouldBypassConfigStartup allowlists help and hints", () => {
       ["bun", "cli.ts", "hints"],
       ["bun", "cli.ts", "hints", "--detail", "brief"],
     ]) {
-      expect(shouldBypassConfigStartup(args), args.join(" ")).toBe(true);
+      expect(shouldBypassConfigStartup(createParsedInvocation(args)), args.join(" ")).toBe(true);
     }
   });
 
   test("a command that needs config is NOT bypassed", async () => {
     const { shouldBypassConfigStartup } = await import("../../src/cli");
-    expect(shouldBypassConfigStartup(["bun", "cli.ts", "search", "anything"])).toBe(false);
+    expect(shouldBypassConfigStartup(createParsedInvocation(["bun", "cli.ts", "search", "anything"]))).toBe(false);
     // `akm info` deliberately reads config the same way every other command
     // does (a10-info follow-up): bypassing it here would also skip a user's
     // configured `output.format`/`output.detail` for it specifically. It
@@ -126,7 +127,7 @@ describe("shouldBypassConfigStartup allowlists help and hints", () => {
     // infoCommand's own try/catch (stash-cli.ts) degrade that instead of
     // throwing, so this is NOT a blanket "info always succeeds" claim, only
     // "info does not get special startup treatment".
-    expect(shouldBypassConfigStartup(["bun", "cli.ts", "info"])).toBe(false);
+    expect(shouldBypassConfigStartup(createParsedInvocation(["bun", "cli.ts", "info"]))).toBe(false);
   });
 });
 

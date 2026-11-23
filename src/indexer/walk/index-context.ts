@@ -1,15 +1,10 @@
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
-
-/** Result types shared by `akmIndex()` and its callers. */
+import { getMeta } from "../../storage/repositories/index-meta-repository";
 
 /**
  * Live runtime state of semantic search, computed fresh at index-finalize
- * time. `ready-js` means every entry has a vector; the name is historical (the
- * sqlite-vec variant, `ready-vec`, is gone).
+ * time. `ready-js` means every entry has a vector; there is no sqlite-vec variant.
  */
-export type SemanticSearchRuntimeStatus = "pending" | "ready-js" | "blocked";
+type SemanticSearchRuntimeStatus = "pending" | "ready-js" | "blocked";
 
 /**
  * Verification of the post-index semantic-search state. Produced by the
@@ -48,6 +43,38 @@ export interface SemanticSearchRecord {
   /** Why semantic search is blocked or unavailable. */
   reason?: string;
 }
+
+/** A configured source `akm index` could not scan completely: its last-known-good rows were kept. */
+export interface IncompleteIndexSource {
+  /** The bundle's id. */
+  bundle: string;
+  /** The component's name in the bundle's config (`main` for the implicit one). */
+  component: string;
+  path: string;
+  /** The filesystem error that stopped the scan, or why the source could not be scanned. */
+  reason: string;
+}
+
+/** The `index_meta` key holding the {@link IncompleteIndexSource} list of the last index run. */
+export const INCOMPLETE_SOURCES_META_KEY = "incompleteSources";
+
+/**
+ * The sources the last index run could not scan, whose last-known-good rows the index still serves. Undefined when
+ * no run recorded the list (an index built before it was recorded).
+ */
+export function readIncompleteSources(db: Parameters<typeof getMeta>[0]): IncompleteIndexSource[] | undefined {
+  const raw = getMeta(db, INCOMPLETE_SOURCES_META_KEY);
+  return raw ? (JSON.parse(raw) as IncompleteIndexSource[]) : undefined;
+}
+
+/** The last index run's {@link SemanticSearchRecord} in an open index, or undefined when no run recorded one. */
+export function readSemanticSearchRecord(db: Parameters<typeof getMeta>[0]): SemanticSearchRecord | undefined {
+  const raw = getMeta(db, SEMANTIC_SEARCH_META_KEY);
+  return raw ? (JSON.parse(raw) as SemanticSearchRecord) : undefined;
+}
+
+/** What `akm info` and `akm bundle update` report about semantic search: the recorded status, or why none can be reported. */
+export type SemanticSearchStatus = SemanticSearchRecord["status"] | "pending" | "unknown";
 
 /** Canonical configured owner that disappeared or moved since the last complete scan. */
 export interface RemovedIndexSource {

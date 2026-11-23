@@ -16,7 +16,7 @@
  * Accounting invariant (the promote pass only): `processed == promoted +
  * judgedNoAction + Σ(skipReasons) + failedChunkMemories`.
  *
- * A second pass, the pair pass (`consolidate/pair-pass.ts`, alpha.9), runs
+ * A second pass, the pair pass (`consolidate/pair-pass.ts`), runs
  * alongside this one and keeps its own separate counters (`pairPass` on the
  * result) — it judges near-duplicate and superseding pairs across the wider
  * memory tier and mints `retire` proposals; see that module's own doc
@@ -36,7 +36,7 @@ import { loadConfig } from "../../core/config/config";
 import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { openStateDatabase } from "../../core/state-db";
-import { warn, warnVerbose } from "../../core/warn";
+import { info, warn, warnVerbose } from "../../core/warn";
 import { type NoticeSink, noticeSet } from "../../execution/notices";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
@@ -146,9 +146,9 @@ export interface AkmConsolidateOptions {
 }
 
 /**
- * Structured-output schema for a plan. Promote-only: merge/delete/contradict
- * were removed in 0.9.17-alpha.1 (`e82eec811`) after running in production —
- * they cost thousands of completion tokens. Every property is required, as a
+ * Structured-output schema for a plan. Promote-only: merge, delete and contradict
+ * operations are not planned, as they cost thousands of completion tokens.
+ * Every property is required, as a
  * strict structured-output provider needs: an empty `description` keeps the
  * memory's own, a null `confidence` is none.
  */
@@ -690,7 +690,7 @@ async function judgeConsolidationChunks(args: {
       }
     }
     const chunk = chunks[chunkIdx] as MemoryEntry[];
-    warn(`[consolidate] chunk ${chunkIdx + 1}/${chunks.length} (${chunk.length} memories) …`);
+    info(`[consolidate] chunk ${chunkIdx + 1}/${chunks.length} (${chunk.length} memories) …`);
     processed++;
     if (!llmRunner) {
       failChunk("No LLM configured for consolidation", chunk);
@@ -848,7 +848,7 @@ async function consolidate(
     );
   }
   const target = opts.target ?? stashDir;
-  // The pair pass (alpha.9) has its own initiator/candidate selection (it
+  // The pair pass has its own initiator/candidate selection (it
   // sees .derived memories, flat knowledge and lessons, not just the
   // promote pool above), so it runs regardless of whether the promote pool
   // is empty — every return path below carries its result.
@@ -891,7 +891,7 @@ async function consolidate(
     durationMs: Date.now() - startMs,
   });
   if (opts.dryRun) return makeConsolidateResult({ ...summary(), dryRun: true, previewOnly: true, pairPass });
-  warn(`[consolidate] plan: ${plan.allOps.length} operation(s)`);
+  info(`[consolidate] plan: ${plan.allOps.length} operation(s)`);
   const ctx: PromoteContext = {
     config,
     stashDir,
@@ -1145,8 +1145,8 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
       ...(typeof op.confidence === "number" ? { confidence: op.confidence } : {}),
       // The ledger keys the attempt by the source memory.
       attemptedRefs: [op.ref],
-      // O1 (alpha.9): on accept, promoteProposal retires this source memory
-      // (and its .derived twin) so promotion no longer leaves a duplicate.
+      // O1: on accept, promoteProposal retires this source memory
+      // (and its .derived twin) so promotion leaves no duplicate.
       promotionSource: op.ref,
       // B3: recorded so accept can refuse to archive a source that was
       // edited after this promotion was queued — the RAW body hash (see

@@ -17,8 +17,8 @@
  * scores from the usage events.
  */
 
-import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
@@ -28,8 +28,8 @@ import { loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { withConfigLock } from "../../src/core/config/config-io";
 import { getDataDir } from "../../src/core/paths";
 import { getStateDbPath, withStateDb } from "../../src/core/state-db";
-import { type Database, openDatabase } from "../../src/storage/database";
 import { walkStashFlat } from "../../src/indexer/walk/walker";
+import { type Database, openDatabase } from "../../src/storage/database";
 import { type BundleRoot, bundleRoots } from "./bundle-roots";
 import { type ContentRefRewriter, contentRefRewriter, type ShadowedRef } from "./migrate/content-ref-planner";
 import { type FileReplacement, replaceFilesWithBackups } from "./migrate/task-files";
@@ -158,7 +158,11 @@ function stateRowsToMove(moves: readonly StateRefMove[]): number {
     for (const [table, column] of STATE_REF_COLUMNS) {
       let held: Array<{ ref: string; n: number }>;
       try {
-        held = db.prepare(`SELECT ${column} AS ref, COUNT(*) AS n FROM ${table} WHERE ${column} IS NOT NULL GROUP BY ${column}`).all() as never;
+        held = db
+          .prepare(
+            `SELECT ${column} AS ref, COUNT(*) AS n FROM ${table} WHERE ${column} IS NOT NULL GROUP BY ${column}`,
+          )
+          .all() as never;
       } catch {
         continue; // a table a pending state migration has not created yet holds nothing to move
       }
@@ -243,7 +247,11 @@ function plan(): {
     const adapterId = root.adapter ?? detectAdapterId(root.root);
     if (UNOWNED_ADAPTERS.has(adapterId)) continue;
     for (const filePath of textFiles(root.root)) {
-      if (seen.has(filePath) || !(documents.files.has(filePath) || isStructuralFile(root.root, adapterId, filePath, assetDirs))) continue;
+      if (
+        seen.has(filePath) ||
+        !(documents.files.has(filePath) || isStructuralFile(root.root, adapterId, filePath, assetDirs))
+      )
+        continue;
       seen.add(filePath);
       const before = fs.readFileSync(filePath);
       const text = before.toString("utf8");
@@ -252,12 +260,21 @@ function plan(): {
       const { text: rewritten, count } = rewriter.rewrite(text);
       if (count === 0) continue;
       files.push({
-        replacement: { filePath, before, after: Buffer.from(rewritten, "utf8"), mode: fs.statSync(filePath).mode & 0o777 },
+        replacement: {
+          filePath,
+          before,
+          after: Buffer.from(rewritten, "utf8"),
+          mode: fs.statSync(filePath).mode & 0o777,
+        },
         refs: count,
       });
     }
   }
-  return { files: files.sort((a, b) => a.replacement.filePath.localeCompare(b.replacement.filePath)), shadowed: [...rewriter.shadowed], moves };
+  return {
+    files: files.sort((a, b) => a.replacement.filePath.localeCompare(b.replacement.filePath)),
+    shadowed: [...rewriter.shadowed],
+    moves,
+  };
 }
 
 function summarize(planned: ReturnType<typeof plan>): ContentRefsSummary {
@@ -273,7 +290,11 @@ function summarize(planned: ReturnType<typeof plan>): ContentRefsSummary {
 }
 
 function statusOf(summary: ContentRefsSummary): ContentRefsMigrationStatus {
-  return { schemaVersion: 1, status: summary.changed > 0 || summary.stateRows > 0 ? "ready" : "current", assetContentRefs: summary };
+  return {
+    schemaVersion: 1,
+    status: summary.changed > 0 || summary.stateRows > 0 ? "ready" : "current",
+    assetContentRefs: summary,
+  };
 }
 
 /** Read-only: what `apply` would rewrite. */
@@ -294,10 +315,15 @@ export function applyContentRefsMigration(): ContentRefsMigrationStatus {
       backupPath,
     );
     // A file that changed since it was planned was left as it is; the report says so, and a run again plans it afresh.
-    const files = summary.files.map((file): ContentRefFileSummary =>
-      conflicts.includes(file.filePath)
-        ? { ...file, status: "skipped", reason: "it changed after it was planned, so it was left as it is; run again to plan it afresh" }
-        : file,
+    const files = summary.files.map(
+      (file): ContentRefFileSummary =>
+        conflicts.includes(file.filePath)
+          ? {
+              ...file,
+              status: "skipped",
+              reason: "it changed after it was planned, so it was left as it is; run again to plan it afresh",
+            }
+          : file,
     );
     const reconcile = gitReconcile(replaced, backupPath);
     return {

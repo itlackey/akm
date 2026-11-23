@@ -197,7 +197,6 @@ export interface ActivityTaskHistory {
       status: "completed" | "failed" | "skipped" | "reused";
       durationMs: number;
       attempts: number;
-      summary?: string;
       reason?: string;
     }> | null;
   }>;

@@ -27,7 +27,8 @@ export class CopilotHarness implements AkmHarness {
   build({ bin, args }: HarnessSpawn, req: AgentDispatchRequest): BuiltCommand {
     const argv = [bin, ...(req.model ? withoutModelFlag(args) : args)];
     if (req.model) argv.push("--model", req.model);
-    if (req.prompt !== undefined) argv.push("--allow-all-tools", "-p", req.prompt);
-    return { argv };
+    if (req.prompt === undefined) return { argv };
+    argv.push("--allow-all-tools", "-p", req.prompt);
+    return { argv, failureStream: "stderr" };
   }
 }

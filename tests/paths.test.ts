@@ -215,7 +215,7 @@ describe("getDataDir", () => {
   //
   // akm does not ask whether it runs under a test. `NODE_ENV=test` or `BUN_TEST=1` in a shell resolves the same
   // directories as without them. What stops a test run reaching the developer's real directories is the harness
-  // (tests/_preload.ts, tests/_helpers/isolation-guard.ts; tests/isolation-guard.test.ts).
+  // (tests/_preload.ts, tests/_helpers/isolation-guard.ts; tests/integration/isolation-guard.test.ts).
 
   test("NODE_ENV=test and BUN_TEST=1 do not change the data directory", () => {
     const plain = getDataDir({ HOME: "/home/user" }, "linux");

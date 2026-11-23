@@ -33,7 +33,7 @@ set -uo pipefail
 
 suite="${1:-}"
 case "$suite" in
-  unit) find_args=(tests -name '*.test.ts' -not -path 'tests/integration/*') ;;
+  unit) find_args=(tests -name '*.test.ts' -not -path 'tests/integration/*' -not -path 'tests/fixtures/*') ;;
   integration) find_args=(tests/integration -name '*.test.ts') ;;
   *) echo "usage: $0 <unit|integration>" >&2; exit 2 ;;
 esac

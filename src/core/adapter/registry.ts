@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The format-family adapter registry — akm 0.9.0 (§4 / normative §12.6).
+ * The format-family adapter registry (normative §12.6).
  *
  * A STATIC, FROZEN registry per normative §12.6: the ordered built-in adapter
  * list ({@link BUILTIN_ADAPTERS}) is defined in the built-in barrel

@@ -6,23 +6,21 @@
  * `semantic-search` for `akm health`: what the last `akm index` recorded about
  * semantic search (status, embedding runtime, the reason it failed), with the
  * index's own entry and vector counts read now. It loads no model and makes no
- * request, and nothing gates search on it (#873 removed the cached verdict
- * search used to obey); it reports what the index says.
+ * request, and nothing gates search on it; it reports what the index says.
  */
 
-import { getDbPath } from "../../core/paths";
-import { heldRebuildLock } from "../../indexer/index-rebuild-lock";
-import { SEMANTIC_SEARCH_META_KEY, type SemanticSearchRecord } from "../../indexer/walk/index-context";
-import { LOCAL_EMBEDDING_RUNTIME } from "../../llm/embedders/local";
 import {
-  closeDatabase,
-  indexDbIsDamaged,
-  openReadonlyExistingDatabase,
-} from "../../storage/repositories/index-connection";
+  readSemanticSearchRecord,
+  type SemanticSearchRecord,
+  type SemanticSearchStatus,
+} from "../../indexer/walk/index-context";
+import { LOCAL_EMBEDDING_RUNTIME } from "../../llm/embedders/local";
+import { indexDbIsDamaged } from "../../storage/repositories/index-connection";
 import { getEmbeddableEntryCount } from "../../storage/repositories/index-entries-repository";
 import { hasCurrentEntriesTable } from "../../storage/repositories/index-entry-schema";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount } from "../../storage/repositories/index-vec-repository";
+import { readHealthIndex } from "./read-index";
 import type { HealthCheckResult, HealthUnknownReason } from "./types";
 
 /** What the check reads: the config's mode and, when there is an index, its record and counts. */
@@ -38,30 +36,44 @@ export interface SemanticSearchState {
 }
 
 /** Read the last index run's record and the index's counts, read-only. */
-export function readSemanticSearchState(mode: string | undefined): SemanticSearchState {
-  try {
-    if (indexDbIsDamaged()) throw new Error("index.db is damaged");
-    const db = openReadonlyExistingDatabase(getDbPath());
-    if (!db) return { mode };
-    try {
-      if (!hasCurrentEntriesTable(db)) throw new Error("index.db has no searchable entries table");
-      const raw = getMeta(db, SEMANTIC_SEARCH_META_KEY);
-      return {
-        mode,
-        index: {
-          ...(raw ? { record: JSON.parse(raw) as SemanticSearchRecord } : {}),
-          builtAt: getMeta(db, "builtAt"),
-          entryCount: getEmbeddableEntryCount(db),
-          embeddingCount: getEmbeddingCount(db),
-        },
-      };
-    } finally {
-      closeDatabase(db);
-    }
-  } catch (error) {
-    if (heldRebuildLock()) return { mode, building: true };
-    return { mode, error: error instanceof Error ? error.message : String(error) };
-  }
+export function readSemanticSearchState(
+  mode: string | undefined,
+  options?: { dbPath?: string; busyTimeoutMs?: number },
+): SemanticSearchState {
+  const read = readHealthIndex((db) => {
+    if (!hasCurrentEntriesTable(db)) throw new Error("index.db has no searchable entries table");
+    const record = readSemanticSearchRecord(db);
+    return {
+      ...(record ? { record } : {}),
+      builtAt: getMeta(db, "builtAt"),
+      entryCount: getEmbeddableEntryCount(db),
+      embeddingCount: getEmbeddingCount(db),
+    };
+  }, options);
+  if ("noIndex" in read) return { mode };
+  if ("building" in read) return { mode, building: true };
+  if ("error" in read) return { mode, error: read.error };
+  return { mode, index: read.value };
+}
+
+/**
+ * The state doctor checks: a damaged page fails search even when this read succeeds, so doctor also checks the
+ * file's integrity, once per run. `akm info` and `akm bundle update` read the state without that pass.
+ */
+export function readSemanticSearchHealth(mode: string | undefined): SemanticSearchState {
+  const state = readSemanticSearchState(mode);
+  return state.index && indexDbIsDamaged() ? { mode, error: "index.db is damaged" } : state;
+}
+
+/**
+ * The state as `akm info` and `akm bundle update` report it: `disabled` when the mode is off, `unknown` with the read
+ * error when the index cannot be read, `pending` when no run recorded one (no index, one being built, or none since
+ * embeddings were configured), otherwise the record's own status.
+ */
+export function semanticSearchStatus(state: SemanticSearchState): { status: SemanticSearchStatus; reason?: string } {
+  if (state.mode === "off") return { status: "disabled" };
+  if (state.error) return { status: "unknown", reason: state.error };
+  return { status: state.index?.record?.status ?? "pending" };
 }
 
 export function semanticSearchCheck(state: SemanticSearchState): HealthCheckResult {

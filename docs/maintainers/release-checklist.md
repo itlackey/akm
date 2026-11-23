@@ -260,7 +260,6 @@ each workflow declares what it needs.
 `itlackey/akm`, workflow `release.yml`; environment `release` for `akm-cli`,
 blank for `akm-web`. Unchanged by the branch model.
 
-For the first release containing CLI invocation usage (version pending), record
-the published version in the CLI reference and migration guide. Run
-`bun test tests/integration/cli-usage.test.ts`; the 0.11 upgrade gate must preserve
-the `cli_usage_*` tables of `metrics.db` (instance identity and durable aggregates) instead of rebuilding them.
+The 0.11 upgrade gate must preserve the `cli_usage_*` tables of `metrics.db` (instance
+identity and durable aggregates) instead of rebuilding them;
+`bun test tests/integration/cli-usage.test.ts` covers the tables.

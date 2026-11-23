@@ -472,7 +472,7 @@ function exclusionMeta(run: DistillRun, forResult: boolean): Record<string, unkn
 export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistillResult> {
   const inputRef = options.ref.trim();
   if (!inputRef) {
-    throw new UsageError("Asset ref is required. Usage: akm distill <ref>", "MISSING_REQUIRED_ARGUMENT");
+    throw new UsageError("Asset ref is required.", "MISSING_REQUIRED_ARGUMENT");
   }
   const config = options.config ?? loadConfig();
   const stash = options.stashDir ?? resolveStashDir();

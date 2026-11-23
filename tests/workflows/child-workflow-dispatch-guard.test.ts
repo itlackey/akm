@@ -38,7 +38,7 @@
  * (no producer would remain — a `UsageError` tells a USER to change their
  * input, and nothing a user can author reaches this line once the seam
  * exists). `WORKFLOW_CHILD_EXECUTION_UNSUPPORTED` itself is retired (row
- * A-04, pinned in tests/workflows/child-executor-seam.test.ts: `rg
+ * A-04, pinned in tests/integration/workflows/child-executor-seam.test.ts: `rg
  * WORKFLOW_CHILD_EXECUTION_UNSUPPORTED src/` is zero hits).
  *
  * The R8 properties that must survive this flip are asserted explicitly
@@ -66,7 +66,7 @@ import { dispatchWorkflowExecution, type UnitDispatchRequest } from "../../src/w
  * points under test decide on `.kind` alone before touching any other
  * field, so `frozenPlan` stays an empty object cast through `unknown` rather
  * than a fully valid `WorkflowPlan` — mirrors
- * `tests/workflows/hash-v6.test.ts`'s `asFrozenTarget` fixture, which
+ * `tests/integration/workflows/hash-v6.test.ts`'s `asFrozenTarget` fixture, which
  * established the identical "cast through unknown for this one field, never
  * a real `@ts-expect-error`" convention for this exact target shape.
  */

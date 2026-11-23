@@ -15,23 +15,6 @@ import type {
 import type { AkmConfig } from "../../core/config/config-types";
 import type { TaskHostShell } from "../task-source";
 
-export type TaskScriptInterpreter =
-  | "sh"
-  | "bun"
-  | "bun-standalone"
-  | "node"
-  | "powershell"
-  | "cmd"
-  | "python"
-  | "ruby"
-  | "go"
-  | "perl"
-  | "php"
-  | "lua"
-  | "rscript"
-  | "swift"
-  | "kotlin";
-
 export interface PreparedTaskBase {
   readonly taskId: string;
   readonly taskRef: string;
@@ -63,7 +46,6 @@ export interface PreparedTaskShell extends PreparedTaskBase {
 export interface PreparedTaskScript extends PreparedTaskBase {
   readonly kind: "script";
   readonly sourceRef: string;
-  readonly interpreter: TaskScriptInterpreter;
   readonly extension: string;
   /** Immutable base64 encoding of the exact source bytes. */
   readonly bytesBase64: string;

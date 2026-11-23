@@ -147,7 +147,7 @@ describe("state-db-events-purge", () => {
    * trim, `state.db` grows forever — `akm health` writes a `health_probe` row on
    * every invocation, and every command surface emits at least one event besides.
    * The guard itself (unfolded days, crash windows) is tested in
-   * tests/commands/metrics/fold.test.ts.
+   * tests/integration/commands/metrics/fold.test.ts.
    */
 
   let storage: IsolatedAkmStorage;

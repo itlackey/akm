@@ -106,7 +106,8 @@ function portable(base: Dict, label: string, notes: string[]): Dict {
   const out: Dict = { ...base };
   const left = HOST_LOCAL_KEYS.filter((key) => Object.hasOwn(out, key));
   for (const key of left) delete out[key];
-  if (left.length > 0) notes.push(`extends ${JSON.stringify(label)}: ${left.join(", ")} not merged; they are host-local.`);
+  if (left.length > 0)
+    notes.push(`extends ${JSON.stringify(label)}: ${left.join(", ")} not merged; they are host-local.`);
 
   let strippedAuthority = false;
   for (const section of ["connections", "harnesses"] as const) {
@@ -158,7 +159,8 @@ interface Located {
 
 function locate(ref: string, context: Dict, fromPath: string, containmentRoot: string | undefined): Located {
   const boundary = ref.indexOf("//");
-  if (boundary > 0 && isBundleSlug(ref.slice(0, boundary))) return locateInBundle(ref, boundary, context, containmentRoot);
+  if (boundary > 0 && isBundleSlug(ref.slice(0, boundary)))
+    return locateInBundle(ref, boundary, context, containmentRoot);
   const expanded = ref.startsWith("~") ? path.join(os.homedir(), ref.slice(1)) : ref;
   const resolvedPath = path.isAbsolute(expanded) ? expanded : path.resolve(path.dirname(fromPath), expanded);
   if (containmentRoot !== undefined) assertContained(containmentRoot, resolvedPath, ref);

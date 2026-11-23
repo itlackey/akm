@@ -2,8 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Output shape registration for `akm proposal new` (#226; formerly the
-// top-level `akm propose`, moved under `proposal` in the 0.9 CLI overhaul, S8).
+// Output shape registration for `akm proposal new` (#226).
 // Shares the proposal-producer envelope shape (success carries a proposal
 // entry; failure carries an AgentFailureReason discriminant) with the
 // internal `akmReflect` result shape — but `reflect` has no standalone CLI

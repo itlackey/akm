@@ -21,10 +21,11 @@ import path from "node:path";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
 import { type AkmConfig, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { withConfigLock } from "../../src/core/config/config-io";
-import { retiredEngineTargets } from "./config/normalize";
-import { type EngineTargets, forgetEngineTargets } from "./config/retired-engines";
 import { getDataDir } from "../../src/core/paths";
 import { bundleRoots } from "./bundle-roots";
+import { retiredEngineTargets } from "./config/normalize";
+import { type EngineTargets, forgetEngineTargets } from "./config/retired-engines";
+import { applyEngineKeysPlan, type EngineKeyRoot, inspectEngineKeyFiles } from "./migrate/engine-key-files";
 import {
   type EngineKeyOutcome,
   type EngineKeyResolution,
@@ -33,7 +34,6 @@ import {
   planEngineKeys,
   type ResolveEngineKey,
 } from "./migrate/engine-key-planner";
-import { applyEngineKeysPlan, type EngineKeyRoot, inspectEngineKeyFiles } from "./migrate/engine-key-files";
 
 export interface EngineKeyFileSummary {
   filePath: string;
@@ -164,15 +164,16 @@ export function applyEngineKeysMigration(targets?: EngineTargets): EngineKeysMig
     const backupPath = path.join(getDataDir(), "backups", "asset-engine-keys", `${Date.now()}-${randomUUID()}`);
     const { rewritten, conflicts } = applyEngineKeysPlan(before, { backupRoot: backupPath });
     // A file that changed since it was planned was left as it is; the report says so, and a run again plans it afresh.
-    const files = summary.files.map((file): EngineKeyFileSummary =>
-      conflicts.includes(file.filePath)
-        ? {
-            filePath: file.filePath,
-            status: "skipped",
-            beforeHash: file.beforeHash,
-            reason: "it changed after it was planned, so it was left as it is; run again to plan it afresh",
-          }
-        : file,
+    const files = summary.files.map(
+      (file): EngineKeyFileSummary =>
+        conflicts.includes(file.filePath)
+          ? {
+              filePath: file.filePath,
+              status: "skipped",
+              beforeHash: file.beforeHash,
+              reason: "it changed after it was planned, so it was left as it is; run again to plan it afresh",
+            }
+          : file,
     );
     const left = files.filter((file) => file.status === "skipped").length;
     // The old names go only when the files, read again, no longer have an `engine:` key that names one: a file

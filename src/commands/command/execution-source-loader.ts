@@ -22,7 +22,7 @@ import type {
 } from "../../execution/source";
 import { type IndexEntry, lookupBundleRef } from "../../indexer/indexer";
 import { deriveInstallations } from "../../indexer/installations";
-import { resolveEntryContentDir, resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveEntryContent, resolveSourceEntries } from "../../indexer/search/search-source";
 import { buildFileContext, type FileContext } from "../../indexer/walk/file-context";
 
 export type ExecutionSourceLookup = (ref: BundleRef) => Promise<IndexEntry | null>;
@@ -123,11 +123,13 @@ function componentForEntry(entry: IndexEntry, config: AkmConfig, realRoot: strin
     );
   }
   const configuredSource = bundlesToSourceEntries(config)?.find((source) => source.name === entry.bundleId);
-  const configuredContentRoot = configuredSource ? resolveEntryContentDir(configuredSource) : undefined;
+  const configuredContent = configuredSource ? resolveEntryContent(configuredSource) : undefined;
+  const configuredContentRoot = configuredContent && "dir" in configuredContent ? configuredContent.dir : undefined;
   if (!configuredSource || !configuredContentRoot) {
+    const why = configuredContent && "error" in configuredContent ? ` (${configuredContent.error})` : "";
     warnOnce(
       `execution-source-unresolved:${entry.itemRef}`,
-      `[command] Configured source for ${JSON.stringify(entry.itemRef)} no longer resolves to materialized content; dispatching from the indexed location instead. Run \`akm index --full\` after restoring or updating the bundle.`,
+      `[command] Configured source for ${JSON.stringify(entry.itemRef)} no longer resolves to materialized content${why}; dispatching from the indexed location instead. Run \`akm index --full\` after restoring or updating the bundle.`,
     );
   } else {
     const lexicalSourceRoot = path.resolve(configuredContentRoot);
@@ -216,7 +218,7 @@ export async function loadAdapterExecutionSource(
     throw new NotFoundError(
       `Execution source ${JSON.stringify(refInput)} was not found in the local index.`,
       "ASSET_NOT_FOUND",
-      "Run `akm index --full`, then retry the command ref.",
+      `Run \`akm index --full\`, then retry, or check the ${expectedKind === "persona" ? "agent" : "command"} ref ${JSON.stringify(refInput)}.`,
     );
   }
   const indexedType = expectedIndexedType(expectedKind);

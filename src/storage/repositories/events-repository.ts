@@ -65,7 +65,7 @@ export function eventRowToEnvelope(row: EventRow): EventEnvelope {
  * Insert a single event. Returns the auto-assigned monotonic rowid, which
  * callers can store as a "sinceId" cursor for future `readEventsSince` calls.
  *
- * Best-effort: mirrors the behaviour of the old `appendEvent` — errors are
+ * Best-effort: errors are
  * caught and logged to stderr rather than propagated so observability never
  * breaks mutation.
  */

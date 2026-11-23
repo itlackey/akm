@@ -7,9 +7,9 @@
  * and harnesses the engines became. See `convert-engines.ts`.
  */
 
-import { getHarness } from "../../../src/integrations/harnesses";
 import { isRecord } from "../../../src/core/common";
 import type { LlmInference } from "../../../src/core/llm-inference";
+import { getHarness } from "../../../src/integrations/harnesses";
 import { type Conversion, type Dict, type Entries, str, wireFieldsOf } from "./convert-engines-shared";
 
 const allAliases = (model: string | undefined): Dict | undefined =>
@@ -88,8 +88,7 @@ export function foldModelsOverlay(modelsOverlay: unknown, fold: ModelsFold): voi
   const writtenHarnesses = written.harnesses;
   /** Whether the config itself already names a model for the alias. */
   const configNames = (own: Dict, name: string, alias: string): boolean => hasModel(own[name], alias);
-  const platformOf = (name: string): string =>
-    String((mergedHarnesses[name] as Dict | undefined)?.platform ?? name);
+  const platformOf = (name: string): string => String((mergedHarnesses[name] as Dict | undefined)?.platform ?? name);
   /** The column of models.json that named a harness: an `opencode-sdk` engine's was `opencode-sdk`, not its platform's. */
   const columnOf = (name: string): string => (renamed.sdkHarness.includes(name) ? "opencode-sdk" : platformOf(name));
   /** Harnesses whose engine had a `model` of its own, which names every alias and so stands over the column (noted once each). */
@@ -122,8 +121,7 @@ export function foldModelsOverlay(modelsOverlay: unknown, fold: ModelsFold): voi
     // The config's own choice stands, and `*` leaves what an explicit column already set.
     const connectionNames = candidates.filter(
       (name) =>
-        !configNames(writtenConnections, name, alias) &&
-        !(column === "*" && hasModel(mergedConnections[name], alias)),
+        !configNames(writtenConnections, name, alias) && !(column === "*" && hasModel(mergedConnections[name], alias)),
     );
     const unnamed = harnessNamed.filter((name) => !configNames(writtenHarnesses, name, alias));
     // The model a harness engine named is what ran when a request named none, and a harness runs its first model then,

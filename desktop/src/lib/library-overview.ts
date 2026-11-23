@@ -66,6 +66,12 @@ export interface Overview {
   bundles: string[];
   bundle: number[];
   shows: number[];
+  /** How many declared links each asset has, either way. */
+  degree: number[];
+  /** When each asset was last read in the window (ISO), or null. */
+  lastShown: Array<string | null>;
+  /** When the overview was built: ages are measured from it. */
+  at: number;
   /** When each asset's file was last changed (ISO), or null. */
   modified: Array<string | null>;
   /** Positive and negative feedback each asset has had in the window. */
@@ -76,9 +82,12 @@ export interface Overview {
   tags: number[][];
   use: Array<UseClass | null>;
   problems: Array<Problem[]>;
+  /** For an outdated asset, why: its recorded state ("superseded", "deprecated"), or the asset it says replaced or
+   * contradicts it (`by`, else -1). */
+  outdatedWhy: Array<Array<{ why: string; by: number }>>;
   /** Each declared link: from asset, to asset, and its kind's name. */
   links: Array<{ from: number; to: number; kind: string }>;
-  /** Each asset's group by meaning (-1: no embedding) and its place in 3D, three numbers per asset. */
+  /** Each asset's group by meaning (-1: no embedding) and the place akm gave it in 3D, three numbers per asset. */
   group: Int32Array;
   place: Float32Array;
   groupCount: number;
@@ -103,45 +112,139 @@ export function useClass(lastShownAt: string | null, modifiedAt: string | null, 
   return now - Date.parse(modifiedAt) <= OLD_DAYS * DAY ? "new" : "unread";
 }
 
-/** How far forward (+1) or back (-1) in its group an asset sits: recent use in front, never read and outdated behind. */
-const DEPTH: Record<UseClass, number> = { recent: 1, earlier: 0.4, new: -0.7, unread: -0.7 };
+/** What the map can gather assets by: akm's groups by meaning, or one group for each value of a property. */
+export const GROUPINGS = [
+  { id: "meaning", label: "Meaning" },
+  { id: "type", label: "Type" },
+  { id: "bundle", label: "Bundle" },
+  { id: "edited", label: "Last edited" },
+  { id: "use", label: "Use" },
+  { id: "problem", label: "Problem" },
+] as const;
+export type Grouping = (typeof GROUPINGS)[number]["id"];
+
+/** The ages an asset's last edit is sorted into, the newest first. */
+const EDITED = [
+  { under: 30, label: "Edited in the last 30 days" },
+  { under: 182, label: "1 to 6 months ago" },
+  { under: 365, label: "6 to 12 months ago" },
+  { under: 730, label: "1 to 2 years ago" },
+  { under: Infinity, label: "Over 2 years ago" },
+];
 
 /**
- * Each asset's place in 3D, three numbers per asset: akm's place by meaning, with the depth inside its group (z) set by
- * use and state, so what is read lately sits at the front of a group and what was never read in the window, or is
- * superseded, contradicted or deprecated, at the back. A fifth of the depth keeps akm's own z, so a group does not flatten into layers.
+ * The overview with its assets grouped by a property instead of by meaning, and the name of each group; by meaning
+ * it is the overview as it is, its groups named by `groupsOf`. Everything that reads an overview's groups then works
+ * on whichever grouping is chosen.
  */
-function placeByUse(payload: OverviewPayload, use: Array<UseClass | null>, outdated: Uint8Array): Float32Array {
-  const g = payload.groups;
-  const n = payload.nodes.ref.length;
-  const place = new Float32Array(n * 3);
-  if (!g) return place;
-  const sum = new Map<number, { n: number; z: number; r: number[] }>();
-  for (let i = 0; i < n; i++) {
-    place.set([g.x[i]!, g.y[i]!, g.z[i]!], i * 3);
-    if (g.group[i]! < 0) continue;
-    const s = sum.get(g.group[i]!) ?? { n: 0, z: 0, r: [0, 0, 0] };
-    s.n++;
-    s.z += g.z[i]!;
-    s.r[0]! += g.x[i]!;
-    s.r[1]! += g.y[i]!;
-    sum.set(g.group[i]!, s);
+export function regroup(o: Overview, by: Grouping): { o: Overview; names: string[] | null } {
+  if (by === "meaning") return { o, names: null };
+  const [of, names]: [(i: number) => number, string[]] =
+    by === "type"
+      ? [(i) => o.family[i]!, FAMILIES.map((f) => f.label)]
+      : by === "bundle"
+        ? [(i) => o.bundle[i]!, o.bundles]
+        : by === "edited"
+          ? [
+              (i) => {
+                const days = o.modified[i] ? (o.at - Date.parse(o.modified[i]!)) / DAY : Number.NaN;
+                const k = EDITED.findIndex((e) => days < e.under);
+                return Number.isNaN(days) ? EDITED.length : k;
+              },
+              [...EDITED.map((e) => e.label), "Edit time not known"],
+            ]
+          : by === "use"
+            ? [
+                (i) => (o.use[i] ? USE_CLASSES.findIndex((u) => u.id === o.use[i]) : USE_CLASSES.length),
+                [...USE_CLASSES.map((u) => u.label), "Use not known"],
+              ]
+            : [
+                (i) => {
+                  const first = firstProblem(o, i);
+                  return first ? PROBLEMS.findIndex((p) => p.id === first) : PROBLEMS.length;
+                },
+                [...PROBLEMS.map((p) => p.label), "No problem recorded"],
+              ];
+  return { o: { ...o, group: Int32Array.from({ length: o.count }, (_, i) => of(i)), groupCount: names.length }, names };
+}
+
+/** How far apart, in the map's units, neighbouring assets of a group stand: in the plane about a point's drawn
+ * width, in space farther, since there one point stands in front of another. */
+export const FLAT_STEP = 5;
+const SPACE_STEP = 16;
+
+/**
+ * The assets laid out by their groups, in the plane (`dims` 2) or in space (3): each group is a disc, or a ball, of
+ * its assets. The clusters do not overlap, stay as near where their assets stand in akm's layout as room allows, and
+ * hold their assets a step apart, the ones nearest the group's middle at the cluster's middle. Dropping the depth of
+ * akm's places instead would lay the groups that stand behind one another on top of each other. An asset with no
+ * group keeps akm's place (flattened, in the plane).
+ */
+export function clusterPlace(o: Overview, dims: 2 | 3): Float32Array {
+  const place = Float32Array.from(o.place);
+  if (dims === 2) for (let i = 0; i < o.count; i++) place[i * 3 + 2] = 0;
+  const lists = Array.from({ length: o.groupCount }, () => [] as number[]);
+  for (let i = 0; i < o.count; i++) if (o.group[i]! >= 0) lists[o.group[i]!]!.push(i);
+  const step = dims === 2 ? FLAT_STEP : SPACE_STEP;
+  /** A cluster's radius per root of its assets: its points then stand about a step apart. */
+  const spread = 0.6 * step;
+  const root = (n: number) => (dims === 2 ? Math.sqrt(n) : Math.cbrt(n));
+  const far = (a: readonly number[], b: readonly number[]) => Math.hypot(a[0]! - b[0]!, a[1]! - b[1]!, a[2]! - b[2]!);
+  const clusters = lists
+    .filter((list) => list.length)
+    .map((list) => {
+      const at = [0, 0, 0];
+      for (const i of list) for (let d = 0; d < dims; d++) at[d]! += o.place[i * 3 + d]! / list.length;
+      return { at, middle: [...at], r: spread * root(list.length) + step, list };
+    });
+  // Start the clusters where their groups are, spread out to about the room they need, then push apart any that touch.
+  const extent = Math.max(1, ...clusters.map((c) => far(c.at, [0, 0, 0])));
+  const room = root(clusters.reduce((sum, c) => sum + c.r ** dims, 0) / 0.6);
+  for (const c of clusters) for (let d = 0; d < dims; d++) c.at[d]! *= room / extent;
+  for (let pass = 0; pass < 300; pass++) {
+    let touching = false;
+    for (let a = 0; a < clusters.length; a++)
+      for (let b = a + 1; b < clusters.length; b++) {
+        const A = clusters[a]!;
+        const B = clusters[b]!;
+        const gap = far(A.at, B.at);
+        if (gap >= A.r + B.r) continue;
+        touching = true;
+        // Two clusters in the same spot part along a direction of their own, so the layout is the same every time.
+        const away = gap
+          ? [0, 1, 2].map((d) => (B.at[d]! - A.at[d]!) / gap)
+          : [Math.cos(a * 2.4 + b), Math.sin(a * 2.4 + b), 0];
+        const push = (A.r + B.r - gap) / 2 + 0.01;
+        for (let d = 0; d < dims; d++) {
+          A.at[d]! -= away[d]! * push;
+          B.at[d]! += away[d]! * push;
+        }
+      }
+    if (!touching) break;
   }
-  const spread = new Map<number, number>();
-  for (let i = 0; i < n; i++) {
-    const s = sum.get(g.group[i]!);
-    if (!s) continue;
-    const d = Math.hypot(g.x[i]! - s.r[0]! / s.n, g.y[i]! - s.r[1]! / s.n, g.z[i]! - s.z / s.n);
-    spread.set(g.group[i]!, (spread.get(g.group[i]!) ?? 0) + (d * d) / s.n);
+  for (const c of clusters) {
+    const out = (i: number) =>
+      far([o.place[i * 3]!, o.place[i * 3 + 1]!, dims === 2 ? 0 : o.place[i * 3 + 2]!], c.middle);
+    [...c.list]
+      .sort((p, q) => out(p) - out(q) || p - q)
+      .forEach((i, k) => {
+        // Each next asset a little farther out, so the disc or the ball fills evenly: round the disc by the golden
+        // angle; over the ball by two steps that never fall into step with each other.
+        const r = spread * root(k + 0.5);
+        const turn = dims === 2 ? k * 2.399963 : 2 * Math.PI * ((k * 0.7548776662) % 1);
+        const up = dims === 2 ? 0 : 1 - 2 * ((k * 0.569840291) % 1);
+        const across = Math.sqrt(1 - up * up);
+        place[i * 3] = c.at[0]! + r * across * Math.cos(turn);
+        place[i * 3 + 1] = c.at[1]! + r * across * Math.sin(turn);
+        place[i * 3 + 2] = c.at[2]! + r * up;
+      });
   }
-  for (let i = 0; i < n; i++) {
-    const s = sum.get(g.group[i]!);
-    if (!s) continue;
-    const centre = s.z / s.n;
-    const radius = Math.sqrt(spread.get(g.group[i]!)!) || 1;
-    const depth = outdated[i] ? -1 : use[i] ? DEPTH[use[i]!] : 0;
-    place[i * 3 + 2] = centre + radius * (0.8 * depth) + 0.2 * (g.z[i]! - centre);
-  }
+  return place;
+}
+/** Each asset's place with its depth removed, three numbers per asset: the same points in one plane. */
+export function flatPlace(o: Overview): Float32Array {
+  const place = Float32Array.from(o.place);
+  for (let i = 0; i < o.count; i++) place[i * 3 + 2] = 0;
   return place;
 }
 
@@ -160,10 +263,25 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
 
   const problems: Problem[][] = Array.from({ length: n }, () => []);
   const outdated = new Uint8Array(n);
-  for (let i = 0; i < n; i++)
-    if (OUTDATED_BELIEFS.includes(payload.beliefs[payload.nodes.belief[i] ?? -1] ?? "")) outdated[i] = 1;
-  for (let e = 0; e < payload.links.from.length; e++)
-    if (OUTDATED_LINKS.includes(payload.kinds[payload.links.kind[e]!] ?? "")) outdated[payload.links.from[e]!] = 1;
+  /** Why each outdated asset is outdated: its recorded state, and what it says replaced or contradicts it. */
+  const outdatedWhy: Overview["outdatedWhy"] = Array.from({ length: n }, () => []);
+  for (let i = 0; i < n; i++) {
+    const belief = payload.beliefs[payload.nodes.belief[i] ?? -1] ?? "";
+    if (!OUTDATED_BELIEFS.includes(belief)) continue;
+    outdated[i] = 1;
+    outdatedWhy[i]!.push({ why: belief, by: -1 });
+  }
+  for (let e = 0; e < payload.links.from.length; e++) {
+    const kind = payload.kinds[payload.links.kind[e]!] ?? "";
+    if (!OUTDATED_LINKS.includes(kind)) continue;
+    outdated[payload.links.from[e]!] = 1;
+    outdatedWhy[payload.links.from[e]!]!.push({ why: kind.replace("_by", ""), by: payload.links.to[e]! });
+  }
+  const degree = new Array<number>(n).fill(0);
+  for (let e = 0; e < payload.links.from.length; e++) {
+    degree[payload.links.from[e]!]!++;
+    degree[payload.links.to[e]!]!++;
+  }
   const duplicates = (payload.duplicates?.a ?? []).map((a, k) => ({
     a,
     b: payload.duplicates!.b[k]!,
@@ -188,6 +306,9 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
     bundles: payload.bundles,
     bundle: payload.nodes.bundle,
     shows: payload.nodes.shows,
+    degree,
+    lastShown: payload.nodes.lastShownAt ?? payload.nodes.ref.map(() => null),
+    at: now,
     modified: payload.nodes.modifiedAt ?? payload.nodes.ref.map(() => null),
     positive: payload.nodes.positive ?? payload.nodes.ref.map(() => 0),
     negative: payload.nodes.negative ?? payload.nodes.ref.map(() => 0),
@@ -195,13 +316,17 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
     tags: payload.nodes.tags ?? payload.nodes.ref.map(() => []),
     use,
     problems,
+    outdatedWhy,
     links: payload.links.from.map((from, e) => ({
       from,
       to: payload.links.to[e]!,
       kind: payload.kinds[payload.links.kind[e]!] ?? "",
     })),
     group: payload.groups ? Int32Array.from(payload.groups.group) : new Int32Array(n).fill(-1),
-    place: placeByUse(payload, use, outdated),
+    place: Float32Array.from({ length: n * 3 }, (_, k) => {
+      const g = payload.groups;
+      return (g ? [g.x, g.y, g.z][k % 3]![Math.floor(k / 3)] : 0) ?? 0;
+    }),
     groupCount: payload.groups?.count ?? 0,
     duplicates,
     duplicatesTruncated: payload.duplicates?.truncated ?? false,
@@ -445,8 +570,6 @@ export interface Group {
   /** Its two most particular tags, or its largest asset type when its assets carry none. */
   label: string;
   members: number[];
-  /** The middle of its assets in 3D. */
-  centre: [number, number, number];
 }
 
 /** How many of `scope` have no group by meaning, so are not points on the 3D map. */
@@ -475,9 +598,7 @@ export function groupsOf(o: Overview, scope: readonly number[]): Group[] {
         .map((x) => o.tagNames[x.t]!);
       const types = tally(list, (i) => o.types[o.type[i]!]!, o.types);
       const largest = o.types.slice().sort((x, y) => types[y]! - types[x]!)[0] ?? "";
-      const centre: [number, number, number] = [0, 0, 0];
-      for (const i of list) for (let d = 0; d < 3; d++) centre[d]! += o.place[i * 3 + d]! / list.length;
-      return { key: `g:${id}`, id, named, label: `${largest}, untagged`, members: list, centre };
+      return { key: `g:${id}`, id, named, label: `${largest}, untagged`, members: list };
     })
     .filter((g) => g.members.length)
     .sort((x, y) => y.members.length - x.members.length || x.id - y.id);

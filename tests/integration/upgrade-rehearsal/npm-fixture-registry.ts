@@ -6,7 +6,7 @@
  * A tiny local npm registry: serves a packument plus tarball for one
  * fixture package, the same shape
  * `tests/integration/registry/registry-network-boundary.test.ts` and
- * `tests/registry-resolve.test.ts` exercise against `AKM_NPM_REGISTRY`.
+ * `tests/integration/registry-resolve.test.ts` exercise against `AKM_NPM_REGISTRY`.
  */
 
 import { createHash } from "node:crypto";

@@ -111,10 +111,7 @@ export function parseJsonResponse<T = unknown>(raw: string): T | undefined {
  * found. Preserves the historical behaviour every current caller (all in
  * `src/`) relies on.
  *
- * An array-preferring mode (`expect: "array"`, for callers that specifically
- * expect a JSON array) existed here for batched LLM entity-graph extraction
- * (#635) and was removed with it in 0.9.17-alpha.9 — every remaining caller
- * calls this with no options, so it was dead weight, not a live choice.
+ * There is no array-preferring mode: every caller passes no options.
  */
 export function parseEmbeddedJsonResponse<T = unknown>(raw: string): T | undefined {
   const direct = parseJsonResponse<T>(raw);

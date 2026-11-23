@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `akm-workflow` adapter — akm 0.9.0 format-family work item (#46).
+ * The `akm-workflow` adapter.
  *
  * A native akm workflow bundle: Markdown workflow sources.
  *

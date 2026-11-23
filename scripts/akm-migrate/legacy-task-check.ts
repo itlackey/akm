@@ -36,11 +36,19 @@ export function legacyTasks(): { blockers: string[]; warnings: string[] } {
         continue;
       }
       if (typeof version !== "number" || version >= 4) continue;
-      const ref = `${root.bundleId}//${path.relative(root.root, file.filePath).split(path.sep).join("/").replace(/\.yml$/, "")}`;
+      const ref = `${root.bundleId}//${path
+        .relative(root.root, file.filePath)
+        .split(path.sep)
+        .join("/")
+        .replace(/\.yml$/, "")}`;
       if (enabled.has(ref)) {
-        blockers.push(`task ${file.filePath} (${ref}) is enabled and uses task schema version ${version}, which 0.10 does not convert, so it would stop running: ${RECIPE}.`);
+        blockers.push(
+          `task ${file.filePath} (${ref}) is enabled and uses task schema version ${version}, which 0.10 does not convert, so it would stop running: ${RECIPE}.`,
+        );
       } else {
-        warnings.push(`task ${file.filePath} uses task schema version ${version}, which 0.10 does not read or convert; it is not enabled, so nothing is lost (${RECIPE}).`);
+        warnings.push(
+          `task ${file.filePath} uses task schema version ${version}, which 0.10 does not read or convert; it is not enabled, so nothing is lost (${RECIPE}).`,
+        );
       }
     }
   }

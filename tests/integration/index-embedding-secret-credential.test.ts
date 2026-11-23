@@ -263,6 +263,7 @@ describe("akm bundle update: the update's embedding phase carries the stored cre
     try {
       const result = await akmUpdate({ target: id, stashDir: storage.stashDir });
 
+      if ("skipped" in result.index) throw new Error("index build was skipped");
       expect(result.index.semanticStatus).toBeDefined();
       expect(result.index.semanticStatus).toBe("ready-js");
       expectEveryRequestCarriedCredential(capture.authHeaders, "Bearer bundle-update-store-secret-value");

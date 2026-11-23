@@ -33,7 +33,7 @@ Search and show only return content; running a workflow, task, script, or agent 
 
 ## Install
 
-**Option 1 — npm package (recommended; requires [Node.js](https://nodejs.org) >= 22):**
+**Option 1 — npm package (recommended; requires [Node.js](https://nodejs.org) >= 22.15):**
 
 ```sh
 npm install -g akm-cli
@@ -82,7 +82,7 @@ AKM recognizes several existing directory layouts in place, each through its own
 | Native akm bundles | Full read/write — scripts, skills, workflows, agents, instructions, memories, knowledge, and more |
 | Claude Code / OpenCode tool directories | Indexes `CLAUDE.md`/`AGENTS.md`, `commands/`, `agents/`, `skills/` in place, read-only |
 | Standalone Agent Skills packages | Indexes `<name>/SKILL.md` collections in place, read-only |
-| Workflow and task files | Indexes standalone `.md` workflows and task source v4 `.yml` files |
+| Workflow and task files | Indexes standalone `.md` workflows (Deprecated) and task source `.yml` files |
 | OKF and LLM wikis | Indexes plain-markdown (OKF) and Karpathy-style wiki (`schema.md` + `raw/` + `pages/`) content, read-only |
 | Git, npm, local dirs, and websites | Any of these can be added as a source; AKM detects the bundle format inside and indexes it (a website is crawled into a local snapshot) |
 
@@ -103,7 +103,7 @@ Scheduling background tasks (like `akm improve`) involves reviewing and activati
 
 ## Local-first and privacy
 
-AKM is local-first: it stores its index and state on disk and sends no crash reports. It records local-only counts of its own commands (which command and flags ran, never their values, and the outcome) in `metrics.db` in its data directory; detail is kept for 30 days and daily counts indefinitely, `--read-only` records nothing, and `usage.capture: false` in the config file turns it off. It also sends one anonymous usage report a day, from the CLI and from AKM Desktop, to a self-hosted Aptabase at `reporting.fwdslsh.dev`: command counts and library sizes, never queries, refs, paths or names. `akm config set usage.report false` turns it off; the exact fields are in the data page below. Apart from that report it makes network requests only to the endpoints you configure or the commands you run: Git, npm, website sources, registries, your own model endpoints, the Hugging Face Hub when it downloads a local embedding model, and GitHub when you run `akm upgrade` or `akm doctor`. See [Data & Telemetry](https://akm.fwdslsh.dev/docs/reference/data-and-telemetry/) for the complete list of destinations and the on-disk inventory.
+AKM is local-first: it stores its index and state on disk and sends no crash reports. It records local-only counts of its own commands (which command and flags ran, never their values, and the outcome) in `metrics.db` in its data directory; detail is kept for 30 days and daily counts indefinitely, `--read-only` records nothing, and `usage.capture: false` in the config file turns it off. It also sends one anonymous usage report a day, from the CLI and from AKM Desktop, to a privately hosted service run by the akm maintainers. It holds no personal information: counts of the commands and flags used, what is set up and library sizes, under a random install id, never queries, refs, paths or names. `akm config set usage.report false` turns it off; the exact fields are in the data page below. Apart from that report it makes network requests only to the endpoints you configure or the commands you run: Git, npm, website sources, registries, your own model endpoints, the Hugging Face Hub when it downloads a local embedding model, and GitHub when you run `akm upgrade` or `akm doctor`. See [Data & Telemetry](https://akm.fwdslsh.dev/docs/reference/data-and-telemetry/) for the complete list of destinations and the on-disk inventory.
 
 ## Documentation and project status
 

@@ -30,6 +30,9 @@ export class AmazonqHarness implements AkmHarness {
     const base = [bin, "chat", ...(req.model ? withoutModelFlag(authored) : authored)];
     const model = req.model ? ["--model", req.model] : [];
     if (req.prompt === undefined) return { argv: [...base, ...model] };
-    return { argv: [...base, "--no-interactive", "--trust-all-tools", ...model, "--", req.prompt] };
+    return {
+      argv: [...base, "--no-interactive", "--trust-all-tools", ...model, "--", req.prompt],
+      failureStream: "stderr",
+    };
   }
 }

@@ -3,9 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm proposal new` — the asset-authoring entry point (formerly the
- * top-level `akm propose`, moved under the `proposal` group per the 0.9 CLI
- * overhaul, S8). Shares no private helper with the proposal MANAGEMENT
+ * `akm proposal new` — the asset-authoring entry point. Shares no private helper with the proposal MANAGEMENT
  * family (list/show/accept/reject/…, `./proposal-cli.ts`) — its path/name
  * helpers come from the shared src/core/asset/asset-create.ts module.
  *

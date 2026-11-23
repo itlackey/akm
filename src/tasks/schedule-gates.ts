@@ -9,22 +9,26 @@
  */
 
 import { UsageError } from "../core/errors";
+import type { InputContract } from "../execution/input-contract";
 import { applyInputDefaults, validateInputs } from "../execution/input-contract";
 import { parseSchedule } from "./schedule";
-import type { ParsedTaskSource } from "./source/parse-task-source";
+import type { TaskSourceV4ScheduleBinding } from "./source/task-source-v4";
+
+/** What the two gates read of a task source, whichever version it is. */
+export interface TaskScheduleSource {
+  readonly inputs?: InputContract;
+  readonly schedule: readonly TaskSourceV4ScheduleBinding[];
+}
 
 /**
- * Validate every v4 `schedule:` entry's `inputs` against the task's own
+ * Validate every `schedule:` entry's `inputs` against the task's own
  * declared contract with defaults applied — the exact set of values a
  * compiled invocation delivers — so a violation is reported at lint rather
  * than when the scheduler fires. Shared with `akm lint`.
  */
-export function assertTaskScheduleInputsSatisfyContract(
-  v4: Pick<ParsedTaskSource["v4"], "inputs" | "schedule">,
-  refLabel: string,
-): void {
-  const contract = v4.inputs ?? {};
-  for (const scheduleEntry of v4.schedule) {
+export function assertTaskScheduleInputsSatisfyContract(source: TaskScheduleSource, refLabel: string): void {
+  const contract = source.inputs ?? {};
+  for (const scheduleEntry of source.schedule) {
     const defaultedInputs = applyInputDefaults(contract, { ...scheduleEntry.inputs });
     const errors = validateInputs(contract, defaultedInputs);
     if (errors.length > 0) {
@@ -38,9 +42,9 @@ export function assertTaskScheduleInputsSatisfyContract(
 }
 
 /**
- * Validate every v4 `schedule:` entry's `cron` against the one cron grammar
+ * Validate every `schedule:` entry's `cron` against the one cron grammar
  * `akm task dispatch` evaluates. Shared with `akm lint`.
  */
-export function assertTaskScheduleCronValid(v4: Pick<ParsedTaskSource["v4"], "schedule">): void {
-  for (const scheduleEntry of v4.schedule) parseSchedule(scheduleEntry.cron);
+export function assertTaskScheduleCronValid(source: Pick<TaskScheduleSource, "schedule">): void {
+  for (const scheduleEntry of source.schedule) parseSchedule(scheduleEntry.cron);
 }

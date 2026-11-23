@@ -12,7 +12,11 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { readSemanticSearchState, semanticSearchCheck } from "../../../src/commands/health/semantic-search-check";
+import {
+  readSemanticSearchHealth,
+  readSemanticSearchState,
+  semanticSearchCheck,
+} from "../../../src/commands/health/semantic-search-check";
 import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
 import { getStateDbPath } from "../../../src/core/state-db";
 import { openDatabase } from "../../../src/storage/database";
@@ -125,7 +129,7 @@ describe("akm health", () => {
   test("with a page damaged inside index.db it fails, since search would", async () => {
     expect((await runCliCapture(["index"])).code).toBe(0);
     damageIndexInterior(getDbPath());
-    const result = semanticSearchCheck(readSemanticSearchState("auto"));
+    const result = semanticSearchCheck(readSemanticSearchHealth("auto"));
     expect(result.status).toBe("fail");
     expect(result.message).toContain("akm index");
   });

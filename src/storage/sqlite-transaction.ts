@@ -152,7 +152,7 @@ export function withImmediateTransaction<T>(db: Database, fn: () => T, reportCon
   // connection (e.g. a nested withImmediateTransaction call inside an outer
   // frame's fn), join it — run fn directly with no BEGIN/COMMIT/ROLLBACK of
   // our own. Without this, the nested BEGIN throws "cannot start a transaction
-  // within a transaction", which the old retry path answered with an
+  // within a transaction", which a retry path would answer with an
   // unconditional ROLLBACK — destroying the OUTER transaction and leaving its
   // COMMIT to fail with "cannot commit - no transaction is active".
   if (db.inTransaction) {

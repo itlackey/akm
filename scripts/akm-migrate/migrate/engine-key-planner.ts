@@ -29,7 +29,7 @@
  */
 
 import crypto from "node:crypto";
-import { isMap, isScalar, isSeq, parseDocument, type Pair, type YAMLMap } from "yaml";
+import { isMap, isScalar, isSeq, type Pair, parseDocument, type YAMLMap } from "yaml";
 
 export type EngineKeyRole = "command" | "tool-command" | "workflow" | "task";
 

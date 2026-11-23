@@ -16,12 +16,13 @@ import path from "node:path";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { readLockfile } from "../../src/integrations/lockfile";
 import { runCliCapture } from "../_helpers/cli";
+import { type GitDaemon, startGitDaemon } from "../_helpers/git-daemon";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage, withTTY } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 let originDir: string;
 let cleanupOrigin: () => void;
-let daemon: ReturnType<typeof Bun.spawn> | undefined;
+let daemon: GitDaemon | undefined;
 let REMOTE_URL = "";
 /** A stored `$VAR` credential reference, resolved from the environment at sync time. */
 const CREDENTIAL_REF = "$AKM_1296_TOKEN";
@@ -51,33 +52,12 @@ beforeEach(() => {
   git(["-C", seed, "commit", "-m", "seed"]);
   git(["clone", "--bare", seed, originDir]);
 
-  // Serve the bare repo over git:// on loopback. It must be a separate process:
-  // akm's synchronous git calls would deadlock an in-process server.
-  const probe = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
-  const port = probe.port;
-  probe.stop(true);
-  daemon = Bun.spawn(
-    [
-      "git",
-      "daemon",
-      "--reuseaddr",
-      "--listen=127.0.0.1",
-      `--port=${port}`,
-      `--base-path=${sandbox.dir}`,
-      "--export-all",
-      sandbox.dir,
-    ],
-    { stdout: "ignore", stderr: "ignore" },
-  );
-  REMOTE_URL = `git://127.0.0.1:${port}/knowledge.git`;
-  for (let attempt = 0; attempt < 50; attempt++) {
-    if (spawnSync("git", ["ls-remote", REMOTE_URL]).status === 0) break;
-    Bun.sleepSync(100);
-  }
+  daemon = startGitDaemon(sandbox.dir, "knowledge.git");
+  REMOTE_URL = `${daemon.baseUrl}/knowledge.git`;
 });
 
 afterEach(() => {
-  daemon?.kill();
+  daemon?.stop();
   cleanupOrigin();
   storage.cleanup();
 });

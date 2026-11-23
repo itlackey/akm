@@ -588,11 +588,11 @@ describe("cross-provider score normalization", () => {
       const result = await searchRegistry("openkit bun typescript starter", {
         registries: [{ url: srv.url }],
       });
+      expect(result.hits).toHaveLength(1);
       for (const hit of result.hits) {
-        if (hit.score !== undefined) {
-          expect(hit.score).toBeGreaterThanOrEqual(0);
-          expect(hit.score).toBeLessThanOrEqual(1);
-        }
+        expect(hit.score).toBeDefined();
+        expect(hit.score as number).toBeGreaterThanOrEqual(0);
+        expect(hit.score as number).toBeLessThanOrEqual(1);
       }
     } finally {
       srv.close();
@@ -659,11 +659,11 @@ describe("cross-provider score normalization", () => {
         registries: [{ url: staticSrv.url }, { url: `http://localhost:${skillsSrv.port}`, provider: "skills-sh" }],
       });
       // All scores in [0, 1]
+      expect(result.hits).toHaveLength(4);
       for (const hit of result.hits) {
-        if (hit.score !== undefined) {
-          expect(hit.score).toBeGreaterThanOrEqual(0);
-          expect(hit.score).toBeLessThanOrEqual(1);
-        }
+        expect(hit.score).toBeDefined();
+        expect(hit.score as number).toBeGreaterThanOrEqual(0);
+        expect(hit.score as number).toBeLessThanOrEqual(1);
       }
       // Results should be sorted descending
       for (let i = 1; i < result.hits.length; i++) {

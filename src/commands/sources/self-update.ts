@@ -16,7 +16,8 @@ import {
 import { ConfigError } from "../../core/errors";
 import { isQuiet, warn } from "../../core/warn";
 import { githubHeaders } from "../../integrations/github";
-import { getDirname, mainPath, semverOrder } from "../../runtime";
+import { isPrerelease } from "../../registry/semver";
+import { getDirname, mainPath, semverOrder, spawnSync } from "../../runtime";
 import type { UpgradeChannel, UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
 import { resolveNpmGlobalRoot } from "../../tasks/resolve-akm-bin";
 import { runMigrationTool } from "../migration-tool";
@@ -221,6 +222,11 @@ export function getAkmBinaryName(): string {
   throw new ConfigError(`Unsupported platform for binary upgrade: ${platform}/${arch}`, "UNSUPPORTED_PLATFORM");
 }
 
+/** The channel the akm at `version` came from: release.yml publishes every prerelease to `next`, every stable release to `latest`. */
+export function installedChannel(version: string): UpgradeChannel {
+  return isPrerelease(version) ? "next" : "latest";
+}
+
 /** The `next` dist-tag of this package on the npm registry, or undefined when none is published. */
 async function lookupNextVersion(fetchOptions?: { timeout?: number; retries?: number }): Promise<string | undefined> {
   const url = `https://registry.npmjs.org/-/package/${encodeURIComponent(getInstalledPackageName())}/dist-tags`;
@@ -257,18 +263,18 @@ export async function checkForUpdate(
   const release = JSON.parse(await readBodyWithByteCap(response, MAX_CHECKSUM_METADATA_BYTES)) as {
     tag_name?: string;
   };
-  const latestTag = release.tag_name ?? "";
-  let latestVersion = latestTag.replace(/^v/, "");
+  if (!release.tag_name) throw new Error(`Failed to check for updates: the latest release at ${url} has no tag_name`);
+  let latestVersion = release.tag_name.replace(/^v/, "");
   if (channel === "next") {
     const next = await lookupNextVersion(fetchOptions);
     if (exactChannel && !next) throw new Error("No next prerelease is published; no channel was changed");
-    if (next && (exactChannel || latestVersion === "" || semverOrder(latestVersion, next) < 0)) latestVersion = next;
+    if (next && (exactChannel || semverOrder(latestVersion, next) < 0)) latestVersion = next;
   }
 
   return {
     currentVersion,
     latestVersion,
-    updateAvailable: latestVersion !== "" && semverOrder(currentVersion, latestVersion) < 0,
+    updateAvailable: semverOrder(currentVersion, latestVersion) < 0,
     installMethod,
   };
 }
@@ -517,24 +523,18 @@ function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullab
     };
   }
   try {
-    const result = childProcess.spawnSync(akmBin, ["index", "--format", "json", ...(isQuiet() ? ["--quiet"] : [])], {
-      encoding: "utf8",
-      env: process.env,
-      stdio: ["pipe", "pipe", "inherit"],
+    const result = spawnSync([akmBin, "index", "--format", "json", ...(isQuiet() ? ["--quiet"] : [])], {
+      env: process.env as Record<string, string>,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
     });
-    if (result.error) {
+    if (result.exitCode !== 0) {
+      const detail = result.stdout.toString("utf8").trim() || `exit code ${result.exitCode}`;
       return {
         ok: false,
         skipped: false,
-        message: `Upgrade completed. The index rebuild could not start: ${result.error.message}. Run \`akm index\` manually.`,
-      };
-    }
-    if (result.status !== 0) {
-      const detail = (result.stdout ?? "").trim() || `exit code ${result.status}`;
-      return {
-        ok: false,
-        skipped: false,
-        exitCode: result.status,
+        exitCode: result.exitCode,
         message: `Upgrade completed. Post-upgrade \`akm index\` failed (${detail}). Run \`akm index\` manually.`,
       };
     }

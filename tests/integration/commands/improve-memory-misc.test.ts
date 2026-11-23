@@ -370,6 +370,25 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     expect(proposals[0]?.payload.content).toContain("Authentication guide");
   });
 
+  test("a queued schema repair carries a schema-repair run token (B10-31)", async () => {
+    const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
+    const { listProposals } = await import("../../../src/commands/proposal/repository");
+    const stashDir = makeTempDir("akm-b1031-schema-repair-");
+    const memFile = path.join(stashDir, "memories", "token.md");
+    fs.mkdirSync(path.dirname(memFile), { recursive: true });
+    fs.writeFileSync(memFile, "---\n---\nToken content.\n", "utf8");
+    configureStash(stashDir);
+    await runSchemaRepairPass([{ ref: "memories/token", reason: "missing description" }], {
+      startMs: Date.now(),
+      budgetMs: 30_000,
+      stashDir,
+      llmRunner: testLlmRunner({ endpoint: "http://localhost/v1/chat", model: "test" }),
+      findFilePath: async () => memFile,
+      chatFn: async () => JSON.stringify({ description: "Token guide." }),
+    });
+    expect(listProposals(stashDir)[0]?.sourceRun).toMatch(/^schema-repair-\d+$/);
+  });
+
   test("a queued schema repair is not re-queued inside the improve ledger's revisit window", async () => {
     const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
     const { listProposals } = await import("../../../src/commands/proposal/repository");

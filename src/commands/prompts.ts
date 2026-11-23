@@ -48,9 +48,8 @@ export interface AgentProposalPayload {
   frontmatter?: Record<string, unknown>;
   /**
    * Optional self-reported confidence score in `[0, 1]` (Advantage D6a / Phase
-   * 6A). Persisted on the proposal for reviewers and the triage judge — it no
-   * longer drives any automated accept path (the improve confidence gate died
-   * in 0.9.0). Out-of-range / non-finite values are clamped or dropped
+   * 6A). Persisted on the proposal for reviewers and the triage judge — it
+   * does not drive any automated accept path. Out-of-range / non-finite values are clamped or dropped
    * downstream in `createProposal`.
    */
   confidence?: number;
@@ -76,7 +75,7 @@ const TYPE_HINTS: Record<string, string> = {
   workflow:
     "workflow assets are markdown describing a multi-step process. Include `# <Title>` and ordered `## Step N` sections.",
   script: "script assets are executable text files. Include a shebang and minimal usage comment.",
-  env: "env assets are `.env` files holding a group of related CONFIGURATION for an app/service (KEY=VALUE pairs, `#` comments) — URLs, flags, and any credentials it needs. Values may or may not be sensitive; all are protected (key names discoverable, values stay on disk). Inject with `akm exec --env env/<name> -- <cmd>`; prefer `--clean` in agent contexts so the child starts from a minimal inherited environment. AKM itself does not print values, but the child command can print its environment, so do not run `env`, `printenv`, shell tracing, or similar diagnostics when secrets are in scope. For a single sensitive value used on its own for authentication (token, key, cert) use a `secret` instead. Never echo values back to the user.",
+  env: "env assets are `.env` files holding a group of related CONFIGURATION for an app/service (KEY=VALUE pairs, `#` comments) — URLs, flags, and any credentials it needs. Values may or may not be sensitive; all are protected (key names discoverable, values stay on disk). Inject by running a script with `akm run --env env/<name> scripts/<file>`; prefer `--clean` in agent contexts so the child starts from a minimal inherited environment. AKM itself does not print values, but the child command can print its environment, so do not run `env`, `printenv`, shell tracing, or similar diagnostics when secrets are in scope. For a single sensitive value used on its own for authentication (token, key, cert) use a `secret` instead. Never echo values back to the user.",
   wiki: "wiki assets are markdown reference pages with `# Title` and structured headings.",
   fact: "fact assets are durable stash-level facts (personal/team/project details, coding conventions, stash-meta). Frontmatter SHOULD include `description` and a `category` (personal|team|project|convention|meta); set `pinned: true` only for the small always-injected core. Keep each fact short, high-signal, and self-contained — it is durable context, not an episodic note.",
 };

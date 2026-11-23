@@ -5,10 +5,9 @@
 import { concurrentMap } from "../core/concurrent";
 import type { DeadUrl, DeadUrlCoverage } from "../core/improve-types";
 import { systemErrorCode } from "../core/system-error";
+import { urlsInText } from "../core/urls";
 
 export type { DeadUrl, DeadUrlCoverage };
-
-const URL_RE = /https?:\/\/[^\s"'<>)\]]+/g;
 
 /**
  * URLs are checked `URL_CHECK_CONCURRENCY` at a time via {@link concurrentMap}
@@ -59,7 +58,7 @@ interface CheckOutcome {
 /**
  * Check every URL in `entries` and report the ones that are dead.
  *
- * No cap, no per-entry slice, no ceiling option: it checks every URL given, at a bounded
+ * No cap, no per-entry slice, no ceiling option. It checks what you asked it to check, at a bounded
  * concurrency (see {@link URL_CHECK_CONCURRENCY}) so a large bundle does not
  * turn into a request flood, and each request is bounded by
  * {@link DEAD_URL_TIMEOUT_MS} so one unresponsive host cannot stall the rest.
@@ -77,9 +76,7 @@ export async function checkDeadUrls(
   _stashDir: string,
   entries: Array<{ ref: string; body: string }>,
 ): Promise<DeadUrlCheckResult> {
-  const urlsToCheck = entries.flatMap((entry) =>
-    (entry.body.match(URL_RE) ?? []).map((url) => ({ ref: entry.ref, url })),
-  );
+  const urlsToCheck = entries.flatMap((entry) => urlsInText(entry.body).map((url) => ({ ref: entry.ref, url })));
 
   const outcomes = await concurrentMap(
     urlsToCheck,

@@ -25,7 +25,7 @@ import {
   withIsolatedAkmStorage,
 } from "../../../_helpers/sandbox";
 
-// WHY THIS NEEDS A REAL SUBPROCESS (moved from tests/commands/improve-cli-flags.test.ts):
+// WHY THIS NEEDS A REAL SUBPROCESS (moved from tests/integration/commands/improve-cli-flags.test.ts):
 // `improve --dry-run` runs improve for real, which opens and writes the
 // state.db (improve_runs). In-process, a SQLite write lock on state.db is
 // already held within the test process (the unit suite keeps DB handles open

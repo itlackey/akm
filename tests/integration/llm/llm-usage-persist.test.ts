@@ -293,14 +293,14 @@ describe("akmHealth llmUsage aggregate", () => {
     const result = await akmHealth({ since: "7d" });
     const usage = result.metrics.llmUsage;
 
-    expect(usage.calls).toBe(4);
-    expect(usage.totalDurationMs).toBe(350);
-    expect(usage.promptTokens).toBe(34);
-    expect(usage.completionTokens).toBe(17);
-    expect(usage.totalTokens).toBe(51);
-    expect(usage.reasoningTokens).toBe(5);
+    expect(usage?.calls).toBe(4);
+    expect(usage?.totalDurationMs).toBe(350);
+    expect(usage?.promptTokens).toBe(34);
+    expect(usage?.completionTokens).toBe(17);
+    expect(usage?.totalTokens).toBe(51);
+    expect(usage?.reasoningTokens).toBe(5);
 
-    expect(usage.byStage.reflect).toMatchObject({
+    expect(usage?.byStage.reflect).toMatchObject({
       calls: 2,
       totalDurationMs: 300,
       promptTokens: 30,
@@ -308,17 +308,17 @@ describe("akmHealth llmUsage aggregate", () => {
       totalTokens: 45,
       reasoningTokens: 5,
     });
-    expect(usage.byStage.distill).toMatchObject({ calls: 1, totalDurationMs: 40, totalTokens: 6 });
-    expect(usage.byStage.unattributed).toMatchObject({ calls: 1, totalDurationMs: 10, totalTokens: 0 });
-    expect(usage.byProcess.reflect).toMatchObject({ calls: 2, totalDurationMs: 300, totalTokens: 45 });
-    expect(usage.byProcess.distill).toMatchObject({ calls: 1, totalDurationMs: 40, totalTokens: 6 });
-    expect(usage.byEngine.fast).toMatchObject({ calls: 2, totalDurationMs: 300, totalTokens: 45 });
-    expect(usage.byEngine.careful).toMatchObject({ calls: 1, totalDurationMs: 40, totalTokens: 6 });
+    expect(usage?.byStage.distill).toMatchObject({ calls: 1, totalDurationMs: 40, totalTokens: 6 });
+    expect(usage?.byStage.unattributed).toMatchObject({ calls: 1, totalDurationMs: 10, totalTokens: 0 });
+    expect(usage?.byProcess.reflect).toMatchObject({ calls: 2, totalDurationMs: 300, totalTokens: 45 });
+    expect(usage?.byProcess.distill).toMatchObject({ calls: 1, totalDurationMs: 40, totalTokens: 6 });
+    expect(usage?.byEngine.fast).toMatchObject({ calls: 2, totalDurationMs: 300, totalTokens: 45 });
+    expect(usage?.byEngine.careful).toMatchObject({ calls: 1, totalDurationMs: 40, totalTokens: 6 });
   });
 
   test("reports an empty aggregate when no llm_usage events exist", async () => {
     const result = await akmHealth({ since: "7d" });
-    expect(result.metrics.llmUsage.calls).toBe(0);
-    expect(result.metrics.llmUsage.byStage).toEqual({});
+    expect(result.metrics.llmUsage?.calls).toBe(0);
+    expect(result.metrics.llmUsage?.byStage).toEqual({});
   });
 });

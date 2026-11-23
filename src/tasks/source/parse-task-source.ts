@@ -6,12 +6,14 @@
  * The task source version router.
  *
  * Runs the bounded YAML front end ONCE (`readBoundedTaskSourceYaml`), reads
- * `root.version`, and dispatches into `parseTaskSourceV4Document`. The
- * runtime reads only task source v4 (#987):
+ * `root.version`, and dispatches into `parseTaskSourceV4Document` or, for the
+ * Experimental `5-beta.<n>`, `parseTaskSourceV5Document`. The runtime reads
+ * only task source v4 and v5:
  *
  *   | root `version`        | outcome                                                        |
  *   |------------------------|-----------------------------------------------------------------|
  *   | `4`                    | `parseTaskSourceV4Document` — the current grammar               |
+ *   | a string `5-beta.<n>`   | `parseTaskSourceV5Document` — task source version 5; a build reads only its own beta (`TASK_SOURCE_V5_VERSION`), any other `5-beta.*` is `TASK_SCHEMA_VERSION_UNSUPPORTED` naming the one it reads |
  *   | `4`, some `schedule[]` entry carries `enabled` (0.9.15's grammar) | `TASK_SOURCE_INVALID` naming the 0.9.32 recipe |
  *   | `4`, a top-level `engine` key | `TASK_SOURCE_INVALID` naming `akm migrate apply`, which rewrites it as `connection` or `harness` |
  *   | `2` or `3`             | `TASK_SCHEMA_VERSION_UNSUPPORTED` naming the 0.9.32 recipe       |
@@ -21,7 +23,7 @@
  * Nothing converts a v2/v3 document, or a v4 document carrying the retired
  * `schedule[].enabled`: akm 0.9.32's `akm migrate apply` did, and 0.10 does not
  * (the floor). Every caller reports the refusal for that one file — `akm task
- * sync` keeps reconciling every other task (#867).
+ * sync` keeps reconciling every other task.
  *
  * A missing or non-numeric `version:` is a MALFORMED v4 document, not a
  * legacy one — it routes into the v4 parser so the field error names the
@@ -32,11 +34,36 @@
 
 import { isRecord } from "../../core/common";
 import { UsageError } from "../../core/errors";
+import { valueInputNames } from "../../execution/input-contract";
 import { RETIRED_ENGINE_KEY_MESSAGE } from "../../execution/source";
+import {
+  parseTaskSourceV5Document,
+  TASK_SOURCE_V5_VERSION,
+  TASK_SOURCE_V5_VERSION_PATTERN,
+  type TaskSourceV5Document,
+} from "../v5/source";
 import { readBoundedTaskSourceYaml } from "./bounded-document";
-import { parseTaskSourceV4Document, TASK_SOURCE_V4_VERSION, type TaskSourceV4Document } from "./task-source-v4";
+import {
+  parseTaskSourceV4Document,
+  TASK_SOURCE_V4_VERSION,
+  type TaskSourceV4Document,
+  type TaskSourceV4ScheduleBinding,
+} from "./task-source-v4";
 
-export type ParsedTaskSource = Readonly<{ version: 4; v4: TaskSourceV4Document }>;
+/** `schedule` and `description` are what a reader that does not run the task needs, whichever version the file is. */
+export type ParsedTaskSource =
+  | Readonly<{
+      version: 4;
+      v4: TaskSourceV4Document;
+      schedule: readonly TaskSourceV4ScheduleBinding[];
+      description: string | undefined;
+    }>
+  | Readonly<{
+      version: "5-beta";
+      v5: TaskSourceV5Document;
+      schedule: TaskSourceV5Document["schedule"];
+      description: string | undefined;
+    }>;
 
 export interface ParseTaskSourceInput {
   readonly yaml: string;
@@ -91,6 +118,24 @@ export function v4ScheduleHasRetiredEnabledKey(root: unknown): boolean {
 /** Parse task source YAML, routing per the table above. */
 export function parseTaskSource(input: ParseTaskSourceInput): ParsedTaskSource {
   const { root, lineAt } = readBoundedTaskSourceYaml(input, { sourceLabel: "task source" });
+  const documentOptions = {
+    filePath: input.filePath,
+    lineAt,
+  };
+  const declared =
+    root !== null && typeof root === "object" && !Array.isArray(root)
+      ? (root as Record<string, unknown>).version
+      : undefined;
+  if (typeof declared === "string" && TASK_SOURCE_V5_VERSION_PATTERN.test(declared)) {
+    if (declared !== TASK_SOURCE_V5_VERSION) {
+      throw new UsageError(
+        `TASK_SCHEMA_VERSION_UNSUPPORTED: Task at ${input.filePath} uses task schema version ${declared}; this build reads only ${TASK_SOURCE_V5_VERSION}.`,
+        "TASK_SCHEMA_VERSION_UNSUPPORTED",
+      );
+    }
+    const v5 = parseTaskSourceV5Document(root, documentOptions);
+    return Object.freeze({ version: "5-beta" as const, v5, schedule: v5.schedule, description: v5.description });
+  }
   const version = peekTaskSourceVersion(root);
   if (version !== undefined && version !== TASK_SOURCE_V4_VERSION) {
     if (version === 2 || version === 3) throw legacyVersionError(input.filePath, version);
@@ -112,9 +157,11 @@ export function parseTaskSource(input: ParseTaskSourceInput): ParsedTaskSource {
       TASK_MIGRATE_HINT,
     );
   }
-  const documentOptions = {
-    filePath: input.filePath,
-    lineAt,
-  };
-  return Object.freeze({ version: 4 as const, v4: parseTaskSourceV4Document(root, documentOptions) });
+  const v4 = parseTaskSourceV4Document(root, documentOptions);
+  return Object.freeze({ version: 4 as const, v4, schedule: v4.schedule, description: v4.description });
+}
+
+/** The declared inputs of a task that take a value, which a flag names and the next token is the value of. */
+export function taskValueInputs(parsed: ParsedTaskSource): Set<string> {
+  return valueInputNames((parsed.version === 4 ? parsed.v4.inputs : parsed.v5.inputs) ?? {});
 }

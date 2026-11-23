@@ -9,9 +9,10 @@
  * CLI spawn wrapper so non-agent subprocess callers (task commands, setup
  * probes/installers) get the same guarantees the agent path already had:
  *
- *   • Process-GROUP spawn (`detached: true` when capturing ON POSIX) so a
- *     negative-pid kill reaps the whole descendant tree — no orphaned children.
- *     See {@link spawnsOwnProcessGroup} for why Windows is excluded.
+ *   • Process-GROUP spawn (`detached: true` ON POSIX when capturing or when akm
+ *     has no controlling terminal) so a negative-pid kill reaps the whole
+ *     descendant tree — no orphaned children. See {@link childGroup} for the
+ *     decision and why Windows is excluded.
  *   • A SIGINT→SIGTERM→SIGKILL kill ladder on timeout/abort — SIGINT first, as
  *     a Ctrl-C would, so a program that treats an interrupt as a stop can wind
  *     the run down; a child that ignores it is terminated, and one that ignores
@@ -28,12 +29,15 @@
  * or `tasks/` — it is a leaf primitive those layers consume.
  */
 
+import fs from "node:fs";
 import { spawn as runtimeSpawn } from "../runtime";
-import { hasSignalOwner } from "./signal-observers";
+import { endBySignal, guardSignal, hasSignalOwner } from "./signal-observers";
 
 /** Minimum subprocess surface we need. The runtime spawn returns this shape. */
 export interface SpawnedSubprocess {
   exitCode: number | null;
+  /** The signal that ended the process, when one did. */
+  signalCode?: string | null;
   exited: Promise<number>;
   stdout?: ReadableStream<Uint8Array> | null;
   stderr?: ReadableStream<Uint8Array> | null;
@@ -61,37 +65,46 @@ export type SpawnFn = (
   },
 ) => SpawnedSubprocess;
 
+/** Whether a child runs in a process group of its own or stays in akm's. */
+export type ChildGroup = "own" | "shared";
+
 /**
- * Kill the process group of `proc` with `signal`, falling back to
- * `proc.kill(signal)` when `proc.pid` is unavailable (e.g. test fakes).
- *
- * Passing a negative PID to `process.kill` targets the entire process
- * group, so opencode's child processes (the .opencode binary, etc.) are
- * reaped alongside the node wrapper. The fallback keeps test fakes working
- * without modification.
+ * Whether this process has a controlling terminal: the kernel's answer to opening `/dev/tty`, not a guess
+ * from whether the standard streams are terminals.
  */
+export function hasControllingTerminal(): boolean {
+  try {
+    fs.closeSync(fs.openSync("/dev/tty", "r"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Whether a captured spawn should ask for its own process group.
+ * Which process group a child runs in.
  *
- * POSIX: yes. `detached` is `setsid()`, which is what makes {@link killGroup}'s
- * `process.kill(-pid, …)` reap the whole descendant tree. It does not touch the
- * child's stdio.
+ * `"own"` on POSIX when output is captured, or when akm has no controlling terminal (cron, systemd, CI, an
+ * agent's shell tool): `detached` is `setsid()`, which is what makes {@link killGroup}'s
+ * `process.kill(-pid, …)` reap the whole descendant tree. It does not touch the child's stdio.
  *
- * Windows: no — the same flag means something unrelated and actively harmful.
- * There it maps to `DETACHED_PROCESS`, so the child is created WITHOUT A
- * CONSOLE; a console host started that way (powershell.exe, cmd.exe) allocates
- * its own console during startup, which REPLACES the std handles it was handed,
- * and everything it writes goes to that phantom console instead of our pipe.
- * The command still runs and its exit code still propagates — the output just
- * vanishes, which is exactly how it failed: a scheduled `akm --version` logged
- * `exit_code=0` with both captured streams empty. Windows gains nothing in
- * return, because `process.kill(-pid, …)` is a POSIX process-group call that
- * throws there; {@link killGroup} already falls back to `proc.kill(signal)`.
+ * `"shared"` for an uncaptured child on a terminal: a session of its own would take the controlling
+ * terminal away, so no `/dev/tty` prompts, no job control, and Ctrl-C and Ctrl-Z would reach akm's group
+ * only. The child stays in akm's group and the terminal's signals reach it directly.
  *
- * Exported for direct unit testing with an explicit platform.
+ * Windows is always `"shared"`: there `detached` means something unrelated and actively harmful. It maps to
+ * `DETACHED_PROCESS`, so the child is created WITHOUT A CONSOLE; a console host started that way
+ * (powershell.exe, cmd.exe) allocates its own console during startup, which REPLACES the std handles it was
+ * handed, and everything it writes goes to that phantom console instead of our pipe. The command still runs
+ * and its exit code still propagates — the output just vanishes, which is exactly how it failed: a scheduled
+ * `akm --version` logged `exit_code=0` with both captured streams empty. Windows gains nothing in return,
+ * because `process.kill(-pid, …)` is a POSIX process-group call that throws there.
+ *
+ * Exported for direct unit testing with explicit inputs.
  */
-export function spawnsOwnProcessGroup(platform: NodeJS.Platform = process.platform): boolean {
-  return platform !== "win32";
+export function childGroup(capture: boolean, platform: NodeJS.Platform, hasTerminal: boolean): ChildGroup {
+  if (platform === "win32") return "shared";
+  return capture || !hasTerminal ? "own" : "shared";
 }
 
 /**
@@ -101,7 +114,7 @@ export function spawnsOwnProcessGroup(platform: NodeJS.Platform = process.platfo
  */
 export function buildSpawnOptions(
   opts: Pick<RunManagedSubprocessOptions, "capture" | "stdin" | "env" | "cwd" | "windowsVerbatimArguments">,
-  platform: NodeJS.Platform = process.platform,
+  group: ChildGroup,
 ): Parameters<SpawnFn>[1] {
   const capture = opts.capture;
   return {
@@ -110,16 +123,26 @@ export function buildSpawnOptions(
     stderr: capture ? "pipe" : "inherit",
     ...(opts.env ? { env: opts.env } : {}),
     ...(opts.cwd ? { cwd: opts.cwd } : {}),
-    // Only in captured mode — interactive mode inherits the parent terminal's
-    // process group intentionally — and only where the flag means a process
-    // group at all (see spawnsOwnProcessGroup).
-    ...(capture && spawnsOwnProcessGroup(platform) ? { detached: true } : {}),
+    ...(group === "own" ? { detached: true } : {}),
     ...(opts.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
   };
 }
 
-export function killGroup(proc: SpawnedSubprocess, signal: "SIGINT" | "SIGTERM" | "SIGKILL"): void {
-  if (typeof proc.pid === "number") {
+/**
+ * Signal `proc`: its whole process group when it leads one of its own, falling back to
+ * `proc.kill(signal)` when `proc.pid` is unavailable (e.g. test fakes) or the group is gone. A child that
+ * shares akm's group is signalled alone, never through `-pid`.
+ *
+ * Passing a negative PID to `process.kill` targets the entire process
+ * group, so opencode's child processes (the .opencode binary, etc.) are
+ * reaped alongside the node wrapper.
+ */
+export function killGroup(
+  proc: SpawnedSubprocess,
+  signal: "SIGINT" | "SIGTERM" | "SIGKILL",
+  group: ChildGroup = "own",
+): void {
+  if (group === "own" && typeof proc.pid === "number") {
     try {
       process.kill(-proc.pid, signal);
       return;
@@ -134,9 +157,9 @@ export function killGroup(proc: SpawnedSubprocess, signal: "SIGINT" | "SIGTERM" 
   }
 }
 
-/** Whether anything still runs in `proc`'s process group (the leader included), or the leader has not exited. */
-function groupRunning(proc: SpawnedSubprocess): boolean {
-  if (typeof proc.pid === "number") {
+/** Whether anything still runs in `proc`'s own process group (the leader included), or the leader has not exited. */
+function groupRunning(proc: SpawnedSubprocess, group: ChildGroup): boolean {
+  if (group === "own" && typeof proc.pid === "number") {
     try {
       process.kill(-proc.pid, 0);
       return true;
@@ -165,89 +188,104 @@ function groupRunning(proc: SpawnedSubprocess): boolean {
  */
 export function scheduleKillLadder(
   proc: SpawnedSubprocess,
-  opts: { onKill: () => void; setTimeoutFn: typeof setTimeout; graceMs?: number },
+  opts: { onKill: () => void; setTimeoutFn: typeof setTimeout; graceMs?: number; group?: ChildGroup },
 ): void {
-  if (!proc || proc.exitCode !== null) return;
+  const group = opts.group ?? "own";
+  if (!proc || !groupRunning(proc, group)) return;
   opts.onKill();
   const afterGrace = (run: () => void): void => {
     const timer = opts.setTimeoutFn(run, opts.graceMs ?? 5000);
     if (typeof timer !== "number") timer.unref?.();
   };
-  killGroup(proc, "SIGINT");
+  killGroup(proc, "SIGINT", group);
   let terminated = false;
   const terminate = (): void => {
-    if (terminated || !groupRunning(proc)) return;
+    if (terminated || !groupRunning(proc, group)) return;
     terminated = true;
-    killGroup(proc, "SIGTERM");
+    killGroup(proc, "SIGTERM", group);
     afterGrace(() => {
-      if (groupRunning(proc)) killGroup(proc, "SIGKILL");
+      if (groupRunning(proc, group)) killGroup(proc, "SIGKILL", group);
     });
   };
   afterGrace(terminate);
   proc.exited.then(terminate, terminate);
 }
 
-/**
- * One captured, own-process-group child that a termination signal to THIS
- * process must take down with it.
- */
-interface LiveGroupChild {
+type GuardSignal = "SIGINT" | "SIGQUIT" | "SIGTERM" | "SIGHUP";
+
+/** One child that a signal to THIS process must reach. */
+interface LiveChild {
   proc: SpawnedSubprocess;
+  group: ChildGroup;
   /** Run the same SIGINT→SIGTERM→SIGKILL ladder the timeout and abort paths run. */
   terminate: () => void;
 }
 
-const liveGroupChildren = new Set<LiveGroupChild>();
-let signalGuardHandlers: Array<[NodeJS.Signals, () => void]> | undefined;
+const liveChildren = new Set<LiveChild>();
+let removeGuardListeners: Array<() => void> | undefined;
 
 function removeSignalGuard(): void {
-  for (const [signal, handler] of signalGuardHandlers ?? []) process.off(signal, handler);
-  signalGuardHandlers = undefined;
+  for (const remove of removeGuardListeners ?? []) remove();
+  removeGuardListeners = undefined;
 }
 
 /**
- * A captured child runs in its own process group, so the terminal's Ctrl-C and
- * a `kill <akm-pid>` no longer reach it: without this, SIGTERM/SIGINT to akm
- * ended akm and left the harness CLI (and everything it started) running. Each
- * live child is registered here and, on the first such signal, takes the same
- * ladder as a timeout; once every child is gone the signal is re-raised so akm
- * still ends by the signal itself.
+ * Every signal the guard takes, for every child; what each child gets is decided per child when one arrives.
+ * A child in its own process group is out of reach of the terminal's Ctrl-C and of a `kill <akm-pid>`:
+ * without the guard, a signal to akm ended akm and left the harness CLI (and everything it started)
+ * running. It takes the same ladder as a timeout, and once every child is gone the signal is re-raised so
+ * akm ends by the signal itself.
  *
- * The listeners are installed only while a child is live and only when nothing
- * else handles the signal. A command that handles it itself (`workflow run`,
- * `improve`, task runs) unwinds through its own cleanup, which already aborts
- * its children, and must not have its handling pre-empted by a re-raise.
+ * A child that shares akm's group got the terminal's SIGINT and SIGQUIT already. akm ignores them while the
+ * child lives and ends with the child's status, as `system(3)` does: a child that handles Ctrl-C and goes on
+ * (a shell at its prompt) keeps akm waiting. SIGTERM and SIGHUP reach akm alone, so they are forwarded to
+ * the child and re-raised once it has exited.
  *
- * They go in BEFORE the spawn ({@link installSignalGuard}): a signal that lands
- * between the spawn and the registration would otherwise meet the default
- * disposition, end akm, and leave the new group running (#1230). The listener
- * runs on the event loop, so it always sees the child registered here.
+ * The guard reaches every live child. A process that owns a signal (a listener that is not one of akm's
+ * own observers: a host that embeds akm, `workflow run`, task runs, `index`) decides how akm ends, and the
+ * guard leaves the exit to it. With no owner, akm ends by the signal once its children are gone.
+ *
+ * They go in BEFORE the spawn ({@link installSignalGuard}): a signal that lands between the spawn and the
+ * registration would otherwise meet the default disposition, end akm, and leave the new group running
+ * (#1230). The listener runs on the event loop, so it always sees the child registered here.
  */
-function registerLiveGroupChild(child: LiveGroupChild): () => void {
-  liveGroupChildren.add(child);
+function registerLiveChild(child: LiveChild): () => void {
+  liveChildren.add(child);
   return () => {
-    liveGroupChildren.delete(child);
-    if (liveGroupChildren.size === 0) removeSignalGuard();
+    liveChildren.delete(child);
+    if (liveChildren.size === 0) removeSignalGuard();
   };
 }
 
 function installSignalGuard(): void {
-  if (!signalGuardHandlers && !hasSignalOwner("SIGINT") && !hasSignalOwner("SIGTERM")) {
-    const handlers: Array<[NodeJS.Signals, () => void]> = [];
-    for (const signal of ["SIGINT", "SIGTERM"] as const) {
-      const handler = (): void => {
-        const children = [...liveGroupChildren];
-        for (const live of children) live.terminate();
+  if (removeGuardListeners) return;
+  let reraise: GuardSignal | undefined;
+  const removers: Array<() => void> = [];
+  for (const signal of ["SIGINT", "SIGQUIT", "SIGTERM", "SIGHUP"] as const) {
+    const handler = (): void => {
+      if (reraise) return;
+      const children = [...liveChildren];
+      const reachesAkmAlone = signal === "SIGTERM" || signal === "SIGHUP";
+      let stoppedOwn = false;
+      for (const live of children) {
+        if (live.group === "own") {
+          live.terminate();
+          stoppedOwn = true;
+        } else if (reachesAkmAlone) live.proc.kill(signal);
+      }
+      // Only the terminal's signals to shared children remain: they have it, akm just waits.
+      if (!reachesAkmAlone && !stoppedOwn) return;
+      if (hasSignalOwner(signal)) return;
+      reraise = signal;
+      void Promise.allSettled(children.map((live) => live.proc.exited)).then(() => {
         removeSignalGuard();
-        void Promise.allSettled(children.map((live) => live.proc.exited)).then(() => {
-          process.kill(process.pid, signal);
-        });
-      };
-      process.once(signal, handler);
-      handlers.push([signal, handler]);
-    }
-    signalGuardHandlers = handlers;
+        endBySignal(signal);
+        process.exit();
+      });
+    };
+    removers.push(guardSignal(signal, handler));
   }
+  removeGuardListeners = removers;
 }
 
 /** Result of draining one captured pipe. */
@@ -466,9 +504,9 @@ export async function readStream(
 /** Per-call options for {@link runManagedSubprocess}. */
 export interface RunManagedSubprocessOptions {
   /**
-   * Captured = pipe stdout/stderr and spawn in an own process group
-   * (`detached: true`) so the kill ladder can reap the whole tree.
-   * Non-captured = inherit the parent stdio and process group (interactive).
+   * Captured = pipe stdout/stderr. Non-captured = inherit the parent stdio. Either way the child runs in
+   * its own process group so the kill ladder can reap the whole tree, except an uncaptured child on a
+   * terminal, which stays in akm's group (see {@link childGroup}).
    */
   capture: boolean;
   /** Child env. */
@@ -513,6 +551,8 @@ export interface RunManagedSubprocessOptions {
  */
 export interface ManagedSubprocessResult {
   exitCode: number | null;
+  /** The signal that ended the child, or null when it exited by itself. */
+  signal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
   timedOut: boolean;
@@ -530,19 +570,10 @@ const EMPTY_READ: StreamReadResult = {
   retainedBytes: 0,
 };
 /**
- * Drain deadline for a run with no wall budget, counted from the child's EXIT
- * (never from capture — see {@link runManagedSubprocess}). It bounds only the
- * window in which a descendant can keep an inherited pipe open after the leader
- * is gone, so it can be generous without ever capping the run itself.
- */
-const UNBOUNDED_STREAM_READ_SAFETY_MS = 60 * 60 * 1000;
-/**
- * Drain deadline for a run WITH a wall budget, counted from the moment the
- * pipe's owner left — the child exited, or (a child that survived its own kill
- * ladder) the budget expired. Anything still holding the fd open then is a
- * background descendant, not the command, so this is the same 2 s the old
- * capture-anchored deadline allowed past the budget; only its starting point
- * moved earlier.
+ * How long a captured pipe may stay open after the pipe's owner left, with or without a wall budget: the
+ * child exited, or (a child that survived its own kill ladder) the budget expired. Anything still holding
+ * the fd open then is a background descendant, not the command. It bounds only what a pipe does after its
+ * owner is gone, so it never caps the run itself.
  */
 const POST_EXIT_STREAM_DRAIN_GRACE_MS = 2_000;
 
@@ -570,6 +601,7 @@ export async function runManagedSubprocess(
   if (opts.signal?.aborted) {
     return {
       exitCode: null,
+      signal: null,
       stdout: "",
       stderr: "",
       timedOut: false,
@@ -579,16 +611,18 @@ export async function runManagedSubprocess(
     };
   }
 
-  // A termination signal to this process takes the own-group child down too.
-  const guardsGroup = capture && spawnsOwnProcessGroup();
-  if (guardsGroup) installSignalGuard();
+  // A termination signal to this process reaches the child too (see installSignalGuard).
+  const group = childGroup(capture, process.platform, !capture && hasControllingTerminal());
+  const guardsChild = process.platform !== "win32";
+  if (guardsChild) installSignalGuard();
   let proc: SpawnedSubprocess;
   try {
-    proc = spawnFn(cmd, buildSpawnOptions(opts));
+    proc = spawnFn(cmd, buildSpawnOptions(opts, group));
   } catch (err) {
-    if (guardsGroup && liveGroupChildren.size === 0) removeSignalGuard();
+    if (guardsChild && liveChildren.size === 0) removeSignalGuard();
     return {
       exitCode: null,
+      signal: null,
       stdout: "",
       stderr: "",
       timedOut: false,
@@ -614,15 +648,23 @@ export async function runManagedSubprocess(
           onBudgetExpiry = resolve;
         })
       : undefined;
+  // The kill ladder starts at most once, whichever of the timeout, the abort and the signal guard starts it.
+  let stopping = false;
+  const stop = (onKill: () => void): void => {
+    if (stopping) return;
+    stopping = true;
+    scheduleKillLadder(proc, {
+      onKill,
+      group,
+      setTimeoutFn: setTimeoutImpl,
+      ...(opts.graceMs !== undefined ? { graceMs: opts.graceMs } : {}),
+    });
+  };
   if (timeoutMs !== null) {
     timer = setTimeoutImpl(() => {
       onBudgetExpiry?.();
-      scheduleKillLadder(proc, {
-        onKill: () => {
-          timedOut = true;
-        },
-        setTimeoutFn: setTimeoutImpl,
-        ...(opts.graceMs !== undefined ? { graceMs: opts.graceMs } : {}),
+      stop(() => {
+        timedOut = true;
       });
     }, timeoutMs);
   }
@@ -632,12 +674,8 @@ export async function runManagedSubprocess(
   let aborted = false;
   const abortSignal = opts.signal;
   const onAbort = () => {
-    scheduleKillLadder(proc, {
-      onKill: () => {
-        aborted = true;
-      },
-      setTimeoutFn: setTimeoutImpl,
-      ...(opts.graceMs !== undefined ? { graceMs: opts.graceMs } : {}),
+    stop(() => {
+      aborted = true;
     });
   };
   if (abortSignal) {
@@ -647,28 +685,38 @@ export async function runManagedSubprocess(
     else abortSignal.addEventListener("abort", onAbort, { once: true });
   }
 
-  const unregisterLiveChild = guardsGroup ? registerLiveGroupChild({ proc, terminate: onAbort }) : () => {};
+  const unregisterLiveChild = guardsChild ? registerLiveChild({ proc, group, terminate: onAbort }) : () => {};
 
-  // Stream-drain timeout: a short grace once nothing living owns the pipe any
-  // more, or a one-hour safety bound when execution itself is unbounded.
+  // Stream-drain timeout: a short grace once nothing living owns the pipe any more, counted from the child's
+  // exit (never from capture) and, for a bounded run, from the wall budget's expiry if that came first.
   //
-  // Neither is armed while the command is still running: every byte up to then
-  // is a live process's, and cancelling the reader would discard the output of
-  // work that is still going. What ends that ownership is where the two cases
-  // differ. Unbounded, the caller asked for NO cap on the run, so only the
-  // child's own exit can end it. Bounded, the wall budget ends it too — a child
-  // that outlived its own kill ladder is not something akm can keep waiting on
-  // — which leaves the SAME budget + grace ceiling as before for a command that
-  // really did spend its whole budget, and cuts the common case that used to
-  // stall: a leader exiting in milliseconds no longer holds the drain (and with
-  // it the unit, and with it a fan-out slot) open for a budget it never came
-  // close to spending.
-  const streamDrainTimeoutMs = timeoutMs !== null ? POST_EXIT_STREAM_DRAIN_GRACE_MS : UNBOUNDED_STREAM_READ_SAFETY_MS;
+  // It is not armed while the command is still running: every byte up to then is a live process's, and
+  // cancelling the reader would discard the output of work that is still going. A leader exiting in
+  // milliseconds does not hold the drain (and with it the unit, and with it a fan-out slot) open for a
+  // budget it never came close to spending.
   // Settles on a rejected `proc.exited` too: either way the child is gone.
   const childSettled = capture ? proc.exited.catch(() => undefined) : undefined;
-  const pipeOwnerGone = childSettled && budgetExpired ? Promise.race([childSettled, budgetExpired]) : childSettled;
+  // What the leader left behind in its own process group is stopped once the drain has had its grace (see
+  // below), so a daemon that holds the pipe cannot keep the run waiting. One that wants to outlive the run
+  // starts its own session.
+  const { promise: bothDrained, resolve: drainStarted } = Promise.withResolvers<unknown>();
+  const leftoversStopped = childSettled?.then(async () => {
+    if (group !== "own") return;
+    let graceTimer: ReturnType<typeof setTimeoutImpl> | undefined;
+    await Promise.race([
+      bothDrained,
+      new Promise<void>((resolve) => {
+        graceTimer = setTimeoutImpl(resolve, POST_EXIT_STREAM_DRAIN_GRACE_MS);
+        if (typeof graceTimer !== "number") graceTimer.unref?.();
+      }),
+    ]);
+    clearTimeoutImpl(graceTimer);
+    if (groupRunning(proc, group)) stop(() => {});
+  });
+  const pipeOwnerGone =
+    leftoversStopped && budgetExpired ? Promise.race([leftoversStopped, budgetExpired]) : leftoversStopped;
   const readOpts = {
-    timeoutMs: streamDrainTimeoutMs,
+    timeoutMs: POST_EXIT_STREAM_DRAIN_GRACE_MS,
     setTimeoutFn: setTimeoutImpl,
     clearTimeoutFn: clearTimeoutImpl,
     ...(pipeOwnerGone ? { armTimeoutAfter: pipeOwnerGone } : {}),
@@ -676,6 +724,7 @@ export async function runManagedSubprocess(
   };
   const stdoutPromise = capture ? readStream(proc.stdout ?? null, readOpts) : Promise.resolve(EMPTY_READ);
   const stderrPromise = capture ? readStream(proc.stderr ?? null, readOpts) : Promise.resolve(EMPTY_READ);
+  drainStarted(Promise.all([stdoutPromise, stderrPromise]));
 
   // Optional stdin payload (captured mode only). Race the write/close against
   // proc.exited so a child that never drains stdin cannot pin us past the
@@ -714,6 +763,7 @@ export async function runManagedSubprocess(
     await Promise.allSettled([stdoutPromise, stderrPromise]);
     return {
       exitCode: null,
+      signal: null,
       stdout: "",
       stderr: "",
       timedOut: false,
@@ -730,6 +780,7 @@ export async function runManagedSubprocess(
   const [stdoutRead, stderrRead] = await Promise.all([stdoutPromise, stderrPromise]);
   return {
     exitCode,
+    signal: (proc.signalCode as NodeJS.Signals | null | undefined) ?? null,
     stdout: stdoutRead.text,
     stderr: stderrRead.text,
     timedOut,

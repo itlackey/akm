@@ -8,7 +8,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { akm, go, launchFixture, open } from "./support.mjs";
+import { akm, go, launchFixture, open, pick } from "./support.mjs";
 
 // Wiring only: each section shows what its operations return, reaches them, and shows a refusal. What the operations
 // decide (revisions, leases, staleness, write targets) is akm's and is tested there.
@@ -284,16 +284,18 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
       ]);
       const map = page.locator(".mind-map");
       await expect(map).toBeVisible();
-      const figures = page.getByRole("complementary", { name: "Figures" });
-      await expect(figures).toContainText("assets");
+      const figures = page.getByRole("complementary", { name: "Details" });
+      const filters = page.locator(".show-menu");
+      await expect(filters.locator("label", { hasText: /^Knowledge/ })).toHaveCount(1);
       // Env and secret files are never on the map.
       await expect(map.getByRole("button", { name: /^(env|secrets?)\b/i })).toHaveCount(0);
-      await expect(figures).not.toContainText(/\b(env|secrets?)\b/i);
-      // Choosing a type fills the column beside the map, and its assets link to their pages.
+      await expect(filters).not.toContainText(/\b(env|secrets?)\b/i);
+      // Choosing a type fills the column beside the map, and what a filter finds links to its page.
       await map.getByRole("button", { name: /^Knowledge: / }).click();
       await expect(figures.getByRole("heading", { level: 2 })).toHaveText("Knowledge");
       await page.getByRole("tab", { name: "Use", exact: true }).click();
-      await figures.locator("section", { hasText: "Never read" }).locator(".read-row a").first().click();
+      await pick(page, "Most read");
+      await figures.locator(".read-row a").first().click();
       await expect(page).toHaveURL(/\/library\/search\?ref=/);
       await expect(page.locator(".markdown")).toBeVisible();
     },
@@ -308,10 +310,15 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
       input.value = input.max;
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    // The fixture's four searches, one read and two feedback events are in the figures and the log.
-    await expect(replay.locator(".figures")).toContainText(/4\s*searches/);
-    await expect(replay.locator(".figures")).toContainText(/1\s*reads/);
-    await expect(replay.locator(".log").first()).toContainText("“missing restore steps”");
+    // The fixture's four searches are counted beside the ones that found nothing, and its events are in the log.
+    await expect(replay.getByRole("heading", { name: /^Searches that found nothing/ })).toContainText("of 4");
+    await replay
+      .locator("section", { hasText: "Latest events" })
+      .getByRole("button", { name: /^Show all/ })
+      .click();
+    await expect(replay.locator("section", { hasText: "Latest events" }).locator(".rows")).toContainText(
+      "“missing restore steps”",
+    );
     await expect(replay.getByRole("button", { name: "Play from start", exact: true })).toBeEnabled();
   });
 

@@ -7,7 +7,7 @@
  * in §7's "new suites this phase adds" table as its own file.
  *
  * TEST-REVIEW FOLLOW-UP (round 3, finding 2): these tests originally lived
- * inside `tests/workflows/hash-v6.test.ts`, combined with the `hashVersion`
+ * inside `tests/integration/workflows/hash-v6.test.ts`, combined with the `hashVersion`
  * 6 tests (A-11…A-16) because both bumps ride in Lane A's one commit. That
  * combination was itself the bug: a static top-level import of
  * `src/workflows/exec/child-invocation.ts` (which does not exist on disk

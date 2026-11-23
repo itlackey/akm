@@ -18,6 +18,7 @@ import { getIndexRebuildLockPath, getIndexWriterLockPath, getRegistryCacheDir } 
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import * as indexerModule from "../../src/indexer/indexer";
 import { akmIndex } from "../../src/indexer/indexer";
+import { readLockfile } from "../../src/integrations/lockfile";
 import * as syncFromRefModule from "../../src/sources/providers/sync-from-ref";
 import { spawnLiveHolder, stopLiveHolders } from "../_helpers/live-holder";
 import { seedLockEntries } from "../_helpers/lockfile";
@@ -72,19 +73,27 @@ afterEach(() => {
 });
 
 describe("akm bundle update lock order", () => {
-  test("waiting for another build does not hold the asset mutation lease", async () => {
+  test("while another build holds the rebuild lock the update publishes, builds nothing and warns the next build indexes it", async () => {
     const rebuildLock = getIndexRebuildLockPath();
     fs.mkdirSync(path.dirname(rebuildLock), { recursive: true });
-    fs.writeFileSync(rebuildLock, spawnLiveHolder().payload(), "utf8");
+    const holder = spawnLiveHolder();
+    fs.writeFileSync(rebuildLock, holder.payload(), "utf8");
+    const warned: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warned.push(args.map(String).join(" "));
+    });
+    const indexSpy = spyOn(indexerModule, "akmIndex");
 
-    const updating = akmUpdate({ target: ID, stashDir: storage.stashDir });
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    const result = await akmUpdate({ target: ID, stashDir: storage.stashDir });
+
+    expect(result.processed[0]?.changed.version).toBe(true);
+    expect(readLockfile().find((entry) => entry.id === ID)?.resolvedVersion).toBe("2.0.0");
+    expect(result.index).toEqual({ skipped: expect.objectContaining({ reason: "lock-held", pid: holder.pid }) });
+    expect(indexSpy).not.toHaveBeenCalled();
+    expect(warned.join("\n")).toContain("The bundle was updated but its search index was not refreshed");
+    expect(JSON.parse(fs.readFileSync(rebuildLock, "utf8")).pid).toBe(holder.pid);
     expect(probeLock(getIndexWriterLockPath()).state).toBe("absent");
-
-    fs.rmSync(rebuildLock);
-    const result = await updating;
-    expect(result.index).toBeDefined();
-  }, 30_000);
+  });
 
   test("an index step that fails after the publish warns that the bundle is updated and rethrows the original error", async () => {
     const warned: string[] = [];

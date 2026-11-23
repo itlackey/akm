@@ -41,7 +41,7 @@ Use a script when a task is mechanical, repeatable, and better handled by a dete
 
 - Add examples when agents or users repeatedly invoke the script incorrectly.
 - Keep dangerous actions behind explicit flags.
-- When a script becomes a core operation, add or update a workflow that explains when to run it.
+- When a script becomes a core operation, add or update a skill that explains when to run it.
 - If the script encodes a convention, also document that convention in a fact or knowledge asset.
 
 ## Placement & linking

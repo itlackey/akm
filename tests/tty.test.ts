@@ -5,18 +5,14 @@
 // Regression suite for #486 — NO_COLOR / TTY-aware glyph stripping.
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { _setTerminalForTests } from "../src/core/stdio";
 import { plainize, shouldDecorate } from "../src/core/tty";
 
 const ENV_KEYS = ["NO_COLOR", "FORCE_COLOR"] as const;
 const savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
-const savedIsTTY = Object.getOwnPropertyDescriptor(process.stderr, "isTTY");
 
 function setStderrTTY(value: boolean): void {
-  Object.defineProperty(process.stderr, "isTTY", {
-    value,
-    configurable: true,
-    writable: true,
-  });
+  _setTerminalForTests((fd) => fd === 2 && value);
 }
 
 beforeEach(() => {
@@ -35,12 +31,7 @@ afterEach(() => {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
-  if (savedIsTTY) {
-    Object.defineProperty(process.stderr, "isTTY", savedIsTTY);
-  } else {
-    // Was undefined originally → remove the property entirely.
-    delete (process.stderr as { isTTY?: boolean }).isTTY;
-  }
+  _setTerminalForTests();
 });
 
 describe("shouldDecorate (#486)", () => {

@@ -82,6 +82,7 @@ export class ClaudeHarness implements AkmHarness {
     if (req.systemPrompt) argv.push("--append-system-prompt", req.systemPrompt);
     if (model) argv.push("--model", model);
     if (req.prompt === undefined) return { argv };
-    return { argv: [...argv, "-p"], stdin: req.prompt };
+    // In print mode Claude Code writes its errors (auth, rate limit, output limit) on stdout and exits 1.
+    return { argv: [...argv, "-p"], stdin: req.prompt, failureStream: "stdout" };
   }
 }

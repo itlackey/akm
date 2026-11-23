@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { summarizeImproveRuns } from "../../../src/commands/health/improve-metrics";
+import { readImproveRows, summarizeImproveRuns } from "../../../src/commands/health/improve-metrics";
 import type { ImproveResultEnvelope } from "../../../src/core/improve-result";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
@@ -93,7 +93,7 @@ describe("summarizeImproveRuns result-row accounting", () => {
         actions: [],
       });
 
-      const summary = summarizeImproveRuns(db, new Date(now - 300_000).toISOString());
+      const summary = summarizeImproveRuns(readImproveRows(db, new Date(now - 300_000).toISOString()));
 
       // windows[].runs retains its historical all-row denominator. Decoder
       // accounting is additive and must not silently narrow that count.
@@ -145,7 +145,7 @@ describe("summarizeImproveRuns result-row accounting", () => {
         });
       }
 
-      const summary = summarizeImproveRuns(db, new Date(now - 300_000).toISOString());
+      const summary = summarizeImproveRuns(readImproveRows(db, new Date(now - 300_000).toISOString()));
       expect(summary.metrics.memorySummary).toEqual({ eligible: 90, derived: 1 });
     } finally {
       db.close();
@@ -183,7 +183,7 @@ describe("summarizeImproveRuns result-row accounting", () => {
         } as unknown as ImproveResultEnvelope,
       });
 
-      const summary = summarizeImproveRuns(db, new Date(now - 300_000).toISOString());
+      const summary = summarizeImproveRuns(readImproveRows(db, new Date(now - 300_000).toISOString()));
       expect(summary.metrics.resultRows).toEqual({ total: 1, included: 1, skipped: { invalid: 0 } });
       // The retired count is ignored: only the triage pre-pass's promoted count is auto-accepted now.
       expect(summary.metrics.autoAccept.promoted).toBe(0);
@@ -222,7 +222,7 @@ describe("summarizeImproveRuns result-row accounting", () => {
         } as ImproveResultEnvelope,
       });
 
-      const summary = summarizeImproveRuns(db, new Date(now - 300_000).toISOString());
+      const summary = summarizeImproveRuns(readImproveRows(db, new Date(now - 300_000).toISOString()));
       expect(summary.metrics.autoAccept.promoted).toBe(3);
     } finally {
       db.close();

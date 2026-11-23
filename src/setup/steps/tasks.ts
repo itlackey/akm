@@ -30,7 +30,7 @@ import { prompt } from "../prompt";
  * The nightly improve template (`core/improve`). This id is preselected in the
  * review multiselect on a detected server install — the "battery heuristic"
  * {@link detectServerDefault} preserved from the retired
- * `registerDefaultTasks`/`akm tasks init` path (0.9, S6).
+ * `registerDefaultTasks`/`akm tasks init` path.
  */
 const SERVER_SUGGESTED_TASK_ID = "improve";
 
@@ -129,15 +129,14 @@ export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
         yaml: fs.readFileSync(filePath, "utf8"),
         filePath,
       });
-      const document = parsed.v4;
-      if (document.schedule.length === 0) continue;
-      const schedules = document.schedule.map((entry) => entry.cron);
+      if (parsed.schedule.length === 0) continue;
+      const schedules = parsed.schedule.map((entry) => entry.cron);
       tasks.push({
         id,
         schedule: schedules[0]!,
         schedules: Object.freeze(schedules),
         enabled: enabledRefs.has(makeBundleRef(target.source.name, `tasks/${id}`)),
-        ...(document.description !== undefined ? { description: document.description } : {}),
+        ...(parsed.description !== undefined ? { description: parsed.description } : {}),
       });
     } catch (error) {
       throw new UsageError(
@@ -183,7 +182,7 @@ export async function prepareSetupTaskDefinitions(
     }
 
     const parsed = parseTaskSource({ yaml, filePath });
-    for (const schedule of parsed.v4.schedule) {
+    for (const schedule of parsed.schedule) {
       parseSchedule(schedule.cron);
     }
     return { filePath, original, yaml, ref: { type: "task" as const, name: plan.task.id } };
@@ -264,7 +263,7 @@ export async function stepScheduledTasks(
 
   const preChecked = embedded.filter((task) => byId.get(task.id)?.enabled === true).map((task) => task.id);
   // Battery heuristic preserved from the retired `registerDefaultTasks` path
-  // (S6): suggest the nightly improve task on a detected server install, same
+  //: suggest the nightly improve task on a detected server install, same
   // as every other embedded template, still gated behind the confirmation
   // below.
   if (

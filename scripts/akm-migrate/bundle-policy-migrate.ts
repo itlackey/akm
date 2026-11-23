@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { documentStashDirs } from "../../src/core/asset/asset-placement";
-import { mutateConfig, resetConfigCache, loadConfig } from "../../src/core/config/config";
+import { loadConfig, mutateConfig, resetConfigCache } from "../../src/core/config/config";
 import { getDataDir } from "../../src/core/paths";
 import { walkStashFlat } from "../../src/indexer/walk/walker";
 import { bundleRoots } from "./bundle-roots";
@@ -86,13 +86,20 @@ function plan(): { files: FileReplacement[]; bundles: BundlePolicySummary["bundl
     const entry = config.bundles?.[root.bundleId];
     const skipTrackedSecrets = marked && entry !== undefined && !entry.lint?.skip?.["tracked-secrets"]?.includes("**");
     if (marked && entry === undefined) {
-      notes.push(`Bundle ${root.bundleId} at ${root.root} tracks env and secrets on purpose and has no config entry for a lint skip.`);
+      notes.push(
+        `Bundle ${root.bundleId} at ${root.root} tracks env and secrets on purpose and has no config entry for a lint skip.`,
+      );
     }
     if (edits.length === 0 && !skipTrackedSecrets) continue;
     bundles.push({ bundleId: root.bundleId, stripped: edits.length, skipTrackedSecrets });
     for (const edit of edits) {
       const before = fs.readFileSync(edit.filePath);
-      files.push({ filePath: edit.filePath, before, after: Buffer.from(edit.after, "utf8"), mode: fs.statSync(edit.filePath).mode & 0o777 });
+      files.push({
+        filePath: edit.filePath,
+        before,
+        after: Buffer.from(edit.after, "utf8"),
+        mode: fs.statSync(edit.filePath).mode & 0o777,
+      });
     }
   }
   return { files, bundles, notes };

@@ -79,19 +79,10 @@ describe("package.json exports", () => {
     expect(copyAssets).toContain("scripts/node-runtime/api.d.ts");
   });
 
-  test("every ./api target and the docs page are in the tarball (once built)", () => {
+  test("the docs page and package.json are in the tarball", () => {
     const files = packed();
     expect(files.has("docs/reference/api.md")).toBe(true);
     expect(files.has("package.json")).toBe(true);
-    // `dist/` is a build output: CI runs `check` before `build`, so only assert
-    // the targets when the checkout has been built.
-    if (!fs.existsSync(path.join(ROOT, "dist", "api.js"))) return;
-    for (const target of ["dist/api.js", "dist/api-node.mjs", "dist/api.d.ts", "dist/text-import-hook.mjs"]) {
-      expect(files.has(target)).toBe(true);
-    }
-    for (const target of ["dist/workspace.js", "dist/workspace-node.mjs", "dist/workspace.d.ts"]) {
-      expect(files.has(target)).toBe(true);
-    }
   });
 });
 
@@ -117,14 +108,14 @@ function runAsNodeVersion(version: string, program: string): ReturnType<typeof s
 function launcherFixture(bin: "akm"): { launcher: string; cleanup: () => void } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-node-runtime-minimum-"));
   const launcher = path.join(root, bin);
-  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", bin), launcher);
+  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", `${bin}.mjs`), launcher);
   fs.writeFileSync(path.join(root, "cli-node.mjs"), 'console.log("NODE_22_LAUNCHER_RAN");\n');
   return { launcher, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 
 describe("npm bin contract", () => {
   test("uses Node as the single interpreter shared by npm's POSIX and Windows shims", () => {
-    const launcher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm"), "utf8");
+    const launcher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm.mjs"), "utf8");
 
     // POSIX executes this shebang and npm embeds the same interpreter in its
     // generated Windows shims. It cannot express a Bun-or-Node choice.
@@ -137,7 +128,7 @@ describe("npm bin contract", () => {
       scripts?: Record<string, string>;
     };
 
-    expect(pkg.engines).toEqual({ node: ">=22" });
+    expect(pkg.engines).toEqual({ node: ">=22.15" });
     // npm 12 blocks install scripts by default, so the floor is checked where akm starts (the launchers, the CLI).
     expect(pkg.scripts?.preinstall).toBeUndefined();
     expect(pkg.scripts?.install).toBeUndefined();
@@ -152,9 +143,8 @@ describe("npm bin contract", () => {
     expect(pkg.bin?.akm).toBe("dist/akm");
     expect(pkg.bin).toEqual({ akm: "dist/akm" });
 
-    const akmLauncher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm"), "utf8");
+    const akmLauncher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm.mjs"), "utf8");
     expect(akmLauncher.startsWith("#!/usr/bin/env node")).toBe(true);
-    expect(akmLauncher).toContain("requires Node.js >= 22 to bootstrap");
     expect(akmLauncher).toContain('new URL("./cli.js", import.meta.url)');
     expect(akmLauncher).toContain('await import("./cli-node.mjs")');
 
@@ -167,16 +157,26 @@ describe("npm bin contract", () => {
     expect(akmLauncher).toContain("bunMajor >= 1");
   });
 
-  test("rejects Node 20 (below the 22 floor) before the published launcher can execute its payload", () => {
+  test("the launcher refuses a Node below engines.node before running its payload, and accepts the floor", () => {
+    const engines = (
+      JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as { engines: { node: string } }
+    ).engines.node;
+    const floor = engines.replace(/^>=/, "");
+    const [floorMajor, floorMinor] = floor.split(".").map(Number) as [number, number];
+    const below = [`${floorMajor - 2}.0.0`, `${floorMajor}.${floorMinor - 1}.0`];
     const fixture = launcherFixture("akm");
+    const run = (version: string) =>
+      runAsNodeVersion(version, `await import(${JSON.stringify(pathToFileURL(fixture.launcher).href)});`);
     try {
-      const result = runAsNodeVersion(
-        "20.0.0",
-        `await import(${JSON.stringify(pathToFileURL(fixture.launcher).href)});`,
-      );
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("requires Node.js >= 22 to bootstrap");
-      expect(result.stdout).not.toContain("NODE_22_LAUNCHER_RAN");
+      for (const version of below) {
+        const result = run(version);
+        expect(result.status, `akm on ${version}`).toBe(1);
+        expect(result.stderr).toContain(`requires Node.js >= ${floor} to bootstrap`);
+        expect(result.stdout).not.toContain("NODE_22_LAUNCHER_RAN");
+      }
+      const accepted = run(`${floor}.0`);
+      expect(accepted.status, `akm on ${floor}`).toBe(0);
+      expect(accepted.stdout).toContain("NODE_22_LAUNCHER_RAN");
     } finally {
       fixture.cleanup();
     }

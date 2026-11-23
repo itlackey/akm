@@ -31,6 +31,6 @@ export class PiHarness implements AkmHarness {
     if (req.model) argv.push("--model", req.model);
     if (req.prompt === undefined) return { argv };
     argv.push("-p");
-    return { argv, stdin: req.prompt };
+    return { argv, stdin: req.prompt, failureStream: "stderr" };
   }
 }

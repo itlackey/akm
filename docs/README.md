@@ -22,7 +22,7 @@ and [migration guides](migration/README.md) have their own indexes.
 - [Capture Knowledge](guides/capture-knowledge.md) -- `akm remember`, `akm import`, and how captured material becomes available to every agent
 - [Wikis](guides/wikis.md) -- Multi-wiki knowledge bases (Karpathy-style)
 - [Environment & Secrets](reference/env-and-secrets.md) -- `akm env` and `akm secret`: operations and file modes
-- [Run Workflows](guides/run-workflows.md) -- Start or continue a run, check on it, resume it, or abandon it
+- [Run Workflows](guides/run-workflows.md) -- Deprecated, removed in 0.11. Start or continue a run, check on it, resume it, or abandon it
 - [Scheduling](guides/scheduling.md) -- Run akm tasks through the OS scheduler (cron / launchd / schtasks)
 - [Improve the Library](guides/improve-the-library.md) -- Feedback, history, and proposals: how evidence turns into reviewable changes
 - Recipes: [Turn a Website into a Searchable Bundle](guides/recipes/website-source.md), [Headless Install](guides/recipes/headless-install.md)
@@ -30,7 +30,7 @@ and [migration guides](migration/README.md) have their own indexes.
 ## Build and operate
 
 - [Bundle Author's Guide](guides/author-bundles.md) -- Build a bundle, make it discoverable, and share it
-- [Author's Guide: Writing Workflows](guides/author-workflows.md) -- Write and test a workflow definition, from a minimal example to gates and outputs
+- [Author's Guide: Writing Workflows](guides/author-workflows.md) -- Deprecated, removed in 0.11. Write and test a workflow definition, from a minimal example to gates and outputs
 - [Bundling akm](integration/bundling-akm.md) -- Ship akm inside your own product: the pin/migrate/health boot contract, plan JSON shapes, and exit codes
 - [Maintainer Docs](maintainers/README.md) -- Local development and the release checklist
 
@@ -44,8 +44,8 @@ and [migration guides](migration/README.md) have their own indexes.
 - [Asset Types](reference/asset-types.md) -- The capability taxonomy, directory conventions, and per-type examples
 - [Refs](reference/refs.md) -- The ref grammar `akm search` emits and `akm show` consumes
 - [Memory](reference/memory.md) -- The `memory` asset type: capture, belief states, and derived memories
-- [Tasks](reference/tasks.md) -- Task source v4 files, targets, triggers, scheduling, and the explicit `akm migrate apply` conversion of v2 and v3 files
-- [Workflow Schema](reference/workflow-schema.md) -- Frontmatter and body syntax for a workflow asset
+- [Tasks](reference/tasks.md) -- Task source v4 files and the Experimental v5, targets, triggers, scheduling, and the explicit `akm migrate apply` conversion of older files
+- [Workflow Schema](reference/workflow-schema.md) -- Deprecated. Frontmatter and body syntax for a workflow asset
 - [Registry](reference/registry.md) -- Registries, search, hosting, and managing sources
 - [Website Sources](reference/website-sources.md) -- The fetcher API for crawling and importing URLs
 - [Data & Telemetry](reference/data-and-telemetry.md) -- What akm reads and writes on your machine

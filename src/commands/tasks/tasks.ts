@@ -30,7 +30,6 @@ import type { AkmConfig } from "../../core/config/config-types";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
 import { warn } from "../../core/warn";
-import type { InputFlag } from "../../execution/input-contract";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
 import {
@@ -45,7 +44,7 @@ import {
 import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { selectBackend } from "../../tasks/backends";
 import type { DispatchEntry, EntryChange, LegacyRow, SchedulerBackend } from "../../tasks/backends/types";
-import { unrunnableTasks } from "../../tasks/dispatch";
+import { unrunnableTasks, unrunnableV5ScheduleEntries } from "../../tasks/dispatch";
 import { movedLocations } from "../../tasks/installation";
 import { prepareTaskExecution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskExecutionContext } from "../../tasks/prepare/prepared-execution";
@@ -59,6 +58,7 @@ import { exitCodeForStatus, type RunTaskOptions, type TaskRunResult } from "../.
 import { parseSchedule, SCHEDULE_SUPPORTED_SUBSET_HINT } from "../../tasks/schedule";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
+import { parseTaskSourceV4 } from "../../tasks/source/task-source-v4";
 import { normaliseTaskConceptId, normaliseTaskId } from "../../tasks/task-id";
 import type { PreparableTaskDocument } from "../../tasks/task-source";
 
@@ -141,8 +141,8 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     tags: input.tags,
   });
 
-  const parsedTask = parseTaskSource({ yaml, filePath: assetPath });
-  const task = projectTaskSourceV4(parsedTask.v4);
+  const parsedTask = parseTaskSourceV4({ yaml, filePath: assetPath });
+  const task = projectTaskSourceV4(parsedTask);
   const qualifiedRef = makeBundleRef(bundle.bundleName, `tasks/${id}`);
   await prepareTaskExecution(task, {
     taskId: id,
@@ -152,7 +152,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     config: bundle.config,
     resolveAsset: taskProjectionAssetResolver(bundle.config, bundle.bundleName, stashDir),
   });
-  const first = parsedTask.v4.schedule[0];
+  const first = parsedTask.schedule[0];
   if (!first) throw new UsageError(`Task "${id}" has no schedulable trigger.`, "INVALID_FLAG_VALUE");
 
   if (fs.existsSync(assetPath) && !input.force) {
@@ -217,7 +217,7 @@ export interface TasksRunResultEnvelope {
 
 export async function akmTasksRun(
   id: string,
-  options: { scheduled?: boolean; target?: string; inputFlags?: readonly InputFlag[] } = {},
+  options: Pick<RunTaskOptions, "inputFlags" | "start"> & { scheduled?: boolean; target?: string } = {},
 ): Promise<TasksRunResultEnvelope> {
   const scheduled = options.scheduled === true;
   const startedAt = new Date();
@@ -259,6 +259,7 @@ export async function akmTasksRun(
     scheduled,
     provenance,
     inputFlags: options.inputFlags,
+    ...(options.start ? { start: options.start } : {}),
     taskStepRunner: stepTaskRunner(scheduled),
   };
   // The runner records scheduled preparation failures; interactive preflight stays non-mutating.
@@ -295,6 +296,12 @@ function stepTaskRunner(scheduled: boolean): NonNullable<RunTaskOptions["taskSte
         bundleName: bundle.source.name,
         adapterId,
       });
+      if (prepared.kind === "v5") {
+        throw new UsageError(
+          `Task ${ref} is version 5, and a version 4 task step does not run one. Run \`akm migrate apply\` to convert the task that runs it.`,
+          "TASK_SOURCE_INVALID",
+        );
+      }
       if (prepared.kind === "steps") {
         throw new UsageError(`Step task ${ref} declares steps:; a task step must not.`, "INVALID_FLAG_VALUE");
       }
@@ -338,11 +345,11 @@ function resolveTaskActivation(
       yaml: fs.readFileSync(sourcePath, "utf8"),
       filePath: sourcePath,
     });
-    if (parsedSource.v4.schedule.length === 0) {
+    if (parsedSource.schedule.length === 0) {
       throw new UsageError(`Task ${JSON.stringify(ref)} has no schedule to enable.`, "INVALID_FLAG_VALUE");
     }
     // Dispatch would fail on a schedule it cannot parse every minute, where only a log records it.
-    for (const entry of parsedSource.v4.schedule) parseSchedule(entry.cron);
+    for (const entry of parsedSource.schedule) parseSchedule(entry.cron);
   }
   return { qualifiedRef: makeBundleRef(bundle.source.name, conceptId), sourcePath, bundleName: bundle.source.name };
 }
@@ -406,8 +413,9 @@ export async function akmTasksHistory(input: {
   const bundle = resolveTaskReadBundle(parsed?.bundle, input.target);
   const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
   const id = parsed ? taskIdForAdapter(parsed.id, adapterId) : undefined;
-  // History rows are keyed by task id in state.db, not per bundle.
-  return { rows: readTaskHistory({ id, limit }) };
+  // A bundle named by `--bundle` or by the ref selects the rows that recorded that bundle.
+  const named = parsed?.bundle !== undefined || input.target !== undefined;
+  return { rows: readTaskHistory({ id, limit, ...(named ? { bundle: bundle.source.name } : {}) }) };
 }
 
 /** What `akm doctor scheduler sync` did to the one dispatch entry. `unmanaged`: this installation does not own the OS scheduler. */
@@ -571,6 +579,12 @@ async function planSync(
       );
     }
   }
+  // Sync checks each version 5 schedule entry as a start does, and names the one that fails.
+  if (enabled) {
+    for (const failure of await unrunnableV5ScheduleEntries()) {
+      warnings.push(`Enabled task ${failure.ref} cannot run: ${failure.reason}`);
+    }
+  }
   for (const kept of keptLegacy) {
     warnings.push(
       `Left the akm 0.9 scheduler row "${kept.id}": ${kept.reason}. Remove it from the OS scheduler yourself if its bundle is gone.`,
@@ -659,7 +673,7 @@ export async function akmTasksDoctor(
       );
     }
   }
-  for (const failure of unrunnableTasks(config)) {
+  for (const failure of [...unrunnableTasks(config), ...(await unrunnableV5ScheduleEntries(config))]) {
     warnings.push(`Enabled task ${failure.ref} cannot run: ${failure.reason}`);
   }
   const legacyOnly = bindings.some((binding) => binding.status.includes("legacy"));

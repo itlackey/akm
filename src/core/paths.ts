@@ -369,12 +369,10 @@ export function getIndexWriterLockPath(): string {
 }
 
 /**
- * Path to the opt-in, PID-liveness-only rebuild lock an explicit `akm index`
- * run acquires (#956). Distinct from {@link getIndexWriterLockPath}'s
+ * Path to the PID-liveness-only rebuild lock every index build acquires (#956). Distinct from {@link getIndexWriterLockPath}'s
  * `index.db.write.lock`, which is the asset-mutation lease and unrelated to
- * indexing since #872 — this lock never blocks and is never required, it
- * only lets a scheduled/opportunistic `akm index --skip-if-locked` step
- * aside instead of contending with a run already in progress.
+ * indexing since #872 — this lock never blocks: a build that finds it held
+ * steps aside instead of contending with a run already in progress.
  */
 export function getIndexRebuildLockPath(): string {
   return path.join(getDataDir(), "index.rebuild.lock");
@@ -498,17 +496,24 @@ export function getStashLocksDir(stashDir: string): string {
   return stashScopedDir(path.join(getStateDir(), "locks"), stashDir);
 }
 
+/** `env` without the `AKM_LAUNCHER_*` variables akm's own launcher set for this process: a nested `akm` gets them from its own launcher. */
+export function withoutLauncherVars<T extends NodeJS.ProcessEnv>(env: T): T {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !name.startsWith("AKM_LAUNCHER_"))) as T;
+}
+
 /**
  * The environment of a process akm starts for the user: akm's own, as the program
  * has it when the user runs it from their shell, with `AKM_CONFIG_FILE` set over it
  * so a child that runs `akm` (an exec unit, an agent CLI) uses the same installation
  * even when the parent found it through `--config`, `XDG_*_HOME`, or a runtime that
  * remaps them. The file is absolute: it names the other locations (its `paths` key)
- * and the working bundle (`defaultBundle`). akm filters nothing.
+ * and the working bundle (`defaultBundle`). akm filters nothing of the user's, and omits only the
+ * `AKM_LAUNCHER_*` variables its own launcher set for this process: a nested `akm` gets them from its
+ * own launcher. `host` is the environment akm runs in.
  */
-export function childProcessEnv(): Record<string, string> {
+export function childProcessEnv(host: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const inherited: Record<string, string> = {};
-  for (const [name, value] of Object.entries(process.env)) {
+  for (const [name, value] of Object.entries(withoutLauncherVars(host))) {
     if (value !== undefined) inherited[name] = value;
   }
   return { ...inherited, AKM_CONFIG_FILE: getConfigPath() };

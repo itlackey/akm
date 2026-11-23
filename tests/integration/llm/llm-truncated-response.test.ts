@@ -3,48 +3,89 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Truncated LLM responses (`finishReason: "length"`), issue #865.
+ * Truncated and empty LLM replies, issue #865 and B10-14.
  *
- * `#815`/`#816` fixed the CAUSE in normal operation (`reasoningEffort` is now
- * a first-class field, so the token-budget truncation that cost ~50% of
- * reflect calls no longer routinely happens). The HANDLING stayed untested:
- * when a response IS truncated mid-JSON, `chatCompletion` resolves
- * successfully (a 200 with valid envelope JSON is not a transport error) and
- * returns only the raw content string — `finishReason` is computed for
- * telemetry (`emitLlmUsage`) but never reaches the caller. `structuredLoop`
- * (src/llm/structured.ts), which every structured-output call site sits on,
- * then fails to parse the truncated JSON and reports the same generic
- * `parse_error` it would for garbled or empty model output — there is no
- * channel for "the model was still writing when the token cap cut it off" to
- * reach that classification at all.
- *
- * This test pins that current behavior. See the accompanying report for the
- * judgment call on whether `finishReason: "length"` should get a distinct
- * classification (decision: no — see PR/issue notes).
+ * `chatCompletion` fails a reply cut at the output limit (`finish_reason: "length"`) and a reply with no content, as a
+ * `parse_error` that says so; the model's reasoning is never returned as the answer. The usage event records the
+ * failure and keeps `finishReason`. `structuredLoop` (src/llm/structured.ts) still reports the same generic
+ * `parse_error` for garbled model output.
  */
 import { describe, expect, test } from "bun:test";
-import { chatCompletion } from "../../../src/llm/client";
+import { chatCompletion, LlmCallError } from "../../../src/llm/client";
 import { isRefused, jsonParser, structuredLoop } from "../../../src/llm/structured";
+import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink } from "../../../src/llm/usage-telemetry";
 
 function createRequestServer(respond: () => Response): { url: string; server: ReturnType<typeof Bun.serve> } {
   const server = Bun.serve({ port: 0, fetch: () => respond() });
   return { url: `http://localhost:${server.port}`, server };
 }
 
-describe("truncated LLM responses collapse into a generic parse_error (#865)", () => {
-  test("chatCompletion resolves successfully with the truncated content, dropping finishReason", async () => {
+describe("a cut-off or empty reply is a failure that says so", () => {
+  test("a reply cut at the output limit fails with parse_error naming finish_reason and the model; the usage event keeps it", async () => {
+    const events: LlmUsageRecord[] = [];
+    setLlmUsageSink((record) => events.push(record));
     const { url, server } = createRequestServer(() =>
       Response.json({
+        model: "served-model",
         choices: [
           { message: { content: '{"file":"a.ts","summary":"this got cut off mid-str' }, finish_reason: "length" },
         ],
       }),
     );
     try {
-      const raw = await chatCompletion({ endpoint: url, model: "test-model" }, [{ role: "user", content: "go" }]);
-      // The truncated JSON comes through as-is — chatCompletion neither throws
-      // nor exposes `finishReason` to the caller.
-      expect(raw).toBe('{"file":"a.ts","summary":"this got cut off mid-str');
+      const failure = await chatCompletion({ endpoint: url, model: "test-model" }, [
+        { role: "user", content: "go" },
+      ]).then(
+        () => undefined,
+        (error) => error,
+      );
+      expect(failure).toBeInstanceOf(LlmCallError);
+      expect((failure as LlmCallError).code).toBe("parse_error");
+      expect((failure as LlmCallError).message).toContain('reply cut at the output limit (finish_reason "length")');
+      expect((failure as LlmCallError).message).toContain("served-model");
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ outcome: "error", errorCode: "parse_error", finishReason: "length" });
+    } finally {
+      clearLlmUsageSink();
+      server.stop(true);
+    }
+  });
+
+  test("an empty content fails with parse_error; reasoning_content is never returned as the answer", async () => {
+    const { url, server } = createRequestServer(() =>
+      Response.json({
+        choices: [
+          {
+            message: { content: "", reasoning_content: "Let me think. The user wants a summary." },
+            finish_reason: "stop",
+          },
+        ],
+      }),
+    );
+    try {
+      const failure = await chatCompletion({ endpoint: url, model: "test-model" }, [
+        { role: "user", content: "go" },
+      ]).then(
+        (answer) => answer,
+        (error) => error,
+      );
+      expect(failure).toBeInstanceOf(LlmCallError);
+      expect((failure as LlmCallError).code).toBe("parse_error");
+      expect((failure as LlmCallError).message).toContain("reply had no content");
+      expect((failure as LlmCallError).message).toContain("reasoning_content");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a complete reply is returned unchanged", async () => {
+    const { url, server } = createRequestServer(() =>
+      Response.json({ choices: [{ message: { content: "done" }, finish_reason: "stop" }] }),
+    );
+    try {
+      expect(await chatCompletion({ endpoint: url, model: "test-model" }, [{ role: "user", content: "go" }])).toBe(
+        "done",
+      );
     } finally {
       server.stop(true);
     }

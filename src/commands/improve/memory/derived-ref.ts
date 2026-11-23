@@ -10,7 +10,7 @@ import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 
 /**
  * A belief edge (`supersededBy` / `contradictedBy` / `currentBeliefRefs`) as a
- * bare memory name. Both spellings occur: `memory:<name>` (pre-0.9 edges) and
+ * bare memory name. Both spellings occur: `memory:<name>` (edges in the old spelling) and
  * `[bundle//]memories/<name>` (what `--supersedes` writes today); accepting only
  * the first once read every superseded memory back as active.
  */

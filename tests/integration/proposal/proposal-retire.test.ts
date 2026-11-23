@@ -1510,6 +1510,7 @@ describe("O1: an accepted promotion retires its source memory", () => {
 
   test("a non-consolidate proposal's promotionSource-shaped ref is never retired (promotionSource is only meaningful for consolidate)", async () => {
     const sourcePath = writeAsset("memories/untouched.md", "description: untouched");
+    const sourceContent = fs.readFileSync(sourcePath, "utf8");
     const config = makeConfig(storage.stashDir);
     // reflect/distill never set promotionSource in practice; this proves the
     // accept path gates on `source === "consolidate"`, not merely on the
@@ -1519,6 +1520,8 @@ describe("O1: an accepted promotion retires its source memory", () => {
       source: "reflect",
       target: { source: "stash", root: storage.stashDir },
       payload: { content: "---\ndescription: a lesson\nwhen_to_use: when testing\n---\n\nBody.\n" },
+      promotionSource: "memories/untouched",
+      promotionSourceHash: contentHash(sourceContent, "body"),
     });
     await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
     expect(fs.existsSync(sourcePath)).toBe(true);

@@ -216,7 +216,7 @@ export async function embedBatch(
 
 // ── Similarity ──────────────────────────────────────────────────────────────
 
-// `cosineSimilarity` was moved to `./embedders/types.ts` so importers
+// `cosineSimilarity` lives in `./embedders/types.ts` so importers
 // (notably `db.ts`) can pull the math function without dragging in this
 // module and the local embedder's import chain.
 export { cosineSimilarity } from "./embedders/types";

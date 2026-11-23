@@ -42,8 +42,8 @@ export class OpencodeHarness implements AkmHarness {
   // session-log provider, so offering it as a stash source is functional.
   readonly setupDetectionDir = ".config/opencode";
   readonly build = opencodeBuilder.build;
-  readonly profile = { bin: OPENCODE_BIN, args: ["run"] };
-  // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
+  readonly profile = { bin: OPENCODE_BIN, args: [] };
+  // ── Workflow-engine descriptor ────────────
   // Session-id env marker for run attribution.
   readonly identityEnv = ["OPENCODE_SESSION_ID"] as const;
   readonly sessionLogProvider = (): SessionLogHarness => new OpenCodeProvider();

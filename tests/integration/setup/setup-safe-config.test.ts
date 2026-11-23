@@ -1,0 +1,415 @@
+/**
+ * Tests for issue #511: safe-by-default `akm setup` config management.
+ *
+ * Covers the three non-interactive write paths (`runSetupFromConfig` and
+ * `runSetupWithDefaults`) and their merge / backup guarantees:
+ *   - `--from` deep-merge: a partial input only updates the keys
+ *     it carries and never drops sibling subkeys.
+ *   - `--yes` idempotency: running N times == running once (fill-missing-only,
+ *     never overwrite an existing value).
+ *   - `--yes --file`: deep-merge plus defaults-fill, no prompts.
+ *   - no pre-existing key is silently dropped in any mode.
+ *   - a real (timestamped) backup is taken when a config already exists.
+ *
+ * Each test drives the setup functions directly inside an isolated XDG sandbox
+ * so config reads/writes/backups land in temp dirs, never the host config.
+ */
+
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
+import { _setAkmInitForTests } from "../../../src/commands/sources/init";
+import { resetConfigCache } from "../../../src/core/config/config";
+import { getConfigLockPath } from "../../../src/core/config/config-io";
+import { getConfigPath } from "../../../src/core/paths";
+import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { rebaseSetupChanges, runSetupFromConfig, runSetupWithDefaults } from "../../../src/setup/setup";
+import { parseSetupFlags } from "../../../src/setup/setup-flags";
+import { spawnLiveHolder } from "../../_helpers/live-holder";
+import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
+import {
+  type Cleanup,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+  sandboxXdgStateHome,
+  withBundle,
+  withEnv,
+  withMockedFetch,
+  writeSandboxConfig,
+} from "../../_helpers/sandbox";
+import { overrideSeam } from "../../_helpers/seams";
+
+let cleanup: Cleanup | undefined;
+
+// Setup asks the PATH `opencode` which major it is; no suite runs a real one.
+beforeEach(() => fakeOpencodeMajor(1));
+
+beforeEach(() => {
+  // Chain isolated XDG dirs so config (write), cache (backups), data & state
+  // all resolve into temp dirs for the duration of the test.
+  const cfg = sandboxXdgConfigHome();
+  const cache = sandboxXdgCacheHome(cfg.cleanup);
+  const data = sandboxXdgDataHome(cache.cleanup);
+  const state = sandboxXdgStateHome(data.cleanup);
+  cleanup = state.cleanup;
+  resetConfigCache();
+});
+
+afterEach(() => {
+  _setAkmInitForTests();
+  cleanup?.();
+  cleanup = undefined;
+});
+
+function readWrittenConfig(): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as Record<string, unknown>;
+}
+
+function backupDir(): string {
+  return path.join(process.env.XDG_CACHE_HOME as string, "akm", "config-backups");
+}
+
+/**
+ * A fully-populated, persistent (non-transient) starting config.
+ *
+ * #37: the pre-cutover `stashDir` + `sources[]` primary/secondary trio became a
+ * `bundles` map. Setup MANAGES the primary bundle — it re-derives it from the
+ * resolved working stash, keying it by the stash path's basename slug (`akm`)
+ * and marking it `writable: true`. The seed is written in exactly that canonical
+ * shape so the "no pre-existing key is silently dropped / idempotent" contracts
+ * hold: setup is a no-op on an already-normalized primary bundle. (Setup does
+ * not round-trip arbitrary secondary bundles — a behavior change from the old
+ * `sources[]` preservation; the primary bundle is the config-management unit.)
+ */
+function seedFullConfig(): void {
+  writeSandboxConfig({
+    semanticSearchMode: "off",
+    output: { format: "json", detail: "full" },
+    harnesses: { claude: { bin: "claude" } },
+    bundles: { akm: { path: "/home/tester/akm", writable: true } },
+    defaultBundle: "akm",
+    registries: [{ name: "default", url: "https://example.com/registry" }],
+  });
+  // writeSandboxConfig writes straight to disk, bypassing saveConfig's cache
+  // invalidation — drop the cache so loadUserConfig re-reads the seed.
+  resetConfigCache();
+}
+
+describe("runSetupFromConfig — deep merge", () => {
+  test("three-way rebase preserves disjoint edits and rejects same-field edits", () => {
+    const original = { output: { format: "json", detail: "brief" } };
+    const desired = { output: { format: "text", detail: "brief" } };
+    expect(rebaseSetupChanges(original, desired, { output: { format: "json", detail: "full" } })).toEqual({
+      output: { format: "text", detail: "full" },
+    });
+    expect(() => rebaseSetupChanges(original, desired, { output: { format: "yaml", detail: "brief" } })).toThrow(
+      /Setup config conflict at output\.format/,
+    );
+  });
+
+  test("detects a same-field race before stash initialization", async () => {
+    seedFullConfig();
+    resetConfigCache();
+    let initCalls = 0;
+    _setAkmInitForTests(async () => {
+      initCalls += 1;
+      return { bundleDir: "/unused", created: true, configPath: getConfigPath(), defaultBundleUpdated: false };
+    });
+
+    // Another process edits the same field while setup is listing the endpoint's models.
+    await withMockedFetch(
+      async () => {
+        await expect(
+          runSetupFromConfig({
+            configJson: JSON.stringify({ output: { format: "text" } }),
+            applyDefaults: true,
+            flags: parseSetupFlags({ endpoint: "https://example.test/v1" }),
+          }),
+        ).rejects.toThrow(/Setup config conflict at output\.format/);
+      },
+      (url) => {
+        if (!url.startsWith("https://example.test/")) throw new Error("unreachable");
+        const concurrent = readWrittenConfig();
+        concurrent.output = { ...(concurrent.output as Record<string, unknown>), format: "yaml" };
+        fs.writeFileSync(getConfigPath(), `${JSON.stringify(concurrent)}\n`);
+        return Response.json({ data: [{ id: "test-model" }] });
+      },
+    );
+
+    expect(initCalls).toBe(0);
+    expect((readWrittenConfig().output as Record<string, unknown>).format).toBe("yaml");
+  });
+
+  test("a partial file updates a nested key but preserves sibling subkeys", async () => {
+    seedFullConfig();
+
+    await runSetupFromConfig({
+      configJson: JSON.stringify({ output: { format: "text" } }),
+      noInit: true,
+    });
+
+    const written = readWrittenConfig();
+    const output = written.output as Record<string, unknown>;
+    // The updated subkey changed...
+    expect(output.format).toBe("text");
+    // ...but its sibling survived (the bug this fixes: shallow replace dropped it).
+    expect(output.detail).toBe("full");
+    // And unrelated top-level keys are untouched.
+    expect(written.harnesses).toEqual({ claude: { bin: "claude" } });
+    expect(written.bundles).toEqual({ akm: { path: "/home/tester/akm", writable: true } });
+    expect(written.registries).toEqual([{ name: "default", url: "https://example.com/registry" }]);
+  });
+
+  test("an embedding model served by a connection needs no endpoint of its own", async () => {
+    seedFullConfig();
+
+    await runSetupFromConfig({
+      configJson: JSON.stringify({
+        connections: { default: { endpoint: "https://example.test/v1", models: { fast: "m" } } },
+        embedding: { model: "nomic-embed-text" },
+      }),
+      noInit: true,
+    });
+
+    expect(readWrittenConfig().embedding).toEqual({ model: "nomic-embed-text" });
+  });
+
+  test("nested harnesses merge key-by-key (sibling harness survives)", async () => {
+    seedFullConfig();
+
+    // Adding a second harness must not drop the seeded `claude` harness.
+    await runSetupFromConfig({
+      configJson: JSON.stringify({ harnesses: { opencode: { bin: "opencode" } } }),
+      noInit: true,
+    });
+
+    const harnesses = readWrittenConfig().harnesses as Record<string, unknown>;
+    expect(harnesses.claude).toEqual({ bin: "claude" });
+    expect(harnesses.opencode).toEqual({ bin: "opencode" });
+  });
+
+  test("an empty file drops no pre-existing key", async () => {
+    seedFullConfig();
+    const before = readWrittenConfig();
+
+    await runSetupFromConfig({ configJson: "{}", noInit: true });
+
+    const after = readWrittenConfig();
+    for (const key of Object.keys(before)) {
+      expect(after[key]).toEqual(before[key]);
+    }
+  });
+});
+
+describe("runSetupFromConfig — top-level key allowlist (R-017)", () => {
+  function captureWarnings(): string[] {
+    const warnCalls: string[] = [];
+    overrideSeam(_setWarnSinkForTests, (level, args) => {
+      if (level !== "warn") return;
+      warnCalls.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
+    });
+    return warnCalls;
+  }
+
+  test("accepts every schema-valid top-level key instead of silently dropping it", async () => {
+    seedFullConfig();
+    const warnCalls = captureWarnings();
+
+    // These six sections are all valid `AkmConfigShape` keys that a
+    // hand-maintained `ALLOWED_KEYS` copy had fallen out of sync with (R-017):
+    // each was silently stripped with only a warning, while the command still
+    // exited 0.
+    await runSetupFromConfig({
+      configJson: JSON.stringify({
+        improve: { enabled: false },
+        search: { defaultExcludeTypes: ["session"] },
+        feedback: { requireReason: true },
+        archiveRetentionDays: 30,
+        workflow: { maxConcurrency: 4 },
+        experimental: { improveAutonomy: true },
+      }),
+      noInit: true,
+    });
+
+    const written = readWrittenConfig();
+    expect(written.improve).toEqual({ enabled: false });
+    expect(written.search).toEqual({ defaultExcludeTypes: ["session"] });
+    expect(written.feedback).toEqual({ requireReason: true });
+    expect(written.archiveRetentionDays).toBe(30);
+    expect(written.workflow).toEqual({ maxConcurrency: 4 });
+    expect(written.experimental).toEqual({ improveAutonomy: true });
+    expect(warnCalls.some((m) => m.includes("Ignoring unknown or restricted config key"))).toBe(false);
+  });
+
+  test("still drops a genuinely retired top-level key with a warning", async () => {
+    seedFullConfig();
+    const warnCalls = captureWarnings();
+
+    await runSetupFromConfig({
+      configJson: JSON.stringify({ profiles: { legacy: {} } }),
+      noInit: true,
+    });
+
+    const written = readWrittenConfig();
+    expect(written.profiles).toBeUndefined();
+    expect(warnCalls.some((m) => m.includes('Ignoring unknown or restricted config key: "profiles"'))).toBe(true);
+  });
+});
+
+describe("runSetupFromConfig — backup guarantees", () => {
+  test("creates a real timestamped backup when a config already exists", async () => {
+    seedFullConfig();
+
+    const result = await runSetupFromConfig({
+      configJson: JSON.stringify({ output: { format: "text" } }),
+      noInit: true,
+    });
+    expect(result.written).toBe(true);
+
+    const entries = fs.readdirSync(backupDir());
+    expect(entries.some((n) => /^config-.*\.json$/.test(n) && n !== "config.latest.json")).toBe(true);
+    expect(entries).toContain("config.latest.json");
+  });
+
+  test("creates the mandatory backup before stash initialization", async () => {
+    seedFullConfig();
+    let backupExistedAtInit = false;
+    _setAkmInitForTests(async () => {
+      backupExistedAtInit = fs.existsSync(path.join(backupDir(), "config.latest.json"));
+      return { bundleDir: "/unused", created: true, configPath: getConfigPath(), defaultBundleUpdated: false };
+    });
+
+    await runSetupFromConfig({ configJson: JSON.stringify({ output: { format: "text" } }) });
+
+    expect(backupExistedAtInit).toBe(true);
+  });
+
+  test("refuses stash initialization when the mandatory backup cannot be created", async () => {
+    seedFullConfig();
+    const unusableCacheRoot = path.join(process.env.HOME as string, "cache-root-file");
+    fs.writeFileSync(unusableCacheRoot, "not a directory");
+    let initCalls = 0;
+    _setAkmInitForTests(async () => {
+      initCalls++;
+      return { bundleDir: "/unused", created: true, configPath: getConfigPath(), defaultBundleUpdated: false };
+    });
+
+    await withEnv({ XDG_CACHE_HOME: unusableCacheRoot }, async () => {
+      await expect(
+        runSetupFromConfig({ configJson: JSON.stringify({ output: { format: "text" } }) }),
+      ).rejects.toThrow();
+    });
+
+    expect(initCalls).toBe(0);
+    expect((readWrittenConfig().output as Record<string, unknown>).format).toBe("json");
+  });
+});
+
+describe("runSetupFromConfig — --yes (applyDefaults) deep-merge + fill", () => {
+  test("deep-merges the file and leaves non-file keys untouched", async () => {
+    seedFullConfig();
+
+    await runSetupFromConfig({
+      configJson: JSON.stringify({ output: { format: "text" } }),
+      noInit: true,
+      applyDefaults: true,
+    });
+
+    const written = readWrittenConfig();
+    const output = written.output as Record<string, unknown>;
+    expect(output.format).toBe("text");
+    expect(output.detail).toBe("full");
+    // Existing values preserved; defaults only fill what was missing.
+    expect((written.bundles as Record<string, { path: string }>).akm!.path).toBe("/home/tester/akm");
+    expect(written.harnesses).toEqual({ claude: { bin: "claude" } });
+  });
+});
+
+describe("runSetupWithDefaults — idempotency", () => {
+  test("preserves every existing value and is idempotent across runs", async () => {
+    seedFullConfig();
+
+    await runSetupWithDefaults({ noInit: true });
+    const first = fs.readFileSync(getConfigPath(), "utf8");
+
+    await runSetupWithDefaults({ noInit: true });
+    const second = fs.readFileSync(getConfigPath(), "utf8");
+
+    // Idempotency contract: running N times == running once. Detection
+    // (#514) may legitimately inject a connection (e.g. a live local LLM), so the
+    // first run is not a no-op — but the SECOND run must add/change nothing.
+    // Compare structurally rather than byte-for-byte: JSON object key
+    // insertion order is not part of the config's identity, and the apply
+    // helpers can reorder `connections`/`harnesses` keys without altering content.
+    expect(JSON.parse(second)).toEqual(JSON.parse(first));
+
+    // No pre-existing value was overwritten by a default.
+    const written = JSON.parse(first) as Record<string, unknown>;
+    expect((written.bundles as Record<string, { path: string }>).akm!.path).toBe("/home/tester/akm");
+    expect(written.output).toEqual({ format: "json", detail: "full" });
+    expect(written.bundles).toEqual({ akm: { path: "/home/tester/akm", writable: true } });
+    expect(written.registries).toEqual([{ name: "default", url: "https://example.com/registry" }]);
+    // The pre-existing harness must survive untouched. Detection (#514)
+    // may ADD a connection (e.g. a live local server on the host), but it must
+    // never overwrite the seeded harness.
+    expect((written.harnesses as Record<string, unknown>).claude).toEqual({ bin: "claude" });
+  });
+
+  test("on a fresh install writes config and takes no backup", async () => {
+    // No seed: no config on disk yet.
+    expect(fs.existsSync(getConfigPath())).toBe(false);
+
+    const result = await runSetupWithDefaults({ noInit: true });
+    expect(result.written).toBe(true);
+    expect(fs.existsSync(getConfigPath())).toBe(true);
+
+    // Nothing to back up on a fresh install → no backup files written.
+    expect(fs.existsSync(backupDir())).toBe(false);
+  });
+
+  test("full initialization still performs only setup's one final config write", async () => {
+    const result = await runSetupWithDefaults({ noInit: false });
+    expect(result.stashCreated).toBe(true);
+    expect(fs.existsSync(getConfigPath())).toBe(true);
+    expect(fs.existsSync(backupDir())).toBe(false);
+  });
+
+  test("rejects an invalid connection before config or stash side effects", async () => {
+    const stashDir = path.join(process.env.HOME as string, "akm");
+    fs.rmSync(stashDir, { recursive: true, force: true });
+    await expect(
+      runSetupFromConfig({
+        configJson: JSON.stringify({ connections: { default: { endpoint: "ftp://example.test/v1" } } }),
+        noInit: false,
+      }),
+    ).rejects.toThrow(/endpoint must use http/);
+    expect(fs.existsSync(getConfigPath())).toBe(false);
+    expect(fs.existsSync(stashDir)).toBe(false);
+  });
+
+  test("fails a config-lock conflict before initializing the stash", async () => {
+    const stashDir = path.join(process.env.HOME as string, "setup-lock-boundary");
+    fs.rmSync(stashDir, { recursive: true, force: true });
+    await withEnv({}, () =>
+      withBundle(stashDir, async () => {
+        fs.mkdirSync(path.dirname(getConfigLockPath()), { recursive: true });
+        const holder = spawnLiveHolder();
+        fs.writeFileSync(getConfigLockPath(), holder.payload());
+        try {
+          await expect(
+            runSetupFromConfig({
+              configJson: JSON.stringify({ semanticSearchMode: "off" }),
+              dir: stashDir,
+              noInit: false,
+            }),
+          ).rejects.toThrow(/Timed out waiting for config lock/);
+          expect(fs.existsSync(path.join(stashDir, "memories"))).toBe(false);
+        } finally {
+          await holder.stop();
+          fs.rmSync(getConfigLockPath(), { force: true });
+        }
+      }),
+    );
+  });
+});

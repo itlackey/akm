@@ -455,7 +455,7 @@ export async function runValidationAndRepairPass(args: {
         startMs: args.startMs,
         budgetMs: args.budgetMs,
         llmRunner: runner,
-        // The resolved source path, not the raw `--stash-dir` flag.
+        // The resolved source path.
         stashDir: args.primaryStashDir,
         findFilePath: findAssetFilePath,
       }),
@@ -815,7 +815,7 @@ export function buildSnapshotManifest(args: {
  *  - noFeedbackPool: no recent feedback and no reflect window, left to the
  *    proactive-maintenance lane;
  *  - fullySkippedCount: feedback on record but nothing new, or a live window.
- * An explicit `--scope <ref>` bypasses every gate.
+ * An explicit scope ref bypasses every gate.
  */
 export function partitionBySignalDelta(args: {
   scope: ImproveScope;

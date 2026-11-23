@@ -36,8 +36,9 @@ that the indexer records:
 | `supersededBy` | Points at the memory that replaced this one |
 
 Supply frontmatter fields explicitly with `--tag`/`--expires`/`--source`,
-derive them from the body heuristically with `--auto`, or have the
-configured LLM propose them with `--enrich`. See
+or use `--auto` (derive them from the body heuristically) or `--enrich`
+(have the configured LLM propose them); both are Deprecated and removed in 0.11
+with no replacement flag. See
 [`akm remember`](cli.md#remember) for the full flag list.
 
 ### Belief states

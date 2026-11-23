@@ -23,10 +23,9 @@
  *     only", so no downstream consumer of `PreparableTaskDocument` learns a
  *     new shape.
  *   - the projected `version` is the LITERAL `3` — the prepare contract's
- *     discriminant, not a re-assertion that the source was v3. Task v3
- *     acceptance is gone from `src` (`TASK_V3_SCHEMA_VERSION` no longer
- *     exists), but `PreparableTaskDocument`'s name and shape are unchanged, so
- *     the literal stays; see its own inline comment below.
+ *     discriminant, not a re-assertion that the source was v3. `src`
+ *     does not accept task v3 source, but `PreparableTaskDocument`'s name and
+ *     shape keep the literal; see its own inline comment below.
  */
 
 import type { PreparableTaskDocument, TaskAkmOptions } from "../task-source";

@@ -30,7 +30,7 @@
 // shells out to `node`.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { BOUNDARY_MARKERS, NATIVE_CRASH_MARKER } from "./node-runtime-markers";
@@ -124,6 +124,9 @@ const env: Record<string, string> = {
   CI: "1",
 };
 
+// Absolute: a step may replace PATH.
+const nodeExe = spawnSync(nodeBin, ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim();
+
 let stepNo = 0;
 let failures = 0;
 
@@ -141,13 +144,17 @@ interface StepOptions {
   allowExitCodes?: number[];
   /** Per-step timeout (ms). */
   timeoutMs?: number;
+  /** The script to run instead of the CLI entry. */
+  entry?: string;
+  /** The environment to run in instead of `env`. */
+  env?: Record<string, string>;
 }
 
 function step(label: string, args: string[], opts: StepOptions = {}): string {
   stepNo++;
   const tag = `[${stepNo}] ${label}`;
-  const res = spawnSync(nodeBin, [cliEntry, ...args], {
-    env,
+  const res = spawnSync(nodeExe, [opts.entry ?? cliEntry, ...args], {
+    env: opts.env ?? env,
     input: opts.stdin,
     encoding: "utf8",
     timeout: opts.timeoutMs ?? 120_000,
@@ -230,6 +237,14 @@ console.log(`node-smoke: temp root = ${root}`);
 try {
   // getDirname / package.json resolution via the boundary + text-import hook.
   step("version", ["--version"], { expect: "." });
+  // The installed launcher (`dist/akm`) with no Bun on PATH runs the CLI on Node, in its own process.
+  const noBunPath = path.join(root, "no-bun-path");
+  mkdirSync(noBunPath, { recursive: true });
+  step("launcher --version, no Bun on PATH", ["--version"], {
+    entry: path.join(repoRoot, "dist", "akm"),
+    env: { ...env, PATH: noBunPath },
+    expect: (JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as { version: string }).version,
+  });
   // better-sqlite3 open + config write.
   step("init", ["bundle", "create", "--dir", stash], { expectJson: { created: true } });
   // SQLite write path (was broken by the better-sqlite3 `readonly:undefined` bug).

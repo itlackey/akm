@@ -12,6 +12,8 @@
  */
 
 import { isRecord } from "../../../src/core/common";
+import { deepMergeConfig } from "../../../src/core/config/deep-merge";
+import { isEnvReference } from "../../../src/core/config/schema/primitives";
 import type { LlmInference } from "../../../src/core/llm-inference";
 import {
   dropJudgeEngine,
@@ -29,8 +31,6 @@ import {
   wireFieldsOf,
 } from "./convert-engines-shared";
 import { foldEngineModels, foldModelsOverlay, type OwnModels } from "./convert-models-overlay";
-import { deepMergeConfig } from "../../../src/core/config/deep-merge";
-import { isEnvReference } from "../../../src/core/config/schema/primitives";
 
 export type { EngineTarget };
 

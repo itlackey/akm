@@ -15,7 +15,7 @@ export type { ProposalValidationFinding, ProposalValidationReport } from "../pro
  * Validate a proposal before promotion: it must parse and carry a body, and a
  * type with a canonical validator runs it.
  *
- * A retire proposal (alpha.9 consolidate pair pass) writes no new content —
+ * A retire proposal (from the consolidate pair pass) writes no new content —
  * it deletes an asset that already passed validation when IT was created —
  * so the content-quality validators (built for new/updated bodies: a
  * description, lesson shape, reflect size ratio, …) do not apply and are

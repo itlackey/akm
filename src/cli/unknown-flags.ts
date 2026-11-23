@@ -60,6 +60,13 @@ export interface FlagScanCommand {
   readonly subCommands?: Record<string, FlagScanCommand> | undefined;
 }
 
+/** The command a flag scan resolves `path` to, as the root of its tree. */
+export function scanRoot(path: readonly string[], command: FlagScanCommand): FlagScanCommand {
+  let root = command;
+  for (const part of [...path].reverse()) root = { subCommands: { [part]: root } };
+  return root;
+}
+
 /** Flags citty implements itself, which no command declares. */
 const IMPLICIT_FLAGS = ["help", "h", "version", "v"];
 
@@ -284,15 +291,31 @@ const DYNAMIC_INPUT_COMMANDS: ReadonlySet<string> = new Set([
   "run",
 ]);
 
+/** The commands whose tokens after their target (a ref or a task id) are checked by the command, which knows what that target declares. */
+const CHECKED_AFTER_TARGET: ReadonlySet<string> = new Set(["run", "task run", "task explain", "doctor explain"]);
+
 /**
  * Throw a {@link UsageError} naming the first flag the resolved command does
  * not declare. Returns silently when every flag is known.
+ *
+ * `untilTarget` is the pre-dispatch gate's: for {@link CHECKED_AFTER_TARGET} it checks only up to the target, and the
+ * command checks the rest from inside its body, where a failure is rendered as the command's own error.
  */
-export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string[]): void {
-  const passthroughAt = rawArgs.indexOf("--");
-  const ownArgs = passthroughAt === -1 ? rawArgs : rawArgs.slice(0, passthroughAt);
+export function assertKnownFlags(
+  root: FlagScanCommand,
+  rawArgs: readonly string[],
+  options: { untilTarget?: boolean } = {},
+): void {
+  let ownArgs = rawArgs;
   const known = collectKnownArgs(root, rawArgs);
   if (!known.resolved) return;
+  if (options.untilTarget === true && CHECKED_AFTER_TARGET.has(known.path.join(" "))) {
+    const target = findCittyTopLevelCommandIndex(
+      known.commandArgs,
+      (known.command.args ?? {}) as CittyArgsDefinitionForScan,
+    );
+    if (target >= 0) ownArgs = ownArgs.slice(0, rawArgs.length - known.commandArgs.length + target + 1);
+  }
   const dynamicWorkflowParams = DYNAMIC_INPUT_COMMANDS.has(known.path.join(" "));
   const tolerant = TOLERANT_COMMANDS.has(known.path.join(" "));
 
@@ -361,13 +384,15 @@ const POSITIONAL_FLAG: Readonly<Record<string, string>> = { "bundle create": "--
 
 /**
  * Commands whose handler reads `args._` itself: `proposal accept` and
- * `proposal reopen` take any number of ids, and `show`, `doctor prompt` and
- * `command` (the retired `command run <ref>` names `akm run <ref>`) refuse an
+ * `proposal reopen` take any number of ids, `migrate apply` and `migrate status` any number of task and workflow
+ * files, and `show`, `doctor prompt` and `command` (the retired `command run <ref>` names `akm run <ref>`) refuse an
  * extra token with a message of their own.
  */
 const OWN_POSITIONALS: ReadonlySet<string> = new Set([
   "proposal accept",
   "proposal reopen",
+  "migrate apply",
+  "migrate status",
   "show",
   "doctor prompt",
   "command",

@@ -519,7 +519,14 @@ describe("OKF first-class conformance", () => {
     try {
       resetConfigCache();
       const result = await akmIndex({ stashDir: storage.stashDir, clean: true });
-      expect(result.clean).toEqual({ checked: 0, removed: 0, removedRefs: [], dryRun: false });
+      expect(result.clean).toEqual({
+        skipped: {
+          reason: "incomplete-scan",
+          sources: [
+            { bundle: "adversarial", component: "main", path: okfRoot, reason: expect.stringContaining("ENOENT") },
+          ],
+        },
+      });
     } finally {
       fs.renameSync(aside, okfRoot);
     }

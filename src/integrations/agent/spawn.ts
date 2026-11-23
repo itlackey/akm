@@ -16,11 +16,12 @@
  * touches a model. Agents are reachable only via shell-out.
  */
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { ConfigError } from "../../core/errors";
 import { childProcessEnv } from "../../core/paths";
 import { runManagedSubprocess, type StreamReadResult, streamCaptureFailure } from "../../core/subprocess";
 import { getHarness } from "../harnesses";
-import type { AgentDispatchRequest } from "../harnesses/harness";
+import type { AgentDispatchRequest, BuiltCommand, HarnessRunReport } from "../harnesses/harness";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 import type { AgentProfile, AgentStdioMode } from "./profiles";
 
@@ -82,8 +83,10 @@ export interface RunAgentOptions {
   stdio?: AgentStdioMode;
   /** Override the profile/global timeout (ms). null = no timeout (runs until the process exits). */
   timeoutMs?: number | null;
-  /** Extra env vars for the child, over the environment akm runs in. */
+  /** Extra env vars for the child, over {@link baseEnv}. */
   env?: Record<string, string>;
+  /** The environment the child starts from. Absent: the one akm runs in, with the directories this akm resolved. */
+  baseEnv?: Record<string, string>;
   /** Working directory for the child. */
   cwd?: string;
   /**
@@ -128,14 +131,14 @@ export interface AgentRunResult {
 }
 
 /**
- * The child's env, lowest precedence first: the environment akm runs in with the
+ * The child's env, lowest precedence first: the call's `baseEnv`, else the environment akm runs in with the
  * directories this akm resolved set over it, so a child that runs `akm` uses the
  * same installation ({@link childProcessEnv}); then the call's `env`. The one
  * environment policy for anything an agent run starts: a CLI harness's child, and
  * the shell of an embedded session.
  */
-export function buildChildEnv(options: Pick<RunAgentOptions, "env">): Record<string, string> {
-  return { ...childProcessEnv(), ...options.env };
+export function buildChildEnv(options: Pick<RunAgentOptions, "env" | "baseEnv">): Record<string, string> {
+  return { ...(options.baseEnv ?? childProcessEnv()), ...options.env };
 }
 
 /**
@@ -148,6 +151,18 @@ export function buildChildEnv(options: Pick<RunAgentOptions, "env">): Record<str
 function streamFailureMessage(label: string, stdout: StreamReadResult, stderr: StreamReadResult): string | undefined {
   const failures = streamCaptureFailure(stdout, stderr);
   return failures === undefined ? undefined : `${label} output capture failed: ${failures}`;
+}
+
+/**
+ * A spawn error's message. An argument list the system refuses (`E2BIG`) names the prompt only when the prompt is what
+ * the command line carries: a harness that reads it from stdin has another argument to blame.
+ */
+function spawnFailure(error: Error, stdin: string | undefined, prompt: string | undefined): string {
+  if ((error as NodeJS.ErrnoException).code !== "E2BIG") return error.message;
+  if (stdin === undefined && prompt !== undefined) {
+    return `the command line is longer than the system allows (${Buffer.byteLength(prompt)} bytes in the prompt argument); this harness takes the prompt on its command line`;
+  }
+  return "the command line is longer than the system allows";
 }
 
 function failed(reason: AgentFailureReason, error: string, rest: Partial<AgentRunResult> = {}): AgentRunResult {
@@ -178,8 +193,40 @@ export async function runAgent(profile: AgentProfile, options: RunAgentOptions =
     );
   }
   const built = harness.build(profile, options.dispatch ?? {});
-  const command = { argv: built.argv, env: { ...buildChildEnv(options), ...built.env }, stdin: built.stdin };
-  return runBuiltCommand(`agent CLI "${profile.name}"`, command, options, options.stdio ?? profile.stdio);
+  const command: ReadyCommand = {
+    argv: built.argv,
+    env: { ...buildChildEnv(options), ...built.env },
+    stdin: built.stdin,
+    ...(built.failureStream ? { failureStream: built.failureStream } : {}),
+  };
+  const label = `agent CLI "${profile.name}"`;
+  const stdioMode = options.stdio ?? profile.stdio;
+  const result = await runBuiltCommand(label, command, options, stdioMode);
+  return built.report && stdioMode === "captured" ? withReport(label, result, built.report(result.stdout)) : result;
+}
+
+/**
+ * The run's result as its harness's own report of it: the reply the program printed, its session id, and the failures
+ * it reported. A reported error or an unfinished turn is never shown as success.
+ */
+function withReport(label: string, result: AgentRunResult, report: HarnessRunReport): AgentRunResult {
+  const reported = { ...result, stdout: report.reply, ...(report.sessionId ? { sessionId: report.sessionId } : {}) };
+  const errors = report.errors.join("; ");
+  if (!result.ok) {
+    return errors ? { ...reported, error: `${result.error}: ${errors}` } : reported;
+  }
+  if (errors) {
+    return { ...reported, ok: false, reason: "parse_error", error: `${label} reported an error: ${errors}` };
+  }
+  if (report.unfinished) {
+    return {
+      ...reported,
+      ok: false,
+      reason: "parse_error",
+      error: `${label} ended its turn unfinished: ${report.unfinished}`,
+    };
+  }
+  return reported;
 }
 
 /** A command ready to run: its argv, the child's whole environment, and what goes on its stdin. */
@@ -187,6 +234,20 @@ export interface ReadyCommand {
   readonly argv: readonly string[];
   readonly env: Readonly<Record<string, string>>;
   readonly stdin?: string | undefined;
+  /** The stream the program writes the reason for a failed run to; absent: the exit code only. */
+  readonly failureStream?: BuiltCommand["failureStream"];
+}
+
+/** The longest line of a program's own failure message that an error carries. */
+const FAILURE_LINE_LIMIT = 300;
+
+/** The last non-empty line of `text`, terminal escapes stripped, cut to {@link FAILURE_LINE_LIMIT}; undefined when there is none. The one reader of a program's own failure line. */
+export function lastOutputLine(text: string): string | undefined {
+  const lines = stripVTControlCharacters(text)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  return lines.at(-1)?.slice(0, FAILURE_LINE_LIMIT);
 }
 
 /**
@@ -197,7 +258,7 @@ export interface ReadyCommand {
  */
 export async function runBuiltCommand(
   label: string,
-  { argv, env, stdin }: ReadyCommand,
+  { argv, env, stdin, failureStream }: ReadyCommand,
   options: RunAgentOptions,
   stdioMode: AgentStdioMode = options.stdio ?? "captured",
 ): Promise<AgentRunResult> {
@@ -230,7 +291,8 @@ export async function runBuiltCommand(
   });
   const durationMs = Date.now() - start;
 
-  if (result.spawnError) return failed("spawn_failed", result.spawnError.message, { durationMs });
+  if (result.spawnError)
+    return failed("spawn_failed", spawnFailure(result.spawnError, stdin, options.dispatch?.prompt), { durationMs });
 
   const { exitCode, stdout, stderr } = result;
   const output = { exitCode, stdout, stderr, durationMs };
@@ -243,7 +305,8 @@ export async function runBuiltCommand(
   const captureFailure = streamFailureMessage(label, result.stdoutRead, result.stderrRead);
   if (captureFailure) return failed("spawn_failed", captureFailure, output);
   if (exitCode !== 0) {
-    return failed("non_zero_exit", `${label} exited with code ${exitCode}`, output);
+    const said = failureStream ? lastOutputLine(failureStream === "stdout" ? stdout : stderr) : undefined;
+    return failed("non_zero_exit", `${label} exited with code ${exitCode}${said ? `: ${said}` : ""}`, output);
   }
   return { ok: true, ...output };
 }
