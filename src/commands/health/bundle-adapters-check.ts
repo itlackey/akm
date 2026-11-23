@@ -3,8 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `bundle-adapters` for `akm doctor`: every adapter a configured bundle names is one akm has. The config schema
- * accepts any adapter id, so this is where a typo (`agent_skills`) is reported before the bundle is next read.
+ * `bundle-adapters` for `akm doctor`: every adapter a configured bundle names is one akm has, and the bundle is
+ * addressed the way that adapter needs (a `location` for a store adapter, none for a directory adapter). The config
+ * schema accepts any adapter id, so this is where a typo (`agent_skills`) is reported before the bundle is next read.
  */
 
 import { requireAdapter } from "../../core/adapter/registry";
@@ -32,7 +33,8 @@ export function collectBundleAdaptersCheck(readConfig: () => AkmConfig = loadCon
   }
   try {
     for (const source of resolveConfiguredSources(config)) {
-      if (source.adapterId !== undefined) requireAdapter(source.name, source.adapterId);
+      if (source.adapterId !== undefined)
+        requireAdapter(source.name, source.adapterId, { location: source.source.type === "location" });
     }
   } catch (error) {
     return {

@@ -20,9 +20,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveEnvBinding } from "../../src/commands/env/env-binding";
 import { resolveInjectionRefs } from "../../src/commands/env/injection";
-import { azureKeyVaultAdapter } from "../../src/core/adapter/adapters/azure-key-vault-adapter";
+import { collectBundleAdaptersCheck } from "../../src/commands/health/bundle-adapters-check";
+import { azureKeyVaultAdapter, purgeRetry } from "../../src/core/adapter/adapters/azure-key-vault-adapter";
 import { secretToolAdapter } from "../../src/core/adapter/adapters/secret-tool-adapter";
+import { clearAdapterCaches } from "../../src/core/adapter/registry";
 import { clientFailure } from "../../src/core/adapter/secret-manager-adapter";
+import { parseBundleRef } from "../../src/core/asset/asset-ref";
+import { assetBundleOf } from "../../src/core/assets/bundle";
+import { allowAdapterPrompts } from "../../src/core/assets/gate";
 import { ConfigError } from "../../src/core/errors";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { akmIndex } from "../../src/indexer/indexer";
@@ -62,7 +67,10 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => storage.cleanup());
+afterEach(() => {
+  allowAdapterPrompts(false);
+  storage.cleanup();
+});
 
 /** Run the CLI and parse what it printed: its JSON result, or on failure its JSON error. */
 async function akm(...args: string[]): Promise<{ code: number; json: Record<string, unknown> }> {
@@ -103,6 +111,7 @@ describe("secret manager bundles", () => {
       expect(refs).toEqual(["keyring//secrets/gh_token", "vault//secrets/deploy-token"]);
 
       const shown = await akm("show", "keyring//secrets/wifi");
+      expect(String(shown.json.error ?? "")).toBe("");
       expect(shown.code).toBe(0);
       expect(shown.json).toMatchObject({ type: "secret", name: "wifi" });
       expect(JSON.stringify([search.json, shown.json])).not.toContain("hunter2");
@@ -119,6 +128,7 @@ describe("secret manager bundles", () => {
       for (const hit of hits) expect(hit).not.toHaveProperty("path");
 
       const shown = await akm("show", "keyring//secrets/wifi");
+      expect(String(shown.json.error ?? "")).toBe("");
       expect(shown.code).toBe(0);
       expect(shown.json).not.toHaveProperty("path");
     });
@@ -169,8 +179,8 @@ describe("secret manager bundles", () => {
     });
   });
 
-  test("reading a secret is one request to its store, and listing it is no part of that", async () => {
-    await withFakeSecretStores({ vaults: VAULT }, async (stores) => {
+  test("reading a vault secret is one request, whatever else the vault holds", async () => {
+    await withFakeSecretStores({ vaults: { "team-vault": { ...VAULT["team-vault"], other: "o" } } }, async (stores) => {
       resolveInjectionRefs({ secret: ["vault//secrets/deploy-token:T"] });
       expect(requests(stores.state().calls)).toEqual(["az show"]);
     });
@@ -179,11 +189,12 @@ describe("secret manager bundles", () => {
       resolveEnvBinding("env/one");
       expect(requests(stores.state().calls)).toEqual(["az show"]);
     });
-    // A keyring is read once: whether it is locked, its entries, each entry's label and attributes; then the
-    // entry is checked to be the only one its attributes find, and looked up.
+    // A keyring is read once: its alias, whether it is locked, its entries, each entry's label and attributes; then
+    // the entry is checked to be the only one its attributes find, and looked up.
     await withFakeSecretStores({ keyrings: KEYRING }, async (stores) => {
       resolveInjectionRefs({ secret: ["keyring//secrets/wifi:T"] });
       expect(requests(stores.state().calls)).toEqual([
+        "busctl call",
         "busctl get-property",
         "busctl get-property",
         "busctl call",
@@ -361,7 +372,7 @@ describe("secret manager bundles", () => {
 });
 
 describe("secret manager bundles in the workspace API", () => {
-  test("the protected editor describes and reads a store secret with one request to the store", async () => {
+  test("the protected editor describes and reads a store secret with one request to the vault", async () => {
     await withFakeSecretStores({ vaults: VAULT }, async (stores) => {
       const info = sensitive.describe({ bundle: "vault", file: "secrets/deploy-token" });
       expect(info).toEqual({
@@ -461,27 +472,23 @@ describe("secret manager bundles: what the stores do that a file does not", () =
     });
   });
 
-  test("a keyring is read once per process and again after akm stores or deletes in it", async () => {
+  test("a keyring is read once per command and again after akm stores or deletes in it", async () => {
     await withFakeSecretStores({ keyrings: KEYRING }, async (stores) => {
       const b = bundle("keyring", "akm");
       secretToolAdapter.read(b, "secrets/gh_token");
       secretToolAdapter.read(b, "secrets/gh_token");
-      const itemReads = () => requests(stores.state().calls).filter((r) => r === "busctl get-property").length;
-      expect(itemReads()).toBe(2);
+      const itemReads = () => stores.state().calls.filter((call) => call.includes("Items")).length;
+      expect(itemReads()).toBe(1);
       secretToolAdapter.create(b, { type: "secret", name: "fresh", content: "v" });
       secretToolAdapter.read(b, "secrets/fresh");
-      expect(itemReads()).toBe(4);
+      expect(itemReads()).toBe(2);
       secretToolAdapter.delete(b, "secrets/fresh");
       secretToolAdapter.read(b, "secrets/gh_token");
-      expect(itemReads()).toBe(6);
-    });
-  });
-
-  test("a locked keyring lists as incomplete and refuses a read with unlock guidance", async () => {
-    await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async () => {
-      const b = bundle("keyring", "akm");
-      expect(secretToolAdapter.list(b)).toMatchObject({ assets: [], complete: false });
-      expect(() => secretToolAdapter.read(b, "secrets/gh_token")).toThrow(/locked/);
+      expect(itemReads()).toBe(3);
+      // The next command (or Desktop request) reads it afresh.
+      clearAdapterCaches();
+      secretToolAdapter.read(b, "secrets/gh_token");
+      expect(itemReads()).toBe(4);
     });
   });
 
@@ -568,6 +575,440 @@ describe("secret manager bundles: what the stores do that a file does not", () =
       const shown = await akm("show", "keyring//secrets/wifi");
       expect(String(shown.json.action)).toContain("its content is the value");
       expect(String(shown.json.action)).not.toContain("file contents");
+    });
+  });
+});
+
+/** A fake store's state file, to change what a store holds while a test runs. */
+function editState(change: (state: Record<string, unknown>) => void): void {
+  const file = process.env.AKM_FAKE_STORE_STATE as string;
+  const state = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+  change(state);
+  fs.writeFileSync(file, JSON.stringify(state));
+}
+
+describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
+  const b = { id: "keyring", root: "/x", location: "akm" };
+
+  test("a locked keyring asks to be unlocked, then is listed and read", async () => {
+    allowAdapterPrompts(true);
+    await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
+      const listed = secretToolAdapter.list(b).assets.map((asset) => asset.conceptId);
+      expect(listed).toEqual(["secrets/gh_token", "secrets/wifi"]);
+      expect(stores.state().locked).toEqual([]);
+      expect(secretToolAdapter.read(b, "secrets/wifi")?.entry.content()).toBe("hunter2");
+      const asked = (member: string) => stores.state().calls.some((call) => call.includes(member));
+      expect(asked("Unlock")).toBe(true);
+      expect(asked("Prompt")).toBe(true);
+    });
+  });
+
+  test("a keyring whose unlock prompt is dismissed is unreachable, and says so", async () => {
+    allowAdapterPrompts(true);
+    await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"], unlockDenied: ["akm"] } as never, async () => {
+      let failure: unknown;
+      try {
+        secretToolAdapter.list(b);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(ConfigError);
+      expect((failure as ConfigError).code).toBe("BUNDLE_UNREACHABLE");
+      expect((failure as Error).message).toContain("is locked");
+    });
+  });
+
+  test("exists asks nothing of a locked keyring: no prompt, no entry read", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
+      expect(secretToolAdapter.exists(b)).toBe(true);
+      expect(secretToolAdapter.exists({ ...b, location: "nowhere" })).toBe(false);
+      expect(secretToolAdapter.exists({ id: "keyring", root: "/x" })).toBe(false);
+      const words = stores.state().calls.flat();
+      expect(words).not.toContain("Unlock");
+      expect(words).not.toContain("Items");
+    });
+  });
+
+  test("a collection only its label names is found, read untouched, and given its alias the first time akm stores in it", async () => {
+    const wallet = {
+      wallet: [
+        {
+          ...keyringItem(1, "wifi", "hunter2", { ssid: "home" }),
+          path: "/org/freedesktop/secrets/collection/wallet/1",
+        },
+      ],
+    };
+    await withFakeSecretStores(
+      { keyrings: wallet, labels: { wallet: "akm" }, unaliased: ["wallet"] } as never,
+      async (stores) => {
+        expect(secretToolAdapter.read(b, "secrets/wifi")?.entry.content()).toBe("hunter2");
+        expect(stores.state().aliases).toBeUndefined();
+        secretToolAdapter.create(b, { type: "secret", name: "fresh", content: "v1" });
+        expect(stores.state().aliases).toEqual({ akm: "wallet" });
+        expect(
+          stores
+            .state()
+            .keyrings.wallet?.map((item) => item.label)
+            .sort(),
+        ).toEqual(["fresh", "wifi"]);
+        secretToolAdapter.create(b, { type: "secret", name: "again", content: "v2" }, { replace: true });
+        const setAliases = stores.state().calls.filter((call) => call.includes("SetAlias"));
+        expect(setAliases).toHaveLength(1);
+        const stored = stores.state().calls.filter((call) => call[0] === "secret-tool" && call[1] === "store");
+        expect(stored.every((call) => call.includes("--collection=akm"))).toBe(true);
+      },
+    );
+  });
+
+  test("the alias wins over a collection that happens to be labelled the same", async () => {
+    const two = {
+      home: [keyringItem(1, "in-home", "h", { k: "h" })],
+      work: [{ ...keyringItem(1, "in-work", "w", { k: "w" }), path: "/org/freedesktop/secrets/collection/work/1" }],
+    };
+    await withFakeSecretStores(
+      { keyrings: two, labels: { home: "akm" }, aliases: { akm: "work" } } as never,
+      async () => {
+        expect(secretToolAdapter.list(b).assets.map((asset) => asset.conceptId)).toEqual(["secrets/in-work"]);
+      },
+    );
+  });
+
+  test("an entry another program made is a secret like any other, and a name two entries share has one winner", async () => {
+    const entries = {
+      akm: [
+        { ...keyringItem(3, "dup", "other-value", { app: "x" }) },
+        { ...keyringItem(2, "dup", "akm-value", { akm: "akm/dup" }) },
+        { ...keyringItem(1, "dup", "first-value", { app: "y" }) },
+        keyringItem(4, "solo", "s", { app: "z" }),
+      ],
+    };
+    await withFakeSecretStores({ keyrings: entries }, async () => {
+      expect(secretToolAdapter.list(b).assets.map((asset) => asset.conceptId)).toEqual(["secrets/dup", "secrets/solo"]);
+      // The entry akm made wins; with none, the lowest object path would.
+      expect(secretToolAdapter.read(b, "secrets/dup")?.entry.content()).toBe("akm-value");
+      const found = await secretToolAdapter.validate(b, [], {});
+      expect(found).toHaveLength(1);
+      expect(found[0]).toMatchObject({ ref: "keyring//secrets/dup", issue: "shadowed-spelling", fixed: false });
+      expect(found[0]?.detail).toContain(`${KEYRING_PATH}/2 is used and ${KEYRING_PATH}/1, ${KEYRING_PATH}/3 ignored`);
+      secretToolAdapter.update(b, "secrets/dup", "changed");
+      expect(secretToolAdapter.read(b, "secrets/dup")?.entry.content()).toBe("changed");
+    });
+    const plain = { akm: [keyringItem(7, "same", "seven", { a: "1" }), keyringItem(5, "same", "five", { a: "2" })] };
+    await withFakeSecretStores({ keyrings: plain }, async () => {
+      expect(secretToolAdapter.read(b, "secrets/same")?.entry.content()).toBe("five");
+    });
+  });
+
+  test("a label that is no concept name is not listed and is reported with its ref; every listed id reads back", async () => {
+    const odd = {
+      akm: [
+        keyringItem(1, "good", "g", { a: "1" }),
+        keyringItem(2, "has#hash", "h", { a: "2" }),
+        keyringItem(3, " padded ", "p", { a: "3" }),
+        keyringItem(4, "up/../out", "o", { a: "4" }),
+        keyringItem(5, "", "e", { a: "5" }),
+        keyringItem(6, "nested/name", "n", { a: "6" }),
+      ],
+    };
+    await withFakeSecretStores({ keyrings: odd }, async () => {
+      const listed = secretToolAdapter.list(b).assets.map((asset) => asset.conceptId);
+      expect(listed).toEqual(["secrets/good", "secrets/nested/name"]);
+      for (const conceptId of listed) {
+        expect(parseBundleRef(`keyring//${conceptId}`).conceptId).toBe(conceptId);
+        expect(secretToolAdapter.read(b, conceptId)?.conceptId).toBe(conceptId);
+      }
+      expect(secretToolAdapter.read(b, "secrets/has#hash")).toBeUndefined();
+      const found = await secretToolAdapter.validate(b, [], {});
+      expect(found.map((diagnostic) => diagnostic.ref).sort()).toEqual([
+        "keyring//secrets/",
+        "keyring//secrets/ padded ",
+        "keyring//secrets/has#hash",
+        "keyring//secrets/up/../out",
+      ]);
+      expect(found.every((diagnostic) => diagnostic.issue === "invalid-name")).toBe(true);
+    });
+  });
+});
+
+describe("a vault behaves like a directory of secrets (N1, N2, N4)", () => {
+  const b = { id: "vault", root: "/x", location: "team-vault" };
+
+  test("a managed secret and a disabled secret are not listed", async () => {
+    await withFakeSecretStores(
+      {
+        vaults: { "team-vault": { ...VAULT["team-vault"], mgd: "m", off: "o" } },
+        managed: { "team-vault": ["mgd"] },
+        disabled: { "team-vault": ["off"] },
+      } as never,
+      async () => {
+        expect(azureKeyVaultAdapter.list(b).assets.map((asset) => asset.conceptId)).toEqual(["secrets/deploy-token"]);
+        // Read directly, a disabled secret is a plain error (N4), not an absent one.
+        expect(() => azureKeyVaultAdapter.read(b, "secrets/off")).toThrow(/disabled/);
+      },
+    );
+  });
+
+  test("reading a disabled secret is a plain error, not an unreachable vault", async () => {
+    await withFakeSecretStores({ vaults: VAULT, disabled: { "team-vault": ["deploy-token"] } } as never, async () => {
+      let failure: unknown;
+      try {
+        azureKeyVaultAdapter.read(b, "secrets/deploy-token");
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      expect(failure).not.toBeInstanceOf(ConfigError);
+      expect((failure as Error).message).toContain("disabled");
+    });
+  });
+
+  test("removing a secret retries a purge the delete is still blocking, then sets the name again", async () => {
+    const before = { ...purgeRetry };
+    purgeRetry.delayMs = 1;
+    try {
+      await withFakeSecretStores({ vaults: VAULT, purgeConflicts: { "team-vault": 2 } } as never, async (stores) => {
+        azureKeyVaultAdapter.delete(b, "secrets/deploy-token");
+        expect(stores.state().calls.filter((call) => call.includes("purge"))).toHaveLength(3);
+        expect(stores.state().deleted?.["team-vault"] ?? {}).toEqual({});
+        azureKeyVaultAdapter.create(b, { type: "secret", name: "deploy-token", content: "again" });
+        expect(stores.state().vaults["team-vault"]?.["deploy-token"]).toBe("again");
+      });
+      const warnings: string[] = [];
+      _setWarnSinkForTests((level, args) => {
+        if (level === "warn") warnings.push(args.map(String).join(" "));
+      });
+      try {
+        await withFakeSecretStores({ vaults: VAULT, purgeConflicts: { "team-vault": 9 } } as never, async (stores) => {
+          azureKeyVaultAdapter.delete(b, "secrets/deploy-token");
+          expect(stores.state().calls.filter((call) => call.includes("purge"))).toHaveLength(purgeRetry.tries);
+        });
+      } finally {
+        _setWarnSinkForTests(undefined);
+      }
+      expect(warnings.join("\n")).toMatch(/refused to purge/);
+    } finally {
+      Object.assign(purgeRetry, before);
+    }
+  });
+
+  test("exists says whether the vault is there", async () => {
+    await withFakeSecretStores({ vaults: VAULT }, async () => {
+      expect(azureKeyVaultAdapter.exists(b)).toBe(true);
+      expect(azureKeyVaultAdapter.exists({ ...b, location: "gone" })).toBe(false);
+    });
+    await withFakeSecretStores({}, async () => {
+      expect(azureKeyVaultAdapter.exists(b)).toBe(false);
+    }, []);
+  });
+});
+
+describe("keyring and vault bundles in config and commands (P3, N3, N5, N6)", () => {
+  const sources = async () =>
+    (await akm("bundle", "list")).json.sources as Array<{ name: string; status: { exists: boolean } }>;
+
+  test("bundle list says from the adapter whether a store is there", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, vaults: {} }, async () => {
+      const listed = await sources();
+      expect(listed.find((entry) => entry.name === "keyring")?.status).toEqual({ exists: true });
+      expect(listed.find((entry) => entry.name === "vault")?.status).toEqual({ exists: false });
+      expect(listed.find((entry) => entry.name === "stash")?.status).toEqual({ exists: true });
+    });
+  });
+
+  test("bundle add <location> --adapter <id> adds a bundle with a location, and never reads the name as a package", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, vaults: VAULT }, async () => {
+      const added = await akm("bundle", "add", "login", "--adapter", "secret-tool", "--name", "login-keyring");
+      expect(added.code).toBe(0);
+      expect(added.json.bundleId).toBe("login-keyring");
+      expect(added.json.sourceAdded).toEqual({ type: "location", location: "login", name: "login-keyring" });
+      const config = (await akm("config", "get", "bundles.login-keyring")).json;
+      expect(config).toMatchObject({ location: "login", adapter: "secret-tool" });
+      // Adding it again is no second bundle.
+      const again = await akm("bundle", "add", "login", "--adapter", "secret-tool");
+      expect(again.json.bundleId).toBe("login-keyring");
+      const named = await akm("bundle", "add", "team-vault2", "--adapter", "azure-key-vault");
+      expect(named.json.bundleId).toBe("team-vault2");
+    });
+  });
+
+  test("config set takes the adapter and the location one at a time, and refuses a pair that does not fit", async () => {
+    expect((await akm("config", "set", "bundles.keyring.location", "wallet")).code).toBe(0);
+    expect((await akm("config", "set", "bundles.keyring.adapter", "azure-key-vault")).code).toBe(0);
+    const bundles = (await akm("config", "get", "bundles")).json as Record<string, Record<string, string>>;
+    expect(bundles.keyring).toMatchObject({ location: "wallet", adapter: "azure-key-vault" });
+
+    // A directory adapter cannot read a store, and a store adapter cannot read a directory: the config stays as it was.
+    for (const [key, value] of [
+      ["bundles.keyring.adapter", "akm"],
+      ["bundles.stash.adapter", "secret-tool"],
+    ] as const) {
+      const refused = await akm("config", "set", key, value);
+      expect(refused.code).not.toBe(0);
+      expect(String(refused.json.error)).toMatch(/location/);
+    }
+    const after = (await akm("config", "get", "bundles")).json as Record<string, Record<string, string>>;
+    expect(after.keyring?.adapter).toBe("azure-key-vault");
+    expect(after.stash?.adapter).not.toBe("secret-tool");
+  });
+
+  test("a bundle whose adapter and address do not fit is a config error where it is resolved, and a fail in the doctor check", async () => {
+    const entry = { path: storage.stashDir, adapter: "secret-tool" };
+    expect(() => assetBundleOf({ name: "mixed", path: storage.stashDir, adapterId: "secret-tool" })).toThrow(
+      'Bundle "mixed" uses adapter "secret-tool", which reads a store named by `location`',
+    );
+    expect(() => assetBundleOf({ name: "mixed", path: storage.stashDir, adapterId: "akm", location: "akm" })).toThrow(
+      /which reads a directory, but the bundle has a `location`/,
+    );
+    const failing = collectBundleAdaptersCheck(
+      () => ({ bundles: { mixed: entry, keyring: { location: "akm", adapter: "akm" } } }) as never,
+    );
+    expect(failing.status).toBe("fail");
+    expect(failing.message).toContain('Bundle "mixed"');
+    expect(collectBundleAdaptersCheck().status).toBe("pass");
+  });
+
+  test("akm lint reports a name it cannot list and a name two entries share, by ref", async () => {
+    const entries = {
+      akm: [
+        keyringItem(1, "good", "g", { a: "1" }),
+        keyringItem(2, "has#hash", "h", { a: "2" }),
+        keyringItem(3, "twice", "t1", { a: "3" }),
+        keyringItem(4, "twice", "t2", { a: "4" }),
+      ],
+    };
+    await withFakeSecretStores({ keyrings: entries, vaults: VAULT }, async () => {
+      const linted = await akm("lint");
+      const issues = [...(linted.json.flagged as Array<Record<string, string>>)].filter((issue) =>
+        issue.file?.startsWith("keyring//"),
+      );
+      expect(issues.map((issue) => `${issue.file} ${issue.issue}`).sort()).toEqual([
+        "keyring//secrets/has#hash adapter-diagnostic",
+        "keyring//secrets/twice shadowed-spelling",
+      ]);
+    });
+    // A store that cannot be reached is skipped.
+    await withFakeSecretStores({}, async () => {
+      const linted = await akm("lint");
+      expect(linted.code).toBe(0);
+    });
+  });
+});
+
+describe("lint never asks to unlock (N3)", () => {
+  test("a locked wallet is skipped by akm lint, with no Unlock call", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
+      const linted = await akm("lint");
+      expect(linted.code).toBe(0);
+      expect(stores.state().calls.some((call) => call.includes("Unlock"))).toBe(false);
+      expect(stores.state().locked).toEqual(["akm"]);
+    });
+  });
+});
+
+describe("review fixes (K gate)", () => {
+  const b = { id: "keyring", root: "/x", location: "login" };
+
+  test("a location still matches the collection's own object-path name, after the alias and the label", async () => {
+    const login = {
+      login: [{ ...keyringItem(1, "wifi", "w", { a: "1" }), path: "/org/freedesktop/secrets/collection/login/1" }],
+    };
+    await withFakeSecretStores(
+      { keyrings: login, labels: { login: "Login" }, unaliased: ["login"] } as never,
+      async () => {
+        expect(secretToolAdapter.read(b, "secrets/wifi")?.entry.content()).toBe("w");
+      },
+    );
+  });
+
+  test("akm lint skips a store that fails in an ordinary way, silently", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, vaults: VAULT, listFails: ["team-vault"] } as never, async () => {
+      const linted = await runCliCapture(["lint", "--format", "json"]);
+      expect(linted.code).toBe(0);
+      expect(linted.stderr).not.toContain("did not check");
+    });
+  });
+
+  test("keyring findings follow lint's --type, carry their ref, and invalid-name is its own code", async () => {
+    const entries = {
+      akm: [
+        keyringItem(1, "has#hash", "h", { a: "1" }),
+        keyringItem(2, "twice", "x", { a: "2" }),
+        keyringItem(3, "twice", "y", { a: "3" }),
+      ],
+    };
+    await withFakeSecretStores({ keyrings: entries, vaults: VAULT }, async () => {
+      const stored = (json: Record<string, unknown>) =>
+        (json.flagged as Array<{ file: string; issue: string; ref?: string }>).filter((i) =>
+          i.file.startsWith("keyring//"),
+        );
+      expect(stored((await akm("lint", "--type", "knowledge")).json)).toEqual([]);
+      const secrets = stored((await akm("lint", "--type", "secrets")).json);
+      expect(secrets.map((i) => i.issue).sort()).toEqual(["adapter-diagnostic", "shadowed-spelling"]);
+      expect(secrets.find((i) => i.issue === "adapter-diagnostic")).toMatchObject({
+        detail: expect.stringContaining("[invalid-name]"),
+      });
+      expect(secrets.every((i) => i.ref === i.file)).toBe(true);
+    });
+  });
+
+  test("a managed vault secret cannot be read, set over or removed by name", async () => {
+    await withFakeSecretStores(
+      { vaults: { "team-vault": { mgd: "m" } }, managed: { "team-vault": ["mgd"] } } as never,
+      async () => {
+        const v = { id: "vault", root: "/x", location: "team-vault" };
+        expect(azureKeyVaultAdapter.read(v, "secrets/mgd")).toBeUndefined();
+        expect(() => azureKeyVaultAdapter.delete(v, "secrets/mgd")).toThrow();
+      },
+    );
+  });
+
+  test("a bundle that does not fit does not stop config set on anything else, and its own edits are refused", async () => {
+    writeSandboxConfig({
+      bundles: {
+        stash: { path: storage.stashDir, writable: true },
+        bad: { path: storage.root, adapter: "secret-tool" },
+      },
+      defaultBundle: "stash",
+    });
+    expect((await akm("config", "set", "semanticSearchMode", "off")).code).toBe(0);
+    expect((await akm("config", "set", "bundles.stash.writable", "true")).code).toBe(0);
+    const refused = await akm("config", "set", "bundles.bad.writable", "true");
+    expect(refused.code).not.toBe(0);
+    expect(String(refused.json.error)).toContain("in place of its path");
+    expect(String(refused.json.error)).not.toContain("set `bundles.bad.location`");
+  });
+});
+
+describe("unlock prompts only for a person at a terminal (F3)", () => {
+  const asked = (stores: { state(): { calls: string[][] } }) =>
+    stores.state().calls.some((call) => call.includes("Unlock"));
+
+  test("a CLI run that is not on a terminal never asks, and says the keyring is locked (exit 78)", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
+      const listed = await akm("show", "keyring//secrets/wifi");
+      expect(listed.code).toBe(78);
+      expect(String(listed.json.error)).toContain(
+        'Keyring "akm" is locked, and this command does not ask to unlock it.',
+      );
+      expect(asked(stores)).toBe(false);
+    });
+  });
+
+  test("a run the dispatcher allowed to prompt (stderr is a terminal) asks, and lists after the unlock", async () => {
+    // The dispatcher (`runCliInvocation`) calls `allowAdapterPrompts(isTerminal(2))`; the in-process runner skips it.
+    allowAdapterPrompts(true);
+    await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
+      const shown = await akm("show", "keyring//secrets/wifi");
+      expect(shown.code).toBe(0);
+      expect(asked(stores)).toBe(true);
+    });
+  });
+
+  test("a workspace host never asks", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
+      const failure = await code(Promise.resolve().then(() => sensitive.describe({ ref: "keyring//secrets/wifi" })));
+      expect(failure).toBe("BUNDLE_UNREACHABLE");
+      expect(asked(stores)).toBe(false);
     });
   });
 });

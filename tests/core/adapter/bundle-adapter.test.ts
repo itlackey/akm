@@ -72,8 +72,13 @@ function makeComponent(overrides: Partial<Bundle> = {}): Bundle {
 const stubAdapter: BundleAdapter = {
   id: "stub",
   version: "0.0.0",
+  addressedBy: "root",
   writes: [],
   retires: [],
+
+  exists(): boolean {
+    return true;
+  },
 
   list(): BundleListing {
     return { assets: [], complete: true };

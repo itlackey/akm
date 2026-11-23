@@ -1027,6 +1027,18 @@ function sourceSnapshotRemovals(
     }));
 }
 
+/** The bundle's listing; a store that cannot be listed (unreachable or failing) is an incomplete one: one bundle never stops the index, which keeps the rows it had. */
+function listOrKeep(adapter: BundleAdapter, bundle: Bundle): BundleListing {
+  try {
+    return adapter.list(bundle);
+  } catch (error) {
+    if (adapter.addressedBy !== "location") throw error;
+    // Any failure, not only BUNDLE_UNREACHABLE: a store that errors (a bad `az` reply) must not stop the whole index,
+    // and a failed listing is the same "keep last-known-good rows" case as an unreachable one.
+    return { assets: [], complete: false, incompleteReason: toErrorMessage(error) };
+  }
+}
+
 /** A bundle's listing as the walk's result: every entry a `FileContext` keyed under the bundle's root. */
 function walkResultOf(listing: BundleListing, root: string): WalkStashFlatResult {
   return {
@@ -1063,9 +1075,8 @@ function buildSourceScanPlans(
       };
     }
     // A bundle that names an adapter akm does not have stops the index before it changes anything.
-    const adapter = requireAdapter(bundle.id, adapterIdOf(sourceAdded));
-    const listing = adapter.list(bundle);
-    const walked = walkResultOf(listing, currentStashDir);
+    const adapter = requireAdapter(bundle.id, adapterIdOf(sourceAdded), { location: bundle.location !== undefined });
+    const walked = walkResultOf(listOrKeep(adapter, bundle), currentStashDir);
     const dirGroups = groupFileContextsByDir(walked.files);
     return {
       currentStashDir,

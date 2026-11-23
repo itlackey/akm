@@ -1580,6 +1580,7 @@ See [Workflows](workflows.md) for the complete authoring contract.
 | `akm bundle add github:owner/repo` | Clones the repo into akm's cache as a `git` source |
 | `akm bundle add @scope/pkg` | Installs the npm package as an `npm` source |
 | `akm bundle add https://docs.example.com` | Crawls and caches a website as a `website` source |
+| `akm bundle add akm --adapter secret-tool` | Adds the keyring `akm` as a `location` bundle (`--adapter azure-key-vault`: a vault); the ref is the store's name |
 | `akm registry add <url>` | Adds a discovery registry (separate concept) |
 
 HTTP(S) URLs on known Git hosts, and URLs ending in `.git`, are treated as git

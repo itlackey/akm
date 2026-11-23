@@ -8,6 +8,7 @@ import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { requireAdapter } from "../../core/adapter/registry";
 import { isBundleSlug } from "../../core/asset/asset-ref";
 import { adapterSkipMessage, adapterSkipOf } from "../../core/assets/adapter-skips";
+import { adapterAddressedBy } from "../../core/assets/gate";
 import { slugForRegistryId, validateExplicitBundleName } from "../../core/bundle-id";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
@@ -52,7 +53,7 @@ export async function akmAdd(
     writable?: boolean;
     /** Symbolic Git credential reference; resolved only for Git subprocesses. */
     credential?: string;
-    /** Override the auto-detected adapter (#909). Local (filesystem) adds only. */
+    /** Override the auto-detected adapter (#909) for a local directory, or name the adapter that reads a store: `ref` is then its `location`. */
     adapter?: string;
   } & BundleInsertPosition,
 ): Promise<AddResponse> {
@@ -64,6 +65,11 @@ export async function akmAdd(
     );
 
   const stashDir = resolveStashDir();
+
+  // An adapter that reads a store (a keyring, a vault) takes the store's name, not a directory or a package.
+  if (input.adapter !== undefined && adapterAddressedBy(input.adapter) === "location") {
+    return addLocationSource(ref, stashDir, input.name, input.adapter, input);
+  }
 
   if (shouldAddAsWebsiteUrl(ref)) {
     return addWebsiteSource(ref, stashDir, input.name, input.options, input);
@@ -142,6 +148,52 @@ async function addLocalSource(
     config: {
       sourceCount: getSources(updatedConfig).length,
     },
+    index: isSkippedIndexBuild(index)
+      ? { skipped: skippedIndexReport(index) }
+      : {
+          mode: index.mode,
+          totalEntries: index.totalEntries,
+          directoriesScanned: index.directoriesScanned,
+          directoriesSkipped: index.directoriesSkipped,
+          ...(index.warnings?.length ? { warnings: index.warnings } : {}),
+        },
+  };
+}
+
+/** Add a store a location adapter reads (a keyring, a vault) as a bundle: `location` names it. */
+async function addLocationSource(
+  location: string,
+  stashDir: string,
+  explicitName: string | undefined,
+  adapter: string,
+  position: BundleInsertPosition = {},
+): Promise<AddResponse> {
+  let bundleKey = explicitName ?? "";
+  mutateConfig((config) => {
+    const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
+    const existing = Object.entries(bundles).find(
+      ([, bundle]) => bundle.location === location && bundle.adapter === adapter,
+    )?.[0];
+    if (existing) {
+      if (explicitName !== undefined) validateExplicitBundleName(bundles, explicitName, existing);
+      bundleKey = existing;
+      return config;
+    }
+    if (explicitName !== undefined) validateExplicitBundleName(bundles, explicitName);
+    bundleKey = nextBundleKey(bundles, explicitName, location);
+    return { ...config, bundles: placeBundle(bundles, bundleKey, { location, adapter }, position) };
+  });
+
+  const index = await buildIndex({ stashDir });
+  const updatedConfig = loadConfig();
+
+  return {
+    schemaVersion: 1,
+    bundleDir: stashDir,
+    ref: location,
+    bundleId: bundleKey,
+    sourceAdded: { type: "location", location, name: bundleKey },
+    config: { sourceCount: getSources(updatedConfig).length },
     index: isSkippedIndexBuild(index)
       ? { skipped: skippedIndexReport(index) }
       : {

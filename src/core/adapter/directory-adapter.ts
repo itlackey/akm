@@ -59,6 +59,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   abstract readonly id: string;
   /** Feeds incrementality and fingerprints. */
   abstract readonly version: string;
+  readonly addressedBy = "root" as const;
   /** The asset types it writes. Empty: read-only. */
   readonly writes: readonly string[] = [];
   /** The asset types it retires recoverably; a subset of `writes`. Empty: it deletes only. */
@@ -127,6 +128,10 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   looksLikeRoot?(root: string): boolean;
 
   // ── Template methods ────────────────────────────────────────────────────────
+
+  exists(b: Bundle): boolean {
+    return fs.statSync(b.root, { throwIfNoEntry: false })?.isDirectory() === true;
+  }
 
   list(b: Bundle): BundleListing {
     const walked = walkStashFlatWithStatus(b.root, this.walkOptions());

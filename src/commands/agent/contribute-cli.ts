@@ -209,6 +209,7 @@ export const lintCommand = defineCommand({
         typeFilter: getStringArg(args, "type"),
         rule: getStringArg(args, "rule"),
         pruneDanglingEdges: getHyphenatedBoolean(args, "prune-dangling-edges"),
+        stores: getStringArg(args, "dir") === undefined && getStringArg(args, "file") === undefined,
       });
       output("lint", result);
       if (args["fail-on-flagged"] && result.summary.flagged > 0) {

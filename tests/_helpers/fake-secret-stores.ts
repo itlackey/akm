@@ -10,7 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { clearKeyringCache } from "../../src/core/adapter/adapters/secret-tool-adapter";
+import { clearAdapterCaches } from "../../src/core/adapter/registry";
 import type { FakeStoreState } from "./fake-secret-stores/state";
 import { makeSandboxDir, withEnv } from "./sandbox";
 
@@ -33,7 +33,7 @@ export async function withFakeSecretStores<T>(
   only: readonly (typeof CLIENTS)[number][] = CLIENTS,
 ): Promise<T> {
   const bin = makeSandboxDir("akm-fake-stores");
-  clearKeyringCache();
+  clearAdapterCaches();
   try {
     const statePath = path.join(bin.dir, "state.json");
     fs.writeFileSync(statePath, JSON.stringify({ keyrings: {}, vaults: {}, calls: [], ...initial }));
@@ -50,7 +50,7 @@ export async function withFakeSecretStores<T>(
       () => run({ state: () => JSON.parse(fs.readFileSync(statePath, "utf8")) as FakeStoreState }),
     );
   } finally {
-    clearKeyringCache();
+    clearAdapterCaches();
     bin.cleanup();
   }
 }
