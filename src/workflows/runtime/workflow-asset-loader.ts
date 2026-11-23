@@ -66,6 +66,7 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   const bundleRef = parseWorkflowRefInput(ref);
 
   const sources = resolveSourceEntries(undefined, loadConfig());
+  // A ref the user typed (`akm workflow run|plan <ref>`): an outdated spelling warns.
   const asset = lookupAsset(makeBundleRef(bundleRef.bundle, bundleRef.conceptId, bundleRef.fragment));
   if (!asset) {
     if (bundleRef.bundle && resolveSourcesForOrigin(bundleRef.bundle, sources).length === 0) {

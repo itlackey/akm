@@ -5,7 +5,7 @@
 /**
  * The whole migration, in order, as one plan: config.json in its current
  * shape, pending state.db migrations, task files to task source v4, assets'
- * retired `engine:` keys, refs in content that use the pre-#1432 spelling, stale bundle policy (`lint_skip`, the track-secrets marker), proposal records that name files, then the residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
+ * retired `engine:` keys, refs in content that use the pre-#1432 spelling, stale bundle policy (`lint_skip`, the track-secrets marker), proposal records that name files, index rows of the form before the index was keyed by ref, then the residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
  * this; `akm migrate` and `akm upgrade` spawn that executable and re-emit
  * it. Every historical shape lives here or under `./migrate/`, so the CLI
  * proper only ever reads current schemas.
@@ -40,6 +40,11 @@ import {
   type EngineKeysMigrationStatus,
   inspectEngineKeysMigration,
 } from "./engine-key-migrate";
+import {
+  applyIndexRowsMigration,
+  type IndexRowsMigrationStatus,
+  inspectIndexRowsMigration,
+} from "./index-rows-migrate";
 import {
   type DeadResidueEntry,
   type DeadResidueRemoval,
@@ -100,6 +105,8 @@ export interface CombinedMigrationPlan {
   bundlePolicy?: BundlePolicyMigrationStatus["bundlePolicy"];
   /** Proposals in state.db written by an older akm (they name files, not refs), and their rewrite. */
   proposalRecords?: ProposalRecordsMigrationStatus["proposalRecords"];
+  /** Present when the index holds rows of the form before it was keyed by ref, and their re-keying. */
+  indexRows?: IndexRowsMigrationStatus["indexRows"];
   /** Present when task files were named for conversion to version 5: each file's outcome, and what to change by hand. */
   taskFilesV5?: TaskFilesV5MigrationStatus["files"];
   taskFilesV5BackupPath?: string;
@@ -265,6 +272,13 @@ export async function runMigration(options: {
     () => (apply ? applyProposalRecordsMigration() : inspectProposalRecordsMigration()),
     apply ? () => inspectProposalRecordsMigration() : undefined,
   );
+  // The index's rows written before it was keyed by ref: a plain update that changes no column and not the layout.
+  const indexRows = await migrationStep(
+    failedSteps,
+    "indexRows",
+    () => (apply ? applyIndexRowsMigration() : inspectIndexRowsMigration()),
+    apply ? () => inspectIndexRowsMigration() : undefined,
+  );
   // Resolving the stash dir runs as its own step: a config that fails to
   // load here is this step's own failure, not an uncaught throw out of
   // `runMigration`.
@@ -292,6 +306,7 @@ export async function runMigration(options: {
   const contentRefsStatus: MigrationStatus = assetContentRefs?.status ?? "current";
   const bundlePolicyStatus: MigrationStatus = bundlePolicy?.status ?? "current";
   const proposalRecordsStatus: MigrationStatus = proposalRecords?.status ?? "current";
+  const indexRowsStatus: MigrationStatus = indexRows?.status ?? "current";
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
@@ -302,6 +317,7 @@ export async function runMigration(options: {
         contentRefsStatus,
         bundlePolicyStatus,
         proposalRecordsStatus,
+        indexRowsStatus,
         taskFilesV5?.status ?? "current",
       ].reduce(worstStatus, taskFiles?.status ?? "blocked"),
       failedSteps,
@@ -320,6 +336,7 @@ export async function runMigration(options: {
     ...(assetContentRefs !== undefined ? { assetContentRefs: assetContentRefs.assetContentRefs } : {}),
     ...(bundlePolicy !== undefined ? { bundlePolicy: bundlePolicy.bundlePolicy } : {}),
     ...(proposalRecords !== undefined ? { proposalRecords: proposalRecords.proposalRecords } : {}),
+    ...(indexRows?.indexRows !== undefined ? { indexRows: indexRows.indexRows } : {}),
     ...(deadResidue !== undefined ? { deadResidue } : {}),
   };
 }

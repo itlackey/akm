@@ -45,6 +45,16 @@ export type EntryRow = {
 };
 
 /**
+ * The path a row stores for an asset no file holds: none. A row written before 4f.2 keyed such an asset under a path
+ * inside its bundle's root and marked its document `fileless`; until `akm migrate apply` re-keys it, that row is read
+ * as the row with no file it stands for, so no command notices the difference. Removed in 0.11 with the migration step.
+ */
+export function storedFilePath(filePath: string, document: unknown): string {
+  // asset-io: deprecated a layout-26 row from before 4f.2, read until `akm migrate apply` re-keys it
+  return (document as { fileless?: unknown } | null)?.fileless === true ? "" : filePath;
+}
+
+/**
  * Map one raw `entries` row to a {@link DbIndexedEntry}, parsing `document_json`.
  * Returns `null` (and warns, tagged with `context`) when the JSON is corrupt so
  * callers can skip the row instead of crashing.
@@ -59,7 +69,7 @@ export function rowToIndexedEntry(row: EntryRow, context: string): DbIndexedEntr
   }
   return {
     id: row.id,
-    filePath: row.file_path,
+    filePath: storedFilePath(row.file_path, entry),
     entry,
     itemRef: row.item_ref,
     conceptId: row.concept_id,

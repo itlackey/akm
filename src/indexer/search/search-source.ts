@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { detectBundleAdapter } from "../../core/assets/gate";
+import { deriveBundleIds } from "../../core/bundle-id";
 import { isWithin, relativeToRoot, resolveStashDir, safeRealpath, toErrorMessage } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import { bundleAtDir, bundlesToSourceEntries, getSources, isBundleEnabled, loadConfig } from "../../core/config/config";
@@ -272,6 +273,18 @@ export function findSourceForPath(filePath: string, sources: SearchSource[]): Se
 export function findSourceForIndexedPath(filePath: string, sources: SearchSource[]): SearchSource | undefined {
   const resolved = path.resolve(filePath);
   return longestSource(sources, (base) => resolved.startsWith(base + path.sep));
+}
+
+/**
+ * The source an index row belongs to: the one its file lives under, or, for a row no file holds (`filePath` `""`), the
+ * one that is its bundle.
+ */
+export function findSourceForRow(
+  row: { filePath: string; bundleId?: string },
+  sources: SearchSource[],
+): SearchSource | undefined {
+  if (row.filePath !== "") return findSourceForIndexedPath(row.filePath, sources);
+  return row.bundleId === undefined ? undefined : sources[deriveBundleIds([...sources]).indexOf(row.bundleId)];
 }
 
 function longestSource(sources: SearchSource[], within: (base: string) => boolean): SearchSource | undefined {

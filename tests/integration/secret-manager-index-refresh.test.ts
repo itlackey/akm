@@ -57,7 +57,8 @@ describe("a secret manager's bundle and the index", () => {
       writeAssets(target, { purpose: "test" }, (w) => w.create({ type: "secret", name: "fresh", content: "v2" }));
       const created = row("keyring//secrets/fresh");
       expect(created?.type).toBe("secret");
-      expect(JSON.parse(created?.document_json ?? "{}").fileless).toBe(true);
+      expect(created?.file_path).toBe("");
+      expect(JSON.parse(created?.document_json ?? "{}").fileless).toBeUndefined();
 
       writeAssets(target, { purpose: "test" }, (w) => w.delete("secrets/fresh"));
       expect(row("keyring//secrets/fresh")).toBeFalsy();

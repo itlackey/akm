@@ -67,6 +67,7 @@ import {
 import {
   buildEditHint,
   findSourceForPath,
+  findSourceForRow,
   isEditable,
   resolveSourceEntries,
   type SearchSource,
@@ -360,7 +361,7 @@ export async function showLocal(input: {
     }
   }
 
-  if (!indexedEntry || !assetPath) {
+  if (!indexedEntry || assetPath === undefined) {
     throw new NotFoundError(
       `Stash asset not found for ref: ${makeBundleRef(parsed.bundle, parsed.conceptId)}. ` +
         "Check the name with `akm search` or verify the asset exists in your stash.",
@@ -372,7 +373,11 @@ export async function showLocal(input: {
   const owned = resolution.asset;
   if (!owned) throwIndexedPathNotFound(Object.assign(new Error("no entry"), { code: "ENOENT" }), input.ref);
 
-  const source = findSourceForPath(assetPath, allSources);
+  // A row no file holds (`""`) belongs to its bundle's source.
+  const source =
+    assetPath === ""
+      ? findSourceForRow({ filePath: "", bundleId: indexedEntry.bundleId }, allSources)
+      : findSourceForPath(assetPath, allSources);
   const sourceStashDir = source?.path ?? allSourceDirs[0];
 
   if (!sourceStashDir) {
@@ -452,7 +457,7 @@ export async function showLocal(input: {
   }
   response.type = indexedEntry.type;
   response.name = indexedEntry.name;
-  // An asset no file holds is keyed under a path that leads nowhere; none is printed.
+  // An asset no file holds has no path to print.
   // asset-io: display no file holds the asset
   if (owned.entry.file === undefined) {
     delete response.path;
@@ -508,7 +513,7 @@ export async function showLocal(input: {
     );
   }
   if (response.type === "workflow") response.action = buildWorkflowAction(canonicalRef);
-  const editable = isEditable(assetPath, config, allSources);
+  const editable = assetPath === "" ? source?.writable === true : isEditable(assetPath, config, allSources);
   // Evidence must describe the same revision as the rendered claim: ordinary
   // Markdown show is source-live, while indexed fragment show is a snapshot.
   let evidenceMetadata: IndexDocument | undefined;

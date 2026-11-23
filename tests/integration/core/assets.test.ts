@@ -950,7 +950,9 @@ describe("assetType and an index an older adapter version wrote", () => {
       const db = openExistingDatabase(getDbPath());
       try {
         db.prepare("UPDATE entries SET type = 'stale' WHERE item_ref = 'main//knowledge/a'").run();
-        db.prepare("UPDATE index_dir_state SET index_variant = 'akm@0.0.1+content1'").run();
+        db.prepare(
+          "INSERT OR REPLACE INTO index_meta (key, value) SELECT 'variant:' || bundle_id, 'akm@0.0.1+content1' FROM entries GROUP BY bundle_id",
+        ).run();
       } finally {
         closeDatabase(db);
       }

@@ -32,11 +32,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { recognizeStashEntries } from "../src/core/adapter/directory/recognize-stash-entries";
 import { walkStashFlat } from "../src/core/adapter/directory/walker";
 import { fetchWithRetry, jsonWithByteCap } from "../src/core/common";
 import { getCacheDir } from "../src/core/paths";
 import type { IndexDocument } from "../src/indexer/passes/metadata";
-import { recognizeStashEntries } from "../src/indexer/scan/drain-dir";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../src/integrations/github";
 import {
   parseRegistryIndex,

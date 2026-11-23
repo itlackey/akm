@@ -19,6 +19,7 @@ import { embeddingInputCap } from "../../indexer/materialize-embeddings";
 import { brokenWorkflowWarning, indexRowEntry } from "../../indexer/scan/drain-dir";
 import { closeDatabase } from "../../storage/repositories/index-connection";
 import { deleteEntriesByIds } from "../../storage/repositories/index-entries-repository";
+import { bundleVariantKey, getMeta } from "../../storage/repositories/index-meta-repository";
 import { hashContent } from "../adapter/adapters/shared";
 import { buildFileContext, fileContextOfEntry, type MatchResult } from "../adapter/directory/file-context";
 import { declaredTypeForPath } from "../adapter/directory/matchers";
@@ -40,35 +41,37 @@ import type { AssetBundle } from "./bundle";
  */
 export function indexAssets(
   assets: readonly Asset[],
-  options: { persist: boolean; supersede?: boolean } = { persist: true },
+  options: { persist: boolean; onMiss?: boolean } = { persist: true },
 ): Map<Asset, IndexDocument> {
   const documents = new Map<Asset, IndexDocument>();
   for (const asset of assets) {
     const document = bundleHolding(asset).recognize(asset.entry);
     if (!document?.conceptId) throw assetNotFound(asset.ref);
-    // No file holds the asset (a keyring's or vault's): the row is keyed under a path that leads nowhere, and says so.
-    if (document.path === undefined) document.fileless = true;
     documents.set(asset, document);
   }
-  if (options.persist && assets.length > 0) record(documents, options.supersede ?? true);
+  if (options.persist && assets.length > 0) record(documents, options.onMiss ?? false);
   return documents;
 }
 
 /** {@link indexAssets} for one asset. */
 export function indexAsset(
   asset: Asset,
-  options: { persist: boolean; supersede?: boolean } = { persist: true },
+  options: { persist: boolean; onMiss?: boolean } = { persist: true },
 ): IndexDocument {
   return indexAssets([asset], options).get(asset) as IndexDocument;
 }
 
-/** Write the index rows of `documents`, when a usable index serves them, and say whether they were. See {@link write} for `supersede`. */
-function record(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean): boolean {
+/**
+ * Write the index rows of `documents`, when a usable index serves them, and say whether they were. `onMiss`: a read
+ * found no row for them, so they are marked for the next `akm index`, which still sees each as new (a moved file);
+ * akm's own writes are not.
+ */
+function record(documents: ReadonlyMap<Asset, IndexDocument>, onMiss: boolean): boolean {
   // No index, nothing to write, and no lock file made either.
   if (isPathAbsent(getDbPath())) return false;
   try {
     // The index-writer lock the indexer takes; held by a running rebuild, nothing is written (no waiting).
-    return withAssetMutationLeaseSync("index-asset", () => write(documents, supersede), { maxWaitMs: 0 });
+    return withAssetMutationLeaseSync("index-asset", () => write(documents, onMiss), { maxWaitMs: 0 });
   } catch (error) {
     warnVerbose("Index update skipped (the assets are indexed by the next `akm index`):", error);
     return false;
@@ -76,11 +79,11 @@ function record(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean
 }
 
 /**
- * A file has one row. With `supersede` (akm wrote the asset through its bundle) a row another ref holds for the file is
- * replaced. Without it (a read found no row for the ref) that row stays: bundles whose roots nest share files, and a
- * read must not move a file from one bundle's row to the other's.
+ * A file has one row. A row another ref holds for the file is replaced when akm wrote the asset through its bundle, and
+ * stays when a read found no row for the ref (`onMiss`): bundles whose roots nest share files, and a read must not move
+ * a file from one bundle's row to the other's. An asset no file holds (a keyring's) shares no file with any.
  */
-function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean): boolean {
+function write(documents: ReadonlyMap<Asset, IndexDocument>, onMiss: boolean): boolean {
   {
     const first = documents.keys().next().value as Asset;
     const usable = openUsableIndex(bundleHolding(first).root, { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
@@ -94,9 +97,10 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean)
           const held = bundleHolding(asset);
           // The scan drops a workflow that does not compile, so no ask of it records a row either.
           if (brokenWorkflowWarning(document, fileContextOfEntry(held.root, asset.entry)) !== null) continue;
-          const file = asset.entry.file ?? path.join(held.root, asset.entry.key);
+          const file = indexedPathOf(asset);
           if (
-            !supersede &&
+            onMiss &&
+            file !== "" &&
             db.prepare("SELECT 1 FROM entries WHERE file_path = ? AND item_ref <> ?").get(file, asset.ref)
           ) {
             continue;
@@ -106,18 +110,15 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean)
             { bundleId: asset.bundle, adapterId: held.adapterId },
             [
               {
-                // The path the index keys the asset under: its file, else (no file holds it) a path inside the bundle.
                 file,
                 entry: indexRowEntry(document, path.basename(asset.entry.key)),
                 conceptId: document.conceptId as string,
                 contentHash: document.hash,
-                hasFile: asset.entry.file !== undefined,
               },
             ],
             cap,
           );
-          // A row written for a read that found none: the next `akm index` still sees the asset as new (a moved file).
-          if (!supersede) written.push(asset.ref);
+          if (onMiss) written.push(asset.ref);
         }
         addIndexOnMissRefs(db, written);
       })();
@@ -164,7 +165,7 @@ export function forgetIndexedAsset(bundle: AssetBundle, conceptId: string): bool
 /** Record the row of one asset that akm wrote: the same refresh a miss in {@link assetType} makes. Says whether it was recorded. */
 export function refreshIndexedAsset(asset: Asset): boolean {
   try {
-    return record(new Map([[asset, indexAsset(asset, { persist: false })]]), true);
+    return record(new Map([[asset, indexAsset(asset, { persist: false })]]), false);
   } catch (error) {
     warnVerbose(`Index update for ${asset.ref} skipped:`, error);
     return false;
@@ -182,21 +183,19 @@ export function assetTypes(assets: readonly Asset[]): Map<Asset, string> {
   if (assets.length === 0) return types;
   const indexed = readUsableIndex(
     (db) => {
-      const find = db.prepare("SELECT type, file_path FROM entries WHERE item_ref = ?");
-      const variant = db.prepare("SELECT index_variant FROM index_dir_state WHERE dir_path = ?");
+      const find = db.prepare("SELECT type FROM entries WHERE item_ref = ?");
       return assets.map((asset) => {
-        const row = find.get(asset.ref) as { type: string; file_path: string } | undefined;
+        const row = find.get(asset.ref) as { type: string } | undefined;
         if (!row) return undefined;
         // A row an older adapter version described is a miss: that one ref is described again.
-        const recorded = (variant.get(path.dirname(row.file_path)) as { index_variant: string | null } | undefined)
-          ?.index_variant;
+        const recorded = getMeta(db, bundleVariantKey(asset.bundle));
         return recorded && !recorded.startsWith(variantPrefixOf(asset)) ? undefined : row.type;
       });
     },
     assets.map(() => undefined),
   );
   const missing = assets.filter((_, position) => indexed[position] === undefined);
-  const documents = indexAssets(missing, { persist: true, supersede: false });
+  const documents = indexAssets(missing, { persist: true, onMiss: true });
   for (const [position, asset] of assets.entries()) {
     types.set(asset, indexed[position] ?? (documents.get(asset) as IndexDocument).type);
   }
@@ -229,15 +228,12 @@ export function assetTypeFresh(asset: Asset): string {
     undefined,
   );
   if (recorded?.content_hash === hashContent(asset.entry.content())) return assetType(asset);
-  return indexAsset(asset, { persist: true, supersede: false }).type;
+  return indexAsset(asset, { persist: true, onMiss: true }).type;
 }
 
-/**
- * The path the index keys an asset under: its file, else (for an asset no file holds) `<root>/<key>`, which is
- * not a path to anything.
- */
-export function indexedPathOf(asset: Asset, source: { path: string }): string {
-  return asset.entry.file ?? path.join(source.path, asset.entry.key);
+/** The file the index records an asset under; `""` for an asset no file holds (a keyring's or vault's). */
+export function indexedPathOf(asset: Asset): string {
+  return asset.entry.file ?? "";
 }
 
 /**

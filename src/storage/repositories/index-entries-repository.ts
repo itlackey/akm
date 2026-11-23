@@ -27,7 +27,7 @@ import { buildSearchText } from "../../indexer/search/search-fields";
 import { capEmbeddingText, DEFAULT_MAX_INPUT_TOKENS } from "../../llm/embedders/remote";
 import { sha256Hex } from "../../runtime";
 import type { Database, SqlValue } from "../database";
-import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-mapper";
+import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry, storedFilePath } from "./index-entry-mapper";
 import type { DbIndexedEntry, EntryProvenance, RekeyEntryOptions } from "./index-entry-types";
 import { deleteFtsEntries, replaceFtsEntry } from "./index-fts-repository";
 import { deleteEntryLinks, replaceEntryLinks } from "./index-links-repository";
@@ -546,7 +546,8 @@ export function getRefsAndFilesByBundle(db: Database, bundleId: string): Array<{
   const seen = new Set<string>();
   const found: Array<{ ref: string; filePath: string }> = [];
   for (const row of rows) {
-    if (seen.has(row.file_path)) continue;
+    // A row no file holds has no path to share with another.
+    if (row.file_path !== "" && seen.has(row.file_path)) continue;
     seen.add(row.file_path);
     found.push({ ref: row.item_ref, filePath: row.file_path });
   }
@@ -594,6 +595,29 @@ export function deleteEntriesByDirExceptRefs(
   return db.transaction(() => {
     const doomed = rowsInDirectory(db, dirPath, bundleId).filter((row) => !keepRefs.has(row.item_ref));
     return deleteEntryRows(db, doomed, options);
+  })();
+}
+
+/**
+ * Prune every row of `bundleId` that is not in `keepRefs`: a bundle that is no directory (a keyring, a vault) is
+ * drained whole, so what its listing no longer holds is what departed.
+ */
+export function deleteEntriesByBundleExceptRefs(
+  db: Database,
+  bundleId: string,
+  keepRefs: ReadonlySet<string>,
+  options: { cleanupUsageEvents?: boolean } = {},
+): DeletedEntry[] {
+  return db.transaction(() => {
+    const rows = db.prepare("SELECT id, item_ref FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{
+      id: number;
+      item_ref: string;
+    }>;
+    return deleteEntryRows(
+      db,
+      rows.filter((row) => !keepRefs.has(row.item_ref)),
+      options,
+    );
   })();
 }
 
@@ -816,7 +840,7 @@ export function getEntryById(
     return undefined;
   }
   return {
-    filePath: row.file_path,
+    filePath: storedFilePath(row.file_path, entry),
     entry,
     itemRef: row.item_ref,
     bundleId: row.bundle_id,

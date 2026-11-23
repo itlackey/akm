@@ -259,7 +259,10 @@ function describe(file: FileContext, conceptId: string): IndexMetadata {
   if (staleAfter !== undefined) doc.staleAfter = staleAfter;
   if (okfVersion !== undefined) doc.okfVersion = okfVersion;
   const extras = Object.fromEntries(Object.entries(data).filter(([key]) => !CONSUMED_FRONTMATTER_KEYS.includes(key)));
-  if (Object.keys(extras).length > 0) doc.documentJson = extras;
+  if (Object.keys(extras).length > 0) {
+    doc.documentJson = extras;
+    doc.opaqueExtras = true;
+  }
   return doc;
 }
 

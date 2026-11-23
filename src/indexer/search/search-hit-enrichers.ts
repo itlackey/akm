@@ -27,7 +27,7 @@ export interface SearchHitContext {
    */
   db?: Database;
   /** A derived surface must satisfy the parent search's existing recall policy. */
-  eligible?: (row: { id: number; entry: IndexDocument; filePath: string }) => boolean;
+  eligible?: (row: { id: number; entry: IndexDocument; filePath: string; bundleId?: string }) => boolean;
 }
 
 /**

@@ -2,12 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import path from "node:path";
 import { lookupBundleRef } from "../../../indexer/indexer";
 import { deriveInstallations, sourceOfBundle } from "../../../indexer/installations";
 import { resolveSourceEntries } from "../../../indexer/search/search-source";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../asset/asset-ref";
 import { findAsset } from "../../assets/read";
-import { indexedPathOf } from "../../assets/type";
 import { bundleIdAt } from "../../bundle-at-dir";
 import { deriveBundleIds } from "../../bundle-id";
 import { safeRealpath } from "../../common";
@@ -44,7 +44,10 @@ function resolveViaDisk(ref: BundleRef, options: ResolveAssetPathOptions): strin
     .filter((id) => bundle === undefined || id === bundle)
     .map((id) => findAsset(makeBundleRef(id, ref.conceptId)))
     .find((found) => found !== undefined);
-  return asset ? safeRealpath(indexedPathOf(asset, sourceOfBundle(sources, asset.bundle))) : null;
+  // An asset no file holds answers a path that leads nowhere, as it always has (phase 5 moves this caller off paths).
+  return asset
+    ? safeRealpath(asset.entry.file ?? path.join(sourceOfBundle(sources, asset.bundle).path, asset.entry.key))
+    : null;
 }
 
 export async function resolveAssetPath(ref: string, options: ResolveAssetPathOptions = {}): Promise<string | null> {
