@@ -19,6 +19,7 @@
 import { ConfigError } from "../errors";
 import { BUILTIN_ADAPTERS } from "./adapters";
 import type { BundleAdapter } from "./bundle-adapter";
+import { SecretManagerAdapterBase } from "./secret-manager-adapter";
 import type { Bundle } from "./types";
 
 export { BUILTIN_ADAPTERS } from "./adapters";
@@ -46,8 +47,12 @@ export function adapterIds(): string[] {
   return BUILTIN_ADAPTERS.map((adapter) => adapter.id);
 }
 
-/** The adapter `bundle` names, or a `ConfigError` listing the ids akm has. */
-export function requireAdapter(bundle: string, id: string): BundleAdapter {
+/**
+ * The adapter `bundle` names, or a `ConfigError` listing the ids akm has. With `location` (whether the bundle is
+ * configured with one), also refused when the bundle is not addressed the way the adapter needs: a store adapter
+ * without a `location`, or a directory adapter with one.
+ */
+export function requireAdapter(bundle: string, id: string, address?: { location: boolean }): BundleAdapter {
   const adapter = BY_ID.get(id);
   if (!adapter) {
     throw new ConfigError(
@@ -55,7 +60,29 @@ export function requireAdapter(bundle: string, id: string): BundleAdapter {
       "INVALID_CONFIG_FILE",
     );
   }
+  if (address && adapter.addressedBy === "location" && !address.location) {
+    throw new ConfigError(
+      `Bundle "${bundle}" uses adapter "${id}", which reads a store named by \`location\`: set \`bundles.${bundle}.location\`.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  if (address && adapter.addressedBy === "root" && address.location) {
+    throw new ConfigError(
+      `Bundle "${bundle}" uses adapter "${id}", which reads a directory, but the bundle has a \`location\`: use a \`path\` (or git, website, npm) instead, or an adapter that reads a store (${locationAdapterIds().join(", ")}).`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
   return adapter;
+}
+
+/** The ids of the adapters whose bundles are named by `location`. */
+function locationAdapterIds(): string[] {
+  return BUILTIN_ADAPTERS.filter((adapter) => adapter.addressedBy === "location").map((adapter) => adapter.id);
+}
+
+/** Forget what the adapters read of their stores. The CLI calls it per command and Desktop per request: a store changes between them. */
+export function clearAdapterCaches(): void {
+  for (const adapter of BUILTIN_ADAPTERS) if (adapter instanceof SecretManagerAdapterBase) adapter.clearCache();
 }
 
 /** The bundle its adapter is called with: its id (its config name), root, and `location` when it has one. */

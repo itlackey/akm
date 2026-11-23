@@ -18,6 +18,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { bundleStorageExists } from "../../core/assets/gate";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
 import { getSources, loadConfig, resolveSecret, retiredBundleComponents } from "../../core/config/config";
@@ -280,7 +281,19 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
       lock: describeLock(lock),
       itemCount: bundleCounts.itemCount,
       byType: bundleCounts.byType,
-      status: { exists: root ? directoryExists(root) : true },
+      status: {
+        exists:
+          configured.location !== undefined && configured.adapter !== undefined
+            ? bundleStorageExists({
+                name: key,
+                path: root,
+                location: configured.location,
+                adapterId: configured.adapter,
+              })
+            : root
+              ? directoryExists(root)
+              : true,
+      },
     });
   }
 

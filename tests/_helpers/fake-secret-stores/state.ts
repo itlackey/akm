@@ -24,6 +24,22 @@ export interface FakeStoreState {
   vaults: Record<string, Record<string, string>>;
   /** Names of keyrings that are locked: their `Items` read as empty, as KWallet's does. */
   locked?: string[];
+  /** Keyrings whose unlock prompt the user dismisses: they stay locked. */
+  unlockDenied?: string[];
+  /** A keyring's label, by name: default, its name. */
+  labels?: Record<string, string>;
+  /** Keyrings with no alias of their own name (default: every keyring is the alias of its name). */
+  unaliased?: string[];
+  /** Aliases set at run time (`SetAlias`), by alias, to a keyring name. */
+  aliases?: Record<string, string>;
+  /** Keyrings whose unlock prompt is open. */
+  prompts?: string[];
+  /** Azure Key Vault secrets that are disabled, by vault: listed by name only when asked for everything, and refused when read. */
+  disabled?: Record<string, string[]>;
+  /** Azure Key Vault secrets another Azure service manages, by vault. */
+  managed?: Record<string, string[]>;
+  /** How many `purge` calls per vault still answer a conflict (the delete is still going on). */
+  purgeConflicts?: Record<string, number>;
   /** Azure Key Vault secrets that are deleted but recoverable, by vault, then name. */
   deleted?: Record<string, Record<string, string>>;
   /** Vaults that refuse `purge`, as one with purge protection or without purge permission does. */
@@ -53,4 +69,22 @@ export function beginCall(program: string): FakeStoreState {
 export function fail(message: string, status = 1): never {
   process.stderr.write(`${message}\n`);
   process.exit(status);
+}
+
+const COLLECTION_PREFIX = "/org/freedesktop/secrets/collection/";
+
+/** The keyring an alias names, or undefined. */
+export function keyringOfAlias(state: FakeStoreState, alias: string): string | undefined {
+  const set = state.aliases?.[alias];
+  if (set !== undefined) return set;
+  return state.keyrings[alias] && !(state.unaliased ?? []).includes(alias) ? alias : undefined;
+}
+
+/** The keyring a collection argument names: an alias, or an object path. */
+export function keyringOfCollection(state: FakeStoreState, collection: string): string | undefined {
+  if (collection.startsWith(COLLECTION_PREFIX)) {
+    const name = collection.slice(COLLECTION_PREFIX.length);
+    return state.keyrings[name] ? name : undefined;
+  }
+  return keyringOfAlias(state, collection);
 }

@@ -933,6 +933,8 @@ full bundle model (`path`, `git`, `website`, `npm`, `location`, `writable`,
 finds a bundle that is not a directory (it needs `adapter`): a keyring
 (`secret-tool`) or an Azure Key Vault (`azure-key-vault`), see
 [Environment & Secrets](env-and-secrets.md#secrets-kept-by-a-secret-manager).
+An adapter that reads a store needs a `location` and a directory adapter cannot have
+one; a bundle that breaks this is a config error, which `akm config set` refuses.
 `defaultBundle` must name a key in `bundles` when set. A
 bundle's `adapter` key pins it to a specific format adapter
 instead of relying on auto-detection. `root` (a `path` or `git` bundle) is the content

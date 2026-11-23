@@ -14,8 +14,9 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { toErrorMessage } from "../common";
-import { assetNotFound, ConfigError } from "../errors";
+import { parseBundleRef } from "../asset/asset-ref";
+import { compareCodePoints } from "../common";
+import { assetNotFound, ConfigError, UsageError } from "../errors";
 import { hashContent } from "./adapters/shared";
 import type {
   AssetChange,
@@ -49,6 +50,17 @@ function requireSecretName(bundle: string, conceptId: string): string {
   return name;
 }
 
+/** Whether `name` is a secret's name as a concept id: the one `secrets/<name>` that parses as a ref and reads back as itself. */
+function isConceptName(name: string): boolean {
+  if (name === "" || name.endsWith("/")) return false;
+  try {
+    const parsed = parseBundleRef(`b//${secretEntryPath(name)}`);
+    return parsed.conceptId === secretEntryPath(name) && parsed.fragment === undefined;
+  } catch {
+    return false;
+  }
+}
+
 /** The secret `name` as an entry, whose value `read` returns, at most once and only when asked. */
 function secretEntry(name: string, read: () => string): AssetEntry {
   let content: string | undefined;
@@ -64,23 +76,82 @@ function secretEntry(name: string, read: () => string): AssetEntry {
   };
 }
 
+/** One item of a store: what its manager holds under a name. Several items can share a name. */
+export interface SecretItem {
+  /** The name the manager gives it (a keyring entry's label, a vault secret's name). */
+  name: string;
+  /** What tells items of one name apart: a keyring entry's object path, a vault secret's name. */
+  id: string;
+  /** Set for an item akm made: it wins among items of one name. */
+  preferred: boolean;
+  /** The value. Called only when someone asks for it. */
+  read(): string;
+}
+
+/** The items of a store as the rules see them: one winner per valid name; the ignored ones; the items no name fits. */
+interface Store {
+  winners: Map<string, SecretItem>;
+  shadowed: Array<{ name: string; winner: SecretItem; ignored: SecretItem[] }>;
+  invalid: SecretItem[];
+}
+
+/** One winner per name: the item akm made, else the lowest id by code point. */
+function classify(items: readonly SecretItem[]): Store {
+  const byName = new Map<string, SecretItem[]>();
+  const invalid: SecretItem[] = [];
+  for (const item of items) {
+    if (!isConceptName(item.name)) invalid.push(item);
+    else byName.set(item.name, [...(byName.get(item.name) ?? []), item]);
+  }
+  const winners = new Map<string, SecretItem>();
+  const shadowed: Store["shadowed"] = [];
+  for (const [name, held] of byName) {
+    const ranked = [...held].sort(
+      (left, right) => Number(right.preferred) - Number(left.preferred) || compareCodePoints(left.id, right.id),
+    );
+    winners.set(name, ranked[0] as SecretItem);
+    if (ranked.length > 1) shadowed.push({ name, winner: ranked[0] as SecretItem, ignored: ranked.slice(1) });
+  }
+  return { winners, shadowed, invalid };
+}
+
 export abstract class SecretManagerAdapterBase implements BundleAdapter {
   abstract readonly id: string;
   abstract readonly version: string;
+  readonly addressedBy = "location" as const;
   readonly writes: readonly string[] = ["secret"];
   /** A secret is deleted, never retired: nothing recoverable should keep its value. */
   readonly retires: readonly string[] = [];
 
   /** What `location` names, for the error of a bundle without one: "a keyring", "an Azure Key Vault". */
   protected abstract readonly what: string;
-  /** The secrets of the store at `location`, each with how to read its value. */
-  protected abstract listSecrets(location: string): Array<{ name: string; read(): string }>;
-  /** The secret `name`, or undefined when the store has none. */
-  protected abstract findSecret(location: string, name: string): { read(): string } | undefined;
-  /** Store `value` as the secret `name`, replacing one of that name. */
-  protected abstract storeSecret(location: string, name: string, value: Buffer): void;
-  /** Delete the secret `name`. False: the store has no such secret. */
-  protected abstract deleteSecret(location: string, name: string): boolean;
+  /** Whether the store at `location` is there. It reads no secret and never prompts. */
+  protected abstract locate(location: string): boolean;
+  /** Every item of the store, valid name or not, each with how to read its value. */
+  protected abstract listSecrets(location: string): SecretItem[];
+  /** Store `value` as the secret `name`: in `existing` when the name has an item, else as a new item. */
+  protected abstract storeSecret(location: string, name: string, value: Buffer, existing?: SecretItem): void;
+  /** Delete `item`. */
+  protected abstract deleteSecret(location: string, item: SecretItem): void;
+  /** Refuse a name the store cannot hold, before anything is asked of it. */
+  protected requireStorable(_name: string): void {}
+
+  /** The stores read so far this command, by location: a listing is one request, and a write drops it. */
+  private readonly stores = new Map<string, Store>();
+
+  /** Forget what was read: the next request reads the store again. The CLI calls it per command, a server per request. */
+  clearCache(): void {
+    this.stores.clear();
+  }
+
+  private store(location: string): Store {
+    let held = this.stores.get(location);
+    if (!held) {
+      held = classify(this.listSecrets(location));
+      this.stores.set(location, held);
+    }
+    return held;
+  }
 
   /** Where the adapter finds the bundle: its configured `location`. */
   private locationOf(b: Bundle): string {
@@ -98,6 +169,13 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
         `Adapter "${this.id}" does not write ${asset.type} assets; the asset facade checks \`writes\` first.`,
       );
     }
+    if (!isConceptName(asset.name)) {
+      throw new UsageError(
+        `"${asset.name}" is not a name a secret can have: it must read back as the ref "secrets/${asset.name}".`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    this.requireStorable(asset.name);
     return asset.name;
   }
 
@@ -106,30 +184,39 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     return { conceptId: secretEntryPath(name), changed: [], ...(content !== undefined ? { content } : {}) };
   }
 
-  /** List the bundle's secrets; a listing that fails leaves the bundle as the index last saw it. */
-  list(b: Bundle): BundleListing {
+  /** Run a write on the store: whatever was read of it is stale afterwards, whether the write worked or not. */
+  private writing<T>(location: string, write: () => T): T {
     try {
-      return {
-        assets: this.listSecrets(this.locationOf(b)).map(({ name, read }) => ({
-          conceptId: secretEntryPath(name),
-          entry: secretEntry(name, read),
-        })),
-        complete: true,
-      };
-    } catch (error) {
-      return {
-        assets: [],
-        complete: false,
-        incompleteReason: toErrorMessage(error),
-        ...(error instanceof ConfigError && error.code === "BUNDLE_UNREACHABLE" ? { unreachable: true as const } : {}),
-      };
+      return write();
+    } finally {
+      this.stores.delete(location);
     }
+  }
+
+  exists(b: Bundle): boolean {
+    try {
+      return this.locate(this.locationOf(b));
+    } catch {
+      return false;
+    }
+  }
+
+  /** List the bundle's secrets. A store that cannot be reached throws `BUNDLE_UNREACHABLE`: the index keeps its rows. */
+  list(b: Bundle): BundleListing {
+    const { winners } = this.store(this.locationOf(b));
+    return {
+      assets: [...winners.values()].map(({ name, read }) => ({
+        conceptId: secretEntryPath(name),
+        entry: secretEntry(name, read),
+      })),
+      complete: true,
+    };
   }
 
   read(b: Bundle, conceptId: string): BundleAsset | undefined {
     const name = secretNameOf(conceptId);
     if (name === undefined) return undefined;
-    const found = this.findSecret(this.locationOf(b), name);
+    const found = this.store(this.locationOf(b)).winners.get(name);
     return found === undefined ? undefined : { conceptId: secretEntryPath(name), entry: secretEntry(name, found.read) };
   }
 
@@ -149,8 +236,33 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     };
   }
 
-  async validate(_b: Bundle, _edits: AssetEdit[], _ctx: ValidateContext): Promise<Diagnostic[]> {
-    return [];
+  /**
+   * What is wrong with the store as it stands: a name that is not a valid concept name is not listed, and items
+   * sharing a name leave one winner. It reads the whole store whatever `edits` name; a store that cannot be reached has
+   * nothing to check.
+   */
+  async validate(b: Bundle, _edits: AssetEdit[], _ctx: ValidateContext): Promise<Diagnostic[]> {
+    let held: Store;
+    try {
+      held = this.store(this.locationOf(b));
+    } catch (error) {
+      if (error instanceof ConfigError) return [];
+      throw error;
+    }
+    return [
+      ...held.invalid.map(({ name, id }) => ({
+        ref: `${b.id}//${secretEntryPath(name)}`,
+        issue: "invalid-name",
+        detail: `The entry "${name}" (${id}) is not a name a secret can have, so it is not listed. Rename it in ${this.what}.`,
+        fixed: false as const,
+      })),
+      ...held.shadowed.map(({ name, winner, ignored }) => ({
+        ref: `${b.id}//${secretEntryPath(name)}`,
+        issue: "shadowed-spelling",
+        detail: `"${secretEntryPath(name)}" is held by more than one entry; ${winner.id} is used and ${ignored.map((item) => item.id).join(", ")} ignored. Remove the ignored ${ignored.length === 1 ? "entry" : "entries"}.`,
+        fixed: false as const,
+      })),
+    ];
   }
 
   place(_b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {
@@ -160,27 +272,31 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   create(b: Bundle, asset: NewAsset, options: { replace?: boolean; verbatim?: boolean } = {}): AssetChange {
     const name = this.secretNameFor(asset);
     const location = this.locationOf(b);
-    if (!options.replace && this.findSecret(location, name)) {
+    const existing = this.store(location).winners.get(name);
+    if (existing && !options.replace) {
       throw new Error(
         `Adapter "${this.id}" will not create "${b.id}//${secretEntryPath(name)}" over an existing secret without \`replace\`; the asset facade checks \`exclusive\` first.`,
       );
     }
-    this.storeSecret(location, name, Buffer.from(asset.content));
+    this.writing(location, () => this.storeSecret(location, name, Buffer.from(asset.content), existing));
     return this.change(name, asset.content);
   }
 
   update(b: Bundle, conceptId: string, content: string | Buffer): AssetChange {
     const location = this.locationOf(b);
     const name = requireSecretName(b.id, conceptId);
-    if (!this.findSecret(location, name)) throw assetNotFound(`${b.id}//${conceptId}`);
-    this.storeSecret(location, name, Buffer.from(content));
+    const existing = this.store(location).winners.get(name);
+    if (!existing) throw assetNotFound(`${b.id}//${conceptId}`);
+    this.writing(location, () => this.storeSecret(location, name, Buffer.from(content), existing));
     return this.change(name, content);
   }
 
   delete(b: Bundle, conceptId: string): AssetChange {
     const location = this.locationOf(b);
     const name = requireSecretName(b.id, conceptId);
-    if (!this.deleteSecret(location, name)) throw assetNotFound(`${b.id}//${conceptId}`);
+    const existing = this.store(location).winners.get(name);
+    if (!existing) throw assetNotFound(`${b.id}//${conceptId}`);
+    this.writing(location, () => this.deleteSecret(location, existing));
     return this.change(name);
   }
 
@@ -207,6 +323,11 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   private refuseRetire(): never {
     throw new Error(`Adapter "${this.id}" does not retire assets; the asset facade checks \`retires\` first.`);
   }
+}
+
+/** Wait `ms` without returning to the event loop: adapters answer synchronously. */
+export function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 /** A command-line client an adapter runs: its program and how to get it. */

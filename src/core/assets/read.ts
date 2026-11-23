@@ -12,10 +12,11 @@
 import { createHash } from "node:crypto";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import type { BundleListing } from "../adapter/bundle-adapter";
 import { withoutTypeHead } from "../asset/asset-placement";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { deriveBundleIds } from "../bundle-id";
-import { compareCodePoints } from "../common";
+import { compareCodePoints, toErrorMessage } from "../common";
 import { loadConfig } from "../config/config";
 import { assetNotFound, ConfigError } from "../errors";
 import { warn, warnOnce } from "../warn";
@@ -130,13 +131,17 @@ export function listAssets(
     const bundle = ids[index] as string;
     if (source.unresolved || (options.bundle !== undefined && bundle !== options.bundle)) continue;
     const held = bundleOfSource(source, bundle);
-    const listing = held.list();
-    // A bundle that cannot be reached is not a shorter list: when it holds what is asked for, the command fails.
-    if (listing.unreachable && (options.type === undefined || held.writes(options.type))) {
-      throw new ConfigError(
-        `Bundle "${bundle}" cannot be reached: ${listing.incompleteReason ?? "unreachable"}`,
-        "BUNDLE_UNREACHABLE",
-      );
+    let listing: BundleListing;
+    try {
+      listing = held.list();
+    } catch (error) {
+      // A bundle that cannot be reached is not a shorter list: when it holds what is asked for, the command fails.
+      const unreachable = error instanceof ConfigError && error.code === "BUNDLE_UNREACHABLE";
+      if (unreachable && (options.type === undefined || held.writes(options.type))) {
+        throw new ConfigError(`Bundle "${bundle}" cannot be reached: ${toErrorMessage(error)}`, "BUNDLE_UNREACHABLE");
+      }
+      warn(`Bundle "${source.registryId ?? source.path}" was not listed completely: ${toErrorMessage(error)}`);
+      continue;
     }
     if (!listing.complete && listing.incompleteReason) {
       warn(`Bundle "${source.registryId ?? source.path}" was not listed completely: ${listing.incompleteReason}`);

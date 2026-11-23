@@ -8,6 +8,7 @@
 // HTTP, status codes) belongs to the host.
 // Declarations: scripts/node-runtime/workspace.d.ts, kept in step by tests/contracts/workspace-surface.test.ts.
 
+export { clearAdapterCaches } from "./core/assets/gate";
 export {
   AkmError,
   type AkmErrorKind,

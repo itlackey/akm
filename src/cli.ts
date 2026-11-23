@@ -130,6 +130,7 @@ import { feedbackCommand } from "./commands/feedback-cli";
 import { akmHealth } from "./commands/health";
 import { doctorMetricsCommand } from "./commands/metrics/usage-cli";
 import { akmTasksDoctor } from "./commands/tasks/tasks";
+import { clearAdapterCaches } from "./core/assets/gate";
 import { closestMatch } from "./core/closest-match";
 import { explainedByReaderGone, isTerminal, stdout } from "./core/stdio";
 import "./commands/health/renderers";
@@ -1360,6 +1361,8 @@ export function requestsHelp(invocation: ParsedInvocation): boolean {
 }
 
 async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
+  // What an adapter read of a keyring or vault lives for one command: a run in this process after another reads afresh.
+  clearAdapterCaches();
   // Resolve output mode once at startup from the invocation's own tokens and persisted
   // config. All subsequent output() calls read from this in-memory singleton.
   // `initOutputMode` can throw a UsageError when --format/--detail values are

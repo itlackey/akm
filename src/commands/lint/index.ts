@@ -29,12 +29,19 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { validateBundleAssets } from "../../core/assets/validate";
 import { deriveBundleIds } from "../../core/bundle-id";
-import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpath, samePath } from "../../core/common";
+import {
+  compareCodePoints,
+  isAkmRegistryCachePath,
+  resolveStashDir,
+  safeRealpath,
+  samePath,
+  toErrorMessage,
+} from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig, primaryBundlePath } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import { defaultExcludedTypes } from "../../core/config/schema/search";
-import { UsageError } from "../../core/errors";
+import { ConfigError, UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
@@ -102,6 +109,11 @@ export interface AkmLintOptions {
    * state.db (the improve dry run's snapshot) passes it; otherwise they are read through the ordinary read-only one.
    */
   readMoves?: ReadMoves;
+  /**
+   * Also check the keyrings and vaults among the configured bundles through their adapters (a name akm cannot list, two
+   * entries of one name). `akm lint` without `--dir` or a file asks; a store that cannot be reached is skipped.
+   */
+  stores?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -261,6 +273,38 @@ async function adapterFindings(
     },
   );
   return found.map(diagnosticToLintIssue);
+}
+
+/**
+ * What the adapters of the configured keyring and vault bundles report about their stores: the entries they do not
+ * list, and the names more than one entry holds. A finding names its asset by ref, since no file holds it. A store that
+ * cannot be reached has nothing to check.
+ */
+async function addStoreFindings(
+  found: LintFindings,
+  sources: SearchSource[],
+  cfg: AkmConfig,
+  options: AkmLintOptions,
+): Promise<void> {
+  if (options.stores !== true) return;
+  const ids = deriveBundleIds(sources);
+  for (const [index, source] of sources.entries()) {
+    if (source.location === undefined || source.adapterId === undefined || source.unresolved) continue;
+    const bundle = ids[index] as string;
+    try {
+      const diagnostics = await validateBundleAssets(
+        { name: bundle, path: source.path, location: source.location, adapterId: source.adapterId },
+        { ctx: { sources, config: cfg, readMoves: options.readMoves ?? readRecordedMoves } },
+      );
+      for (const issue of diagnostics.map(diagnosticToLintIssue)) {
+        (isAdvisoryLintIssue(issue) ? found.warnings : found.flagged).push(issue);
+      }
+    } catch (error) {
+      if (!(error instanceof ConfigError && error.code === "BUNDLE_UNREACHABLE")) {
+        warn(`Warning: lint did not check bundle "${bundle}": ${toErrorMessage(error)}`);
+      }
+    }
+  }
 }
 
 /**
@@ -1084,6 +1128,7 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   if (adapterId !== "akm") {
     const found = await lintViaAdapter(adapterId, stashRoot, extraStashRoots, sources, cfg, options);
     found.flagged.push(...trackedSecretIssues(stashRoot));
+    await addStoreFindings(found, sources, cfg, options);
     return finishLint(found, cfg, options, stashRoot);
   }
   // Same fail-closed rule for --type on the akm sweep: an unknown value used
@@ -1104,5 +1149,6 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   const found = lintAkmSweep(stashRoot, extraStashRoots, cfg, sources, options);
   await addAdapterFindings(found, stashRoot, sources, cfg, options);
   found.flagged.push(...trackedSecretIssues(stashRoot));
+  await addStoreFindings(found, sources, cfg, options);
   return finishLint(found, cfg, options, stashRoot);
 }

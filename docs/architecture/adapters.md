@@ -206,7 +206,12 @@ is computable in closed form, and no bundle walk is needed.
 ### Adapters of a secret manager
 
 `secret-tool` and `azure-key-vault` implement the same contract over a
-secret manager's command-line client (`adapters/secret-client-shared.ts`).
+secret manager's command-line client; `SecretManagerAdapterBase`
+(`src/core/adapter/secret-manager-adapter.ts`) implements the contract once and a
+subclass supplies `locate`, `listSecrets`, `storeSecret` and `deleteSecret`.
+An adapter says how config addresses its bundles in `addressedBy` (`"root"` for a
+directory, `"location"` for a store) and whether the storage is there in `exists`
+(no asset read, no prompt); the registry refuses a bundle addressed the other way.
 The bundle holds secrets only, as the entries `secrets/<name>`, the ref a
 secret file has in a directory bundle, so the rest of akm does not tell them
 apart. A bundle names the adapter in `adapter` and the keyring or vault
@@ -219,14 +224,21 @@ in `location`:
 
 | | `secret-tool` | `azure-key-vault` |
 | --- | --- | --- |
-| `list` | the keyring's entries over `busctl` (labels and attributes, never a value) | `az keyvault secret list` |
-| `read` | the entry by label; its value with `secret-tool lookup` when `content()` is asked | `az keyvault secret show`: finding a secret reads it |
+| `list` | the collection's entries over `busctl` (labels and attributes, never a value); a locked collection is unlocked through the Secret Service's prompt | `az keyvault secret list` of the enabled, unmanaged secrets |
+| `read` | the winner of the label in that listing; its value with `secret-tool lookup` when `content()` is asked | the winner in that listing; its value with `az keyvault secret show` when `content()` is asked |
 | `create` / `update` | `secret-tool store`, value on stdin, through the entry's own attributes | `az keyvault secret set --file`, a temporary file only the user can read |
 | `retire` | `Delete` on the entry's own object path (`secret-tool clear` would delete every match) | `az keyvault secret delete` |
 
-The value never reaches a client's command line. A client that is missing or
-fails raises `BUNDLE_UNREACHABLE`; a listing that fails is an incomplete walk,
-so the index keeps the entries it had. Such a bundle's entries are indexed
+The value never reaches a client's command line. A store that cannot be reached
+(client missing, no session, keyring or vault not there, account refused) makes `list`
+throw `BUNDLE_UNREACHABLE`: there is one signal for it. The index scan catches it
+and keeps the entries it had; the facade catches it only for a typed listing of a type
+the bundle cannot hold. Any other failure is a plain error naming the operation.
+A name that is no concept name is not an asset (`validate` reports it), and
+among items of one name the `preferred` one wins, else the lowest `id`
+(`validate` reports the rest as `shadowed-spelling`). What the base read of a store
+lives for one command: the CLI and Desktop call `clearAdapterCaches()` at the start
+of a command or request. Such a bundle's entries are indexed
 under `$CACHE/index/bundles/<bundle>`, where nothing is written.
 
 Cross-component ref existence is a **core** base check, not an adapter

@@ -43,6 +43,8 @@ export class TransientError extends AkmError {
 export const CONFLICT_CODES: ReadonlySet<string>;
 
 export function scrubUrlCredentials(value: unknown): unknown;
+/** Forget what the adapters read of keyrings and vaults: a host serving many requests calls it at the start of each, so a store changed meanwhile is read afresh. */
+export function clearAdapterCaches(): void;
 /** Refresh the existing index for files just written inside a bundle; fail-open, `false` when the index could not be updated. */
 export function indexWrittenAssets(
   stashDir: string,
