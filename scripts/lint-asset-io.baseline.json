@@ -82,35 +82,10 @@
       "writeFileSync": 1
     }
   },
-  "src/commands/lint/base-linter.ts": {
-    "asset-io": {
-      "existsSync": 4,
-      "statSync": 1,
-      "writeFileSync": 1
-    }
-  },
   "src/commands/lint/index.ts": {
     "adapter-id": {
       "akm": 2,
       "okf": 1
-    },
-    "adapter-import": {
-      "src/core/adapter/adapters/akm-adapter": 1,
-      "src/core/adapter/adapters/akm-lint": 1,
-      "src/core/adapter/registry": 1,
-      "src/core/adapter/validate-context": 1
-    },
-    "asset-io": {
-      "adapterForId": 2,
-      "existsSync": 6,
-      "readFileSync": 2,
-      "readdirSync": 5,
-      "statSync": 1,
-      "unlinkSync": 1,
-      "walkStashFlat": 1
-    },
-    "entry-file": {
-      "entry.file": 2
     }
   },
   "src/commands/proposal/repository.ts": {
@@ -207,11 +182,6 @@
       "forgetIndexedAsset": 1,
       "indexAssets": 1,
       "refreshIndexedAsset": 1
-    }
-  },
-  "src/core/assets/write.ts": {
-    "facade-export": {
-      "AssetWriter": 1
     }
   },
   "src/core/env-secret-ref.ts": {

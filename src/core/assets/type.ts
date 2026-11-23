@@ -19,6 +19,7 @@ import { embeddingInputCap } from "../../indexer/materialize-embeddings";
 import { brokenWorkflowWarning, indexRowEntry } from "../../indexer/scan/drain-dir";
 import { closeDatabase } from "../../storage/repositories/index-connection";
 import { deleteEntriesByIds } from "../../storage/repositories/index-entries-repository";
+import { classifyAkmFile } from "../adapter/adapters/akm-adapter";
 import { hashContent } from "../adapter/adapters/shared";
 import { buildFileContext, fileContextOfEntry, type MatchResult } from "../adapter/directory/file-context";
 import { declaredTypeForPath } from "../adapter/directory/matchers";
@@ -225,6 +226,20 @@ export function assetTypeFresh(asset: Asset): string {
   );
   if (recorded?.content_hash === hashContent(asset.entry.content())) return assetType(asset);
   return indexAsset(asset, { persist: true, supersede: false }).type;
+}
+
+/**
+ * The type each of `assets` of an akm bundle has by its bytes, as the next `akm index` would give it, for a check that
+ * holds the bytes it reads and must change nothing (`akm lint`): no index is read or written, and nothing is described
+ * but the type, so the answer is {@link assetTypeFresh}'s whatever the index holds. An asset akm does not type has none.
+ */
+export function assetTypesByContent(assets: readonly Asset[]): Map<Asset, string | undefined> {
+  return new Map(
+    assets.map((asset) => {
+      const root = bundleHolding(asset).root;
+      return [asset, classifyAkmFile(asset.entry.key, fileContextOfEntry(root, asset.entry))?.match.type];
+    }),
+  );
 }
 
 /**

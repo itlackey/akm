@@ -71,6 +71,27 @@ describe("akm lint --fix refuses a bundle configured writable: false (issue #761
     expect(fs.readFileSync(notePath, "utf8")).toBe(before);
   });
 
+  test("lint's refusal comes first, with its own sentence, not the write gate's", async () => {
+    storage = withIsolatedAkmStorage();
+    writeMemory(storage.stashDir, "note");
+
+    await expect(akmLint({ fix: true, config: readOnlyConfig(storage.stashDir) })).rejects.toThrow(
+      `lint: bundle "${storage.stashDir}" is configured \`writable: false\`; refusing to modify it.`,
+    );
+  });
+
+  test("the write gates refuse nothing lint fixed: a bundle that sets writable: true is fixed", async () => {
+    storage = withIsolatedAkmStorage();
+    const notePath = writeMemory(storage.stashDir, "note");
+    const config = makeConfig(storage.stashDir);
+    config.bundles = { stash: { path: storage.stashDir, writable: true } } as AkmConfig["bundles"];
+
+    const result = await akmLint({ fix: true, config });
+
+    expect(result.fixed.some((issue) => issue.issue === "missing-updated")).toBe(true);
+    expect(fs.readFileSync(notePath, "utf8")).toMatch(/updated:/);
+  });
+
   test("a read-only bundle still LINTS — only the mutation is refused", async () => {
     storage = withIsolatedAkmStorage();
     writeMemory(storage.stashDir, "note");
@@ -166,6 +187,7 @@ describe("akm lint --fix is transactional per file (issue #761)", () => {
       fix: true,
       stashRoot: storage.stashDir,
       stalePathRoots: [storage.stashDir],
+      write: (raw) => fs.writeFileSync(unwritable, raw, "utf8"),
     });
 
     const updated = issues.filter((issue) => issue.issue === "missing-updated");

@@ -33,7 +33,6 @@
 // `secret`, `script`, and `task` refs are path-resolved.
 // ----------------------------------------------------------------------------
 
-import fs from "node:fs";
 import path from "node:path";
 import { isScalar, parseDocument } from "yaml";
 import {
@@ -51,9 +50,9 @@ import {
 } from "../../core/asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../core/asset/frontmatter-lint";
 import { ruleApplies } from "../../core/asset/lint-text";
-import { isArchivedRelPath } from "../../core/asset/memory-archive";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { findStalePaths } from "../../core/asset/stale-path";
+import { holdsFile, isRetired } from "../../core/assets/held";
 import { localDateStamp } from "../../core/common";
 import { containsRedactedContent, REDACTED_CONTENT_MARKER } from "../../core/content-safety";
 import { DERIVED_SUFFIX } from "../../core/recognition-util";
@@ -267,7 +266,7 @@ function memoryArchiveHasRef(refType: string, refName: string, stashRoots: strin
   const candidates = refPathCandidates(refType, typeDir, refName);
   for (const root of stashRoots) {
     for (const candidate of candidates) {
-      if (isArchivedRelPath(candidate, root)) return true;
+      if (isRetired(root, candidate)) return true;
     }
   }
   return false;
@@ -292,8 +291,7 @@ export function resolveRefPathInStash(relPath: string, refType: string, refName:
   const typeDir = stashDirFor(refType);
   const candidates = typeDir === undefined ? [relPath] : refPathCandidates(refType, typeDir, refName);
   for (const candidate of candidates) {
-    const absPath = path.join(root, candidate);
-    if (fs.existsSync(absPath)) return absPath;
+    if (holdsFile(root, candidate)) return path.join(root, candidate);
   }
   return null;
 }
@@ -394,14 +392,11 @@ function classifyConceptRef(
     // What an asset declares as a ref is one wherever it points: it must exist as a file of that concept id.
     if (declared) {
       const files = [`${conceptId}.md`, ...filesForRef("", conceptId)];
-      const found = allRoots.some((root) =>
-        files.some((file) => fs.existsSync(path.join(root, file)) || isArchivedRelPath(file, root)),
-      );
+      const found = allRoots.some((root) => files.some((file) => holdsFile(root, file) || isRetired(root, file)));
       return found ? null : `${conceptId}.md`;
     }
     // A path ref outside the type folders is checked only when the index recorded a move away from it.
-    const gone =
-      !allRoots.some((root) => fs.existsSync(path.join(root, `${conceptId}.md`))) && movedConcepts.has(conceptId);
+    const gone = !allRoots.some((root) => holdsFile(root, `${conceptId}.md`)) && movedConcepts.has(conceptId);
     return gone ? `${conceptId}.md` : null;
   }
   if (isNonRefName(conceptId.slice(slash + 1))) return null;
@@ -413,7 +408,7 @@ function classifyConceptRef(
   ]);
   for (const root of allRoots) {
     for (const candidate of candidates) {
-      if (fs.existsSync(path.join(root, candidate)) || isArchivedRelPath(candidate, root)) return null;
+      if (holdsFile(root, candidate) || isRetired(root, candidate)) return null;
     }
   }
   return `${conceptId}.md`;
@@ -727,7 +722,7 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
     if (ctx.fix) {
       let mtime: Date;
       try {
-        mtime = fs.statSync(ctx.filePath).mtime;
+        mtime = ctx.modified?.() ?? new Date();
       } catch {
         mtime = new Date();
       }
@@ -767,7 +762,8 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
     if (!modified) return;
     modified = false;
     try {
-      fs.writeFileSync(ctx.filePath, currentRaw, "utf8");
+      if (ctx.write === undefined) throw new Error("there is nowhere to save the fixed text");
+      ctx.write(currentRaw);
       // Propagate the mutated raw back so subclasses can re-parse if needed
       ctx.raw = currentRaw;
     } catch (e) {

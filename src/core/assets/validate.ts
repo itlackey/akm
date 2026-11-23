@@ -12,10 +12,20 @@
 
 import type { AssetEntry } from "../adapter/bundle-adapter";
 import type { AssetEdit, Diagnostic, ValidateContext } from "../adapter/types";
+import { type Asset, assetOf } from "./asset";
 import { assetBundleOf } from "./bundle";
 
 /** The categories the akm adapter accepts for a fact's `category`: its validators' vocabulary, which the frontmatter forms offer. */
-export { KNOWN_CATEGORIES } from "../adapter/adapters/akm-lint";
+/** The akm adapter's own per-type checks, which `akm lint --fix` runs on the text it holds while it repairs it. */
+export {
+  derivedSiblingPath,
+  KNOWN_CATEGORIES,
+  MAX_SKILL_GROUP_DEPTH,
+  matchWorkflowPlaceholder,
+  perTypeChecks,
+  perTypeFrontend,
+} from "../adapter/adapters/akm-lint";
+export type { FileDiagnostic } from "../adapter/validate-context";
 
 /**
  * What the bundle's adapter reports for the assets it lists, each checked as an `update` in the adapter's listing
@@ -31,4 +41,26 @@ export function validateBundleAssets(
     .assets.filter(({ entry }) => options.keep === undefined || options.keep(entry))
     .map(({ conceptId }) => ({ conceptId, op: "update" }));
   return held.validate(edits, options.ctx ?? {});
+}
+
+/** Every asset the bundle's adapter lists, one per concept, in the adapter's listing order. */
+export function listBundleAssets(bundle: {
+  name: string;
+  path: string;
+  location?: string;
+  adapterId?: string;
+}): Asset[] {
+  const held = assetBundleOf(bundle);
+  return held.list().assets.map((found) => assetOf(held, found));
+}
+
+/** The asset the bundle holds at the stored `key`, when it holds one there. */
+export function assetAtKey(
+  bundle: { name: string; path: string; location?: string; adapterId?: string },
+  key: string,
+): Asset | undefined {
+  const held = assetBundleOf(bundle);
+  const conceptId = held.identifyKey(key);
+  const found = conceptId === null ? undefined : held.read(conceptId);
+  return found?.entry.key === key ? assetOf(held, found) : undefined;
 }

@@ -141,4 +141,10 @@ export interface LintContext {
   bundleRoots?: ReadonlyMap<string, string>;
   /** Rewrite the links to moved refs only (`fix` rewrites them too, with every other fix). */
   fixMovedRefs?: boolean;
+  /** When the asset last changed: the date a `missing-updated` fix stamps. */
+  modified?: () => Date;
+  /** Save the fixed text of the asset (a fix asks for it; it throws when the text cannot be saved). */
+  write?: (raw: string) => void;
+  /** Delete the asset (the fix of a stub; it throws when it cannot be deleted). */
+  remove?: () => void;
 }
