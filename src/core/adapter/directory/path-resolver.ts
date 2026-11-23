@@ -8,7 +8,7 @@ import { deriveInstallations, sourceOfBundle } from "../../../indexer/installati
 import { resolveSourceEntries } from "../../../indexer/search/search-source";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../asset/asset-ref";
 import { findAsset } from "../../assets/read";
-import { bundleIdAt } from "../../bundle-at-dir";
+import { materialiseBundleDir } from "../../bundle-at-dir";
 import { deriveBundleIds } from "../../bundle-id";
 import { safeRealpath } from "../../common";
 
@@ -39,7 +39,7 @@ function resolveViaDisk(ref: BundleRef, options: ResolveAssetPathOptions): strin
     : allSources;
   const bundle = options.honorOrigin !== false ? ref.bundle : undefined;
   // The first of the sources, in order (the named directory's bundle first), that holds the ref.
-  if (options.stashDir !== undefined) bundleIdAt(options.stashDir);
+  if (options.stashDir !== undefined) materialiseBundleDir(options.stashDir);
   const asset = deriveBundleIds([...sources])
     .filter((id) => bundle === undefined || id === bundle)
     .map((id) => findAsset(makeBundleRef(id, ref.conceptId)))

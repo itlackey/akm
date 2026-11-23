@@ -47,8 +47,8 @@ import path from "node:path";
 import { registerTestRoot } from "../scripts/sweep-test-tmp";
 
 import { _resetParsedInvocationForTests } from "../src/cli/invocation";
-import { clearAdHocBundles } from "../src/core/assets/bundle";
 import { resetConfigCache } from "../src/core/config/config";
+import { _resetMaterialisedBundlesForTests } from "../src/core/materialised-bundles";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-writer-lock";
 import { agentRuntime } from "../src/integrations/agent/runtime";
@@ -370,7 +370,7 @@ function healSandboxEnv(): void {
 function resetSingletons(): void {
   resetAllSeams();
   // Directories a test named (`--dir`) are bundles of that test alone.
-  clearAdHocBundles();
+  _resetMaterialisedBundlesForTests();
   resetConfigCache();
   clearEmbeddingCache();
   resetLocalEmbedder();

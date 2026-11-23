@@ -22,7 +22,7 @@ import { lookupAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import { addressOf } from "../../core/assets/write";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
-import { bundleIdAt } from "../../core/bundle-at-dir";
+import { materialiseBundleDir } from "../../core/bundle-at-dir";
 import { isWithin, resolveStashDir, safeRealpath } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -724,8 +724,8 @@ async function resolveReflectSource(
   // A proposal writes the file that owns the ref in the proposal's own bundle; the type is that of
   // the file that owns it wherever it is (a file in another bundle is `createProposal`'s to refuse, #1000).
   const root = path.resolve(options.target?.root ?? stash);
-  const address = addressOf(bundleIdAt(root), options.ref);
-  const owned = lookupAsset(options.itemRef ?? options.ref, { bundle: bundleIdAt(stash) });
+  const address = addressOf(materialiseBundleDir(root), options.ref);
+  const owned = lookupAsset(options.itemRef ?? options.ref, { bundle: materialiseBundleDir(stash) });
   const parsedRef: AssetRef = { type: owned ? assetType(owned) : address.type, name: address.name };
   // A secret's content is never read, whatever it looks like.
   if (REFLECT_REFUSED_TYPES.has(parsedRef.type)) {
@@ -740,7 +740,7 @@ async function resolveReflectSource(
   let assetFile: string | undefined;
   if (assetContent === undefined) {
     try {
-      const held = owned ?? lookupAsset(options.itemRef ?? options.ref, { bundle: bundleIdAt(stash) });
+      const held = owned ?? lookupAsset(options.itemRef ?? options.ref, { bundle: materialiseBundleDir(stash) });
       if (held) {
         // asset-io: display the layout guard below names the file in its refusal
         assetFile = held.entry.file;

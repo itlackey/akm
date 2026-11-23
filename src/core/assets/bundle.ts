@@ -26,74 +26,12 @@ import type {
 import { bundleAdapterId } from "../adapter/detect-adapter";
 import { bundleOf, requireAdapter } from "../adapter/registry";
 import type { AssetEdit, Bundle, Diagnostic, IndexDocument, ValidateContext } from "../adapter/types";
-import { bundleIdForDir, deriveBundleIds } from "../bundle-id";
-import { resolveStashDir, safeRealpath } from "../common";
+import { deriveBundleIds } from "../bundle-id";
+import { resolveStashDir } from "../common";
 import { type AkmConfig, loadConfig } from "../config/config";
 import { bundleAtDir } from "../config/config-sources";
 import { ConfigError, UsageError, type UsageErrorCode } from "../errors";
-
-type BundleSource = { name: string; path: string; location?: string; adapterId?: string };
-
-/**
- * Bundles of directories no configured bundle is at (an ad-hoc `--dir`, the working directory named by
- * `AKM_BUNDLE_DIR`, a directory a stored record names), by id. Each directory has one id, kept for the life of the process.
- */
-const adHocBundles = new Map<string, BundleSource>();
-const adHocIdOfDir = new Map<string, string>();
-
-/**
- * Make the bundle of a directory a caller holds addressable by an id (`bundleFor`): one no config entry names, or one
- * config names but did not resolve to a directory (a git bundle not yet cloned that a write has just made; it keeps the
- * adapter and location config gives it). A configured bundle keeps its adapter and location, and a store is never replaced. Returns the id: the one the
- * directory already has, else `source.name`, else (another directory holds that id) an id derived from this
- * directory that no configured name and no other registered directory has. Use the returned id, not the one asked for.
- */
-export function registerAdHocBundle(source: BundleSource): string {
-  const config = loadConfig();
-  const entry = config.bundles?.[source.name];
-  const named = entry !== undefined;
-  if (named) {
-    // A configured bundle keeps the adapter and location config gives it, whatever the caller holds.
-    let held: SearchSource | undefined;
-    try {
-      const sources = activeSources(config);
-      held = sources[deriveBundleIds(sources).indexOf(source.name)];
-    } catch {
-      // The configured sources cannot be resolved as a set: this bundle is then taken as the caller holds it.
-    }
-    // A store, or a directory bundle the caller holds at the directory config resolves it to, is config's as it is.
-    if (held !== undefined && !held.unresolved) {
-      if (entry.location !== undefined || safeRealpath(held.path) === safeRealpath(source.path)) return source.name;
-    }
-    // Otherwise the caller holds the directory somewhere else (a scratch copy a task is checked in) or config has not
-    // resolved it yet (a git bundle a write just cloned): it is kept where the caller has it.
-    const adapterId = entry.adapter ?? held?.adapterId;
-    source = {
-      name: source.name,
-      path: source.path,
-      ...(adapterId !== undefined ? { adapterId } : {}),
-      ...(entry.location !== undefined ? { location: entry.location } : {}),
-    };
-  }
-  const dir = safeRealpath(source.path);
-  // A name config gives a bundle is its id, whatever id the directory was registered under before (a rename).
-  let id = named ? source.name : (adHocIdOfDir.get(dir) ?? source.name);
-  const holder = adHocBundles.get(id);
-  // An id whose directory is gone (a removed temporary directory) is free again.
-  const heldByOther = !named && holder !== undefined && safeRealpath(holder.path) !== dir && fs.existsSync(holder.path);
-  if (heldByOther) {
-    id = bundleIdForDir(source.path, new Set([...Object.keys(config.bundles ?? {}), ...adHocBundles.keys()]));
-  }
-  adHocIdOfDir.set(dir, id);
-  adHocBundles.set(id, { ...source, name: id });
-  return id;
-}
-
-/** Forget the ad-hoc bundles: a host that serves many requests (AKM Desktop) and each test start clean. */
-export function clearAdHocBundles(): void {
-  adHocBundles.clear();
-  adHocIdOfDir.clear();
-}
+import { type BundleSource, materialisedBundle, materialisedBundles } from "../materialised-bundles";
 
 export class AssetBundle {
   /** The id refs use. */
@@ -252,17 +190,25 @@ export function activeSources(config: AkmConfig): SearchSource[] {
 }
 
 /**
- * The bundle `id` names: a configured bundle, the implicit working bundle or `AKM_BUNDLE_DIR`, else an ad-hoc directory
- * recorded by `bundleSourceAt`. Its adapter is the one config records for it. Refused when no bundle has the id.
+ * The bundle `id` names: a configured bundle (the implicit working bundle and `AKM_BUNDLE_DIR` are among the resolved
+ * sources), else a directory a command materialised (`materialiseBundleDir`). Its adapter is the one config records
+ * for it. A configured bundle is never shadowed by a materialised one. Refused when no bundle has the id.
  */
 export function bundleFor(id: string): AssetBundle {
-  // An ad-hoc directory is recorded for an id no config entry has; the configured sources need not be resolvable for it.
-  const adHoc = adHocBundles.get(id);
-  if (adHoc && fs.existsSync(adHoc.path)) return assetBundleOf(adHoc);
-  const sources = activeSources(loadConfig());
-  const source = sources[deriveBundleIds([...sources]).indexOf(id)];
-  if (source) return assetBundleOf(sourceBundle(id, source));
-  if (adHoc) return assetBundleOf(adHoc);
+  const materialised = materialisedBundle(id);
+  let sources: SearchSource[] | undefined;
+  try {
+    sources = activeSources(loadConfig());
+  } catch (cause) {
+    // The configured sources need not be resolvable for a directory a command was handed.
+    if (materialised === undefined) throw cause;
+  }
+  const source = sources?.[deriveBundleIds([...sources]).indexOf(id)];
+  // A configured source is never shadowed; the implicit working bundle (no registry id) yields to a directory a command materialised under its id.
+  if (source && (source.registryId !== undefined || !materialised || !fs.existsSync(materialised.path))) {
+    return assetBundleOf(sourceBundle(id, source));
+  }
+  if (materialised) return assetBundleOf(materialised);
   throw new ConfigError(`Bundle "${id}" is not among the configured sources.`, "INVALID_CONFIG_FILE");
 }
 
@@ -275,34 +221,37 @@ function sourceBundle(name: string, source: SearchSource): BundleSource {
   };
 }
 
-/**
- * Every bundle in source order (the default bundle first); an unresolved source is left out. `adHoc`: then the
- * directories `bundleSourceAt` named, which a lookup may need and a listing never includes.
- */
-export function orderedBundles(options: { adHoc?: boolean } = {}): AssetBundle[] {
+/** Every configured bundle in source order (the default bundle first); an unresolved source is left out. */
+export function orderedBundles(): AssetBundle[] {
   const config = loadConfig();
+  const sources = activeSources(config);
+  const ids = deriveBundleIds(sources);
+  return sources.flatMap((source, index) =>
+    source.unresolved ? [] : [assetBundleOf(sourceBundle(ids[index] as string, source))],
+  );
+}
+
+/**
+ * The bundles a lookup looks in: the configured ones, then the directories a command materialised. The implicit working
+ * bundle yields to a materialised directory that has its id; a configured bundle never does. A listing of every bundle
+ * (`orderedBundles`) never includes the materialised ones.
+ */
+export function lookupBundles(): AssetBundle[] {
+  const held = materialisedBundles();
   let sources: SearchSource[] = [];
   try {
-    sources = activeSources(config);
+    sources = activeSources(loadConfig());
   } catch (error) {
     // The configured sources can be unresolvable (no working directory) while the directories a command was handed are not.
-    if (!options.adHoc || adHocBundles.size === 0) throw error;
+    if (held.length === 0) throw error;
   }
   const ids = deriveBundleIds(sources);
-  // An ad-hoc directory whose id a source also derives (two directories named `stash`) is the one a command named.
-  const named = (id: string): BundleSource | undefined => {
-    const held = adHocBundles.get(id);
-    return options.adHoc && held !== undefined && fs.existsSync(held.path) ? held : undefined;
-  };
-  const bundles = sources.flatMap((source, index) =>
-    source.unresolved || named(ids[index] as string) !== undefined
-      ? []
-      : [assetBundleOf(sourceBundle(ids[index] as string, source))],
-  );
-  if (options.adHoc) {
-    for (const source of adHocBundles.values()) {
-      if (fs.existsSync(source.path)) bundles.push(assetBundleOf(source));
-    }
-  }
-  return bundles;
+  const heldIds = new Set(held.map((source) => source.name));
+  const bundles = sources.flatMap((source, index) => {
+    const id = ids[index] as string;
+    if (source.unresolved || (source.registryId === undefined && heldIds.has(id))) return [];
+    return [assetBundleOf(sourceBundle(id, source))];
+  });
+  const taken = new Set(bundles.map((bundle) => bundle.name));
+  return [...bundles, ...held.filter((source) => !taken.has(source.name)).map((source) => assetBundleOf(source))];
 }

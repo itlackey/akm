@@ -19,15 +19,10 @@ import { compareCodePoints } from "../common";
 import { assetNotFound, ConfigError } from "../errors";
 import { warnOnce } from "../warn";
 import { type Asset, assetOf, readExact, readFrom, readOutdated } from "./asset";
-import { type AssetBundle, assetBundleOf, bundleFor, orderedBundles } from "./bundle";
+import { type AssetBundle, assetBundleOf, bundleFor, lookupBundles, orderedBundles } from "./bundle";
 import { assetTypes } from "./type";
 
 export type { Asset } from "./asset";
-
-/** The bundles a lookup looks in, in order: a source set that cannot be read fails the lookup, as it always has. */
-function lookupBundles(): AssetBundle[] {
-  return orderedBundles({ adHoc: true });
-}
 
 /**
  * An input ref, qualified: the one place an unqualified ref is resolved to a bundle (§4.2). A qualified `input` keeps its
@@ -131,8 +126,8 @@ export function listAssets(
   } = {},
 ): Asset[] {
   const found: Asset[] = [];
-  // A bundle named by its id may be an ad-hoc directory a command was handed; a listing of every bundle never is.
-  for (const held of orderedBundles({ adHoc: options.bundle !== undefined })) {
+  // A bundle named by its id may be a directory a command materialised; a listing of every bundle never is.
+  for (const held of options.bundle !== undefined ? lookupBundles() : orderedBundles()) {
     const bundle = held.name;
     if (options.bundle !== undefined && bundle !== options.bundle) continue;
     if (held.isStore) {

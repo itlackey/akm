@@ -32,7 +32,7 @@ import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { listAssets, requireAsset } from "../../core/assets/read";
-import { bundleIdAt, bundleSourceAt } from "../../core/bundle-at-dir";
+import { bundleSourceAt, materialiseBundleDir } from "../../core/bundle-at-dir";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-types";
@@ -337,7 +337,7 @@ export function loadExistingKnowledgeBodyHashes(targetRoot: string): Set<string>
   const hashes = new Set<string>();
   const bundle = resolveConsolidationSourceOwner({}, targetRoot)?.bundleId;
   if (bundle === undefined) return hashes;
-  bundleIdAt(targetRoot, undefined, { name: bundle });
+  materialiseBundleDir(targetRoot, undefined, { name: bundle });
   for (const asset of listAssets({ bundle })) {
     if (!asset.conceptId.startsWith("knowledge/")) continue;
     try {
@@ -508,7 +508,7 @@ function resolveConsolidationSourceOwner(
     const target = deriveInstallations(sources)[targetIndex];
     if (!target) return undefined;
     // The directory is a bundle the facade takes by its id, which config may not name (an override directory).
-    const bundleId = bundleIdAt(stashDir, opts.config, { name: target.id });
+    const bundleId = materialiseBundleDir(stashDir, opts.config, { name: target.id });
     return {
       bundleId,
       sourceRoot: targetRoot,

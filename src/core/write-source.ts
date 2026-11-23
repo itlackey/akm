@@ -47,8 +47,8 @@ import { assertWritableFile } from "./adapter/directory-adapter";
 import { normalizeAkmMarkdown } from "./asset/akm-markdown";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName } from "./asset/resolve-ref";
-import { assertAdapterWrites, detectBundleAdapter, registerAdHocBundle } from "./assets/gate";
-import { bundleIdForDir } from "./bundle-id";
+import { assertAdapterWrites, detectBundleAdapter } from "./assets/gate";
+import { materialiseBundleDir } from "./bundle-at-dir";
 import { existingFileMode, isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
 import { bundleAtDir, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
@@ -208,12 +208,8 @@ export function resolveWorkingStashTarget(
       throw new ConfigError("The AKM_BUNDLE_DIR source is disabled in config.", "INVALID_CONFIG_FILE");
     }
     const adapterId = detectBundleAdapter(stashDir);
-    // The directory is a bundle no config entry names: the facade takes it by the id it is registered under.
-    const bundleId = registerAdHocBundle({
-      name: bundleIdForDir(stashDir, new Set(Object.keys(akmConfig.bundles ?? {}))),
-      path: stashDir,
-      adapterId,
-    });
+    // The directory is a bundle no config entry names: the facade takes it by the id it is materialised under.
+    const bundleId = materialiseBundleDir(stashDir, akmConfig, { adapterId });
     return {
       source: { kind: "filesystem", name: bundleId, path: stashDir, adapterId },
       config: { type: "filesystem", name: bundleId, path: stashDir, writable: true },

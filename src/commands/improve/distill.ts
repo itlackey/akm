@@ -29,7 +29,7 @@ import { lookupAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import { addressOf } from "../../core/assets/write";
 import { authoringRulesForType } from "../../core/authoring-rules";
-import { bundleIdAt } from "../../core/bundle-at-dir";
+import { materialiseBundleDir } from "../../core/bundle-at-dir";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
@@ -479,7 +479,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const config = options.config ?? loadConfig();
   const stash = options.stashDir ?? resolveStashDir();
   // An existing input is addressed where its file is; only a ref no file owns is read by placement.
-  const address = addressOf(bundleIdAt(stash), inputRef);
+  const address = addressOf(materialiseBundleDir(stash), inputRef);
   const profile = options.improveProfile ?? resolveImproveStrategy(undefined, config).config;
   options = { ...options, improveProfile: profile };
   const targetKind = options.proposalKind ?? "lesson";
@@ -500,7 +500,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const ledgerRef = options.itemRef ?? inputRef;
   const eligMeta = options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {};
   // The input's type is its file's; the ref's first folder names it only for a ref no file owns.
-  const owned = lookupAsset(inputRef, { bundle: bundleIdAt(stash) });
+  const owned = lookupAsset(inputRef, { bundle: materialiseBundleDir(stash) });
   const inputType = owned ? assetType(owned) : address.type;
   if (isDistillRefusedInputType(inputType)) {
     const secret = inputType === "env" || inputType === "secret";

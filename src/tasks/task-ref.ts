@@ -11,10 +11,13 @@
 import { stashDirFor, withoutTypeHead } from "../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
-import { adapterWrites, bundleAdapterId, registerAdHocBundle } from "../core/assets/gate";
+import { adapterWrites, bundleAdapterId } from "../core/assets/gate";
 import { type Asset, listAssets, readAsset, requireAsset } from "../core/assets/read";
 import { assetTypes } from "../core/assets/type";
 import { addressOf } from "../core/assets/write";
+import { materialiseBundleDir } from "../core/bundle-at-dir";
+import { loadConfig } from "../core/config/config";
+import { bundleAtDir } from "../core/config/config-sources";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 
 /** Where tasks are looked up: the bundle with this id. */
@@ -36,13 +39,19 @@ export function taskScopeOf(source: TaskBundleSource): TaskScope {
   return { bundle: taskBundleId(source) };
 }
 
-/** The id of the bundle `source` is, which the facade takes; an unconfigured directory is recorded under its name. */
+/**
+ * The id of the bundle `source` is, which the facade takes. A configured bundle held at its own directory (or a store)
+ * is that bundle; the same name held elsewhere (a scratch copy) is the bundle of that directory, never the configured
+ * one; an unconfigured directory is materialised under its name.
+ */
 function taskBundleId(source: TaskBundleSource): string {
-  return registerAdHocBundle({
-    name: source.name,
-    path: source.path,
+  const config = loadConfig();
+  const configured = config.bundles?.[source.name];
+  const own =
+    configured !== undefined && (configured.location !== undefined || bundleAtDir(config, source.path) === source.name);
+  return materialiseBundleDir(source.path, config, {
+    ...(configured === undefined || own ? { name: source.name } : {}),
     ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
-    ...(source.location !== undefined ? { location: source.location } : {}),
   });
 }
 

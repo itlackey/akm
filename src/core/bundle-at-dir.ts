@@ -12,10 +12,11 @@
  */
 
 import path from "node:path";
-import { detectBundleAdapter, registerAdHocBundle } from "./assets/gate";
+import { detectBundleAdapter } from "./assets/gate";
 import { bundleIdForDir } from "./bundle-id";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { bundleAtDir } from "./config/config-sources";
+import { holdMaterialised, materialisedBundles, materialisedIdOf, materialisedIdTaken } from "./materialised-bundles";
 
 /** The key rows for the bundle at `dir` are filed under: its id, else (no configured bundle) the directory's own path. */
 export function bundleKeyForDir(config: AkmConfig, dir: string): string {
@@ -40,21 +41,32 @@ export function bundleSourceAt(
 }
 
 /**
- * The id of the bundle at `dir`, for the facade, which takes bundle ids (`bundleFor`). A directory no configured bundle
- * is at is recorded as an ad-hoc bundle, so its id resolves for the rest of the process.
+ * The id of the bundle at `dir`, for the facade, which takes bundle ids (`bundleFor`). The one function that makes a
+ * directory addressable by an id; a command calls it where it holds a directory it was handed, once per directory (a
+ * repeat answers the same id). Config is read first and never shadowed:
+ *  - `as.name` (a name a stored record gave the directory) naming a configured bundle is that bundle;
+ *  - a configured bundle at `dir` is that bundle;
+ *  - any other directory (a `--dir`, the implicit working bundle, `AKM_BUNDLE_DIR`) is materialised, in memory only,
+ *    under `as.name`, else `bundleIdForDir`: its basename slug, or `<slug>-<8-hex of the path>` when a configured
+ *    bundle or another directory that is still there has that id. A materialised directory takes the id of the implicit
+ *    working bundle (which is one too); it never takes a configured bundle's.
  */
-export function bundleIdAt(
+export function materialiseBundleDir(
   dir: string,
   config: AkmConfig = loadConfig(),
   as: { name?: string; adapterId?: string } = {},
 ): string {
-  const source = bundleSourceAt(dir, config);
-  const name = as.name ?? source.name;
-  // `as`: a name a stored record gave the directory (which no configured bundle may have any more) or an adapter a caller read it with.
-  if (as.name !== undefined ? !(as.name in (config.bundles ?? {})) : bundleAtDir(config, dir) === undefined) {
-    return registerAdHocBundle({ ...source, name, ...(as.adapterId !== undefined ? { adapterId: as.adapterId } : {}) });
+  const configuredNames = Object.keys(config.bundles ?? {});
+  if (as.name !== undefined ? as.name in (config.bundles ?? {}) : bundleAtDir(config, dir) !== undefined) {
+    return as.name ?? (bundleAtDir(config, dir) as string);
   }
-  return name;
+  const existing = materialisedIdOf(dir);
+  if (existing !== undefined) return existing;
+  const taken = new Set([...configuredNames, ...materialisedBundles().map((held) => held.name)]);
+  let id = as.name ?? bundleIdForDir(dir, taken);
+  if (materialisedIdTaken(id, dir)) id = bundleIdForDir(dir, new Set([...taken, id]));
+  holdMaterialised({ name: id, path: dir, adapterId: as.adapterId ?? detectBundleAdapter(dir) });
+  return id;
 }
 
 /**

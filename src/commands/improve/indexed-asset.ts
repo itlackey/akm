@@ -9,7 +9,7 @@
 
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type Asset, findAsset, lookupAsset } from "../../core/assets/read";
-import { bundleIdAt } from "../../core/bundle-at-dir";
+import { materialiseBundleDir } from "../../core/bundle-at-dir";
 
 /** The asset an index row names, or undefined when no bundle holds it. A stored row is not the caller's to fix, so an outdated spelling resolves quietly. */
 export function indexedAsset(bundleId: string | undefined, conceptId: string): Asset | undefined {
@@ -47,7 +47,7 @@ export function plannedAsset(planned: { ref: string; itemRef?: string }, stashDi
   try {
     const ref = planned.itemRef ?? planned.ref;
     if (parseBundleRef(ref).bundle !== undefined) return findAsset(ref);
-    return lookupAsset(ref, stashDir === undefined ? undefined : { bundle: bundleIdAt(stashDir) });
+    return lookupAsset(ref, stashDir === undefined ? undefined : { bundle: materialiseBundleDir(stashDir) });
   } catch {
     return undefined;
   }
@@ -56,7 +56,7 @@ export function plannedAsset(planned: { ref: string; itemRef?: string }, stashDi
 /** The asset `ref` names in the bundle at `stashDir` (a ref that names another bundle is not found here). */
 export function assetInStash(stashDir: string, ref: string): Asset | undefined {
   try {
-    const bundle = bundleIdAt(stashDir);
+    const bundle = materialiseBundleDir(stashDir);
     const parsed = parseBundleRef(ref);
     if (parsed.bundle !== undefined && parsed.bundle !== bundle) return undefined;
     return findAsset(makeBundleRef(bundle, parsed.conceptId));

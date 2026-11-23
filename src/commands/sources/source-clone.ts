@@ -14,7 +14,7 @@ import { parseFrontmatter, replaceFrontmatterBlocks } from "../../core/asset/fro
 import { conceptIdFromTypeName, displayRef, parseQualifiedPlacementRef } from "../../core/asset/resolve-ref";
 import { findAsset } from "../../core/assets/read";
 import { assetTypeFresh } from "../../core/assets/type";
-import { bundleIdAt } from "../../core/bundle-at-dir";
+import { materialiseBundleDir } from "../../core/bundle-at-dir";
 import { isWithin, safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -332,7 +332,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
  * index use, so a clone sees exactly the file the index holds for the ref.
  */
 function resolveOpaqueAsset(source: SearchSource, conceptId: string): { path: string; type?: string } | undefined {
-  const asset = findAsset(makeBundleRef(bundleIdAt(source.path), conceptId));
+  const asset = findAsset(makeBundleRef(materialiseBundleDir(source.path), conceptId));
   if (!asset?.entry.file) return undefined;
   return { path: safeRealpath(asset.entry.file), type: assetTypeFresh(asset) };
 }

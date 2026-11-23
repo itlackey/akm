@@ -13,9 +13,9 @@ import {
   requireAdapter,
 } from "../adapter/registry";
 import type { UsageErrorCode } from "../errors";
-import { assetBundleOf, bundleFor, clearAdHocBundles } from "./bundle";
+import { assetBundleOf, bundleFor } from "./bundle";
 
-export { activeSources, registerAdHocBundle } from "./bundle";
+export { activeSources } from "./bundle";
 
 /**
  * Refuse an asset write the bundle's adapter does not make: an adapter that writes nothing, or (with `type`) one
@@ -85,7 +85,6 @@ export function bundleStorageExists(source: {
 /** Forget what the adapters read of their keyrings and vaults. The CLI calls it per command and Desktop per request: a store changes between them. */
 export function clearAdapterCaches(): void {
   clearRegistryCaches();
-  clearAdHocBundles();
 }
 
 export { bundleAdapterId } from "../adapter/detect-adapter";

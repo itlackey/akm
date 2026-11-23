@@ -3,17 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * A directory no config names (`--dir`) is a bundle the facade takes by an id (§4.2, 4e.2). Each directory has one id for
- * the life of the process, and two directories with one basename never share one.
+ * A directory no config names (`--dir`) is materialised by `materialiseBundleDir`, once, and the facade takes it by the
+ * id that returns (§4.2, §4.3). Two directories with one basename never share an id, and a configured bundle is never
+ * shadowed by a materialised directory.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { bundleFor } from "../../../src/core/assets/bundle";
-import { findAsset } from "../../../src/core/assets/read";
+import { findAsset, listAssets } from "../../../src/core/assets/read";
 import { addressOf } from "../../../src/core/assets/write";
-import { bundleIdAt } from "../../../src/core/bundle-at-dir";
+import { materialiseBundleDir } from "../../../src/core/bundle-at-dir";
 import { saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { taskScopeOf } from "../../../src/tasks/task-ref";
@@ -45,16 +46,54 @@ test("two unconfigured directories with one basename get distinct ids, and each 
   const dirA = stashIn(a.dir);
   const dirB = stashIn(b.dir);
 
-  const idA = bundleIdAt(dirA);
-  const idB = bundleIdAt(dirB);
+  const idA = materialiseBundleDir(dirA);
+  const idB = materialiseBundleDir(dirB);
 
   expect(idA).not.toBe(idB);
   expect(addressOf(idA, "knowledge/note").file).toBe(path.join(dirA, "knowledge", "note.md"));
   expect(addressOf(idB, "knowledge/note").file).toBe(path.join(dirB, "knowledge", "note.md"));
   // A directory keeps its id.
-  expect(bundleIdAt(dirA)).toBe(idA);
-  expect(bundleIdAt(dirB)).toBe(idB);
+  expect(materialiseBundleDir(dirA)).toBe(idA);
+  expect(materialiseBundleDir(dirB)).toBe(idB);
   expect(addressOf(idA, "knowledge/note").file).toBe(path.join(dirA, "knowledge", "note.md"));
+});
+
+test("a scratch copy of a configured bundle is a bundle of its own directory: the configured one is never shadowed", () => {
+  const configured = makeSandboxDir("akm-mat-config-");
+  const scratch = makeSandboxDir("akm-mat-scratch-");
+  cleanups.push(configured.cleanup, scratch.cleanup);
+  const dir = stashIn(configured.dir);
+  const copy = stashIn(scratch.dir);
+  fs.writeFileSync(path.join(copy, "knowledge", "note.md"), "---\ndescription: copy\n---\n\n# copy\n", "utf8");
+  saveConfig({ semanticSearchMode: "off", bundles: { docs: { path: dir } }, defaultBundle: "docs" });
+
+  const { bundle } = taskScopeOf({ name: "docs", path: copy });
+
+  expect(bundle).not.toBe("docs");
+  expect(addressOf(bundle, "knowledge/note").file).toBe(path.join(copy, "knowledge", "note.md"));
+  expect(addressOf("docs", "knowledge/note").file).toBe(path.join(dir, "knowledge", "note.md"));
+  expect(taskScopeOf({ name: "docs", path: dir }).bundle).toBe("docs");
+  expect(materialiseBundleDir(dir)).toBe("docs");
+  // A materialised directory is read by a lookup after the configured bundles, and a listing of every bundle omits it.
+  expect(listAssets().every((asset) => asset.bundle === "docs")).toBe(true);
+  expect(listAssets({ bundle }).map((asset) => asset.conceptId)).toEqual(["knowledge/note"]);
+});
+
+test("AKM_BUNDLE_DIR keeps the id it always had (its basename slug), and is listed once", () => {
+  const a = makeSandboxDir("akm-mat-implicit-");
+  cleanups.push(a.cleanup);
+  const dir = stashIn(a.dir);
+  const saved = process.env.AKM_BUNDLE_DIR;
+  process.env.AKM_BUNDLE_DIR = dir;
+  try {
+    const id = materialiseBundleDir(dir);
+    expect(id).toBe("stash");
+    expect(bundleFor(id).root).toBe(dir);
+    expect(listAssets({ bundle: id }).map((asset) => asset.ref)).toEqual(["stash//knowledge/note"]);
+  } finally {
+    if (saved === undefined) delete process.env.AKM_BUNDLE_DIR;
+    else process.env.AKM_BUNDLE_DIR = saved;
+  }
 });
 
 test("a task source naming a configured bundle never replaces it: its adapter and location stay config's", async () => {
