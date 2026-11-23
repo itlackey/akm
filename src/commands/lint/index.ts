@@ -742,11 +742,16 @@ async function addAdapterFindings(
     return dir !== undefined && dirs.has(dir);
   };
   const seen = new Set([...found.fixed, ...found.flagged, ...found.warnings].map(lintIssueDedupeKey));
+  // A finding the sweep tried to fix is that finding, whether or not the fix landed: a fix that could not be written
+  // leaves the file as it was, and the adapter would report it again with its unfixed wording.
+  const fixTried = new Set(
+    [...found.fixed, ...found.flagged].filter((issue) => issue.fixed !== false).map((i) => `${i.file} ${i.issue}`),
+  );
   for (const issue of await adapterFindings(adapter.id, stashRoot, inSweep, sources, cfg, options)) {
     // A skill directory's check belongs to the skills sweep: `--type knowledge` does not report it.
     if (issue.issue === "missing-skill-md" && !dirs.has("skills")) continue;
     const key = lintIssueDedupeKey(issue);
-    if (seen.has(key)) continue;
+    if (seen.has(key) || fixTried.has(`${issue.file} ${issue.issue}`)) continue;
     seen.add(key);
     (isAdvisoryLintIssue(issue) ? found.warnings : found.flagged).push(issue);
   }
