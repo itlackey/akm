@@ -29,6 +29,7 @@ export function materializeFrozenScript(script: FrozenScriptSnapshot): Materiali
   }
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "akm-task-script-"));
   const file = path.join(directory, `snapshot${script.extension}`);
+  // asset-io: scratch materialized script
   fs.writeFileSync(file, bytes, { mode: 0o700 });
   return Object.freeze({ directory, file });
 }
@@ -49,10 +50,12 @@ export function scriptProgram(
   file: string,
   args: readonly string[],
 ): { argv: string[]; script: ScriptOrigin } {
+  // asset-io: scratch materialized script
   const script = { ref, bytes: fs.readFileSync(file), extension: path.extname(file).toLowerCase() };
   return { argv: scriptCommand(script, file, args), script: scriptOrigin(script) };
 }
 
 export function cleanupFrozenScript(materialized: MaterializedFrozenScript): void {
+  // asset-io: scratch materialized script
   fs.rmSync(materialized.directory, { recursive: true, force: true });
 }

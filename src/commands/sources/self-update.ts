@@ -71,6 +71,7 @@ export async function streamResponseToFile(
   const totalTimeoutMs = limits?.totalTimeoutMs ?? BINARY_TOTAL_TIMEOUT_MS;
   const overallDeadlineAt = Date.now() + totalTimeoutMs;
 
+  // asset-io: install self-update
   const fd = fs.openSync(destination, "w", 0o600);
   const reader = response.body.getReader();
   const hash = createHash("sha256");
@@ -462,18 +463,24 @@ export async function performUpgrade(
     }
   }
 
+  // asset-io: install self-update
   if (fs.existsSync(backupPath)) {
     warn(`A previous upgrade left a stale backup at ${backupPath}; overwriting it.`);
     removeFileBestEffort(backupPath);
   }
 
   try {
+    // asset-io: install self-update
     if (IS_WINDOWS) fs.renameSync(execPath, backupPath);
+    // asset-io: install self-update
     else fs.copyFileSync(execPath, backupPath);
+    // asset-io: install self-update
     fs.renameSync(stagedPath, execPath);
   } catch (err) {
     removeFileBestEffort(stagedPath);
+    // asset-io: install self-update
     if (!fs.existsSync(execPath) && fs.existsSync(backupPath)) {
+      // asset-io: install self-update
       fs.renameSync(backupPath, execPath);
     }
     throw err;
@@ -666,6 +673,7 @@ function readInstalledCliVersion(akmBin: string): string | undefined {
 
 function removeFileBestEffort(filePath: string): void {
   try {
+    // asset-io: install self-update
     fs.unlinkSync(filePath);
   } catch {
     // Cleanup is best-effort; the primary operation determines success.
@@ -692,7 +700,9 @@ function normalizePathSeparators(value: string | undefined): string {
 function getInstalledPackageName(): string {
   try {
     const pkgPath = path.resolve(getDirname(import.meta.url), "../../../package.json");
+    // asset-io: install self-update
     if (fs.existsSync(pkgPath)) {
+      // asset-io: install self-update
       const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as { name?: unknown };
       if (typeof pkg.name === "string" && pkg.name.trim()) {
         return pkg.name.trim();
@@ -707,6 +717,7 @@ function getInstalledPackageName(): string {
 function resolveNodePackageManagerCommand(name: "npm" | "pnpm"): string {
   const extension = IS_WINDOWS ? ".cmd" : "";
   const adjacent = path.join(path.dirname(process.execPath), `${name}${extension}`);
+  // asset-io: install self-update
   return fs.existsSync(adjacent) ? adjacent : name;
 }
 

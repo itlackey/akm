@@ -102,6 +102,7 @@ export function get() {
     path: configPath,
     projectWarnings: projects.warnings,
     localProjects: projects.local,
+    // asset-io: config
     exists: fs.existsSync(configPath),
     config: effective,
     // What the embedding settings need beyond the config: whether this platform has the built-in embedder, and the

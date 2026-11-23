@@ -50,6 +50,7 @@ function realDirectory(value: string, label: string): string {
   let stat: fs.Stats;
   try {
     real = fs.realpathSync(value);
+    // asset-io: bundle-root root probe
     stat = fs.statSync(real);
   } catch {
     throw new NotFoundError(`${label} is missing or unreadable. Rebuild the index and retry.`, "FILE_NOT_FOUND");

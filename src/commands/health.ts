@@ -678,6 +678,7 @@ function unreadableStateDbCheck(detail: string): HealthCheckResult {
  * must not apply them). `undefined` when it can be read as it is.
  */
 function readOnlyStateDbUnavailable(stateDbPath: string): HealthCheckResult | undefined {
+  // asset-io: state
   if (!fs.existsSync(stateDbPath)) {
     return {
       name: "state-db-readable",

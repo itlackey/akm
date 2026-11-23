@@ -292,6 +292,7 @@ function tryParseLocalRef(rawRef: string, explicitPath: boolean): ParsedLocalRef
   const resolvedPath = path.resolve(rawRef);
   let stat: fs.Stats;
   try {
+    // asset-io: user-input path the user named
     stat = fs.statSync(resolvedPath);
   } catch {
     // Explicit paths (./foo, ../bar, /abs) should throw on missing
@@ -682,6 +683,7 @@ function toReadableLocalId(absolutePath: string): string {
 function findGitRepoRoot(startDir: string): string | undefined {
   let current = path.resolve(startDir);
   while (true) {
+    // asset-io: host git root of the working directory
     if (fs.existsSync(path.join(current, ".git"))) {
       return current;
     }

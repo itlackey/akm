@@ -1431,6 +1431,7 @@ async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
     if (invocation.userArgs.length > 0) return;
     if (!isTerminal(2)) return;
     try {
+      // asset-io: config
       if (fs.existsSync(getConfigPath())) return;
     } catch {
       // If we can't resolve the config path, assume non-fresh and stay silent.

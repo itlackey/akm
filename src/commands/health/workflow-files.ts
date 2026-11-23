@@ -16,7 +16,9 @@ import type { HealthCheckResult } from "./types";
 /** The workflow files under a bundle root's `workflows` folder, sorted. */
 export function workflowFilesIn(root: string): string[] {
   const directory = path.join(root, "workflows");
+  // asset-io: deprecated
   if (!fs.existsSync(directory)) return [];
+  // asset-io: deprecated
   return fs
     .readdirSync(directory, { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".md") && entry.name.toLowerCase() !== "readme.md")

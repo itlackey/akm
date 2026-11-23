@@ -29,6 +29,7 @@ const realGit: GitRunner = (bundleRoot, args) => {
  * `.git` (unless a `git` seam is given), without a remote, or with nothing tracked.
  */
 export function trackedSecretIssues(bundleRoot: string, git: GitRunner = realGit): LintIssue[] {
+  // asset-io: bundle-root git checkout probe
   if (git === realGit && !fs.existsSync(path.join(bundleRoot, ".git"))) return [];
   if (!git(bundleRoot, ["rev-parse", "--is-inside-work-tree"]).ok) return [];
   const tracked = git(bundleRoot, ["ls-files", "--", "env", "secrets"]);

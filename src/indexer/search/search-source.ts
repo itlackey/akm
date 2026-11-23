@@ -456,7 +456,9 @@ export async function ensureSourceCaches(
  */
 function isMaterializedDir(dir: string): boolean {
   try {
+    // asset-io: install checkout probe
     if (!fs.statSync(dir).isDirectory()) return false;
+    // asset-io: install checkout probe
     return fs.readdirSync(dir).length > 0;
   } catch {
     return false;

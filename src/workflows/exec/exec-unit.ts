@@ -302,6 +302,7 @@ async function resolveExecCwd(input: RunExecUnitInput): Promise<ResolvedCwd> {
 
 async function isExistingDirectory(candidate: string): Promise<boolean> {
   try {
+    // asset-io: deprecated
     return (await fs.promises.stat(candidate)).isDirectory();
   } catch {
     return false;

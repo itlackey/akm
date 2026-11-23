@@ -95,6 +95,7 @@ export const proposeCommand = defineCommand({
       // `name` is flat; subdirectory placement is `--path`'s job.
       assertFlatAssetName(String(args.name));
       const proposedName = combineCreatePath(normalizeCreateSubPath(getStringArg(args, "path")), String(args.name));
+      // asset-io: user-input --file
       const taskText = fileFromFlag ? fs.readFileSync(path.resolve(fileFromFlag), "utf8") : (taskFromFlag ?? "");
       const timeoutMs = parseTimeoutFlags(args.timeout, parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms"));
       const project = resolveProject(loadConfig(), { project: getStringArg(args, "project") });

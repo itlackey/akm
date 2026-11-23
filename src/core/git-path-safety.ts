@@ -22,6 +22,7 @@ import { runGit } from "./git-run";
  * end-of-run improve auto-sync gate.
  */
 export function isGitBackedStash(stashDir: string): boolean {
+  // asset-io: bundle-root git checkout probe
   return fs.existsSync(path.join(stashDir, ".git"));
 }
 

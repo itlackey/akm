@@ -593,6 +593,7 @@ function countUndecidedPendingMemories(stashDir: string): number {
 
 function probeEntryCount(): number | undefined {
   try {
+    // asset-io: state index database
     if (!fs.existsSync(getDbPath())) return undefined;
     const db = openExistingDatabase();
     try {

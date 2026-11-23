@@ -42,6 +42,7 @@ import { akmAgentDispatch } from "./agent-dispatch";
 
 const EXIT_GENERAL = EXIT_CODES.GENERAL;
 
+// asset-io: user-input stdin
 export function readPromptStdin(read: () => string = () => fs.readFileSync(0, "utf8")): string {
   return read();
 }

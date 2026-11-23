@@ -90,9 +90,11 @@ const secretSetCommand = defineJsonCommand({
 
     let value: Buffer;
     if (fromFile !== undefined) {
+      // asset-io: user-input --from-file
       if (!fs.existsSync(fromFile)) {
         throw new NotFoundError(`File not found: ${fromFile}`, "FILE_NOT_FOUND");
       }
+      // asset-io: user-input --from-file
       value = fs.readFileSync(fromFile);
     } else if (fromEnv !== undefined) {
       const envVal = process.env[fromEnv];

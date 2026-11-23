@@ -342,6 +342,7 @@ export function readEvents(options: ReadEventsOptions = {}, ctx?: EventsContext)
     if (ctx?.db) {
       db = ctx.db;
     } else if (ctx?.readOnly) {
+      // asset-io: state
       if (!fs.existsSync(dbPath)) return { events: [], nextOffset: 0 };
       db = openDatabase(dbPath, { readonly: true, create: false });
       ownsDb = true;
@@ -383,6 +384,7 @@ export function readEvents(options: ReadEventsOptions = {}, ctx?: EventsContext)
     } catch (error) {
       if (ctx?.readOnly && error instanceof Error && /no such table:/i.test(error.message)) {
         // An empty or behind-on-migrations state.db has no events; a non-empty file with no schema at all is zero-filled.
+        // asset-io: state
         if (fs.statSync(dbPath).size > 0 && !db.prepare("SELECT 1 FROM sqlite_master LIMIT 1").get())
           throw damagedStateDbError(dbPath, "no schema in a non-empty file");
         return { events: [], nextOffset: options.sinceOffset ?? 0 };

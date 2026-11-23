@@ -101,6 +101,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
       "RESOURCE_ALREADY_EXISTS",
     );
   }
+  // asset-io: deprecated
   if (fs.existsSync(assetPath) && !input.force) {
     throw new UsageError(
       `Workflow "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
@@ -133,6 +134,7 @@ function readWorkflowSource(source: string, bundleDir: string): string {
   const resolved = path.resolve(source);
   let stat: fs.Stats;
   try {
+    // asset-io: deprecated
     stat = fs.statSync(resolved);
   } catch {
     throw new UsageError(`Workflow source not found: "${source}".`);
@@ -149,6 +151,7 @@ function readWorkflowSource(source: string, bundleDir: string): string {
         `If this was unintentional, abort and re-run with a --from path inside ${bundleDir}.`,
     );
   }
+  // asset-io: deprecated
   return fs.readFileSync(resolved, "utf8");
 }
 
@@ -199,6 +202,7 @@ function findExistingWorkflowPaths(typeRoot: string, normalizedName: string): st
   const parent = path.join(typeRoot, path.dirname(normalizedName));
   let entries: fs.Dirent[];
   try {
+    // asset-io: deprecated
     entries = fs.readdirSync(parent, { withFileTypes: true });
   } catch {
     return [];

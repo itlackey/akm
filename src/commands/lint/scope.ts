@@ -41,6 +41,7 @@ export function lintScope(
 ): LintScope {
   return {
     stashRoot: root,
+    // asset-io: bundle-root root probe
     extraStashRoots: sources.map((source) => source.path).filter((p) => p !== root && fs.existsSync(p)),
     bundleRoots: bundleRootsOf(sources),
     moves: readMovedRefs(readMoves),

@@ -73,6 +73,7 @@ export function detectServerDefault(): boolean {
   // A laptop exposes a battery under /sys/class/power_supply/BAT*. Absence of
   // any battery is our heuristic for "server / desktop".
   try {
+    // asset-io: host battery probe
     const entries = fs.readdirSync("/sys/class/power_supply");
     const hasBattery = entries.some((e) => /^BAT/i.test(e));
     return !hasBattery;

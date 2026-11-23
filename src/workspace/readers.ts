@@ -22,6 +22,7 @@ export { withReadonlyStateDb } from "../core/state-db";
 export type StateDbUnavailable = { available: false; reason: "absent" | "needs-migration" };
 
 export function stateDbUnavailable(): StateDbUnavailable {
+  // asset-io: state
   return { available: false, reason: fs.existsSync(getStateDbPath()) ? "needs-migration" : "absent" };
 }
 

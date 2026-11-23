@@ -27,9 +27,11 @@ export async function importTaskFile(
   }
   let yaml: string;
   try {
+    // asset-io: user-input import source
     if (!fs.statSync(input.source).isFile()) {
       throw new UsageError(`Expected a readable task definition file: "${input.source}".`, "INVALID_FLAG_VALUE");
     }
+    // asset-io: user-input import source
     yaml = fs.readFileSync(input.source, "utf8");
   } catch (error) {
     if (error instanceof UsageError) throw error;

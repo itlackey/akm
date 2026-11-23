@@ -607,6 +607,7 @@ export function _setDrainObserverForTests(observer?: (dirPath: string, fileCount
 /** Whether `root` is a directory whose listing can be read (adapter detection only probes such roots). */
 function isReadableDirectory(root: string): boolean {
   try {
+    // asset-io: bundle-root root probe
     if (!fs.statSync(root).isDirectory()) return false;
     fs.readdirSync(root); // probe readability, not just existence
     return true;

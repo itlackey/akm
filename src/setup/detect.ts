@@ -73,6 +73,7 @@ export function detectAgentPlatforms(): AgentPlatform[] {
   return AGENT_PLATFORMS.filter((p) => {
     const fullPath = path.join(home, p.relPath);
     try {
+      // asset-io: host harness and home probes
       return fs.statSync(fullPath).isDirectory();
     } catch {
       return false;
@@ -173,6 +174,7 @@ export function detectStashDir(opts?: {
     for (const dirName of ["akm", "agent-stash"]) {
       const candidate = path.join(repoRoot, dirName);
       try {
+        // asset-io: host harness and home probes
         if (fs.statSync(candidate).isDirectory()) {
           push(candidate, `git repo contains ${dirName}/`, 1);
         }
@@ -187,6 +189,7 @@ export function detectStashDir(opts?: {
     for (const dirName of ["akm", ".akm"]) {
       const candidate = path.join(home, dirName);
       try {
+        // asset-io: host harness and home probes
         if (fs.statSync(candidate).isDirectory()) {
           push(candidate, `${dirName} exists in home`, 2);
         }
@@ -204,6 +207,7 @@ function findGitRepoRoot(start: string): string | undefined {
   let dir = path.resolve(start);
   for (;;) {
     try {
+      // asset-io: host harness and home probes
       if (fs.existsSync(path.join(dir, ".git"))) return dir;
     } catch {
       // ignore

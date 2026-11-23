@@ -150,6 +150,7 @@ export function resolveRunBundleRoot(ref: string): string {
 export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   const { assetPath, canonicalName, fullRef } = resolveWorkflowAsset(ref);
   const title = canonicalName.split("/").pop() || canonicalName;
+  // asset-io: deprecated
   const bytes = fs.readFileSync(assetPath);
   const result = compileWorkflowSource(bytes.toString("utf8"), {
     path: assetPath,

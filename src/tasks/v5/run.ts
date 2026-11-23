@@ -163,12 +163,15 @@ function writeRecord(record: RunRecord): void {
   const file = runRecordPath(record.taskId, record.runId);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const pending = `${file}.${process.pid}.tmp`;
+  // asset-io: state run record
   fs.writeFileSync(pending, JSON.stringify(record));
+  // asset-io: state run record
   fs.renameSync(pending, file);
 }
 
 function readRecord(taskId: string, runId: string): RunRecord | undefined {
   try {
+    // asset-io: state run record
     return JSON.parse(fs.readFileSync(runRecordPath(taskId, runId), "utf8")) as RunRecord;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
@@ -178,7 +181,9 @@ function readRecord(taskId: string, runId: string): RunRecord | undefined {
 
 /** A run that will not be resumed: the folder akm made for it and for the runs it started, and what is kept of it. */
 function discard(record: RunRecord): void {
+  // asset-io: scratch run folder akm made
   if (record.madeDir) fs.rmSync(record.dir, { recursive: true, force: true });
+  // asset-io: state run record
   fs.rmSync(runRecordPath(record.taskId, record.runId), { force: true });
   for (const child of Object.values(record.children)) {
     const kept = readRecord(child.task, child.run);
@@ -672,6 +677,7 @@ async function runProcessStep(
         };
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-task-state-"));
   const statePath = path.join(stateDir, "state.json");
+  // asset-io: scratch run folder akm made
   fs.writeFileSync(statePath, JSON.stringify(record.state, null, 2));
   try {
     const result = await runProgram({
@@ -705,6 +711,7 @@ async function runProcessStep(
     if (incomplete) return { ok: false, reason: incomplete };
     return { ok: true, value: stdout };
   } finally {
+    // asset-io: scratch run folder akm made
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
 }

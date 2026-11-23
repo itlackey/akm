@@ -223,6 +223,7 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
   };
 
   const stateDbPath = getStateDbPath();
+  // asset-io: state
   if (!fs.existsSync(stateDbPath)) {
     notes.push("state.db was not found, so every section except utility is empty.");
     return buildMetricsResult(input);

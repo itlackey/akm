@@ -264,6 +264,7 @@ const GIT_LOG_MAX_BUFFER = 16 * 1024 * 1024;
  * nested inside a larger repo.
  */
 export function loadGitFirstAddedMap(stashDir: string): ReadonlyMap<string, number> | undefined {
+  // asset-io: bundle-root git checkout probe
   if (!fs.existsSync(path.join(stashDir, ".git"))) return undefined;
   let result: ReturnType<typeof runGit>;
   try {

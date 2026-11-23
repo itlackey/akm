@@ -67,10 +67,13 @@ export function exportVectors(config: AkmConfig, file: string): { file: string; 
   }
   const temp = `${file}.${process.pid}.tmp`;
   try {
+    // asset-io: user-input export output
     fs.rmSync(temp, { force: true });
     writeVectorFile(temp, model, rows());
+    // asset-io: user-input export output
     fs.renameSync(temp, file);
   } catch (error) {
+    // asset-io: user-input export output
     fs.rmSync(temp, { force: true });
     throw error;
   } finally {

@@ -702,6 +702,7 @@ export function listProposalsReadOnly(
 ): Proposal[] {
   if (ctx?.db) return queryProposals(ctx.db, stashDir, options);
   const dbPath = ctx?.dbPath ?? getStateDbPath();
+  // asset-io: state proposal database
   if (!fs.existsSync(dbPath)) return [];
   const db = openSqliteReadSnapshot(dbPath);
   if (!db) return [];
