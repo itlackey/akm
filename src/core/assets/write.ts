@@ -77,8 +77,11 @@ export interface AssetWriter {
   read(conceptId: string): Asset | undefined;
   /** An existing asset by ref, else where a new one of the ref's type goes. */
   address(ref: string): AssetAddress;
-  /** `exclusive`: refuse an existing asset. `verbatim`: keep `content` exactly, not in the adapter's form for the type. */
-  create(asset: NewAsset, options?: { exclusive?: boolean; verbatim?: boolean }): WriteResult;
+  /**
+   * `exclusive`: refuse an existing asset. `verbatim`: keep `content` exactly, not in the adapter's form for the type.
+   * `replaceLink`: an asset file that is a symbolic link to a file inside the bundle is replaced by a regular file.
+   */
+  create(asset: NewAsset, options?: { exclusive?: boolean; verbatim?: boolean; replaceLink?: boolean }): WriteResult;
   update(conceptId: string, content: string | Buffer, options?: { revision?: string }): WriteResult;
   delete(conceptId: string, options?: { revision?: string }): WriteResult;
   retire(conceptId: string, note: RetireNote, options?: { revision?: string }): WriteResult & { handle: string };
@@ -241,7 +244,13 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
         }
       }
       // Without `exclusive` a create replaces the asset, with the bytes a create writes.
-      return result(held.create(asset, { replace: !options?.exclusive, verbatim: options?.verbatim }));
+      return result(
+        held.create(asset, {
+          replace: !options?.exclusive,
+          verbatim: options?.verbatim,
+          replaceLink: options?.replaceLink,
+        }),
+      );
     },
     update(conceptId, content, options) {
       existing(conceptId, options);

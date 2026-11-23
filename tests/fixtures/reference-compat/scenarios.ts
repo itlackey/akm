@@ -593,8 +593,8 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
   {
-    // `--force` over a link that stays inside its folder (F9): refused as a symbolic link, the link left; `1f2e58c9`
-    // replaced the link with a regular file.
+    // `--force` over a link that stays inside its folder replaces the link with a regular file, as `1f2e58c9` does
+    // (F9 was rejected by the owner); `workflow create` and `secret set` refuse a link, as they always did.
     id: "write over a link inside the folder",
     setup: (sb) => {
       const doc = "---\ndescription: d\n---\n\nD.\n";

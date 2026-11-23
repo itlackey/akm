@@ -28,7 +28,14 @@ import {
 import { buildFileContext, type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
 import { isWalkedFile, walkStashFlatWithStatus } from "../../indexer/walk/walker";
 import { makeBundleRef } from "../asset/asset-ref";
-import { compareCodePoints, existingFileMode, hasErrnoCode, relativeToRoot, writeFileAtomic } from "../common";
+import {
+  compareCodePoints,
+  existingFileMode,
+  hasErrnoCode,
+  isWithin,
+  relativeToRoot,
+  writeFileAtomic,
+} from "../common";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
 import type {
   AssetChange,
@@ -319,7 +326,11 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return conceptId;
   }
 
-  create(b: Bundle, asset: NewAsset, options: { replace?: boolean; verbatim?: boolean } = {}): AssetChange {
+  create(
+    b: Bundle,
+    asset: NewAsset,
+    options: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean } = {},
+  ): AssetChange {
     if (!this.writes.includes(asset.type)) {
       throw new Error(
         `Adapter "${this.id}" does not write ${asset.type} assets in bundle "${b.id}"; the asset facade checks \`writes\` first.`,
@@ -338,7 +349,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const content = options.verbatim ? asset.content : this.serialize(asset.type, file, asset.content);
     const changed = asset.resources?.length
       ? this.writePackage(b, asset, entry, content, asset.resources)
-      : this.writeFile(b, asset.type, file, content);
+      : this.writeFile(b, asset.type, file, content, options.replaceLink);
     return { conceptId, file, changed, content: asset.content };
   }
 
@@ -440,8 +451,8 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   }
 
   /** The bytes and file mode a write gives a file. */
-  private writeFile(b: Bundle, type: string, file: string, bytes: string | Buffer): string[] {
-    assertWritableFile(b.root, b.id, file);
+  private writeFile(b: Bundle, type: string, file: string, bytes: string | Buffer, replaceLink = false): string[] {
+    assertWritableFile(b.root, b.id, file, { replaceLink });
     fs.mkdirSync(path.dirname(file), { recursive: true });
     // Atomic: a crash or a full disk never leaves a half-written asset where a good one was.
     writeFileAtomic(file, bytes, this.fileMode(type) ?? existingFileMode(file));
@@ -639,8 +650,15 @@ function packageResources(dir: string, entryFile: string): AssetResource[] {
 /**
  * Refuse a write to `file` that leaves the bundle's root, or passes through a
  * symbolic link below it: a write never follows a link out of the bundle.
+ * With `replaceLink`, `file` itself may be a link to a file inside the bundle:
+ * the write replaces the link and leaves what it pointed at.
  */
-export function assertWritableFile(root: string, bundle: string, file: string): void {
+export function assertWritableFile(
+  root: string,
+  bundle: string,
+  file: string,
+  options: { replaceLink?: boolean } = {},
+): void {
   const lexicalRoot = path.resolve(root);
   // A path under another spelling of the root (a symlinked spelling of the library) is inside it.
   const relative = relativeToRoot(file, lexicalRoot) ?? "..";
@@ -653,12 +671,24 @@ export function assertWritableFile(root: string, bundle: string, file: string): 
   } catch {
     // A root that is not there yet holds no link to follow.
   }
-  for (const segment of relative.split(path.sep)) {
+  const realRoot = current;
+  const segments = relative.split(path.sep);
+  for (const [index, segment] of segments.entries()) {
     current = path.join(current, segment);
     const stat = fs.lstatSync(current, { throwIfNoEntry: false });
     if (!stat) break;
     if (stat.isSymbolicLink()) {
+      if (options.replaceLink && index === segments.length - 1 && linksInside(current, realRoot)) break;
       throw new UsageError(`Write path contains a symbolic link below source "${bundle}": ${relative}`);
     }
+  }
+}
+
+/** Whether the symbolic link `link` points at an existing file inside `root`. */
+function linksInside(link: string, root: string): boolean {
+  try {
+    return fs.statSync(link).isFile() && isWithin(link, root);
+  } catch {
+    return false;
   }
 }

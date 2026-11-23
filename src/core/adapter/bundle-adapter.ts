@@ -149,9 +149,15 @@ export interface BundleAdapter {
   /**
    * Create the asset, in the adapter's own form for its type, or with `verbatim` as exactly `asset.content` (a promoted
    * proposal's bytes are the ones it was reviewed with). Over an existing asset of the same concept it writes the same
-   * bytes only with `replace`; without it the create is refused.
+   * bytes only with `replace`; without it the create is refused. With `replaceLink`, an asset file that is a symbolic
+   * link to a file inside the bundle is replaced by a regular file (the link's target is left as it is); a link to
+   * nothing or to a file outside the bundle is still refused.
    */
-  create(b: Bundle, asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean }): AssetChange;
+  create(
+    b: Bundle,
+    asset: NewAsset,
+    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean },
+  ): AssetChange;
   /** Replace the content of the asset `conceptId` holds with exactly `content`. */
   update(b: Bundle, conceptId: string, content: string | Buffer): AssetChange;
   /** Take the asset out of the bundle. */
