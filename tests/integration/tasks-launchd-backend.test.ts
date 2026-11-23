@@ -551,6 +551,39 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
     }
   });
 
+  test("a row in the id form is an update, and tasks sync rewrites it to the ref form (A11, P11)", async () => {
+    const stash = sandboxStashDir();
+    try {
+      const tasksDir = path.join(stash.dir, "tasks");
+      fs.mkdirSync(tasksDir, { recursive: true });
+      fs.writeFileSync(path.join(tasksDir, "ping.yml"), 'version: 4\nrun: echo ping\nschedule: "0 9 * * *"\n', "utf8");
+      activateTask(stash.dir);
+      const { backend } = makeBackend();
+      const bundleName = path.basename(stash.dir).toLowerCase();
+      const legacy: SchedulerBinding = {
+        ...makeTask("0 9 * * *"),
+        logicalSource: { kind: "task", ref: `${bundleName}//tasks/ping` },
+        invocation: ["task", "run", "ping", "--bundle", bundleName, "--scheduled"],
+      };
+      await backend.install(legacy, { environment: sandboxRowEnvironment(stash.dir) });
+
+      const result = await akmTasksSync({ backend });
+
+      expect(result.updated).toEqual(["ping"]);
+      expect(result.installed).toEqual([]);
+      expect(result.removed).toEqual([]);
+      expect((backend.list() as Array<{ invocation?: string[] }>)[0]!.invocation).toEqual([
+        "task",
+        "run",
+        `${bundleName}//tasks/ping`,
+        "--scheduled",
+      ]);
+      expect((await akmTasksSync({ backend })).unchanged).toEqual(["ping"]);
+    } finally {
+      stash.cleanup();
+    }
+  });
+
   test("a launchctl-disabled override changes the listed signature and tasks sync repairs it", async () => {
     const stash = sandboxStashDir();
     try {
@@ -567,7 +600,7 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       const qualifiedTask: SchedulerBinding = {
         ...makeTask("0 9 * * *"),
         logicalSource: { kind: "task", ref: `${bundleName}//tasks/ping` },
-        invocation: ["task", "run", "ping", "--bundle", bundleName, "--scheduled"],
+        invocation: ["task", "run", `${bundleName}//tasks/ping`, "--scheduled"],
       };
       // The sandbox stash is the env-selected working stash (AKM_BUNDLE_DIR,
       // no configured bundle), so its row carries the path in the plist.

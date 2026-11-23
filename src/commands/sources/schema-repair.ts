@@ -15,7 +15,6 @@
  * independently testable and to use the shared structured execution seam.
  */
 
-import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
@@ -117,11 +116,15 @@ async function classifySchemaRepairs(args: {
       continue;
     }
     try {
-      const raw = fs.readFileSync(filePath, "utf8");
-      const frontmatter = parseFrontmatter(raw);
-      // The asset's type is its file's (which fields to repair, and the type's standards and rules).
+      // The asset is read through its bundle's adapter; its type is the index's (which fields to repair, and the type's standards and rules).
       const owned = findAsset(failure.ref, { sources: resolveSourceEntries(stashDir) });
-      const kind = owned ? assetType(owned) : "";
+      if (!owned) {
+        repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
+        continue;
+      }
+      const raw = owned.entry.content();
+      const frontmatter = parseFrontmatter(raw);
+      const kind = assetType(owned);
       const missingFields: string[] = [];
       if (!frontmatter.data.description) missingFields.push("description");
       if (kind === "lesson" && !frontmatter.data.when_to_use) missingFields.push("when_to_use");

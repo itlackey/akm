@@ -778,18 +778,18 @@ describe("akm bundle rename — native scheduler sync", () => {
     // Install the native row under the OLD name first, exactly as a real
     // prior `akm task sync` would have.
     await akmTasksSync({ backend }, "original");
-    expect(exec.current()).toContain("task run foo --bundle original --scheduled");
+    expect(exec.current()).toContain("task run original//tasks/foo --scheduled");
 
     // --dry-run reports the stale row and leaves the crontab untouched.
     const plan = await renameBundle("original", "renamed", { dryRun: true }, renameDeps(backend));
-    expect(plan.nativeSchedulerRows.some((row) => row.includes("--bundle original"))).toBe(true);
-    expect(exec.current()).toContain("--bundle original");
+    expect(plan.nativeSchedulerRows.some((row) => row.includes("original//tasks/foo"))).toBe(true);
+    expect(exec.current()).toContain("original//tasks/foo");
 
     const result = await renameBundle("original", "renamed", {}, renameDeps(backend));
     expect(result.applied).toBe(true);
     expect(result.taskSync?.ok).toBe(true);
-    expect(exec.current()).toContain("task run foo --bundle renamed --scheduled");
-    expect(exec.current()).not.toContain("--bundle original");
+    expect(exec.current()).toContain("task run renamed//tasks/foo --scheduled");
+    expect(exec.current()).not.toContain("original//");
   });
 
   // a binding that fails to re-sync must not be reported as success —
@@ -812,7 +812,7 @@ describe("akm bundle rename — native scheduler sync", () => {
     // Install the native row under the OLD name first, exactly as a real
     // prior `akm task sync` would have.
     await akmTasksSync({ backend }, "original");
-    expect(exec.current()).toContain("task run foo --bundle original --scheduled");
+    expect(exec.current()).toContain("task run original//tasks/foo --scheduled");
 
     // An invalid schedule written before the rename — the same #867 shape
     // `akmTasksSync` reports as a failure rather than installing.
@@ -831,7 +831,7 @@ describe("akm bundle rename — native scheduler sync", () => {
     expect(syncResult?.failures[0]?.reason).toMatch(/version is required and must be 4/);
     // The stale old-name row was still removed, even though the new one
     // could not be installed in its place.
-    expect(exec.current()).not.toContain("--bundle original");
+    expect(exec.current()).not.toContain("original//");
     expect(exec.current()).not.toContain("--bundle renamed");
   });
 });

@@ -537,17 +537,20 @@ export function deleteEntriesOutsideLibrary(
   })();
 }
 
-/**
- * The `file_path` of every entry indexed under one bundle — used by
- * `akm bundle rename` (D6) to find bundle CONTENT that still spells the old
- * `<bundle>//` prefix (xrefs, `supersededBy`, task `uses:`), which the rename
- * reports rather than rewrites.
- */
-export function getFilePathsByBundle(db: Database, bundleId: string): string[] {
-  const rows = db.prepare("SELECT DISTINCT file_path FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{
+/** The ref and file of each indexed file of a bundle, one entry per file, in the order of the rows. */
+export function getRefsAndFilesByBundle(db: Database, bundleId: string): Array<{ ref: string; filePath: string }> {
+  const rows = db.prepare("SELECT file_path, item_ref FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{
     file_path: string;
+    item_ref: string;
   }>;
-  return rows.map((row) => row.file_path);
+  const seen = new Set<string>();
+  const found: Array<{ ref: string; filePath: string }> = [];
+  for (const row of rows) {
+    if (seen.has(row.file_path)) continue;
+    seen.add(row.file_path);
+    found.push({ ref: row.item_ref, filePath: row.file_path });
+  }
+  return found;
 }
 
 /**

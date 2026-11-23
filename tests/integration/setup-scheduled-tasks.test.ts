@@ -306,6 +306,22 @@ function managedPlans(ids: string[]): PreparedSetupTask[] {
 }
 
 describe("task definition preparation", () => {
+  test("a task held in an off-case file is listed under its id, which `task enable` takes through the F5 path", () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({ bundles: { stash: { path: storage.stashDir } }, defaultBundle: "stash" });
+      const taskDir = path.join(storage.stashDir, "tasks");
+      fs.mkdirSync(taskDir, { recursive: true });
+      fs.writeFileSync(path.join(taskDir, "Up.YML"), "version: 4\nrun: echo up\nschedule: '0 1 * * *'\n", "utf8");
+
+      const listed = listSetupTaskDefinitions();
+      expect(listed.map((task) => task.id)).toEqual(["Up"]);
+      expect(JSON.stringify(listed)).not.toContain("YML");
+    } finally {
+      storage.cleanup();
+    }
+  });
+
   test("setup accepts and preserves every valid schedule in a multi-schedule task", async () => {
     const storage = withIsolatedAkmStorage();
     try {
@@ -476,7 +492,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
         envPath: false,
       });
       await akmTasksSync({ backend });
-      expect(exec.current()).toContain("task run orphan");
+      expect(exec.current()).toContain("//tasks/orphan --scheduled");
 
       // A pre-0.9.17 config has no list at all: the installed row IS the choice.
       const { scheduler: _dropped, ...withoutList } = loadConfig();
@@ -492,14 +508,14 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
         inspectInstalled: async () => ({ installed: await backend.list() }),
       });
 
-      expect(exec.current()).toContain("task run orphan");
+      expect(exec.current()).toContain("//tasks/orphan --scheduled");
       expect(schedulerEnabledRefs(loadConfig())).toContain("stash//tasks/orphan");
 
       // An explicit empty list is a choice, not a missing one: nothing is re-derived.
       saveConfig({ ...loadConfig(), scheduler: { enabled: [] } });
       resetConfigCache();
       await akmTasksSync({ backend });
-      expect(exec.current()).not.toContain("task run orphan");
+      expect(exec.current()).not.toContain("//tasks/orphan --scheduled");
       expect(schedulerEnabledRefs(loadConfig())).toEqual([]);
     } finally {
       storage.cleanup();
@@ -534,7 +550,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
       state.multiselectReturn = ["extract"];
       state.confirmReturn = true;
       await stepScheduledTasks(deps);
-      expect(exec.current()).toContain("task run extract");
+      expect(exec.current()).toContain("//tasks/extract --scheduled");
       expect(schedulerEnabledRefs(loadConfig())).toContain("stash//tasks/extract");
 
       // Second run: leave `extract` unchecked. Its YAML stays prepared on disk; the choice is the list.
@@ -544,7 +560,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
       await stepScheduledTasks(deps);
 
       expect(schedulerEnabledRefs(loadConfig())).not.toContain("stash//tasks/extract");
-      expect(exec.current()).not.toContain("task run extract");
+      expect(exec.current()).not.toContain("//tasks/extract --scheduled");
     } finally {
       storage.cleanup();
     }

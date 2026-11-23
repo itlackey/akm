@@ -14,6 +14,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { stashDirFor } from "../core/asset/asset-placement";
 import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
 import { UsageError } from "../core/errors";
 import { canonicalInputJson, type InputFlag } from "../execution/input-contract";
@@ -117,8 +118,6 @@ export interface SchedulerBackend {
 export function compileTaskSchedulerBindings(input: CompileTaskSchedulerBindingsInput): readonly SchedulerBinding[] {
   const id = normaliseTaskConceptId(input.id);
   const ref = assertQualifiedRef(input.qualifiedRef, "task");
-  const bundle = parseBundleRef(ref).bundle;
-  if (!bundle) throw new Error("invariant: qualified scheduler task ref lost its bundle");
   return Object.freeze(
     input.schedules.map((schedule) => {
       const bindingId = schedule.ordinal === 0 ? id : digestBindingId("task", ref, schedule.ordinal);
@@ -133,9 +132,7 @@ export function compileTaskSchedulerBindings(input: CompileTaskSchedulerBindings
         invocation: [
           "task",
           "run",
-          id,
-          "--bundle",
-          bundle,
+          ref,
           "--scheduled",
           ...schedulerInputFlagTail(schedule.inputs),
           ...schedulerStartFlagTail(schedule.start),
@@ -210,8 +207,16 @@ export function schedulerBindingNativeId(binding: SchedulerBinding): string {
  * nested one behind a digest spelling); every other row is its native id.
  */
 export function schedulerLogicalBindingId(nativeId: string, invocation: readonly string[]): string {
-  const taskId = invocation[0] === "task" && invocation[1] === "run" ? invocation[2] : undefined;
-  return taskId !== undefined && schedulerNativeBindingId(taskId) === nativeId ? taskId : nativeId;
+  const subject = invocation[0] === "task" && invocation[1] === "run" ? invocation[2] : undefined;
+  if (subject === undefined) return nativeId;
+  // A row names its task by ref (`<bundle>//<concept id>`); a row written before 0.11 by its id.
+  const conceptId = subject.includes("//") ? parseBundleRef(subject).conceptId : subject;
+  const folder = stashDirFor("task");
+  const candidates =
+    folder !== undefined && conceptId.startsWith(`${folder}/`)
+      ? [conceptId, conceptId.slice(folder.length + 1)]
+      : [conceptId];
+  return candidates.find((candidate) => schedulerNativeBindingId(candidate) === nativeId) ?? nativeId;
 }
 
 function digestBindingId(kind: "task" | "workflow", ref: string, ordinal: number): string {

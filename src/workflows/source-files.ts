@@ -133,6 +133,7 @@ export class WorkflowSourceLinkResolutionError extends WorkflowSourceRejectionEr
  * in the bundle it sits.
  */
 function ownsWorkflowFile(sourceRoot: string, adapterId: string, absPath: string): boolean {
+  // asset-io: deprecated workflows are not read through the adapters
   if (adapterId === "akm-workflow") return true;
   // asset-io: deprecated
   return adapterId === "akm" && declaredTypeForPath(buildFileContext(sourceRoot, absPath)) === "workflow";
@@ -144,6 +145,7 @@ export function workflowNameForSourcePath(
   adapterId: string,
   sourcePath: string,
 ): string | undefined {
+  // asset-io: deprecated workflows are not read through the adapters
   if (adapterId !== "akm" && adapterId !== "akm-workflow") return undefined;
   const relativePath = toPosix(path.relative(path.resolve(sourceRoot), path.resolve(sourcePath)));
   if (!isSafeRelativeName(relativePath)) return undefined;
@@ -171,6 +173,7 @@ export function resolveWorkflowSourceDomains(
   adapterId: string,
   sourcePaths: readonly string[],
 ): WorkflowSourceDomainResolution[] {
+  // asset-io: deprecated workflows are not read through the adapters
   if (adapterId !== "akm" && adapterId !== "akm-workflow") return [];
 
   const authoredRoot = path.resolve(sourceRoot);

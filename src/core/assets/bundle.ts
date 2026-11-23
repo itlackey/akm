@@ -48,6 +48,11 @@ export class AssetBundle {
     return `${this.#adapter.id}@${this.#adapter.version}+`;
   }
 
+  /** Whether this bundle's adapter declares assets of `type`: it writes them, or recognizes them without writing. */
+  declares(type: string): boolean {
+    return this.#adapter.writes.includes(type) || (this.#adapter.reads?.includes(type) ?? false);
+  }
+
   /** Whether this bundle's adapter writes assets of `type`: it holds them as its own, not as files it reads. */
   writes(type: string): boolean {
     return this.#adapter.writes.includes(type);
