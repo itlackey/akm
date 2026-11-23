@@ -223,6 +223,45 @@ const config = (sb: Sandbox) => JSON.parse(fs.readFileSync(sb.configFile, "utf8"
 
 const c = (id: string, args: string[], extra: Partial<CorpusCase> = {}): CorpusCase => ({ id, args, ...extra });
 
+/** Store one proposal (a copy of fixture proposal 0002 with this id and ref) in the queue filed under `stashDir`. */
+function storeProposalIn(sb: Sandbox, id: string, ref: string, stashDir: string): void {
+  const db = new Database(sb.stateDb);
+  try {
+    const row = db.query("SELECT * FROM proposals WHERE id = '00000000-0000-4000-8000-000000000002'").get() as Record<
+      string,
+      unknown
+    >;
+    const columns = Object.keys(row);
+    const copy: Record<string, unknown> = { ...row, id, ref, stash_dir: stashDir };
+    db.query(`INSERT INTO proposals (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`).run(
+      ...columns.map((column) => copy[column] as never),
+    );
+  } finally {
+    db.close();
+  }
+}
+
+/** Two git bundles whose checkouts are in the cache (a bundle's checkout is `<cache>/registry-index/git-<sha256 of its url, 16 hex>/repo`). */
+function gitBundles(sb: Sandbox): string[] {
+  const cfg = config(sb) as { bundles: Record<string, unknown> };
+  const checkouts: string[] = [];
+  for (const name of ["alpha", "beta"]) {
+    const url = `https://example.test/${name}-notes`;
+    const checkout = path.join(
+      sb.env.XDG_CACHE_HOME as string,
+      "akm",
+      "registry-index",
+      `git-${createHash("sha256").update(url).digest("hex").slice(0, 16)}`,
+      "repo",
+    );
+    write(path.join(checkout, "knowledge", "note.md"), `---\ndescription: ${name}\n---\n\n${name} note.\n`);
+    cfg.bundles[name] = { git: url, writable: true };
+    checkouts.push(checkout);
+  }
+  fs.writeFileSync(sb.configFile, JSON.stringify(cfg, null, 2));
+  return checkouts;
+}
+
 /** Move the `main` bundle's directory and point its config entry at the new place (the bundle keeps its name). */
 function moveMainBundle(sb: Sandbox): string {
   const moved = path.join(sb.fixture, "main-moved");
@@ -705,5 +744,62 @@ export const SCENARIOS: Scenario[] = [
       c("improve report", ["improve", "report"]),
     ],
     finals: { "doctor state-unknown-bundle": doctorUnknownBundle },
+  },
+  {
+    // Two git bundles, each with a proposal in its own queue: the queues are separate (a checkout is a directory of its
+    // own, not "repo"), under an older akm and now.
+    id: "two git bundles",
+    setup: (sb) => {
+      const [alpha, beta] = gitBundles(sb);
+      storeProposalIn(sb, "00000000-0000-4000-8000-000000000041", "alpha//knowledge/only-in-alpha", alpha as string);
+      storeProposalIn(sb, "00000000-0000-4000-8000-000000000042", "beta//knowledge/only-in-beta", beta as string);
+    },
+    cases: [
+      c("proposal list --queue alpha", ["proposal", "list", "--queue", "alpha"]),
+      c("proposal list --queue beta", ["proposal", "list", "--queue", "beta"]),
+      c("proposal show 41 --queue alpha", [
+        "proposal",
+        "show",
+        "00000000-0000-4000-8000-000000000041",
+        "--queue",
+        "alpha",
+      ]),
+      c("proposal show 41 --queue beta", [
+        "proposal",
+        "show",
+        "00000000-0000-4000-8000-000000000041",
+        "--queue",
+        "beta",
+      ]),
+      c("proposal list", ["proposal", "list"]),
+    ],
+  },
+  {
+    // Two directories with the same name, neither a configured bundle, each used as the working directory with its own
+    // proposal: the queues are separate, as they were filed by directory.
+    id: "two unconfigured directories with one name",
+    setup: (sb) => {
+      for (const side of ["a", "b"])
+        write(path.join(sb.fixture, side, "akm", "knowledge", "note.md"), "---\ndescription: n\n---\n\nNote.\n");
+      storeProposalIn(
+        sb,
+        "00000000-0000-4000-8000-000000000051",
+        "akm//knowledge/in-a",
+        path.join(sb.fixture, "a", "akm"),
+      );
+      storeProposalIn(
+        sb,
+        "00000000-0000-4000-8000-000000000052",
+        "akm//knowledge/in-b",
+        path.join(sb.fixture, "b", "akm"),
+      );
+    },
+    cases: [
+      c("proposal list in a", ["proposal", "list"], { env: { AKM_BUNDLE_DIR: "{FIXTURE}/a/akm" } }),
+      c("proposal list in b", ["proposal", "list"], { env: { AKM_BUNDLE_DIR: "{FIXTURE}/b/akm" } }),
+      c("proposal show 51 in b", ["proposal", "show", "00000000-0000-4000-8000-000000000051"], {
+        env: { AKM_BUNDLE_DIR: "{FIXTURE}/b/akm" },
+      }),
+    ],
   },
 ];

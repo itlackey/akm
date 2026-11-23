@@ -110,13 +110,15 @@ describe("state rows follow the bundle's name", () => {
         name: string;
         status: string;
         message: string;
-        evidence?: { bundles: Array<{ id: string; rows: Record<string, number> }> };
+        evidence?: { bundles: Array<{ id: string; kind: string; rows: Record<string, number> }> };
       }>;
     };
     const finding = report.advisories.find((entry) => entry.name === "state-unknown-bundle");
     expect(finding?.status).toBe("pass");
-    expect(finding?.evidence?.bundles).toEqual([{ id: "work", rows: { proposals: 1, improve_ledger: 2 } }]);
-    expect(finding?.message).toContain('"work" (1 in proposals, 2 in improve_ledger)');
+    expect(finding?.evidence?.bundles).toEqual([
+      { id: "work", kind: "name", rows: { proposals: 1, improve_ledger: 2 } },
+    ]);
+    expect(finding?.message).toContain('bundle "work" (1 in proposals, 2 in improve_ledger)');
 
     configure({ work: home });
     expect(listProposals(home).map((p) => p.id)).toEqual([id]);

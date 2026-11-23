@@ -4,17 +4,17 @@
 
 /**
  * Rows migration 031 carried over keep the absolute root they were filed under in `bundle_id` (a migration cannot read
- * config). {@link convertPathBundleIds} rewrites each root to the id of the bundle that directory is now
- * (`bundleAtDir`), once, in one transaction, the first time the state opener has a config to read. A row whose directory
- * no configured bundle has keeps the id that directory gets unconfigured (`bundleIdForDir`), so it reattaches if the
- * directory is configured or used again; `akm doctor` reports such rows (`state-unknown-bundle`). The conversion is
+ * config). {@link convertPathBundleIds} rewrites each root a configured bundle is at to that bundle's id
+ * (`bundleAtDir`), in one transaction, when the state opener has a config to read. A row whose directory no configured
+ * bundle has keeps its path, as `state.db` always filed it, and is rewritten on a later open once a bundle is
+ * configured at that directory; `akm doctor` reports such rows (`state-unknown-bundle`). The conversion is
  * idempotent: it touches only a value that is a path, and an id never is (a bundle name holds no `/`, `\` or `:`).
  */
 
 import { STATE_BUNDLE_ID_COLUMNS } from "../../storage/bundle-id-columns";
 import type { Database } from "../../storage/database";
 import { withImmediateTransaction } from "../../storage/sqlite-transaction";
-import { bundleAtDir } from "../bundle-id";
+import { bundleAtDir } from "../bundle-at-dir";
 import { loadConfig } from "../config/config";
 import { rethrowIfTestIsolationError } from "../errors";
 
@@ -29,8 +29,9 @@ function hasPathValuedRows(db: Database): boolean {
 }
 
 /**
- * Rewrite every root-valued `bundle_id` of `state.db` to its bundle's id. Does nothing when no row holds a root, and
- * leaves the rows as they are (to be converted on a later open) when the config cannot be read.
+ * Rewrite every root-valued `bundle_id` of `state.db` whose directory a configured bundle is at to that bundle's id. A
+ * root no configured bundle is at stays as it is, and is looked at again on a later open (the directory may be
+ * configured by then); so do all rows when the config cannot be read. Writes nothing when no root matches.
  */
 export function convertPathBundleIds(db: Database): void {
   if (!hasPathValuedRows(db)) return;
@@ -41,20 +42,23 @@ export function convertPathBundleIds(db: Database): void {
     rethrowIfTestIsolationError(error);
     return;
   }
+  const moves: Array<{ table: string; column: string; root: string; id: string }> = [];
+  for (const { table, column } of STATE_BUNDLE_ID_COLUMNS) {
+    // Oldest first by rowid: when two roots of one bundle both hold the same ledger key, the last write wins.
+    const roots = db
+      .prepare(
+        `SELECT ${column} AS root FROM ${table} WHERE ${PATH_VALUED(column)} GROUP BY ${column} ORDER BY MAX(rowid) ASC`,
+      )
+      .all() as Array<{ root: string }>;
+    for (const { root } of roots) {
+      const id = bundleAtDir(config, root);
+      if (id !== undefined) moves.push({ table, column, root, id });
+    }
+  }
+  if (moves.length === 0) return;
   withImmediateTransaction(db, () => {
-    for (const { table, column } of STATE_BUNDLE_ID_COLUMNS) {
-      // Newest first by rowid: when two roots of one bundle both hold the same ledger key, the last write wins.
-      const roots = db
-        .prepare(
-          `SELECT ${column} AS root FROM ${table} WHERE ${PATH_VALUED(column)} GROUP BY ${column} ORDER BY MAX(rowid) ASC`,
-        )
-        .all() as Array<{ root: string }>;
-      for (const { root } of roots) {
-        db.prepare(`UPDATE OR REPLACE ${table} SET ${column} = ? WHERE ${column} = ?`).run(
-          bundleAtDir(config, root),
-          root,
-        );
-      }
+    for (const { table, column, root, id } of moves) {
+      db.prepare(`UPDATE OR REPLACE ${table} SET ${column} = ? WHERE ${column} = ?`).run(id, root);
     }
   });
 }

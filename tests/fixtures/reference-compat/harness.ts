@@ -53,6 +53,8 @@ export interface CorpusCase {
   /** akm arguments, with `{OUT}` replaced by the sandbox's output directory. */
   args: string[];
   stdin?: string;
+  /** Environment variables this command runs with besides the sandbox's (`{FIXTURE}` is the sandbox's fixture directory). */
+  env?: Record<string, string>;
   /** Files (relative to the sandbox's output directory) the command wrote that the result records. */
   readFiles?: string[];
 }
@@ -494,10 +496,15 @@ export function recordStateSql(tree: string, scratch: string): string {
 
 // ── Running ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-function spawn(sandbox: Sandbox, args: string[], stdin?: string) {
+function spawn(sandbox: Sandbox, args: string[], stdin?: string, env?: Record<string, string>) {
   const proc = Bun.spawnSync([process.execPath, path.join(sandbox.tree, "src", "cli.ts"), ...args], {
     cwd: path.join(sandbox.root, "work"),
-    env: sandbox.env,
+    env: {
+      ...sandbox.env,
+      ...Object.fromEntries(
+        Object.entries(env ?? {}).map(([key, value]) => [key, value.split("{FIXTURE}").join(sandbox.fixture)]),
+      ),
+    },
     stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
     timeout: 120_000,
   });
@@ -667,7 +674,7 @@ function probeSql(db: Database, probe: { table?: string; sql: string }): string 
 function runCase(sandbox: Sandbox, norm: ReturnType<typeof normaliser>, c: CorpusCase, quietA2 = false): CorpusResult {
   const fill1 = (arg: string) =>
     arg.split("{OUT}").join(sandbox.out).split("{BUNDLE_MAIN}").join(path.join(sandbox.fixture, "main"));
-  const res = spawn(sandbox, c.args.map(fill1), c.stdin);
+  const res = spawn(sandbox, c.args.map(fill1), c.stdin, c.env);
   const result: CorpusResult = { exit: res.exitCode };
   const trimmed = res.stdout.trim();
   let parsed: unknown;

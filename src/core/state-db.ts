@@ -75,8 +75,8 @@ import {
 import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 import { openSqliteReadSnapshot } from "../storage/sqlite-read-snapshot";
 import { pkgVersion } from "../version";
-import { bundleAtDir } from "./bundle-id";
-import { loadConfig } from "./config/config";
+import { bundleKeyForDir } from "./bundle-at-dir";
+import { type AkmConfig, loadConfig } from "./config/config";
 import { ConfigError, rethrowIfTestIsolationError } from "./errors";
 import { getDataDir } from "./paths";
 import { convertPathBundleIds } from "./state/bundle-id-conversion";
@@ -102,12 +102,13 @@ export function getStateDbPath(): string {
 }
 
 /**
- * The bundle id state rows (proposals, improve runs, the improve ledger) are filed under for the bundle at `dir`:
- * rows follow a bundle by its name, never by where its directory is (§0.2 P8). A command that has the bundle's
- * directory (the working stash, `--dir`) asks here; everything below it takes the id.
+ * The `bundle_id` state rows (proposals, improve runs, the improve ledger) are filed under for the bundle at `dir`:
+ * its id, so rows follow a bundle by its name and not by where its directory is (§0.2 P8); the directory's own path
+ * when no configured bundle is there. A command that has the bundle's directory (the working stash, `--dir`) asks
+ * here, with the config it holds; everything below takes the key.
  */
-export function stateBundleId(dir: string): string {
-  return bundleAtDir(loadConfig(), dir);
+export function stateBundleId(dir: string, config: AkmConfig = loadConfig()): string {
+  return bundleKeyForDir(config, dir);
 }
 
 // ── Database open ────────────────────────────────────────────────────────────

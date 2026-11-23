@@ -21,8 +21,8 @@
 
 import path from "node:path";
 import { legacyRefOf } from "../../core/assets/write";
-import { bundleAtDir, deriveBundleIds } from "../../core/bundle-id";
-import type { AkmConfig } from "../../core/config/config";
+import { deriveBundleIds } from "../../core/bundle-id";
+import { safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError } from "../../core/errors";
 import { warnOnce } from "../../core/warn";
@@ -56,43 +56,36 @@ interface ConfiguredBundle {
   source: SearchSource;
 }
 
-interface ConfiguredBundles {
-  config: AkmConfig;
-  bundles: ConfiguredBundle[];
-}
-
-let cached: ConfiguredBundles | undefined;
+let cached: { config: unknown; bundles: ConfiguredBundle[] } | undefined;
 
 /**
  * The configured bundles, in order, as the proposal queue sees them; none when the config cannot be read. Computed
  * once for a loaded config (a command's reads share it), and only a record of the old shape asks.
  */
-function configuredBundles(): ConfiguredBundles | undefined {
+function configuredBundles(): ConfiguredBundle[] {
   try {
     const config = loadConfig();
-    if (cached?.config === config) return cached;
+    if (cached?.config === config) return cached.bundles;
     const sources = resolveSourceEntries(undefined, config);
     const ids = deriveBundleIds(sources);
-    cached = { config, bundles: sources.map((source, index) => ({ id: ids[index] as string, source })) };
-    return cached;
+    const bundles = sources.map((source, index) => ({ id: ids[index] as string, source }));
+    cached = { config, bundles };
+    return bundles;
   } catch (error) {
     rethrowIfTestIsolationError(error);
-    return undefined;
+    return [];
   }
 }
 
-/** The bundle a stored `(source, root)` names: the configured bundle called `source`, else the bundle at `root` (`bundleAtDir`). */
-function bundleOfRecord(
-  known: ConfiguredBundles | undefined,
-  name: unknown,
-  root: unknown,
-): ConfiguredBundle | undefined {
-  if (!known) return undefined;
-  const named = typeof name === "string" ? known.bundles.find((bundle) => bundle.id === name) : undefined;
+function sameRoot(left: string, right: string): boolean {
+  return path.resolve(left) === path.resolve(right) || safeRealpath(left) === safeRealpath(right);
+}
+
+/** The bundle a stored `(source, root)` names: the configured bundle called `source`, else the one at `root`. */
+function bundleOfRecord(bundles: ConfiguredBundle[], name: unknown, root: unknown): ConfiguredBundle | undefined {
+  const named = typeof name === "string" ? bundles.find((bundle) => bundle.id === name) : undefined;
   if (named) return named;
-  if (typeof root !== "string") return undefined;
-  const id = bundleAtDir(known.config, root);
-  return known.bundles.find((bundle) => bundle.id === id);
+  return typeof root === "string" ? bundles.find((bundle) => sameRoot(bundle.source.path, root)) : undefined;
 }
 
 function refOfPath(bundle: ConfiguredBundle | undefined, root: unknown, file: string, fallback: string): string {
@@ -116,9 +109,13 @@ function refOfPath(bundle: ConfiguredBundle | undefined, root: unknown, file: st
  * `meta` in the current shape, and whether it was old. A record already current comes back as given. Fields that are
  * not recognised are left as they are: the repository's own checks refuse a malformed record, as they always did.
  */
-export function convertLegacyProposalMetadata(meta: Meta, proposalRef: string): { meta: Meta; legacy: boolean } {
+export function convertLegacyProposalMetadata(
+  meta: Meta,
+  proposalRef: string,
+  given?: ConfiguredBundle[],
+): { meta: Meta; legacy: boolean } {
   if (!isLegacyProposalMetadata(meta)) return { meta, legacy: false };
-  const bundles = configuredBundles();
+  const bundles = given ?? configuredBundles();
   const out: Meta = { ...meta };
   const proposed = isRecord(meta.proposedTarget) ? meta.proposedTarget : undefined;
   const accepted = isRecord(meta.acceptedTarget) ? meta.acceptedTarget : undefined;

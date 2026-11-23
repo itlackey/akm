@@ -677,7 +677,7 @@ describe("migration 028 backfills the ledger from proposals rows", () => {
 
     const db = openStateDatabase(file);
     try {
-      const rows = new Map(listImproveLedgerRows(db, "s").map((row) => [`${row.source} ${row.ref}`, row]));
+      const rows = new Map(listImproveLedgerRows(db, "/s").map((row) => [`${row.source} ${row.ref}`, row]));
       expect(rows.get("distill personal//lessons/a")).toMatchObject({
         outcome: "proposed",
         proposalId: "a-new",

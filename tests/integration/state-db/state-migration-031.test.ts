@@ -135,42 +135,68 @@ describe("migration 031-bundle-id-columns", () => {
     }
   });
 
-  test("a root no configured bundle has keeps the id that directory gets, so it reattaches when configured again", () => {
-    const gone = path.join(storage.root, "moved-away", "old-library");
+  test("a root no configured bundle is at keeps its path, and a bundle configured at it later takes the rows", () => {
+    const library = path.join(storage.root, "moved-away", "old-library");
+    fs.mkdirSync(library, { recursive: true });
     writeSandboxConfig({
       semanticSearchMode: "off",
       bundles: { work: { path: storage.stashDir, writable: true } },
       defaultBundle: "work",
     });
     resetConfigCache();
-    seedPre031({ proposal: gone, run: gone, ledger: gone });
+    seedPre031({ proposal: library, run: library, ledger: library });
 
-    const db = openStateDatabase(statePath());
+    const first = openStateDatabase(statePath());
     try {
-      expect(bundleIds(db)).toEqual({
-        proposals: ["old-library"],
-        improve_runs: ["old-library"],
-        improve_ledger: ["old-library"],
+      expect(bundleIds(first)).toEqual({ proposals: [library], improve_runs: [library], improve_ledger: [library] });
+    } finally {
+      first.close();
+    }
+    // Not looked at as another bundle's: a bundle called like the directory does not take them.
+    writeSandboxConfig({
+      bundles: {
+        work: { path: storage.stashDir, writable: true },
+        "old-library": { path: path.join(storage.root, "elsewhere"), writable: true },
+      },
+    });
+    fs.mkdirSync(path.join(storage.root, "elsewhere"), { recursive: true });
+    resetConfigCache();
+    const second = openStateDatabase(statePath());
+    try {
+      expect(bundleIds(second).proposals).toEqual([library]);
+    } finally {
+      second.close();
+    }
+    // A bundle configured at the directory does.
+    writeSandboxConfig({
+      bundles: { work: { path: storage.stashDir, writable: true }, library: { path: library, writable: true } },
+    });
+    resetConfigCache();
+    const third = openStateDatabase(statePath());
+    try {
+      expect(bundleIds(third)).toEqual({
+        proposals: ["library"],
+        improve_runs: ["library"],
+        improve_ledger: ["library"],
       });
     } finally {
-      db.close();
+      third.close();
     }
   });
 
-  test("a root whose basename is a configured name gets a hashed id, never that bundle's", () => {
-    const other = path.join(storage.root, "elsewhere", "work");
-    writeSandboxConfig({
-      semanticSearchMode: "off",
-      bundles: { work: { path: storage.stashDir, writable: true } },
-      defaultBundle: "work",
-    });
+  test("two unconfigured directories with the same basename keep separate rows", () => {
+    const first = path.join(storage.root, "a", "akm");
+    const second = path.join(storage.root, "b", "akm");
     resetConfigCache();
-    seedPre031({ proposal: other, run: other, ledger: other });
+    seedPre031({ proposal: first, run: first, ledger: first });
+    const seeded = openDatabase(statePath());
+    seeded.prepare("UPDATE proposals SET stash_dir = ? WHERE id = 'p1'").run(second);
+    seeded.close();
 
     const db = openStateDatabase(statePath());
     try {
-      const [id] = bundleIds(db).proposals as [string];
-      expect(id).toMatch(/^work-[0-9a-f]{8}$/);
+      expect(bundleIds(db).proposals).toEqual([second]);
+      expect(bundleIds(db).improve_ledger).toEqual([first]);
     } finally {
       db.close();
     }
