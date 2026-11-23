@@ -603,7 +603,10 @@ describe("writeAssets", () => {
     const created = writeAssets(target, { purpose: "test" }, (w) =>
       w.create({ type: "knowledge", name: "note", content: "---\ndescription: n\n---\nBody\n" }),
     );
-    expect(created).toEqual({ ref: "stash//knowledge/note", content: "---\ndescription: n\n---\nBody\n" });
+    expect(created).toEqual({
+      ref: "stash//knowledge/note",
+      content: "---\ndescription: n\n---\nBody\n",
+    });
     expect(fs.existsSync(path.join(stash.path, "knowledge", "note.md"))).toBe(true);
 
     writeAssets(target, { purpose: "test" }, (w) => {

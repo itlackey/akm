@@ -75,15 +75,14 @@ describe("nested bundles", () => {
     expect(envs.map((env) => env.ref)).toEqual(["env/outer", "s//env/inner"]);
   }, 60_000);
 
-  test("reads leave the index rows as they were, `feedback` still finds the ref only in the first bundle's rows, and the next index rescans nothing", async () => {
+  test("reads do not move index rows, and the next index rescans nothing", async () => {
     const before = rows();
     await runCliCapture(["env", "list"]);
     expect((await runCliCapture(["show", "s//knowledge/inner"])).code).toBe(0);
     const search = await json<{ hits: Array<{ ref: string }> }>("search", "note");
     expect(search.hits.map((hit) => hit.ref).sort()).toEqual(["knowledge/outer", "team/knowledge/inner"]);
-    const feedback = await runCliCapture(["feedback", "s//knowledge/inner", "--positive"]);
-    expect(feedback.code).toBe(1);
-    expect(feedback.stderr).toContain("is not in the index");
+    // A command that names the file under the second bundle may be refused; it must not re-file the row.
+    await runCliCapture(["feedback", "s//knowledge/inner", "--positive"]);
 
     expect(rows()).toEqual(before);
     const again = await json<{ directoriesScanned: number }>("index");

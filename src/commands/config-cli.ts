@@ -50,10 +50,15 @@ export function setConfigValue(config: AkmConfig, key: string, rawValue: string)
     );
   }
   const next = configSet(config as unknown as Record<string, unknown>, key, rawValue) as unknown as AkmConfig;
-  // A typo in an adapter id is caught as it is typed, not when a bundle is next read.
+  // A typo in an adapter id, or an adapter the bundle is not addressed for, is caught as it is typed, not when a bundle
+  // is next read.
   if (key === "bundles" || key.startsWith("bundles.")) {
+    // Only the bundle the key names (every bundle for `bundles` itself): another bundle's fault is not this edit's.
+    const touched = key.split(".")[1];
     for (const source of resolveConfiguredSources(next)) {
-      if (source.adapterId !== undefined) requireAdapter(source.name, source.adapterId);
+      if (touched !== undefined && source.name !== touched) continue;
+      if (source.adapterId !== undefined)
+        requireAdapter(source.name, source.adapterId, { location: source.source.type === "location" });
     }
   }
   return next;

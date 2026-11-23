@@ -27,6 +27,7 @@ import {
 } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
+import { withoutAdapterPrompts } from "../../core/assets/gate";
 import { validateBundleAssets } from "../../core/assets/validate";
 import { deriveBundleIds } from "../../core/bundle-id";
 import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpath, samePath } from "../../core/common";
@@ -102,6 +103,11 @@ export interface AkmLintOptions {
    * state.db (the improve dry run's snapshot) passes it; otherwise they are read through the ordinary read-only one.
    */
   readMoves?: ReadMoves;
+  /**
+   * Also check the keyrings and vaults among the configured bundles through their adapters (a name akm cannot list, two
+   * entries of one name). `akm lint` without `--dir` or a file asks; a store that cannot be reached is skipped.
+   */
+  stores?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -261,6 +267,41 @@ async function adapterFindings(
     },
   );
   return found.map(diagnosticToLintIssue);
+}
+
+/**
+ * What the adapters of the configured keyring and vault bundles report about their stores: the entries they do not
+ * list, and the names more than one entry holds. A finding names its asset by ref, since no file holds it. A store that
+ * cannot be reached has nothing to check.
+ */
+async function addStoreFindings(
+  found: LintFindings,
+  sources: SearchSource[],
+  cfg: AkmConfig,
+  options: AkmLintOptions,
+): Promise<void> {
+  // Secrets are the stores' only type: a `--type` for another one leaves them out.
+  if (options.stores !== true || (options.typeFilter !== undefined && options.typeFilter !== "secrets")) return;
+  const ids = deriveBundleIds(sources);
+  for (const [index, source] of sources.entries()) {
+    if (source.location === undefined || source.adapterId === undefined || source.unresolved) continue;
+    const bundle = ids[index] as string;
+    try {
+      // Lint runs in hooks and CI: a locked keyring is skipped like an unreachable one, never asked to unlock.
+      const diagnostics = await withoutAdapterPrompts(() =>
+        validateBundleAssets(
+          { name: bundle, path: source.path, location: source.location, adapterId: source.adapterId },
+          { ctx: { sources, config: cfg, readMoves: options.readMoves ?? readRecordedMoves } },
+        ),
+      );
+      for (const diagnostic of diagnostics) {
+        const issue = { ...diagnosticToLintIssue(diagnostic), ref: diagnostic.ref };
+        (isAdvisoryLintIssue(issue) ? found.warnings : found.flagged).push(issue);
+      }
+    } catch {
+      // A store that cannot be reached or fails has nothing to check: lint skips it silently, as in hooks and CI.
+    }
+  }
 }
 
 /**
@@ -1084,6 +1125,7 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   if (adapterId !== "akm") {
     const found = await lintViaAdapter(adapterId, stashRoot, extraStashRoots, sources, cfg, options);
     found.flagged.push(...trackedSecretIssues(stashRoot));
+    await addStoreFindings(found, sources, cfg, options);
     return finishLint(found, cfg, options, stashRoot);
   }
   // Same fail-closed rule for --type on the akm sweep: an unknown value used
@@ -1104,5 +1146,6 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   const found = lintAkmSweep(stashRoot, extraStashRoots, cfg, sources, options);
   await addAdapterFindings(found, stashRoot, sources, cfg, options);
   found.flagged.push(...trackedSecretIssues(stashRoot));
+  await addStoreFindings(found, sources, cfg, options);
   return finishLint(found, cfg, options, stashRoot);
 }

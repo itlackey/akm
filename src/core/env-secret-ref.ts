@@ -17,13 +17,13 @@ import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
 import { type Asset, findAsset, listAssets } from "./assets/read";
 import { assetType } from "./assets/type";
-import { readAsset, type WriteResult, writeAssets } from "./assets/write";
+import { addressOf, readAsset, type WriteResult, writeAssets } from "./assets/write";
 import { deriveBundleIds } from "./bundle-id";
 import { scanEnvKeyNames, toPosix } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
 import { resolveMutationTarget } from "./mutation-target";
-import { formatRefForMessage, type ResolvedWriteTarget } from "./write-source";
+import { assertWritePathsInsideSource, formatRefForMessage, type ResolvedWriteTarget } from "./write-source";
 
 /**
  * The assets of `type` in the type's folder (`env/`, `secrets/`): the refs the env and secret commands accept. A file
@@ -238,6 +238,25 @@ export function resolveSecretWriteTarget(
 /** The env file or secret a write resolution names, as the target bundle's adapter reads it; undefined when it has none. */
 export function findWriteTargetAsset(resolution: EnvSecretWriteResolution): Asset | undefined {
   return readAsset(resolution.target.source, resolution.conceptId);
+}
+
+/**
+ * The asset a create of this name would meet: the one the name's ref holds, else the one at the concept the name is
+ * placed at (`env/default.env` is placed as `env/default`, which `env/.env` holds), under any spelling.
+ */
+export function findCreateTargetAsset(resolution: EnvSecretWriteResolution): Asset | undefined {
+  const { source } = resolution.target;
+  return (
+    findWriteTargetAsset(resolution) ??
+    readAsset(source, addressOf(source, `${resolution.type}/${resolution.name}`).conceptId)
+  );
+}
+
+/** Refuse, as a write would, the file that holds the asset a resolution names when its path passes a symbolic link. */
+export function assertEnvSecretFileWritable(resolution: EnvSecretWriteResolution): void {
+  const { source } = resolution.target;
+  const { file } = addressOf(source, `${resolution.type}/${resolution.name}`);
+  if (file !== undefined) assertWritePathsInsideSource(source, [file]);
 }
 
 /**

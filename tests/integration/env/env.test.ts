@@ -516,6 +516,41 @@ describe("env create over an env kept under another spelling (§0.2 N20)", () =>
   });
 });
 
+describe("env create by the file spelling of an env that exists (§0.2 N20)", () => {
+  test("`env/default.env` with `env/.env` present is refused, with and without content, and `env/.env` is untouched", async () => {
+    const stashDir = makeTempDir("akm-envcli-stash-");
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", ".env"), "KEEP=me\n", "utf8");
+    const seed = path.join(stashDir, "seed.txt");
+    fs.writeFileSync(seed, "NEW=1\n", "utf8");
+
+    for (const args of [
+      ["env/default.env"],
+      ["env/default.env", "--from-file", seed],
+      ["env/default", "--from-file", seed],
+    ]) {
+      const result = await runCli(["env", "create", ...args], { AKM_BUNDLE_DIR: stashDir });
+      expect(result.status, args.join(" ")).toBe(2);
+      expect((JSON.parse(result.stderr) as { code?: string }).code).toBe("RESOURCE_ALREADY_EXISTS");
+    }
+    expect(fs.readdirSync(path.join(stashDir, "env"))).toEqual([".env"]);
+    expect(fs.readFileSync(path.join(stashDir, "env", ".env"), "utf8")).toBe("KEEP=me\n");
+  });
+
+  test("a symbolic-linked env is refused as before, not left as it is", async () => {
+    const stashDir = makeTempDir("akm-envcli-stash-");
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "app.env"), "KEEP=me\n", "utf8");
+    fs.symlinkSync("app.env", path.join(stashDir, "env", "lnk.env"));
+
+    const result = await runCli(["env", "create", "env/lnk"], { AKM_BUNDLE_DIR: stashDir });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("symbolic link");
+    expect(fs.readFileSync(path.join(stashDir, "env", "app.env"), "utf8")).toBe("KEEP=me\n");
+  });
+});
+
 describe("env remove", () => {
   test("removes an env file", async () => {
     const stashDir = makeTempDir("akm-envcli-stash-");

@@ -59,7 +59,7 @@ export const addCommand = defineJsonCommand({
     name: { type: "string", description: "Human-friendly name for the source" },
     adapter: {
       type: "string",
-      description: `Adapter for a local directory: ${adapterIds().join(", ")}`,
+      description: `Adapter for a local directory, or the adapter that reads a keyring or vault (then the ref is its name): ${adapterIds().join(", ")}`,
     },
     writable: {
       type: "boolean",

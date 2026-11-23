@@ -26,11 +26,22 @@ const name = option("name") as string;
 const missing = (): never =>
   fail(`ERROR: (SecretNotFound) A secret with (name/id) ${name} was not found in this key vault.`, 3);
 
-if (verb === "list") {
-  process.stdout.write(`${JSON.stringify(Object.keys(vault))}\n`);
+if (verb === "list" && (state.listFails ?? []).includes(vaultName)) {
+  fail("ERROR: (InternalServerError) The service failed.", 3);
+} else if (verb === "list") {
+  // A query that asks for what is enabled and unmanaged leaves out the secrets that are not.
+  const excluded = option("query")?.includes("managed")
+    ? [...(state.disabled?.[vaultName] ?? []), ...(state.managed?.[vaultName] ?? [])]
+    : [];
+  process.stdout.write(`${JSON.stringify(Object.keys(vault).filter((secret) => !excluded.includes(secret)))}\n`);
 } else if (verb === "show") {
   if (!(name in vault)) missing();
-  process.stdout.write(`${JSON.stringify(vault[name])}\n`);
+  if (state.disabled?.[vaultName]?.includes(name))
+    fail("ERROR: (Forbidden) Operation get is not allowed on a disabled secret.\nCode: SecretDisabled", 3);
+  const managed = (state.managed?.[vaultName] ?? []).includes(name);
+  process.stdout.write(
+    `${JSON.stringify(option("query")?.includes("managed") ? [vault[name], managed] : vault[name])}\n`,
+  );
 } else if (verb === "set") {
   if (!/^[0-9a-zA-Z-]+$/.test(name)) fail(`ERROR: (BadParameter) The request URI contains an invalid name: ${name}`, 3);
   if (state.deleted?.[vaultName]?.[name] !== undefined)
@@ -38,7 +49,13 @@ if (verb === "list") {
       `ERROR: (Conflict) Secret ${name} is currently in a deleted but recoverable state, and its name cannot be reused.`,
       3,
     );
-  vault[name] = fs.readFileSync(option("file") as string, "utf8");
+  vault[name] =
+    option("file") !== undefined ? fs.readFileSync(option("file") as string, "utf8") : (option("value") as string);
+  saveState(state);
+} else if (verb === "set-attributes") {
+  if (!(name in vault)) missing();
+  const others = (state.disabled?.[vaultName] ?? []).filter((secret) => secret !== name);
+  state.disabled = { ...state.disabled, [vaultName]: option("enabled") === "false" ? [...others, name] : others };
   saveState(state);
 } else if (verb === "delete") {
   if (!(name in vault)) missing();
@@ -47,6 +64,11 @@ if (verb === "list") {
   delete vault[name];
   saveState(state);
 } else if (verb === "purge") {
+  if ((state.purgeConflicts?.[vaultName] ?? 0) > 0) {
+    (state.purgeConflicts as Record<string, number>)[vaultName] = (state.purgeConflicts?.[vaultName] ?? 1) - 1;
+    saveState(state);
+    fail(`ERROR: (Conflict) Secret ${name} is currently being deleted.`, 3);
+  }
   if (state.purgeForbidden?.includes(vaultName))
     fail(`ERROR: (Forbidden) The user does not have secrets purge permission on vault '${vaultName}'.`, 3);
   if (state.deleted?.[vaultName]?.[name] === undefined) missing();

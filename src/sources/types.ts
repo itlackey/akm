@@ -300,6 +300,11 @@ export interface AddResponse {
         url: string;
         name?: string;
         stashRoot: string;
+      }
+    | {
+        type: "location";
+        location: string;
+        name: string;
       };
   config: {
     sourceCount: number;

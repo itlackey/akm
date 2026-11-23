@@ -353,6 +353,42 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // `env create` of the default env under the file spelling `env/default.env` while `env/.env` holds it (N20: refused,
+    // nothing written; `1f2e58c9` wrote a twin `env/default.env`), with and without content, and over a symlinked env.
+    id: "env create default",
+    setup: (sb) => {
+      write(path.join(sb.fixture, "main/env/.env"), "KEEP=1\n");
+      write(path.join(sb.root, "work/new.env"), "REPLACED=1\n");
+      fs.symlinkSync("app.env", path.join(sb.fixture, "main/env/lnk.env"));
+    },
+    prep: [["index", "--quiet"]],
+    track: ["main"],
+    cases: [
+      // with content first: `1f2e58c9` wrote `env/default.env` for it, which the later cases then find
+      c("env/default.env --from-file", ["env", "create", "env/default.env", "--from-file", "new.env"]),
+      c("env/default --from-file", ["env", "create", "env/default", "--from-file", "new.env"]),
+      c("env/default", ["env", "create", "env/default"]),
+      c("env/default.env", ["env", "create", "env/default.env"]),
+      c("main//env/default.env", ["env", "create", "main//env/default.env"]),
+      c("env/lnk", ["env", "create", "env/lnk"]),
+      c("env/lnk.env", ["env", "create", "env/lnk.env"]),
+    ],
+  },
+  {
+    // A task held in an off-case file with no `.yml` of its id (F5): `1f2e58c9` found it at neither enable nor sync.
+    id: "task in an off-case file",
+    setup: (sb) => {
+      fs.copyFileSync(path.join(sb.fixture, "main/tasks/nightly.yml"), path.join(sb.fixture, "main/tasks/Up.YML"));
+    },
+    prep: [["index", "--quiet"]],
+    cases: [
+      c("task enable tasks/Up", ["task", "enable", "tasks/Up"]),
+      c("task enable Up", ["task", "enable", "Up"]),
+      c("doctor scheduler sync --dry-run", ["doctor", "scheduler", "sync", "--dry-run"]),
+      c("task disable tasks/Up", ["task", "disable", "tasks/Up"]),
+    ],
+  },
+  {
     // The events log after an env or secret is used through a file spelling (N21).
     id: "log after use",
     cases: [

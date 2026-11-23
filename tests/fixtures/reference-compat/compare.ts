@@ -40,6 +40,19 @@ export function caseCovers(entryCase: string, nodeCase: string): boolean {
   return new RegExp(`^${pattern}$`).test(nodeCase);
 }
 
+/**
+ * Whether a registered entry's `path` covers a node's: the same path, or one with `[*]` where the node has an array
+ * index (`stdout.sources[*].detected`), for a difference every element shows the same way.
+ */
+export function pathCovers(entryPath: string, nodePath: string): boolean {
+  if (!entryPath.includes("[*]")) return entryPath === nodePath;
+  const pattern = entryPath
+    .split("[*]")
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("\\[\\d+\\]");
+  return new RegExp(`^${pattern}$`).test(nodePath);
+}
+
 export interface RegisteredDifference extends DifferenceNode {
   /** The §0.2 row that approves this difference, e.g. `A3`; `A3+A5` when two approved rows together account for it. */
   row: string;
@@ -61,6 +74,8 @@ export const APPROVED_ROWS: ReadonlySet<string> = new Set([
   "P6",
   // F1 is provisional: set by the coordinator while the owner is unattended (design §0.2), pending the owner's answer.
   "F1",
+  // F5 is provisional (Fable, design §0.2): a task held in an off-case file is scheduled by sync and accepted by enable.
+  "F5",
 ]);
 
 /** True when `row` names only approved §0.2 rows (`A3`, or `A3+A5`). */
@@ -146,7 +161,7 @@ export function approvedBy(node: DifferenceNode, registry: RegisteredDifference[
   return registry.find(
     (e) =>
       caseCovers(e.case, node.case) &&
-      e.path === node.path &&
+      pathCovers(e.path, node.path) &&
       same(e.base, node.base) &&
       same(e.current, node.current) &&
       rowsApproved(e.row),

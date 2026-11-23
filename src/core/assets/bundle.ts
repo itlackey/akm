@@ -34,7 +34,7 @@ export class AssetBundle {
   /** The adapter the source is configured with, else the one its root's probe finds. */
   constructor(source: BundleSource) {
     this.name = source.name;
-    this.#adapter = requireAdapter(source.name, adapterIdOf(source));
+    this.#adapter = requireAdapter(source.name, adapterIdOf(source), { location: source.location !== undefined });
     this.#bundle = bundleOf(source);
   }
 
@@ -80,6 +80,14 @@ export class AssetBundle {
     throw new UsageError(`Bundle "${this.name}" (adapter "${this.#adapter.id}") does not retire assets.`);
   }
 
+  /** Whether the bundle is a store (a keyring, a vault) rather than a directory. */
+  get isStore(): boolean {
+    return this.#adapter.addressedBy === "location";
+  }
+  /** Whether the bundle's storage is there. */
+  exists(): boolean {
+    return this.#adapter.exists(this.#bundle);
+  }
   list(): BundleListing {
     return this.#adapter.list(this.#bundle);
   }

@@ -9,7 +9,7 @@
  */
 
 import fs from "node:fs";
-import { beginCall, type FakeKeyringItem, fail, saveState } from "./state";
+import { beginCall, type FakeKeyringItem, fail, keyringOfCollection, saveState } from "./state";
 
 const COLLECTION_PREFIX = "/org/freedesktop/secrets/collection/";
 
@@ -31,9 +31,11 @@ if (verb === "lookup") {
   if (!item) process.exit(1);
   process.stdout.write(item.secret);
 } else if (verb === "store") {
-  const keyring = options.collection as string;
-  const items = state.keyrings[keyring];
-  if (!items) fail(`secret-tool: No such secret collection at path: ${COLLECTION_PREFIX}${keyring}`);
+  // `--collection` takes an alias or an object path.
+  const keyring = keyringOfCollection(state, options.collection as string);
+  const items = keyring === undefined ? undefined : state.keyrings[keyring];
+  if (keyring === undefined || !items)
+    fail(`secret-tool: No such secret collection at path: ${COLLECTION_PREFIX}${options.collection}`);
   const same = (item: FakeKeyringItem) => JSON.stringify(item.attributes) === JSON.stringify(wanted);
   const next = Math.max(0, ...items.map((item) => Number(item.path.split("/").pop()))) + 1;
   const stored: FakeKeyringItem = {

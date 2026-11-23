@@ -86,6 +86,7 @@ import {
   type SchedulerSyncOperation,
   type SchedulerSyncPlan,
   scheduledInvocationBundle,
+  taskIdClaimedByYml,
 } from "../../tasks/scheduler-sync";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
@@ -430,14 +431,29 @@ function resolveTaskActivation(
     adapterId === "akm"
       ? path.join(bundle.source.path, "tasks", `${id}.yml`)
       : path.join(bundle.source.path, `${id}.yml`);
-  if (requireSchedulable && !fs.existsSync(sourcePath)) {
-    throw new NotFoundError(`Task ${JSON.stringify(makeBundleRef(bundle.source.name, conceptId))} was not found.`);
-  }
+  // The task as sync reads it: its `.yml`, else the file its asset is held in when that is an off-case `.yml` (F5).
+  let yaml: string | undefined;
+  let filePath = sourcePath;
   if (requireSchedulable) {
-    const parsedSource = parseTaskSource({
-      yaml: fs.readFileSync(sourcePath, "utf8"),
-      filePath: sourcePath,
-    });
+    if (fs.existsSync(sourcePath)) {
+      yaml = fs.readFileSync(sourcePath, "utf8");
+    } else {
+      const held = readAsset(bundle.source, conceptId);
+      if (
+        held !== undefined &&
+        /\.yml$/i.test(held.entry.relPath) &&
+        !taskIdClaimedByYml(bundle.source.path, adapterId, id)
+      ) {
+        yaml = held.entry.content();
+        filePath = path.join(bundle.source.path, held.entry.relPath);
+      }
+    }
+    if (yaml === undefined) {
+      throw new NotFoundError(`Task ${JSON.stringify(makeBundleRef(bundle.source.name, conceptId))} was not found.`);
+    }
+  }
+  if (requireSchedulable && yaml !== undefined) {
+    const parsedSource = parseTaskSource({ yaml, filePath });
     if (parsedSource.schedule.length === 0) {
       throw new UsageError(`Task ${JSON.stringify(ref)} has no schedule to enable.`, "INVALID_FLAG_VALUE");
     }

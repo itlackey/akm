@@ -10299,6 +10299,180 @@
         }
       }
     },
+    "env create default :: env/default.env --from-file": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/default.env",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "env/default.env": "REPLACED=1\n"
+          },
+          "removed": []
+        }
+      }
+    },
+    "env create default :: env/default --from-file": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Env \"env/default\" already exists. Remove it first (`akm env remove`) or edit the file directly.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create default :: env/default": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/default",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create default :: env/default.env": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/default.env",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create default :: main//env/default.env": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/default.env",
+        "shape": "env-create",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create default :: env/lnk": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Write path contains a symbolic link below source \"main\": env/lnk.env",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "env create default :: env/lnk.env": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Write path contains a symbolic link below source \"main\": env/lnk.env",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "task in an off-case file :: task enable tasks/Up": {
+      "exit": 1,
+      "errorJson": {
+        "ok": false,
+        "error": "Task \"main//tasks/Up\" was not found.",
+        "code": "ASSET_NOT_FOUND",
+        "hint": "Run `akm search <query>` or `akm index` to refresh the index."
+      }
+    },
+    "task in an off-case file :: task enable Up": {
+      "exit": 1,
+      "errorJson": {
+        "ok": false,
+        "error": "Task \"main//tasks/Up\" was not found.",
+        "code": "ASSET_NOT_FOUND",
+        "hint": "Run `akm search <query>` or `akm index` to refresh the index."
+      }
+    },
+    "task in an off-case file :: doctor scheduler sync --dry-run": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "backend": "cron",
+        "dryRun": true,
+        "adds": [],
+        "updates": [
+          {
+            "id": "report",
+            "kind": "update",
+            "installedFingerprint": "0 9 * * 1 AKM_BUNDLE_DIR=<SANDBOX>/fixture/main AKM_CONFIG_DIR=<SANDBOX>/config/akm AKM_DATA_DIR=<SANDBOX>/data/akm AKM_CACHE_DIR=<SANDBOX>/cache/akm AKM_STATE_DIR=<SANDBOX>/state/akm <BUN> <TREE>/src/cli.ts task run report --scheduled > <SANDBOX>/cache/akm/tasks/logs/report.log 2>&1",
+            "expectedFingerprint": "0 9 * * 1 AKM_BUNDLE_DIR=<SANDBOX>/fixture/main AKM_CONFIG_DIR=<SANDBOX>/config/akm AKM_DATA_DIR=<SANDBOX>/data/akm AKM_CACHE_DIR=<SANDBOX>/cache/akm AKM_STATE_DIR=<SANDBOX>/state/akm <BUN> <TREE>/src/cli.ts task run report --bundle main --scheduled > <SANDBOX>/cache/akm/tasks/logs/report.log 2>&1"
+          }
+        ],
+        "removes": [],
+        "unchanged": [
+          "nightly",
+          "team-task"
+        ],
+        "hasRemovals": false,
+        "failures": [],
+        "shape": "task-sync-dry-run",
+        "schemaVersion": 1
+      }
+    },
+    "task in an off-case file :: task disable tasks/Up": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "main//tasks/Up",
+        "enabled": false,
+        "changed": false,
+        "sync": {
+          "installed": [],
+          "updated": [
+            "report"
+          ],
+          "removed": [],
+          "unchanged": [
+            "nightly"
+          ],
+          "skipped": [],
+          "backend": "cron",
+          "failures": []
+        },
+        "shape": "task-disable",
+        "schemaVersion": 1
+      }
+    },
     "log after use :: run --env env/app.env": {
       "exit": 0,
       "stdout": [

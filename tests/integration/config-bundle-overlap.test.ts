@@ -161,6 +161,22 @@ describe("a config that already nests bundles", () => {
     expect((await runCliCapture(["bundle", "list", "--format=json"])).code).toBe(0);
   }, 60_000);
 
+  test("renaming a bundle of the pair keeps it: the pair is told by its roots, not its ids", async () => {
+    for (const [from, to] of [
+      ["inner", "renamed"],
+      ["outer", "wrapper"],
+    ] as const) {
+      const result = await runCliCapture(["bundle", "rename", from, to]);
+      expect(result.code, result.stderr).toBe(0);
+    }
+    expect(Object.keys(loadConfig().bundles ?? {}).sort()).toEqual(["renamed", "wrapper"]);
+  }, 60_000);
+
+  test("a second bundle at the same roots is still a new overlap", async () => {
+    const result = await runCliCapture(["config", "set", "bundles.twin.path", inner]);
+    expect(result.code, result.stderr).toBe(78);
+  }, 60_000);
+
   test("`akm doctor` warns `bundle-shared-path` for the pair and exits 4", async () => {
     const result = await runCliCapture(["doctor", "--no-probe", "--format", "json"]);
     const report = JSON.parse(result.stdout) as {

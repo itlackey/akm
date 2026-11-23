@@ -92,21 +92,31 @@ async function compileTaskSources(
   desired: SchedulerBinding[],
   failures: SchedulerSourceFailure[],
 ): Promise<void> {
+  const candidates = taskSourceFiles(input.sourceRoot, input.adapterId);
+  const idOf = (candidate: string): string => taskIdOfFile(input.sourceRoot, input.adapterId, candidate);
+  // A `.yml` file claims its scheduler id (compared case-insensitively, as the scheduler compares them).
+  const claimed = new Set(
+    candidates.filter((candidate) => candidate.endsWith(".yml")).map((c) => idOf(c).toLowerCase()),
+  );
   const seen = new Set<string>();
-  for (const candidate of taskSourceFiles(input.sourceRoot, input.adapterId)) {
+  for (const candidate of candidates) {
     const conceptId = toPosix(path.relative(input.sourceRoot, candidate)).replace(/\.yml$/i, "");
-    const id = input.adapterId === "akm-task" ? conceptId : path.basename(candidate).replace(/\.yml$/i, "");
+    const id = idOf(candidate);
     const ref = sourceRef(input.bundleName, conceptId);
     if (ref === undefined || seen.has(ref) || (input.enabledRefs && !input.enabledRefs.has(ref))) continue;
+    const offCase = !candidate.endsWith(".yml");
+    // A file whose extension is in another case (`tt.YML`) is a task source only when it is the file its enabled asset
+    // is held in (a task add over it rewrites that file) and no `.yml` file claims the id; every other is not found.
+    if (offCase && claimed.has(id.toLowerCase())) continue;
     seen.add(ref);
-    let file = candidate;
+    const file = candidate;
     try {
-      // The file the task is read from is the one its asset is held in, whatever its spelling (`tt.YML`).
+      // The file the task is read from is the one its asset is held in, which must be the candidate.
       const held = readFrom({ path: input.sourceRoot, adapterId: input.adapterId }, input.bundleName, conceptId);
-      if (held === undefined || !/\.yml$/i.test(held.entry.relPath)) continue;
-      const relative = held.entry.relPath;
-      file = path.join(input.sourceRoot, relative);
-      const parsed = parseTaskSource({ yaml: held.entry.content(), filePath: file });
+      if (held === undefined || path.join(input.sourceRoot, held.entry.relPath) !== candidate) continue;
+      const yaml = held.entry.content();
+      const relative = toPosix(path.relative(input.sourceRoot, file));
+      const parsed = parseTaskSource({ yaml, filePath: file });
       // A task with no `schedule:` is run by hand or by a workflow step; it
       // contributes no binding and is not sync's to validate.
       if (parsed.schedule.length === 0) continue;
@@ -204,6 +214,19 @@ function scheduleStartFlags(entry: TaskSourceV5ScheduleBinding): SchedulerStartF
     ...(entry.secret !== undefined && entry.secret.length > 0 ? { secret: entry.secret } : {}),
     ...(entry.timeout !== undefined ? { timeout: entry.timeout } : {}),
   };
+}
+
+function taskIdOfFile(sourceRoot: string, adapterId: string, file: string): string {
+  return adapterId === "akm-task"
+    ? toPosix(path.relative(sourceRoot, file)).replace(/\.yml$/i, "")
+    : path.basename(file).replace(/\.yml$/i, "");
+}
+
+/** Whether a `.yml` file claims `id` (compared case-insensitively), so a task held in an off-case file is not found. */
+export function taskIdClaimedByYml(sourceRoot: string, adapterId: string, id: string): boolean {
+  return taskSourceFiles(sourceRoot, adapterId).some(
+    (file) => file.endsWith(".yml") && taskIdOfFile(sourceRoot, adapterId, file).toLowerCase() === id.toLowerCase(),
+  );
 }
 
 /**

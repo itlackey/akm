@@ -55,18 +55,17 @@ export interface BundleAsset {
   entry: AssetEntry;
 }
 
-/** Every asset of a bundle, one per concept. Listing reads no content. */
+/**
+ * Every asset of a bundle, one per concept. Listing reads no content. A store that cannot be reached at all (a keyring
+ * that is not there or refuses to unlock, a vault that refuses the account) is not a listing: `list` throws
+ * `BUNDLE_UNREACHABLE`.
+ */
 export interface BundleListing {
   assets: BundleAsset[];
   /** False when part of the bundle could not be read: the index keeps the rows it had. */
   complete: boolean;
   /** When `complete` is false: why. */
   incompleteReason?: string;
-  /**
-   * The store could not be reached at all, so nothing of the bundle is known (a keyring that is locked or a vault that
-   * refuses the account). The index keeps its rows; a command that needs the bundle fails with `BUNDLE_UNREACHABLE`.
-   */
-  unreachable?: true;
 }
 
 /** An asset to create: its type and its name within the type (`env/prod` is type `env`, name `prod`). */
@@ -113,14 +112,18 @@ export interface BundleAdapter {
   readonly id: string;
   /** Feeds index incrementality and fingerprints. */
   readonly version: string;
+  /** How config names the adapter's bundles: a directory by `path`/`git`/`website`/`npm`, a store by `location`. */
+  readonly addressedBy: "root" | "location";
   /** Types it creates, updates and deletes. Empty: read-only. */
   readonly writes: readonly string[];
   /** Types it retires recoverably; a subset of `writes`. Empty: it deletes only. */
   readonly retires: readonly string[];
 
+  /** Whether the bundle's storage is there. It reads no asset and never prompts. */
+  exists(b: Bundle): boolean;
   /**
    * Every asset of the bundle, one per concept. Identity comes from each entry's storage key alone: no content is read.
-   * The indexer describes each with `recognize`.
+   * The indexer describes each with `recognize`. Throws `BUNDLE_UNREACHABLE` when the storage cannot be reached.
    */
   list(b: Bundle): BundleListing;
   /**

@@ -37,10 +37,18 @@ import {
   caseCovers,
   type DifferenceNode,
   differences,
+  pathCovers,
   type RegisteredDifference,
   rowsApproved,
 } from "../fixtures/reference-compat/compare";
-import { buildSandbox, type CorpusResult, FIXTURE_DIR, runCorpus } from "../fixtures/reference-compat/harness";
+import {
+  buildSandbox,
+  type CorpusResult,
+  FIXTURE_DIR,
+  runMainCorpus,
+  runScenario,
+} from "../fixtures/reference-compat/harness";
+import { SCENARIOS } from "../fixtures/reference-compat/scenarios";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
 const expectedFile = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, "expected.json"), "utf8")) as {
@@ -57,8 +65,12 @@ const findings = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, "findings.jso
   note: string;
 }>;
 
-let actual: Record<string, CorpusResult> = {};
-let nodes: DifferenceNode[] = [];
+const actual: Record<string, CorpusResult> = {};
+const nodes: DifferenceNode[] = [];
+const ids = Object.keys(expectedFile.results);
+const scenarioIds = SCENARIOS.map((scenario) => scenario.id);
+/** The main corpus: every recorded case no scenario owns. */
+const mainIds = ids.filter((id) => !scenarioIds.some((scenario) => id.startsWith(`${scenario} :: `)));
 
 const show = (v: unknown) => {
   const text = JSON.stringify(v);
@@ -68,36 +80,62 @@ const show = (v: unknown) => {
 const describeNode = (n: DifferenceNode) =>
   `  ${n.case} :: ${n.path || "<whole result>"}\n    recorded: ${show(n.base)}\n    now:      ${show(n.current)}`;
 
-beforeAll(() => {
+/** Take a run's results in, and compare the recorded cases among them (those `ran` names) with the recording. */
+function take(results: Record<string, CorpusResult>, ran: string[]): void {
+  Object.assign(actual, results);
+  const recorded = Object.fromEntries(ran.map((id) => [id, expectedFile.results[id]]));
+  const now = Object.fromEntries(Object.entries(results).filter(([id]) => ran.includes(id) || !(id in recorded)));
+  nodes.push(...differences(recorded, now));
+}
+
+function checkCase(id: string): void {
+  test(id, () => {
+    const unapproved = nodes.filter((n) => n.case === id && !approvedBy(n, registry));
+    if (unapproved.length > 0) {
+      const finding = findings.find((f) => caseCovers(f.case, id));
+      throw new Error(
+        `${finding ? `OPEN FINDING (no approved row covers it): ${finding.note}\n` : ""}${unapproved.length} difference(s) from ${expectedFile.recordedFrom.slice(0, 8)} that no approved §0.2 row covers:\n${unapproved.map(describeNode).join("\n")}`,
+      );
+    }
+  });
+}
+
+/** Each part of the corpus runs in a sandbox of its own, so one slow or broken case fails its own part only. */
+const withSandbox = <T>(run: (dir: string) => T): T => {
   const sandbox = makeSandboxDir("akm-rc");
   try {
-    actual = runCorpus(buildSandbox(path.join(sandbox.dir, "run"), repoRoot, stateSql));
+    return run(sandbox.dir);
   } finally {
     sandbox.cleanup();
   }
-  nodes = differences(expectedFile.results, actual);
-}, 900_000);
+};
 
 describe(`references written before the adapter refactor resolve to the same assets (recorded from ${expectedFile.recordedFrom.slice(0, 8)})`, () => {
-  for (const id of Object.keys(expectedFile.results)) {
-    test(id, () => {
-      const unapproved = nodes.filter((n) => n.case === id && !approvedBy(n, registry));
-      if (unapproved.length > 0) {
-        const finding = findings.find((f) => caseCovers(f.case, id));
-        throw new Error(
-          `${finding ? `OPEN FINDING (no approved row covers it): ${finding.note}\n` : ""}${unapproved.length} difference(s) from ${expectedFile.recordedFrom.slice(0, 8)} that no approved §0.2 row covers:\n${unapproved.map(describeNode).join("\n")}`,
-        );
-      }
-    });
-  }
+  beforeAll(() => {
+    withSandbox((dir) => take(runMainCorpus(buildSandbox(path.join(dir, "run"), repoRoot, stateSql)), mainIds));
+  }, 900_000);
+  for (const id of mainIds) checkCase(id);
+});
 
+for (const scenario of SCENARIOS) {
+  const own = ids.filter((id) => id.startsWith(`${scenario.id} :: `));
+  describe(`references written before the adapter refactor resolve to the same assets: ${scenario.id}`, () => {
+    beforeAll(() => {
+      withSandbox((dir) => take(runScenario(buildSandbox(path.join(dir, "run"), repoRoot, stateSql), scenario), own));
+    }, 300_000);
+    for (const id of own) checkCase(id);
+  });
+}
+
+describe("the register of differences", () => {
   test("every command of the corpus ran, and none is new", () => {
+    expect(ids.filter((id) => !(id in actual))).toEqual([]);
     expect(Object.keys(actual).filter((id) => !(id in expectedFile.results))).toEqual([]);
   });
 
   test("every registered difference still occurs", () => {
     const stale = registry.filter(
-      (e) => !nodes.some((n) => caseCovers(e.case, n.case) && n.path === e.path && approvedBy(n, [e])),
+      (e) => !nodes.some((n) => caseCovers(e.case, n.case) && pathCovers(e.path, n.path) && approvedBy(n, [e])),
     );
     expect(stale.map((e) => `${e.case} :: ${e.path} (${e.row})`)).toEqual([]);
   });
