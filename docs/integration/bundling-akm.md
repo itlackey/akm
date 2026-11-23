@@ -73,7 +73,13 @@ In order, every run applies (or, under `status`, plans):
    in one transaction after a copy of the database
    (`state.db.pre-proposal-records.bak`). Until then every command reads them as
    converted and warns once. Dry run: `proposal records: <n> to rewrite`.
-8. **Residue sweep**: superseded pre-0.9.0 `.akm` files in the stash and the
+8. **Index rows** (`indexRows`): rows of a bundle that is no directory (a
+   keyring, a vault) that an earlier akm indexed under a path inside the
+   bundle's root are re-keyed to hold no path, in one update that changes no
+   column and not the index layout. Until then every command reads them as
+   rows with no file. Present only when such rows exist. Dry run:
+   `index rows: <n> to re-key`.
+9. **Residue sweep**: superseded pre-0.9.0 `.akm` files in the stash and the
    transaction-journal, maintenance-barrier, lock-mutex and version-stamp
    files older releases kept under `$DATA`/`$STATE`/`$CONFIG` (`deadResidue`).
 
@@ -153,6 +159,7 @@ Key fields:
 | `assetContentRefs` | `changed`/`skipped` file counts, `refs` (old-spelling refs found), a `files[]` array with each file's `refs`, and `shadowed[]` (`bundleId`, `from`, `to`): old spellings another file holds as its ref, not rewritten; and `reconcile[]`, present after an apply that rewrote files inside a git checkout: the checkout path and how to review, commit or restore the edits. Only asset files, `index.md` and wiki `schema.md` are rewritten. |
 | `bundlePolicy` | `changed` (files to rewrite plus bundles whose config gains the skip), `bundles[]` (`bundleId`, `stripped`: assets whose `lint_skip` is removed, `skipTrackedSecrets`), and `notes[]`: a bundle with the marker and no config entry. After a real apply: `applied`, and `backupPath` when files were rewritten. |
 | `proposalRecords` | `changed` (records of an older shape to rewrite; after a real apply, how many were rewritten) and `message` (`proposal records: <n> to rewrite`). After a real apply that rewrote records: `applied`, and `backupPath` (the copy of `state.db` taken first). |
+| `indexRows` | Present only when the index holds rows of the form before it was keyed by ref: `changed` (rows to re-key; after a real apply, how many were) and `message` (`index rows: <n> to re-key`). After a real apply: `applied`. |
 | `backupPath` / `applied` | Present after a real apply that rewrote at least one task file: the run's backup directory and how many files it rewrote. |
 | `deadResidue` | `{ pending: [...] }` under a read-only run, `{ removed: [...] }` after apply. Each entry carries `relativePath` and `sizeBytes`; a removal entry adds `removed` (a boolean) and an `error` when the delete failed. A failed delete does not set `status` to `blocked`. |
 

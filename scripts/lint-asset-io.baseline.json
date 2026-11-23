@@ -267,29 +267,6 @@
       "existsSync": 1
     }
   },
-  "src/indexer/scan/doc-to-entry.ts": {
-    "adapter-id": {
-      "okf": 1
-    }
-  },
-  "src/indexer/scan/drain-dir.ts": {
-    "adapter-id": {
-      ".fileless": 1,
-      "akm": 1,
-      "akm-workflow": 2
-    },
-    "adapter-import": {
-      "src/core/adapter/adapters/akm-adapter": 1
-    },
-    "asset-io": {
-      "buildFileContext": 1
-    }
-  },
-  "src/indexer/search/db-search.ts": {
-    "adapter-id": {
-      ".fileless": 1
-    }
-  },
   "src/output/renderers.ts": {
     "asset-io": {
       "existsSync": 1

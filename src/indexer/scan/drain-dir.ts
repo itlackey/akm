@@ -26,13 +26,12 @@
  * import cycle.
  */
 
-import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
 import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
-import { buildFileContext, type FileContext } from "../../core/adapter/directory/file-context";
+import type { FileContext } from "../../core/adapter/directory/file-context";
 import { type Bundle, type IndexDocument, rootOf } from "../../core/adapter/types";
 import { compileWorkflowSource } from "../../workflows/compile";
 import { isUsableWorkflowSource, workflowNameForSourcePath } from "../../workflows/source-files";
-import { buildMetadataSkipWarning, type StashFile } from "../passes/metadata";
+import { buildMetadataSkipWarning } from "../passes/metadata";
 import { indexDocumentToStashEntry } from "./doc-to-entry";
 
 /** The markdown-workflow renderer name the `akm` adapter carries on `documentJson.renderer`. */
@@ -40,15 +39,11 @@ const WORKFLOW_MD_RENDERER = "workflow-md";
 
 /**
  * The durable entry of a recognized document, as the scan, a write-path refresh and the facade's refresh all record
- * it. An entry no file holds (a secret manager's) is keyed under the path the indexer gave it (`fileName` is its
- * name), and marked: no output prints a path for it.
+ * it. An entry no file holds (a secret manager's) has no path; `fileName` is its name.
  */
 export function indexRowEntry(doc: IndexDocument, fileName: string): IndexDocument {
   const entry = indexDocumentToStashEntry(doc);
-  if (doc.path === undefined) {
-    entry.filename = fileName;
-    entry.fileless = true;
-  }
+  if (doc.path === undefined) entry.filename = fileName;
   return entry;
 }
 
@@ -116,25 +111,6 @@ export function drainDirDocuments(
 }
 
 /**
- * `(stashRoot, files) → StashFile` builds a FileContext per file and drains them through the
- * `akm` adapter's `recognize`. Callers that only need the
- * recognized entries (`manifest`'s no-index fallback, the `registry`
- * static-index builder, and the metadata unit tests) use it. It also applies the D-R6 reserved-file exclusion and the AKM sensitive/infra
- * abstention the adapter now enforces itself. Provenance is not persisted by these
- * callers, so the synthetic bundle id is immaterial.
- */
-export function recognizeStashEntries(stashRoot: string, files: string[]): StashFile {
-  const bundle: Bundle = { id: stashRoot, root: stashRoot };
-  // No pre-filter: the `akm` adapter's `recognize` claims/abstains per file
-  // (filtering is adapter-owned).
-  const contexts = files.map((file) => buildFileContext(stashRoot, file));
-  const drained = drainDirDocuments(akmAdapter, bundle, contexts);
-  return drained.warnings.length > 0
-    ? { entries: drained.entries, warnings: drained.warnings }
-    : { entries: drained.entries };
-}
-
-/**
  * If `doc` is a workflow, compile it through source IR: return a
  * `Skipped workflow …` drop warning when it is broken, or return `null` when
  * it compiles. Non-workflow docs return `null` immediately. A broken workflow is no row of the index, whoever
@@ -144,13 +120,12 @@ export function brokenWorkflowWarning(
   doc: IndexDocument,
   file: Pick<FileContext, "content" | "relPath" | "absPath">,
 ): string | null {
-  if (
-    doc.type !== "workflow" ||
-    (doc.adapterId !== "akm" && doc.adapterId !== "akm-workflow") ||
-    (docRenderer(doc) !== WORKFLOW_MD_RENDERER && doc.adapterId !== "akm-workflow")
-  ) {
-    return null;
-  }
+  if (doc.type !== "workflow") return null;
+  // asset-io: deprecated workflows are not read through the adapters
+  const workflowBundle = doc.adapterId === "akm-workflow";
+  // asset-io: deprecated workflows are not read through the adapters
+  const akmBundle = doc.adapterId === "akm";
+  if (!workflowBundle && !(akmBundle && docRenderer(doc) === WORKFLOW_MD_RENDERER)) return null;
 
   const result = compileWorkflowSource(file.content(), { path: file.relPath });
   if (!result.ok) return workflowDropWarning(file, result.errors);

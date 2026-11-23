@@ -47,20 +47,19 @@ export const WRITE_PATH_INDEX_BUSY_TIMEOUT_MS = 5_000;
 
 /** One recognized file to record in the index. */
 export interface IndexRow {
-  /** The path the index keys the row under. */
+  /** The file the asset is read from; `""` when no file holds it. */
   file: string;
   entry: IndexDocument;
   conceptId: string;
   contentHash?: string;
-  /** False for an entry no file holds: there is no size to record. Default true. */
-  hasFile?: boolean;
 }
 
 /**
  * Record `rows` in the index: the one place a row is written outside a full scan (the write path and the facade's
- * refresh). The provenance is the full-index writer's, so a row is never a NULL-item_ref straggler. A file has one
- * current row: one under another ref is superseded, which is how an explicitly named bundle takes a file over from an
- * earlier path-derived identity. Returns the ids of the rows written. The caller holds the transaction.
+ * refresh). The provenance is the full-index writer's, so a row is never a NULL-item_ref straggler. A row is keyed by
+ * its ref; a file has one current row, so one under another ref is superseded (how an explicitly named bundle takes a
+ * file over from an earlier path-derived identity). A row no file holds supersedes nothing. Returns the ids of the
+ * rows written. The caller holds the transaction.
  */
 export function upsertIndexRows(
   db: Database,
@@ -69,17 +68,19 @@ export function upsertIndexRows(
   maxInputTokens: number,
 ): number[] {
   const ids: number[] = [];
-  for (const { file, entry, conceptId, contentHash, hasFile = true } of rows) {
+  for (const { file, entry, conceptId, contentHash } of rows) {
     const provenance = deriveEntryProvenance(owner, entry.type, entry.name, conceptId);
-    const superseded = db
-      .prepare("SELECT id FROM entries WHERE file_path = ? AND item_ref <> ?")
-      .all(file, provenance.itemRef) as Array<{ id: number }>;
-    deleteEntriesByIds(
-      db,
-      superseded.map((row) => row.id),
-    );
+    if (file !== "") {
+      const superseded = db
+        .prepare("SELECT id FROM entries WHERE file_path = ? AND item_ref <> ?")
+        .all(file, provenance.itemRef) as Array<{ id: number }>;
+      deleteEntriesByIds(
+        db,
+        superseded.map((row) => row.id),
+      );
+    }
     ids.push(
-      upsertEntry(db, file, hasFile ? withFileSize(entry, file) : entry, provenance, contentHash, maxInputTokens),
+      upsertEntry(db, file, file === "" ? entry : withFileSize(entry, file), provenance, contentHash, maxInputTokens),
     );
   }
   return ids;

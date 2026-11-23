@@ -94,3 +94,11 @@ export function upsertIndexDirState(
 export function deleteIndexDirState(db: Database, dirPath: string): void {
   db.prepare("DELETE FROM index_dir_state WHERE dir_path = ?").run(dirPath);
 }
+
+/**
+ * The `index_meta` key of the freshness variant the index last scanned `bundle` under: `<adapter id>@<adapter
+ * version>+content<projection version>`. A row an older variant described is described again on its next read.
+ */
+export function bundleVariantKey(bundle: string): string {
+  return `variant:${bundle}`;
+}

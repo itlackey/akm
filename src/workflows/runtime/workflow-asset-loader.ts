@@ -7,7 +7,7 @@ import fs from "node:fs";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 // asset-io: deprecated
 import { adapterWrites, bundleAdapterId, refuseByAdapter } from "../../core/assets/gate";
-import { lookupAsset } from "../../core/assets/read";
+import { findAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import { loadConfig } from "../../core/config/config";
 import { COMPOSITION_INVALID_MULTI_JOB_HINT, NotFoundError, UsageError } from "../../core/errors";
@@ -66,7 +66,7 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   const bundleRef = parseWorkflowRefInput(ref);
 
   const sources = resolveSourceEntries(undefined, loadConfig());
-  const asset = lookupAsset(makeBundleRef(bundleRef.bundle, bundleRef.conceptId, bundleRef.fragment));
+  const asset = findAsset(makeBundleRef(bundleRef.bundle, bundleRef.conceptId, bundleRef.fragment));
   if (!asset) {
     if (bundleRef.bundle && resolveSourcesForOrigin(bundleRef.bundle, sources).length === 0) {
       throw new UsageError(

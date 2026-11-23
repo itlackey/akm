@@ -2830,7 +2830,11 @@ in order:
    (`state.db.pre-proposal-records.bak`). Until then every command reads them as
    converted and warns once; `status` and `apply --dry-run` say
    `proposal records: <n> to rewrite`;
-8. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
+8. index rows an earlier akm keyed under a path inside a keyring's or vault's
+   bundle root re-keyed to hold no path (`indexRows`, present only when such
+   rows exist), in one update that changes no column and not the index layout;
+   `status` and `apply --dry-run` say `index rows: <n> to re-key`;
+9. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
    the stash, and the transaction-journal, maintenance-barrier, lock-mutex and
    version-stamp files older releases kept under `$DATA`, `$STATE` and
    `$CONFIG`.

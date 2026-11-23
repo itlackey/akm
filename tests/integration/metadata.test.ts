@@ -2,6 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { recognizeStashEntries } from "../../src/core/adapter/directory/recognize-stash-entries";
 import {
   applyCuratedFrontmatter,
   extractCommentMetadata,
@@ -12,7 +13,6 @@ import {
   type IndexDocument,
   validateStashEntry,
 } from "../../src/indexer/passes/metadata";
-import { recognizeStashEntries } from "../../src/indexer/scan/drain-dir";
 import { buildSearchFields, buildSearchText } from "../../src/indexer/search/search-fields";
 
 // Renderers auto-register via ensureBuiltinsRegistered in file-context.ts

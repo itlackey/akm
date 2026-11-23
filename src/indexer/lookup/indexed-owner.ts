@@ -18,13 +18,13 @@ import type { SearchSource } from "../search/search-source";
 /**
  * The index entry of an asset whose bundle has no row for it (a file added outside akm): the asset's adapter recognizes
  * it once and, with `persist`, the row is recorded, so the next ask finds it in the index. Undefined when the adapter
- * does not recognize it. A row another ref holds for the file stays (nested bundles share files). Without `persist` (a read-only lookup) the entry is served and the index left as it is; it has
+ * does not recognize it. Without `persist` (a read-only lookup) the entry is served and the index left as it is; it has
  * no links, usage or indexed fragments.
  */
 export function entryOnMiss(asset: Asset, source: SearchSource, persist: boolean): IndexEntry | undefined {
   const bundleId = asset.bundle;
   try {
-    const document = indexAsset(asset, { persist, supersede: false });
+    const document = indexAsset(asset, { persist, onMiss: true });
     const adapterId = document.adapterId as string;
     const { itemRef, conceptId } = deriveEntryProvenance(
       { bundleId, adapterId },
@@ -33,7 +33,7 @@ export function entryOnMiss(asset: Asset, source: SearchSource, persist: boolean
       document.conceptId as string,
     );
     return {
-      filePath: indexedPathOf(asset, source),
+      filePath: indexedPathOf(asset),
       stashDir: source.path,
       type: document.type,
       name: document.name,
@@ -50,9 +50,10 @@ export function entryOnMiss(asset: Asset, source: SearchSource, persist: boolean
 }
 
 /** Whether `indexedPath` is where the index keys `asset`: the same path, and the same file behind it. */
-export function indexedPathMatchesOwner(indexedPath: string, asset: Asset, source: SearchSource): boolean {
-  const owner = indexedPathOf(asset, source);
+export function indexedPathMatchesOwner(indexedPath: string, asset: Asset): boolean {
+  const owner = indexedPathOf(asset);
+  // An asset no file holds is indexed under no path.
+  if (owner === "" || indexedPath === "") return owner === indexedPath;
   if (path.resolve(indexedPath) !== path.resolve(owner)) return false;
-  // The asset was found, so its entry exists; an entry that is no file resolves to its own path.
   return safeRealpath(indexedPath) === path.resolve(safeRealpath(owner));
 }

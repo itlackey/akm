@@ -171,11 +171,6 @@ export interface IndexDocument {
   intent?: StashIntent;
   filename?: string;
   /**
-   * No file holds the asset (a secret manager's): the index keys its row under a path inside the bundle's root, and
-   * no output prints that path.
-   */
-  fileless?: boolean;
-  /**
    * Asset quality marker. Four values are well-known:
    * `"generated"` and `"curated"` are included in default search;
    * `"enriched"` marks entries the now-retired LLM metadata-enhancement pass
@@ -313,6 +308,11 @@ export interface IndexDocument {
   okfVersion?: string;
   /** Opaque adapter extras ONLY (arbitrary OKF frontmatter keys); not FTS, never parsed by core. */
   documentJson?: unknown;
+  /**
+   * `documentJson` holds the adapter's own keys, none of them a member of this document: the row keeps the bag whole
+   * and does not read it for members (an OKF concept's frontmatter key `usage` is not the member `usage`).
+   */
+  opaqueExtras?: boolean;
 }
 
 /**
