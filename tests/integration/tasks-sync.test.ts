@@ -24,6 +24,7 @@ import {
   akmTasksSyncPlan,
 } from "../../src/commands/tasks/tasks";
 import { loadConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
+import { akmIndex } from "../../src/indexer/indexer";
 import { isSchedulerRefEnabled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult, listBlocks } from "../../src/tasks/backends/cron";
 import type { SchedulerBackend } from "../../src/tasks/backends/types";
@@ -428,6 +429,19 @@ describe("akmTasksSync — schedule drift", () => {
     await expect(akmTasksEnable("tasks/nosuch", {}, { backend } as never)).rejects.toThrow(
       /"stash\/\/tasks\/nosuch" was not found/,
     );
+  });
+
+  test("a stray file named after a type folder (`knowledge`) leaves the index complete and sync as it was", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("alpha", "*/15 * * * *", true);
+    fs.rmSync(path.join(stashDir, "knowledge"), { recursive: true, force: true });
+    fs.writeFileSync(path.join(stashDir, "knowledge"), "junk\n");
+    const indexed = await akmIndex({ stashDir, full: true });
+    expect(indexed.scanComplete).toBe(true);
+    const result = await akmTasksSync({ backend });
+    expect(result.failures).toEqual([]);
+    expect(result.installed).toEqual(["alpha"]);
   });
 
   test("a failed crontab write is reported, and the prior crontab stays active", async () => {

@@ -11,7 +11,7 @@
 import { stashDirFor, withoutTypeHead } from "../core/asset/asset-placement";
 import { makeBundleRef } from "../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
-import { adapterWrites, bundleAdapterId } from "../core/assets/gate";
+import { adapterDeclares, adapterWrites, bundleAdapterId } from "../core/assets/gate";
 import { type Asset, listAssets, readFrom, requireAsset } from "../core/assets/read";
 import { assetTypes } from "../core/assets/type";
 import { addressOf } from "../core/assets/write";
@@ -134,10 +134,9 @@ export function taskNameOf(source: TaskBundleSource, input: string): string {
   return name;
 }
 
-/** Refuse a bundle whose adapter holds no task: it defines no task identity. Asked only once a lookup found nothing. */
+/** Refuse a bundle whose adapter declares no task type: it defines no task identity. */
 function refuseWithoutTasks(source: TaskBundleSource): void {
-  if (adapterWrites(source, "task")) return;
-  if (taskAssetsAmong(listAssets(taskScopeOf(source))).length > 0) return;
+  if (adapterDeclares(source, "task")) return;
   throw new UsageError(
     `Bundle adapter ${JSON.stringify(bundleAdapterId(source))} does not define task runtime identity.`,
     "INVALID_FLAG_VALUE",
@@ -146,11 +145,9 @@ function refuseWithoutTasks(source: TaskBundleSource): void {
 
 /** The task `input` names in a source's bundle, with its id; undefined when it holds none. Refuses what base refused. */
 export function resolveTask(source: TaskBundleSource, input: string): { asset: Asset; id: string } | undefined {
+  refuseWithoutTasks(source);
   const asset = findTask(taskScopeOf(source), taskNameOf(source, input));
-  if (asset === undefined) {
-    refuseWithoutTasks(source);
-    return undefined;
-  }
+  if (asset === undefined) return undefined;
   return { asset, id: taskIdOf(asset, source) };
 }
 
@@ -178,9 +175,13 @@ export function isShadowedByYml(asset: Asset, id: string, claimed: ReadonlySet<s
  * (where its adapter would place it), so a task whose file is gone still has the ref its activation was stored under.
  */
 export function taskRefIn(source: TaskBundleSource, input: string, options: { refuse?: boolean } = {}): string {
+  if (options.refuse !== false) refuseWithoutTasks(source);
   const name = taskNameOf(source, input);
   const found = findTask(taskScopeOf(source), name);
   if (found) return found.ref;
-  if (options.refuse !== false) refuseWithoutTasks(source);
-  return makeBundleRef(source.name, addressOf(source, conceptIdFromTypeName("task", name)).conceptId);
+  // An adapter that writes no task places none: a task there is named by its concept id.
+  return makeBundleRef(
+    source.name,
+    adapterWrites(source, "task") ? addressOf(source, conceptIdFromTypeName("task", name)).conceptId : name,
+  );
 }

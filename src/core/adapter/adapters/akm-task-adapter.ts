@@ -119,6 +119,8 @@ async function validate(_c: Bundle, changes: FileChange[], ctx: FileValidateCont
 export class AkmTaskAdapter extends DirectoryAdapterBase {
   readonly id = "akm-task";
   readonly version = "0.9.2";
+  /** It recognizes tasks and writes none. */
+  readonly reads = ["task"];
   // `.yaml` is listed as a COLLECTION hint only — `recognize` still gates on
   // `.yml`, so a `.yaml` file is never indexed as a task. Listing it is what
   // routes the near-miss file into `validate`, where it is reported instead of

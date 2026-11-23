@@ -23,6 +23,11 @@ export function bundleAdapterId(source: GateSource): string {
   return assetBundleOf(source).adapterId;
 }
 
+/** Whether the bundle's adapter declares assets of `type`, written or only recognized. */
+export function adapterDeclares(source: GateSource, type: string): boolean {
+  return assetBundleOf(source).declares(type);
+}
+
 /** Whether the bundle's adapter writes assets of `type`: it holds them as its own, not as files it reads. */
 export function adapterWrites(source: GateSource, type: string): boolean {
   return assetBundleOf(source).writes(type);

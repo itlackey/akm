@@ -17,7 +17,7 @@
 
 import path from "node:path";
 import { parseBundleRef } from "../core/asset/asset-ref";
-import { listAssetsStrict } from "../core/assets/read";
+import { listAssets } from "../core/assets/read";
 import { compareCodePoints, toPosix } from "../core/common";
 import type { AkmConfig } from "../core/config/config-types";
 import { UsageError } from "../core/errors";
@@ -109,12 +109,12 @@ async function compileTaskSources(
     path: input.sourceRoot,
     ...(input.adapterId !== undefined ? { adapterId: input.adapterId } : {}),
   };
-  // An incomplete listing is the bundle's failure: its rows are left as they are.
-  const everything = listAssetsStrict(taskScopeOf(source));
+  // A tasks folder that cannot be listed is the bundle's failure: its rows are left as they are.
+  const everything = listAssets({ ...taskScopeOf(source), type: "task", requireComplete: true });
   const listed = everything.filter((asset) => !input.enabledRefs || input.enabledRefs.has(asset.ref));
   // A task held in a `.yml` file claims its id (compared case-insensitively, as the scheduler compares them).
   const claimed = ymlHeldIds(everything, source);
-  const tasks = taskAssetsAmong(listed).sort((left, right) => compareCodePoints(taskFileOf(left), taskFileOf(right)));
+  const tasks = [...listed].sort((left, right) => compareCodePoints(taskFileOf(left), taskFileOf(right)));
   for (const asset of tasks) {
     const { ref, conceptId } = asset;
     const id = taskIdOf(asset, source);

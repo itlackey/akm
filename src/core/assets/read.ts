@@ -10,10 +10,12 @@
  */
 
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import type { BundleListing } from "../adapter/bundle-adapter";
-import { withoutTypeHead } from "../asset/asset-placement";
+import { stashDirFor, withoutTypeHead } from "../asset/asset-placement";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { deriveBundleIds } from "../bundle-id";
 import { compareCodePoints, toErrorMessage } from "../common";
@@ -122,23 +124,17 @@ export function requireAsset(ref: string | BundleRef, options: FindOptions = {})
  * `BUNDLE_UNREACHABLE` when it holds what is asked for.
  */
 export function listAssets(
-  options: { sources?: readonly SearchSource[]; bundle?: string; type?: string } = {},
-): Asset[] {
-  return collectAssets(options, false);
-}
-
-/**
- * {@link listAssets} for a caller that acts on what is not there (a scheduler removes the rows of a task that is gone):
- * a bundle listed incompletely fails with `BUNDLE_UNREACHABLE` instead of warning, and a bundle whose storage is not
- * there lists nothing, with no warning.
- */
-export function listAssetsStrict(options: { sources?: readonly SearchSource[]; bundle?: string } = {}): Asset[] {
-  return collectAssets(options, true);
-}
-
-function collectAssets(
-  options: { sources?: readonly SearchSource[]; bundle?: string; type?: string },
-  strict: boolean,
+  options: {
+    sources?: readonly SearchSource[];
+    bundle?: string;
+    type?: string;
+    /**
+     * For a caller that acts on what is not there (a scheduler removes the rows of a task that is gone): with `type`,
+     * a bundle whose folder for that type exists and is not a directory fails with `BUNDLE_UNREACHABLE`, and one whose
+     * storage is not there lists nothing, with no warning.
+     */
+    requireComplete?: boolean;
+  } = {},
 ): Asset[] {
   const sources = defaultSources(options);
   const ids = deriveBundleIds([...sources]);
@@ -147,7 +143,14 @@ function collectAssets(
     const bundle = ids[index] as string;
     if (source.unresolved || (options.bundle !== undefined && bundle !== options.bundle)) continue;
     const held = bundleOfSource(source, bundle);
-    if (strict && !held.exists()) continue;
+    if (options.requireComplete) {
+      if (!held.exists()) continue;
+      const folder = options.type === undefined ? undefined : stashDirFor(options.type);
+      const dir = folder === undefined ? undefined : path.join(source.path, folder);
+      if (dir !== undefined && fs.existsSync(dir) && !fs.statSync(dir).isDirectory()) {
+        throw new ConfigError(`ENOTDIR: not a directory, scandir '${dir}'`, "BUNDLE_UNREACHABLE");
+      }
+    }
     let listing: BundleListing;
     try {
       listing = held.list();
@@ -160,12 +163,6 @@ function collectAssets(
       }
       warn(`Bundle "${source.registryId ?? source.path}" was not listed completely: ${toErrorMessage(error)}`);
       continue;
-    }
-    if (strict && !listing.complete) {
-      throw new ConfigError(
-        listing.incompleteReason ?? `Bundle "${bundle}" was not listed completely.`,
-        "BUNDLE_UNREACHABLE",
-      );
     }
     if (!listing.complete && listing.incompleteReason) {
       warn(`Bundle "${source.registryId ?? source.path}" was not listed completely: ${listing.incompleteReason}`);

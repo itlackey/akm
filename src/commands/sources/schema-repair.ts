@@ -118,7 +118,10 @@ async function classifySchemaRepairs(args: {
     try {
       // The asset is read through its bundle's adapter; its type is the index's (which fields to repair, and the type's standards and rules).
       const owned = findAsset(failure.ref, { sources: resolveSourceEntries(stashDir) });
-      if (!owned) throw new Error(`Asset ${failure.ref} was not found in its bundle.`);
+      if (!owned) {
+        repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
+        continue;
+      }
       const raw = owned.entry.content();
       const frontmatter = parseFrontmatter(raw);
       const kind = assetType(owned);

@@ -366,7 +366,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     expect(proposals[0]?.payload.content).toContain("Authentication guide");
   });
 
-  test("runSchemaRepairPass reports a file no bundle holds as an error, not a skip", async () => {
+  test("runSchemaRepairPass skips a file no bundle holds", async () => {
     const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
     const stashDir = makeTempDir("akm-schema-repair-unheld-");
     const strayFile = path.join(stashDir, "stray", "outside.md");
@@ -383,13 +383,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
       chatFn: async () => JSON.stringify({ description: "x" }),
     });
 
-    expect(result.repairs).toEqual([
-      expect.objectContaining({
-        ref: "memories/not-held",
-        outcome: "error",
-        error: expect.stringContaining("not found"),
-      }),
-    ]);
+    expect(result.repairs).toEqual([expect.objectContaining({ ref: "memories/not-held", outcome: "skipped" })]);
   });
 
   test("a queued schema repair carries a schema-repair run token (B10-31)", async () => {
