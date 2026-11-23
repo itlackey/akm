@@ -286,11 +286,6 @@
       "akm": 1
     }
   },
-  "src/commands/sources/schema-repair.ts": {
-    "asset-io": {
-      "readFileSync": 1
-    }
-  },
   "src/commands/sources/source-add.ts": {
     "adapter-import": {
       "src/core/adapter/detect-adapter": 1,
@@ -367,11 +362,6 @@
   "src/core/assets/write.ts": {
     "facade-export": {
       "AssetWriter": 1
-    }
-  },
-  "src/core/bundle-rename.ts": {
-    "asset-io": {
-      "readFileSync": 1
     }
   },
   "src/core/env-secret-ref.ts": {
@@ -552,11 +542,6 @@
     },
     "asset-io": {
       "adapterForId": 1
-    }
-  },
-  "src/workspace/documents.ts": {
-    "asset-io": {
-      "readFileSync": 1
     }
   },
   "src/workspace/graph.ts": {

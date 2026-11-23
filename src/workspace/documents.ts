@@ -8,7 +8,6 @@
  * the asset-mutation lease, and fails fast when another akm process holds the lease.
  */
 import { createHash } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
 import { akmProposalAccept } from "../commands/proposal/proposal";
 import { createRetireProposal, recordGateDecision, rejectProposalDurably } from "../commands/proposal/repository";
@@ -16,9 +15,12 @@ import { writeMarkdownAsset } from "../commands/read/knowledge";
 import { akmShowUnified } from "../commands/read/show";
 import { akmClone, type CloneResponse } from "../commands/sources/source-clone";
 import { assertFlatAssetName, normalizeCreateSubPath } from "../core/asset/asset-create";
-import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
+import { stashDirFor } from "../core/asset/asset-placement";
 import { parseBundleRef } from "../core/asset/asset-ref";
+import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
 import { assertAdapterWrites } from "../core/assets/gate";
+import { findAsset } from "../core/assets/read";
+import { addressOf } from "../core/assets/write";
 import { resolveStashDir, toErrorMessage } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
@@ -83,12 +85,14 @@ async function loadSource(ref: string): Promise<{
   // anywhere else cannot be saved through them.
   const typeDir = stashDirFor(found.type);
   if (!typeDir) throw new UsageError("Only indexed documents can be edited.");
-  const expectedPath = assetPathForName(found.type, path.join(found.target.source.path, typeDir), found.name);
-  if (path.resolve(expectedPath) !== path.resolve(found.path))
+  // The document is the one asset the target's adapter places under that type and name.
+  const asset = findAsset(found.canonical);
+  const placed = addressOf(found.target.source, conceptIdFromTypeName(found.type, found.name));
+  if (asset === undefined || asset.conceptId !== placed.conceptId)
     throw new UsageError(
       "The indexed source no longer matches the writable document target. Refresh the index before editing.",
     );
-  const raw = fs.readFileSync(found.path);
+  const raw = asset.entry.bytes();
   const content = raw.toString("utf8");
   if (!Buffer.from(content, "utf8").equals(raw))
     throw new UsageError("This source is not valid UTF-8; edit it outside the UI.");
