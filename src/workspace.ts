@@ -8,6 +8,7 @@
 // HTTP, status codes) belongs to the host.
 // Declarations: scripts/node-runtime/workspace.d.ts, kept in step by tests/contracts/workspace-surface.test.ts.
 
+export { indexFiles } from "./core/assets/files";
 export { clearAdapterCaches } from "./core/assets/gate";
 export {
   AkmError,
@@ -18,7 +19,6 @@ export {
   TransientError,
   UsageError,
 } from "./core/errors";
-export { indexWrittenAssets } from "./indexer/index-written-assets";
 export * as activity from "./workspace/activity";
 export * as assets from "./workspace/assets";
 export * as backups from "./workspace/backups";

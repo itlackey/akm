@@ -21,12 +21,12 @@ import {
 } from "../commands/sources/source-clone";
 import { managedFolderOf, protectedTypeOf } from "../core/adapter/directory/place-rules";
 import { assertFlatAssetName, normalizeCreateSubPath } from "../core/asset/asset-create";
+import { indexFiles } from "../core/assets/files";
 import { isWithin, safeRealpath } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { resolveBundleWriteTarget } from "../core/mutation-target";
 import { assertPlainWritable, commitWriteTargetBoundary, prepareWriteTargetForMutation } from "../core/write-source";
-import { indexWrittenAssets } from "../indexer/index-written-assets";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAssetRefsForFiles } from "../storage/repositories/index-entries-repository";
@@ -136,7 +136,7 @@ export async function copyEntry(input: CopyEntryInput) {
     commitWriteTargetBoundary(target, `Copy ${bundle}//${from} to ${toBundle}//${to}`, {
       paths: files.map((file) => path.relative(commitRoot, file).replaceAll(path.sep, "/")),
     });
-    const indexed = await indexWrittenAssets(root, files, { bundleId: toBundle });
+    const indexed = await indexFiles(toBundle, files);
     return { bundle, from, toBundle, to, indexed };
   });
 }

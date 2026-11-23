@@ -310,26 +310,9 @@
       "walkStashFlat": 1
     }
   },
-  "src/workspace/check-text.ts": {
-    "adapter-id": {
-      "akm": 2
-    },
-    "adapter-import": {
-      "src/core/adapter/adapters/akm-adapter": 1,
-      "src/core/adapter/registry": 1
-    },
-    "asset-io": {
-      "adapterForId": 1
-    }
-  },
   "src/workspace/graph.ts": {
     "asset-io": {
       "statSync": 1
-    }
-  },
-  "src/workspace/moved-links.ts": {
-    "adapter-id": {
-      "akm": 1
     }
   },
   "src/workspace/new-file.ts": {

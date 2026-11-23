@@ -5,7 +5,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { assets, bundles, indexWrittenAssets, UsageError } from "akm-cli/workspace";
+import { assets, bundles, indexFiles, UsageError } from "akm-cli/workspace";
 import { fields } from "../input.js";
 import { entryAt } from "./bundle-path.js";
 
@@ -130,7 +130,7 @@ export async function saveFile(body: unknown) {
     fs.rmSync(temporary, { force: true });
   }
   // The bundle's own adapter recognizes the file; `indexed` is what akm reports, for any adapter.
-  const indexed = await indexWrittenAssets(chosen.root, [chosen.indexable], { bundleId: chosen.bundle });
+  const indexed = await indexFiles(chosen.bundle, [chosen.indexable]);
   return {
     ref: chosen.ref,
     bundle: chosen.bundle,

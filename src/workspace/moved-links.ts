@@ -10,11 +10,11 @@
 
 import path from "node:path";
 import { akmLint } from "../commands/lint";
-import { bundleAdapterId } from "../core/assets/gate";
+import { indexFiles } from "../core/assets/files";
+import { adapterWrites } from "../core/assets/gate";
 import { type AkmConfig, loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { inspectWriteTarget } from "../core/write-source";
-import { indexWrittenAssets } from "../indexer/index-written-assets";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { interactive } from "./lease";
 
@@ -22,7 +22,7 @@ import { interactive } from "./lease";
 function akmBundles(config: AkmConfig, bundle?: string) {
   return resolveSourceEntries(undefined, config).flatMap((source) => {
     if (!source.registryId || source.unresolved || (bundle !== undefined && source.registryId !== bundle)) return [];
-    return bundleAdapterId(source) === "akm" ? [{ name: source.registryId, source }] : [];
+    return adapterWrites(source.registryId, "knowledge") ? [{ name: source.registryId, source }] : [];
   });
 }
 
@@ -56,10 +56,9 @@ export async function updateMovedLinks(input: { bundle: string }) {
     const result = await akmLint({ dir: found.source.path, fixMovedRefs: true, config });
     const fixed = result.fixed.filter((issue) => issue.movedTo !== undefined);
     const files = [...new Set(fixed.map((issue) => issue.file))];
-    await indexWrittenAssets(
-      found.source.path,
+    await indexFiles(
+      name,
       files.map((file) => path.join(found.source.path, file)),
-      { bundleId: name },
     );
     return { bundle: name, rewritten: fixed.length, files };
   });
