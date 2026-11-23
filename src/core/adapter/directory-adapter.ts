@@ -28,7 +28,7 @@ import {
 import { buildFileContext, type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
 import { isWalkedFile, walkStashFlatWithStatus } from "../../indexer/walk/walker";
 import { makeBundleRef } from "../asset/asset-ref";
-import { compareCodePoints, existingFileMode, hasErrnoCode, writeFileAtomic } from "../common";
+import { compareCodePoints, existingFileMode, hasErrnoCode, relativeToRoot, writeFileAtomic } from "../common";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
 import type {
   AssetChange,
@@ -642,7 +642,8 @@ function packageResources(dir: string, entryFile: string): AssetResource[] {
  */
 export function assertWritableFile(root: string, bundle: string, file: string): void {
   const lexicalRoot = path.resolve(root);
-  const relative = path.relative(lexicalRoot, path.resolve(file));
+  // A path under another spelling of the root (a symlinked spelling of the library) is inside it.
+  const relative = relativeToRoot(file, lexicalRoot) ?? "..";
   if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new UsageError(`Write path resolves outside source "${bundle}".`, "PATH_ESCAPE_VIOLATION");
   }

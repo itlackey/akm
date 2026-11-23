@@ -15,17 +15,33 @@ import type { AssetChange, NewAsset, Retirement, RetireNote } from "../adapter/b
 import { stashDirFor } from "../asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { parsePlacementRef } from "../asset/resolve-ref";
-import { assetNotFound, UsageError } from "../errors";
+import { assetNotFound, ConfigError, UsageError } from "../errors";
 import { recordWrittenPath } from "../write-provenance";
 import {
   commitWriteTargetBoundary,
   ensureWritable,
+  isWriteCapableSourceKind,
   type ResolvedWriteTarget,
   recordWriteTargetPath,
 } from "../write-source";
 import { type AssetBundle, assetBundleOf } from "./bundle";
 import { type Asset, assetRevision, readFrom } from "./read";
 import { assetType, forgetIndexedAsset, refreshIndexedAsset } from "./type";
+
+/**
+ * The gates every write passes: the bundle takes writes, and it is a kind akm writes (a directory, a git checkout, or a
+ * store its adapter keeps). A source built by hand of another kind is refused, as the loader would refuse it.
+ */
+function gate(source: ResolvedWriteTarget["source"], config: ResolvedWriteTarget["config"]): void {
+  ensureWritable(source, config);
+  if (source.kind === "location" || isWriteCapableSourceKind(source.kind)) return;
+  throw new ConfigError(
+    `write-source: unsupported kind "${source.kind}" for source "${source.name}". ` +
+      "Writes are only defined for `filesystem` and `git` sources.",
+    "INVALID_CONFIG_FILE",
+    'Set `kind: "filesystem"` (or `kind: "git"`) on the source, or add a parallel filesystem entry.',
+  );
+}
 
 /** Where a write to a ref goes. */
 export interface AssetAddress {
@@ -198,7 +214,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
   };
   /** The asset a change applies to, after the gates every change to an existing asset passes. */
   const existing = (conceptId: string, options?: { revision?: string; retire?: boolean }): Asset => {
-    ensureWritable(source, config);
+    gate(source, config);
     const asset = readAsset(source, conceptId);
     if (!asset) throw assetNotFound(`${source.name}//${conceptId}`);
     const type = assetType(asset);
@@ -216,7 +232,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     read: (conceptId) => readAsset(source, conceptId),
     address: (ref) => addressIn(held, source, ref, true),
     create(asset, options) {
-      ensureWritable(source, config);
+      gate(source, config);
       held.assertWrites(asset.type);
       if (options?.exclusive) {
         const conceptId = held.place(asset);
@@ -242,17 +258,17 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     },
     retired: () => held.retired(),
     restore(handle, fallback) {
-      ensureWritable(source, config);
+      gate(source, config);
       held.assertRetiring();
       return result(held.restore(handle, fallback));
     },
     forget(handle) {
-      ensureWritable(source, config);
+      gate(source, config);
       held.assertRetiring();
       record(held.forget(handle));
     },
     expireRetired(before) {
-      ensureWritable(source, config);
+      gate(source, config);
       held.assertRetiring();
       record(held.expireRetired(before));
     },
