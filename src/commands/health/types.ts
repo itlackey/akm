@@ -8,7 +8,7 @@
  * windows,llm-usage,metrics,advisories}.ts, the report renderers, and the
  * check registry.
  *
- * Chunk-9 WI-9.5d: this used to be one 690-line type dump. It is now a
+ * This module is a
  * re-export barrel over cohesive per-domain modules (pure type move — zero
  * runtime change, every existing `from "./types"` / `from "../health/types"`
  * import site keeps working unchanged):

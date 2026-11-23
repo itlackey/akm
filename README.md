@@ -82,7 +82,7 @@ AKM recognizes several existing directory layouts in place, each through its own
 | Native akm bundles | Full read/write — scripts, skills, workflows, agents, instructions, memories, knowledge, and more |
 | Claude Code / OpenCode tool directories | Indexes `CLAUDE.md`/`AGENTS.md`, `commands/`, `agents/`, `skills/` in place, read-only |
 | Standalone Agent Skills packages | Indexes `<name>/SKILL.md` collections in place, read-only |
-| Workflow and task files | Indexes standalone `.md` workflows and task source v4 `.yml` files |
+| Workflow and task files | Indexes standalone `.md` workflows (Deprecated) and task source `.yml` files |
 | OKF and LLM wikis | Indexes plain-markdown (OKF) and Karpathy-style wiki (`schema.md` + `raw/` + `pages/`) content, read-only |
 | Git, npm, local dirs, and websites | Any of these can be added as a source; AKM detects the bundle format inside and indexes it (a website is crawled into a local snapshot) |
 
@@ -93,7 +93,7 @@ See [Supported Formats](https://akm.fwdslsh.dev/docs/reference/supported-formats
 - Connect local dirs, git repos, npm packages, and websites — [Bundles](https://akm.fwdslsh.dev/docs/guides/bundles/)
 - Capture memories, import docs, and manage wikis — [Capture Knowledge](https://akm.fwdslsh.dev/docs/guides/capture-knowledge/)
 - Turn feedback and usage into reviewable proposals — [Improve the Library](https://akm.fwdslsh.dev/docs/guides/improve-the-library/)
-- Run resumable, multi-step procedures — [Workflows](https://akm.fwdslsh.dev/docs/reference/workflows/)
+- Run resumable, multi-step procedures — [Workflows](https://akm.fwdslsh.dev/docs/reference/workflows/) (Deprecated, removed in 0.11; tasks take over)
 - Author strict scheduled automation — [Tasks](https://akm.fwdslsh.dev/docs/reference/tasks/)
 - Upgrading from 0.9 — [0.9 to 0.10 migration guide](https://akm.fwdslsh.dev/docs/migration/v0.9-to-v0.10/)
 - Wire akm into Claude Code, OpenCode, Cursor, and other assistants — [Use AKM With Any Agent](https://akm.fwdslsh.dev/docs/guides/use-with-any-agent/)

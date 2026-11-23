@@ -69,12 +69,11 @@ export function deriveWritableBundleIds(sources: SearchSource[]): Set<string> {
 }
 
 /**
- * Derive the durable `EntryProvenance` for an indexed entry (Chunk-5 flip
- * §14.4): `conceptId` is the owning adapter's, else the one a new asset of this
+ * Derive the durable `EntryProvenance` for an indexed entry: `conceptId` is the owning adapter's, else the one a new asset of this
  * type and name is placed under (`conceptIdFromTypeName`), and `item_ref` is `<bundle>//<conceptId>` — the exact
  * spelling `recognize` emits as `IndexDocument.ref`. Shared by the full-index
  * diff-persist writer and the write-path `indexWrittenAssets` fast path so both
- * populate item_ref identically (F4a M-core-2 item 5 — no NULL-item_ref rows).
+ * populate item_ref identically (no NULL-item_ref rows).
  */
 export function deriveEntryProvenance(
   bundle: { bundleId: string; adapterId: string },

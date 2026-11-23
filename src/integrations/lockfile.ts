@@ -122,8 +122,8 @@ export function readLockfile(): LockfileEntry[] {
  * writes the whole array back. An unreadable `akm.lock` that reads as `[]`
  * therefore does not merely lose information — the very next
  * `writeFileAtomic` replaces the operator's entire lock record with the single
- * entry this call happened to be adding. That is the same catastrophe R-012
- * guards against for a *corrupt* file, reached instead through a permission
+ * entry this call happened to be adding. That is the same catastrophe
+ * `readLockfileOrThrow` guards against for a *corrupt* file, reached instead through a permission
  * fault, and `fs.existsSync`/a swallowed `readFileSync` could not tell the two
  * apart from "the file was never created".
  *
@@ -143,7 +143,7 @@ function assertLockfilePathReadable(target: string): void {
 
 /**
  * Like {@link readLockfile}, but THROWS instead of silently degrading to `[]`
- * when the on-disk lockfile exists yet cannot be read or parsed (R-012, #791).
+ * when the on-disk lockfile exists yet cannot be read or parsed (#791).
  *
  * `readLockfile`'s fail-open contract is intentional for READ paths — a
  * corrupt lock degrades a managed bundle to "unmanaged" rather than erroring
@@ -221,7 +221,7 @@ export function lockContentRootFor(bundleId: string | undefined, type: string): 
 }
 
 function writeLockfileUnlocked(entries: LockfileEntry[]): void {
-  // Always write to $DATA — never to the legacy $CONFIG location.
+  // Always write to $DATA — never to $CONFIG.
   const lockfilePath = getLockfilePath();
   const dir = path.dirname(lockfilePath);
   fs.mkdirSync(dir, { recursive: true });
@@ -240,7 +240,7 @@ export async function writeLockfile(entries: LockfileEntry[]): Promise<void> {
 export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
   const release = await acquireLockSentinel();
   try {
-    // R-012: readLockfileOrThrow (not readLockfile) — a corrupt/malformed
+    // readLockfileOrThrow (not readLockfile) — a corrupt/malformed
     // lockfile must abort the upsert loudly rather than read as `[]` and get
     // silently overwritten with just this one entry.
     const entries = readLockfileOrThrow();
@@ -261,7 +261,7 @@ export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
 export async function renameLockEntry(oldId: string, newId: string): Promise<boolean> {
   const release = await acquireLockSentinel();
   try {
-    // R-012: see upsertLockEntry — a corrupt lockfile must abort loudly
+    // See upsertLockEntry — a corrupt lockfile must abort loudly
     // rather than read as `[]` and get silently overwritten.
     const entries = readLockfileOrThrow();
     const existing = entries.find((e) => e.id === oldId);
@@ -284,7 +284,7 @@ export async function removeLockEntry(id: string): Promise<void> {
   if (!fs.existsSync(dataDir)) return;
   const release = await acquireLockSentinel();
   try {
-    // R-012: see upsertLockEntry — same destructive-overwrite risk on a
+    // See upsertLockEntry — same destructive-overwrite risk on a
     // corrupt lockfile, so the same strict reader is used here.
     const entries = readLockfileOrThrow();
     writeLockfileUnlocked(entries.filter((e) => e.id !== id));

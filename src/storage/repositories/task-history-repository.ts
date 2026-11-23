@@ -3,10 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Repository for the state.db `task_history` table (per-task run ledger,
- * replaces the old per-task JSONL files). Extracted verbatim from
- * core/state-db.ts — queries unchanged, only relocated behind the repository
- * boundary. Re-exported by core/state-db.ts so existing importers resolve.
+ * Repository for the state.db `task_history` table (per-task run ledger).
+ * Re-exported by core/state-db.ts.
  *
  * @module task-history-repository
  */
@@ -91,10 +89,9 @@ function validateDetail(value: unknown): asserts value is TaskHistoryDetail | nu
  * Decode the task-history metadata shape.
  *
  * Read-time compatibility shim (mirrors proposals-repository's
- * `storedToChanges`): `metadataVersion` was added in a later release. 58% of
- * a real install's `task_history` rows (8,596/14,801) predate the field
- * entirely, and 88 more carry additive fields (`profile`, `repairReason`)
- * written by prior releases. An absent `metadataVersion` is a LEGACY row, not
+ * `storedToChanges`): `metadataVersion` was added after rows already existed, so
+ * older `task_history` rows lack the field, and some carry additive fields
+ * (`profile`, `repairReason`) written by prior releases. An absent `metadataVersion` is a LEGACY row, not
  * corruption — decode what's present (defaulting the absent `detail` key to
  * `null`) instead of throwing. Unknown keys are ignored rather than
  * hard-rejected, so the next additive field never regresses this again;
@@ -406,11 +403,11 @@ export interface TaskIntervalRow {
  * predicate is fixed because the only caller (commands/health.ts
  * `loadTaskIntervals`) builds wall-time intervals for the improve cron task.
  *
- * Owns the SQL formerly inlined in commands/health.ts. Note the bound is
+ * Owns the SQL behind commands/health.ts. Note the bound is
  * EXCLUSIVE on the upper end (`started_at < ?`) — callers pass an already
  * widened window; this helper does not widen.
  *
- * Connection-lifetime rule (WS5): `.all()` materializes a plain array before
+ * Connection-lifetime rule: `.all()` materializes a plain array before
  * returning.
  */
 export function queryCompletedTaskIntervals(db: Database, since: string, until?: string): TaskIntervalRow[] {

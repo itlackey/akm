@@ -95,7 +95,7 @@ export const addCommand = defineJsonCommand({
     if (args.before && args.after) throw new UsageError("Only one of --before or --after may be used.");
 
     // --provider → declarative bundle source (URL for git/website; bare
-    // package spec for npm — R-013). Git is materialized below before success;
+    // package spec for npm). Git is materialized below before success;
     // other providers remain declarative until bundle update.
     if (args.provider) {
       if (shouldWarnOnPlainHttp(ref)) {

@@ -131,13 +131,13 @@ export interface CurateOptions extends RecallOptions {
   /**
    * Usage-event provenance for telemetry. Defaults to `"user"`. The CLI passes
    * the AKM_EVENT_SOURCE-derived value so pipeline/task-runner curates are not
-   * recorded as user demand (was previously hardcoded to "user").
+   * recorded as user demand.
    */
   eventSource?: UsageEventSource;
   /** Internal projection used only to decide whether derived surface content was emitted. */
   attributionProjection?: AttributionProjection;
   /**
-   * When true, skip logging usage events for this curate call (F2/R-055):
+   * When true, skip logging usage events for this curate call:
    * neither the top-level curate event nor the underlying search/show reads
    * feed usage-events telemetry.
    * Curate's own nested `akmSearch`/`akmShowUnified` calls always pass
@@ -328,7 +328,7 @@ export async function curateSearchResults(
   const allStashHits = result.hits.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
   const registryHits = result.registryHits ?? [];
 
-  // F3/R-018: `--type` NARROWS the candidate pool. The caller's search
+  // `--type` NARROWS the candidate pool. The caller's search
   // usually applied the filter already, but `curateSearchResults` is also
   // driven directly (tests, `searchResponse` fixtures) with a
   // `SearchResponse` that was never type-filtered.
@@ -337,7 +337,7 @@ export async function curateSearchResults(
 
   const selectedStashHits = stashHits.slice(0, limit);
 
-  // F4/R-019: respect `--limit` for registry fill instead of hard-capping it
+  // Respect `--limit` for registry fill instead of hard-capping it
   // at a bare literal 2 — the remaining slots after stash hits ARE the cap.
   const selectedRegistryHits =
     selectedStashHits.length >= limit ? [] : registryHits.slice(0, limit - selectedStashHits.length);
@@ -524,7 +524,7 @@ function buildCurateSummary(query: string, items: CuratedItem[]): string {
  * Up to {@link MAX_CURATE_SUPPORT_REFS} assets the hit's declared links (#935)
  * name, not already selected: what the hit links to first, then what links to
  * it, in the order `akm show` lists them. The LLM entity graph's `related`
- * list no longer feeds them.
+ * list does not feed them.
  */
 async function buildCurateSupportRefs(
   links: ShowResponse["links"],

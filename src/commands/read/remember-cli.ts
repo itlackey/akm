@@ -111,12 +111,13 @@ export const rememberCommand = defineJsonCommand({
     },
     auto: {
       type: "boolean",
-      description: "Tag heuristically from the body",
+      description: "Deprecated, removed in 0.11 with no replacement: tag heuristically from the body",
       default: false,
     },
     enrich: {
       type: "boolean",
-      description: "Propose tags and description with the configured LLM",
+      description:
+        "Deprecated, removed in 0.11 with no replacement: propose tags and description with the configured LLM",
       default: false,
     },
     bundle: {
@@ -142,7 +143,7 @@ export const rememberCommand = defineJsonCommand({
     },
     "show-similar": {
       type: "boolean",
-      // R-062: canonical spelling is kebab-case, matching every other
+      // canonical spelling is kebab-case, matching every other
       // multi-word flag in the CLI (--fail-on-flagged, --auto-fix, …).
       // `--showSimilar` (the pre-rename spelling) is kept as an explicit,
       // documented alias rather than a silent citty auto-alias — citty
@@ -151,7 +152,8 @@ export const rememberCommand = defineJsonCommand({
       // breaking change: both spellings already worked, and both keep
       // working.
       alias: "showSimilar",
-      description: "Return the top 3 similar memories (alias: --showSimilar)",
+      description:
+        "Deprecated, removed in 0.11 with no replacement: return the top 3 similar memories (alias: --showSimilar)",
     },
   },
   async run({ args }) {

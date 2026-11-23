@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Single-parse argv normalization (plan §10.7, chunk-9 WI-9.9).
+ * Single-parse argv normalization.
  *
  * Before this module, ~46 `process.argv` read sites were scattered across
  * `src/**` (32 outside `src/cli.ts`), each re-scanning the raw argv array for
@@ -14,13 +14,13 @@
  * one parse instead of re-scanning the raw array.
  *
  * Deliberately import-free: this module must never join an import cycle
- * (cycle ratchet, plan §10.7 / chunk-9 D.3), so it depends on nothing but
+ * (the import-cycle check), so it depends on nothing but
  * global `process` — no `output/context`, no `core/errors`. The flag-parsing
  * primitives below are intentionally small, self-contained re-implementations
  * of the same algorithms `output/context.ts`'s `parseFlagValue`/
  * `hasBooleanFlag` and (the now-retired) `cli/shared.ts` `parseAllFlagValues`
  * used, kept byte-identical so every converted call site is behavior-
- * preserving — with ONE deliberate exception (R-033a): `getAllFlagValuesFrom`
+ * preserving — with ONE deliberate exception: `getAllFlagValuesFrom`
  * now stops at a literal `--` separator instead of scanning past it, fixing a
  * bug where a repeatable flag's value placed after `--` (meant to end flag
  * parsing) was still read as a real flag occurrence. See that function's
@@ -51,7 +51,7 @@
  *    `bun test`, but it exists so a test that DOES call
  *    `setParsedInvocation` directly can clean up after itself.
  *
- * Also folds three argv re-scanners that pre-dated this module (plan §10.7):
+ * Also folds three argv re-scanners that pre-dated this module:
  *  - `parseAllFlagValues` (moved from `cli/shared.ts`) — repeated-flag
  *    collection (`--tag foo --tag bar`), re-exported from `cli/shared.ts` so
  *    every existing importer (feedback-cli, observability-cli, remember-cli,
@@ -64,8 +64,7 @@
  *    disambiguation guard.
  */
 
-// ── Repeated-flag / `--`-passthrough primitives (byte-identical to the
-// pre-WI-9.9 per-site implementations they replace) ─────────────────────────
+// ── Repeated-flag / `--`-passthrough primitives (shared by every command) ─────────────────────────
 
 function getFlagValueFrom(argv: readonly string[], flag: string): string | undefined {
   for (let i = 0; i < argv.length; i++) {
@@ -87,14 +86,13 @@ function hasFlagIn(argv: readonly string[], flag: string): boolean {
 
 /**
  * Collect every `--flag value` / `--flag=value` occurrence, stopping at a
- * literal `--` separator (R-033a). `--` conventionally ends flag parsing —
+ * literal `--` separator. `--` conventionally ends flag parsing —
  * everything after it is positional/passthrough, never a flag akm should
  * interpret. Before this fix, a token like `--tag leaked:yes` placed AFTER
  * `--` (e.g. `akm feedback <ref> --positive -- --tag leaked:yes`) was still
  * picked up as a real `--tag` value, letting argv content past the boundary
- * leak into structured output. This is a deliberate BEHAVIOR CHANGE from the
- * pre-WI-9.9 per-site implementation this module otherwise keeps
- * byte-identical (see the module docstring) — every caller of
+ * leak into structured output. This is a deliberate exception to the
+ * byte-identical flag parsing described in the module docstring — every caller of
  * `parseAllFlagValues`/`getAllFlagValues` inherits the fix for free.
  */
 function getAllFlagValuesFrom(argv: readonly string[], flag: string): string[] {
@@ -186,8 +184,7 @@ let _invocation: ParsedInvocation | undefined;
 
 /**
  * Mint the process-wide {@link ParsedInvocation} singleton. `src/cli.ts` calls
- * it at startup, before any command handler runs ("normalize argv at entry",
- * plan §10.7); a `run` of a script mints it twice, as the boundary is only
+ * it at startup, before any command handler runs ("normalize argv at entry"); a `run` of a script mints it twice, as the boundary is only
  * known once the ref has resolved (see `mintInvocation` there).
  */
 export function setParsedInvocation(argv: readonly string[], boundary: InvocationBoundary = {}): ParsedInvocation {

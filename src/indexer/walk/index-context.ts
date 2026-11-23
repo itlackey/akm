@@ -2,8 +2,7 @@ import { getMeta } from "../../storage/repositories/index-meta-repository";
 
 /**
  * Live runtime state of semantic search, computed fresh at index-finalize
- * time. `ready-js` means every entry has a vector; the name is historical (the
- * sqlite-vec variant, `ready-vec`, is gone).
+ * time. `ready-js` means every entry has a vector; there is no sqlite-vec variant.
  */
 type SemanticSearchRuntimeStatus = "pending" | "ready-js" | "blocked";
 

@@ -79,7 +79,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     throw new UsageError("--dest and --bundle cannot be used together; choose an unmanaged path or a managed bundle.");
   }
 
-  // F1b/F4b: accept the 0.9.0 conceptId spelling (`akm clone scripts/deploy.sh`).
+  // F1b/F4b: accept the conceptId spelling (`akm clone scripts/deploy.sh`).
   // F5 origin split (parseQualifiedPlacementRef): `akm clone` also accepts a NON-slug
   // clone SOURCE as the `origin//conceptId` prefix — a registry ref
   // (`npm:@scope/pkg`), a bare path, or a URL — resolved by

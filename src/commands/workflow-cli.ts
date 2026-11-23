@@ -413,17 +413,8 @@ const workflowPlanCommand = defineJsonCommand({
     ref: { type: "positional", description: "Workflow ref (workflows/<name>)", required: true },
   },
   async run({ args }) {
-    // json-by-default, like every other verb (#903). This used to default to
-    // the human summary, which cost ~60 lines of branch: `args.format` cannot
-    // detect "no format named" (citty parses per level, so a global
-    // pre-subcommand `--format json` is eaten by the ROOT command and the leaf
-    // reads undefined), so it had to route through `getParsedInvocation()`,
-    // then fold in a persisted `output.format`, and then still leave a
-    // resolved "json" on the text branch because that is indistinguishable
-    // from "nothing configured". The last compromise meant an explicit
-    // `--format json` silently did nothing for anyone whose config already
-    // resolved to json. `--format text` still renders the summary through the
-    // registered formatter; it is just no longer the unmarked default.
+    // json by default, like every other verb. `--format text` renders the
+    // summary through the registered formatter.
     await runWorkflowPlan(args.ref);
   },
 });
@@ -459,7 +450,8 @@ const workflowResumeCommand = defineJsonCommand({
 export const workflowCommand = defineGroupCommand({
   meta: {
     name: "workflow",
-    description: "Experimental: author, inspect, and execute step-by-step workflow assets",
+    description:
+      "Deprecated, removed in 0.11: author, inspect, and execute step-by-step workflow assets; tasks take over their ordered steps",
   },
   subCommands: {
     status: workflowStatusCommand,
@@ -471,8 +463,6 @@ export const workflowCommand = defineGroupCommand({
     plan: workflowPlanCommand,
   },
   // Bare `akm workflow` runs `akm workflow list` (see insertBareListSubcommand in
-  // src/cli.ts). This group was previously
-  // hand-rolled on `defineCommand` with its own `hasWorkflowSubcommand` guard,
-  // which duplicated the subcommand names in a second hand-maintained set;
-  // `defineGroupCommand` derives the guard from `subCommands` directly.
+  // src/cli.ts). `defineGroupCommand` derives the bare-group guard from
+  // `subCommands`.
 });

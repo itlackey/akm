@@ -6,9 +6,8 @@
  * Shared text-truncation heuristics used by `distill` and `consolidate`.
  *
  * Both commands need to recognise when an LLM-produced description string was
- * sliced mid-sentence (typically the model hit its output budget). The two
- * implementations historically maintained overlapping-but-not-identical
- * vocabularies of hanging-connector words, which was a maintenance trap.
+ * sliced mid-sentence (typically the model hit its output budget). Both
+ * share one vocabulary of hanging-connector words.
  *
  * This module is the single source of truth. A separate section-heading regex
  * (`HEADING_FRAGMENT_PATTERNS` in

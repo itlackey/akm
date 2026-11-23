@@ -29,11 +29,8 @@ const MONTH_MS = 30 * DAY_MS;
  *   - `h` = hours, `d` = days
  *
  * Matching is CASE-SENSITIVE (see {@link parseDuration}), which is what lets
- * `m` and `M` mean different things. Historically `akm health --since` and
- * `remember --expires` read a case-insensitive `m` as MONTHS while
- * `consolidate` / `--window-compare` read it as MINUTES; that split is now
- * resolved in favour of the conventional `m`=minutes, with `M` reserved for
- * months.
+ * `m` and `M` mean different things. Every duration flag uses the conventional
+ * `m`=minutes, with `M` reserved for months.
  */
 export const DURATION_UNITS: Readonly<Record<string, number>> = {
   m: MINUTE_MS,

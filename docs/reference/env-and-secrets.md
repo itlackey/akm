@@ -124,7 +124,7 @@ true` turns it on. `akm exec [--env <ref>]... [--secret <ref>:<VAR>]... -- <comm
 command with the values added to its environment: one argument is a shell line,
 several are a program and its arguments (see [CLI: exec](cli.md#exec)). It exits
 with the command's status and is exempt from `--format`. `akm run <ref>` takes
-the same two flags and runs an agent, command, task or workflow with them (see
+the same two flags and runs a script, agent, command, task or workflow with them (see
 [CLI: run](cli.md#run)).
 
 - Both flags repeat. Env assets apply in the order given, then secrets over
@@ -341,7 +341,7 @@ sources.
 
 ## Stability
 
-`env list`, `env path`, `env export` and `secret list` are Stable. `akm exec` is
+`env list`, `env path` and `secret list` are Stable. `env export` and `akm exec` are
 Experimental and off until `experimental.exec` is true. `env run` and `secret run` are Deprecated. `env create`, `env remove`, `secret set` and `secret remove` are Experimental. Bundles kept by a secret manager are Experimental. See
 [STABILITY.md](../../STABILITY.md).
 

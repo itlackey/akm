@@ -215,12 +215,12 @@ export interface CreateProposalInput {
   /** The eligibility lane that selected the source asset. */
   eligibilitySource?: EligibilitySource;
   /**
-   * A consolidate PROMOTION proposal's source memory ref (alpha.9, O1): set
+   * A consolidate PROMOTION proposal's source memory ref: set
    * by `emitPromotionProposal`. On accept, the source (and its `.derived`
    * twin) is retired through the same archive path a `retire` proposal uses.
    */
   promotionSource?: string;
-  /** Body content hash of `promotionSource` at mint time (alpha.9, B3) — see `Proposal.promotionSourceHash`. */
+  /** Body content hash of `promotionSource` at mint time — see `Proposal.promotionSourceHash`. */
   promotionSourceHash?: string;
   /** A feedback fix's reason and cited source — see `Proposal.feedback`. */
   feedback?: ProposalFeedbackFix;
@@ -258,7 +258,7 @@ function refFilter(stashDir: string, ref: string): (proposalRef: string) => bool
   const filter = proposalRefIdentity(ref);
   if (!filter) {
     throw new UsageError(
-      `Invalid asset-ref filter "${ref}". Use the 0.9.0 grammar [bundle//]conceptId, e.g. knowledge/guide.md or lessons/deploy.`,
+      `Invalid asset-ref filter "${ref}". Use the ref grammar [bundle//]conceptId, e.g. knowledge/guide.md or lessons/deploy.`,
       "INVALID_FLAG_VALUE",
     );
   }
@@ -547,7 +547,7 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
 export interface CreateRetireProposalInput {
   /** The ref of the asset being retired — becomes the proposal's own ref. */
   ref: string;
-  /** One of {@link PROPOSAL_SOURCES}; the consolidate pair pass always uses `"consolidate-pair"` (S6) — kept apart from `"consolidate"`'s promotions. */
+  /** One of {@link PROPOSAL_SOURCES}; the consolidate pair pass always uses `"consolidate-pair"` — kept apart from `"consolidate"`'s promotions. */
   source: ProposalSource | string;
   sourceRun?: string;
   target?: { source: string; root: string };
@@ -560,7 +560,7 @@ export interface CreateRetireProposalInput {
 }
 
 /**
- * Mint a `retire` proposal (0.9.17-alpha.9, the consolidate pair pass): its
+ * Mint a `retire` proposal: its
  * primary `FileChange` deletes `ref`'s own file rather than writing new
  * content, so this does not reuse {@link createProposal} (which always
  * builds a create/update change and enforces content/description rules that
@@ -1334,7 +1334,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  * frontmatter; every other byte, the body included, stays as written. The
  * edited text is parsed back to confirm it holds exactly the intended mapping;
  * when it does not (an indented `---` inside a block scalar), the frontmatter is
- * written out again instead, as it always used to be.
+ * written out again instead.
  */
 function stampProposalProvenance(
   content: string,
@@ -1644,8 +1644,8 @@ export function commitCollectedAccepts(collector: AcceptCommitCollector, label: 
 }
 
 /**
- * O1 (alpha.9): an accepted consolidate PROMOTION retires its source memory
- * (and its `.derived` twin), so promotion no longer leaves a memory/
+ * O1: an accepted consolidate PROMOTION retires its source memory
+ * (and its `.derived` twin), so promotion leaves no memory/
  * knowledge duplicate behind. Runs whether a person accepted the promotion
  * or triage auto-promotion did — this is called from inside
  * `promoteProposalWithLease`'s ordinary accept path, below the drain/CLI
@@ -2001,7 +2001,7 @@ function assertRetirementStillFresh(
 }
 
 /**
- * Accept a `retire` proposal (0.9.17-alpha.9, the consolidate pair pass): no
+ * Accept a `retire` proposal: no
  * new content is written. It is a
  * three-phase, resume-safe sequence: (1) record intent — `backupContent`
  * and the exact files about to move — on the still-pending proposal; (2)
@@ -2333,10 +2333,10 @@ export async function revertProposal(
 }
 
 /**
- * Revert an accepted `retire` proposal (0.9.17-alpha.9): move the archived
+ * Revert an accepted `retire` proposal: move the archived
  * file(s) — the retired asset, and its `.derived` twin when one was archived
  * alongside it — back to where they lived, then overwrite the primary with
- * the exact pre-retire bytes `backupContent` recorded at accept (S4) —
+ * the exact pre-retire bytes `backupContent` recorded at accept —
  * byte-exact, so it also undoes any supersede edge accept wrote without
  * touching one a person had already written, and without appending a
  * trailing newline the original never had. Each archive dir is located from
@@ -2352,7 +2352,7 @@ export async function revertProposal(
  * erroring on its own prior work. The archive dirs (tombstones) are removed
  * only after the "reverted" decision is durably recorded, not interleaved
  * with the moves — a crash between moving a file and recording the
- * decision used to delete that file's tombstone first, leaving an
+ * decision would otherwise delete that file's tombstone first, leaving an
  * "accepted" proposal a retry could neither finish nor re-validate.
  */
 async function unretireProposalWithLease(
@@ -2482,7 +2482,7 @@ async function unretireProposalWithLease(
     restoredPaths.push(p.originalAbs, p.archivedAbs, p.auditPath);
     if (p.primary) primaryOriginalAbs = p.originalAbs;
   }
-  // S4 / nit: overwrite the primary with the EXACT pre-retire bytes recorded
+  // Overwrite the primary with the EXACT pre-retire bytes recorded
   // at accept (`backupContent`) — no appended trailing newline either, so
   // YAML comments, key order, a pre-existing human `supersededBy` edge, and
   // even the exact absence of a final newline all survive the round trip.

@@ -75,8 +75,8 @@ export interface TaskRunResult {
 export interface RunTaskOptions {
   /**
    * The bundle directory the task asset resolves against. Resolved once at
-   * the `akm task run` command boundary (WI-9.10 CLI-wide sweep) and threaded
-   * in — this runner no longer reads the ambient stash-dir resolver.
+   * the `akm task run` command boundary and threaded
+   * in — this runner does not read the ambient stash-dir resolver.
    *
    * The option key is `bundleDir`; a `stashDir`-only options object does not
    * resolve the task.

@@ -395,7 +395,7 @@ warnings instead of aborting the full run. `verification.embeddingRuntime` is
 `onnxruntime-node` when the local embedder embedded in this run; it is absent
 for a remote embedding provider and when nothing was embedded locally.
 
-**Progress in non-verbose JSON mode (default output format, #954):** even
+**Progress in non-verbose JSON mode (default output format):** even
 without `--verbose`, phase-start messages and the embedding heartbeat
 (`Still generating embeddings: X/N stored, F failed; waiting on embedding
 provider.`) are now written to stderr, and a failed embedding batch logs at
@@ -482,7 +482,7 @@ fail: it warns, builds nothing, prints
 (`launcherPid` is the holder's launcher pid when known, `null` otherwise) and
 exits 0. The next build indexes whatever changed. The other commands that build
 the index after their own change (`bundle add`, `bundle update`,
-`bundle remove`, `source add`, `improve`) skip the same way and carry on, and
+`bundle remove`, `improve`) skip the same way and carry on, and
 report the skipped build in their `index` field; their own change is kept. A task
 step that runs `akm index` therefore needs no wrapper. `--skip-if-locked` on
 `akm index` is accepted, warned about once as deprecated, and ignored. If
@@ -1295,8 +1295,9 @@ to run `akm bundle add <origin>` first.
 
 ### workflow
 
-**Experimental** (see [STABILITY.md](../../STABILITY.md)): the workflow commands, asset format and engine may
-change in any release through the 0.10 series, which decides whether the feature is stabilized or removed.
+**Deprecated** (see [STABILITY.md](../../STABILITY.md)): workflows, the workflow asset format, the engine and every
+`akm workflow` command are removed in 0.11, where tasks with ordered steps replace them. Nothing changes in 0.10.x.
+Start runs with `akm run <ref>`; `akm migrate apply` converts workflow files in 0.11.
 
 Author, inspect, and execute structured workflow assets.
 
@@ -1328,7 +1329,7 @@ Subcommands:
 | `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs (the Experimental `unit: { workflow: … }` step) are excluded unless `--children` is passed. Lists every run on the host, most recently updated first, from any working directory. `--all-scopes` is a deprecated no-op |
 | `resume <run-id>` | Flip a `blocked` or `failed` run back to `active` so `run <run-id>` can continue it; it executes nothing. Completed runs cannot be resumed |
 | `abandon <run-id>` | Mark a run failed so it stops counting as active (`resume` can reopen it) |
-| `plan <ref>` | **Evolving.** Compile and freeze a workflow WITHOUT publishing a run: the canonical step graph, per-step frozen target kinds, task/child expansion, input bindings, source read set, and lowering notices — zero durable writes. Returns the full JSON envelope by default, like every other command; pass `--format text` for a human-readable summary |
+| `plan <ref>` | Deprecated; use `akm doctor explain <ref>`. Compile and freeze a workflow WITHOUT publishing a run: the canonical step graph, per-step frozen target kinds, task/child expansion, input bindings, source read set, and lowering notices — zero durable writes. Returns the full JSON envelope by default, like every other command; pass `--format text` for a human-readable summary |
 
 Everywhere a run id is accepted (`run`, `status`, `resume`, `abandon`), a
 unique run-id **prefix** of 8 or more characters works too — the same
@@ -1418,7 +1419,7 @@ budget is left. `gate.max_loops` (1–100) is the per-step ceiling;
 `budget.max_units` and `budget.max_tokens` are the whole-run ceilings, seeded
 from the unit journal so they hold across resumes.
 
-`run` is Experimental and does not consult `experimental.workflowEngine`. Every
+Every
 non-empty `### gate` needs a connection or a harness to judge it before a new
 run can be frozen (the judge runs where model work runs; see
 [Configuration](configuration.md#where-each-process-runs)). Gate evaluation is
@@ -1613,6 +1614,8 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | --- | --- |
 | `--name` | The bundle key. A contract, not a hint: it must be a legal bundle slug (no `:` `.` `#` `/` or whitespace) and not already taken by a different bundle, or the add fails before any write. Re-adding an already-installed source under a different `--name` than it already carries also fails — use `akm bundle rename <old> <new>` instead. Omit it and akm derives a name (falling back to a `-<hash>` suffix on a collision). |
 | `--provider` | Explicit provider for declarative source configuration; normally inferred from the input |
+| `--adapter` | Component adapter for a local directory: `website-snapshot`, `agent-skills`, `claude`, `opencode`, `dotenv`, `akm-workflow`, `akm-task`, `llm-wiki`, `akm`, `okf`, `generic-files` or `code-project`; normally detected |
+| `--before` / `--after` | Insert the new bundle before or after this configured bundle, setting its search order |
 | `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
 | `--options` | Provider options as JSON (e.g. `'{"maxPages":100}'`) |
 | `--allow-insecure-transport` | Allow a plain-HTTP source URL after explicitly accepting transport substitution risk |
@@ -2300,6 +2303,8 @@ A session loads its rules with [`akm rules`](#rules), not with search. The AKM a
 run it at session start and after compaction; an agent without a plugin runs the same command.
 
 ### rules
+
+**Experimental** (see [STABILITY.md](../../STABILITY.md)): the flags, the JSON shape and the `rules` metrics section may change in any release.
 
 Print the rules that apply here, in full: the project's rules first, then shared ones, each
 group by ref.
@@ -3662,7 +3667,7 @@ Scan the Markdown assets of a bundle for structural issues: unquoted colons, mis
 stale paths, and broken refs — in body text and in
 `refs`/`xrefs`/`supersededBy`/`contradictedBy` frontmatter. A belief edge
 pointing at a memory that `akm improve` pruned resolves through the archive
-tombstone under `.akm/memory-cleanup/archive/` and is not reported (#884). Also reports
+tombstone under `.akm/memory-cleanup/archive/` and is not reported. Also reports
 `dangerous-env-key` findings for env files (the key set described under
 [Env files and process-hijacking keys](#env-files-and-process-hijacking-keys);
 `lint` only warns). `--type workflows` structurally parses
@@ -3719,7 +3724,7 @@ akm lint --rule stale-path      # List one rule's findings, grouped by asset
 | Argument or flag | Description |
 | --- | --- |
 | `<file>` | Optional. Lint just this file with the rules the bundle lint applies to it, and return the same result with the counts for that file only (first in 0.10.261122). A file inside a bundle (a configured one, or the root given with `--dir`) gets its type from where it sits, as the bundle lint decides it. A file outside every bundle needs `--type` (`agents`, `commands`, `memories`, `skills`, `workflows`, `lessons`, `tasks`, `knowledge`, `facts`, `instructions`, `rules`, `sessions`), as a type name (`rule`) or its folder name (`rules`). Checks that need other files, such as broken refs and orphaned stubs, run only for a file inside a bundle; outside one only the file's own rules run. A `--type` that disagrees with the file's location, a missing path, a directory (use `--dir`) and `--prune-dangling-edges` are usage errors (exit 2). `--fix` changes only this file. |
-| `--fix` (alias `--auto-fix`) | Apply auto-fixes in place, including the rewrite of links to moved refs. Refused with a usage error when the target bundle is configured `writable: false`. |
+| `--fix` (alias `--auto-fix`, Deprecated: use `--fix`) | Apply auto-fixes in place, including the rewrite of links to moved refs. Refused with a usage error when the target bundle is configured `writable: false`. |
 | `--dir` | Override the bundle root directory (default: from config) |
 | `--type` | Only lint assets of this type, by type name or folder name (e.g. `workflow` or `workflows`, `task`, `memory` or `memories`); a bundle lint leaves out the types search leaves out by default (`search.defaultExcludeTypes`, default `session`) unless `--type` names one. **akm bundles only** — every other adapter validates the whole bundle and warns on stderr that the flag had no effect. |
 | `--rule` | List this rule's findings grouped by asset: the asset ref and file, then each finding with its line, path, reason, nearest existing directory and line text. Combines with `--type`. A listing: it cannot combine with `--fix` or `--prune-dangling-edges`. An unknown rule name warns and shows every rule. |
@@ -3827,8 +3832,8 @@ akm doctor judge reflect.quality < revision.json # reflect's quality judge on on
 | `--connection <name>` / `--harness <name>` | Run every call of this run, judges included, on this connection or harness instead of the default; they are mutually exclusive |
 | `--model <alias\|name>` | The model for every call of this run: an alias (`fast`, `balanced`, `reasoning`) or an exact name |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
-| `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD` — field follow-up to #948: two legitimate `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
-| `--show-prompt` | Deprecated; use `akm doctor prompt <ref>`; removed in 0.11. Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or model call. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside `engine` (the connection or harness reflect would run on) and `engineKind` (`connection` or `harness`); pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
+| `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD`: two `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
+| `--show-prompt` | Deprecated; use `akm doctor prompt <ref>`; removed in 0.11. Print the composed reflect prompt for one asset and exit — before any lock, index write, or model call. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside `engine` (the connection or harness reflect would run on) and `engineKind` (`connection` or `harness`); pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
 | `--sync` / `--no-sync` | Sync the git-backed primary bundle like `akm sync` (fetch and merge the upstream, commit, push) before the run, and commit (and optionally push) when it finishes. A conflict or fetch failure before the run only warns; the run continues on the local state. Default: on for git-backed bundles (per profile config). |
 | `--push` / `--no-push` | Push after the pre-run and end-of-run sync commits when writable with a remote configured. `--no-push` commits only, skipping the push. Default: per profile config (`true`). `sync.push` stays outside the autonomy gate — this is a per-run opt-out, not a default change. |
 
@@ -3996,7 +4001,7 @@ resolution for every kind of work, whichever strategy runs. `--dry-run` does not
 probe reachability over the network — run `akm doctor` to check whether a
 connection actually answers.
 
-`akm doctor prompt <ref>` (formerly `--show-prompt`, #952) is the cheapest way to exercise reflect alone: it
+`akm doctor prompt <ref>` (formerly `--show-prompt`) is the cheapest way to exercise reflect alone: it
 builds the exact prompt reflect would send for one asset — the same source
 resolution, runner selection, feedback/schema-hint/rejected-proposal
 gathering `akm improve`'s live reflect step uses — and prints it
@@ -4577,6 +4582,8 @@ diff is only its two header lines, `--- <ref> (missing)` and the `+++` line.
 
 #### proposal drain
 
+**Experimental** (see [STABILITY.md](../../STABILITY.md)).
+
 Drain the standing pending-proposal backlog instead of adjudicating proposals
 one at a time. One rule decides each proposal: a proposal whose quality judge
 passed on its current content is accepted (unless its target changed since it
@@ -4637,7 +4644,7 @@ not a reason to record against it.
 shell commands. It manages on-disk task definitions under
 `<bundle>/tasks/<id>.yml` and reconciles them with the OS-native scheduler
 (cron / launchd / schtasks). Task source v4 YAML (`version: 4`) is the only
-executable source contract this release accepts; `akm import <file> --type task`
+stable source contract this release accepts (the Experimental `version: 5-beta.1` is described in [Tasks](tasks.md#task-source-v5-experimental)); `akm import <file> --type task`
 imports a v4 file — see the canonical [Tasks reference](tasks.md). The
 group is `add | enable | disable | run | explain | sync | doctor | history | prune`
 — there is no `show` or `remove`; use `akm show tasks/<id>` to inspect one
@@ -4679,7 +4686,8 @@ akm doctor scheduler sync --prune --yes     # Remove every currently-computed or
 akm doctor scheduler sync --prune --id ghost,stale --yes  # Remove only the named orphan ids
 ```
 
-The Deprecated `task add` also accepts `--disabled` (write the task but leave its ref out of
+The Deprecated `task add` also accepts `--name`, `--description`, `--when-to-use` and `--tags` (the
+file's `name`, `description`, `when_to_use` and `tags`), `--disabled` (write the task but leave its ref out of
 this host's scheduler activation), `--force` (overwrite an existing task with
 the same id), and `--rebind` (also point the bundle's installed scheduler rows
 at this akm invocation, as `akm doctor scheduler sync --rebind` does).

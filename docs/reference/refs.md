@@ -83,10 +83,12 @@ facts in the bundle skeleton.
 
 ## Renames and moves
 
-**Treat a ref as permanent.** A rename is **delete plus create**: the new
-path is a new identity, so the destination starts with fresh learned state
-(utility, salience, usage history) and any inbound refs to the old path
-dangle. When you must rename:
+**Treat a ref as permanent.** A rename or move gives the item a new ref, and
+any inbound refs to the old path dangle. When `akm index` next runs it pairs a
+vanished file with a new file of the same content (see
+[`akm index`](cli.md#index)) and carries the learned state (utility, salience,
+usage history) to the new ref; a file that was also edited, or a pairing that is
+ambiguous, is a new asset that starts with none. When you must rename:
 
 ```sh
 mv ~/akm/memories/old-note.md ~/akm/memories/new-note.md
@@ -96,11 +98,8 @@ akm lint          # confirms nothing dangles
 ```
 
 Moving an item between bundles is copy/import followed by deletion from the
-source; both the bundle and the concept identity change. There is no
-`akm mv`.
-
-A rename or move changes the asset's identity, so its earned signal (feedback,
-usage, salience/outcome history) resets.
+source, or a plain move of the file when both bundles are indexed; the pairing
+above applies either way. There is no `akm mv`.
 
 ## Refs in prose
 

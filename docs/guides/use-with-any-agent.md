@@ -26,12 +26,12 @@ For a longer, agent-facing instruction block — usage patterns, flag guidance,
 the full ref format — generate one instead of hand-writing it:
 
 ```sh
-akm hints --detail brief >> AGENTS.md
+akm hints >> AGENTS.md
 ```
 
 The output is written for agents rather than humans: it describes the lookup
 workflow (`curate` → `show` → `feedback`) and explains how refs work. It prints
-the complete guide by default; `--detail brief` prints the short one.
+the short guide.
 
 ## The retrieval loop: curate, show, feedback
 
@@ -134,7 +134,8 @@ one plugin to the other major's config.
 | 2 | `akm-opencode-v2` | `"plugins"` (the key `opencode plugin add` writes) | `~/.cache/opencode/npm/akm-opencode-v2@<tag>/<build>/` |
 
 (`$XDG_CACHE_HOME` and `$XDG_CONFIG_HOME` move both.) Both packages declare the
-same `akm-cli` dependency.
+same `akm-cli` dependency. OpenCode 1 is deprecated as the `opencode` harness and
+removed in 0.11 (see [STABILITY.md](../../STABILITY.md)); use OpenCode 2.
 
 **OpenCode 1.** Add `akm-opencode` to the global config
 (`~/.config/opencode/opencode.json`):
@@ -160,7 +161,7 @@ config to follow prereleases. The exact rules are in the
 warns when either plugin's bundled `akm-cli` differs from the running CLI.
 
 **Which OpenCode akm runs** does not depend on the plugin: the `opencode`
-harness runs your OpenCode through its CLI (OpenCode 1 and 2), and akm's own
+harness runs your OpenCode through its CLI (OpenCode 2; OpenCode 1 still runs through 0.10 and prints a deprecation notice), and akm's own
 runtime fetches and runs its own pinned one (see
 [Configuration](../reference/configuration.md#without-a-harness)). Install the plugin for
 the OpenCode you use yourself.
@@ -171,6 +172,6 @@ the OpenCode you use yourself.
 - [Discover and Load](discover-and-load.md) — the full curate → show retrieval path
 - [Capture Knowledge](capture-knowledge.md) — capturing agent-generated memories
 - [Improve the Library](improve-the-library.md) — feeding back usage signals
-- [CLI Reference](../reference/cli.md) — `completions`, `agent`, and `hints` command documentation
+- [CLI Reference](../reference/cli.md) — `completions` and `hints` command documentation
 - [Concepts](concepts.md) — bundles, adapters, refs, and the asset type system
 - [Bundle Types](../reference/bundle-types.md) — how AKM indexes existing project layouts in place

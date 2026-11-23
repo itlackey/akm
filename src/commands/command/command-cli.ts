@@ -49,7 +49,10 @@ export const commandRunCommand = defineJsonCommand({
       type: "string",
       description: "Timeout as a duration (30s, 2m) or milliseconds",
     },
-    "timeout-ms": { type: "string", description: "Override the execution timeout in milliseconds" },
+    "timeout-ms": {
+      type: "string",
+      description: "Deprecated: use `--timeout`. Override the execution timeout in milliseconds",
+    },
     "max-retries": { type: "string", hidden: true, description: "Run again up to N times when the command fails" },
     cwd: { type: "string", description: "Override the execution workspace/current working directory" },
     "dry-run": {
@@ -111,7 +114,8 @@ export const commandRunCommand = defineJsonCommand({
 export const commandCommand = defineGroupCommand({
   meta: {
     name: "command",
-    description: "Run reusable agent prompt templates through AKM's common execution resolver",
+    description:
+      "Deprecated, removed in 0.11: use `akm run <ref>`. Run reusable agent prompt templates through AKM's common execution resolver",
   },
   subCommands: { run: commandRunCommand },
 });

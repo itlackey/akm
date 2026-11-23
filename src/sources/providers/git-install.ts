@@ -116,7 +116,7 @@ export function inspectGitUpstream(repoDir: string, credential?: string): GitUps
 
 /**
  * Verify the actually-cloned HEAD matches the revision resolved before the
- * clone ran (R-011). This is a presence/identity check only — full
+ * clone ran. This is a presence/identity check only — full
  * content-digest verification across install/update is separate, larger
  * scope work. `expectedRevision` may be an annotated tag's OBJECT id (which
  * `git ls-remote` reports, distinct from the commit it points to), so the
@@ -128,7 +128,7 @@ export function verifyClonedRevision(cloneDir: string, url: string, expectedRevi
     // `resolveGitArtifact` (registry/resolve.ts) throws when it cannot resolve
     // a revision via `git ls-remote`, so a plain git install never reaches
     // this call with `undefined` — treat it as a bug, not a silently-skipped
-    // check that would defeat the R-011 post-clone integrity verification.
+    // check that would defeat the post-clone integrity verification.
     throw new UsageError(`No revision was resolved from ${url}; refusing to install without a verifiable checkout.`);
   }
   const head = runGit(["-C", cloneDir, "rev-parse", "HEAD"]);
@@ -354,7 +354,7 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
       }
     }
 
-    // R-011: `resolved.resolvedRevision` was resolved via a SEPARATE
+    // `resolved.resolvedRevision` was resolved via a SEPARATE
     // `git ls-remote` round-trip before this clone ran (resolveGitArtifact /
     // resolveGithubArtifact in registry/resolve.ts) and was never checked
     // against what actually got cloned. Verify it now, while `.git` still

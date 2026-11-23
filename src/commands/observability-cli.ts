@@ -4,19 +4,11 @@
 
 /**
  * Observability command cluster — `akm log` (append-only events stream).
- * Extracted verbatim from src/cli.ts (WS6) so the God Module shrinks; the
- * `main.subCommands.log` key and its args/output shape are byte-identical.
  *
- * `log` reads the append-only state.db events stream. It shares no helpers
- * with any command still inline in cli.ts.
+ * `log` reads the append-only state.db events stream.
  *
- * 0.9.0 CLI overhaul (S3): `log` was a group with `list`/`tail` subcommands;
- * `tail` (a foreground polling daemon) is dropped and `log` becomes a LEAF
- * command that is today's `list` surface, unchanged (including the
- * `--since @offset:<id>` durable cursor and --ref/--type filters). The
- * `lessons`/`lesson` group (`coverage`, `strength`) is dropped entirely —
- * ranking's `lessonStrength` contributor is untouched, only the CLI read
- * surface for it goes away.
+ * `log` is a leaf command with the `--since @offset:<id>` durable cursor
+ * and --ref/--type filters.
  *
  * The embedded agent guide (`akm hints`) lives in src/cli.ts, so its
  * loading code is intentionally outside this module.
@@ -36,14 +28,9 @@ import { akmTasksHistory } from "./tasks/tasks";
 // Append-only events stream surface (#204). Reads state.db events with
 // optional --since/--type/--ref filters.
 //
-// R-060: the internal output()/shape-registry command name is `log-list`
-// (renamed from the pre-rename `events-list`, back when the command group was
-// still called `akm events`). This string never reaches the wire —
-// `shapeEventsOutput` (src/output/shapes/helpers.ts) builds its own envelope
-// and never stamps a `shape` field — so the rename is a coherence-only
-// change, not a schemaVersion bump. Kept as `log-list` (not renamed to `log`)
-// even though the group flattened to a leaf, to avoid unrelated churn on the
-// internal registry key.
+// The internal output()/shape-registry command name is `log-list`. It never
+// reaches the wire: `shapeEventsOutput` (src/output/shapes/helpers.ts) builds
+// its own envelope and never stamps a `shape` field.
 
 export const logCommand = defineJsonCommand({
   meta: { name: "log", description: "List events from the append-only state.db events stream" },

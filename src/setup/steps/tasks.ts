@@ -27,7 +27,7 @@ import { prompt } from "../prompt";
  * The nightly improve template (`core/improve`). This id is preselected in the
  * review multiselect on a detected server install — the "battery heuristic"
  * {@link detectServerDefault} preserved from the retired
- * `registerDefaultTasks`/`akm tasks init` path (0.9, S6).
+ * `registerDefaultTasks`/`akm tasks init` path.
  */
 const SERVER_SUGGESTED_TASK_ID = "improve";
 
@@ -295,7 +295,7 @@ export async function stepScheduledTasks(
 
   const preChecked = embedded.filter((task) => byId.get(task.id)?.enabled === true).map((task) => task.id);
   // Battery heuristic preserved from the retired `registerDefaultTasks` path
-  // (S6): suggest the nightly improve task on a detected server install, same
+  //: suggest the nightly improve task on a detected server install, same
   // as every other embedded template, still gated behind the confirmation
   // below.
   if (

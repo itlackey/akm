@@ -71,11 +71,10 @@ export interface DrainedDir {
 /**
  * Drain one directory's recognized documents into durable entries.
  *
- * `fileContexts` are the dir's walked files (the drain no longer pre-filters —
- * adapter-owned filtering, owner ruling 2026-07-21). `adapter.recognize` returns
+ * `fileContexts` are the dir's walked files (the drain does not pre-filter —
+ * filtering is adapter-owned). `adapter.recognize` returns
  * `null` for a file it abstains on (no matcher claims it, an OKF reserved file,
- * or an AKM sensitive/infra file) — silently skipped, the same contract the
- * legacy flat-walk pass's "no matcher claims the file" case had.
+ * or an AKM sensitive/infra file) — silently skipped.
  */
 export function drainDirDocuments(
   adapter: BundleAdapter,
@@ -117,20 +116,17 @@ export function drainDirDocuments(
 }
 
 /**
- * `(stashRoot, files) → StashFile` drop-in for the deleted flat-walk matcher
- * pass (F4a M-core-3): builds a FileContext per file and drains them through the
- * `akm` adapter's `recognize`. The recognize engine is the proven-equal
- * replacement for the old matcher-pass metadata assembly (shadow-parity gate), so
- * callers that only need the recognized entries (`manifest`'s no-index fallback,
- * the `registry` static-index builder, and the metadata unit tests) get identical
- * entries — plus the D-R6 reserved-file exclusion and the AKM sensitive/infra
+ * `(stashRoot, files) → StashFile` builds a FileContext per file and drains them through the
+ * `akm` adapter's `recognize`. Callers that only need the
+ * recognized entries (`manifest`'s no-index fallback, the `registry`
+ * static-index builder, and the metadata unit tests) use it. It also applies the D-R6 reserved-file exclusion and the AKM sensitive/infra
  * abstention the adapter now enforces itself. Provenance is not persisted by these
  * callers, so the synthetic bundle id is immaterial.
  */
 export function recognizeStashEntries(stashRoot: string, files: string[]): StashFile {
   const bundle: Bundle = { id: stashRoot, root: stashRoot };
   // No pre-filter: the `akm` adapter's `recognize` claims/abstains per file
-  // (owner ruling 2026-07-21 — adapter-owned filtering).
+  // (filtering is adapter-owned).
   const contexts = files.map((file) => buildFileContext(stashRoot, file));
   const drained = drainDirDocuments(akmAdapter, bundle, contexts);
   return drained.warnings.length > 0

@@ -3,15 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Pure recognition/placement layer for the built-in akm asset types — akm
- * 0.9.0 chunk-3 (the taxonomy-cutover leaf).
+ * Pure recognition/placement layer for the built-in akm asset types.
  *
  * This module is the SINGLE SOURCE OF TRUTH for the `AssetSpec` filesystem
  * surface (`stashDir`/`isRelevantFile`/`toCanonicalName`/`toAssetPath`), the
  * per-type stash-subdir map, and the derive/resolve helpers built on them.
- * Chunk-3 deleted the mutable taxonomy globals that used to expose this data
- * as ambient registries; the surface is now reached through the small typed
- * accessors below (`stashDirFor`/`stashDirNames`/`placementTypes`/
+ * There are no mutable taxonomy globals: the surface is reached through the
+ * small typed accessors below (`stashDirFor`/`stashDirNames`/`placementTypes`/
  * `assetPathForName`/`placementSpecFor`), which the `akm` bundle adapter
  * (`adapter/adapters/akm-adapter.ts`) consumes for placement.
  *
@@ -105,7 +103,7 @@ const BUILTIN_PLACEMENT_SPECS = {
   command: { stashDir: "commands", ...markdownSpec },
   agent: { stashDir: "agents", ...markdownSpec },
   knowledge: { stashDir: "knowledge", ...markdownSpec },
-  // R-045 / Q-18 second half (owner ruling 11, EXECUTE NOW) — `instruction` as
+  // `instruction` as
   // a real stash-resident type, mirroring `knowledge`'s plain markdown spec.
   // This is distinct from the ADAPTER-OWNED instruction docs emitted by
   // format-family adapters (root CLAUDE.md/AGENTS.md via `tool-dir-shared.ts`):

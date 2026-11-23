@@ -1,5 +1,5 @@
 {
-  "recordedFrom": "1f2e58c9e9baea90ebdcf2d771965f183d2af0be",
+  "recordedFrom": "e09b7ae7732bd070095c0228a8c38ffab8a4ffed",
   "results": {
     "show before index knowledge/guide": {
       "exit": 0,
@@ -9378,7 +9378,7 @@
       "exit": 2,
       "errorJson": {
         "ok": false,
-        "error": "Invalid asset-ref filter \"knowledge:guide\". Use the 0.9.0 grammar [bundle//]conceptId, e.g. knowledge/guide.md or lessons/deploy.",
+        "error": "Invalid asset-ref filter \"knowledge:guide\". Use the ref grammar [bundle//]conceptId, e.g. knowledge/guide.md or lessons/deploy.",
         "code": "INVALID_FLAG_VALUE",
         "hint": "Run `akm <command> --help` to see accepted values."
       }

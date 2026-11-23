@@ -8,7 +8,7 @@
  * The `wiki` ASSET-TYPE is retired, but the LLM Wiki structure stays first-class
  * as its OWN adapter: a `BundleAdapter` carrying the native wiki semantics
  * (probe = schema.md + pages/, wiki-page recognition, links) that the retired
- * `src/wiki/` module used to own.
+ * `src/wiki/` module owned.
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/llm-wiki/` + goldens
@@ -52,7 +52,7 @@
  * field, so `missing-updated` would fire on every page/reserved file and
  * contradict the lint golden's clean result — the native checks are the wiki's
  * complete validation surface. The `orphan` issue CODE is APPROVED but the
- * recorded chunk-4 behavior (lint golden edgeCases) is to emit `broken-xref`
+ * recorded behavior (lint golden edgeCases) is to emit `broken-xref`
  * only (the actionable finding) and surface `orphan` after the xref is fixed —
  * so no `orphan` finding is emitted here.
  *
@@ -421,7 +421,7 @@ export class LlmWikiAdapter extends DirectoryAdapterBase {
     return ["."];
   }
 
-  /** Install-time probe (§1.2): a root is an LLM Wiki when it has a root `schema.md` AND a `pages/` directory. */
+  /** Install-time probe: a root is an LLM Wiki when it has a root `schema.md` AND a `pages/` directory. */
   looksLikeRoot(root: string): boolean {
     return looksLikeLlmWikiRoot(root);
   }

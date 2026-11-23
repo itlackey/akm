@@ -127,7 +127,7 @@ export async function indexWrittenAssets(
 
     // Generate metadata BEFORE opening the DB so the write window stays
     // short. One drain call per file keeps the entry↔path pairing exact and
-    // reuses the full-index recognize engine (F4a M-core-2 item 5): broken
+    // reuses the full-index recognize engine: broken
     // workflows drop, valid workflow docs are cached for the side-table upsert.
     // The bundle's own adapter recognizes what was written: a named bundle's configured one, the akm adapter otherwise.
     const configuredAdapterId = options.bundleId

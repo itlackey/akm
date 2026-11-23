@@ -7,6 +7,7 @@ live one level up in `docs/migration/`.
 
 ## Available notes
 
+- [0.10.261130](0.10.261130.md) — Workflows convert to tasks with `akm migrate apply`, opt-in task source v5, `env run`/`secret run` replacements, and `migrate status` as the preview.
 - [0.10.261022](0.10.261022.md) — Automatic document-ref repair, skill health fixes, and local UI workflow improvements.
 - [0.10.261019](0.10.261019.md) — The 0.10 series: 0.9.15 version floor, merged CLI spellings, `default`/`consolidate` strategies only, OpenCode 2, feedback-scaled ranking, and `0.10.YYMMNN` versions.
 - [0.9.19](0.9.19.md) — Bundle-scoped improve planning, proposal reopen, and consolidate/distill guardrails.

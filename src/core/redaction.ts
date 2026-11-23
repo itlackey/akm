@@ -481,11 +481,11 @@ export function redactCredentialPatterns(input: string): string {
  * once, so overlapping matches merge into a single `[REDACTED]` and no needle
  * can ever match inside a token an earlier needle produced.
  *
- * That last property is load-bearing. This function used to take a `replaceAll`
- * fast path that chained over a *mutating* accumulator, which meant any needle
- * drawn from the letters of `[REDACTED]` re-matched the tokens already injected
- * and the output grew geometrically: `redactSensitiveText("a".repeat(50),
- * ["a","E","D","T","C","R"])` returned 32,450 characters — 649x the input. On a
+ * That last property is load-bearing. A `replaceAll`
+ * fast path that chained over a *mutating* accumulator would let any needle
+ * drawn from the letters of `[REDACTED]` re-match the tokens already injected
+ * and the output grow geometrically: `redactSensitiveText("a".repeat(50),
+ * ["a","E","D","T","C","R"])` would return 32,450 characters — 649x the input. On a
  * path where the needle set is derived from configuration or the environment,
  * that is a memory-exhaustion hazard reachable from ordinary command output.
  * The encoded-form path never had the bug because it always worked this way.

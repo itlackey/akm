@@ -10,8 +10,7 @@
  * `index-schema.ts`) brings it up to date in place — added and dropped
  * columns, retired tables dropped, a one-time full-text rebuild — without
  * touching embeddings, utility scores, or the LLM enrichment cache (the one
- * exception is the LLM entity graph, unconditionally dropped since its
- * retirement in 0.9.17-alpha.9). A newer layout is refused, naming the
+ * exception is the LLM entity graph, unconditionally dropped). A newer layout is refused, naming the
  * upgrade.
  */
 
@@ -147,7 +146,7 @@ const REQUIRED_ENTRY_COLUMNS = [
  * and layout 21 removed (`entry_key` was the key). They are NOT NULL, so a
  * table that still has one takes none of this release's inserts, and its
  * `document_json` is empty (the entry sat in `entry_json`), so none of its rows
- * can be read either. A 0.9.1 index is such a table.
+ * can be read either. An index from an older release can be such a table.
  */
 const RETIRED_ENTRY_COLUMNS = ["entry_key", "dir_path", "stash_dir", "entry_json", "entry_type"] as const;
 

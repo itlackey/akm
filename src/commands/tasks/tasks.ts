@@ -808,7 +808,7 @@ async function listInstalledRows(sched: SchedulerBackend): Promise<InstalledSche
 
 /**
  * The `AKM_BUNDLE_DIR` an installed row names: its inline one, or the one in
- * the descriptor a row written before 0.9.17-alpha.7 references. Undefined
+ * the descriptor an older-format row references. Undefined
  * when it names none, or its descriptor cannot be read — which never means
  * "mine".
  */
@@ -843,8 +843,8 @@ export interface TasksPruneResult {
 }
 
 /**
- * Why `akm task prune` (#851) would remove an installed row: a row written
- * before 0.9.17-alpha.7 whose descriptor cannot be read (`invalid-context`),
+ * Why `akm task prune` (#851) would remove an installed row: an older-format row
+ * whose descriptor cannot be read (`invalid-context`),
  * or one naming a bundle directory that is gone (`dead-bundle-path`). A row
  * that still resolves to a live bundle is never a candidate.
  */
@@ -916,7 +916,7 @@ export interface TasksDoctorResult {
   caller: { argv: string[]; via: string };
   bindings: Array<{
     argv: string[];
-    /** A row written before 0.9.17-alpha.7: the descriptor it names. The next `akm doctor scheduler sync` rewrites it. */
+    /** An older-format row: the descriptor it names. The next `akm doctor scheduler sync` rewrites it. */
     contextPath?: string;
     taskIds: string[];
     status: string[];

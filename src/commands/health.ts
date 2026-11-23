@@ -74,7 +74,7 @@ import { collectWorkflowFilesAdvisory } from "./health/workflow-files";
 
 export interface AkmHealthOptions {
   since?: string;
-  /** Row grouping. `run` emits one row per improve_runs entry (was `--detail per-run`). */
+  /** Row grouping. `run` emits one row per improve_runs entry. */
   groupBy?: "run";
   windowCompare?: string;
   windows?: WindowSpec[];

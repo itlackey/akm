@@ -119,9 +119,8 @@ function bareRef(ref: string): string {
 
 /**
  * The bare-form (conceptId) candidate a caller ref matches a stored
- * `usage_events` row under. Post-Chunk-8 every stored row is conceptId-spelled
- * (the one-time §11.4 re-key ran at the migration cutover), so only the conceptId
- * candidate remains — the legacy `type:name` sibling is retired.
+ * `usage_events` row under. Every stored row is conceptId-spelled, so only the conceptId
+ * candidate remains.
  */
 function bareRefCandidates(ref: string): string[] {
   return [bareRef(ref.trim())];
@@ -182,7 +181,7 @@ export function getRetrievalCounts(
     // rfind, but stored origins never themselves contain `//`, so a stash ref
     // has exactly one `//` and `substr(... instr ...)` is exact; bare refs have
     // no `//` and are excluded above.
-    // usage_events lives in state.db (Chunk-8 WI-8.3) — this global count needs
+    // usage_events lives in state.db — this global count needs
     // no entries join, so it reads state.db directly.
     const rows = stateDb
       .prepare(

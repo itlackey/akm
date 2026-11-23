@@ -26,17 +26,14 @@
 const EXEMPT_COMMANDS: ReadonlySet<string> = new Set([
   // Emits shell completion script source for eval.
   "completions",
-  // `migrate status`/`apply` used to be exempt here too: `runMigrationTool`
-  // (src/commands/migration-tool.ts) spawns the task-only standalone
-  // `scripts/akm-migrate.ts` tool, which always emitted its own fixed JSON
-  // shape and never consulted `--format`. `src/commands/migrate-cli.ts` now
-  // parses that child's final result line and renders it through the normal
-  // `output()` pipeline (registered shape: `src/output/shapes/migrate.ts`;
-  // text renderer: `src/output/text/migrate.ts`), so both subcommands honour
-  // `--format` like any other command and are no longer listed here. Any
-  // progress-event lines the child prints during a real `apply` still print
-  // verbatim ahead of the formatted result — those are operational logging,
-  // not part of the result envelope, the same way a progress spinner would be.
+  // `migrate status`/`apply` are not exempt: `runMigrationTool`
+  // (src/commands/migration-tool.ts) spawns the standalone
+  // `scripts/akm-migrate.ts` tool, and `src/commands/migrate-cli.ts` parses
+  // that child's final result line and renders it through the normal
+  // `output()` pipeline (shape: `src/output/shapes/migrate.ts`; text renderer:
+  // `src/output/text/migrate.ts`), so both honour `--format`. Progress-event
+  // lines the child prints during a real `apply` print verbatim ahead of the
+  // formatted result; they are operational logging, not part of the envelope.
   // Document payload group: bare `help` prints the sectioned overview and
   // `help migrate <version>` prints release notes — neither renders a result
   // envelope.

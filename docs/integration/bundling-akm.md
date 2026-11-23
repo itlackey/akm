@@ -23,11 +23,10 @@ Everything below is detail in service of those three lines.
 
 ```sh
 akm migrate status        # read-only: what would change
-akm migrate apply --dry-run
 akm migrate apply
 ```
 
-In order, every run applies (or, under `status`/`--dry-run`, plans):
+In order, every run applies (or, under `status`, plans):
 
 1. **config.json in its current shape** (`configFile`): unknown keys dropped,
    `configVersion` set, and the `engines` / `defaults` form converted to
@@ -138,7 +137,7 @@ same step names):
   everything it *can*, then reports `blocked` and exits non-zero.
 
 A pending `state.db` migration needs no human decision, so it is never
-`blocked`: under `akm migrate status` or `apply --dry-run` it reads as
+`blocked`: under `akm migrate status` it reads as
 `ready` (the run would change `state.db`) and is listed in
 `stateMigrations.pending`; a real `apply` always applies it.
 
@@ -146,7 +145,7 @@ Key fields:
 
 | Field | Meaning |
 | --- | --- |
-| `stateMigrations` | `{ pending: string[] }` under `status`/`--dry-run`; `{ applied: string[], safetyCopyPath?: string }` after a real `apply`. `safetyCopyPath` is present only when a historical-destructive migration ran — see below. |
+| `stateMigrations` | `{ pending: string[] }` under `status`; `{ applied: string[], safetyCopyPath?: string }` after a real `apply`. `safetyCopyPath` is present only when a historical-destructive migration ran — see below. |
 | `taskFiles` | `changed`/`skipped`/`blocked` counts and a `files[]` array with each file's `status` and `reason`. |
 | `taskFilesV5` | Present when files were named (`status <file>...`, `apply <file>...`): one entry per named task or workflow file with `filePath`, `status` (`converted`, `skipped`, `blocked`), `reason`, `notes[]` (what version 5 does not keep, to change by hand), `taskFile` (the task a workflow file becomes) and, when blocked, `detail` and `guidance`. `taskFilesV5BackupPath` is the backup directory after a real apply. |
 | `workflowFiles` | Present when workflow files remain in enabled, writable bundles: `bundles[]` (`bundle`: the bundle's root, `files[]`) and `message`, the line `akm doctor` prints for its `workflow-files` advisory. Reported only: a workflow file is converted when it is named, and it does not change `status`. |
@@ -197,8 +196,8 @@ Its result carries the same plan under `migration`:
 
 ```json
 {
-  "currentVersion": "0.9.8",
-  "newVersion": "0.9.9",
+  "currentVersion": "0.10.261122",
+  "newVersion": "0.10.261130",
   "upgraded": false,
   "installMethod": "package-local",
   "message": "akm runs as a dependency of the package at /opt/myapp; upgrade that package to move akm.",

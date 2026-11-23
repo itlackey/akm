@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `dotenv` adapter — akm 0.9.0 format-family work item (#46).
+ * The `dotenv` adapter.
  *
  * A metadata-only env/secret bundle. REDACTION IS
  * A HARD CONTRACT keyed on the ADAPTER, never on the open `type` value (a
