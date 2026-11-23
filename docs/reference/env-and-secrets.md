@@ -320,7 +320,11 @@ such a bundle after the bundles before it in priority.
   keyring lists no entries until it is unlocked (a closed KWallet), `akm index`
   fails, telling you to unlock it and run `akm index` again; the entries the
   index had stay. KWallet may replace an entry's attributes when it is reopened;
-  akm reads them afresh before each read and store. The keyring must exist, and `secret-tool` cannot create it: create the wallet or
+  a read then says to run `akm index`, which records them again. On KWallet
+  (`ksecretd`), a removal can be undone when the wallet is next loaded: the
+  Secret Service stops listing the entry, but the wallet file may keep it, so
+  check KWalletManager after a removal. An unanswered KWallet password dialog
+  blocks every request to KWallet until it is answered or dismissed. The keyring must exist, and `secret-tool` cannot create it: create the wallet or
   keyring named in `location` in your keyring manager (KWalletManager,
   Seahorse). A missing one is refused naming the keyrings the service has. A
   process with no session bus (a scheduled task, a container) cannot reach the

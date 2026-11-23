@@ -31,8 +31,10 @@ N="${TEST_SHARDS:-$cores}"
 
 bun run sweep:tmp >/dev/null 2>&1 || true
 
-# Deterministic file list; sort so every machine shards identically.
-mapfile -t files < <(find tests/integration -name '*.test.ts' | sort)
+# Deterministic file list; sort so every machine shards identically. The
+# reference-compatibility corpus is not part of this run (it is a local gate for
+# the adapter refactor, run directly: `bun test tests/integration/reference-compat.test.ts`).
+mapfile -t files < <(find tests/integration -name '*.test.ts' ! -name 'reference-compat.test.ts' | sort)
 total="${#files[@]}"
 
 if [ "$total" -eq 0 ]; then
