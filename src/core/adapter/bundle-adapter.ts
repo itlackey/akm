@@ -153,6 +153,11 @@ export interface BundleAdapter {
    */
   recognize(b: Bundle, entry: AssetEntry): IndexDocument | null;
   /**
+   * The type the entry's bytes give it, as `recognize` would say it, without describing the rest (a check that holds the
+   * bytes and must change nothing asks this). Absent: the adapter has no cheaper answer; undefined: it types nothing.
+   */
+  contentType?(b: Bundle, entry: AssetEntry): string | undefined;
+  /**
    * Native validation of pending `edits`, each an asset by its concept id (`akm lint` checks every asset as an
    * `update`). It never writes. A directory adapter checks the bundle's snapshot with the edits overlaid; a store
    * with no files has nothing to check. Cross-bundle ref existence is a core base check, not an adapter concern.
@@ -173,8 +178,12 @@ export interface BundleAdapter {
     asset: NewAsset,
     options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean },
   ): AssetChange;
-  /** Replace the content of the asset `conceptId` holds with exactly `content`. */
-  update(b: Bundle, conceptId: string, content: string | Buffer): AssetChange;
+  /**
+   * Replace the content of the asset `conceptId` holds with exactly `content`. With `throughLink`, an asset file reached
+   * through a symbolic link whose target is a file inside the bundle is written where the link leads and the link is kept;
+   * a link to nothing or to a file outside the bundle is still refused.
+   */
+  update(b: Bundle, conceptId: string, content: string | Buffer, options?: { throughLink?: boolean }): AssetChange;
   /** Take the asset out of the bundle. */
   delete(b: Bundle, conceptId: string): AssetChange;
 

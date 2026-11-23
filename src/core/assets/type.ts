@@ -231,6 +231,15 @@ export function assetTypeFresh(asset: Asset): string {
   return indexAsset(asset, { persist: true, onMiss: true }).type;
 }
 
+/**
+ * The type each of `assets` has by its bytes, when its adapter can say it, as the next `akm index` would give it, for a check that
+ * holds the bytes it reads and must change nothing (`akm lint`): no index is read or written, and nothing is described
+ * but the type, so the answer is {@link assetTypeFresh}'s whatever the index holds. An asset akm does not type has none.
+ */
+export function assetTypesByContent(assets: readonly Asset[]): Map<Asset, string | undefined> {
+  return new Map(assets.map((asset) => [asset, bundleHolding(asset).contentType(asset.entry)]));
+}
+
 /** The file the index records an asset under; `""` for an asset no file holds (a keyring's or vault's). */
 export function indexedPathOf(asset: Asset): string {
   return asset.entry.file ?? "";

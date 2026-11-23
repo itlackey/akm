@@ -400,9 +400,11 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return { conceptId, changed, content: asset.content };
   }
 
-  update(b: Bundle, conceptId: string, content: string | Buffer): AssetChange {
+  update(b: Bundle, conceptId: string, content: string | Buffer, options: { throughLink?: boolean } = {}): AssetChange {
     const { conceptId: canonical, entry } = this.existing(b, conceptId);
-    const file = entry.file as string;
+    const held = entry.file as string;
+    // Through a link that leads to a file inside the bundle the write goes where it leads; any other link is refused below.
+    const file = options.throughLink ? (linkTargetInside(rootOf(b), held) ?? held) : held;
     this.writeFile(b, this.typeOf(entry.key), file, content);
     return { conceptId: canonical, changed: [file], content };
   }
@@ -732,6 +734,17 @@ export function assertWritableFile(
       }
       throw new UsageError(`Write path contains a symbolic link below source "${bundle}": ${relative}`);
     }
+  }
+}
+
+/** Where `file` really is, when it is reached through a symbolic link and that is a file inside `root`; undefined otherwise. */
+function linkTargetInside(root: string, file: string): string | undefined {
+  try {
+    const real = fs.realpathSync(file);
+    const realRoot = fs.realpathSync(root);
+    return real !== file && fs.statSync(real).isFile() && isWithin(real, realRoot) ? real : undefined;
+  } catch {
+    return undefined;
   }
 }
 
