@@ -5,10 +5,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { BundleAdapter, BundleListing } from "../core/adapter/bundle-adapter";
-import { adapterIdOf, detectAdapterId } from "../core/adapter/detect-adapter";
 import { requireAdapter } from "../core/adapter/registry";
 import type { Bundle } from "../core/adapter/types";
+import { bundleAdapterId } from "../core/assets/gate";
 import { type Asset, findAsset } from "../core/assets/read";
+import { indexedPathOf } from "../core/assets/type";
 import { isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
 import { appendEvent } from "../core/events";
@@ -93,7 +94,7 @@ import {
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations, sourceOfBundle } from "./installations";
 import { legacyRefMove, rekeyLegacyEntry } from "./legacy-refs";
-import { entryOnMiss, indexedPathMatchesOwner, indexedPathOf } from "./lookup/indexed-owner";
+import { entryOnMiss, indexedPathMatchesOwner } from "./lookup/indexed-owner";
 import { type EmbeddingGenerationResult, embeddingInputCap, generateEmbeddingsForDb } from "./materialize-embeddings";
 import {
   computeDirFingerprint,
@@ -636,10 +637,10 @@ function detectAndPersistBundleAdapters(
 ): { config: AkmConfig; persistedAdapters: Record<string, string> } {
   const detectedByBundle = new Map<string, string>();
   for (const source of allSourceEntries) {
-    if (source.adapterId || source.unresolved) continue;
-    if (isReadableDirectory(source.path)) {
-      source.adapterId = detectAdapterId(source.path);
-      if (source.registryId) detectedByBundle.set(source.registryId, source.adapterId);
+    // `resolveSourceEntries` found an adapter for every entry without one; this records it.
+    if (source.registryId === undefined || source.unresolved || config.bundles?.[source.registryId]?.adapter) continue;
+    if (source.adapterId !== undefined && isReadableDirectory(source.path)) {
+      detectedByBundle.set(source.registryId, source.adapterId);
     }
   }
 
@@ -959,7 +960,7 @@ function buildIndexedSourceOwners(sources: readonly SearchSource[]): Map<string,
   return new Map(
     sources.map((source, index) => [
       path.resolve(source.path),
-      { bundleId: (bundles[index] as Bundle).id, adapterId: adapterIdOf(source) },
+      { bundleId: (bundles[index] as Bundle).id, adapterId: bundleAdapterId(source) },
     ]),
   );
 }
@@ -1075,7 +1076,9 @@ function buildSourceScanPlans(
       };
     }
     // A bundle that names an adapter akm does not have stops the index before it changes anything.
-    const adapter = requireAdapter(bundle.id, adapterIdOf(sourceAdded), { location: bundle.location !== undefined });
+    const adapter = requireAdapter(bundle.id, bundleAdapterId(sourceAdded), {
+      location: bundle.location !== undefined,
+    });
     const walked = walkResultOf(listOrKeep(adapter, bundle), currentStashDir);
     const dirGroups = groupFileContextsByDir(walked.files);
     return {
@@ -1816,7 +1819,7 @@ async function lookupBundleRefWithResolutionUsing(
     if (!asset) return resolved(null);
     const bundleId = asset.bundle;
     const source = sourceOfBundle(sources, bundleId);
-    const adapterId = adapterIdOf(source);
+    const adapterId = bundleAdapterId(source);
     const ownerPath = indexedPathOf(asset, source);
     // A workflow source that is a symlink to a file of another extension is warned about once, as before.
     if (workflowNameForSourcePath(source.path, adapterId, ownerPath) !== undefined) {

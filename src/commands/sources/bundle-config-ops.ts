@@ -16,7 +16,7 @@
 
 import path from "node:path";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
-import { bundleKeyForContentRoot, primaryBundlePath } from "../../core/config/config";
+import { bundleAtDir, primaryBundlePath } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { deriveBundleId } from "../../indexer/installations";
 
@@ -68,8 +68,7 @@ export function placeBundle(
 export function withPrimaryBundle(config: AkmConfig, stashDir: string): AkmConfig {
   const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
   const key =
-    bundleKeyForContentRoot(config, path.resolve(stashDir)) ??
-    deriveBundleId(undefined, stashDir, new Set(Object.keys(bundles)));
+    bundleAtDir(config, path.resolve(stashDir)) ?? deriveBundleId(undefined, stashDir, new Set(Object.keys(bundles)));
   const { root: _root, ...existing } = bundles[key] ?? {};
   bundles[key] = { ...existing, path: stashDir, writable: true, adapter: "akm" };
   return { ...config, bundles, defaultBundle: key };

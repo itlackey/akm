@@ -24,7 +24,7 @@ import { findAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import { addressOf } from "../../core/assets/write";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
-import { slugForPath } from "../../core/bundle-id";
+import { bundleSourceAt } from "../../core/bundle-at-dir";
 import { isWithin, resolveStashDir, safeRealpath } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -729,7 +729,7 @@ async function resolveReflectSource(
   // A proposal writes the file that owns the ref in the proposal's own bundle; the type is that of
   // the file that owns it wherever it is (a file in another bundle is `createProposal`'s to refuse, #1000).
   const root = path.resolve(options.target?.root ?? stash);
-  const address = addressOf({ name: slugForPath(root), path: root }, options.ref);
+  const address = addressOf(bundleSourceAt(root), options.ref);
   const owned = findAsset(options.itemRef ?? options.ref, { sources: resolveSourceEntries(stash) });
   const parsedRef: AssetRef = { type: owned ? assetType(owned) : address.type, name: address.name };
   // A secret's content is never read, whatever it looks like.

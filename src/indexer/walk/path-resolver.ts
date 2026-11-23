@@ -4,10 +4,10 @@
 
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { findAsset } from "../../core/assets/read";
+import { indexedPathOf } from "../../core/assets/type";
 import { safeRealpath } from "../../core/common";
 import { lookupBundleRef } from "../indexer";
 import { deriveInstallations, sourceOfBundle } from "../installations";
-import { indexedPathOf } from "../lookup/indexed-owner";
 import { resolveSourceEntries } from "../search/search-source";
 
 export interface ResolveAssetPathOptions {

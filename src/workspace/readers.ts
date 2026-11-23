@@ -8,7 +8,7 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { resolveStashDir } from "../core/common";
 import { type AkmConfig, getConfigValueSource, loadConfig, sanitizeConfigForWrite } from "../core/config/config";
-import { bundleKeyForContentRoot } from "../core/config/config-sources";
+import { bundleAtDir } from "../core/config/config-sources";
 import { UsageError } from "../core/errors";
 import { getStateDbPath } from "../core/state-db";
 import { resolveWorkingStashTarget } from "../core/write-source";
@@ -82,7 +82,7 @@ export function capSide(text: string | null): { text: string | null; truncated: 
 export function workingStashDir(config: AkmConfig): string | undefined {
   try {
     const dir = implicitStashDir(config);
-    return dir && !bundleKeyForContentRoot(config, dir) ? dir : undefined;
+    return dir && !bundleAtDir(config, dir) ? dir : undefined;
   } catch {
     return undefined;
   }

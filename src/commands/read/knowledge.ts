@@ -15,14 +15,15 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { parse as yamlParse } from "yaml";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { normalizeAkmMarkdown } from "../../core/asset/akm-markdown";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { bundleAdapterId } from "../../core/assets/gate";
 import { addressOf, writeAssets } from "../../core/assets/write";
+import { bundleIdForDir } from "../../core/bundle-id";
 import { isHttpUrl, isWithin, resolveStashDir, safeRealpath, samePath, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -38,7 +39,7 @@ import {
 } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import { deriveInstallations, slugForPath } from "../../indexer/installations";
+import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { storeSecretResolver } from "../../sources/snapshot-fetchers/secret-seam";
 import {
@@ -263,6 +264,7 @@ function resolveWriteRefRoots(target?: string, targetFlag?: string): { roots: Wr
   if (workingStash && !samePath(workingStash, stashRoot)) mutableRoots.push(workingStash);
   const namedSources = resolveSourceEntries(undefined, cfg);
   const installations = deriveInstallations(namedSources);
+  const configuredNames = new Set(installations.map((installation) => installation.id));
   const bundleByPath = new Map(
     namedSources.flatMap((source, index) => {
       const bundleId = installations[index]?.id;
@@ -281,18 +283,18 @@ function resolveWriteRefRoots(target?: string, targetFlag?: string): { roots: Wr
         const source = namedSources.find((candidate) => samePath(candidate.path, p));
         const mutable = samePath(p, stashRoot)
           ? writeTarget.source.adapterId === "akm"
-          : source?.writable === true && (source.adapterId ?? detectAdapterId(p)) === "akm";
+          : source?.writable === true && bundleAdapterId(source) === "akm";
         return {
           path: p,
           source,
-          bundleId: bundleByPath.get(safeRealpath(p)) ?? slugForPath(p),
+          bundleId: bundleByPath.get(safeRealpath(p)) ?? bundleIdForDir(p, configuredNames),
           mutable,
         };
       }),
     ...otherSources.map((source) => ({
       path: source.path,
       source,
-      bundleId: bundleByPath.get(path.resolve(source.path)) ?? slugForPath(source.path),
+      bundleId: bundleByPath.get(path.resolve(source.path)) ?? bundleIdForDir(source.path, configuredNames),
       mutable: false,
     })),
   ];

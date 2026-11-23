@@ -4,7 +4,14 @@
 
 /** What a bundle's adapter writes, for callers that decide before they write. `bundle.ts` itself stays inside the facade. */
 
-import { adapterForId, clearAdapterCaches as clearRegistryCaches } from "../adapter/registry";
+import { akmAdapter } from "../adapter/adapters/akm-adapter";
+import { detectAdapterId } from "../adapter/detect-adapter";
+import {
+  adapterForId,
+  clearAdapterCaches as clearRegistryCaches,
+  getAdapters,
+  requireAdapter,
+} from "../adapter/registry";
 import type { UsageErrorCode } from "../errors";
 import { assetBundleOf } from "./bundle";
 
@@ -33,6 +40,37 @@ export function adapterAddressedBy(adapterId: string): "root" | "location" | und
   return adapterForId(adapterId)?.addressedBy;
 }
 
+/**
+ * The adapter that reads the directory `root`, found by the adapters' install-time probe. This is the one detection:
+ * it runs when a bundle is added and when an entry without `adapter` is resolved (§4.3), never when an asset is read.
+ * A root no adapter claims is read by `akm`.
+ */
+export function detectBundleAdapter(root: string): string {
+  return detectAdapterId(root);
+}
+
+/** Refuse an adapter id akm does not have, naming the bundle. */
+export function assertKnownAdapter(bundle: string, adapterId: string): void {
+  requireAdapter(bundle, adapterId);
+}
+
+/** Whether some adapter's install-time probe claims `root` as the root of a bundle of its format. A probe that throws does not claim it. */
+export function looksLikeBundleRoot(root: string): boolean {
+  for (const adapter of getAdapters()) {
+    try {
+      if (adapter.looksLikeRoot?.(root) === true) return true;
+    } catch {
+      // a throwing probe does not claim the root: try the next adapter
+    }
+  }
+  return false;
+}
+
+/** The directory names `akm` itself owns at the root of a bundle (one per asset type). */
+export function akmOwnedDirNames(root: string): string[] {
+  return akmAdapter.directoryList({ id: "akm", root });
+}
+
 /** Whether the bundle's storage is there: a directory exists, a keyring or vault answers. It reads no asset and never prompts. */
 export function bundleStorageExists(source: GateSource): boolean {
   return assetBundleOf(source).exists();
@@ -43,6 +81,7 @@ export function clearAdapterCaches(): void {
   clearRegistryCaches();
 }
 
+export { bundleAdapterId } from "../adapter/detect-adapter";
 export {
   allowPrompts as allowAdapterPrompts,
   withoutPrompts as withoutAdapterPrompts,

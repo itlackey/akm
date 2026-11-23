@@ -104,7 +104,11 @@ export function detectAdapterId(root: string, fallback = "akm"): string {
   return fallback;
 }
 
-/** The id of the adapter that reads a bundle: the one it is configured with, else the one its root's probe finds. */
-export function adapterIdOf(source: { path: string; adapterId?: string }, fallback = "akm"): string {
-  return source.adapterId ?? detectAdapterId(source.path, fallback);
+/**
+ * The id of the adapter that reads a bundle: the one it is configured with. A bundle's adapter is recorded when it is
+ * added and, for an older entry without one, found once when the sources are resolved (`resolveSourceEntries`); it is
+ * never probed here.
+ */
+export function bundleAdapterId(source: { adapterId?: string }): string {
+  return source.adapterId ?? "akm";
 }

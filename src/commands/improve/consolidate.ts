@@ -26,11 +26,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import consolidateSystemPrompt from "../../assets/prompts/consolidate-system.md" with { type: "text" };
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { refForFile } from "../../core/asset/asset-placement";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { bundleSourceAt } from "../../core/bundle-at-dir";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-types";
@@ -381,7 +381,7 @@ export function makeConsolidateResult(
   };
 }
 
-function resolveConsolidationWriteTarget(opts: AkmConsolidateOptions, config: AkmConfig): ResolvedWriteTarget {
+export function resolveConsolidationWriteTarget(opts: AkmConsolidateOptions, config: AkmConfig): ResolvedWriteTarget {
   if (opts.writeTarget) {
     const root = path.resolve(opts.writeTarget.source.path);
     return {
@@ -389,15 +389,16 @@ function resolveConsolidationWriteTarget(opts: AkmConsolidateOptions, config: Ak
       source: {
         ...opts.writeTarget.source,
         path: root,
-        adapterId: opts.writeTarget.source.adapterId ?? detectAdapterId(root),
+        adapterId: opts.writeTarget.source.adapterId ?? bundleSourceAt(root, config).adapterId,
       },
     };
   }
   if (!opts.target && opts.stashDir) {
     const root = path.resolve(opts.stashDir);
+    const bundle = bundleSourceAt(root, config);
     return {
-      source: { kind: "filesystem", name: "stash", path: root, adapterId: detectAdapterId(root) },
-      config: { type: "filesystem", name: "stash", path: root, writable: true },
+      source: { kind: "filesystem", name: bundle.name, path: root, adapterId: bundle.adapterId },
+      config: { type: "filesystem", name: bundle.name, path: root, writable: true },
     };
   }
   const target = resolveWriteTarget(config, opts.target);

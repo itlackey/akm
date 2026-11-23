@@ -3,55 +3,41 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Which configured bundle a directory is, and the key `state.db` rows are filed under for it (§0.2 P8).
+ * The key `state.db` rows are filed under for a directory (§0.2 P8), and the source a directory is addressed as.
  *
- * A bundle is found by its resolved root, the one `resolveSourceEntries` gives every kind of bundle: a directory, a git
- * or npm checkout (the lock's root), a location bundle's synthetic root. A directory no configured bundle has keeps
- * its path as its key, as `state.db` always filed it: nothing is shared between two unconfigured directories, and a
- * bundle configured later at a different directory does not take the rows. The rows of an unconfigured directory are
- * rewritten to the bundle's id when a bundle is configured at it (`convertPathBundleIds`).
+ * The bundle at a directory is `bundleAtDir` (config-sources.ts), the one root-to-bundle lookup. A directory no
+ * configured bundle has keeps its path as its key (a named exception to "ids are names": base filed rows by path, and a
+ * bundle configured later at that directory takes them, which a derived id could not). The rows of an unconfigured
+ * directory are rewritten to the bundle's id when a bundle is configured at it (`convertPathBundleIds`).
  */
 
 import path from "node:path";
-import { resolveSourceEntries } from "../indexer/search/search-source";
-import { safeRealpath } from "./common";
+import { detectBundleAdapter } from "./assets/gate";
+import { bundleIdForDir } from "./bundle-id";
 import { type AkmConfig, loadConfig } from "./config/config";
-import { rethrowIfTestIsolationError } from "./errors";
-import { registerBundleAtDir } from "./state-db";
-
-const rootsOf = new WeakMap<AkmConfig, ReadonlyMap<string, string>>();
-
-/** Real root -> bundle id for every configured bundle, the default first, then in configured order (the first on a root wins). Once per config. */
-function configuredRoots(config: AkmConfig): ReadonlyMap<string, string> {
-  const known = rootsOf.get(config);
-  if (known) return known;
-  const roots = new Map<string, string>();
-  try {
-    for (const source of resolveSourceEntries(undefined, config)) {
-      const id = source.registryId;
-      if (id === undefined || config.bundles?.[id] === undefined) continue;
-      const root = safeRealpath(source.path);
-      if (!roots.has(root)) roots.set(root, id);
-    }
-  } catch (error) {
-    // A config whose sources cannot be resolved (a disabled working bundle) names no bundle by directory.
-    rethrowIfTestIsolationError(error);
-  }
-  rootsOf.set(config, roots);
-  return roots;
-}
-
-/** The configured bundle whose resolved root is `dir`, if there is one. */
-export function bundleAtDir(config: AkmConfig, dir: string): string | undefined {
-  return configuredRoots(config).get(safeRealpath(dir));
-}
+import { bundleAtDir } from "./config/config-sources";
 
 /** The key rows for the bundle at `dir` are filed under: its id, else (no configured bundle) the directory's own path. */
 export function bundleKeyForDir(config: AkmConfig, dir: string): string {
   return bundleAtDir(config, dir) ?? path.resolve(dir);
 }
 
-registerBundleAtDir(bundleAtDir);
+/**
+ * The bundle at `dir` as a source an asset is addressed in: the configured bundle's id and adapter, else (a directory no
+ * configured bundle has) its derived id and the adapter its root's probe finds.
+ */
+export function bundleSourceAt(
+  dir: string,
+  config: AkmConfig = loadConfig(),
+): { name: string; path: string; adapterId: string } {
+  const id = bundleAtDir(config, dir);
+  const configured = id === undefined ? undefined : config.bundles?.[id];
+  return {
+    name: id ?? bundleIdForDir(dir, new Set(Object.keys(config.bundles ?? {}))),
+    path: dir,
+    adapterId: configured?.adapter ?? detectBundleAdapter(dir),
+  };
+}
 
 /**
  * The `bundle_id` state rows (proposals, improve runs, the improve ledger) are filed under for the bundle at `dir`:

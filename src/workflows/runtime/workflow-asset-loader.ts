@@ -4,10 +4,9 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-// asset-io: deprecated
-import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { adapterWrites, refuseByAdapter } from "../../core/assets/gate";
+// asset-io: deprecated
+import { adapterWrites, bundleAdapterId, refuseByAdapter } from "../../core/assets/gate";
 import { findAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import { loadConfig } from "../../core/config/config";
@@ -100,7 +99,7 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   if (
     !isUsableWorkflowSource(source.path, assetPath) ||
     // asset-io: deprecated
-    !isWorkflowSource(source.path, adapterIdOf(source), assetPath)
+    !isWorkflowSource(source.path, bundleAdapterId(source), assetPath)
   ) {
     refuseByAdapter(bundle, "does not support native workflow execution", "WORKFLOW_SOURCE_INVALID");
   }

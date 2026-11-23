@@ -20,10 +20,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { warnWorkflowUse } from "../../cli/deprecations";
-import { adapterIdOf, detectAdapterId } from "../../core/adapter/detect-adapter";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
+import { bundleAdapterId } from "../../core/assets/gate";
 import { addressOf, readAsset, writeAssets } from "../../core/assets/write";
 import { isWithin, resolveStashDir } from "../../core/common";
 import {
@@ -33,7 +33,7 @@ import {
   mutateConfig,
   resetConfigCache,
 } from "../../core/config/config";
-import { bundleKeyForContentRoot, resolveConfiguredSources } from "../../core/config/config-sources";
+import { bundleAtDir, resolveConfiguredSources } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
@@ -323,7 +323,7 @@ export async function akmTasksRun(
   try {
     parsed = parseTaskRef(id);
     bundle = resolveTaskReadBundle(parsed.bundle, options.target);
-    adapterId = adapterIdOf(bundle.source);
+    adapterId = bundleAdapterId(bundle.source);
     resolvedId = taskIdForAdapter(parsed.id, adapterId);
   } catch (failure) {
     if (scheduled) {
@@ -385,7 +385,7 @@ function stepTaskRunner(scheduled: boolean): NonNullable<RunTaskOptions["taskSte
     check: async (ref) => {
       const parsed = parseTaskRef(ref);
       const bundle = resolveTaskReadBundle(parsed.bundle, undefined);
-      const adapterId = adapterIdOf(bundle.source);
+      const adapterId = bundleAdapterId(bundle.source);
       const prepared = await loadPreparedTask(taskIdForAdapter(parsed.id, adapterId), {
         bundleDir: bundle.source.path,
         bundleName: bundle.source.name,
@@ -424,7 +424,7 @@ function resolveTaskActivation(
 } {
   const parsed = parseTaskRef(ref);
   const bundle = resolveTaskReadBundle(parsed.bundle, target);
-  const adapterId = adapterIdOf(bundle.source);
+  const adapterId = bundleAdapterId(bundle.source);
   const id = taskIdForAdapter(parsed.id, adapterId);
   const conceptId = adapterId === "akm" ? `tasks/${id}` : id;
   const sourcePath =
@@ -566,7 +566,7 @@ export async function akmTasksHistory(input: {
   const limit = input.limit !== undefined && input.limit > 0 ? input.limit : 50;
   const parsed = input.id ? parseTaskRef(input.id) : undefined;
   const bundle = resolveTaskReadBundle(parsed?.bundle, input.target);
-  const adapterId = adapterIdOf(bundle.source);
+  const adapterId = bundleAdapterId(bundle.source);
   const id = parsed ? taskIdForAdapter(parsed.id, adapterId) : undefined;
   // A bundle named by `--bundle` or by the ref selects the rows that recorded that bundle.
   const named = parsed?.bundle !== undefined || input.target !== undefined;
@@ -714,7 +714,7 @@ async function buildSchedulerSyncPlan(
     try {
       const resolved = resolveTaskReadBundle(undefined, name);
       const stashDir = resolved.source.path;
-      const adapterId = resolved.source.adapterId ?? detectAdapterId(stashDir);
+      const adapterId = bundleAdapterId(resolved.source);
       const compiled = await compileSchedulerSources({
         sourceRoot: stashDir,
         adapterId,
@@ -830,7 +830,7 @@ function installedSchedulerBundle(config: AkmConfig, row: InstalledSchedulerBind
   const direct = row.target ?? scheduledInvocationBundle(row.invocation);
   if (direct !== undefined) return direct;
   if (row.ownerBundlePath === undefined) return undefined;
-  return bundleKeyForContentRoot(config, row.ownerBundlePath);
+  return bundleAtDir(config, row.ownerBundlePath);
 }
 
 export type TasksPruneReason = "invalid-context" | "dead-bundle-path";
@@ -1157,7 +1157,7 @@ export function resolveTaskReadBundle(
         kind: source.type ?? "filesystem",
         name: selector,
         path: source.path,
-        adapterId: adapterIdOf(source),
+        adapterId: bundleAdapterId(source),
       },
     };
   }

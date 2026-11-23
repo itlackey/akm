@@ -13,7 +13,7 @@
  * Three parts, matching the issue's ask:
  *   1. Registration matches on the RESOLVED CONTENT ROOT
  *      (`path.resolve(entry.path, bundle.root ?? ".")`), not the bare
- *      configured `path` — `bundleKeyForContentRoot` / `withPrimaryBundle`.
+ *      configured `path` — `bundleAtDir` / `withPrimaryBundle`.
  *   2. `akm migrate`'s file enumeration (`bundleRoots` in
  *      scripts/akm-migrate/bundle-roots.ts) reconciles two bundle ids that
  *      already resolve to the same directory instead of double-counting.
@@ -26,7 +26,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { inspectTaskFilesMigration } from "../../../scripts/akm-migrate/task-migrate";
 import { withPrimaryBundle } from "../../../src/commands/sources/bundle-config-ops";
-import { type AkmConfig, bundleContentRoot, bundleKeyForContentRoot } from "../../../src/core/config/config";
+import { type AkmConfig, bundleAtDir, bundleContentRoot } from "../../../src/core/config/config";
 import { ConfigError } from "../../../src/core/errors";
 import { resolveWorkingStashTarget } from "../../../src/core/write-source";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
@@ -40,7 +40,7 @@ function writeV2Task(tasksDir: string, name: string): void {
 
 // ── Part 0: the identity primitive ──────────────────────────────────────────
 
-describe("bundleContentRoot / bundleKeyForContentRoot", () => {
+describe("bundleContentRoot / bundleAtDir", () => {
   test("resolves a relative, absolute, and trailing-slash spelling of the same path identically", () => {
     const a = bundleContentRoot("/home/user/openpalm");
     const b = bundleContentRoot("/home/user/openpalm/");
@@ -57,8 +57,8 @@ describe("bundleContentRoot / bundleKeyForContentRoot", () => {
         openpalm: { path: "/home/user/openpalm", root: "catalog" },
       },
     };
-    expect(bundleKeyForContentRoot(config, "/home/user/openpalm/catalog")).toBe("openpalm");
-    expect(bundleKeyForContentRoot(config, "/home/user/openpalm")).toBeUndefined();
+    expect(bundleAtDir(config, "/home/user/openpalm/catalog")).toBe("openpalm");
+    expect(bundleAtDir(config, "/home/user/openpalm")).toBeUndefined();
   });
 });
 

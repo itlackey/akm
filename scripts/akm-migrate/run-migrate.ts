@@ -14,7 +14,7 @@
 import { describeRemainingWorkflowFiles, type WorkflowFilesOfBundle } from "../../src/commands/health/workflow-files";
 import { resolveStashDir } from "../../src/core/common";
 import {
-  bundleKeyForContentRoot,
+  bundleAtDir,
   type ConfigFileNormalization,
   isBundleEnabled,
   loadConfig,
@@ -176,7 +176,7 @@ function stashDirIfConfigured(): string | undefined {
   try {
     const stashDir = resolveStashDir();
     const config = loadConfig();
-    const owner = bundleKeyForContentRoot(config, stashDir);
+    const owner = bundleAtDir(config, stashDir);
     return owner !== undefined && !isBundleEnabled(config, owner) ? undefined : stashDir;
   } catch (error) {
     if (error instanceof ConfigError && error.code === "STASH_DIR_NOT_FOUND") return undefined;

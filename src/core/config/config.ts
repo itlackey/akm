@@ -1675,10 +1675,10 @@ export function resolveSecret(value: string | undefined, resolveFromStore?: Secr
 
 // Re-export source runtime helpers — implementation lives in config-sources.ts.
 export {
+  bundleAtDir,
   bundleContentRoot,
   bundleContentRoots,
   bundleEntryToSourceEntry,
-  bundleKeyForContentRoot,
   bundlePhysicalContentRoot,
   bundleSourceId,
   bundlesToSourceEntries,

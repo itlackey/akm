@@ -20,7 +20,7 @@
  *              `skills/`, …) are type-derived leading path segments of the
  *              conceptId within the one bundle.
  *
- * The adapter that reads a bundle is not part of it: {@link adapterIdOf}
+ * The adapter that reads a bundle is not part of it: {@link bundleAdapterId}
  * (`core/adapter/detect-adapter.ts`) is the one place that says which, the
  * configured id or else the ordered `looksLikeRoot` probe over the built-in
  * adapters (`getAdapters()`, most specific first), falling back to `akm` when no

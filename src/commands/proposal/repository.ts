@@ -32,8 +32,7 @@ import { stalePathRoots } from "../../core/asset/stale-path";
 import { assertAdapterWrites } from "../../core/assets/gate";
 import { currentConceptId } from "../../core/assets/read";
 import { type AssetAddress, addressOf, legacyRefOf, readAsset, writeAssets } from "../../core/assets/write";
-import { stateBundleId } from "../../core/bundle-at-dir";
-import { slugForPath } from "../../core/bundle-id";
+import { bundleSourceAt, stateBundleId } from "../../core/bundle-at-dir";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -428,7 +427,7 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
   }
 
   const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, origin);
-  const targetSource = { name: proposalTarget.source, path: proposalTarget.root };
+  const targetSource = { ...bundleSourceAt(proposalTarget.root), name: proposalTarget.source };
   let parsedRef: AssetAddress;
   try {
     parsedRef = addressOf(targetSource, input.ref);
@@ -597,7 +596,7 @@ export function createRetireProposal(
     throw invalid(err);
   }
   const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, origin);
-  const targetSource = { name: proposalTarget.source, path: proposalTarget.root };
+  const targetSource = { ...bundleSourceAt(proposalTarget.root), name: proposalTarget.source };
   let parsedRef: AssetAddress;
   try {
     parsedRef = addressOf(targetSource, input.ref);
@@ -666,7 +665,7 @@ function proposalBundleSource(
   config: AkmConfig,
 ): { name: string; path: string; adapterId?: string } {
   const bound = proposal.proposedTarget?.source;
-  if (bound === undefined) return { name: slugForPath(stashDir), path: stashDir };
+  if (bound === undefined) return bundleSourceAt(stashDir);
   try {
     const { source } = resolveBundleWriteTarget(config, bound);
     return {
@@ -675,7 +674,7 @@ function proposalBundleSource(
       ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
     };
   } catch {
-    return { name: bound, path: stashDir };
+    return { ...bundleSourceAt(stashDir), name: bound };
   }
 }
 
@@ -945,7 +944,7 @@ export function purgeOrphanProposals(
     if (parsed.type === "lesson" || !spec) continue;
     const exists = sourceDirs.some((root) => {
       try {
-        return addressOf({ name: slugForPath(root), path: root }, p.ref).exists;
+        return addressOf(bundleSourceAt(root), p.ref).exists;
       } catch {
         return false;
       }

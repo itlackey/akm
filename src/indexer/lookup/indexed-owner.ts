@@ -9,19 +9,11 @@
 
 import path from "node:path";
 import type { Asset } from "../../core/assets/read";
-import { indexAsset } from "../../core/assets/type";
+import { indexAsset, indexedPathOf } from "../../core/assets/type";
 import { safeRealpath } from "../../core/common";
 import type { IndexEntry } from "../indexer";
 import { deriveEntryProvenance } from "../installations";
 import type { SearchSource } from "../search/search-source";
-
-/**
- * The path the index keys an asset under: its file, else (for an asset no file holds) `<root>/<relPath>`, which is
- * not a path to anything.
- */
-export function indexedPathOf(asset: Asset, source: SearchSource): string {
-  return asset.entry.file ?? path.join(source.path, asset.entry.relPath);
-}
 
 /**
  * The index entry of an asset whose bundle has no row for it (a file added outside akm): the asset's adapter recognizes

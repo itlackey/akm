@@ -14,9 +14,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getStateMigrationSafety, STATE_MIGRATIONS } from "../../../src/core/state/migrations";
-import "../../../src/core/bundle-at-dir"; // registers how the state opener finds a bundle by directory
 import { openStateDatabase, openStateReadSnapshot } from "../../../src/core/state-db";
-import { STATE_BUNDLE_ID_COLUMNS } from "../../../src/storage/bundle-id-columns";
+import { BUNDLE_ID_COLUMNS } from "../../../src/storage/bundle-id-columns";
 import { openDatabase } from "../../../src/storage/database";
 import { runMigrations } from "../../../src/storage/sqlite-migrations";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
@@ -67,7 +66,7 @@ function seedPre031(roots: { proposal: string; run: string; ledger: string }): v
 
 const bundleIds = (db: ReturnType<typeof openStateDatabase>): Record<string, string[]> =>
   Object.fromEntries(
-    STATE_BUNDLE_ID_COLUMNS.map(({ table, column }) => [
+    BUNDLE_ID_COLUMNS.map(({ table, column }) => [
       table,
       (db.prepare(`SELECT ${column} AS id FROM ${table} ORDER BY ${column}`).all() as Array<{ id: string }>).map(
         (row) => row.id,
@@ -83,7 +82,7 @@ describe("migration 031-bundle-id-columns", () => {
   test("a fresh database has bundle_id and no stash_dir in the three tables", () => {
     const db = openStateDatabase(statePath());
     try {
-      for (const { table, column } of STATE_BUNDLE_ID_COLUMNS) {
+      for (const { table, column } of BUNDLE_ID_COLUMNS) {
         const names = (
           db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all() as Array<{ name: string }>
         ).map((row) => row.name);

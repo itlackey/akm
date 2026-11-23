@@ -6,11 +6,7 @@
   },
   "src/commands/command/execution-source-loader.ts": {
     "adapter-import": {
-      "src/core/adapter/detect-adapter": 1,
       "src/core/adapter/registry": 1
-    },
-    "adapter-probe": {
-      "adapterIdOf": 1
     },
     "asset-io": {
       "statSync": 1
@@ -54,12 +50,6 @@
     }
   },
   "src/commands/improve/consolidate.ts": {
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "detectAdapterId": 2
-    },
     "asset-io": {
       "existsSync": 5,
       "readFileSync": 6,
@@ -164,12 +154,8 @@
     "adapter-import": {
       "src/core/adapter/adapters/akm-adapter": 1,
       "src/core/adapter/adapters/akm-lint": 1,
-      "src/core/adapter/detect-adapter": 1,
       "src/core/adapter/registry": 1,
       "src/core/adapter/validate-context": 1
-    },
-    "adapter-probe": {
-      "detectAdapterId": 2
     },
     "asset-io": {
       "adapterForId": 2,
@@ -210,12 +196,6 @@
     "adapter-id": {
       "akm": 2
     },
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "detectAdapterId": 1
-    },
     "asset-io": {
       "existsSync": 2,
       "readFileSync": 2
@@ -231,11 +211,7 @@
       "akm": 1
     },
     "adapter-import": {
-      "src/core/adapter/adapters/akm-adapter": 1,
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "adapterIdOf": 1
+      "src/core/adapter/adapters/akm-adapter": 1
     },
     "asset-io": {
       "buildFileContext": 1,
@@ -249,11 +225,7 @@
       "akm-workflow": 1
     },
     "adapter-import": {
-      "src/core/adapter/detect-adapter": 1,
       "src/core/adapter/recognize-match": 1
-    },
-    "adapter-probe": {
-      "adapterIdOf": 1
     },
     "asset-io": {
       "buildFileContext": 2,
@@ -281,14 +253,6 @@
       "existsSync": 1
     }
   },
-  "src/commands/sources/installed-stashes.ts": {
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "detectAdapterId": 1
-    }
-  },
   "src/commands/sources/plugin-upgrade.ts": {
     "adapter-id": {
       "akm": 1
@@ -297,15 +261,6 @@
   "src/commands/sources/schema-repair.ts": {
     "asset-io": {
       "readFileSync": 1
-    }
-  },
-  "src/commands/sources/source-add.ts": {
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1,
-      "src/core/adapter/registry": 1
-    },
-    "adapter-probe": {
-      "detectAdapterId": 2
     }
   },
   "src/commands/sources/source-clone.ts": {
@@ -324,24 +279,10 @@
       "entry.file": 2
     }
   },
-  "src/commands/sources/source-manage.ts": {
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "detectAdapterId": 1
-    }
-  },
   "src/commands/tasks/explain.ts": {
     "adapter-id": {
       "akm": 1,
       "akm-task": 1
-    },
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "adapterIdOf": 1
     },
     "asset-io": {
       "readFileSync": 1
@@ -354,13 +295,6 @@
     "adapter-id": {
       "akm": 4,
       "akm-task": 1
-    },
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "adapterIdOf": 5,
-      "detectAdapterId": 1
     },
     "asset-io": {
       "existsSync": 1,
@@ -427,11 +361,7 @@
   "src/core/write-source.ts": {
     "adapter-import": {
       "src/core/adapter/adapters/akm-format": 1,
-      "src/core/adapter/detect-adapter": 1,
       "src/core/adapter/directory-adapter": 1
-    },
-    "adapter-probe": {
-      "detectAdapterId": 2
     },
     "asset-io": {
       "writeFileAtomic": 1
@@ -439,11 +369,7 @@
   },
   "src/indexer/index-written-assets.ts": {
     "adapter-import": {
-      "src/core/adapter/detect-adapter": 1,
       "src/core/adapter/registry": 1
-    },
-    "adapter-probe": {
-      "adapterIdOf": 1
     },
     "asset-io": {
       "adapterForId": 1,
@@ -454,21 +380,11 @@
   },
   "src/indexer/indexer.ts": {
     "adapter-import": {
-      "src/core/adapter/detect-adapter": 1,
       "src/core/adapter/registry": 1
-    },
-    "adapter-probe": {
-      "adapterIdOf": 3,
-      "detectAdapterId": 1
     },
     "asset-io": {
       "lstatSync": 1,
       "readdirSync": 1
-    }
-  },
-  "src/indexer/lookup/indexed-owner.ts": {
-    "entry-file": {
-      "entry.file": 1
     }
   },
   "src/indexer/passes/dir-staleness.ts": {
@@ -479,12 +395,6 @@
   "src/indexer/passes/memory-inference.ts": {
     "adapter-id": {
       "akm": 1
-    },
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "adapterIdOf": 1
     },
     "asset-io": {
       "existsSync": 4,
@@ -566,16 +476,6 @@
       "writeFileSync": 1
     }
   },
-  "src/sources/providers/git-provider.ts": {
-    "adapter-import": {
-      "src/core/adapter/adapters/akm-adapter": 1
-    }
-  },
-  "src/sources/providers/provider-utils.ts": {
-    "adapter-import": {
-      "src/core/adapter/registry": 1
-    }
-  },
   "src/sources/resolve.ts": {
     "adapter-import": {
       "src/core/adapter/recognize-match": 1
@@ -604,12 +504,6 @@
     "adapter-id": {
       "akm": 1,
       "akm-task": 1
-    },
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "detectAdapterId": 1
     },
     "asset-io": {
       "readFileSync": 1
@@ -660,11 +554,7 @@
     },
     "adapter-import": {
       "src/core/adapter/adapters/akm-adapter": 1,
-      "src/core/adapter/detect-adapter": 1,
       "src/core/adapter/registry": 1
-    },
-    "adapter-probe": {
-      "adapterIdOf": 1
     },
     "asset-io": {
       "adapterForId": 1
@@ -683,12 +573,6 @@
   "src/workspace/moved-links.ts": {
     "adapter-id": {
       "akm": 1
-    },
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "adapterIdOf": 1
     }
   },
   "src/workspace/new-file.ts": {

@@ -18,7 +18,7 @@ import type {
   Retirement,
   RetireNote,
 } from "../adapter/bundle-adapter";
-import { adapterIdOf } from "../adapter/detect-adapter";
+import { bundleAdapterId } from "../adapter/detect-adapter";
 import { bundleOf, requireAdapter } from "../adapter/registry";
 import type { AssetEdit, Bundle, Diagnostic, IndexDocument, ValidateContext } from "../adapter/types";
 import { UsageError, type UsageErrorCode } from "../errors";
@@ -34,7 +34,7 @@ export class AssetBundle {
   /** The adapter the source is configured with, else the one its root's probe finds. */
   constructor(source: BundleSource) {
     this.name = source.name;
-    this.#adapter = requireAdapter(source.name, adapterIdOf(source), { location: source.location !== undefined });
+    this.#adapter = requireAdapter(source.name, bundleAdapterId(source), { location: source.location !== undefined });
     this.#bundle = bundleOf(source);
   }
 

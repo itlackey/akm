@@ -13,9 +13,9 @@ import path from "node:path";
 import { getStringArg, PROJECT_ARG } from "../../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
 import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
-import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { displayRefForConceptId } from "../../core/asset/resolve-ref";
+import { bundleAdapterId } from "../../core/assets/gate";
 import { compareCodePoints } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { type ProjectView, resolveProject } from "../../core/projects";
@@ -105,7 +105,7 @@ export function akmRules(input: {
   const found: Array<RuleItem & { shared: boolean; durableRef: string }> = [];
   for (const source of new Set(wanted)) {
     const bundle = installations[sources.indexOf(source)];
-    if (!bundle || adapterIdOf(source) !== "akm" || source.unresolved) continue;
+    if (!bundle || bundleAdapterId(source) !== "akm" || source.unresolved) continue;
     bundles.push(bundle.id);
     const files = walkedFiles(
       bundle.root,

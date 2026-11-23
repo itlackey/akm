@@ -12,7 +12,6 @@ import {
   perTypeChecks,
   perTypeFrontend,
 } from "../../core/adapter/adapters/akm-lint";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
 import type { Diagnostic } from "../../core/adapter/types";
 import type { FileDiagnostic } from "../../core/adapter/validate-context";
@@ -27,13 +26,13 @@ import {
 } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
-import { withoutAdapterPrompts } from "../../core/assets/gate";
+import { bundleAdapterId, withoutAdapterPrompts } from "../../core/assets/gate";
 import { validateBundleAssets } from "../../core/assets/validate";
 import { deriveBundleIds } from "../../core/bundle-id";
 import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpath, samePath } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig, primaryBundlePath } from "../../core/config/config";
-import { bundleKeyForContentRoot } from "../../core/config/config-sources";
+import { bundleAtDir } from "../../core/config/config-sources";
 import { defaultExcludedTypes } from "../../core/config/schema/search";
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
@@ -908,8 +907,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
   let subdir: string | undefined;
   if (root) {
     const sources = resolveSourceEntries(root, cfg);
-    const adapterId =
-      sources.find((s) => path.resolve(s.path) === path.resolve(root))?.adapterId ?? detectAdapterId(root);
+    const adapterId = bundleAdapterId(sources.find((s) => path.resolve(s.path) === path.resolve(root)) ?? {});
     const relPath = path.relative(realRoot as string, absFile);
     if (adapterId !== "akm") {
       const result = await lintViaAdapter(
@@ -1037,7 +1035,7 @@ function refOfFile(root: string, file: string, cfg: AkmConfig): string | undefin
   const type = typeForStashDir(file.split(/[\\/]/)[0] ?? "");
   const conceptId = type ? refForFile(type, root, path.join(root, file)) : undefined;
   if (conceptId === undefined) return undefined;
-  const bundleId = bundleKeyForContentRoot(cfg, root);
+  const bundleId = bundleAtDir(cfg, root);
   return displayRefForConceptId(conceptId, bundleId, cfg.defaultBundle);
 }
 
@@ -1117,8 +1115,7 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   // The primary stash is the defaultBundle's path.
   const stashRoot = options.dir ?? primaryBundlePath(cfg) ?? resolveStashDir();
   const sources = resolveSourceEntries(stashRoot, cfg);
-  const configuredAdapter = sources.find((source) => samePath(source.path, stashRoot))?.adapterId;
-  const adapterId = configuredAdapter ?? detectAdapterId(stashRoot);
+  const adapterId = bundleAdapterId(sources.find((source) => samePath(source.path, stashRoot)) ?? {});
   // asset-io: bundle-root root probe
   const extraStashRoots = sources.map((s) => s.path).filter((p) => p !== stashRoot && fs.existsSync(p));
 
