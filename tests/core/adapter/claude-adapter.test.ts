@@ -17,7 +17,8 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { claudeAdapter } from "../../../src/core/adapter/adapters/claude-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
+import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adapter/validate-context";
 import type { FileChange } from "../../../src/core/file-change";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
@@ -39,7 +40,7 @@ function recognizeRel(relPath: string): IndexDocument | null {
   return claudeAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
-const ctx: ValidateContext = {
+const ctx: FileValidateContext = {
   readFile: async (p) => {
     try {
       return fs.readFileSync(path.join(FIXTURE_ROOT, p), "utf8");
@@ -101,7 +102,7 @@ describe("claude adapter — renderer golden (presentation keyed on the open typ
 });
 
 describe("claude adapter — lint golden (lenient tool-dir validation)", () => {
-  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: Diagnostic[] }>;
+  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: FileDiagnostic[] }>;
 
   test("every recognized fixture file validates to exactly the golden's issue codes", async () => {
     const changes: FileChange[] = Object.values(perType).map((e) => ({
@@ -109,7 +110,7 @@ describe("claude adapter — lint golden (lenient tool-dir validation)", () => {
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await claudeAdapter.validate(bundle(), changes, ctx);
+    const diags = await claudeAdapter.validateChanges(bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {
@@ -118,8 +119,8 @@ describe("claude adapter — lint golden (lenient tool-dir validation)", () => {
   });
 
   test("a skill directory with no SKILL.md emits missing-skill-md (the one coded skill check)", async () => {
-    const emptyCtx: ValidateContext = { ...ctx, readFile: async () => null };
-    const diags = await claudeAdapter.validate(
+    const emptyCtx: FileValidateContext = { ...ctx, readFile: async () => null };
+    const diags = await claudeAdapter.validateChanges(
       bundle(),
       [{ path: "skills/csv-cleanup/reference.md", op: "update", after: "resource" }],
       emptyCtx,

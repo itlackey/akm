@@ -24,7 +24,8 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { websiteSnapshotAdapter } from "../../../src/core/adapter/adapters/website-snapshot-adapter";
-import type { Bundle, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
+import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
+import type { FileValidateContext } from "../../../src/core/adapter/validate-context";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
 
@@ -45,7 +46,7 @@ function recognizeRel(relPath: string): IndexDocument | null {
   return websiteSnapshotAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
-const ctx: ValidateContext = {
+const ctx: FileValidateContext = {
   readFile: async (p) => {
     try {
       return fs.readFileSync(path.join(FIXTURE_ROOT, p), "utf8");
@@ -116,7 +117,7 @@ describe("website-snapshot adapter — lint golden (base checks only; read-only 
   test("every snapshot page validates clean ([])", async () => {
     for (const entry of Object.values(perType)) {
       const raw = fs.readFileSync(path.join(FIXTURE_ROOT, entry.relPath), "utf8");
-      const diags = await websiteSnapshotAdapter.validate(
+      const diags = await websiteSnapshotAdapter.validateChanges(
         bundle(),
         [{ path: entry.relPath, op: "update", after: raw }],
         ctx,

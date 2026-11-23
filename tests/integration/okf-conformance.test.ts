@@ -182,7 +182,7 @@ describe("OKF first-class conformance", () => {
     // `[Dangling](/missing.md)` link (seeded above) was ALWAYS a broken OKF
     // link, but the pre-dispatch `akm lint` ran a CLI-only `missing-type`-only
     // re-implementation for OKF bundles that never checked links at all —
-    // `okfAdapter.validate()`'s own `missing-ref` check (`okf-adapter.ts`) was
+    // `okfAdapter.validateChanges()`'s own `missing-ref` check (`okf-adapter.ts`) was
     // unreachable dead code. `akm lint` now runs the real adapter, so this
     // finding — genuinely present in the fixture the whole time — is reported
     // (non-blocking, per §5's OKF leniency: consumers tolerate broken links).
@@ -578,7 +578,7 @@ describe("OKF first-class conformance", () => {
 
     expect(result.ok).toBe(true);
     // akm 0.9.0 lint/adapter-dispatch wiring: `akm lint` now runs the OKF
-    // bundle through the real `okfAdapter.validate()` (spec §5) instead of a
+    // bundle through the real `okfAdapter.validateChanges()` (spec §5) instead of a
     // CLI-only re-implementation — the detail text below is the adapter's own
     // (`okf-adapter.ts`'s `missing-type` message), not a re-recorded
     // duplicate of it. This is the same fix that makes `missing-ref` reachable

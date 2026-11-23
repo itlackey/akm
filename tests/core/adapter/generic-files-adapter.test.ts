@@ -17,7 +17,8 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { genericFilesAdapter } from "../../../src/core/adapter/adapters/generic-files-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
+import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adapter/validate-context";
 import type { FileChange } from "../../../src/core/file-change";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
@@ -38,7 +39,7 @@ function recognizeRel(relPath: string): IndexDocument | null {
   return genericFilesAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
-const ctx: ValidateContext = {
+const ctx: FileValidateContext = {
   readFile: async (p) => {
     try {
       return fs.readFileSync(path.join(FIXTURE_ROOT, p), "utf8");
@@ -94,7 +95,7 @@ describe("generic-files adapter — renderer golden (script known; document/file
 });
 
 describe("generic-files adapter — lint golden (base checks only)", () => {
-  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: Diagnostic[] }>;
+  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: FileDiagnostic[] }>;
 
   test("every file validates clean ([])", async () => {
     const changes: FileChange[] = Object.values(perType).map((e) => ({
@@ -102,7 +103,7 @@ describe("generic-files adapter — lint golden (base checks only)", () => {
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await genericFilesAdapter.validate(bundle(), changes, ctx);
+    const diags = await genericFilesAdapter.validateChanges(bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {

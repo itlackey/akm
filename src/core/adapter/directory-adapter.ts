@@ -29,7 +29,6 @@ import { buildFileContext, type FileContext, fileContextOfEntry } from "../../in
 import { isWalkedFile, walkStashFlatWithStatus } from "../../indexer/walk/walker";
 import { compareCodePoints, existingFileMode, hasErrnoCode, writeFileAtomic } from "../common";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
-import type { FileChange } from "../file-change";
 import type {
   AssetChange,
   AssetEntry,
@@ -52,7 +51,9 @@ import {
   restoreArchive,
   type Tombstone,
 } from "./directory-archive";
-import type { Bundle, Diagnostic, IndexDocument, IndexMetadata, ValidateContext } from "./types";
+import type { FileChange } from "./file-change";
+import type { AssetEdit, Bundle, Diagnostic, IndexDocument, IndexMetadata, ValidateContext } from "./types";
+import { createFileValidateContext, type FileDiagnostic, type FileValidateContext } from "./validate-context";
 
 export abstract class DirectoryAdapterBase implements BundleAdapter {
   abstract readonly id: string;
@@ -88,7 +89,11 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   protected abstract spellings(conceptId: string): string[];
   /** What the index records about `file`, the asset `conceptId` names. It may read the file. */
   protected abstract describe(b: Bundle, file: FileContext, conceptId: string): IndexMetadata;
-  protected abstract validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]>;
+  protected abstract validateFiles(
+    b: Bundle,
+    changes: FileChange[],
+    ctx: FileValidateContext,
+  ): Promise<FileDiagnostic[]>;
 
   /** Where a new asset of `type` and `name` is kept. */
   protected placeFile(b: Bundle, { type }: Pick<NewAsset, "type" | "name">): string {
@@ -178,27 +183,79 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   }
 
   /**
-   * Native validation, and a finding for every concept in `changes` that more than one file spells (`skills/x.md`
-   * and `skills/x/SKILL.md`): reads and writes act on the winner, so the ignored files are only visible here.
+   * Native validation of `edits`, by ref. The edits become file changes over the bundle's snapshot (the files on disk
+   * with the pending edits overlaid) and are checked there, so nothing here resolves a spelling on the live tree.
    */
-  async validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  async validate(b: Bundle, edits: AssetEdit[], ctx: ValidateContext): Promise<Diagnostic[]> {
+    const base = { root: b.root, sources: ctx.sources, config: ctx.config, readMoves: ctx.readMoves };
+    const disk = createFileValidateContext(base);
+    const changes: FileChange[] = [];
+    for (const edit of edits) {
+      const relPath =
+        (await this.snapshotSpellings(b, disk, edit.conceptId, []))[0] ?? this.spellings(edit.conceptId)[0];
+      if (relPath === undefined) continue;
+      changes.push(
+        edit.op === "delete"
+          ? { path: relPath, op: "delete" }
+          : { path: relPath, op: edit.op, ...(edit.content === undefined ? {} : { after: edit.content.toString() }) },
+      );
+    }
+    const found = await this.validateChanges(b, changes, createFileValidateContext({ ...base, changes }));
+    return found.map((diagnostic) => ({
+      ...diagnostic,
+      ref: `${b.id}//${this.identify(diagnostic.file) ?? diagnostic.file}`,
+    }));
+  }
+
+  /**
+   * The checks of `changes` over `ctx`, and a finding for every concept in them that more than one file spells
+   * (`skills/x.md` and `skills/x/SKILL.md`): reads and writes act on the winner, so the ignored files are only visible
+   * here.
+   */
+  async validateChanges(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     const diagnostics = await this.validateFiles(b, changes, ctx);
     const seen = new Set<string>();
     for (const change of changes) {
       const conceptId = this.identify(change.path);
       if (conceptId === null || seen.has(conceptId)) continue;
       seen.add(conceptId);
-      const held = this.holders(b, conceptId);
-      if (!held || held.files.length < 2) continue;
-      const [winner, ...ignored] = held.files.map((file) => file.relPath);
+      const files = await this.snapshotSpellings(b, ctx, conceptId, changes);
+      if (files.length < 2) continue;
+      const [winner, ...ignored] = files;
       diagnostics.push({
         file: winner as string,
         issue: "shadowed-spelling",
-        detail: `"${held.conceptId}" is held by more than one file; "${winner}" is used and ${ignored.join(", ")} ignored. Remove the ignored ${ignored.length === 1 ? "file" : "files"}.`,
+        detail: `"${conceptId}" is held by more than one file; "${winner}" is used and ${ignored.join(", ")} ignored. Remove the ignored ${ignored.length === 1 ? "file" : "files"}.`,
         fixed: false,
       });
     }
     return diagnostics;
+  }
+
+  /**
+   * The files of the snapshot that spell `conceptId` (case variants included), that `identify` maps to it and that a
+   * walk reaches, in spelling order. A file of the working tree the walk does not reach is no spelling; only duplicates
+   * are worth asking git, and a file a pending change creates is judged by its path alone.
+   */
+  private async snapshotSpellings(
+    b: Bundle,
+    ctx: FileValidateContext,
+    conceptId: string,
+    pending: readonly FileChange[],
+  ): Promise<string[]> {
+    const normalized = normalizedConceptId(conceptId);
+    if (!normalized) return [];
+    const found = new Set<string>();
+    for (const spelling of this.spellings(normalized)) {
+      for (const relPath of await snapshotVariants(ctx, spelling)) {
+        if (this.identify(relPath) === normalized) found.add(relPath);
+      }
+    }
+    if (found.size < 2) return [...found];
+    const walked = (relPath: string): boolean =>
+      pending.some((change) => change.path === relPath && change.op !== "delete") ||
+      isWalkedFile(b.root, path.join(b.root, relPath), this.walkOptions());
+    return [...found].filter(walked);
   }
 
   /**
@@ -473,6 +530,18 @@ function isCaseVariant(spelling: string, other: string): boolean {
     path.posix.basename(spelling, extension) === path.posix.basename(other, path.posix.extname(other)) &&
     extension.toLowerCase() === path.posix.extname(other).toLowerCase()
   );
+}
+
+/** The files of a snapshot named `spelling`, or by it with the case of its extension changed: the exact one first, then by code point. */
+async function snapshotVariants(ctx: FileValidateContext, spelling: string): Promise<string[]> {
+  const dir = path.posix.dirname(spelling);
+  const named = (await ctx.list(dir))
+    .map((name) => (dir === "." ? name : `${dir}/${name}`))
+    .filter((relPath) => relPath === spelling || isCaseVariant(spelling, relPath));
+  return [
+    ...named.filter((relPath) => relPath === spelling),
+    ...named.filter((relPath) => relPath !== spelling).sort(compareCodePoints),
+  ];
 }
 
 /** `spelling` and the names in its folder that differ from it only in the case of the extension: the exact one first, then by code point. */

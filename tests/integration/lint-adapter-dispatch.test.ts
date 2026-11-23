@@ -19,7 +19,7 @@
  * This suite builds a fresh llm-wiki-shaped bundle at runtime (never touches
  * the shared conformance fixture at `tests/fixtures/bundles/llm-wiki/`, which
  * is deliberately clean) and drives it through the real `akm lint` CLI entry
- * point — not `llmWikiAdapter.validate()` directly (that surface already has
+ * point — not `llmWikiAdapter.validateChanges()` directly (that surface already has
  * its own dedicated suite, `tests/core/adapter/llm-wiki-adapter.test.ts`).
  */
 
@@ -38,7 +38,7 @@ function write(root: string, relPath: string, content: string): void {
   fs.writeFileSync(full, content, "utf8");
 }
 
-describe("akm lint dispatches an llm-wiki bundle through llmWikiAdapter.validate()", () => {
+describe("akm lint dispatches an llm-wiki bundle through llmWikiAdapter.validateChanges()", () => {
   let storage: IsolatedAkmStorage;
 
   afterEach(() => storage?.cleanup());

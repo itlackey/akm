@@ -53,11 +53,12 @@ import type { AdapterRenderedExecutionSource } from "../../../execution/source";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
 import type { AssetEntry } from "../bundle-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
-import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { skillDirectoryDiagnostics } from "./akm-lint";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
@@ -181,7 +182,7 @@ function nameOrSignalDiagnostics(
   relPath: string,
   data: Record<string, unknown>,
   body: string,
-): Diagnostic[] {
+): FileDiagnostic[] {
   if (nonEmptyString(data.name) !== undefined || nonEmptyString(data.description) !== undefined) return [];
   // command-shaped body/frontmatter signals: $ARGUMENTS / $1 / an `agent` frontmatter key.
   if (
@@ -205,9 +206,9 @@ export async function validateToolDir(
   layout: ToolDirLayout,
   c: Bundle,
   changes: FileChange[],
-  ctx: ValidateContext,
-): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+  ctx: FileValidateContext,
+): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
   const seenSkillDirs = new Set<string>();
   const { check } = createBaseChecker(c.root, ctx);
   for (const change of changes) {
@@ -283,7 +284,7 @@ export abstract class ToolDirAdapterBase extends DirectoryAdapterBase {
     return renderToolDirExecutionSource(this.layout, b, entry);
   }
 
-  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     return validateToolDir(this.layout, b, changes, ctx);
   }
 

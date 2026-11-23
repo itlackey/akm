@@ -52,7 +52,11 @@ describe("akm-workflow adapter — every Markdown file but a README is a workflo
         conceptId: "doc",
       });
       expect(akmWorkflowAdapter.list(b).assets.map((asset) => asset.conceptId)).toEqual(["doc"]);
-      const diagnostics = await akmWorkflowAdapter.validate(b, [{ path: "doc.md", op: "update", after: raw }], ctx);
+      const diagnostics = await akmWorkflowAdapter.validateChanges(
+        b,
+        [{ path: "doc.md", op: "update", after: raw }],
+        ctx,
+      );
       expect(diagnostics.filter((d) => d.issue === "type-from-content")).toEqual([
         expect.objectContaining({ file: "doc.md", detail: expect.stringContaining('type "knowledge"') }),
       ]);

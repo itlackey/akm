@@ -33,9 +33,10 @@ import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
 import { DirectoryAdapterBase } from "../directory-adapter";
-import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { hashContent, nonEmptyString, readTags, validateChangesWithBaseChecks } from "./shared";
 
 const LANGUAGE_BY_EXTENSION: Readonly<Record<string, string>> = {
@@ -213,7 +214,7 @@ export class CodeProjectAdapter extends DirectoryAdapterBase {
 
   // The base checks misfire on source (`stale-path` flags `/tmp/...` literals,
   // the ref regex matches Python's `y//2`), so they run on Markdown only.
-  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     return validateChangesWithBaseChecks(
       b,
       changes.filter((change) => MARKDOWN_EXTENSIONS.has(path.extname(change.path).toLowerCase())),

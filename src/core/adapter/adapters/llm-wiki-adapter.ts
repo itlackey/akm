@@ -76,9 +76,10 @@ import { parseFrontmatter, parseFrontmatterBlock } from "../../asset/frontmatter
 import { LLM_WIKI_PAGES_DIR, looksLikeLlmWikiRoot } from "../../asset/llm-wiki-root";
 import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
 import { DirectoryAdapterBase } from "../directory-adapter";
-import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { hashContent, nonEmptyString } from "./shared";
 
 /** The adapter's own `type` for immutable ingested sources under `raw/` (recognition golden, reading A). */
@@ -307,7 +308,7 @@ interface WikiValidateItem {
   body: string;
 }
 
-async function validate(c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
   const items: WikiValidateItem[] = [];
   for (const change of changes) {
     if (change.op === "delete") continue;
@@ -332,7 +333,7 @@ async function validate(c: Bundle, changes: FileChange[], ctx: ValidateContext):
     for (const src of resolveSources(item.fm)) citedRawConceptIds.add(src);
   }
 
-  const diagnostics: Diagnostic[] = [];
+  const diagnostics: FileDiagnostic[] = [];
 
   for (const item of items) {
     if (item.kind === "raw") {
@@ -407,7 +408,7 @@ export class LlmWikiAdapter extends DirectoryAdapterBase {
     return describe(b, file, conceptId);
   }
 
-  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     return validate(b, changes, ctx);
   }
 

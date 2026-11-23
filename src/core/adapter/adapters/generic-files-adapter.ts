@@ -27,10 +27,11 @@ import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
 import { SCRIPT_EXTENSIONS } from "../../recognition-util";
 import { DirectoryAdapterBase } from "../directory-adapter";
-import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { hashContent, nonEmptyString, RESERVED_FILES, readTags, validateChangesWithBaseChecks } from "./shared";
 
 /** Markdown / plain-text extensions classified as `document`. */
@@ -92,7 +93,7 @@ export class GenericFilesAdapter extends DirectoryAdapterBase {
     return describe(file, conceptId);
   }
 
-  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     return validateChangesWithBaseChecks(b, changes, ctx);
   }
 

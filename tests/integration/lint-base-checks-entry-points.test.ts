@@ -15,7 +15,7 @@ import path from "node:path";
 import { akmLint } from "../../src/commands/lint";
 import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
 import { okfAdapter } from "../../src/core/adapter/adapters/okf-adapter";
-import { createValidateContext } from "../../src/core/adapter/validate-context";
+import { createFileValidateContext } from "../../src/core/adapter/validate-context";
 import { loadConfig } from "../../src/core/config/config";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -174,8 +174,8 @@ describe("the base checks give the same findings through the lint sweep and thro
     const config = loadConfig();
 
     const sweep = (await akmLint({ dir: root, config })).flagged;
-    const ctx = createValidateContext({ root, sources: resolveSourceEntries(root, config) });
-    const validated = await akmAdapter.validate(
+    const ctx = createFileValidateContext({ root, sources: resolveSourceEntries(root, config) });
+    const validated = await akmAdapter.validateChanges(
       { id: "stash", root },
       FIXTURE.map((file) => ({ path: file.rel, op: "update" as const })),
       ctx,
@@ -269,10 +269,10 @@ describe("a ref a file declares is checked wherever it points", () => {
       "---\ntype: concept\ntitle: A\nxrefs:\n  - concepts/there\n  - concepts/gone\n---\n\nBody.\n",
     );
     const config = loadConfig();
-    const found = await okfAdapter.validate(
+    const found = await okfAdapter.validateChanges(
       { id: "okf", root },
       [{ path: "concepts/a.md", op: "update" }],
-      createValidateContext({ root, sources: [{ path: root }], config }),
+      createFileValidateContext({ root, sources: [{ path: root }], config }),
     );
 
     expect(found.filter((f) => f.issue === "missing-ref").map((f) => f.detail)).toEqual([

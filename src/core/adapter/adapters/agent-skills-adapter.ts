@@ -29,7 +29,7 @@
  *   - `missing-skill-md` — a package dir with no SKILL.md (edge case; git cannot
  *     commit an empty dir, so it is covered by a directory-level check, not a
  *     fixture). Implemented by {@link missingManifestDiagnostics}, which scans
- *     the bundle root through `ValidateContext.list` — the change-set loop
+ *     the bundle root through `FileValidateContext.list` — the change-set loop
  *     cannot reach it, because a change is always a file and a manifest-less
  *     package contributes no SKILL.md change (issue #774).
  *
@@ -48,9 +48,10 @@ import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { isScratchPath } from "../../asset/scratch";
 import { toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
 import { DirectoryAdapterBase } from "../directory-adapter";
-import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { hashContent, nonEmptyString, readTags } from "./shared";
 
 /** The skill manifest basename (the item marker). */
@@ -99,8 +100,8 @@ function describe(file: FileContext): IndexMetadata {
 }
 
 /** The Agent Skills hard-rule checks for one SKILL.md (name + description). */
-function skillFieldDiagnostics(relPath: string, dirName: string, data: Record<string, unknown>): Diagnostic[] {
-  const diagnostics: Diagnostic[] = [];
+function skillFieldDiagnostics(relPath: string, dirName: string, data: Record<string, unknown>): FileDiagnostic[] {
+  const diagnostics: FileDiagnostic[] = [];
   const name = typeof data.name === "string" ? data.name.normalize("NFKC") : "";
   const lower = name.toLowerCase();
   const reserved = RESERVED_NAME_WORDS.find((w) => lower.includes(w));
@@ -142,10 +143,10 @@ interface ManifestScanResult {
   /** At least one real package root (`SKILL.md`) exists in this subtree. */
   containsManifest: boolean;
   /** Broken package candidates below a grouping directory. */
-  diagnostics: Diagnostic[];
+  diagnostics: FileDiagnostic[];
 }
 
-function missingManifestDiagnostic(dir: string): Diagnostic {
+function missingManifestDiagnostic(dir: string): FileDiagnostic {
   return { file: dir, issue: "missing-skill-md", detail: `no SKILL.md in ${dir}/`, fixed: false };
 }
 
@@ -158,7 +159,7 @@ function missingManifestDiagnostic(dir: string): Diagnostic {
 async function scanPackageCandidate(
   dir: string,
   entries: readonly string[],
-  ctx: ValidateContext,
+  ctx: FileValidateContext,
   depth: number,
 ): Promise<ManifestScanResult> {
   if (entries.includes(SKILL_MANIFEST)) return { containsManifest: true, diagnostics: [] };
@@ -172,7 +173,7 @@ async function scanPackageCandidate(
     const child = `${dir}/${entry}`;
     // `list` on a FILE yields `[]` (the read throws and is swallowed), so an
     // empty listing is the "not a directory worth descending" signal — no
-    // separate stat is available on ValidateContext, and none is needed.
+    // separate stat is available on FileValidateContext, and none is needed.
     const childEntries = await ctx.list(child);
     if (childEntries.length === 0) continue;
     children.push(await scanPackageCandidate(child, childEntries, ctx, depth + 1));
@@ -196,7 +197,7 @@ async function scanPackageCandidate(
  * directory carrying resources but no manifest contributes nothing the
  * change-loop can see, and the check the lint golden's `missingSkillMd` edge
  * case names would be unreachable. This scans the
- * bundle root through {@link ValidateContext.list} instead, so the case is
+ * bundle root through {@link FileValidateContext.list} instead, so the case is
  * actually reported.
  *
  * A package's own resource dirs (`pdf-processing/reference/`) are part of the
@@ -204,8 +205,8 @@ async function scanPackageCandidate(
  * their children are classified independently so one valid package cannot hide
  * a manifest-less sibling.
  */
-async function missingManifestDiagnostics(ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+async function missingManifestDiagnostics(ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
   for (const name of await ctx.list(".")) {
     if (name.startsWith(".")) continue; // .git, .github, … are not skill packages
     const entries = await ctx.list(name);
@@ -215,8 +216,8 @@ async function missingManifestDiagnostics(ctx: ValidateContext): Promise<Diagnos
   return diagnostics;
 }
 
-async function validate(_c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+async function validate(_c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
   const seenDirs = new Set<string>();
   for (const change of changes) {
     if (change.op === "delete") continue;
@@ -250,7 +251,7 @@ export class AgentSkillsAdapter extends DirectoryAdapterBase {
     return describe(file);
   }
 
-  protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     return validate(b, changes, ctx);
   }
 

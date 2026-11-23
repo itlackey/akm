@@ -26,8 +26,7 @@
  */
 
 import type { AdapterRenderedExecutionSource } from "../../execution/source";
-import type { FileChange } from "../file-change";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "./types";
+import type { AssetEdit, Bundle, Diagnostic, IndexDocument, ValidateContext } from "./types";
 
 /** One entry of a bundle: an asset as its adapter holds it. */
 export interface AssetEntry {
@@ -136,11 +135,11 @@ export interface BundleAdapter {
    */
   recognize(b: Bundle, entry: AssetEntry): IndexDocument | null;
   /**
-   * Native validation (change-transaction pre-commit and `akm lint`). It must not write and must not read the live
-   * filesystem: `ctx` serves the run snapshot with the pending changes overlaid, plus a read-only `resolveRef` for
-   * link and xref existence. Cross-bundle ref existence is a core base check, not an adapter concern.
+   * Native validation of pending `edits`, each an asset by its concept id (`akm lint` checks every asset as an
+   * `update`). It never writes. A directory adapter checks the bundle's snapshot with the edits overlaid; a store
+   * with no files has nothing to check. Cross-bundle ref existence is a core base check, not an adapter concern.
    */
-  validate(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]>;
+  validate(b: Bundle, edits: AssetEdit[], ctx: ValidateContext): Promise<Diagnostic[]>;
 
   /** The concept id a `create` of `asset` would give, without writing. Refused by a read-only adapter. */
   place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string;

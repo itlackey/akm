@@ -163,9 +163,9 @@ describe("a concept spelled twice: the first spelling wins for list, read and th
     return file;
   }
 
-  /** What `validate` says for one deleted path: no change content is read, so it reports spellings alone. */
-  async function shadowFinding(adapter: DirectoryAdapterBase, b: Bundle, relPath: string) {
-    const diagnostics = await adapter.validate(b, [{ path: relPath, op: "delete" }] as never, {} as never);
+  /** What `validate` says for one asset's pending content: no file is read, so it reports spellings alone. */
+  async function shadowFinding(adapter: DirectoryAdapterBase, b: Bundle, conceptId: string) {
+    const diagnostics = await adapter.validate(b, [{ conceptId, op: "update", content: "x" }], {});
     return diagnostics.filter((diagnostic) => diagnostic.issue === "shadowed-spelling");
   }
 
@@ -181,7 +181,7 @@ describe("a concept spelled twice: the first spelling wins for list, read and th
       const listed = adapter.list(b).assets.filter((asset) => asset.conceptId === conceptId);
       expect(listed.map((asset) => asset.entry.relPath)).toEqual([winner]);
       expect(adapter.read(b, conceptId)?.entry.relPath).toBe(winner);
-      const [finding, ...rest] = await shadowFinding(adapter, b, files[0]);
+      const [finding, ...rest] = await shadowFinding(adapter, b, conceptId);
       expect(rest).toEqual([]);
       expect(finding?.file).toBe(winner);
       for (const ignored of files.filter((rel) => rel !== winner)) expect(finding?.detail).toContain(ignored);

@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { codeProjectAdapter, eligibleType } from "../../../../src/core/adapter/adapters/code-project-adapter";
-import type { Bundle, ValidateContext } from "../../../../src/core/adapter/types";
+import type { Bundle } from "../../../../src/core/adapter/types";
+import type { FileValidateContext } from "../../../../src/core/adapter/validate-context";
 import { buildFileContext, type FileContext } from "../../../../src/indexer/walk/file-context";
 import { walkStashFlat } from "../../../../src/indexer/walk/walker";
 import { identify, spellings } from "../../../_helpers/adapter-hooks";
@@ -105,14 +106,14 @@ describe("code-project recognize", () => {
 });
 
 describe("code-project validate", () => {
-  const ctx: ValidateContext = {
+  const ctx: FileValidateContext = {
     readFile: async () => null,
     list: async () => [],
     resolveRef: async () => ({ exists: false }),
   };
 
   test("base checks do not run on source (no stale-path or ref misfires)", async () => {
-    const diagnostics = await codeProjectAdapter.validate(
+    const diagnostics = await codeProjectAdapter.validateChanges(
       bundle,
       [
         { path: "src/a.ts", op: "update", after: 'const p = "/tmp/x";' },

@@ -3,23 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The ONE core {@link ValidateContext} implementation.
- *
- * `BundleAdapter.validate()` (`./bundle-adapter.ts`) is a REQUIRED interface
- * method whose contract is explicit: the adapter MUST NOT write and MUST NOT
- * read the live filesystem — `ctx` serves the run's on-disk SNAPSHOT WITH the
- * caller's pending {@link FileChange}s overlaid, plus a read-only `resolveRef`
- * for link/xref existence. That overlay is meant to be built ONCE, centrally —
- * "one core overlay implementation, not one per adapter" (the interface's own
- * words) — so every `validate()` caller shares identical overlay semantics
- * rather than each hand-rolling its own (as every adapter's own test suite has
- * done up to now, see e.g. `tests/integration/core/adapter/okf-adapter.test.ts`'s
- * `overlayCtx`/`diskCtx`).
- *
- * The production caller of this factory is `akm lint`'s non-akm adapter dispatch
- * (`commands/lint/index.ts`): a plain sweep with NO pending changes, so the overlay
- * is empty and every read falls straight through to disk. It also hands the context
- * the run's `sources` and `config`, which the base checks read.
+ * The snapshot a directory adapter's checks read: the files of one bundle with the pending {@link FileChange}s
+ * overlaid, and the bundles' roots for ref existence. Internal to the directory layer: `BundleAdapter.validate`
+ * takes asset edits by ref and a {@link ValidateContext} with no paths, and `DirectoryAdapterBase.validate` builds
+ * this from them. The overlay is built once, here, so every adapter shares one semantics.
  *
  * ── resolveRef ──
  *
@@ -43,9 +30,21 @@ import fs from "node:fs";
 import path from "node:path";
 import { filesForRef } from "../asset/asset-placement";
 import { toPosix } from "../common";
-import type { AkmConfig } from "../config/config-types";
-import type { FileChange } from "../file-change";
-import type { BundleSourceRef, ValidateContext } from "./types";
+import type { FileChange } from "./file-change";
+import type { BundleSourceRef, Diagnostic, ValidateContext } from "./types";
+
+/** What a check reports about a file: {@link Diagnostic} before the directory layer names the asset (`ref`) it is about. */
+export type FileDiagnostic = Omit<Diagnostic, "ref" | "file"> & { file: string };
+
+/** What a directory adapter's checks read; see the file header. */
+export interface FileValidateContext extends ValidateContext {
+  /** A file of the snapshot: the pending content, else the file on disk; null when there is none. */
+  readFile(path: string): Promise<string | Uint8Array | null>;
+  /** The names directly inside `dir` in the snapshot. */
+  list(dir: string): Promise<string[]>;
+  /** Whether a file holds `ref` in the snapshot or in another configured bundle. */
+  resolveRef(ref: string): Promise<{ exists: boolean; path?: string }>;
+}
 
 /** `null` = the overlay DELETES this path (never satisfies a read/exists check). */
 type OverlayValue = string | null;
@@ -134,13 +133,13 @@ function stripBundlePrefix(ref: string): string {
   return boundary >= 0 ? ref.slice(boundary + 2) : ref;
 }
 
-export interface ValidateContextOptions {
+export interface FileValidateContextOptions {
   /** The primary root `changes` paths are relative to (a bundle's root, or a lint sweep's stash root). */
   root: string;
   /** The configured bundles; the roots other than `root` are consulted (disk only) for cross-bundle ref existence. */
   sources?: readonly BundleSourceRef[];
   /** The settings of the run. */
-  config?: AkmConfig;
+  config?: ValidateContext["config"];
   /** How the recorded `moved` events are read. */
   readMoves?: ValidateContext["readMoves"];
   /** Pending changes to overlay onto the snapshot. Empty (or omitted) for a plain sweep with nothing pending. */
@@ -153,7 +152,7 @@ export interface ValidateContextOptions {
  * cross-bundle ref existence) WITH `options.changes` overlaid on `options.root`
  * — never a write, never a live-FS read beyond that snapshot.
  */
-export function createValidateContext(options: ValidateContextOptions): ValidateContext {
+export function createFileValidateContext(options: FileValidateContextOptions): FileValidateContext {
   const root = options.root;
   const sources = options.sources ?? [];
   const extraRoots = sources.map((source) => source.path).filter((sourcePath) => sourcePath !== root);

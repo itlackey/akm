@@ -18,7 +18,8 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { dotenvAdapter } from "../../../src/core/adapter/adapters/dotenv-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
+import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adapter/validate-context";
 import type { FileChange } from "../../../src/core/file-change";
 import { presentationFor } from "../../../src/core/type-presentation";
 import { buildFileContext } from "../../../src/indexer/walk/file-context";
@@ -47,7 +48,7 @@ function assertNoLeak(doc: IndexDocument, forbidden: string[]): void {
   }
 }
 
-const ctx: ValidateContext = {
+const ctx: FileValidateContext = {
   readFile: async (p) => {
     try {
       return fs.readFileSync(path.join(FIXTURE_ROOT, p), "utf8");
@@ -133,7 +134,7 @@ describe("dotenv adapter — renderer golden (field-omission redaction)", () => 
 });
 
 describe("dotenv adapter — lint golden (dangerous-env-key, .env-suffix-narrow)", () => {
-  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: Diagnostic[] }>;
+  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: FileDiagnostic[] }>;
 
   test("each file validates to exactly the golden's issue codes", async () => {
     const changes: FileChange[] = Object.values(perType).map((e) => ({
@@ -141,7 +142,7 @@ describe("dotenv adapter — lint golden (dangerous-env-key, .env-suffix-narrow)
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await dotenvAdapter.validate(bundle(), changes, ctx);
+    const diags = await dotenvAdapter.validateChanges(bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {
@@ -155,9 +156,9 @@ describe("dotenv adapter — lint golden (dangerous-env-key, .env-suffix-narrow)
       op: "update",
       after: fs.readFileSync(path.join(FIXTURE_ROOT, rel), "utf8"),
     });
-    const dangerous = await dotenvAdapter.validate(bundle(), [mk("env/dangerous.env")], ctx);
+    const dangerous = await dotenvAdapter.validateChanges(bundle(), [mk("env/dangerous.env")], ctx);
     expect(dangerous.map((d) => d.issue)).toEqual(["dangerous-env-key", "dangerous-env-key"]);
-    const bareSecret = await dotenvAdapter.validate(bundle(), [mk("secrets/deploy-key")], ctx);
+    const bareSecret = await dotenvAdapter.validateChanges(bundle(), [mk("secrets/deploy-key")], ctx);
     expect(bareSecret).toEqual([]);
   });
 });
