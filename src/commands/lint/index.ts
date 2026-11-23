@@ -36,13 +36,12 @@ import {
   resolveStashDir,
   safeRealpath,
   samePath,
-  toErrorMessage,
 } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig, primaryBundlePath } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import { defaultExcludedTypes } from "../../core/config/schema/search";
-import { ConfigError, UsageError } from "../../core/errors";
+import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
