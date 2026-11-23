@@ -173,15 +173,15 @@ describe("secret manager bundles", () => {
     });
   });
 
-  test("reading a secret lists its store once and reads that secret, whatever else the store holds", async () => {
+  test("reading a vault secret is one request, whatever else the vault holds", async () => {
     await withFakeSecretStores({ vaults: { "team-vault": { ...VAULT["team-vault"], other: "o" } } }, async (stores) => {
       resolveInjectionRefs({ secret: ["vault//secrets/deploy-token:T"] });
-      expect(requests(stores.state().calls)).toEqual(["az list", "az show"]);
+      expect(requests(stores.state().calls)).toEqual(["az show"]);
     });
     fs.writeFileSync(path.join(storage.stashDir, "env", "one.env"), "DEPLOY=${vault//secrets/deploy-token}\n");
     await withFakeSecretStores({ vaults: VAULT }, async (stores) => {
       resolveEnvBinding("env/one");
-      expect(requests(stores.state().calls)).toEqual(["az list", "az show"]);
+      expect(requests(stores.state().calls)).toEqual(["az show"]);
     });
     // A keyring is read once: its alias, whether it is locked, its entries, each entry's label and attributes; then
     // the entry is checked to be the only one its attributes find, and looked up.
@@ -366,7 +366,7 @@ describe("secret manager bundles", () => {
 });
 
 describe("secret manager bundles in the workspace API", () => {
-  test("the protected editor describes and reads a store secret from one listing of the store", async () => {
+  test("the protected editor describes and reads a store secret with one request to the vault", async () => {
     await withFakeSecretStores({ vaults: VAULT }, async (stores) => {
       const info = sensitive.describe({ bundle: "vault", file: "secrets/deploy-token" });
       expect(info).toEqual({
@@ -380,10 +380,10 @@ describe("secret manager bundles in the workspace API", () => {
         revision: sha("vault-value"),
         location: { bundle: "vault", path: "secrets/deploy-token", parent: "secrets" },
       });
-      expect(requests(stores.state().calls)).toEqual(["az list", "az show"]);
+      expect(requests(stores.state().calls)).toEqual(["az show"]);
 
       expect(sensitive.readValue({ ref: info.ref })).toEqual({ content: "vault-value", revision: info.revision });
-      expect(requests(stores.state().calls)).toEqual(["az list", "az show", "az show"]);
+      expect(requests(stores.state().calls)).toEqual(["az show", "az show"]);
     });
   });
 
@@ -734,21 +734,17 @@ describe("a vault behaves like a directory of secrets (N1, N2, N4)", () => {
       } as never,
       async () => {
         expect(azureKeyVaultAdapter.list(b).assets.map((asset) => asset.conceptId)).toEqual(["secrets/deploy-token"]);
-        expect(azureKeyVaultAdapter.read(b, "secrets/off")).toBeUndefined();
-        expect(azureKeyVaultAdapter.read(b, "secrets/mgd")).toBeUndefined();
+        // Read directly, a disabled secret is a plain error (N4), not an absent one.
+        expect(() => azureKeyVaultAdapter.read(b, "secrets/off")).toThrow(/disabled/);
       },
     );
   });
 
-  test("reading a secret that was disabled since it was listed is a plain error, not an unreachable vault", async () => {
-    await withFakeSecretStores({ vaults: VAULT }, async () => {
-      const asset = azureKeyVaultAdapter.read(b, "secrets/deploy-token");
-      editState((state) => {
-        state.disabled = { "team-vault": ["deploy-token"] };
-      });
+  test("reading a disabled secret is a plain error, not an unreachable vault", async () => {
+    await withFakeSecretStores({ vaults: VAULT, disabled: { "team-vault": ["deploy-token"] } } as never, async () => {
       let failure: unknown;
       try {
-        asset?.entry.content();
+        azureKeyVaultAdapter.read(b, "secrets/deploy-token");
       } catch (error) {
         failure = error;
       }
@@ -886,6 +882,17 @@ describe("keyring and vault bundles in config and commands (P3, N3, N5, N6)", ()
     await withFakeSecretStores({}, async () => {
       const linted = await akm("lint");
       expect(linted.code).toBe(0);
+    });
+  });
+});
+
+describe("lint never asks to unlock (N3)", () => {
+  test("a locked wallet is skipped by akm lint, with no Unlock call", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
+      const linted = await akm("lint");
+      expect(linted.code).toBe(0);
+      expect(stores.state().calls.some((call) => call.includes("Unlock"))).toBe(false);
+      expect(stores.state().locked).toEqual(["akm"]);
     });
   });
 });

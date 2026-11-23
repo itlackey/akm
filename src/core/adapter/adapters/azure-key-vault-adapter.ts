@@ -87,6 +87,13 @@ export class AzureKeyVaultAdapter extends SecretManagerAdapterBase {
     throw clientFailure(AZ, `find vault "${vault}"`, result);
   }
 
+  /** Names are unique in a vault: one `show`, no listing first. */
+  protected findSecret(vault: string, name: string): SecretItem | undefined {
+    if (!VALID_NAME.test(name)) return undefined;
+    const value = show(vault, name);
+    return value === undefined ? undefined : { name, id: name, preferred: true, read: () => value };
+  }
+
   protected listSecrets(vault: string): SecretItem[] {
     const names = requireClient(AZ, `list vault "${vault}"`, [
       "keyvault",

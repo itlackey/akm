@@ -76,6 +76,24 @@ function secretEntry(name: string, read: () => string): AssetEntry {
   };
 }
 
+let promptsAllowed = true;
+
+/** Whether an adapter may ask the user something (unlock a keyring). */
+export function mayPrompt(): boolean {
+  return promptsAllowed;
+}
+
+/** Run `run` with every prompt off: a store that would need one is unreachable. For lint, which runs in hooks and CI. */
+export async function withoutPrompts<T>(run: () => Promise<T>): Promise<T> {
+  const before = promptsAllowed;
+  promptsAllowed = false;
+  try {
+    return await run();
+  } finally {
+    promptsAllowed = before;
+  }
+}
+
 /** One item of a store: what its manager holds under a name. Several items can share a name. */
 export interface SecretItem {
   /** The name the manager gives it (a keyring entry's label, a vault secret's name). */
@@ -133,6 +151,10 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   protected abstract storeSecret(location: string, name: string, value: Buffer, existing?: SecretItem): void;
   /** Delete `item`. */
   protected abstract deleteSecret(location: string, item: SecretItem): void;
+  /** The item that holds `name`, or undefined. By default the winner of one listing; a store whose names are unique can ask for it directly. */
+  protected findSecret(location: string, name: string): SecretItem | undefined {
+    return this.store(location).winners.get(name);
+  }
   /** Refuse a name the store cannot hold, before anything is asked of it. */
   protected requireStorable(_name: string): void {}
 
@@ -216,7 +238,7 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   read(b: Bundle, conceptId: string): BundleAsset | undefined {
     const name = secretNameOf(conceptId);
     if (name === undefined) return undefined;
-    const found = this.store(this.locationOf(b)).winners.get(name);
+    const found = this.findSecret(this.locationOf(b), name);
     return found === undefined ? undefined : { conceptId: secretEntryPath(name), entry: secretEntry(name, found.read) };
   }
 
@@ -272,7 +294,7 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   create(b: Bundle, asset: NewAsset, options: { replace?: boolean; verbatim?: boolean } = {}): AssetChange {
     const name = this.secretNameFor(asset);
     const location = this.locationOf(b);
-    const existing = this.store(location).winners.get(name);
+    const existing = this.findSecret(location, name);
     if (existing && !options.replace) {
       throw new Error(
         `Adapter "${this.id}" will not create "${b.id}//${secretEntryPath(name)}" over an existing secret without \`replace\`; the asset facade checks \`exclusive\` first.`,
@@ -285,7 +307,7 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   update(b: Bundle, conceptId: string, content: string | Buffer): AssetChange {
     const location = this.locationOf(b);
     const name = requireSecretName(b.id, conceptId);
-    const existing = this.store(location).winners.get(name);
+    const existing = this.findSecret(location, name);
     if (!existing) throw assetNotFound(`${b.id}//${conceptId}`);
     this.writing(location, () => this.storeSecret(location, name, Buffer.from(content), existing));
     return this.change(name, content);
@@ -294,7 +316,7 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   delete(b: Bundle, conceptId: string): AssetChange {
     const location = this.locationOf(b);
     const name = requireSecretName(b.id, conceptId);
-    const existing = this.store(location).winners.get(name);
+    const existing = this.findSecret(location, name);
     if (!existing) throw assetNotFound(`${b.id}//${conceptId}`);
     this.writing(location, () => this.deleteSecret(location, existing));
     return this.change(name);
