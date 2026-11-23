@@ -208,8 +208,8 @@ describe("akm proposal reopen — a rejected retire proposal", () => {
     expect(accepted.proposal.status).toBe("accepted");
     expect(fs.existsSync(retiredPath)).toBe(false);
     const archived = getProposal(stash(), proposal.id);
-    expect(archived.retiredArchive?.dirs).toHaveLength(1);
-    expect(fs.existsSync(path.join(stash(), archived.retiredArchive?.dirs[0] ?? "missing"))).toBe(true);
+    expect(archived.retiredArchive?.retired).toHaveLength(1);
+    expect(fs.existsSync(path.join(stash(), archived.retiredArchive?.retired[0]?.handle ?? "missing"))).toBe(true);
     expect(archived.reviewHistory).toHaveLength(1); // accepting does not erase the reopen
     expect(ledgerRow(proposal.ref, "consolidate-pair")?.outcome).toBe("accepted");
 

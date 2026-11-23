@@ -8089,8 +8089,8 @@
           "memories/pruned-note.md": "---\ndescription: A memory that was pruned\n---\n\nOld content.\n"
         },
         "removed": [
-          ".akm/memory-cleanup/archive/2026-01-05T00-00-00-000Z-main-memories-pruned-note/cleanup.md",
-          ".akm/memory-cleanup/archive/2026-01-05T00-00-00-000Z-main-memories-pruned-note/memories/pruned-note.md"
+          ".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note/cleanup.md",
+          ".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note/memories/pruned-note.md"
         ]
       }
     },
@@ -12244,6 +12244,836 @@
           "metadata_json": "{\"review\":{\"outcome\":\"rejected\",\"decidedAt\":\"2026-01-26T09:00:00.000Z\"}}"
         }
       ]
+    },
+    "old-shape retire record :: proposal show full": {
+      "exit": 0,
+      "stdout": {
+        "schemaVersion": 1,
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000005",
+          "ref": "main//memories/pruned-note",
+          "status": "accepted",
+          "source": "consolidate",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "2026-01-30T10:00:00.000Z",
+          "payload": {
+            "content": ""
+          },
+          "review": {
+            "outcome": "accepted",
+            "decidedAt": "2026-01-29T09:00:00.000Z"
+          },
+          "retirement": {
+            "retiredRef": "main//memories/pruned-note",
+            "successorRef": "main//memories/successor",
+            "cosine": 0.97,
+            "judgeLabel": "duplicate",
+            "judgeReason": "Same content.",
+            "retiredContentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+            "successorContentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+            "reason": "duplicate"
+          },
+          "retiredArchive": {
+            "dirs": [
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note"
+            ]
+          }
+        },
+        "validation": {
+          "ok": true,
+          "findings": []
+        }
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "old-shape retire record :: proposal list accepted full": {
+      "exit": 0,
+      "stdout": {
+        "schemaVersion": 1,
+        "totalCount": 3,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "ref": "main//knowledge/guide",
+            "status": "accepted",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z",
+            "updatedAt": "2026-01-30T10:00:00.000Z",
+            "payload": {
+              "content": "# Guide\n"
+            }
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000004",
+            "ref": "main//knowledge/old-guide",
+            "status": "accepted",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z",
+            "updatedAt": "2026-01-30T10:00:00.000Z",
+            "payload": {
+              "content": "---\ndescription: The previous guide, superseded\ntags: [guide]\nupdated: 2025-06-01\nsupersededBy: main//knowledge/guide\n---\n\n# Old guide\n\nReplaced by main//knowledge/guide.\n"
+            },
+            "review": {
+              "outcome": "accepted",
+              "decidedAt": "2026-01-28T09:00:00.000Z"
+            }
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000005",
+            "ref": "main//memories/pruned-note",
+            "status": "accepted",
+            "source": "consolidate",
+            "createdAt": "2026-01-30T10:00:00.000Z",
+            "updatedAt": "2026-01-30T10:00:00.000Z",
+            "payload": {
+              "content": ""
+            },
+            "review": {
+              "outcome": "accepted",
+              "decidedAt": "2026-01-29T09:00:00.000Z"
+            },
+            "retirement": {
+              "retiredRef": "main//memories/pruned-note",
+              "successorRef": "main//memories/successor",
+              "cosine": 0.97,
+              "judgeLabel": "duplicate",
+              "judgeReason": "Same content.",
+              "retiredContentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+              "successorContentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+              "reason": "duplicate"
+            },
+            "retiredArchive": {
+              "dirs": [
+                ".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note"
+              ]
+            }
+          }
+        ]
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "old-shape retire record :: proposal revert": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "schemaVersion": 1,
+        "id": "00000000-0000-4000-8000-000000000005",
+        "ref": "main//memories/pruned-note",
+        "assetPath": "<SANDBOX>/fixture/main/memories/pruned-note.md",
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000005",
+          "ref": "main//memories/pruned-note",
+          "status": "reverted",
+          "source": "consolidate",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "<TIME>",
+          "payload": {
+            "content": ""
+          },
+          "changes": [
+            {
+              "path": "memories/pruned-note.md",
+              "op": "delete"
+            }
+          ],
+          "proposedTarget": {
+            "source": "main",
+            "root": "<SANDBOX>/fixture/main"
+          },
+          "acceptedAt": "2026-01-29T09:00:00.000Z",
+          "review": {
+            "outcome": "rejected",
+            "reason": "reverted: archived asset restored",
+            "decidedAt": "<TIME>"
+          },
+          "backupContent": "---\ndescription: A memory that was pruned\n---\n\nOld content.\n",
+          "acceptedTarget": {
+            "source": "main",
+            "root": "<SANDBOX>/fixture/main",
+            "path": "<SANDBOX>/fixture/main/memories/pruned-note.md",
+            "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000003"
+          },
+          "retirement": {
+            "retiredRef": "main//memories/pruned-note",
+            "successorRef": "main//memories/successor",
+            "cosine": 0.97,
+            "judgeLabel": "duplicate",
+            "judgeReason": "Same content.",
+            "retiredContentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+            "successorContentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+            "reason": "duplicate"
+          },
+          "retiredArchive": {
+            "dirs": [
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note"
+            ]
+          }
+        },
+        "shape": "proposal-revert"
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "memories/pruned-note.md": "---\ndescription: A memory that was pruned\n---\n\nOld content.\n"
+          },
+          "removed": [
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note/cleanup.md",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note/memories/pruned-note.md"
+          ]
+        }
+      }
+    },
+    "old-shape retire record :: proposal show full after revert": {
+      "exit": 0,
+      "stdout": {
+        "schemaVersion": 1,
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000005",
+          "ref": "main//memories/pruned-note",
+          "status": "reverted",
+          "source": "consolidate",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "<TIME>",
+          "payload": {
+            "content": ""
+          },
+          "review": {
+            "outcome": "rejected",
+            "reason": "reverted: archived asset restored",
+            "decidedAt": "<TIME>"
+          },
+          "retirement": {
+            "retiredRef": "main//memories/pruned-note",
+            "successorRef": "main//memories/successor",
+            "cosine": 0.97,
+            "judgeLabel": "duplicate",
+            "judgeReason": "Same content.",
+            "retiredContentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+            "successorContentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+            "reason": "duplicate"
+          },
+          "retiredArchive": {
+            "dirs": [
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note"
+            ]
+          }
+        },
+        "validation": {
+          "ok": true,
+          "findings": []
+        }
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "old-shape retire record :: retire record": {
+      "value": {
+        "status": "reverted",
+        "metadata_json": "{\"changes\":[{\"path\":\"memories/pruned-note.md\",\"op\":\"delete\"}],\"proposedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\"},\"acceptedAt\":\"2026-01-29T09:00:00.000Z\",\"review\":{\"outcome\":\"rejected\",\"reason\":\"reverted: archived asset restored\",\"decidedAt\":\"<TIME>\"},\"backupContent\":\"---\\ndescription: A memory that was pruned\\n---\\n\\nOld content.\\n\",\"acceptedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\",\"path\":\"<SANDBOX>/fixture/main/memories/pruned-note.md\",\"contentHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000003\"},\"retirement\":{\"retiredRef\":\"main//memories/pruned-note\",\"successorRef\":\"main//memories/successor\",\"cosine\":0.97,\"judgeLabel\":\"duplicate\",\"judgeReason\":\"Same content.\",\"retiredContentHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000004\",\"successorContentHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000005\",\"reason\":\"duplicate\"},\"retiredArchive\":{\"dirs\":[\".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note\"]}}"
+      }
+    },
+    "old-shape retire record after migrate :: proposal show full": {
+      "exit": 0,
+      "stdout": {
+        "schemaVersion": 1,
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000005",
+          "ref": "main//memories/pruned-note",
+          "status": "accepted",
+          "source": "consolidate",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "2026-01-30T10:00:00.000Z",
+          "payload": {
+            "content": ""
+          },
+          "review": {
+            "outcome": "accepted",
+            "decidedAt": "2026-01-29T09:00:00.000Z"
+          },
+          "retirement": {
+            "retiredRef": "main//memories/pruned-note",
+            "successorRef": "main//memories/successor",
+            "cosine": 0.97,
+            "judgeLabel": "duplicate",
+            "judgeReason": "Same content.",
+            "retiredContentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+            "successorContentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+            "reason": "duplicate"
+          },
+          "retiredArchive": {
+            "dirs": [
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note"
+            ]
+          }
+        },
+        "validation": {
+          "ok": true,
+          "findings": []
+        }
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "old-shape retire record after migrate :: proposal revert": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "schemaVersion": 1,
+        "id": "00000000-0000-4000-8000-000000000005",
+        "ref": "main//memories/pruned-note",
+        "assetPath": "<SANDBOX>/fixture/main/memories/pruned-note.md",
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000005",
+          "ref": "main//memories/pruned-note",
+          "status": "reverted",
+          "source": "consolidate",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "<TIME>",
+          "payload": {
+            "content": ""
+          },
+          "changes": [
+            {
+              "path": "memories/pruned-note.md",
+              "op": "delete"
+            }
+          ],
+          "proposedTarget": {
+            "source": "main",
+            "root": "<SANDBOX>/fixture/main"
+          },
+          "acceptedAt": "2026-01-29T09:00:00.000Z",
+          "review": {
+            "outcome": "rejected",
+            "reason": "reverted: archived asset restored",
+            "decidedAt": "<TIME>"
+          },
+          "backupContent": "---\ndescription: A memory that was pruned\n---\n\nOld content.\n",
+          "acceptedTarget": {
+            "source": "main",
+            "root": "<SANDBOX>/fixture/main",
+            "path": "<SANDBOX>/fixture/main/memories/pruned-note.md",
+            "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000003"
+          },
+          "retirement": {
+            "retiredRef": "main//memories/pruned-note",
+            "successorRef": "main//memories/successor",
+            "cosine": 0.97,
+            "judgeLabel": "duplicate",
+            "judgeReason": "Same content.",
+            "retiredContentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+            "successorContentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+            "reason": "duplicate"
+          },
+          "retiredArchive": {
+            "dirs": [
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note"
+            ]
+          }
+        },
+        "shape": "proposal-revert"
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "memories/pruned-note.md": "---\ndescription: A memory that was pruned\n---\n\nOld content.\n"
+          },
+          "removed": [
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note/cleanup.md",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note/memories/pruned-note.md"
+          ]
+        }
+      }
+    },
+    "old-shape retire record after migrate :: retire record": {
+      "value": {
+        "status": "reverted",
+        "metadata_json": "{\"changes\":[{\"path\":\"memories/pruned-note.md\",\"op\":\"delete\"}],\"proposedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\"},\"acceptedAt\":\"2026-01-29T09:00:00.000Z\",\"review\":{\"outcome\":\"rejected\",\"reason\":\"reverted: archived asset restored\",\"decidedAt\":\"<TIME>\"},\"backupContent\":\"---\\ndescription: A memory that was pruned\\n---\\n\\nOld content.\\n\",\"acceptedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\",\"path\":\"<SANDBOX>/fixture/main/memories/pruned-note.md\",\"contentHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000003\"},\"retirement\":{\"retiredRef\":\"main//memories/pruned-note\",\"successorRef\":\"main//memories/successor\",\"cosine\":0.97,\"judgeLabel\":\"duplicate\",\"judgeReason\":\"Same content.\",\"retiredContentHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000004\",\"successorContentHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000005\",\"reason\":\"duplicate\"},\"retiredArchive\":{\"dirs\":[\".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note\"]}}"
+      }
+    },
+    "retire accept and revert :: proposal accept": {
+      "exit": 0,
+      "stdout": {
+        "schemaVersion": 1,
+        "ok": true,
+        "id": "00000000-0000-4000-8000-000000000031",
+        "ref": "main//memories/deploy-note",
+        "assetPath": "<SANDBOX>/fixture/main/memories/deploy-note.md",
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000031",
+          "ref": "main//memories/deploy-note",
+          "status": "accepted",
+          "source": "propose",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "<TIME>",
+          "payload": {
+            "content": ""
+          },
+          "review": {
+            "outcome": "accepted",
+            "decidedAt": "<TIME>",
+            "decidedBy": "human"
+          },
+          "retiredArchive": {
+            "dirs": [
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note",
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note"
+            ]
+          }
+        }
+      },
+      "changes": {
+        "main": {
+          "written": {
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/cleanup.md": "---\nschemaVersion: 1\nkind: memory-cleanup-archive\narchivedAt: <TIME>\nbeliefState: archived\npreviousBeliefState: active\nref: main//memories/deploy-note\nreason: manual\noriginalPath: memories/deploy-note.md\narchivedPath: .akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.md\nproposalId: 00000000-0000-4000-8000-000000000031\nretiredAt: <TIME>\n---\n\nArchived derived memory for recoverable cleanup.\n",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.md": "---\ndescription: Deploys fail when the cache is cold\ntags: [deploy]\nupdated: 2026-01-15\n---\n\nWarm the cache first (see main//knowledge/guide).\n",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/cleanup.md (2)": "---\nschemaVersion: 1\nkind: memory-cleanup-archive\narchivedAt: <TIME>\nbeliefState: archived\npreviousBeliefState: active\nref: main//memories/deploy-note\nreason: manual\noriginalPath: memories/deploy-note.derived.md\narchivedPath: .akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.derived.md\nproposalId: 00000000-0000-4000-8000-000000000031\nretiredAt: <TIME>\n---\n\nArchived derived memory for recoverable cleanup.\n",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.derived.md": "---\ndescription: Derived restatement of the deploy note\ntags: [deploy]\nupdated: 2026-01-15\nderivedFrom: memories/deploy-note\n---\n\nA cold cache makes deploys fail.\n"
+          },
+          "removed": [
+            "memories/deploy-note.derived.md",
+            "memories/deploy-note.md"
+          ]
+        }
+      }
+    },
+    "retire accept and revert :: proposal show full": {
+      "exit": 0,
+      "stdout": {
+        "schemaVersion": 1,
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000031",
+          "ref": "main//memories/deploy-note",
+          "status": "accepted",
+          "source": "propose",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "<TIME>",
+          "payload": {
+            "content": ""
+          },
+          "review": {
+            "outcome": "accepted",
+            "decidedAt": "<TIME>",
+            "decidedBy": "human"
+          },
+          "retiredArchive": {
+            "dirs": [
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note",
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note"
+            ]
+          }
+        },
+        "validation": {
+          "ok": true,
+          "findings": []
+        }
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "retire accept and revert :: proposal accept again": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "id": "00000000-0000-4000-8000-000000000031",
+        "ref": "main//memories/deploy-note",
+        "assetPath": "<SANDBOX>/fixture/main/memories/deploy-note.md",
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000031",
+          "ref": "main//memories/deploy-note",
+          "status": "accepted",
+          "source": "propose",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "<TIME>",
+          "review": {
+            "outcome": "accepted",
+            "decidedAt": "<TIME>",
+            "decidedBy": "human"
+          }
+        }
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "retire accept and revert :: lint": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "fixed": [],
+        "flagged": [
+          {
+            "file": "commands/release.md",
+            "issue": "missing-name-or-type",
+            "detail": "missing fields: name, type; suggested slug: release",
+            "fixed": false,
+            "ref": "commands/release"
+          },
+          {
+            "file": "knowledge/acts-like-command.md",
+            "issue": "missing-name-or-type",
+            "detail": "missing fields: name, type; suggested slug: acts-like-command",
+            "fixed": false,
+            "ref": "knowledge/acts-like-command"
+          },
+          {
+            "file": "agents/reviewer.md",
+            "issue": "missing-name-or-type",
+            "detail": "missing fields: name, type; suggested slug: reviewer",
+            "fixed": false,
+            "ref": "agents/reviewer"
+          },
+          {
+            "file": "knowledge/guide.md",
+            "issue": "missing-ref",
+            "detail": "missing ref: team//knowledge/ghost-note (resolved to knowledge/ghost-note.md)",
+            "fixed": false,
+            "ref": "knowledge/guide"
+          },
+          {
+            "file": "knowledge/guide.md",
+            "issue": "missing-ref",
+            "detail": "missing ref: knowledge/ghost (frontmatter xrefs; resolved to knowledge/ghost.md)",
+            "fixed": false,
+            "ref": "knowledge/guide"
+          },
+          {
+            "file": "memories/successor.md",
+            "issue": "missing-ref",
+            "detail": "missing ref: main//memories/gone-for-good (frontmatter supersededBy; resolved to memories/gone-for-good.md)",
+            "fixed": false,
+            "ref": "memories/successor"
+          }
+        ],
+        "warnings": [],
+        "summary": {
+          "fixed": 0,
+          "flagged": 6,
+          "warnings": 0
+        },
+        "byRule": {
+          "missing-name-or-type": {
+            "findings": 3,
+            "assets": 3
+          },
+          "missing-ref": {
+            "findings": 3,
+            "assets": 2
+          }
+        },
+        "shape": "lint",
+        "schemaVersion": 1
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "retire accept and revert :: proposal revert": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "schemaVersion": 1,
+        "id": "00000000-0000-4000-8000-000000000031",
+        "ref": "main//memories/deploy-note",
+        "assetPath": "<SANDBOX>/fixture/main/memories/deploy-note.md",
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000031",
+          "ref": "main//memories/deploy-note",
+          "status": "reverted",
+          "source": "propose",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "<TIME>",
+          "payload": {
+            "content": ""
+          },
+          "changes": [
+            {
+              "path": "memories/deploy-note.md",
+              "op": "delete"
+            }
+          ],
+          "proposedTarget": {
+            "source": "main",
+            "root": "<SANDBOX>/fixture/main"
+          },
+          "beforeHash": "ceb7a4d1d84f06e8783a44d13eb3e01641307f9cc7d9aa08acb1316fd5a9c509",
+          "acceptedAt": "<TIME>",
+          "review": {
+            "outcome": "rejected",
+            "reason": "reverted: archived asset restored",
+            "decidedAt": "<TIME>",
+            "decidedBy": "human"
+          },
+          "backupContent": "---\ndescription: Deploys fail when the cache is cold\ntags: [deploy]\nupdated: 2026-01-15\n---\n\nWarm the cache first (see main//knowledge/guide).\n",
+          "acceptedTarget": {
+            "source": "main",
+            "root": "<SANDBOX>/fixture/main",
+            "path": "<SANDBOX>/fixture/main/memories/deploy-note.md",
+            "contentHash": "ceb7a4d1d84f06e8783a44d13eb3e01641307f9cc7d9aa08acb1316fd5a9c509"
+          },
+          "retiredArchive": {
+            "dirs": [
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note",
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note"
+            ]
+          }
+        },
+        "shape": "proposal-revert"
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "memories/deploy-note.derived.md": "---\ndescription: Derived restatement of the deploy note\ntags: [deploy]\nupdated: 2026-01-15\nderivedFrom: memories/deploy-note\n---\n\nA cold cache makes deploys fail.\n",
+            "memories/deploy-note.md": "---\ndescription: Deploys fail when the cache is cold\ntags: [deploy]\nupdated: 2026-01-15\n---\n\nWarm the cache first (see main//knowledge/guide).\n"
+          },
+          "removed": [
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/cleanup.md",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.md",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/cleanup.md (2)",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.derived.md"
+          ]
+        }
+      }
+    },
+    "retire accept and revert :: retire record": {
+      "value": {
+        "status": "reverted",
+        "metadata_json": "{\"changes\":[{\"path\":\"memories/deploy-note.md\",\"op\":\"delete\"}],\"proposedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\"},\"beforeHash\":\"ceb7a4d1d84f06e8783a44d13eb3e01641307f9cc7d9aa08acb1316fd5a9c509\",\"acceptedAt\":\"<TIME>\",\"review\":{\"outcome\":\"rejected\",\"reason\":\"reverted: archived asset restored\",\"decidedAt\":\"<TIME>\",\"decidedBy\":\"human\"},\"backupContent\":\"---\\ndescription: Deploys fail when the cache is cold\\ntags: [deploy]\\nupdated: 2026-01-15\\n---\\n\\nWarm the cache first (see main//knowledge/guide).\\n\",\"acceptedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\",\"path\":\"<SANDBOX>/fixture/main/memories/deploy-note.md\",\"contentHash\":\"<HASH>\"},\"retiredArchive\":{\"dirs\":[\".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note\",\".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note\"]}}"
+      }
+    },
+    "retire accept resumed :: proposal accept": {
+      "exit": 0,
+      "stdout": {
+        "schemaVersion": 1,
+        "ok": true,
+        "id": "00000000-0000-4000-8000-000000000032",
+        "ref": "main//memories/deploy-note",
+        "assetPath": "<SANDBOX>/fixture/main/memories/deploy-note.md",
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000032",
+          "ref": "main//memories/deploy-note",
+          "status": "accepted",
+          "source": "propose",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "<TIME>",
+          "payload": {
+            "content": ""
+          },
+          "review": {
+            "outcome": "accepted",
+            "decidedAt": "<TIME>",
+            "decidedBy": "human"
+          },
+          "retiredArchive": {
+            "dirs": [
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note",
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note"
+            ]
+          }
+        }
+      },
+      "changes": {
+        "main": {
+          "written": {
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/cleanup.md": "---\nschemaVersion: 1\nkind: memory-cleanup-archive\narchivedAt: <TIME>\nbeliefState: archived\npreviousBeliefState: active\nref: main//memories/deploy-note\nreason: manual\noriginalPath: memories/deploy-note.md\narchivedPath: .akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.md\nproposalId: 00000000-0000-4000-8000-000000000032\nretiredAt: <TIME>\n---\n\nArchived derived memory for recoverable cleanup.\n",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.md": "---\ndescription: Deploys fail when the cache is cold\ntags: [deploy]\nupdated: 2026-01-15\n---\n\nWarm the cache first (see main//knowledge/guide).\n",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/cleanup.md (2)": "---\nschemaVersion: 1\nkind: memory-cleanup-archive\narchivedAt: <TIME>\nbeliefState: archived\npreviousBeliefState: active\nref: main//memories/deploy-note\nreason: manual\noriginalPath: memories/deploy-note.derived.md\narchivedPath: .akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.derived.md\nproposalId: 00000000-0000-4000-8000-000000000032\nretiredAt: <TIME>\n---\n\nArchived derived memory for recoverable cleanup.\n",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.derived.md": "---\ndescription: Derived restatement of the deploy note\ntags: [deploy]\nupdated: 2026-01-15\nderivedFrom: memories/deploy-note\n---\n\nA cold cache makes deploys fail.\n"
+          },
+          "removed": [
+            "memories/deploy-note.derived.md",
+            "memories/deploy-note.md"
+          ]
+        }
+      }
+    },
+    "retire accept resumed :: proposal show full": {
+      "exit": 0,
+      "stdout": {
+        "schemaVersion": 1,
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000032",
+          "ref": "main//memories/deploy-note",
+          "status": "accepted",
+          "source": "propose",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "<TIME>",
+          "payload": {
+            "content": ""
+          },
+          "review": {
+            "outcome": "accepted",
+            "decidedAt": "<TIME>",
+            "decidedBy": "human"
+          },
+          "retiredArchive": {
+            "dirs": [
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note",
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note"
+            ]
+          }
+        },
+        "validation": {
+          "ok": true,
+          "findings": []
+        }
+      },
+      "changes": {
+        "main": {
+          "written": {},
+          "removed": []
+        }
+      }
+    },
+    "retire accept resumed :: proposal revert": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "schemaVersion": 1,
+        "id": "00000000-0000-4000-8000-000000000032",
+        "ref": "main//memories/deploy-note",
+        "assetPath": "<SANDBOX>/fixture/main/memories/deploy-note.md",
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000032",
+          "ref": "main//memories/deploy-note",
+          "status": "reverted",
+          "source": "propose",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "<TIME>",
+          "payload": {
+            "content": ""
+          },
+          "changes": [
+            {
+              "path": "memories/deploy-note.md",
+              "op": "delete"
+            }
+          ],
+          "proposedTarget": {
+            "source": "main",
+            "root": "<SANDBOX>/fixture/main"
+          },
+          "beforeHash": "ceb7a4d1d84f06e8783a44d13eb3e01641307f9cc7d9aa08acb1316fd5a9c509",
+          "acceptedAt": "<TIME>",
+          "review": {
+            "outcome": "rejected",
+            "reason": "reverted: archived asset restored",
+            "decidedAt": "<TIME>",
+            "decidedBy": "human"
+          },
+          "backupContent": "---\ndescription: Deploys fail when the cache is cold\ntags: [deploy]\nupdated: 2026-01-15\n---\n\nWarm the cache first (see main//knowledge/guide).\n",
+          "acceptedTarget": {
+            "source": "main",
+            "root": "<SANDBOX>/fixture/main",
+            "path": "<SANDBOX>/fixture/main/memories/deploy-note.md",
+            "contentHash": "ceb7a4d1d84f06e8783a44d13eb3e01641307f9cc7d9aa08acb1316fd5a9c509"
+          },
+          "retiredArchive": {
+            "dirs": [
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note",
+              ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note"
+            ]
+          }
+        },
+        "shape": "proposal-revert"
+      },
+      "changes": {
+        "main": {
+          "written": {
+            "memories/deploy-note.derived.md": "---\ndescription: Derived restatement of the deploy note\ntags: [deploy]\nupdated: 2026-01-15\nderivedFrom: memories/deploy-note\n---\n\nA cold cache makes deploys fail.\n",
+            "memories/deploy-note.md": "---\ndescription: Deploys fail when the cache is cold\ntags: [deploy]\nupdated: 2026-01-15\n---\n\nWarm the cache first (see main//knowledge/guide).\n"
+          },
+          "removed": [
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/cleanup.md",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.md",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/cleanup.md (2)",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.derived.md"
+          ]
+        }
+      }
+    },
+    "retire accept resumed :: retire record": {
+      "value": {
+        "status": "reverted",
+        "metadata_json": "{\"changes\":[{\"path\":\"memories/deploy-note.md\",\"op\":\"delete\"}],\"proposedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\"},\"beforeHash\":\"ceb7a4d1d84f06e8783a44d13eb3e01641307f9cc7d9aa08acb1316fd5a9c509\",\"acceptedAt\":\"<TIME>\",\"review\":{\"outcome\":\"rejected\",\"reason\":\"reverted: archived asset restored\",\"decidedAt\":\"<TIME>\",\"decidedBy\":\"human\"},\"backupContent\":\"---\\ndescription: Deploys fail when the cache is cold\\ntags: [deploy]\\nupdated: 2026-01-15\\n---\\n\\nWarm the cache first (see main//knowledge/guide).\\n\",\"acceptedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\",\"path\":\"<SANDBOX>/fixture/main/memories/deploy-note.md\",\"contentHash\":\"<HASH>\"},\"retiredArchive\":{\"dirs\":[\".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note\",\".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note\"]}}"
+      }
+    },
+    "promotion retires its source :: proposal accept": {
+      "exit": 0,
+      "stdout": {
+        "schemaVersion": 1,
+        "ok": true,
+        "id": "00000000-0000-4000-8000-000000000033",
+        "ref": "main//knowledge/promoted",
+        "assetPath": "<SANDBOX>/fixture/main/knowledge/promoted.md",
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000033",
+          "ref": "main//knowledge/promoted",
+          "status": "accepted",
+          "source": "consolidate",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "<TIME>",
+          "payload": {
+            "content": "---\ndescription: Promoted deploy note\ngenerated:\n  by: akm/<VERSION>\n  at: <TIME>\nverified:\n  - by: human:unknown\n    at: <TIME>\n---\n\nWarm the cache first.\n"
+          },
+          "review": {
+            "outcome": "accepted",
+            "decidedAt": "<TIME>",
+            "decidedBy": "human"
+          },
+          "promotionSource": "main//memories/deploy-note",
+          "promotionSourceHash": "6c59ecfd3537bba5c99595a0985a226adc485421e02b054d7f656021c9d1fe0d"
+        }
+      },
+      "changes": {
+        "main": {
+          "written": {
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/cleanup.md": "---\nschemaVersion: 1\nkind: memory-cleanup-archive\narchivedAt: <TIME>\nbeliefState: archived\npreviousBeliefState: active\nref: main//memories/deploy-note\nreason: promoted\noriginalPath: memories/deploy-note.md\narchivedPath: .akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.md\nproposalId: 00000000-0000-4000-8000-000000000033\nretiredAt: <TIME>\nsuccessorRefs:\n  - main//knowledge/promoted\n---\n\nArchived derived memory for recoverable cleanup.\n",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.md": "---\ndescription: Deploys fail when the cache is cold\ntags: [deploy]\nupdated: 2026-01-15\n---\n\nWarm the cache first (see main//knowledge/guide).\n",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/cleanup.md (2)": "---\nschemaVersion: 1\nkind: memory-cleanup-archive\narchivedAt: <TIME>\nbeliefState: archived\npreviousBeliefState: active\nref: main//memories/deploy-note\nreason: promoted\noriginalPath: memories/deploy-note.derived.md\narchivedPath: .akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.derived.md\nproposalId: 00000000-0000-4000-8000-000000000033\nretiredAt: <TIME>\nsuccessorRefs:\n  - main//knowledge/promoted\n---\n\nArchived derived memory for recoverable cleanup.\n",
+            ".akm/memory-cleanup/archive/<TIME>-main-memories-deploy-note/memories/deploy-note.derived.md": "---\ndescription: Derived restatement of the deploy note\ntags: [deploy]\nupdated: 2026-01-15\nderivedFrom: memories/deploy-note\n---\n\nA cold cache makes deploys fail.\n",
+            "knowledge/promoted.md": "---\ndescription: Promoted deploy note\ngenerated:\n  by: akm/<VERSION>\n  at: <TIME>\nverified:\n  - by: human:unknown\n    at: <TIME>\n---\n\nWarm the cache first.\n"
+          },
+          "removed": [
+            "memories/deploy-note.derived.md",
+            "memories/deploy-note.md"
+          ]
+        }
+      }
+    },
+    "promotion retires its source :: retire record": {
+      "value": {
+        "status": "accepted",
+        "metadata_json": "{\"changes\":[{\"path\":\"knowledge/promoted.md\",\"op\":\"create\"}],\"proposedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\"},\"acceptedAt\":\"<TIME>\",\"review\":{\"outcome\":\"accepted\",\"decidedAt\":\"<TIME>\",\"decidedBy\":\"human\"},\"acceptedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\",\"path\":\"<SANDBOX>/fixture/main/knowledge/promoted.md\",\"contentHash\":\"<HASH>\"},\"promotionSource\":\"main//memories/deploy-note\",\"promotionSourceHash\":\"6c59ecfd3537bba5c99595a0985a226adc485421e02b054d7f656021c9d1fe0d\"}"
+      }
     },
     "created assets are searchable :: env create": {
       "exit": 0,

@@ -7,13 +7,18 @@
  * retires, restores, forgets and expires assets.
  *
  * To retire a file, the archive writes a tombstone and then moves the file:
- * `<root>/.akm/memory-cleanup/archive/<stamp>-<ref>/cleanup.md` records what was
+ * `<root>/.akm/memory-cleanup/archive/<stamp>-<concept id>/cleanup.md` records what was
  * retired and why, and the file itself is renamed to
- * `<root>/.akm/memory-cleanup/archive/<stamp>-<ref>/<originalPath>`. The
+ * `<root>/.akm/memory-cleanup/archive/<stamp>-<concept id>/<originalPath>`. The
  * tombstone is written first so a crash between the two leaves, at worst, a
  * tombstone for a move that did not happen: the file is still where it was, and
  * `restore` of that retirement changes nothing. The format is persisted
  * (proposals record the archive directories); do not change it.
+ *
+ * The refs a tombstone's note carries (`ref`, `parentRef`, `survivorRef`, `successorRefs`) and the directory name
+ * are concept ids: a ref into the bundle's own namespace is written without its `bundle//` (§0.2 N11), another
+ * bundle's stays qualified. Tombstones written before that carry qualified refs; {@link qualifiedNote} reads both
+ * as qualified, and nothing parses a directory name.
  *
  * A retirement's `handle` is its archive directory, relative to the bundle's
  * root. The `.akm/memory-cleanup/archive` location is the one the memory-cleanup
@@ -23,6 +28,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { makeBundleRef } from "../asset/asset-ref";
 import { assembleAsset } from "../asset/asset-serialize";
 import { parseFrontmatter } from "../asset/frontmatter";
 import { toPosix, writeFileAtomic } from "../common";
@@ -39,6 +45,12 @@ const TOMBSTONE_FILENAME = "cleanup.md";
 
 /** The tombstone fields the archive itself writes; everything else in it is the caller's note. */
 const MECHANICS_FIELDS = ["schemaVersion", "kind", "originalPath", "archivedPath"];
+
+/**
+ * The note fields a tombstone has always written after `originalPath` and `archivedPath` (§0.2 P18: the file is
+ * committed into the bundle, so its key order is kept); the rest of the note comes before them.
+ */
+const TRAILING_NOTE_FIELDS = ["proposalId", "retiredAt", "successorRefs"];
 
 /** One retirement, as its tombstone records it. */
 export interface Tombstone {
@@ -126,6 +138,43 @@ export function noteOf(tombstone: Tombstone): RetireNote {
   return Object.fromEntries(Object.entries(tombstone.data).filter(([key]) => !MECHANICS_FIELDS.includes(key)));
 }
 
+/** The note fields that hold one ref, and the one that holds a list of them. */
+const REF_FIELDS = ["ref", "parentRef", "survivorRef"];
+const REF_LIST_FIELD = "successorRefs";
+
+/** `note` with `convert` applied to each ref it holds; anything else, and a field that is not a string, is kept. */
+function mapNoteRefs(note: RetireNote, convert: (ref: string) => string): RetireNote {
+  const out: Record<string, unknown> = { ...note };
+  for (const field of REF_FIELDS) {
+    const value = out[field];
+    if (typeof value === "string") out[field] = convert(value);
+  }
+  const list = out[REF_LIST_FIELD];
+  if (Array.isArray(list)) out[REF_LIST_FIELD] = list.map((ref) => (typeof ref === "string" ? convert(ref) : ref));
+  return out;
+}
+
+/** `ref` without the `bundle//` that names the bundle it is in; another bundle's ref is kept (§0.2 N11). */
+function localRef(bundle: string, ref: string): string {
+  return ref.startsWith(`${bundle}//`) ? ref.slice(bundle.length + 2) : ref;
+}
+
+/**
+ * The tombstone converter: `note` with each ref qualified by `bundle`. A ref already qualified is read as written
+ * (a tombstone from before §0.2 N11 holds only those), and so is one in the retired `<type>:<name>` spelling, which
+ * memory cleanup still records and which names no concept id.
+ */
+export function qualifiedNote(bundle: string, note: RetireNote): RetireNote {
+  return mapNoteRefs(note, (ref) => {
+    if (ref.includes("//") || /^[a-z-]+:/i.test(ref)) return ref;
+    try {
+      return makeBundleRef(bundle, ref);
+    } catch {
+      return ref; // a hand-edited tombstone: never throw from a read
+    }
+  });
+}
+
 /** The tombstone of the retirement `handle` names; refuses a handle that is not an archive directory of `root`. */
 export function readTombstone(root: string, handle: string): Tombstone {
   const dir = archiveDirOf(root, handle);
@@ -160,27 +209,32 @@ export interface ArchiveWrite {
 
 /**
  * Retire `file` (inside `root`): write the tombstone (`note` plus where the file was and went), then move the
- * file under the archive. `ref` names the archive directory; `archivedAt` stamps it and the tombstone.
+ * file under the archive. `ref` names the archive directory; `archivedAt` stamps it and the tombstone. Given the
+ * `bundle` the root belongs to, a ref into that bundle is written as its concept id (§0.2 N11); a caller with no
+ * qualified refs names none.
  */
 export function archiveFile(
   root: string,
   file: string,
-  { ref, archivedAt, note }: { ref: string; archivedAt: string; note: RetireNote },
+  { ref, archivedAt, note, bundle }: { ref: string; archivedAt: string; note: RetireNote; bundle?: string },
 ): ArchiveWrite {
   const originalPath = toPosix(path.relative(root, file));
-  const archiveDir = createArchiveDir(root, ref, archivedAt);
+  const local = (value: string) => (bundle === undefined ? value : localRef(bundle, value));
+  const archiveDir = createArchiveDir(root, local(ref), archivedAt);
   const archivedPath = path.join(archiveDir, originalPath);
   fs.mkdirSync(path.dirname(archivedPath), { recursive: true });
 
   const auditPath = path.join(archiveDir, TOMBSTONE_FILENAME);
+  const noteFields = Object.entries(bundle === undefined ? note : mapNoteRefs(note, local));
   const tombstone = assembleAsset(
     {
       schemaVersion: 1,
       kind: "memory-cleanup-archive",
       archivedAt,
-      ...note,
+      ...Object.fromEntries(noteFields.filter(([key]) => !TRAILING_NOTE_FIELDS.includes(key))),
       originalPath,
       archivedPath: toPosix(path.relative(root, archivedPath)),
+      ...Object.fromEntries(noteFields.filter(([key]) => TRAILING_NOTE_FIELDS.includes(key))),
     },
     "Archived derived memory for recoverable cleanup.\n",
   );

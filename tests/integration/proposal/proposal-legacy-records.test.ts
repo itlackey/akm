@@ -242,3 +242,124 @@ describe("akm migrate apply rewrites them (proposalRecords)", () => {
     expect(listProposals(stash, { includeArchive: true })).toEqual(before);
   });
 });
+
+/**
+ * A retire an older akm recorded: the accepted one names the archive directories it moved files into
+ * (`retiredArchive.dirs`), the one caught mid-accept names the file it was moving (`retireAcceptIntent.assetPath`)
+ * (§0.2 P5, P7). Both are read as the current record (`retiredArchive.retired`, an intent that names no file),
+ * revert and accept work on them, and `akm migrate apply` rewrites them with the rest.
+ */
+describe("a retire recorded with files and directories", () => {
+  const RETIRED_ID = "00000000-0000-4000-8000-000000000021";
+  const MID_ID = "00000000-0000-4000-8000-000000000022";
+  const ARCHIVE = ".akm/memory-cleanup/archive/2026-01-05T00-00-00-000Z-work-memories-old-note";
+  const OLD = "---\ndescription: An old note\n---\n\nOld body.\n";
+
+  function seedRetires(): void {
+    fs.mkdirSync(path.join(stash, ARCHIVE, "memories"), { recursive: true });
+    fs.writeFileSync(path.join(stash, ARCHIVE, "memories/old-note.md"), OLD);
+    fs.writeFileSync(
+      path.join(stash, ARCHIVE, "cleanup.md"),
+      `---\nschemaVersion: 1\nkind: memory-cleanup-archive\nref: work//memories/old-note\nreason: manual\noriginalPath: memories/old-note.md\narchivedPath: ${ARCHIVE}/memories/old-note.md\n---\n\nArchived.\n`,
+    );
+    fs.mkdirSync(path.join(stash, "memories"), { recursive: true });
+    fs.writeFileSync(path.join(stash, "memories/mid.md"), OLD);
+    const db = openStateDatabase(getStateDbPath());
+    try {
+      const insert = db.prepare(
+        `INSERT INTO proposals
+           (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+         VALUES (?, ?, ?, ?, 'consolidate', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '', NULL, ?)`,
+      );
+      insert.run(
+        RETIRED_ID,
+        stash,
+        "work//memories/old-note",
+        "accepted",
+        JSON.stringify({
+          changes: [{ path: "memories/old-note.md", op: "delete" }],
+          proposedTarget: { source: "work", root: stash },
+          backupContent: OLD,
+          acceptedTarget: {
+            source: "work",
+            root: stash,
+            path: path.join(stash, "memories/old-note.md"),
+            contentHash: HASH,
+          },
+          retiredArchive: { dirs: [ARCHIVE] },
+        }),
+      );
+      insert.run(
+        MID_ID,
+        stash,
+        "work//memories/mid",
+        "pending",
+        JSON.stringify({
+          changes: [{ path: "memories/mid.md", op: "delete" }],
+          proposedTarget: { source: "work", root: stash },
+          retireAcceptIntent: { assetPath: path.join(stash, "memories/mid.md"), backupContent: OLD },
+        }),
+      );
+    } finally {
+      db.close();
+    }
+  }
+
+  beforeEach(seedRetires);
+
+  test("the archive is a list of { ref, handle }, the intent names no file, and a command warns once", async () => {
+    const { result, warned } = await warnings(() => ({
+      done: getProposal(stash, RETIRED_ID),
+      mid: getProposal(stash, MID_ID),
+    }));
+    expect(result.done.retiredArchive).toEqual({ retired: [{ ref: "work//memories/old-note", handle: ARCHIVE }] });
+    expect(result.mid.retireAcceptIntent).toEqual({ backupContent: OLD });
+    expect(warned).toEqual([LEGACY_PROPOSAL_RECORDS_WARNING]);
+  });
+
+  test("reverting the old record puts the file back from the archive it names", async () => {
+    const { akmProposalRevert } = await import("../../../src/commands/proposal/proposal");
+    await akmProposalRevert({ stashDir: stash, id: RETIRED_ID });
+    expect(fs.readFileSync(path.join(stash, "memories/old-note.md"), "utf8")).toBe(OLD);
+    expect(fs.existsSync(path.join(stash, ARCHIVE))).toBe(false);
+    expect(getProposal(stash, RETIRED_ID).status).toBe("reverted");
+  });
+
+  test("accepting the one caught mid-accept finishes it and stores the current record", async () => {
+    const accepted = await akmProposalAccept({ stashDir: stash, id: MID_ID });
+    expect(accepted.proposal.status).toBe("accepted");
+    expect(fs.existsSync(path.join(stash, "memories/mid.md"))).toBe(false);
+    const stored = rawMetadata(MID_ID);
+    expect(JSON.stringify(stored)).not.toContain("assetPath");
+    expect(JSON.stringify(stored)).not.toContain('"dirs"');
+    const archive = stored.retiredArchive as { retired: Array<{ ref: string; handle: string }> };
+    expect(archive.retired).toHaveLength(1);
+    expect(archive.retired[0]?.ref).toBe("work//memories/mid");
+    expect(archive.retired[0]?.handle).toMatch(/-memories-mid$/); // a concept id, not `work-memories-mid` (N11)
+  });
+
+  test("a dry run counts them with the others, and apply rewrites them", () => {
+    expect(inspectProposalRecordsMigration().proposalRecords.changed).toBe(5);
+    const result = applyProposalRecordsMigration();
+    expect(result.proposalRecords).toMatchObject({ changed: 5, applied: 5 });
+    expect(rawMetadata(RETIRED_ID).retiredArchive).toEqual({
+      retired: [{ ref: "work//memories/old-note", handle: ARCHIVE }],
+    });
+    expect(rawMetadata(MID_ID).retireAcceptIntent).toEqual({ backupContent: OLD });
+    expect(inspectProposalRecordsMigration().proposalRecords.changed).toBe(0);
+  });
+
+  test("renaming the bundle renames the ref each retirement holds", async () => {
+    const { renameProposalsBundleRef } = await import("../../../src/storage/repositories/proposals-repository");
+    applyProposalRecordsMigration();
+    const db = openStateDatabase(getStateDbPath());
+    try {
+      renameProposalsBundleRef(db, "work", "team");
+    } finally {
+      db.close();
+    }
+    expect(rawMetadata(RETIRED_ID).retiredArchive).toEqual({
+      retired: [{ ref: "team//memories/old-note", handle: ARCHIVE }],
+    });
+  });
+});

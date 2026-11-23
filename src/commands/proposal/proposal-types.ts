@@ -260,27 +260,26 @@ export interface RetirementContinuityRisk {
 
 /**
  * Where an archived retire proposal's files ended up (accept-time only, so
- * `akm proposal revert` can find them without re-scanning every tombstone).
- * Stash-relative paths, one per archived file (the retired asset, plus its
- * `.derived` twin when one was archived alongside it).
+ * `akm proposal revert` can find them without re-scanning every tombstone):
+ * one retirement per archived file (the retired asset, plus its `.derived`
+ * twin when one was archived alongside it), each by the `ref` it was retired
+ * under and the opaque `handle` of its archive (§0.2 P7).
  */
 export interface RetiredArchiveRecord {
-  dirs: string[];
+  retired: Array<{ ref: string; handle: string }>;
 }
 
 /**
  * A retire accept's durable intent, recorded on the still-
  * "pending" proposal BEFORE any file is moved: the exact bytes to preserve
  * as `backupContent`. A crashed accept resumes from this record instead of
- * re-deriving it from whatever the archive happens to contain. No `twinPath`:
- * the twin, if any, is a
- * pure function of `assetPath` and the ref's type (`derivedTwinPath`), and
- * whether it was already archived by an earlier, crashed attempt is exactly
- * what the tombstone scan (`alreadyArchivedOriginalPaths`) independently
- * finds — nothing a stored path adds to either.
+ * re-deriving it from whatever the archive happens to contain. It names no
+ * file: the asset is the proposal's ref, and the twin, if any, is a pure
+ * function of the asset's file and its type (`derivedTwinPath`), whose
+ * archiving by an earlier, crashed attempt is exactly what the tombstone scan
+ * (`alreadyArchivedOriginalPaths`) independently finds.
  */
 export interface RetireAcceptIntent {
-  assetPath: string;
   backupContent: string;
 }
 

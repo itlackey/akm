@@ -239,15 +239,14 @@ describe("akm improve memory cleanup", () => {
       reason: "duplicate-derived",
       beliefState: "archived",
       previousBeliefState: "active",
-      originalPath: "memories/deploy-duplicate.derived.md",
     });
-    const archivedPath = result.memoryCleanup?.archived?.[0]?.archivedPath;
-    const auditPath = result.memoryCleanup?.archived?.[0]?.auditPath;
-    expect(archivedPath).toBeTruthy();
-    expect(auditPath).toBeTruthy();
-    expect(fs.existsSync(path.join(stashDir, archivedPath as string))).toBe(true);
-    expect(fs.existsSync(path.join(stashDir, auditPath as string))).toBe(true);
-    const auditRaw = fs.readFileSync(path.join(stashDir, auditPath as string), "utf8");
+    const archived = result.memoryCleanup?.archived?.[0] as unknown as Record<string, unknown>;
+    // A retirement is named by its opaque handle, not by the files it moved (§0.2 P7).
+    expect(Object.keys(archived).filter((key) => /Path$/.test(key))).toEqual([]);
+    const handle = archived.handle as string;
+    expect(handle).toBeTruthy();
+    expect(fs.existsSync(path.join(stashDir, handle, "memories/deploy-duplicate.derived.md"))).toBe(true);
+    const auditRaw = fs.readFileSync(path.join(stashDir, handle, "cleanup.md"), "utf8");
     expect(auditRaw).toContain("kind: memory-cleanup-archive");
     expect(auditRaw).toContain("ref: memory:deploy-duplicate.derived");
     expect(

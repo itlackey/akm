@@ -4,11 +4,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { archiveFile, expireArchive } from "../../../core/adapter/directory-archive";
+import { type ArchiveWrite, archiveFile, expireArchive } from "../../../core/adapter/directory-archive";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
 import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
 import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
-import { asNonEmptyString, groupBy, stringArray, toPosix } from "../../../core/common";
+import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
 import type {
   ArchivedMemoryCleanupRecord,
   MemoryBeliefState,
@@ -260,7 +260,7 @@ export function applyMemoryCleanup(stashDir: string, plan: MemoryCleanupPlan): M
     const filePath = fileByRef.get(candidate.ref);
     if (!filePath) continue;
     try {
-      archived.push(archiveCleanupCandidate(stashDir, candidate, filePath));
+      archived.push(archiveCleanupCandidate(stashDir, candidate, filePath).record);
     } catch (error) {
       warnings.push(formatApplyWarning("archive", candidate.ref, error));
     }
@@ -627,18 +627,24 @@ function resolvePreviousBeliefState(
  * cleanup already used (D27: never two coexisting encodings). A
  * retire-proposal candidate (one carrying `proposalId`) additionally stamps
  * `proposalId`, `successorRefs` and `retiredAt` on the tombstone.
+ *
+ * The record names the retirement by `handle` (its archive directory); `written` is what the move touched, for a
+ * caller that journals, commits or undoes it. Given the `bundle` the refs may be qualified with, a ref into it is
+ * written to the tombstone and the directory name as its concept id (§0.2 N11).
  */
 export function archiveCleanupCandidate(
   stashDir: string,
   candidate: MemoryPruneCandidate,
   filePath: string,
-): ArchivedMemoryCleanupRecord {
+  bundle?: string,
+): { record: ArchivedMemoryCleanupRecord; written: ArchiveWrite } {
   const archivedAt = new Date().toISOString();
   const previousBeliefState = resolvePreviousBeliefState(candidate, filePath);
   const retiring = isRetireCandidate(candidate);
   const written = archiveFile(stashDir, filePath, {
     ref: candidate.ref,
     archivedAt,
+    ...(bundle !== undefined ? { bundle } : {}),
     note: {
       beliefState: "archived",
       previousBeliefState,
@@ -656,22 +662,21 @@ export function archiveCleanupCandidate(
   // sync stages the removal of the original alongside the archived copy and the tombstone.
   for (const file of written.changed) recordWrittenPath(file);
 
-  return {
+  const record: ArchivedMemoryCleanupRecord = {
     ref: candidate.ref,
+    handle: written.handle,
     ...(candidate.parentRef ? { parentRef: candidate.parentRef } : {}),
     reason: candidate.reason,
     beliefState: "archived",
     previousBeliefState,
     ...(candidate.survivorRef ? { survivorRef: candidate.survivorRef } : {}),
-    originalPath: written.originalPath,
-    archivedPath: toPosix(path.relative(stashDir, written.archivedPath)),
-    auditPath: toPosix(path.relative(stashDir, written.auditPath)),
     archivedAt,
     ...(retiring ? { proposalId: candidate.proposalId, retiredAt: archivedAt } : {}),
     ...(retiring && candidate.successorRefs && candidate.successorRefs.length > 0
       ? { successorRefs: candidate.successorRefs }
       : {}),
   };
+  return { record, written };
 }
 
 /**

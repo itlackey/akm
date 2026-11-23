@@ -5,14 +5,18 @@
 /**
  * Proposal records written by an older akm, as the current shape.
  *
- * A record named files: `changes[].path/after`, `proposedTarget.root`, `acceptedTarget.root/path` (§0.2 P5). It names
- * assets by ref now: `changes[].ref/content`, `proposedTarget.source`, `acceptedTarget.bundle/ref`. The proposals
+ * A record named files: `changes[].path/after`, `proposedTarget.root`, `acceptedTarget.root/path`,
+ * `retireAcceptIntent.assetPath` and `retiredArchive.dirs` (§0.2 P5). It names assets by ref and retirements by handle
+ * now: `changes[].ref/content`, `proposedTarget.source`, `acceptedTarget.bundle/ref`, `retiredArchive.retired[]`
+ * (`{ ref, handle }`; a handle is the directory the old record named, kept as written). The proposals
  * repository reads an old record through {@link convertLegacyProposalMetadata} and says so once per command; `akm
  * migrate apply` writes the converted record back (`proposal-records`). The state opener never rewrites one.
  *
  * The bundle an old record named is its `proposedTarget.source` when that is configured, else the bundle whose root
  * the record stored (a proposal made with `--dir` named the invented bundle `stash`, §0.2 P9). A path becomes a ref
- * through `legacyRefOf`; one that names no asset (or a record whose bundle is gone) takes the proposal's own ref.
+ * through `legacyRefOf`; one that names no asset (or a record whose bundle is gone) takes the proposal's own ref. A
+ * retirement's ref is the accepted target's: a retire accept archives each file under the proposal's ref, so a
+ * tombstone holds nothing more to read.
  */
 
 import path from "node:path";
@@ -40,7 +44,11 @@ export function isLegacyProposalMetadata(meta: Meta): boolean {
   const proposed = meta.proposedTarget;
   if (isRecord(proposed) && "root" in proposed) return true;
   const accepted = meta.acceptedTarget;
-  return isRecord(accepted) && ("root" in accepted || "path" in accepted || "source" in accepted);
+  if (isRecord(accepted) && ("root" in accepted || "path" in accepted || "source" in accepted)) return true;
+  return (
+    (isRecord(meta.retireAcceptIntent) && "assetPath" in meta.retireAcceptIntent) ||
+    (isRecord(meta.retiredArchive) && "dirs" in meta.retiredArchive)
+  );
 }
 
 interface ConfiguredBundle {
@@ -135,6 +143,17 @@ export function convertLegacyProposalMetadata(
           : (accepted.ref ?? proposalRef),
       contentHash: accepted.contentHash,
     };
+  }
+  const intent = meta.retireAcceptIntent;
+  if (isRecord(intent) && "assetPath" in intent) {
+    const { assetPath: _file, ...rest } = intent;
+    out.retireAcceptIntent = rest;
+  }
+  const archive = meta.retiredArchive;
+  if (isRecord(archive) && Array.isArray(archive.dirs)) {
+    const ref =
+      isRecord(out.acceptedTarget) && typeof out.acceptedTarget.ref === "string" ? out.acceptedTarget.ref : proposalRef;
+    out.retiredArchive = { retired: archive.dirs.map((handle) => ({ ref, handle })) };
   }
   return { meta: out, legacy: true };
 }

@@ -30,6 +30,8 @@
  *      `<HASH>`; the plan itself, step by step, is still compared;
  *   8. a `content` field of a `show` result is replaced by its length and SHA-256, so the file records the content
  *      hash the design asks for instead of whole documents.
+ *   9. the path of a file a tracked bundle's case changed is normalised like any other text (a retirement's archive
+ *      directory carries its time), and two paths that then agree are told apart by their order (` (2)`).
  * JSON objects are compared as parsed values, so key order is not compared; array order is.
  */
 
@@ -596,12 +598,23 @@ function bundleChanges(dir: string, pristine: string, text: (s: string) => strin
   };
   const now = files(dir);
   const before = new Set(files(pristine));
+  // A path carries the time a retirement was archived (`<TIME>-memories-note/cleanup.md`): it is normalised like any
+  // text, and two files whose paths then agree (a memory's archive and its twin's) are told apart by their order.
+  const named = (taken: (name: string) => boolean, rel: string): string => {
+    const base = text(rel);
+    let name = base;
+    for (let n = 2; taken(name); n++) name = `${base} (${n})`;
+    return name;
+  };
   const written: Record<string, string> = {};
   for (const rel of now) {
     const bytes = fs.readFileSync(path.join(dir, rel), "utf8");
-    if (!before.has(rel) || fs.readFileSync(path.join(pristine, rel), "utf8") !== bytes) written[rel] = text(bytes);
+    if (!before.has(rel) || fs.readFileSync(path.join(pristine, rel), "utf8") !== bytes)
+      written[named((name) => name in written, rel)] = text(bytes);
   }
-  const removed = [...before].filter((rel) => !now.includes(rel));
+  const removed: string[] = [];
+  for (const rel of [...before].filter((r) => !now.includes(r)))
+    removed.push(named((name) => removed.includes(name), rel));
   return { written, removed };
 }
 

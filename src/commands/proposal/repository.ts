@@ -1697,12 +1697,13 @@ function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Pr
       proposalId: accepted.id,
       successorRefs: [accepted.ref],
     };
-    const record = archiveCleanupCandidate(mutationTarget.source.path, candidate, sourcePath);
-    paths.push(
+    const archivedSource = archiveCleanupCandidate(
+      mutationTarget.source.path,
+      candidate,
       sourcePath,
-      path.join(mutationTarget.source.path, record.archivedPath),
-      path.join(mutationTarget.source.path, record.auditPath),
+      mutationTarget.source.name,
     );
+    paths.push(...archivedSource.written.changed);
     const twin = derivedTwinPath(sourcePath, sourceRef.type);
     if (
       twin &&
@@ -1711,12 +1712,13 @@ function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Pr
         scopeFromFrontmatter(parseFrontmatter(sourceContent).data),
       )
     ) {
-      const twinRecord = archiveCleanupCandidate(mutationTarget.source.path, candidate, twin);
-      paths.push(
+      const archivedTwin = archiveCleanupCandidate(
+        mutationTarget.source.path,
+        candidate,
         twin,
-        path.join(mutationTarget.source.path, twinRecord.archivedPath),
-        path.join(mutationTarget.source.path, twinRecord.auditPath),
+        mutationTarget.source.name,
       );
+      paths.push(...archivedTwin.written.changed);
     }
   } catch (error) {
     warn(
@@ -1891,7 +1893,8 @@ function persistRetireAcceptance(
     ref: string;
     assetPath: string;
     contentHash: string;
-    archiveDirs: string[];
+    /** The archive of each file the retirement moved. */
+    handles: string[];
     backupContent: string;
     gateDecision?: GateDecisionInput;
     decidedBy?: ProposalDecider;
@@ -1915,7 +1918,7 @@ function persistRetireAcceptance(
         acceptedAt: decidedAt,
         review: { outcome: "accepted", decidedAt, ...(info.decidedBy ? { decidedBy: info.decidedBy } : {}) },
         acceptedTarget: { bundle: info.targetName, ref: info.ref, contentHash: info.contentHash },
-        retiredArchive: { dirs: info.archiveDirs },
+        retiredArchive: { retired: info.handles.map((handle) => ({ ref: info.ref, handle })) },
         backupContent: info.backupContent,
         ...(info.gateDecision
           ? { gateDecision: { ...info.gateDecision, decidedAt: info.gateDecision.decidedAt ?? decidedAt } }
@@ -2035,7 +2038,8 @@ async function retireProposalWithLease(
     requireAcceptedTarget(proposal);
     const assetPath = acceptedAssetPath(proposal, target);
     const archive = proposal.retiredArchive;
-    const archivedStill = archive?.dirs.every((dir) => fs.existsSync(path.join(target.source.path, dir))) === true;
+    const archivedStill =
+      archive?.retired.every(({ handle }) => fs.existsSync(path.join(target.source.path, handle))) === true;
     if (fs.existsSync(assetPath) || !archivedStill) {
       throw new UsageError(
         `Accepted retire proposal ${proposal.id} no longer matches its archive.`,
@@ -2085,7 +2089,7 @@ async function retireProposalWithLease(
     // between here and the edge write below can never cause a resume to
     // re-read the file and capture the edge INTO backupContent as if it were
     // the original.
-    intent = { assetPath, backupContent: currentBytes.toString("utf8") };
+    intent = { backupContent: currentBytes.toString("utf8") };
     working = recordRetireAcceptIntent(stashDir, proposal.id, intent, ctx);
     scheduler = await disableRetiredTask(ref, target.source.name);
     if (retirement?.judgeLabel === "supersedes") {
@@ -2099,7 +2103,7 @@ async function retireProposalWithLease(
     }
   } else {
     assertAdapterWrites(target.source, ref.type);
-    assertRetiringTaskUnchanged(ref, intent, proposal);
+    assertRetiringTaskUnchanged(ref, assetPath, intent, proposal);
     // Revalidate the survivor even after a partial archive. The recorded original
     // is the judged retired side when its file has already moved.
     if (working.retirement) {
@@ -2108,7 +2112,7 @@ async function retireProposalWithLease(
         proposal.ref,
         working.retirement,
         target.source,
-        fs.existsSync(intent.assetPath) ? fs.readFileSync(intent.assetPath) : Buffer.from(intent.backupContent),
+        fs.existsSync(assetPath) ? fs.readFileSync(assetPath) : Buffer.from(intent.backupContent),
       );
     }
     scheduler = await disableRetiredTask(ref, target.source.name);
@@ -2118,27 +2122,27 @@ async function retireProposalWithLease(
   // intent — it is a pure function of assetPath and the ref's type, and the
   // tombstone scan below (`alreadyDone`) already finds one archived earlier,
   // so storing it was redundant persisted state.
-  const twinPath = derivedTwinPath(intent.assetPath, ref.type);
+  const twinPath = derivedTwinPath(assetPath, ref.type);
   let mutationTarget: ResolvedWriteTarget;
   let commit: ReturnType<typeof commitAccept>;
   let accepted: Proposal;
   try {
     // Native reconciliation awaits external work; a direct file edit can happen outside AKM's mutation lease.
-    assertRetiringTaskUnchanged(ref, intent, proposal);
+    assertRetiringTaskUnchanged(ref, assetPath, intent, proposal);
 
     // Phase 2: move, idempotently — a resumed call skips whichever file a
     // tombstone under this proposal's own id already claims. A failure undoes this
     // call's own moves, so a refused accept leaves no asset half-retired.
     mutationTarget = prepareWriteTargetForMutation(target);
     assertWritePathsInsideSource(mutationTarget.source, [
-      intent.assetPath,
+      assetPath,
       path.join(mutationTarget.source.path, MEMORY_ARCHIVE_REL, "archive-check"),
     ]);
     const already = findRetireArchiveDirsByProposalId(mutationTarget.source.path, proposal.id) ?? [];
     const alreadyDone = alreadyArchivedOriginalPaths(mutationTarget.source.path, already);
-    const archiveDirs = [...already];
+    const handles = [...already];
     const paths: string[] = [];
-    const moved: Array<{ original: string; record: ReturnType<typeof archiveCleanupCandidate> }> = [];
+    const moved: Array<{ original: string; written: ReturnType<typeof archiveCleanupCandidate>["written"] }> = [];
     const candidate: MemoryPruneCandidate = {
       ref: proposal.ref,
       reason: working.retirement?.reason ?? "manual",
@@ -2146,18 +2150,18 @@ async function retireProposalWithLease(
       ...(working.retirement?.successorRef ? { successorRefs: [working.retirement.successorRef] } : {}),
     };
     const moveToArchive = (original: string) => {
-      const record = archiveCleanupCandidate(mutationTarget.source.path, candidate, original);
-      moved.push({ original, record });
-      archiveDirs.push(path.dirname(record.auditPath));
-      paths.push(
+      const { written } = archiveCleanupCandidate(
+        mutationTarget.source.path,
+        candidate,
         original,
-        path.join(mutationTarget.source.path, record.archivedPath),
-        path.join(mutationTarget.source.path, record.auditPath),
+        mutationTarget.source.name,
       );
+      moved.push({ original, written });
+      handles.push(written.handle);
+      paths.push(...written.changed);
     };
     try {
-      if (!alreadyDone.has(path.resolve(intent.assetPath)) && fs.existsSync(intent.assetPath))
-        moveToArchive(intent.assetPath);
+      if (!alreadyDone.has(path.resolve(assetPath)) && fs.existsSync(assetPath)) moveToArchive(assetPath);
       if (
         twinPath &&
         !alreadyDone.has(path.resolve(twinPath)) &&
@@ -2169,17 +2173,14 @@ async function retireProposalWithLease(
       )
         moveToArchive(twinPath);
     } catch (error) {
-      for (const { original, record } of moved.reverse()) {
+      for (const { original, written } of moved.reverse()) {
         // A failed undo must not hide the failure that caused it; the tombstone stays to explain the file.
         try {
-          fs.renameSync(path.join(mutationTarget.source.path, record.archivedPath), original);
-          fs.rmSync(path.dirname(path.join(mutationTarget.source.path, record.auditPath)), {
-            recursive: true,
-            force: true,
-          });
+          fs.renameSync(written.archivedPath, original);
+          fs.rmSync(written.archiveDir, { recursive: true, force: true });
         } catch (undoError) {
           warn(
-            `[retire] could not put ${original} back from ${record.archivedPath}: ${undoError instanceof Error ? undoError.message : String(undoError)}`,
+            `[retire] could not put ${original} back from ${written.archivedPath}: ${undoError instanceof Error ? undoError.message : String(undoError)}`,
           );
         }
       }
@@ -2187,7 +2188,7 @@ async function retireProposalWithLease(
     }
     commit = paths.length > 0 ? commitAccept(options.commitCollector, mutationTarget, proposal, paths) : undefined;
 
-    if (archiveDirs.length === 0) {
+    if (handles.length === 0) {
       // Recorded intent, but neither file is at its original location NOR
       // archived under this proposal's id: something else removed the target
       // between intent and move. Refuse cleanly rather than finalize on
@@ -2206,9 +2207,9 @@ async function retireProposalWithLease(
       {
         targetName: mutationTarget.source.name,
         ref: makeBundleRef(mutationTarget.source.name, ref.conceptId),
-        assetPath: intent.assetPath,
+        assetPath,
         contentHash: contentHash(intent.backupContent),
-        archiveDirs,
+        handles,
         backupContent: intent.backupContent,
         ...(options.gateDecision ? { gateDecision: options.gateDecision } : {}),
         ...(options.decidedBy ? { decidedBy: options.decidedBy } : {}),
@@ -2222,23 +2223,24 @@ async function retireProposalWithLease(
     throw error;
   }
   // The moved files left the index's view; drop their rows now, not at the next `akm index`.
-  await indexWrittenProposalAssets(mutationTarget, twinPath ? [intent.assetPath, twinPath] : [intent.assetPath]);
+  await indexWrittenProposalAssets(mutationTarget, twinPath ? [assetPath, twinPath] : [assetPath]);
   return {
     proposal: accepted,
-    assetPath: intent.assetPath,
+    assetPath,
     ref: accepted.ref,
     ...(commit ? { commit } : {}),
     ...(scheduler.warnings.length ? { warnings: scheduler.warnings } : {}),
   };
 }
 
-function assertRetiringTaskUnchanged(ref: AssetAddress, intent: RetireAcceptIntent, proposal: Proposal): void {
+function assertRetiringTaskUnchanged(
+  ref: AssetAddress,
+  assetPath: string,
+  intent: RetireAcceptIntent,
+  proposal: Proposal,
+): void {
   // The intent holds the bytes this retirement was validated against; `beforeHash` is absent on some proposals.
-  if (
-    ref.type === "task" &&
-    fs.existsSync(intent.assetPath) &&
-    fs.readFileSync(intent.assetPath, "utf8") !== intent.backupContent
-  ) {
+  if (ref.type === "task" && fs.existsSync(assetPath) && fs.readFileSync(assetPath, "utf8") !== intent.backupContent) {
     throw new UsageError(
       `Retire proposal ${proposal.id} target (${proposal.ref}) changed since retirement started.`,
       "PROPOSAL_STALE",
@@ -2338,7 +2340,7 @@ export async function revertProposal(
  * byte-exact, so it also undoes any supersede edge accept wrote without
  * touching one a person had already written, and without appending a
  * trailing newline the original never had. Each archive dir is located from
- * `retiredArchive.dirs` (set at accept time) and its own `cleanup.md`
+ * `retiredArchive.retired` (set at accept time) and its own `cleanup.md`
  * tombstone names the exact paths to restore — no re-scan of every
  * tombstone in the archive.
  *
@@ -2373,7 +2375,7 @@ async function unretireProposalWithLease(
     return { proposal, assetPath, ref: proposal.ref };
   }
   const archive = proposal.retiredArchive;
-  if (!archive || archive.dirs.length === 0) {
+  if (!archive || archive.retired.length === 0) {
     throw new UsageError(
       `no archive recorded for this retire proposal (id: ${proposal.id})`,
       "MISSING_REQUIRED_ARGUMENT",
@@ -2395,7 +2397,7 @@ async function unretireProposalWithLease(
     fromBackup: boolean;
   }
   const pending: PendingRestore[] = [];
-  for (const dirRel of archive.dirs) {
+  for (const { handle: dirRel } of archive.retired) {
     const dirAbs = path.join(target.source.path, dirRel);
     const auditPath = path.join(dirAbs, "cleanup.md");
     let tombstoneData: Record<string, unknown>;

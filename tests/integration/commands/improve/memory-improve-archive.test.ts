@@ -81,7 +81,7 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
       proposalId: "proposal-1",
       successorRefs: ["memories/new-note"],
     };
-    const record = archiveCleanupCandidate(stashDir, candidate, filePath);
+    const { record, written } = archiveCleanupCandidate(stashDir, candidate, filePath);
 
     expect(fs.existsSync(filePath)).toBe(false);
     expect(record.reason).toBe("duplicate");
@@ -94,7 +94,8 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
     expect(record.previousBeliefState).toBe("superseded");
     expect(record.parentRef).toBeUndefined();
 
-    const tombstone = fs.readFileSync(path.join(stashDir, record.auditPath), "utf8");
+    const tombstone = fs.readFileSync(written.auditPath, "utf8");
+    expect(record.handle).toBe(path.relative(stashDir, written.archiveDir));
     expect(tombstone).toContain("proposalId: proposal-1");
     expect(tombstone).toContain("successorRefs:");
     expect(tombstone).toContain("retiredAt:");
@@ -104,7 +105,7 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
   test("a retire candidate with no beliefState in frontmatter defaults to active, same as memory cleanup's resolver", () => {
     const stashDir = sandbox();
     const filePath = writeAsset(stashDir, "knowledge/dup.md", "description: a duplicate knowledge asset");
-    const record = archiveCleanupCandidate(
+    const { record } = archiveCleanupCandidate(
       stashDir,
       { ref: "knowledge/dup", reason: "subsumed", proposalId: "p2", successorRefs: ["knowledge/keeper"] },
       filePath,
@@ -124,7 +125,7 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
       reason: "superseded-derived",
       survivorRef: "memory:child.derived.v2",
     };
-    const record = archiveCleanupCandidate(stashDir, candidate, filePath);
+    const { record, written } = archiveCleanupCandidate(stashDir, candidate, filePath);
     expect(record.previousBeliefState).toBe("superseded");
     expect(record.parentRef).toBe("memories/child");
     expect(record.survivorRef).toBe("memory:child.derived.v2");
@@ -132,7 +133,7 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
     expect(record.successorRefs).toBeUndefined();
     expect(record.retiredAt).toBeUndefined();
 
-    const tombstone = fs.readFileSync(path.join(stashDir, record.auditPath), "utf8");
+    const tombstone = fs.readFileSync(written.auditPath, "utf8");
     expect(tombstone).not.toContain("proposalId:");
     expect(tombstone).not.toContain("successorRefs:");
     expect(tombstone).not.toContain("retiredAt:");
@@ -191,7 +192,7 @@ describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)
       proposalId: `p-${ref}`,
       successorRefs: ["memories/keeper"],
     };
-    const record = archiveCleanupCandidate(stashDir, candidate, filePath);
+    const { record } = archiveCleanupCandidate(stashDir, candidate, filePath);
     if (!record.retiredAt) throw new Error("expected a retiredAt on a retire-shaped archive record");
     return record.retiredAt;
   }

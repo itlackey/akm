@@ -90,7 +90,7 @@ export interface AssetChange {
 
 /** What the caller records with a retirement; kept with it and returned by `retired`. YAML-serializable. */
 export interface RetireNote {
-  /** Names the retirement's archive (default: the asset's ref). */
+  /** Names the retirement's archive (default: the asset's concept id). A ref into the bundle is stored without its `bundle//`. */
   readonly ref?: string;
   /** When it was retired (ISO 8601): `expireRetired` measures its age from it. */
   readonly retiredAt?: string;

@@ -448,7 +448,7 @@ purged produces no commit at all. The run reports its journal as
 
 ### Archive purge
 
-A retirement's archived bytes (`.akm/memory-cleanup/archive/<stamp>-<ref>/`)
+A retirement's archived bytes (`.akm/memory-cleanup/archive/<stamp>-<concept id>/`)
 are not deleted at accept time — only the tombstone (`cleanup.md`) resolves
 the ref going forward. `purgeGracedArchive`
 (`src/commands/improve/memory/memory-improve.ts`) sweeps them later: run once

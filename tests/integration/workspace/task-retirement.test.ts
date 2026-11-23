@@ -97,7 +97,7 @@ for (const through of ["workspace", "proposal"] as const) {
     expect(loadConfig().scheduler?.enabled).toEqual(["stash//tasks/other"]);
     expect(await backend.list()).toEqual(beforeOther);
     const proposal = getProposal(storage.stashDir, proposalId);
-    const archive = proposal.retiredArchive?.dirs[0];
+    const archive = proposal.retiredArchive?.retired[0]?.handle;
     expect(archive).toBeDefined();
     expect(fs.readFileSync(path.join(storage.stashDir, archive!, "tasks/nightly.yml"), "utf8")).toBe(source);
     // Accepting again reads only the archive: no scheduler lock, bundle lookup or native query.

@@ -266,22 +266,23 @@ function validatePresentMetadata(meta: Record<string, unknown>): void {
     if (
       typeof archive !== "object" ||
       archive === null ||
-      !Array.isArray(archive.dirs) ||
-      archive.dirs.length === 0 ||
-      archive.dirs.some((dir) => typeof dir !== "string" || dir.length === 0)
+      !Array.isArray(archive.retired) ||
+      archive.retired.length === 0 ||
+      archive.retired.some(
+        (entry) =>
+          !isRecord(entry) ||
+          typeof entry.ref !== "string" ||
+          entry.ref.length === 0 ||
+          typeof entry.handle !== "string" ||
+          entry.handle.length === 0,
+      )
     ) {
       invalidPresentField("retiredArchive");
     }
   }
   if (Object.hasOwn(meta, "retireAcceptIntent")) {
     const intent = meta.retireAcceptIntent as Record<string, unknown> | null;
-    if (
-      typeof intent !== "object" ||
-      intent === null ||
-      typeof intent.assetPath !== "string" ||
-      intent.assetPath.length === 0 ||
-      typeof intent.backupContent !== "string"
-    ) {
+    if (typeof intent !== "object" || intent === null || typeof intent.backupContent !== "string") {
       invalidPresentField("retireAcceptIntent");
     }
   }
@@ -679,6 +680,13 @@ export function renameProposalsBundleRef(
       const accepted = meta.acceptedTarget as Record<string, unknown> | undefined;
       if (typeof accepted === "object" && accepted !== null && "ref" in accepted) {
         meta.acceptedTarget = { ...accepted, ref: rename(accepted.ref) };
+      }
+      const archive = meta.retiredArchive as Record<string, unknown> | undefined;
+      if (isRecord(archive) && Array.isArray(archive.retired)) {
+        meta.retiredArchive = {
+          ...archive,
+          retired: archive.retired.map((entry) => (isRecord(entry) ? { ...entry, ref: rename(entry.ref) } : entry)),
+        };
       }
       db.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(meta), holder.id);
     }
