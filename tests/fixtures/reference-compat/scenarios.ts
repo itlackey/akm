@@ -546,6 +546,48 @@ export const SCENARIOS: Scenario[] = [
     },
   },
   {
+    // Every create over a broken symbolic link is refused as a symbolic link, the link left (F8; `1f2e58c9` replaced
+    // it), and a remove over a directory where an env or secret file would be says not found (F10; `1f2e58c9` crashed).
+    id: "broken links and removal over a directory",
+    setup: (sb) => {
+      fs.symlinkSync("../../../outside/nowhere.md", path.join(sb.fixture, "main/memories/mbr.md"));
+      fs.symlinkSync("../../../outside/nowhere.md", path.join(sb.fixture, "main/memories/mbrf.md"));
+      fs.symlinkSync("../../../outside/nowhere.yml", path.join(sb.fixture, "main/tasks/tbr.yml"));
+      fs.symlinkSync("../../../outside/nowhere.yml", path.join(sb.fixture, "main/tasks/tbrf.yml"));
+      fs.mkdirSync(path.join(sb.fixture, "main/env/rmd.env"));
+      fs.mkdirSync(path.join(sb.fixture, "main/secrets/rmd"));
+    },
+    cases: [
+      c("remember over broken link", ["remember", "x", "--name", "mbr"]),
+      c("remember over broken link --force", ["remember", "x", "--name", "mbrf", "--force"]),
+      c("task add over broken link", ["task", "add", "tbr", "--schedule", "@daily", "--command", "echo x"]),
+      c("task add over broken link --force", [
+        "task",
+        "add",
+        "tbrf",
+        "--schedule",
+        "@daily",
+        "--command",
+        "echo x",
+        "--force",
+      ]),
+      c("env remove over directory", ["env", "remove", "env/rmd", "--yes"]),
+      c("secret remove over directory", ["secret", "remove", "secrets/rmd", "--yes"]),
+    ],
+    finals: {
+      entries: (sb) =>
+        Object.fromEntries(
+          ["memories/mbr.md", "memories/mbrf.md", "tasks/tbr.yml", "tasks/tbrf.yml", "env/rmd.env", "secrets/rmd"].map(
+            (rel) => {
+              const file = path.join(sb.fixture, "main", rel);
+              const stat = fs.lstatSync(file);
+              return [rel, stat.isSymbolicLink() ? "link" : stat.isDirectory() ? "directory" : "file"];
+            },
+          ),
+        ),
+    },
+  },
+  {
     // A write into a bundle whose adapter does not write the type is refused with the one sentence `1f2e58c9` gave
     // (`which does not support AKM asset writes`), whatever the type.
     id: "writes into a bundle whose adapter does not write the type",

@@ -10608,6 +10608,98 @@
         "tasks/lta.yml": "file"
       }
     },
+    "broken links and removal over a directory :: remember over broken link": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "memories/mbr",
+        "path": "<SANDBOX>/fixture/main/memories/mbr.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "remember",
+        "schemaVersion": 1
+      }
+    },
+    "broken links and removal over a directory :: remember over broken link --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "memories/mbrf",
+        "path": "<SANDBOX>/fixture/main/memories/mbrf.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "remember",
+        "schemaVersion": 1
+      }
+    },
+    "broken links and removal over a directory :: task add over broken link": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "id": "tbr",
+        "ref": "tasks/tbr",
+        "path": "<SANDBOX>/fixture/main/tasks/tbr.yml",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "schedule": "@daily",
+        "enabled": true,
+        "backend": "cron",
+        "target": {
+          "kind": "run",
+          "run": "echo x"
+        },
+        "shape": "task-add",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md.",
+        "Scheduled tasks now run akm from a source checkout (<BUN> <TREE>/src/cli.ts); they run whatever the checkout holds when they fire. Install akm with `npm install --global akm-cli` or a standalone release, then run `akm doctor scheduler sync --rebind`."
+      ]
+    },
+    "broken links and removal over a directory :: task add over broken link --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "id": "tbrf",
+        "ref": "tasks/tbrf",
+        "path": "<SANDBOX>/fixture/main/tasks/tbrf.yml",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "schedule": "@daily",
+        "enabled": true,
+        "backend": "cron",
+        "target": {
+          "kind": "run",
+          "run": "echo x"
+        },
+        "shape": "task-add",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md.",
+        "Scheduled tasks now run akm from a source checkout (<BUN> <TREE>/src/cli.ts); they run whatever the checkout holds when they fire. Install akm with `npm install --global akm-cli` or a standalone release, then run `akm doctor scheduler sync --rebind`."
+      ]
+    },
+    "broken links and removal over a directory :: env remove over directory": {
+      "exit": 70,
+      "errorJson": {
+        "ok": false,
+        "error": "Path is a directory: rm returned EISDIR (is a directory) <SANDBOX>/fixture/main/env/rmd.env"
+      }
+    },
+    "broken links and removal over a directory :: secret remove over directory": {
+      "exit": 70,
+      "errorJson": {
+        "ok": false,
+        "error": "Path is a directory: rm returned EISDIR (is a directory) <SANDBOX>/fixture/main/secrets/rmd"
+      }
+    },
+    "broken links and removal over a directory :: entries": {
+      "value": {
+        "memories/mbr.md": "file",
+        "memories/mbrf.md": "file",
+        "tasks/tbr.yml": "file",
+        "tasks/tbrf.yml": "file",
+        "env/rmd.env": "directory",
+        "secrets/rmd": "directory"
+      }
+    },
     "writes into a bundle whose adapter does not write the type :: remember": {
       "exit": 2,
       "errorJson": {
