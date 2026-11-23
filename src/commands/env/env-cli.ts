@@ -21,12 +21,10 @@ import path from "node:path";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output, reportChildExit } from "../../cli/shared";
+import { addressOf } from "../../core/assets/write";
 import { writeFileAtomic } from "../../core/common";
 import {
-  assertEnvSecretFileWritable,
-  findCreateTargetAsset,
   findWriteTargetAsset,
-  heldUnderOtherSpelling,
   listEnvsRecursive,
   makeEnvRef,
   resolveEnvPath,
@@ -35,6 +33,7 @@ import {
 } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { stderr, stdout } from "../../core/stdio";
+import { assertWritePathsInsideSource } from "../../core/write-source";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
 import { runProgram } from "./injection";
@@ -73,8 +72,9 @@ const envCreateCommand = defineJsonCommand({
     // `--path` is the subdirectory; `--bundle` selects the writable destination bundle.
     const resolution = resolveEnvWriteTarget(args.name, args.bundle, { subPath: getStringArg(args, "path") });
     const { ref } = resolution;
-    const held = findCreateTargetAsset(resolution);
-    const exists = held !== undefined;
+    const { source } = resolution.target;
+    const held = addressOf(source, `${resolution.type}/${resolution.name}`);
+    const exists = held.exists;
 
     const fromFile = args["from-file"];
     const fromStdin = args["from-stdin"] === true;
@@ -105,17 +105,23 @@ const envCreateCommand = defineJsonCommand({
     }
 
     // Without content, an env kept in the file a create writes is left as it is; one kept under another spelling is refused.
-    if (held && content === undefined && heldUnderOtherSpelling(resolution, held)) {
+    if (
+      exists &&
+      content === undefined &&
+      held.file !== undefined &&
+      held.placedFile !== undefined &&
+      path.resolve(held.file) !== path.resolve(held.placedFile)
+    ) {
       throw new UsageError(
-        `Env "${ref}" already exists as ${held.entry.relPath}. Remove it first (\`akm env remove\`) or edit the file directly.`,
+        `Env "${ref}" already exists as ${path.relative(source.path, held.file).split(path.sep).join("/")}. Remove it first (\`akm env remove\`) or edit the file directly.`,
         "RESOURCE_ALREADY_EXISTS",
       );
     }
     if (!exists || content !== undefined) {
-      writeEnvSecret(resolution, { op: "create", content: content ?? "" });
+      writeEnvSecret(resolution, { op: "create", content: content ?? "", exclusive: true });
     } else {
       // Left as it is, but a file the write would have refused (a symbolic link) is refused still.
-      assertEnvSecretFileWritable(resolution);
+      if (held.file !== undefined) assertWritePathsInsideSource(source, [held.file]);
     }
     output("env-create", { ref });
   },

@@ -365,7 +365,7 @@ describe("secret manager bundles", () => {
       const remembered = await akm("remember", "a note", "--bundle", "keyring");
       expect(remembered.code).not.toBe(0);
       expect(remembered.json.error).toBe(
-        'Bundle "keyring" uses adapter "secret-tool", which does not write memory assets.',
+        'Bundle "keyring" uses adapter "secret-tool", which does not support AKM asset writes.',
       );
     });
   });

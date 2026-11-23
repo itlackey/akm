@@ -10405,6 +10405,370 @@
         }
       }
     },
+    "task symlinks :: import task over escaping link": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Task \"es\" already exists. Pass --force to overwrite.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      }
+    },
+    "task symlinks :: import task over escaping link --force": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Resolved asset path escapes its source: \"es\" in source \"main\".",
+        "code": "PATH_ESCAPE_VIOLATION"
+      }
+    },
+    "task symlinks :: import task over broken link": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": "t.yml",
+        "path": "<SANDBOX>/fixture/main/tasks/br.yml",
+        "ref": "main//tasks/br",
+        "shape": "import",
+        "schemaVersion": 1
+      }
+    },
+    "task symlinks :: import task over broken link --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": "t.yml",
+        "path": "<SANDBOX>/fixture/main/tasks/br.yml",
+        "ref": "main//tasks/br",
+        "shape": "import",
+        "schemaVersion": 1
+      }
+    },
+    "task symlinks :: import task over directory": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Task \"dd\" already exists. Pass --force to overwrite.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      }
+    },
+    "task symlinks :: task add over directory": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Task \"dd\" already exists. Pass --force to overwrite, or delete its file and run `akm doctor scheduler sync` first.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      }
+    },
+    "task symlinks :: tasks": {
+      "value": {
+        "es": "link to ../../../outside/es.yml",
+        "br": "file",
+        "dd": "directory"
+      }
+    },
+    "links leaving the type folder :: workflow create over link --force": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm workflow create is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Write path contains a symbolic link below source \"main\": workflows/wfl.md",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "links leaving the type folder :: remember over link --force": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Resolved memory path escapes the stash: \"mml\"",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "links leaving the type folder :: import over link --force": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Resolved knowledge path escapes the stash: \"kkl\"",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "links leaving the type folder :: env create over link": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Env name \"evl\" escapes the env directory.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "links leaving the type folder :: env create over link --from-file": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Env name \"evl\" escapes the env directory.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "links leaving the type folder :: secret set over link": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Secret name \"sel\" escapes the secrets directory.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "links leaving the type folder :: env create over directory": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/evd",
+        "shape": "env-create",
+        "schemaVersion": 1
+      }
+    },
+    "links leaving the type folder :: env create over directory --from-file": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Env \"env/evd\" already exists. Remove it first (`akm env remove`) or edit the file directly.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      }
+    },
+    "write over a link inside the folder :: import --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": "doc.md",
+        "ref": "knowledge/lk",
+        "path": "<SANDBOX>/fixture/main/knowledge/lk.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "import",
+        "schemaVersion": 1
+      }
+    },
+    "write over a link inside the folder :: import task --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": "t.yml",
+        "path": "<SANDBOX>/fixture/main/tasks/lt.yml",
+        "ref": "main//tasks/lt",
+        "shape": "import",
+        "schemaVersion": 1
+      }
+    },
+    "write over a link inside the folder :: task add --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "id": "lta",
+        "ref": "tasks/lta",
+        "path": "<SANDBOX>/fixture/main/tasks/lta.yml",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "schedule": "@daily",
+        "enabled": true,
+        "backend": "cron",
+        "target": {
+          "kind": "run",
+          "run": "echo x"
+        },
+        "shape": "task-add",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md.",
+        "Scheduled tasks now run akm from a source checkout (<BUN> <TREE>/src/cli.ts); they run whatever the checkout holds when they fire. Install akm with `npm install --global akm-cli` or a standalone release, then run `akm doctor scheduler sync --rebind`."
+      ]
+    },
+    "write over a link inside the folder :: remember --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "memories/lm",
+        "path": "<SANDBOX>/fixture/main/memories/lm.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "remember",
+        "schemaVersion": 1
+      }
+    },
+    "write over a link inside the folder :: links": {
+      "value": {
+        "knowledge/lk.md": "file",
+        "memories/lm.md": "file",
+        "tasks/lt.yml": "file",
+        "tasks/lta.yml": "file"
+      }
+    },
+    "broken links and removal over a directory :: remember over broken link": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "memories/mbr",
+        "path": "<SANDBOX>/fixture/main/memories/mbr.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "remember",
+        "schemaVersion": 1
+      }
+    },
+    "broken links and removal over a directory :: remember over broken link --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "memories/mbrf",
+        "path": "<SANDBOX>/fixture/main/memories/mbrf.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "remember",
+        "schemaVersion": 1
+      }
+    },
+    "broken links and removal over a directory :: task add over broken link": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "id": "tbr",
+        "ref": "tasks/tbr",
+        "path": "<SANDBOX>/fixture/main/tasks/tbr.yml",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "schedule": "@daily",
+        "enabled": true,
+        "backend": "cron",
+        "target": {
+          "kind": "run",
+          "run": "echo x"
+        },
+        "shape": "task-add",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md.",
+        "Scheduled tasks now run akm from a source checkout (<BUN> <TREE>/src/cli.ts); they run whatever the checkout holds when they fire. Install akm with `npm install --global akm-cli` or a standalone release, then run `akm doctor scheduler sync --rebind`."
+      ]
+    },
+    "broken links and removal over a directory :: task add over broken link --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "id": "tbrf",
+        "ref": "tasks/tbrf",
+        "path": "<SANDBOX>/fixture/main/tasks/tbrf.yml",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "schedule": "@daily",
+        "enabled": true,
+        "backend": "cron",
+        "target": {
+          "kind": "run",
+          "run": "echo x"
+        },
+        "shape": "task-add",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md.",
+        "Scheduled tasks now run akm from a source checkout (<BUN> <TREE>/src/cli.ts); they run whatever the checkout holds when they fire. Install akm with `npm install --global akm-cli` or a standalone release, then run `akm doctor scheduler sync --rebind`."
+      ]
+    },
+    "broken links and removal over a directory :: env remove over directory": {
+      "exit": 70,
+      "errorJson": {
+        "ok": false,
+        "error": "Path is a directory: rm returned EISDIR (is a directory) <SANDBOX>/fixture/main/env/rmd.env"
+      }
+    },
+    "broken links and removal over a directory :: secret remove over directory": {
+      "exit": 70,
+      "errorJson": {
+        "ok": false,
+        "error": "Path is a directory: rm returned EISDIR (is a directory) <SANDBOX>/fixture/main/secrets/rmd"
+      }
+    },
+    "broken links and removal over a directory :: entries": {
+      "value": {
+        "memories/mbr.md": "file",
+        "memories/mbrf.md": "file",
+        "tasks/tbr.yml": "file",
+        "tasks/tbrf.yml": "file",
+        "env/rmd.env": "directory",
+        "secrets/rmd": "directory"
+      }
+    },
+    "writes into a bundle whose adapter does not write the type :: remember": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Bundle \"denv\" uses adapter \"dotenv\", which does not support AKM asset writes.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "writes into a bundle whose adapter does not write the type :: import": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Bundle \"denv\" uses adapter \"dotenv\", which does not support AKM asset writes.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "writes into a bundle whose adapter does not write the type :: import task": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Bundle \"denv\" uses adapter \"dotenv\", which does not support AKM asset writes.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "writes into a bundle whose adapter does not write the type :: task add": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Bundle \"denv\" uses adapter \"dotenv\", which does not support AKM asset writes.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "writes into a bundle whose adapter does not write the type :: workflow create": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm workflow create is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Unknown flag \"--bundle\".",
+        "code": "UNKNOWN_FLAG",
+        "hint": "Run the command with `--help` to see its accepted flags."
+      }
+    },
+    "writes into a bundle whose adapter does not write the type :: env create": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "denv//env/new",
+        "shape": "env-create",
+        "schemaVersion": 1
+      }
+    },
+    "writes into a bundle whose adapter does not write the type :: secret set knowledge": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "denv//secrets/s",
+        "shape": "secret-set",
+        "schemaVersion": 1
+      }
+    },
     "task in an off-case file :: task enable tasks/Up": {
       "exit": 1,
       "errorJson": {
@@ -13279,6 +13643,131 @@
     },
     "bundle renamed by hand :: doctor state-unknown-bundle": {
       "value": "<no state-unknown-bundle finding>"
+    },
+    "two git bundles :: proposal list --queue alpha": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 1,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000041",
+            "ref": "alpha//knowledge/only-in-alpha",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "two git bundles :: proposal list --queue beta": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 1,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000042",
+            "ref": "beta//knowledge/only-in-beta",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "two git bundles :: proposal show 41 --queue alpha": {
+      "exit": 0,
+      "stdout": {
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000041",
+          "ref": "alpha//knowledge/only-in-alpha",
+          "status": "pending",
+          "source": "reflect",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "2026-01-30T10:00:00.000Z",
+          "confidence": 0.8
+        },
+        "validation": {
+          "ok": false,
+          "findings": [
+            {
+              "kind": "promotion",
+              "message": "Proposal 00000000-0000-4000-8000-000000000041 is bound to a different queue target."
+            }
+          ]
+        }
+      }
+    },
+    "two git bundles :: proposal show 41 --queue beta": {
+      "exit": 1,
+      "errorJson": {
+        "ok": false,
+        "error": "Proposal \"00000000-0000-4000-8000-000000000041\" not found.",
+        "code": "PROPOSAL_NOT_FOUND",
+        "hint": "Run `akm proposal list` to see pending proposals and their ids."
+      }
+    },
+    "two git bundles :: proposal list": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 1,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "ref": "main//knowledge/new-note",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "two unconfigured directories with one name :: proposal list in a": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 1,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000051",
+            "ref": "akm//knowledge/in-a",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      },
+      "stderr": [
+        "[deprecated] AKM_BUNDLE_DIR is deprecated and is removed in 0.11: register the bundle (`akm bundle add`) and set `defaultBundle`. See STABILITY.md."
+      ]
+    },
+    "two unconfigured directories with one name :: proposal list in b": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 1,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000052",
+            "ref": "akm//knowledge/in-b",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      },
+      "stderr": [
+        "[deprecated] AKM_BUNDLE_DIR is deprecated and is removed in 0.11: register the bundle (`akm bundle add`) and set `defaultBundle`. See STABILITY.md."
+      ]
+    },
+    "two unconfigured directories with one name :: proposal show 51 in b": {
+      "exit": 1,
+      "stderr": [
+        "[deprecated] AKM_BUNDLE_DIR is deprecated and is removed in 0.11: register the bundle (`akm bundle add`) and set `defaultBundle`. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Proposal \"00000000-0000-4000-8000-000000000051\" not found.",
+        "code": "PROPOSAL_NOT_FOUND",
+        "hint": "Run `akm proposal list` to see pending proposals and their ids."
+      }
     }
   }
 }

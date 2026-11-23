@@ -48,16 +48,11 @@ export class AssetBundle {
     return this.#adapter.writes.includes(type);
   }
 
-  /** Refuse a write this bundle's adapter does not make: it writes nothing, or (with `type`) not assets of that type. */
+  /** Refuse a write this bundle's adapter does not make: it writes nothing, or (with `type`) not assets of that type. The sentence is the one base gave. */
   assertWrites(type?: string): void {
     const { writes } = this.#adapter;
     if (writes.length > 0 && (type === undefined || this.writes(type))) return;
-    throw new UsageError(
-      writes.length === 0
-        ? `Bundle "${this.name}" uses adapter "${this.#adapter.id}", which does not support AKM asset writes.`
-        : `Bundle "${this.name}" uses adapter "${this.#adapter.id}", which does not write ${type} assets.`,
-      "INVALID_FLAG_VALUE",
-    );
+    this.refuse("does not support AKM asset writes", "INVALID_FLAG_VALUE");
   }
 
   /** Refuse with a message that names this bundle and its adapter: `Bundle "x" uses adapter "y", which <what>.` */
@@ -68,16 +63,13 @@ export class AssetBundle {
   /** Refuse a retirement of `type`: this bundle's adapter deletes assets of it. */
   assertRetires(type: string): void {
     if (this.#adapter.retires.includes(type)) return;
-    throw new UsageError(
-      `Bundle "${this.name}" uses adapter "${this.#adapter.id}", which does not retire ${type} assets.`,
-      "INVALID_FLAG_VALUE",
-    );
+    this.refuse("does not support AKM asset writes", "INVALID_FLAG_VALUE");
   }
 
   /** Refuse retirement bookkeeping (restore, forget, expire) on a bundle whose adapter retires no type. */
   assertRetiring(): void {
     if (this.#adapter.retires.length > 0) return;
-    throw new UsageError(`Bundle "${this.name}" (adapter "${this.#adapter.id}") does not retire assets.`);
+    this.refuse("does not support AKM asset writes", "INVALID_FLAG_VALUE");
   }
 
   /** Whether the bundle is a store (a keyring, a vault) rather than a directory. */

@@ -59,7 +59,7 @@ export function placeInTypeFolder(b: Bundle, { type, name }: Pick<NewAsset, "typ
   const relative = path.relative(typeRoot, file);
   if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new UsageError(
-      `Resolved asset path escapes its source: "${name}" in bundle "${b.id}".`,
+      `Resolved asset path escapes its source: "${name}" in source "${b.id}".`,
       "PATH_ESCAPE_VIOLATION",
     );
   }

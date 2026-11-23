@@ -524,6 +524,176 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // A task file that is a symbolic link, imported over: one that leaves the bundle is refused as an escaping path
+    // (`Resolved asset path escapes its source`, `PATH_ESCAPE_VIOLATION`); one to nowhere is refused as a symbolic link, the
+    // link left (F8; `1f2e58c9` replaced it). A directory where the task goes is refused as existing, and crashes under --force as before.
+    id: "task symlinks",
+    setup: (sb) => {
+      write(path.join(sb.root, "work/t.yml"), fs.readFileSync(path.join(sb.fixture, "main/tasks/nightly.yml"), "utf8"));
+      write(
+        path.join(sb.root, "outside/es.yml"),
+        fs.readFileSync(path.join(sb.fixture, "main/tasks/nightly.yml"), "utf8"),
+      );
+      fs.symlinkSync("../../../outside/es.yml", path.join(sb.fixture, "main/tasks/es.yml"));
+      fs.symlinkSync("../../../outside/nowhere.yml", path.join(sb.fixture, "main/tasks/br.yml"));
+      fs.mkdirSync(path.join(sb.fixture, "main/tasks/dd.yml"));
+    },
+    cases: [
+      c("import task over escaping link", ["import", "t.yml", "--type", "task", "--name", "es"]),
+      c("import task over escaping link --force", ["import", "t.yml", "--type", "task", "--name", "es", "--force"]),
+      c("import task over broken link", ["import", "t.yml", "--type", "task", "--name", "br"]),
+      c("import task over broken link --force", ["import", "t.yml", "--type", "task", "--name", "br", "--force"]),
+      c("import task over directory", ["import", "t.yml", "--type", "task", "--name", "dd"]),
+      c("task add over directory", ["task", "add", "dd", "--schedule", "@daily", "--command", "echo x"]),
+    ],
+    finals: {
+      tasks: (sb) =>
+        Object.fromEntries(
+          ["es", "br", "dd"].map((id) => {
+            const file = path.join(sb.fixture, "main/tasks", `${id}.yml`);
+            const stat = fs.lstatSync(file);
+            return [
+              id,
+              stat.isSymbolicLink() ? `link to ${fs.readlinkSync(file)}` : stat.isDirectory() ? "directory" : "file",
+            ];
+          }),
+        ),
+    },
+  },
+  {
+    // A file that is a link leaving its type's folder, written over (each type refuses in its own words: workflow and
+    // memory by the symbolic-link refusal, env and secret by their name refusal), and an env over a directory (a no-op;
+    // refused when given content).
+    id: "links leaving the type folder",
+    setup: (sb) => {
+      const doc = "---\ndescription: d\n---\n\nD.\n";
+      for (const [dir, name] of [
+        ["workflows", "wfl.md"],
+        ["memories", "mml.md"],
+        ["knowledge", "kkl.md"],
+        ["env", "evl.env"],
+        ["secrets", "sel"],
+      ] as const) {
+        write(path.join(sb.root, "outside", name), name.endsWith(".env") || name === "sel" ? "A=1\n" : doc);
+        fs.symlinkSync(`../../../outside/${name}`, path.join(sb.fixture, "main", dir, name));
+      }
+      fs.mkdirSync(path.join(sb.fixture, "main/env/evd.env"));
+      write(path.join(sb.root, "work/seed.env"), "S=1\n");
+      write(path.join(sb.root, "work/doc.md"), doc);
+    },
+    cases: [
+      c("workflow create over link --force", ["workflow", "create", "wfl", "--force"]),
+      c("remember over link --force", ["remember", "x", "--name", "mml", "--force"]),
+      c("import over link --force", ["import", "doc.md", "--name", "kkl", "--force"]),
+      c("env create over link", ["env", "create", "env/evl"]),
+      c("env create over link --from-file", ["env", "create", "env/evl", "--from-file", "seed.env"]),
+      c("secret set over link", ["secret", "set", "secrets/sel"], { stdin: "v" }),
+      c("env create over directory", ["env", "create", "env/evd"]),
+      c("env create over directory --from-file", ["env", "create", "env/evd", "--from-file", "seed.env"]),
+    ],
+  },
+  {
+    // `--force` over a link that stays inside its folder (F9): refused as a symbolic link, the link left; `1f2e58c9`
+    // replaced the link with a regular file.
+    id: "write over a link inside the folder",
+    setup: (sb) => {
+      const doc = "---\ndescription: d\n---\n\nD.\n";
+      write(path.join(sb.root, "work/doc.md"), doc);
+      fs.copyFileSync(path.join(sb.fixture, "main/tasks/nightly.yml"), path.join(sb.root, "work/t.yml"));
+      write(path.join(sb.fixture, "main/knowledge/real-k.md"), doc);
+      write(path.join(sb.fixture, "main/memories/real-m.md"), doc);
+      fs.copyFileSync(path.join(sb.fixture, "main/tasks/nightly.yml"), path.join(sb.fixture, "main/tasks/real-t.yml"));
+      fs.symlinkSync("real-k.md", path.join(sb.fixture, "main/knowledge/lk.md"));
+      fs.symlinkSync("real-m.md", path.join(sb.fixture, "main/memories/lm.md"));
+      fs.symlinkSync("real-t.yml", path.join(sb.fixture, "main/tasks/lt.yml"));
+      fs.symlinkSync("real-t.yml", path.join(sb.fixture, "main/tasks/lta.yml"));
+    },
+    prep: [["index", "--quiet"]],
+    cases: [
+      c("import --force", ["import", "doc.md", "--name", "lk", "--force"]),
+      c("import task --force", ["import", "t.yml", "--type", "task", "--name", "lt", "--force"]),
+      c("task add --force", ["task", "add", "lta", "--schedule", "@daily", "--command", "echo x", "--force"]),
+      c("remember --force", ["remember", "x", "--name", "lm", "--force"]),
+    ],
+    finals: {
+      links: (sb) =>
+        Object.fromEntries(
+          ["knowledge/lk.md", "memories/lm.md", "tasks/lt.yml", "tasks/lta.yml"].map((rel) => {
+            const file = path.join(sb.fixture, "main", rel);
+            return [rel, fs.lstatSync(file).isSymbolicLink() ? `link to ${fs.readlinkSync(file)}` : "file"];
+          }),
+        ),
+    },
+  },
+  {
+    // Every create over a broken symbolic link is refused as a symbolic link, the link left (F8; `1f2e58c9` replaced
+    // it), and a remove over a directory where an env or secret file would be says not found (F10; `1f2e58c9` crashed).
+    id: "broken links and removal over a directory",
+    setup: (sb) => {
+      fs.symlinkSync("../../../outside/nowhere.md", path.join(sb.fixture, "main/memories/mbr.md"));
+      fs.symlinkSync("../../../outside/nowhere.md", path.join(sb.fixture, "main/memories/mbrf.md"));
+      fs.symlinkSync("../../../outside/nowhere.yml", path.join(sb.fixture, "main/tasks/tbr.yml"));
+      fs.symlinkSync("../../../outside/nowhere.yml", path.join(sb.fixture, "main/tasks/tbrf.yml"));
+      fs.mkdirSync(path.join(sb.fixture, "main/env/rmd.env"));
+      fs.mkdirSync(path.join(sb.fixture, "main/secrets/rmd"));
+    },
+    cases: [
+      c("remember over broken link", ["remember", "x", "--name", "mbr"]),
+      c("remember over broken link --force", ["remember", "x", "--name", "mbrf", "--force"]),
+      c("task add over broken link", ["task", "add", "tbr", "--schedule", "@daily", "--command", "echo x"]),
+      c("task add over broken link --force", [
+        "task",
+        "add",
+        "tbrf",
+        "--schedule",
+        "@daily",
+        "--command",
+        "echo x",
+        "--force",
+      ]),
+      c("env remove over directory", ["env", "remove", "env/rmd", "--yes"]),
+      c("secret remove over directory", ["secret", "remove", "secrets/rmd", "--yes"]),
+    ],
+    finals: {
+      entries: (sb) =>
+        Object.fromEntries(
+          ["memories/mbr.md", "memories/mbrf.md", "tasks/tbr.yml", "tasks/tbrf.yml", "env/rmd.env", "secrets/rmd"].map(
+            (rel) => {
+              const file = path.join(sb.fixture, "main", rel);
+              const stat = fs.lstatSync(file);
+              return [rel, stat.isSymbolicLink() ? "link" : stat.isDirectory() ? "directory" : "file"];
+            },
+          ),
+        ),
+    },
+  },
+  {
+    // A write into a bundle whose adapter does not write the type is refused with the one sentence `1f2e58c9` gave
+    // (`which does not support AKM asset writes`), whatever the type.
+    id: "writes into a bundle whose adapter does not write the type",
+    setup: (sb) => {
+      write(path.join(sb.fixture, "denv/env/e.env"), "E=1\n");
+      write(path.join(sb.root, "work/doc.md"), "---\ndescription: d\n---\n\nD.\n");
+      write(path.join(sb.root, "work/t.yml"), fs.readFileSync(path.join(sb.fixture, "main/tasks/nightly.yml"), "utf8"));
+      const cfg = config(sb);
+      (cfg.bundles as Record<string, unknown>).denv = {
+        path: path.join(sb.fixture, "denv"),
+        writable: true,
+        components: { main: { adapter: "dotenv" } },
+      };
+      fs.writeFileSync(sb.configFile, JSON.stringify(cfg, null, 2));
+    },
+    cases: [
+      c("remember", ["remember", "a fact", "--name", "f", "--bundle", "denv"]),
+      c("import", ["import", "doc.md", "--bundle", "denv"]),
+      c("import task", ["import", "t.yml", "--type", "task", "--name", "x", "--bundle", "denv"]),
+      c("task add", ["task", "add", "x", "--schedule", "@daily", "--command", "echo x", "--bundle", "denv"]),
+      c("workflow create", ["workflow", "create", "wf", "--bundle", "denv"]),
+      c("env create", ["env", "create", "env/new", "--bundle", "denv"]),
+      c("secret set knowledge", ["secret", "set", "secrets/s", "--bundle", "denv"], { stdin: "v" }),
+    ],
+  },
+  {
     // A task held in an off-case file with no `.yml` of its id (F5): `1f2e58c9` found it at neither enable nor sync.
     id: "task in an off-case file",
     setup: (sb) => {

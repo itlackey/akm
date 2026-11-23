@@ -217,7 +217,7 @@
       "detectAdapterId": 1
     },
     "asset-io": {
-      "existsSync": 3,
+      "existsSync": 2,
       "readFileSync": 2
     }
   },
@@ -274,11 +274,6 @@
   "src/commands/sources/add-cli.ts": {
     "adapter-import": {
       "src/core/adapter/registry": 1
-    }
-  },
-  "src/commands/sources/import-task.ts": {
-    "asset-io": {
-      "existsSync": 1
     }
   },
   "src/commands/sources/init.ts": {
@@ -368,7 +363,7 @@
       "detectAdapterId": 1
     },
     "asset-io": {
-      "existsSync": 2,
+      "existsSync": 1,
       "readFileSync": 1
     }
   },
