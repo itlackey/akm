@@ -135,7 +135,10 @@ export class DotenvAdapter extends AkmFormatAdapterBase {
    */
   protected spellings(conceptId: string): string[] {
     const posix = toPosix(conceptId);
-    const expanded = (["env", "secret"] as const).flatMap((type) => assetPathCandidatesForName(type, ".", posix));
+    // The type the concept's folder names comes first, so the first spelling is the file a create of it writes.
+    const named = posix.startsWith(`${SECRETS_DIR}/`) ? "secret" : "env";
+    const types = named === "secret" ? (["secret", "env"] as const) : (["env", "secret"] as const);
+    const expanded = types.flatMap((type) => assetPathCandidatesForName(type, ".", posix));
     return [...new Set(expanded.map((candidate) => toPosix(path.normalize(candidate))))];
   }
 

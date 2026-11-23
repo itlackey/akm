@@ -11,22 +11,21 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { FileChange } from "../../src/core/file-change";
-import { proposalContent } from "../../src/core/file-change";
+import { type ProposalChange, proposalContent } from "../../src/commands/proposal/proposal-types";
 
 describe("proposalContent", () => {
-  test("a create/update primary change reads its `after`", () => {
-    const changes: FileChange[] = [{ path: "memories/a.md", op: "update", after: "body" }];
+  test("a create/update primary change reads its `content`", () => {
+    const changes: ProposalChange[] = [{ ref: "main//memories/a", op: "update", content: "body" }];
     expect(proposalContent({ changes })).toBe("body");
   });
 
   test("a delete primary change reads as empty, not a throw", () => {
-    const changes: FileChange[] = [{ path: "memories/a.md", op: "delete" }];
+    const changes: ProposalChange[] = [{ ref: "main//memories/a", op: "delete" }];
     expect(proposalContent({ changes })).toBe("");
   });
 
-  test("a malformed create/update with no `after` still throws (genuine corruption)", () => {
-    const changes: FileChange[] = [{ path: "memories/a.md", op: "update" }];
+  test("a malformed create/update with no `content` still throws (genuine corruption)", () => {
+    const changes: ProposalChange[] = [{ ref: "main//memories/a", op: "update" }];
     expect(() => proposalContent({ changes })).toThrow();
   });
 

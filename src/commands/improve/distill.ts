@@ -26,7 +26,9 @@ import { stripMarkdownFences } from "../../core/asset/markdown";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { findAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
+import { addressOf } from "../../core/assets/write";
 import { authoringRulesForType } from "../../core/authoring-rules";
+import { slugForPath } from "../../core/bundle-id";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
@@ -55,7 +57,6 @@ import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { chatCompletion } from "../../llm/client";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
-import { resolveProposalAddress } from "../proposal/address";
 import type { EligibilitySource } from "../proposal/proposal-types";
 import { listProposals, type Proposal, type ProposalsContext } from "../proposal/repository";
 import { detectDoubleFrontmatter, isValidDescription } from "../proposal/validators/proposal-quality-validators";
@@ -479,7 +480,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const config = options.config ?? loadConfig();
   const stash = options.stashDir ?? resolveStashDir();
   // An existing input is addressed where its file is; only a ref no file owns is read by placement.
-  const address = resolveProposalAddress(stash, inputRef);
+  const address = addressOf({ name: slugForPath(stash), path: stash }, inputRef);
   const profile = options.improveProfile ?? resolveImproveStrategy(undefined, config).config;
   options = { ...options, improveProfile: profile };
   const targetKind = options.proposalKind ?? "lesson";

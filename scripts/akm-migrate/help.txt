@@ -52,7 +52,12 @@ order, and print one combined JSON plan (exit 1 when any step is blocked):
      `"tracked-secrets": ["**"]` to that bundle's `lint.skip`. `.gitignore` is
      never modified. The config is written first, the files under one backup
      directory per run
-  7. superseded residue removed: pre-0.9.0 `.akm` leftovers in the stash,
+  7. proposals in state.db that an older akm recorded with the files they
+     change (`changes[].path`, a target directory) rewritten as the current
+     record, which names assets by ref, in one transaction after a copy of
+     state.db (`state.db.pre-proposal-records.bak`); until then every command
+     reads them as converted and says so once
+  8. superseded residue removed: pre-0.9.0 `.akm` leftovers in the stash,
      and the transaction-journal, maintenance-barrier, lock-mutex and
      version-stamp files older releases kept under $DATA, $STATE and $CONFIG
 

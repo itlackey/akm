@@ -66,8 +66,11 @@ export async function importTaskFile(
     }
     // An overwrite rewrites the file the task is read from, whatever its spelling.
     const written =
-      writeAssets(prepared, { purpose: "import-task" }, (w) => w.create({ type: "task", name: id, content: yaml }))
-        .file ?? file;
+      writeAssets(prepared, { purpose: "import-task" }, (w) => {
+        const { file: kept } = w.address(`tasks/${id}`);
+        w.create({ type: "task", name: id, content: yaml });
+        return kept;
+      }) ?? file;
     commitWriteTargetBoundary(prepared, `Import tasks/${id}`);
     return { path: written, ref };
   });

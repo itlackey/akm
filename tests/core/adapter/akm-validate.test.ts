@@ -30,9 +30,9 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
+import type { FileChange } from "../../../src/core/adapter/file-change";
 import type { Bundle } from "../../../src/core/adapter/types";
 import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adapter/validate-context";
-import type { FileChange } from "../../../src/core/file-change";
 import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const ALL_TYPES_ROOT = path.resolve(__dirname, "../../fixtures/stashes/all-types");

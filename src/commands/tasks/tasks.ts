@@ -238,8 +238,11 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     if (input.disabled) setSchedulerRefEnabled(qualifiedRef, false);
     // The file the task is read from after the write: an overwrite rewrites the asset's own file (N19), whatever its spelling.
     const writtenPath =
-      writeAssets(bundle.resolved, { purpose: "task-add" }, (w) => w.create({ type: "task", name: id, content: yaml }))
-        .file ?? assetPath;
+      writeAssets(bundle.resolved, { purpose: "task-add" }, (w) => {
+        const { file } = w.address(`tasks/${id}`);
+        w.create({ type: "task", name: id, content: yaml });
+        return file;
+      }) ?? assetPath;
     (deps.commitBoundary ?? commitWriteTargetBoundary)(bundle.resolved, `Update tasks/${id}`);
     if (!input.disabled) setSchedulerRefEnabled(qualifiedRef, true);
     const sync = await akmTasksSync(deps, bundle.bundleName, { rebind: input.rebind === true });

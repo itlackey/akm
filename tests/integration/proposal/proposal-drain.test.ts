@@ -122,7 +122,7 @@ function proposalFixture(source: string, content: string): Proposal {
   return {
     source,
     payload: { content },
-    changes: [{ path: "lessons/fixture.md", op: "create", after: content }],
+    changes: [{ ref: "stash//lessons/fixture", op: "create", content }],
   } as Proposal;
 }
 

@@ -662,7 +662,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 
     const proposal = getProposal(storage.stashDir, result.retired[0]!);
     expect(proposal.ref).toBe("stash//memories/old-note");
-    expect(proposal.changes).toEqual([{ path: "memories/old-note.md", op: "delete" }]);
+    expect(proposal.changes).toEqual([{ ref: "stash//memories/old-note", op: "delete" }]);
     // S6: its own generator, kept apart from the promote pass's "consolidate" proposals.
     expect(proposal.source).toBe("consolidate-pair");
     expect(proposal.retirement).toMatchObject({
@@ -1813,7 +1813,7 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
     expect(result.retired).toHaveLength(1);
     const proposal = getProposal(storage.stashDir, result.retired[0]!);
     expect(proposal.ref).toBe("stash//memories/topic-memory");
-    expect(proposal.changes).toEqual([{ path: "memories/topic-memory.md", op: "delete" }]);
+    expect(proposal.changes).toEqual([{ ref: "stash//memories/topic-memory", op: "delete" }]);
     expect(proposal.retirement).toMatchObject({
       retiredRef: "memories/topic-memory",
       successorRef: "knowledge/topic-note",

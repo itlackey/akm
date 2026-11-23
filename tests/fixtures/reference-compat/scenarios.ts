@@ -417,6 +417,32 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // The fixture's stored proposals are in the shape an older akm wrote: they name files (`changes[].path`,
+    // `proposedTarget.root`, `acceptedTarget.root/path`). They are read as before, say so once with a warning naming
+    // `akm migrate apply` (§0.2 P5), `migrate apply` rewrites them, and no command warns after it. The records are
+    // read back from state.db at the end.
+    id: "old-shape proposal records",
+    cases: [
+      c("proposal list", ["proposal", "list"]),
+      c("proposal show", ["proposal", "show", "00000000-0000-4000-8000-000000000002"]),
+      c("migrate status", ["migrate", "status", "--read-only"]),
+      c("migrate apply", ["migrate", "apply"]),
+      c("proposal list after migrate", ["proposal", "list"]),
+      c("proposal show after migrate", ["proposal", "show", "00000000-0000-4000-8000-000000000002"]),
+      c("proposal list accepted after migrate", ["proposal", "list", "--status", "accepted"]),
+    ],
+    finals: {
+      "proposal records": (sb) => {
+        const db = new Database(sb.stateDb, { readonly: true });
+        try {
+          return db.query("SELECT id, ref, status, metadata_json FROM proposals ORDER BY id").all();
+        } finally {
+          db.close();
+        }
+      },
+    },
+  },
+  {
     // A created asset is found by `search` before the next `index` (N14).
     id: "created assets are searchable",
     prep: [["index", "--quiet"]],

@@ -55,6 +55,10 @@ export interface RegisteredDifference extends DifferenceNode {
 export const APPROVED_ROWS: ReadonlySet<string> = new Set([
   ...Array.from({ length: 16 }, (_, i) => `A${i + 1}`),
   ...[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23].map((n) => `N${n}`),
+  // P5 (old-shape proposal records are read as converted, with one warning) and P6 (proposals name assets by ref, not
+  // files): decided by the owner ("Via akm migrate apply", "Approve"); shipped by 4d.2.
+  "P5",
+  "P6",
   // F1 is provisional: set by the coordinator while the owner is unattended (design §0.2), pending the owner's answer.
   "F1",
 ]);

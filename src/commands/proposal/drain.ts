@@ -29,6 +29,8 @@
 
 import fs from "node:fs";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { addressOf } from "../../core/assets/write";
+import { slugForPath } from "../../core/bundle-id";
 import type { AkmConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { appendEvent, type EventsContext } from "../../core/events";
@@ -50,7 +52,6 @@ import {
 } from "../improve/consolidate/coverage";
 import { resolveImproveExecution } from "../improve/execution";
 import { errMessage } from "../improve/stage";
-import { resolveProposalAddress } from "./address";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
 import { isRetireProposal, PAIR_PASS_GATE, type ProposalDecider, STALE_TARGET_GATE_REASON } from "./proposal-types";
 import {
@@ -584,7 +585,7 @@ function promotionNeighbours(
 ): ReturnType<typeof nearestKnowledgeNotes> {
   if (!isPromotionProposal(proposal) || proposal.promotionSource === undefined) return [];
   try {
-    const memoryPath = resolveProposalAddress(stashDir, proposal.promotionSource).path;
+    const memoryPath = addressOf({ name: slugForPath(stashDir), path: stashDir }, proposal.promotionSource).file;
     if (!memoryPath) return [];
     const existing = nearestKnowledgeNotes(memoryPath);
     const source = fs.readFileSync(memoryPath, "utf8");
@@ -614,7 +615,7 @@ function promotionNeighbours(
 /** The live asset a proposal would overwrite, if any. */
 function readLiveAssetContent(stashDir: string, ref: string): string | undefined {
   try {
-    const assetPath = resolveProposalAddress(stashDir, ref).path;
+    const assetPath = addressOf({ name: slugForPath(stashDir), path: stashDir }, ref).file;
     return assetPath && fs.existsSync(assetPath) ? fs.readFileSync(assetPath, "utf8") : undefined;
   } catch {
     return undefined;

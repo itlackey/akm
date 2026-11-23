@@ -15,9 +15,9 @@ import path from "node:path";
 import { contentHash } from "../../src/commands/improve/content-hash";
 import { collectEligibleRefs } from "../../src/commands/improve/eligibility";
 import { resolveImproveStrategy, shouldSkipRef } from "../../src/commands/improve/improve-strategies";
-import { resolveProposalAddress } from "../../src/commands/proposal/address";
 import { akmProposalAccept, akmProposalRevert } from "../../src/commands/proposal/proposal";
 import { createProposal, createRetireProposal, getProposal } from "../../src/commands/proposal/repository";
+import { addressOf } from "../../src/core/assets/write";
 import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
 import { makeConfig } from "../_helpers/factories";
@@ -73,23 +73,23 @@ const LOOSE: Array<[rel: string, ref: string]> = [
 describe("the write address of an existing asset", () => {
   test.each(LOOSE)("%s is written at its own file, with the type its file is recognized as", async (rel, ref) => {
     const file = write(rel, NOTE);
-    expect(resolveProposalAddress(stash, ref)).toMatchObject({ type: "knowledge", conceptId: ref, path: file });
+    expect(addressOf({ name: "stash", path: stash }, ref)).toMatchObject({ type: "knowledge", conceptId: ref, file });
   });
 
   test("its ref in the outdated type-folder spelling writes the same file", () => {
     const file = write("reports/release.md", NOTE);
-    expect(resolveProposalAddress(stash, "knowledge/reports/release")).toMatchObject({
+    expect(addressOf({ name: "stash", path: stash }, "knowledge/reports/release")).toMatchObject({
       type: "knowledge",
       conceptId: "reports/release",
-      path: file,
+      file,
     });
   });
 
   test("a new asset is placed in its ref's type folder", () => {
-    expect(resolveProposalAddress(stash, "lessons/new-one")).toMatchObject({
+    expect(addressOf({ name: "stash", path: stash }, "lessons/new-one")).toMatchObject({
       type: "lesson",
       conceptId: "lessons/new-one",
-      path: path.join(stash, "lessons", "new-one.md"),
+      file: path.join(stash, "lessons", "new-one.md"),
     });
   });
 });
@@ -112,7 +112,7 @@ describe("a proposal for a loose asset", () => {
     await index();
     const proposal = createProposal(stash, { ref, source: "reflect", payload: { content: UPDATED } });
     expect(proposal.ref).toBe(`stash//${ref}`);
-    expect(proposal.changes).toEqual([expect.objectContaining({ path: rel, op: "update" })]);
+    expect(proposal.changes).toEqual([expect.objectContaining({ ref: `stash//${ref}`, op: "update" })]);
 
     const config = makeConfig(stash);
     const before = assetFiles();
@@ -143,7 +143,7 @@ describe("a proposal for a loose asset", () => {
         reason: "duplicate",
       },
     });
-    expect(proposal.changes).toEqual([{ path: "reports/old.md", op: "delete" }]);
+    expect(proposal.changes).toEqual([{ ref: "stash//reports/old", op: "delete" }]);
 
     const config = makeConfig(stash);
     await akmProposalAccept({ stashDir: stash, id: proposal.id, config });

@@ -564,14 +564,34 @@ describe("addressOf", () => {
       type: "lesson",
       name: "new-one",
       exists: false,
+      file: path.join(stash.path, "lessons", "new-one.md"),
     });
   });
 
-  test("a bundle whose adapter does not write is refused when a new asset is placed", () => {
+  test("a bundle whose adapter does not write is not refused by addressOf: no file is placed, the write refuses", () => {
     const okf = bundleOf("okf", {}, "okf");
-    expect(() => addressOf({ name: "okf", path: okf.path, adapterId: "okf" }, "lessons/new-one")).toThrow(
+    expect(addressOf({ name: "okf", path: okf.path, adapterId: "okf" }, "lessons/new-one")).toEqual({
+      conceptId: "lessons/new-one",
+      type: "lesson",
+      name: "new-one",
+      exists: false,
+    });
+    // The write session's address is a write's own gate.
+    expect(() => writeAssets(targetOf(okf, "okf"), { purpose: "test" }, (w) => w.address("lessons/new-one"))).toThrow(
       /adapter "okf", which does not support AKM asset writes/,
     );
+  });
+
+  test("a name the adapter would place where no asset is: addressOf names it as written, the write session refuses", () => {
+    const stash = bundleOf("stash", {});
+    const source = { name: "stash", path: stash.path };
+    expect(addressOf(source, "scripts/no-extension")).toMatchObject({
+      conceptId: "scripts/no-extension",
+      exists: false,
+    });
+    expect(() =>
+      writeAssets(targetOf(stash, "stash"), { purpose: "test" }, (w) => w.address("scripts/no-extension")),
+    ).toThrow(/which is not an asset/);
   });
 });
 

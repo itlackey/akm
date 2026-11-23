@@ -11430,6 +11430,375 @@
         "workflows/newflow": "vector"
       }
     },
+    "old-shape proposal records :: proposal list": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 1,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "ref": "main//knowledge/new-note",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "old-shape proposal records :: proposal show": {
+      "exit": 0,
+      "stdout": {
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "ref": "main//knowledge/new-note",
+          "status": "pending",
+          "source": "reflect",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "2026-01-30T10:00:00.000Z",
+          "confidence": 0.8
+        },
+        "validation": {
+          "ok": true,
+          "findings": []
+        }
+      }
+    },
+    "old-shape proposal records :: migrate status": {
+      "exit": 0,
+      "stdout": {
+        "schemaVersion": 1,
+        "status": "current",
+        "blockers": [],
+        "configFile": {
+          "keys": [],
+          "changed": false,
+          "applied": false
+        },
+        "stateMigrations": {
+          "pending": []
+        },
+        "taskFiles": {
+          "schemaVersion": 1,
+          "changed": 0,
+          "skipped": 7,
+          "blocked": 0,
+          "files": [
+            {
+              "filePath": "<SANDBOX>/fixture/main/tasks/greet.yml",
+              "status": "skipped",
+              "reason": "already-v4",
+              "beforeHash": "0a003e22f9879f8e9bbbf2f7de5003232415b1641d564d39193001091dbe3d07"
+            },
+            {
+              "filePath": "<SANDBOX>/fixture/main/tasks/inline.yml",
+              "status": "skipped",
+              "reason": "already-v4",
+              "beforeHash": "54886c52c0d1085dc40efdb74244fc5e40b7598090f33ee6346452b020c98004"
+            },
+            {
+              "filePath": "<SANDBOX>/fixture/main/tasks/nightly.yml",
+              "status": "skipped",
+              "reason": "already-v4",
+              "beforeHash": "3d5bb2a63a203616e95fbc890ad78b9529df944d0108a0a847908679defa44b3"
+            },
+            {
+              "filePath": "<SANDBOX>/fixture/main/tasks/report.yml",
+              "status": "skipped",
+              "reason": "already-v4",
+              "beforeHash": "a139be3df74423df89c9bdc64ad0de552ecf163aceabf5bc83b24c2243e6f07c"
+            },
+            {
+              "filePath": "<SANDBOX>/fixture/main/tasks/shell.yml",
+              "status": "skipped",
+              "reason": "already-v4",
+              "beforeHash": "de069a024e617636da1d2d6326e64121502e7e48dbb6e651d3adc7ccf744c491"
+            },
+            {
+              "filePath": "<SANDBOX>/fixture/team/tasks/team-task.yml",
+              "status": "skipped",
+              "reason": "already-v4",
+              "beforeHash": "f18f37a6132a78161e3cf94296e7a698ad59225b177c311d89d48348a8315ede"
+            },
+            {
+              "filePath": "<SANDBOX>/fixture/team/tasks/twin.yml",
+              "status": "skipped",
+              "reason": "already-v4",
+              "beforeHash": "7c4e014bd2fcf6cc3a1e4e65bf90c100d8efbf922c1834aa1894476b2c6334a6"
+            }
+          ]
+        },
+        "workflowFiles": {
+          "bundles": [
+            {
+              "bundle": "<SANDBOX>/fixture/main",
+              "files": [
+                "<SANDBOX>/fixture/main/workflows/inner.md",
+                "<SANDBOX>/fixture/main/workflows/ship.md"
+              ]
+            },
+            {
+              "bundle": "<SANDBOX>/fixture/team",
+              "files": [
+                "<SANDBOX>/fixture/team/workflows/release.md"
+              ]
+            }
+          ],
+          "message": "3 workflow file(s) remain, in <SANDBOX>/fixture/main (2), <SANDBOX>/fixture/team (1). Workflows are removed in 0.11; `akm migrate status <bundle>/workflows/*.md` reports what each becomes and why one cannot convert, and `akm migrate apply <path>` makes the task. A workflow file stays in place when its task is made: delete it once the task works, and it is no longer counted here."
+        },
+        "assetEngineKeys": {
+          "schemaVersion": 1,
+          "changed": 0,
+          "skipped": 0,
+          "files": []
+        },
+        "assetContentRefs": {
+          "schemaVersion": 1,
+          "changed": 0,
+          "skipped": 0,
+          "refs": 0,
+          "files": [],
+          "shadowed": [
+            {
+              "bundleId": "flows",
+              "from": "skills/deploy",
+              "to": "deploy"
+            }
+          ]
+        },
+        "bundlePolicy": {
+          "schemaVersion": 1,
+          "changed": 0,
+          "bundles": [],
+          "notes": []
+        },
+        "deadResidue": {
+          "pending": []
+        },
+        "ok": true
+      }
+    },
+    "old-shape proposal records :: migrate apply": {
+      "exit": 0,
+      "stdout": {
+        "schemaVersion": 1,
+        "status": "current",
+        "blockers": [],
+        "configFile": {
+          "keys": [],
+          "changed": false,
+          "applied": false
+        },
+        "stateMigrations": {
+          "applied": []
+        },
+        "taskFiles": {
+          "schemaVersion": 1,
+          "changed": 0,
+          "skipped": 7,
+          "blocked": 0,
+          "files": [
+            {
+              "filePath": "<SANDBOX>/fixture/main/tasks/greet.yml",
+              "status": "skipped",
+              "reason": "already-v4",
+              "beforeHash": "0a003e22f9879f8e9bbbf2f7de5003232415b1641d564d39193001091dbe3d07"
+            },
+            {
+              "filePath": "<SANDBOX>/fixture/main/tasks/inline.yml",
+              "status": "skipped",
+              "reason": "already-v4",
+              "beforeHash": "54886c52c0d1085dc40efdb74244fc5e40b7598090f33ee6346452b020c98004"
+            },
+            {
+              "filePath": "<SANDBOX>/fixture/main/tasks/nightly.yml",
+              "status": "skipped",
+              "reason": "already-v4",
+              "beforeHash": "3d5bb2a63a203616e95fbc890ad78b9529df944d0108a0a847908679defa44b3"
+            },
+            {
+              "filePath": "<SANDBOX>/fixture/main/tasks/report.yml",
+              "status": "skipped",
+              "reason": "already-v4",
+              "beforeHash": "a139be3df74423df89c9bdc64ad0de552ecf163aceabf5bc83b24c2243e6f07c"
+            },
+            {
+              "filePath": "<SANDBOX>/fixture/main/tasks/shell.yml",
+              "status": "skipped",
+              "reason": "already-v4",
+              "beforeHash": "de069a024e617636da1d2d6326e64121502e7e48dbb6e651d3adc7ccf744c491"
+            },
+            {
+              "filePath": "<SANDBOX>/fixture/team/tasks/team-task.yml",
+              "status": "skipped",
+              "reason": "already-v4",
+              "beforeHash": "f18f37a6132a78161e3cf94296e7a698ad59225b177c311d89d48348a8315ede"
+            },
+            {
+              "filePath": "<SANDBOX>/fixture/team/tasks/twin.yml",
+              "status": "skipped",
+              "reason": "already-v4",
+              "beforeHash": "7c4e014bd2fcf6cc3a1e4e65bf90c100d8efbf922c1834aa1894476b2c6334a6"
+            }
+          ]
+        },
+        "workflowFiles": {
+          "bundles": [
+            {
+              "bundle": "<SANDBOX>/fixture/main",
+              "files": [
+                "<SANDBOX>/fixture/main/workflows/inner.md",
+                "<SANDBOX>/fixture/main/workflows/ship.md"
+              ]
+            },
+            {
+              "bundle": "<SANDBOX>/fixture/team",
+              "files": [
+                "<SANDBOX>/fixture/team/workflows/release.md"
+              ]
+            }
+          ],
+          "message": "3 workflow file(s) remain, in <SANDBOX>/fixture/main (2), <SANDBOX>/fixture/team (1). Workflows are removed in 0.11; `akm migrate status <bundle>/workflows/*.md` reports what each becomes and why one cannot convert, and `akm migrate apply <path>` makes the task. A workflow file stays in place when its task is made: delete it once the task works, and it is no longer counted here."
+        },
+        "assetEngineKeys": {
+          "schemaVersion": 1,
+          "changed": 0,
+          "skipped": 0,
+          "files": []
+        },
+        "assetContentRefs": {
+          "schemaVersion": 1,
+          "changed": 0,
+          "skipped": 0,
+          "refs": 0,
+          "files": [],
+          "shadowed": [
+            {
+              "bundleId": "flows",
+              "from": "skills/deploy",
+              "to": "deploy"
+            }
+          ]
+        },
+        "bundlePolicy": {
+          "schemaVersion": 1,
+          "changed": 0,
+          "bundles": [],
+          "notes": []
+        },
+        "deadResidue": {
+          "removed": []
+        },
+        "ok": true
+      }
+    },
+    "old-shape proposal records :: proposal list after migrate": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 1,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "ref": "main//knowledge/new-note",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "old-shape proposal records :: proposal show after migrate": {
+      "exit": 0,
+      "stdout": {
+        "proposal": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "ref": "main//knowledge/new-note",
+          "status": "pending",
+          "source": "reflect",
+          "createdAt": "2026-01-30T10:00:00.000Z",
+          "updatedAt": "2026-01-30T10:00:00.000Z",
+          "confidence": 0.8
+        },
+        "validation": {
+          "ok": true,
+          "findings": []
+        }
+      }
+    },
+    "old-shape proposal records :: proposal list accepted after migrate": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 3,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "ref": "main//knowledge/guide",
+            "status": "accepted",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000004",
+            "ref": "main//knowledge/old-guide",
+            "status": "accepted",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000005",
+            "ref": "main//memories/pruned-note",
+            "status": "accepted",
+            "source": "consolidate",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "old-shape proposal records :: proposal records": {
+      "value": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "ref": "main//knowledge/guide",
+          "status": "accepted",
+          "metadata_json": "{}"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "ref": "main//knowledge/new-note",
+          "status": "pending",
+          "metadata_json": "{\"changes\":[{\"path\":\"knowledge/new-note.md\",\"op\":\"create\"}],\"proposedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\"},\"confidence\":0.8}"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000003",
+          "ref": "team//knowledge/shared",
+          "status": "pending",
+          "metadata_json": "{\"changes\":[{\"path\":\"knowledge/shared.md\",\"op\":\"update\"}],\"proposedTarget\":{\"source\":\"team\",\"root\":\"<SANDBOX>/fixture/team\"},\"beforeHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000001\"}"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000004",
+          "ref": "main//knowledge/old-guide",
+          "status": "accepted",
+          "metadata_json": "{\"changes\":[{\"path\":\"knowledge/old-guide.md\",\"op\":\"update\"}],\"proposedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\"},\"acceptedAt\":\"2026-01-28T09:00:00.000Z\",\"review\":{\"outcome\":\"accepted\",\"decidedAt\":\"2026-01-28T09:00:00.000Z\"},\"backupContent\":\"---\\ndescription: The previous guide\\ntags: [guide]\\n---\\n\\n# Old guide\\n\\nBefore the rewrite.\\n\",\"acceptedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\",\"path\":\"<SANDBOX>/fixture/main/knowledge/old-guide.md\",\"contentHash\":\"<HASH>\"}}"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000005",
+          "ref": "main//memories/pruned-note",
+          "status": "accepted",
+          "metadata_json": "{\"changes\":[{\"path\":\"memories/pruned-note.md\",\"op\":\"delete\"}],\"proposedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\"},\"retirement\":{\"retiredRef\":\"main//memories/pruned-note\",\"successorRef\":\"main//memories/successor\",\"cosine\":0.97,\"judgeLabel\":\"duplicate\",\"judgeReason\":\"Same content.\",\"retiredContentHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000004\",\"successorContentHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000005\",\"reason\":\"duplicate\"},\"acceptedAt\":\"2026-01-29T09:00:00.000Z\",\"review\":{\"outcome\":\"accepted\",\"decidedAt\":\"2026-01-29T09:00:00.000Z\"},\"backupContent\":\"---\\ndescription: A memory that was pruned\\n---\\n\\nOld content.\\n\",\"acceptedTarget\":{\"source\":\"main\",\"root\":\"<SANDBOX>/fixture/main\",\"path\":\"<SANDBOX>/fixture/main/memories/pruned-note.md\",\"contentHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000003\"},\"retiredArchive\":{\"dirs\":[\".akm/memory-cleanup/archive/<TIME>-main-memories-pruned-note\"]}}"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000006",
+          "ref": "team//knowledge/dup",
+          "status": "rejected",
+          "metadata_json": "{\"changes\":[{\"path\":\"knowledge/dup.md\",\"op\":\"update\"}],\"proposedTarget\":{\"source\":\"team\",\"root\":\"<SANDBOX>/fixture/team\"},\"review\":{\"outcome\":\"rejected\",\"reason\":\"Not an improvement.\",\"decidedAt\":\"2026-01-27T09:00:00.000Z\"}}"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000007",
+          "ref": "main//knowledge:legacy-note",
+          "status": "rejected",
+          "metadata_json": "{\"review\":{\"outcome\":\"rejected\",\"decidedAt\":\"2026-01-26T09:00:00.000Z\"}}"
+        }
+      ]
+    },
     "created assets are searchable :: env create": {
       "exit": 0,
       "stdout": {

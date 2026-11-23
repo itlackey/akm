@@ -101,7 +101,7 @@ describe("proposal queue target binding", () => {
     });
 
     expect(created.ref).toBe("team//lessons/bound-secondary");
-    expect(created.proposedTarget).toEqual({ source: "team", root: path.resolve(team) });
+    expect(created.proposedTarget).toEqual({ source: "team" });
 
     const accepted = await akmProposalAccept({ queue: "team", id: created.id, config: cfg });
     expect(accepted.assetPath).toBe(path.join(team, "lessons", "bound-secondary.md"));
@@ -148,7 +148,7 @@ describe("proposal queue target binding", () => {
       source: "propose",
       payload: { content: VALID_LESSON },
     });
-    expect(created.proposedTarget).toEqual({ source: "team", root: path.resolve(team) });
+    expect(created.proposedTarget).toEqual({ source: "team" });
 
     const accepted = await akmProposalAccept({ queue: "team", id: created.id, config: cfg });
     expect(accepted.assetPath).toBe(path.join(team, "lessons", "git-default-fallback.md"));
@@ -297,7 +297,7 @@ describe("proposal queue target binding", () => {
       payload: { content: VALID_LESSON },
     });
     expect(unqualified.ref).toBe("primary//lessons/configured-default");
-    expect(unqualified.proposedTarget).toEqual({ source: "primary", root: path.resolve(primary) });
+    expect(unqualified.proposedTarget).toEqual({ source: "primary" });
   });
 
   test("a configured bundle name wins even when it matches another queue's directory name", () => {
@@ -320,7 +320,7 @@ describe("proposal queue target binding", () => {
       payload: { content: VALID_LESSON },
     });
     expect(created.ref).toBe("collision//lessons/no-redirect");
-    expect(created.proposedTarget).toEqual({ source: "collision", root: path.resolve(collisionTarget) });
+    expect(created.proposedTarget).toEqual({ source: "collision" });
   });
 
   test("accept rejects a target changed after the proposal captured its before hash", async () => {

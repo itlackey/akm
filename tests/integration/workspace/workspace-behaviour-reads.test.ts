@@ -746,7 +746,7 @@ describe("reads", () => {
     const detail = await out(proposals.get({ id: created.id }));
     expect(detail.proposal).toMatchObject({ id: created.id, ref: "stash//lessons/rg" });
     expect(detail.proposal.backupContent).toBeUndefined();
-    expect(detail.proposal.changes).toEqual([{ op: expect.any(String), path: expect.any(String) }]);
+    expect(detail.proposal.changes).toEqual([{ op: expect.any(String), ref: expect.any(String) }]);
     expect(detail.validation).toMatchObject({ ok: true });
     expect(detail.diffError).toBeNull();
     expect(detail.diff.isNew).toBe(true);

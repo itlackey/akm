@@ -115,7 +115,7 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
       content: "Customer records.",
       frontmatter_json: null,
       metadata_json: JSON.stringify({
-        proposedTarget: { source: "adversarial", root: okfRoot },
+        proposedTarget: { source: "adversarial" },
         changes: [{ path: "tables/customers.md", op: "update" }],
       }),
     };

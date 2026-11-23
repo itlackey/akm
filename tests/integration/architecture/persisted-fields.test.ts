@@ -31,10 +31,6 @@ const ALLOWED: Record<string, string> = {
   "state.workflow_run_unit_attempts.worktree_path": "permanent (a git worktree of a run, not an asset)",
   "index.entries.file_path": "permanent (nullable display path, 4f.2)",
   "index.index_dir_state.dir_path": "permanent (directory scan state)",
-  "Proposal.proposedTarget.root": "4d.2",
-  "Proposal.acceptedTarget.root": "4d.2",
-  "Proposal.acceptedTarget.path": "4d.2",
-  "FileChange.path": "4d.2",
   "RetireAcceptIntent.assetPath": "4d.3",
   "RetiredArchiveRecord.dirs": "4d.3",
   "ArchivedMemoryCleanupRecord.originalPath": "4d.3",
@@ -47,8 +43,12 @@ const ALLOWED: Record<string, string> = {
 
 /** The persisted record types: the file that declares each. */
 const RECORD_TYPES: Record<string, string[]> = {
-  "src/commands/proposal/proposal-types.ts": ["Proposal", "RetireAcceptIntent", "RetiredArchiveRecord"],
-  "src/core/file-change.ts": ["FileChange"],
+  "src/commands/proposal/proposal-types.ts": [
+    "Proposal",
+    "ProposalChange",
+    "RetireAcceptIntent",
+    "RetiredArchiveRecord",
+  ],
   "src/core/improve-types.ts": ["ArchivedMemoryCleanupRecord"],
   "src/core/adapter/types.ts": ["IndexDocument"],
   "src/tasks/scheduler-binding.ts": ["InstalledSchedulerBinding"],

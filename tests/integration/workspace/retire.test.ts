@@ -137,7 +137,7 @@ test("revert still works after the bundle is renamed, for a manual retirement an
   });
   await akmProposalAccept({ stashDir: storage.stashDir, id: edit.id });
   expect((await rename()).applied).toBe(true);
-  expect(getProposal(storage.stashDir, receipt.proposalId).acceptedTarget?.source).toBe("renamed");
+  expect(getProposal(storage.stashDir, receipt.proposalId).acceptedTarget?.bundle).toBe("renamed");
   expect((await revert(receipt)).proposal.status).toBe("reverted");
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
   expect((await akmProposalRevert({ id: edit.id })).proposal.status).toBe("reverted");

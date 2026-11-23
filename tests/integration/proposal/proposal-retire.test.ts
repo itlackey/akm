@@ -167,7 +167,7 @@ describe("createRetireProposal — mint", () => {
     });
     expect(proposal.status).toBe("pending");
     expect(proposal.source).toBe("consolidate-pair");
-    expect(proposal.changes).toEqual([{ path: "memories/old-note.md", op: "delete" }]);
+    expect(proposal.changes).toEqual([{ ref: "stash//memories/old-note", op: "delete" }]);
     expect(proposal.retirement?.judgeLabel).toBe("duplicate");
     expect(proposal.beforeHash).toBeDefined();
   });

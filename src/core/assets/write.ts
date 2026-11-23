@@ -36,17 +36,16 @@ export interface AssetAddress {
   origin?: string;
   /** Whether an asset holds the ref now. Otherwise `conceptId` is where a new asset of the ref's type goes. */
   exists: boolean;
-  /** The file that holds the asset, when it exists and its bundle keeps it as a file. */
+  /**
+   * The file that holds the asset, when it exists, else the file a new one would be kept at; absent when its bundle
+   * keeps no file for it. Display only (§0.2 P13): never stored, never an identity.
+   */
   file?: string;
 }
 
-/**
- * What a write tells its caller: the asset's ref, the file it is kept in when it is a file, and the content it now holds
- * (absent after a delete or retire).
- */
+/** What a write tells its caller: the asset's ref and the content it now holds (absent after a delete or retire). */
 export interface WriteResult {
   ref: string;
-  file?: string;
   content?: string | Buffer;
 }
 
@@ -77,7 +76,8 @@ function searchSourceOf(source: WriteSource): SearchSource {
   };
 }
 
-function addressIn(held: AssetBundle, source: WriteSource, ref: string): AssetAddress {
+/** `gate`: refuse a new asset of a type the bundle's adapter does not write, as a write would. */
+function addressIn(held: AssetBundle, source: WriteSource, ref: string, gate: boolean): AssetAddress {
   const readIn = (id: string): Asset | undefined => readFrom(searchSourceOf(source), source.name, id);
   const { bundle: origin, conceptId: written, fragment } = parseBundleRef(ref);
   const found = fragment === undefined ? readIn(written) : undefined;
@@ -97,19 +97,46 @@ function addressIn(held: AssetBundle, source: WriteSource, ref: string): AssetAd
     };
   }
   const placed = parsePlacementRef(ref);
-  held.assertWrites(placed.type);
+  const named = { type: placed.type, name: placed.name, ...(origin !== undefined ? { origin } : {}), exists: false };
+  if (!held.writes(placed.type)) {
+    if (gate) held.assertWrites(placed.type);
+    // Not a write: the asset is named as written and no file is placed for a type the bundle does not keep.
+    return { conceptId: written, ...named };
+  }
+  // Placement can refuse (a name that would be kept where no asset is). A write refuses where it is made, so only a
+  // gated address does here; one that only says where an asset goes names it as written.
+  const attempt = <T>(place: () => T): T | undefined => {
+    try {
+      return place();
+    } catch (error) {
+      if (gate) throw error;
+      return undefined;
+    }
+  };
+  const file = attempt(() => held.placedFile(placed));
   return {
-    conceptId: held.place(placed),
-    type: placed.type,
-    name: placed.name,
-    ...(origin !== undefined ? { origin } : {}),
-    exists: false,
+    conceptId: attempt(() => held.place(placed)) ?? written,
+    ...named,
+    ...(file !== undefined ? { file } : {}),
   };
 }
 
-/** Where a write to `ref` goes in `source`'s bundle, without a write session: the address {@link AssetWriter.address} gives. */
+/**
+ * Where a write to `ref` goes in `source`'s bundle, without a write session. Unlike {@link AssetWriter.address} it
+ * refuses nothing a write would refuse (a type the bundle's adapter does not write, a name it cannot place): nothing is
+ * written, so the write refuses where it is made. Only an invalid ref throws.
+ */
 export function addressOf(source: WriteSource, ref: string): AssetAddress {
-  return addressIn(assetBundleOf(source), source, ref);
+  return addressIn(assetBundleOf(source), source, ref, false);
+}
+
+/**
+ * The ref of the asset an old stored record named by a bundle-relative path (`changes[].path`), for converters only
+ * (§8.4). Valid when no file holds the asset any more; undefined when the path is no asset's.
+ */
+export function legacyRefOf(source: WriteSource, relPath: string): string | undefined {
+  const conceptId = assetBundleOf(source).identifyKey(relPath);
+  return conceptId === null ? undefined : makeBundleRef(source.name, conceptId);
 }
 
 /** The asset `conceptId` names in `source`'s bundle, read outside a write session. */
@@ -139,7 +166,6 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     reindex(change, kept);
     return {
       ref: makeBundleRef(source.name, change.conceptId),
-      ...(change.file !== undefined ? { file: change.file } : {}),
       ...(change.content !== undefined ? { content: change.content } : {}),
     };
   };
@@ -161,7 +187,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
   };
   return {
     read: (conceptId) => readAsset(source, conceptId),
-    address: (ref) => addressIn(held, source, ref),
+    address: (ref) => addressIn(held, source, ref, true),
     create(asset, options) {
       ensureWritable(source, config);
       held.assertWrites(asset.type);

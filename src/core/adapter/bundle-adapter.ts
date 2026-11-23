@@ -179,4 +179,14 @@ export interface BundleAdapter {
   renderExecutionSource?(b: Bundle, entry: AssetEntry): AdapterRenderedExecutionSource | null;
   /** Install-time probe; ordered by the registry. */
   looksLikeRoot?(root: string): boolean;
+  /**
+   * The file a new asset of `asset`'s type and name would be kept at, when the adapter writes the type and keeps
+   * assets as files. Display only (`AssetAddress.file`, §0.2 P13); never stored.
+   */
+  placedFile?(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string | undefined;
+  /**
+   * The concept id a stored storage key (a bundle-relative path) holds, from the key alone, so it is valid when no
+   * file exists. For converters of old stored records only (§8.4: `legacyRefOf`).
+   */
+  identifyKey?(b: Bundle, key: string): string | null;
 }

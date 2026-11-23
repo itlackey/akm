@@ -519,9 +519,9 @@ pending one, or an asset ref. Unknown: `PROPOSAL_NOT_FOUND`.
       "isRetire": false,
       "retirement": null,
       "sourceRun": "run-1",
-      "proposedTarget": { "source": "stash", "root": "/home/me/akm" },
+      "proposedTarget": { "source": "stash" },
       "payload": { "frontmatter": { "description": "Use ripgrep" } },
-      "changes": [{ "op": "create", "path": "lessons/rg.md" }]
+      "changes": [{ "op": "create", "ref": "stash//lessons/rg" }]
     },
     "validation": {
       "ok": true,

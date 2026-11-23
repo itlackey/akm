@@ -151,8 +151,8 @@ function makeProposal(id: string, ref: string, targetSource: string): Proposal {
     createdAt: now,
     updatedAt: now,
     payload: { content: `content for ${ref}` },
-    changes: [{ path: `${ref}.md`, after: `content for ${ref}`, op: "create" }],
-    proposedTarget: { source: targetSource, root: storage.stashDir },
+    changes: [{ ref, content: `content for ${ref}`, op: "create" }],
+    proposedTarget: { source: targetSource },
   } as unknown as Proposal;
 }
 
@@ -289,6 +289,8 @@ describe("akm bundle rename — applied", () => {
       };
       expect(proposalRow.ref).toBe("renamed//knowledge/new-thing");
       expect(JSON.parse(proposalRow.metadata_json).proposedTarget.source).toBe("renamed");
+      // The refs a proposal's changes carry name the bundle too.
+      expect(JSON.parse(proposalRow.metadata_json).changes[0].ref).toBe("renamed//knowledge/new-thing");
 
       const taskRow = readDb.prepare("SELECT target_ref FROM task_history WHERE task_id = ?").get("wf-run") as {
         target_ref: string;

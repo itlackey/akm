@@ -27,6 +27,7 @@ import {
 } from "../../indexer/passes/metadata";
 import { buildFileContext, type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
 import { isWalkedFile, walkStashFlatWithStatus } from "../../indexer/walk/walker";
+import { makeBundleRef } from "../asset/asset-ref";
 import { compareCodePoints, existingFileMode, hasErrnoCode, writeFileAtomic } from "../common";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
 import type {
@@ -53,7 +54,12 @@ import {
 } from "./directory-archive";
 import type { FileChange } from "./file-change";
 import type { AssetEdit, Bundle, Diagnostic, IndexDocument, IndexMetadata, ValidateContext } from "./types";
-import { createFileValidateContext, type FileDiagnostic, type FileValidateContext } from "./validate-context";
+import {
+  buildOverlay,
+  createFileValidateContext,
+  type FileDiagnostic,
+  type FileValidateContext,
+} from "./validate-context";
 
 export abstract class DirectoryAdapterBase implements BundleAdapter {
   abstract readonly id: string;
@@ -205,7 +211,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const found = await this.checkChanges(b, changes, createFileValidateContext({ ...base, changes }));
     return found.map((diagnostic) => ({
       ...diagnostic,
-      ref: `${b.id}//${this.identify(diagnostic.file) ?? diagnostic.file}`,
+      ref: makeBundleRef(b.id, this.identify(diagnostic.file) ?? diagnostic.file),
     }));
   }
 
@@ -216,7 +222,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
    */
   protected async checkChanges(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     const diagnostics = await this.validateFiles(b, changes, ctx);
-    const view = snapshotView(b, changes);
+    const view = snapshotView(b, buildOverlay(b.root, changes));
     const seen = new Set<string>();
     for (const change of changes) {
       const conceptId = this.identify(change.path);
@@ -285,6 +291,14 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   private entryOf(file: FileContext): AssetEntry {
     const dir = this.packageDir(file);
     return dir === undefined ? file : { ...file, resources: () => packageResources(dir, file.absPath) };
+  }
+
+  placedFile(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string | undefined {
+    return this.writes.includes(asset.type) ? this.placeFile(b, asset) : undefined;
+  }
+
+  identifyKey(_b: Bundle, key: string): string | null {
+    return this.identify(key);
   }
 
   /** The concept id a new asset gets; refused when its file would be no asset (`knowledge` named `index`, `secret` named `x.lock`). */
@@ -549,10 +563,10 @@ function liveView(b: Bundle): FileView {
   };
 }
 
-/** The bundle's files with `changes` laid over them: a created or updated file is there, a deleted one is not. */
-function snapshotView(b: Bundle, changes: readonly FileChange[]): FileView {
+/** The bundle's files with the pending overlay laid over them: a file with pending content is there, a deleted one is not. */
+function snapshotView(b: Bundle, overlay: ReadonlyMap<string, string | null>): FileView {
   const live = liveView(b);
-  const pending = new Map(changes.map((change) => [change.path, change.op !== "delete"]));
+  const pending = new Map([...overlay].map(([relPath, content]) => [relPath, content !== null]));
   return {
     rootExists: live.rootExists,
     list(dir) {

@@ -2816,7 +2816,13 @@ in order:
    never modified. The config is written first (its own backup), then the
    files under one backup directory per run. A bundle with that line and no
    config entry is listed in `bundlePolicy.notes`;
-7. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
+7. proposals recorded by an older akm with the files they change (a path, a
+   target directory) rewritten as the current record, which names assets by
+   ref (`proposalRecords`), in one transaction after a copy of `state.db`
+   (`state.db.pre-proposal-records.bak`). Until then every command reads them as
+   converted and warns once; `status` and `apply --dry-run` say
+   `proposal records: <n> to rewrite`;
+8. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
    the stash, and the transaction-journal, maintenance-barrier, lock-mutex and
    version-stamp files older releases kept under `$DATA`, `$STATE` and
    `$CONFIG`.

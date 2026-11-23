@@ -777,12 +777,14 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
       }
     }
     // An overwrite rewrites the file the asset is read from (N19), so that is the path to report.
-    const change = writeAssets({ source, config }, { purpose: "markdown-write" }, (w) =>
-      w.create({ type: resolved.ref.type, name: resolved.ref.name, content: options.content }),
-    );
+    let writtenFile: string | undefined;
+    const change = writeAssets({ source, config }, { purpose: "markdown-write" }, (w) => {
+      writtenFile = w.address(conceptIdFromTypeName(resolved.ref.type, resolved.ref.name)).file;
+      return w.create({ type: resolved.ref.type, name: resolved.ref.name, content: options.content });
+    });
     const { conceptId } = parseBundleRef(change.ref);
     const durableRef = displayRef({ conceptId, bundleId: resolved.ref.origin });
-    const result = { path: change.file ?? assetPath, ref: resolved.displayRef };
+    const result = { path: writtenFile ?? assetPath, ref: resolved.displayRef };
     // SPEC-5 (--supersedes): demote each superseded asset by mutating its
     // frontmatter (`beliefState: superseded` + sorted-set-append `supersededBy`;
     // every other key and the body are preserved). Ordered BEFORE

@@ -12,6 +12,8 @@ import { assembleAsset, serializeFrontmatter } from "../core/asset/asset-seriali
 import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "../core/asset/frontmatter";
 import { type AssetRef, displayDefaultBundle, displayRef } from "../core/asset/resolve-ref";
 import { currentConceptId } from "../core/assets/read";
+import { addressOf } from "../core/assets/write";
+import { slugForPath } from "../core/bundle-id";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, NotFoundError, TransientError, UsageError } from "../core/errors";
@@ -42,7 +44,6 @@ import {
 import { getUtilityScore } from "../storage/repositories/index-utility-repository";
 import { contentHash } from "./improve/content-hash";
 import { readEdgeList } from "./improve/memory/memory-belief";
-import { resolveProposalAddress } from "./proposal/address";
 import { akmProposalAccept } from "./proposal/proposal";
 import { createProposal, recordGateDecision, rejectProposalDurably } from "./proposal/repository";
 
@@ -361,7 +362,10 @@ function assertFrontmatterStillParses(before: string, after: string, file: strin
  * not the indexed one, so accepting the proposal would leave the real one unfixed.
  */
 export function assertProposalWritesFile(itemRef: string, root: string, filePath: string): void {
-  const { type, path: writes } = resolveProposalAddress(path.resolve(root), itemRef);
+  const { type, file: writes } = addressOf(
+    { name: slugForPath(path.resolve(root)), path: path.resolve(root) },
+    itemRef,
+  );
   if (writes !== undefined && safeRealpath(writes) === safeRealpath(filePath)) return;
   throw new UsageError(
     `akm cannot queue a fix for ${itemRef}: its file is ${filePath}, but a proposal would write ${writes ?? `no file (akm has no directory for "${type}" assets)`}. Edit the file directly.`,

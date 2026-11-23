@@ -99,8 +99,8 @@ describe("proposal repository — pure helpers (post-split)", () => {
     const base = proposalRowToProposal({
       ...historicalRow,
       metadata_json: JSON.stringify({
-        changes: [{ path: "lessons/history.md", op: "update" }],
-        proposedTarget: { source: "team", root: "/tmp/stash" },
+        changes: [{ ref: "team//lessons/history", op: "update" }],
+        proposedTarget: { source: "team" },
       }),
     });
     const reviewHistory = [
@@ -119,8 +119,8 @@ describe("proposal repository — pure helpers (post-split)", () => {
     const withHistory = (history: unknown) => ({
       ...historicalRow,
       metadata_json: JSON.stringify({
-        changes: [{ path: "lessons/history.md", op: "update" }],
-        proposedTarget: { source: "team", root: "/tmp/stash" },
+        changes: [{ ref: "team//lessons/history", op: "update" }],
+        proposedTarget: { source: "team" },
         reviewHistory: history,
       }),
     });
@@ -134,8 +134,8 @@ describe("proposal repository — pure helpers (post-split)", () => {
 
   test("acceptedAt round-trips through the row codec, old-shape rows decode without it, a non-string is refused", () => {
     const envelope = {
-      changes: [{ path: "lessons/history.md", op: "update" }],
-      proposedTarget: { source: "team", root: "/tmp/stash" },
+      changes: [{ ref: "team//lessons/history", op: "update" }],
+      proposedTarget: { source: "team" },
     };
     const oldRow = { ...historicalRow, status: "accepted", metadata_json: JSON.stringify(envelope) };
     const old = proposalRowToProposal(oldRow);
@@ -157,7 +157,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
   });
 
   test("review.decidedBy round-trips, old-shape reviews decode without it, a non-string is refused", () => {
-    const envelope = { changes: [{ path: "lessons/history.md", op: "update" }] };
+    const envelope = { changes: [{ ref: "team//lessons/history", op: "update" }] };
     const review = { outcome: "accepted", decidedAt: "2026-01-02T00:00:00.000Z" };
     const row = (r: Record<string, unknown>) => ({
       ...historicalRow,
@@ -205,7 +205,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
   test("tolerates a legacy row missing only `changes` (#858/#859)", () => {
     const proposal = proposalRowToProposal({
       ...historicalRow,
-      metadata_json: JSON.stringify({ proposedTarget: { source: "team", root: "/tmp/stash" } }),
+      metadata_json: JSON.stringify({ proposedTarget: { source: "team" } }),
     });
     expect(proposal.changes).toEqual([]);
   });
@@ -213,7 +213,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
   test("tolerates a legacy row missing only `proposedTarget` (#859)", () => {
     const proposal = proposalRowToProposal({
       ...historicalRow,
-      metadata_json: JSON.stringify({ changes: [{ path: "lessons/history.md", op: "update" }] }),
+      metadata_json: JSON.stringify({ changes: [{ ref: "team//lessons/history", op: "update" }] }),
     });
     expect(proposal.proposedTarget).toBeUndefined();
   });
@@ -224,15 +224,15 @@ describe("proposal repository — pure helpers (post-split)", () => {
     expect(() =>
       proposalRowToProposal({
         ...historicalRow,
-        metadata_json: JSON.stringify({ changes: [{ path: 1, op: "create" }] }),
+        metadata_json: JSON.stringify({ changes: [{ ref: 1, op: "create" }] }),
       }),
     ).toThrow(/changes/i);
     expect(() =>
       proposalRowToProposal({
         ...historicalRow,
         metadata_json: JSON.stringify({
-          changes: [{ path: "lessons/history.md", op: "update" }],
-          proposedTarget: { source: "team" },
+          changes: [{ ref: "team//lessons/history", op: "update" }],
+          proposedTarget: { source: 42 },
         }),
       }),
     ).toThrow(/proposedTarget/i);
@@ -242,8 +242,8 @@ describe("proposal repository — pure helpers (post-split)", () => {
     const proposal = proposalRowToProposal({
       ...historicalRow,
       metadata_json: JSON.stringify({
-        changes: [{ path: "lessons/history.md", op: "update" }],
-        proposedTarget: { source: "team", root: "/tmp/stash" },
+        changes: [{ ref: "team//lessons/history", op: "update" }],
+        proposedTarget: { source: "team" },
       }),
     });
     expect(proposalToRowValues(proposal, historicalRow.stash_dir).metadata_json).toContain("proposedTarget");
@@ -300,25 +300,20 @@ describe("proposal repository — pure helpers (post-split)", () => {
   test("a fully-populated modern row round-trips every field", () => {
     const metadata = {
       sourceRun: "reflect-modern",
-      changes: [{ path: "lessons/history.md", op: "update" }],
-      proposedTarget: { source: "team", root: "/tmp/stash" },
+      changes: [{ ref: "team//lessons/history", op: "update" }],
+      proposedTarget: { source: "team" },
       beforeHash: "a".repeat(64),
       beforeHashNormalized: "c".repeat(64),
       review: { outcome: "accepted", decidedAt: "2026-01-01T00:00:00.000Z" },
       confidence: 0.5,
       gateDecision: { outcome: "deferred", reason: "mid-band", decidedAt: "2026-01-01T00:00:00.000Z" },
       backupContent: "prior content",
-      acceptedTarget: {
-        source: "team",
-        root: "/tmp/stash",
-        path: "/tmp/stash/lessons/history.md",
-        contentHash: "b".repeat(64),
-      },
+      acceptedTarget: { bundle: "team", ref: "team//lessons/history", contentHash: "b".repeat(64) },
       eligibilitySource: "signal-delta",
     };
     const proposal = proposalRowToProposal({ ...terminalRow, metadata_json: JSON.stringify(metadata) });
-    expect(proposal.changes).toEqual([{ path: "lessons/history.md", op: "update", after: "historical body" }]);
-    expect(proposal.proposedTarget).toEqual({ source: "team", root: "/tmp/stash" });
+    expect(proposal.changes).toEqual([{ ref: "team//lessons/history", op: "update", content: "historical body" }]);
+    expect(proposal.proposedTarget).toEqual({ source: "team" });
     expect(proposal.beforeHash).toBe(metadata.beforeHash);
     expect(proposal.beforeHashNormalized).toBe(metadata.beforeHashNormalized);
     expect(proposal.confidence).toBe(0.5);
@@ -361,8 +356,8 @@ describe("proposal repository — pure helpers (post-split)", () => {
       reason: "duplicate" as const,
     };
     const metadata = {
-      changes: [{ path: "memories/old-note.md", op: "delete" }],
-      proposedTarget: { source: "team", root: "/tmp/stash" },
+      changes: [{ ref: "team//memories/old-note", op: "delete" }],
+      proposedTarget: { source: "team" },
       retirement,
       promotionSource: undefined,
     };
@@ -372,14 +367,14 @@ describe("proposal repository — pure helpers (post-split)", () => {
       content: "",
       metadata_json: JSON.stringify(metadata),
     });
-    expect(proposal.changes).toEqual([{ path: "memories/old-note.md", op: "delete" }]);
+    expect(proposal.changes).toEqual([{ ref: "team//memories/old-note", op: "delete" }]);
     expect(proposal.retirement).toEqual(retirement);
 
     // Round-trips back through the write path unchanged.
     const rowValues = proposalToRowValues(proposal, "/tmp/stash");
     const decoded = proposalRowToProposal({ ...historicalRow, ...rowValues });
     expect(decoded.retirement).toEqual(retirement);
-    expect(decoded.changes).toEqual([{ path: "memories/old-note.md", op: "delete" }]);
+    expect(decoded.changes).toEqual([{ ref: "team//memories/old-note", op: "delete" }]);
   });
 
   test("retiredArchive, promotionSource and promotionSourceHash round-trip", () => {
@@ -422,14 +417,14 @@ describe("proposal repository — pure helpers (post-split)", () => {
   test("write path: pending status still requires the full envelope (write path not weakened)", () => {
     const pendingNoTarget = proposalRowToProposal({
       ...historicalRow,
-      metadata_json: JSON.stringify({ changes: [{ path: "lessons/history.md", op: "update" }] }),
+      metadata_json: JSON.stringify({ changes: [{ ref: "team//lessons/history", op: "update" }] }),
     });
     expect(pendingNoTarget.status).toBe("pending");
     expect(() => proposalToRowValues(pendingNoTarget, historicalRow.stash_dir)).toThrow(/proposedTarget/i);
 
     const pendingNoChanges = proposalRowToProposal({
       ...historicalRow,
-      metadata_json: JSON.stringify({ proposedTarget: { source: "team", root: "/tmp/stash" } }),
+      metadata_json: JSON.stringify({ proposedTarget: { source: "team" } }),
     });
     expect(() => proposalToRowValues(pendingNoChanges, historicalRow.stash_dir)).toThrow(/no file changes/i);
   });

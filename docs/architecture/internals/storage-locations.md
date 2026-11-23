@@ -243,7 +243,12 @@ The proposal queue. A decided proposal stays as a row; archiving changes `status
 `reviewHistory`, `confidence`, `gateDecision`, `feedback`, `backupContent`,
 `acceptedTarget`, `eligibilitySource`, `promotionSource`, `promotionSourceHash`,
 `retirement`, `retiredArchive`, `retireAcceptIntent`. The shapes are validated
-in `validatePresentMetadata`, `src/storage/repositories/proposals-repository.ts`.
+in `validatePresentMetadata`, `src/storage/repositories/proposals-repository.ts`. A record
+names assets by ref, never files: `changes` is `[{ ref, op, content? }]` (the primary
+change's content is the `content` column), `proposedTarget` is `{ source }` (the bundle),
+`acceptedTarget` is `{ bundle, ref, contentHash }`. A record an older akm wrote with
+`changes[].path`, `proposedTarget.root` or `acceptedTarget.root/path` is read as converted
+(`src/commands/proposal/legacy-records.ts`) and rewritten by `akm migrate apply`.
 
 Indexes: `idx_proposals_stash_status`, `idx_proposals_ref_status`,
 `idx_proposals_stash_status_ref_source`.

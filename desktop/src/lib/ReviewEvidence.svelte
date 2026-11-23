@@ -157,7 +157,7 @@
     </details>
   {/if}
   <details>
-    <summary>Provenance and changed files ({rows(p.changes).length})</summary>
+    <summary>Provenance and changed assets ({rows(p.changes).length})</summary>
     <dl class="evidence-grid">
       <dt>Proposal ID</dt>
       <dd class="mono wrap">{p.id}</dd>
@@ -168,9 +168,7 @@
       {#if p.gateDecision?.reason}<dt>Judge reason</dt>
         <dd>{p.gateDecision.reason}</dd>{/if}
       {#if p.proposedTarget}<dt>Target bundle</dt>
-        <dd>{p.proposedTarget.source}</dd>
-        <dt>Target directory</dt>
-        <dd class="mono wrap">{p.proposedTarget.root}</dd>{/if}
+        <dd>{p.proposedTarget.source}</dd>{/if}
       {#if p.review}<dt>Decision</dt>
         <dd>{text(review.outcome)} · {date(review.decidedAt)} · {p.decider ?? "Decider unknown"}</dd>
         <dt>Reason</dt>
@@ -178,9 +176,9 @@
     </dl>
     {#if rows(p.changes).length}<ul class="plain">
         {#each rows(p.changes) as change}<li>
-            <span class="badge">{text(change.op)}</span> <code class="wrap">{text(change.path)}</code>
+            <span class="badge">{text(change.op)}</span> <code class="wrap">{text(change.ref)}</code>
           </li>{/each}
-      </ul>{:else}<p class="muted">No changed-file metadata recorded.</p>{/if}
+      </ul>{:else}<p class="muted">No changed-asset metadata recorded.</p>{/if}
   </details>
 </section>
 

@@ -192,8 +192,8 @@
   },
   "src/commands/proposal/repository.ts": {
     "asset-io": {
-      "existsSync": 22,
-      "readFileSync": 22,
+      "existsSync": 18,
+      "readFileSync": 18,
       "readdirSync": 1,
       "renameSync": 3,
       "rmSync": 3,
@@ -416,7 +416,6 @@
   },
   "src/core/assets/write.ts": {
     "facade-export": {
-      "AssetAddress": 1,
       "AssetWriter": 1
     }
   },
@@ -701,11 +700,6 @@
     "asset-io": {
       "buildFileContext": 1,
       "existsSync": 1
-    }
-  },
-  "src/workspace/proposals.ts": {
-    "asset-io": {
-      "buildFileContext": 1
     }
   },
   "src/workspace/sensitive.ts": {

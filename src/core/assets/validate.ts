@@ -5,7 +5,9 @@
 /**
  * Checking assets: the one validate side of the asset facade. The bundle's adapter says what is wrong with its
  * assets, which it is asked about by concept id (`AssetBundle.validate`); nothing here writes. A caller with pending
- * edits (proposal accept, 4d.2) gets its function here when it exists.
+ * edits gets its function here when it exists (the proposal accept lint is still the base checks over the stamped
+ * content: `validate` would also honour `lint.skip` and moved refs and add findings, a visible change that needs its
+ * own §0.2 row, and it is async where the accept preflight is not).
  */
 
 import type { AssetEntry } from "../adapter/bundle-adapter";

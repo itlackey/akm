@@ -22,7 +22,9 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { AssetRef } from "../../core/asset/resolve-ref";
 import { findAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
+import { addressOf } from "../../core/assets/write";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
+import { slugForPath } from "../../core/bundle-id";
 import { isWithin, resolveStashDir, safeRealpath } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -54,7 +56,6 @@ import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported } f
 import { isRefused, structuredLoop } from "../../llm/structured";
 import type { StructuredOutcome } from "../../llm/structured-call";
 import { enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
-import { resolveProposalAddress, type WriteAddress } from "../proposal/address";
 import type { EligibilitySource } from "../proposal/proposal-types";
 import type { CreateProposalInput, ProposalsContext } from "../proposal/repository";
 import { isValidDescription } from "../proposal/validators/proposal-quality-validators";
@@ -728,9 +729,9 @@ async function resolveReflectSource(
   // A proposal writes the file that owns the ref in the proposal's own bundle; the type is that of
   // the file that owns it wherever it is (a file in another bundle is `createProposal`'s to refuse, #1000).
   const root = path.resolve(options.target?.root ?? stash);
-  const address = resolveProposalAddress(root, options.ref);
+  const address = addressOf({ name: slugForPath(root), path: root }, options.ref);
   const owned = findAsset(options.itemRef ?? options.ref, { sources: resolveSourceEntries(stash) });
-  const parsedRef: WriteAddress = { ...address, type: owned ? assetType(owned) : address.type };
+  const parsedRef: AssetRef = { type: owned ? assetType(owned) : address.type, name: address.name };
   // A secret's content is never read, whatever it looks like.
   if (REFLECT_REFUSED_TYPES.has(parsedRef.type)) {
     return unsupportedTypeFailure(
@@ -764,9 +765,9 @@ async function resolveReflectSource(
     return unsupportedTypeFailure(options.ref, parsedRef.type, "its content is not frontmatter + markdown", emitFailed);
   }
   // A file in another bundle is `createProposal`'s to refuse (#1000); this one is in the proposal's own bundle.
-  if (assetFile !== undefined && address.path !== undefined && isWithin(assetFile, root)) {
-    if (safeRealpath(address.path) !== safeRealpath(assetFile)) {
-      return fileOutsideLayoutFailure(options.ref, assetFile, address.path, emitFailed);
+  if (assetFile !== undefined && address.file !== undefined && isWithin(assetFile, root)) {
+    if (safeRealpath(address.file) !== safeRealpath(assetFile)) {
+      return fileOutsideLayoutFailure(options.ref, assetFile, address.file, emitFailed);
     }
   }
   return { assetContent, parsedRef };

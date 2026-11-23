@@ -49,8 +49,12 @@ export interface FileValidateContext extends ValidateContext {
 /** `null` = the overlay DELETES this path (never satisfies a read/exists check). */
 type OverlayValue = string | null;
 
-/** Build the overlay map, keyed by POSIX path relative to `root`. */
-function buildOverlay(root: string, changes: readonly FileChange[]): Map<string, OverlayValue> {
+/**
+ * Build the overlay map, keyed by POSIX path relative to `root`: the one definition of what pending changes do to the
+ * files, shared by the checks' reads and the directory layer's file view. A change without content to write adds no
+ * file; a delete removes one.
+ */
+export function buildOverlay(root: string, changes: readonly FileChange[]): Map<string, OverlayValue> {
   const overlay = new Map<string, OverlayValue>();
   for (const change of changes) {
     const relKey = toPosix(path.isAbsolute(change.path) ? path.relative(root, change.path) : change.path);

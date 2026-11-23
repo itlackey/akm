@@ -436,7 +436,7 @@ describe("a fix for an asset outside its type's folder", () => {
     const id = (json.fix as { proposalId: string }).proposalId;
     const proposal = getProposal(stashDir, id);
     expect(proposal).toMatchObject({ status: "accepted", ref: `stash//${ref}` });
-    expect(proposal.changes.map((change) => change.path)).toEqual([rel]);
+    expect(proposal.changes.map((change) => change.ref)).toEqual([`stash//${ref}`]);
     const file = path.join(stashDir, rel);
     expect(fs.readFileSync(file, "utf8")).toContain("port 4096");
     expect(fs.existsSync(path.join(stashDir, placementFile))).toBe(false);

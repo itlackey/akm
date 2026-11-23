@@ -493,9 +493,9 @@ describe("listProposals resilience to malformed archive rows (#858/#859)", () =>
         metadata_json: string;
       };
       const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
-      // Present but malformed (missing `root`) — genuine corruption, distinct
+      // Present but malformed (not a bundle name) — genuine corruption, distinct
       // from the field being absent entirely.
-      metadata.proposedTarget = { source: "team" };
+      metadata.proposedTarget = { source: 42 };
       db.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(metadata), corrupt.id);
     } finally {
       db.close();

@@ -2,14 +2,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import path from "node:path";
+import { parseBundleRef } from "../../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
-import { parsePlacementRef } from "../../../core/asset/resolve-ref";
-import { proposalContent } from "../../../core/file-change";
+import { type AssetRef, parsePlacementRef } from "../../../core/asset/resolve-ref";
+import { addressOf } from "../../../core/assets/write";
+import { loadConfig } from "../../../core/config/config";
 import { lintLessonContent } from "../../../core/lesson-lint";
+import { resolveBundleWriteTarget } from "../../../core/mutation-target";
 import { isLegacyProposalRef } from "../../../storage/repositories/proposals-repository";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
 import { compileWorkflowSource } from "../../../workflows/compile";
-import { resolveProposalAddress } from "../address";
 import type {
   Proposal,
   ProposalValidationContext,
@@ -17,6 +20,7 @@ import type {
   ProposalValidationReport,
   ProposalValidator,
 } from "../proposal-types";
+import { proposalContent } from "../proposal-types";
 import { defaultProposalQualityValidators } from "./proposal-quality-validators";
 
 // ProposalValidationContext / ProposalValidator moved to ../proposal-types.ts
@@ -26,6 +30,23 @@ import { defaultProposalQualityValidators } from "./proposal-quality-validators"
 // the dependency-free leaf breaks that back-edge). Re-exported here so
 // existing import sites are unchanged.
 export type { ProposalValidationContext, ProposalValidator } from "../proposal-types";
+
+/**
+ * The type and name a proposal's ref has. The bundle the proposal is bound to, when it is configured, says what an
+ * existing asset's type is; otherwise the ref's first folder does.
+ */
+function refOfProposal(proposal: Proposal): AssetRef {
+  const bound = proposal.acceptedTarget?.bundle ?? proposal.proposedTarget?.source;
+  if (bound !== undefined) {
+    try {
+      const { type, name, origin } = addressOf(resolveBundleWriteTarget(loadConfig(), bound).source, proposal.ref);
+      return { type, name, ...(origin !== undefined ? { origin } : {}) };
+    } catch {
+      // The bundle is not configured, or the ref is invalid: the ref alone decides, and refuses an invalid one.
+    }
+  }
+  return parsePlacementRef(proposal.ref);
+}
 
 const genericProposalValidator: ProposalValidator = {
   name: "generic-proposal-validator",
@@ -55,9 +76,7 @@ const genericProposalValidator: ProposalValidator = {
     }
 
     try {
-      // The bound bundle, when there is one, says what an existing target's type is.
-      const root = proposal.acceptedTarget?.root ?? proposal.proposedTarget?.root;
-      ctx.parsedRef = root ? resolveProposalAddress(root, proposal.ref) : parsePlacementRef(proposal.ref);
+      ctx.parsedRef = refOfProposal(proposal);
     } catch (err) {
       findings.push({
         kind: "invalid-ref",
@@ -101,7 +120,7 @@ const canonicalProposalValidators: Readonly<Record<string, CanonicalProposalVali
     // `invalid-task-structure` finding by the try/catch this call sits in.
     parseTaskSource({
       yaml: proposalContent(proposal),
-      filePath: proposal.changes[0]?.path || proposal.ref,
+      filePath: proposal.ref,
     });
     return [];
   },
@@ -121,8 +140,12 @@ const canonicalProposalValidators: Readonly<Record<string, CanonicalProposalVali
       ];
     }
 
-    const sourcePath = proposal.changes[0]?.path || proposal.ref;
-    const result = compileWorkflowSource(content, { path: sourcePath });
+    // A workflow is Markdown: its source is named by the concept (a ref that spells another extension is refused as
+    // such), and its title is the concept's last segment.
+    const { conceptId } = parseBundleRef(proposal.ref);
+    const result = compileWorkflowSource(content, {
+      path: path.posix.extname(conceptId) ? conceptId : `${conceptId}.md`,
+    });
     if (result.ok) return [];
 
     return result.errors.map((error) => ({

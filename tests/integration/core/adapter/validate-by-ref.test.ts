@@ -6,7 +6,9 @@ import { akmWorkflowAdapter } from "../../../../src/core/adapter/adapters/akm-wo
 import { genericFilesAdapter } from "../../../../src/core/adapter/adapters/generic-files-adapter";
 import { okfAdapter } from "../../../../src/core/adapter/adapters/okf-adapter";
 import type { Bundle } from "../../../../src/core/adapter/types";
+import { createFileValidateContext } from "../../../../src/core/adapter/validate-context";
 import { validateBundleAssets } from "../../../../src/core/assets/validate";
+import { checkChanges } from "../../../_helpers/adapter-hooks";
 import { sandboxStashDir } from "../../../_helpers/sandbox";
 
 const UPDATED = "---\nupdated: 2026-01-01\n---\nbody\n";
@@ -87,6 +89,26 @@ describe("validate checks asset edits by ref", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("the file checks and the shadow check see one overlay of the pending changes", () => {
+  test("a pending create adds a second spelling: a shadow, and the new file is in the snapshot the checks read", async () => {
+    write("tasks/twin.yml", "name: twin\n");
+    const changes = [{ path: "tasks/twin.md", op: "create" as const, after: "# twin\n" }];
+    const ctx = createFileValidateContext({ root: sandbox.dir, changes });
+    expect(await ctx.readFile("tasks/twin.md")).toBe("# twin\n");
+    const found = await checkChanges(akmAdapter, b, changes, ctx);
+    expect(found).toContainEqual(expect.objectContaining({ file: "tasks/twin.yml", issue: "shadowed-spelling" }));
+  });
+
+  test("a pending create with no content adds no file to either: no second spelling", async () => {
+    write("tasks/twin.yml", "name: twin\n");
+    const changes = [{ path: "tasks/twin.md", op: "create" as const }];
+    const ctx = createFileValidateContext({ root: sandbox.dir, changes });
+    expect(await ctx.readFile("tasks/twin.md")).toBeNull();
+    const found = await checkChanges(akmAdapter, b, changes, ctx);
+    expect(found.filter((d) => d.issue === "shadowed-spelling")).toEqual([]);
   });
 });
 

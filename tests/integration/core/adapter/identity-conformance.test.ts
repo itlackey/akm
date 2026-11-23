@@ -242,3 +242,32 @@ describe("identity is the path: a secret manager's entries", () => {
     });
   });
 });
+
+describe("a validated create is checked at the file a create writes", () => {
+  test.each(
+    directoryAdapters().flatMap((adapter) => adapter.writes.map((type) => [adapter.id, type] as const)),
+  )("%s %s: the first spelling of the placed concept is the placed file", (id, type) => {
+    const adapter = directoryAdapters().find((candidate) => candidate.id === id) as DirectoryAdapterBase;
+    const sandbox = sandboxStashDir();
+    try {
+      const b: Bundle = { id: "b", root: sandbox.dir };
+      const asset = { type, name: "probe" };
+      let conceptId: string;
+      try {
+        conceptId = adapter.place(b, asset);
+      } catch {
+        return; // a name the adapter refuses to place has no file to compare
+      }
+      const placed = adapter.placedFile(b, asset);
+      expect(placed).toBeDefined();
+      expect(
+        path
+          .relative(sandbox.dir, placed as string)
+          .split(path.sep)
+          .join("/"),
+      ).toBe(spellings(adapter, conceptId)[0] ?? "");
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+});

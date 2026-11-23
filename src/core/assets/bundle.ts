@@ -95,6 +95,14 @@ export class AssetBundle {
   place(asset: Pick<NewAsset, "type" | "name">): string {
     return this.#adapter.place(this.#bundle, asset);
   }
+  /** The file a new asset would be kept at, when its adapter keeps assets as files and writes the type. Display only. */
+  placedFile(asset: Pick<NewAsset, "type" | "name">): string | undefined {
+    return this.#adapter.placedFile?.(this.#bundle, asset);
+  }
+  /** The concept id a stored key holds, from the key alone; null when it holds none or the adapter has no keys. */
+  identifyKey(key: string): string | null {
+    return this.#adapter.identifyKey?.(this.#bundle, key) ?? null;
+  }
   create(asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean }): AssetChange {
     return this.#adapter.create(this.#bundle, asset, options);
   }
