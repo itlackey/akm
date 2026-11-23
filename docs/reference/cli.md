@@ -1621,7 +1621,7 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--allow-dangerous-env-keys` | Deprecated, no effect. `bundle add` no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
-| `--credential` | Git HTTPS bearer credential, stored as a reference and never a literal token: `$VAR`, `${VAR}`, or an akm ref such as `${secrets/gitea_token}` (`${team//secrets/gitea_token}` for a secret in another bundle). Resolved only when git runs |
+| `--credential` | Git HTTPS token (sent as HTTP Basic auth with the token as the password, the form GitHub, Gitea, GitLab and Azure DevOps accept), stored as a reference and never a literal token: `$VAR`, `${VAR}`, or an akm ref such as `${secrets/gitea_token}` (`${team//secrets/gitea_token}` for a secret in another bundle). Resolved only when git runs |
 
 To index only a subdirectory of a git bundle, set the component `root` after
 adding it:

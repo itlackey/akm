@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A git bundle's `credential` now reaches a private GitHub repository. akm sent the token to Git as `Authorization: Bearer`, which GitHub's Git endpoint refuses for a personal access token, so the clone failed with "repository not found or private". It is now sent as HTTP Basic auth (`x-access-token` and the token), which GitHub, Gitea, GitLab and Azure DevOps all accept, for clone, update, `akm sync` fetch and push alike.
+
 ## [0.10.261130] - 2026-11-22
 
 ### Added
