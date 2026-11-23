@@ -79,7 +79,11 @@ export interface AssetWriter {
    * `replaceLink`: an asset file that is a symbolic link to a file inside the bundle is replaced by a regular file.
    */
   create(asset: NewAsset, options?: { exclusive?: boolean; verbatim?: boolean; replaceLink?: boolean }): WriteResult;
-  update(conceptId: string, content: string | Buffer, options?: { revision?: string }): WriteResult;
+  update(
+    conceptId: string,
+    content: string | Buffer,
+    options?: { revision?: string; throughLink?: boolean },
+  ): WriteResult;
   delete(conceptId: string, options?: { revision?: string }): WriteResult;
   retire(conceptId: string, note: RetireNote, options?: { revision?: string }): WriteResult & { handle: string };
   retired(): Retirement[];
@@ -239,7 +243,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     },
     update(conceptId, content, options) {
       existing(conceptId, options);
-      return result(held.update(conceptId, content));
+      return result(held.update(conceptId, content, { throughLink: options?.throughLink }));
     },
     delete(conceptId, options) {
       existing(conceptId, options);

@@ -170,6 +170,10 @@ export class AssetBundle {
   recognize(entry: AssetEntry): IndexDocument | null {
     return this.#adapter.recognize(this.#bundle, entry);
   }
+  /** The type the entry's bytes give it, when the adapter can say so without describing the entry (undefined: it types nothing, or cannot). */
+  contentType(entry: AssetEntry): string | undefined {
+    return this.#adapter.contentType?.(this.#bundle, entry);
+  }
   validate(edits: AssetEdit[], ctx: ValidateContext): Promise<Diagnostic[]> {
     return this.#adapter.validate(this.#bundle, edits, ctx);
   }
@@ -187,8 +191,8 @@ export class AssetBundle {
   create(asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean }): AssetChange {
     return this.#adapter.create(this.#bundle, asset, options);
   }
-  update(conceptId: string, content: string | Buffer): AssetChange {
-    return this.#adapter.update(this.#bundle, conceptId, content);
+  update(conceptId: string, content: string | Buffer, options?: { throughLink?: boolean }): AssetChange {
+    return this.#adapter.update(this.#bundle, conceptId, content, options);
   }
   delete(conceptId: string): AssetChange {
     return this.#adapter.delete(this.#bundle, conceptId);

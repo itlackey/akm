@@ -470,6 +470,10 @@ export class AkmAdapter extends AkmFormatAdapterBase {
     ".kts",
   ];
 
+  contentType(b: Bundle, entry: AssetEntry): string | undefined {
+    return classifyAkmFile(entry.key, fileContextOfEntry(rootOf(b), entry))?.match.type;
+  }
+
   protected identify(relPath: string): string | null {
     return classifyAkmPath(relPath)?.conceptId ?? null;
   }

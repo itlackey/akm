@@ -17,7 +17,14 @@ import {
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { bundleAdapterId } from "../../core/assets/gate";
-import { assertFileWritable, heldFilesBelow, heldFolders, heldText, holdsFile } from "../../core/assets/held";
+import {
+  assertFileWritable,
+  heldFilesBelow,
+  heldFolders,
+  heldText,
+  holdsFile,
+  saveHeldText,
+} from "../../core/assets/held";
 import type { Asset } from "../../core/assets/read";
 import { assetTypesByContent } from "../../core/assets/type";
 import {
@@ -122,7 +129,7 @@ export interface AkmLintOptions {
  * walking past it and reporting a clean scan.
  */
 function collectTaskFiles(root: string): string[] {
-  return heldFilesBelow(root, "tasks", (name) => isTaskFileName(name) || isNearMissTaskFileName(name));
+  return heldFilesBelow({ path: root }, "tasks", (name) => isTaskFileName(name) || isNearMissTaskFileName(name));
 }
 
 function isTaskFileName(fileName: string): boolean {
@@ -418,7 +425,9 @@ function runEnvDangerousKeyPass(
     // hand-built `env:<base>` colon grammar is rejected by the ref
     // parser, which dead-ended a user copying the ref off a security finding.
     for (const assetType of ["env", "secret"] as const) {
-      for (const envPath of heldFilesBelow(root, stashDirFor(assetType) as string, (name) => name.endsWith(".env"))) {
+      for (const envPath of heldFilesBelow({ path: root }, stashDirFor(assetType) as string, (name) =>
+        name.endsWith(".env"),
+      )) {
         const conceptId = conceptIdForStashFile(assetType, root, envPath);
         const ref = displayRefForConceptId(conceptId, bundleId, cfg.defaultBundle);
         const relPath = path.relative(root, envPath);
@@ -479,7 +488,7 @@ function isFileDeletion(issue: LintIssue): boolean {
  * golden (`tests/integration/goldens-lint-output.test.ts`).
  */
 export function lintSkillDirectory(stashRoot: string, relDir: string, depth = 1): LintIssue[] {
-  if (holdsFile(stashRoot, path.join(relDir, "SKILL.md"))) return [];
+  if (holdsFile({ path: stashRoot }, path.join(relDir, "SKILL.md"))) return [];
   const children = depth < MAX_SKILL_GROUP_DEPTH ? skillSubfolders(stashRoot, relDir) : [];
   if (children.some((child) => containsSkillManifest(stashRoot, child, depth + 1))) {
     return children.flatMap((child) => lintSkillDirectory(stashRoot, child, depth + 1));
@@ -489,13 +498,13 @@ export function lintSkillDirectory(stashRoot: string, relDir: string, depth = 1)
 
 /** The folders of `relDir` that are not hidden, as bundle-relative paths. */
 function skillSubfolders(stashRoot: string, relDir: string): string[] {
-  return heldFolders(stashRoot, relDir)
+  return heldFolders({ path: stashRoot }, relDir)
     .filter((name) => !name.startsWith("."))
     .map((name) => path.join(relDir, name));
 }
 
 function containsSkillManifest(stashRoot: string, relDir: string, depth: number): boolean {
-  if (holdsFile(stashRoot, path.join(relDir, "SKILL.md"))) return true;
+  if (holdsFile({ path: stashRoot }, path.join(relDir, "SKILL.md"))) return true;
   if (depth >= MAX_SKILL_GROUP_DEPTH) return false;
   return skillSubfolders(stashRoot, relDir).some((child) => containsSkillManifest(stashRoot, child, depth + 1));
 }
@@ -541,7 +550,7 @@ export function lintAssetFile(ctx: LintContext, subdir: string): LintIssue[] {
     body: ctx.body,
     ext: path.extname(ctx.relPath).toLowerCase(),
     rules: { relPath: ctx.relPath, skip: ctx.lintSkip },
-    derivedSiblingExists: holdsFile(ctx.stashRoot, derivedSiblingPath(ctx.relPath)),
+    derivedSiblingExists: holdsFile({ path: ctx.stashRoot }, derivedSiblingPath(ctx.relPath)),
   });
   issues.push(...found.map((finding) => deleteStubWhenFixing(ctx, finding)));
   return issues;
@@ -582,30 +591,34 @@ interface SweepFile {
 
 /**
  * The file `filePath` of the bundle at `root`. The asset that holds it (an adapter lists one there) is what a fix saves
- * through; a file no adapter lists as an asset (a `.yaml` near-miss task) is read as it lies and has nothing to save to.
+ * through, written where a link leads when the file is one; a file no adapter lists as an asset (a `.yaml` near-miss task)
+ * is read and saved as it lies. Under a write session the asset is read again when its turn comes, since an earlier fix
+ * may have changed the bytes it was listed with (two paths to one file).
  */
 function sweepFileOf(
-  root: string,
+  bundle: LintBundle,
   filePath: string,
   asset: Asset | undefined,
   writer: AssetWriter | undefined,
 ): SweepFile {
+  const current = (held: Asset): Asset => (writer ? (assetAtKey(bundle, held.entry.key) ?? held) : held);
   return {
     filePath,
-    relPath: path.relative(root, filePath),
-    read: () => (asset ? asset.entry.content() : heldText(filePath)),
-    io:
-      asset && writer
+    relPath: path.relative(bundle.path, filePath),
+    read: () => (asset ? current(asset).entry.content() : heldText(filePath)),
+    io: asset
+      ? writer
         ? {
             modified: () => asset.entry.modified?.() ?? new Date(),
             write: (raw) => {
               // A read-only file stays as it is: the save replaces the file, which ignores its mode.
               assertFileWritable(filePath);
-              writer.update(asset.conceptId, raw);
+              writer.update(asset.conceptId, raw, { throughLink: true });
             },
             remove: () => void writer.delete(asset.conceptId),
           }
-        : {},
+        : {}
+      : { write: (raw) => saveHeldText(filePath, raw) },
   };
 }
 
@@ -850,7 +863,7 @@ function lintAkmSweep(
       // SkillLinter.lintDirectory). Run once per direct subdirectory before the
       // per-file loop.
       if (subdir === "skills") {
-        for (const name of heldFolders(stashRoot, "skills")) {
+        for (const name of heldFolders({ path: stashRoot }, "skills")) {
           for (const issue of lintSkillDirectory(stashRoot, path.join("skills", name))) {
             // Tristate-safe: only `true` counts as fixed; `false` and "failed"
             // are both flagged.
@@ -870,7 +883,7 @@ function lintAkmSweep(
         // rewrote files inside the registry cache.
         if (isAkmRegistryCachePath(filePath)) continue;
         lintSweepFile(
-          sweepFileOf(stashRoot, filePath, assetByFile.get(filePath), writer),
+          sweepFileOf(bundle, filePath, assetByFile.get(filePath), writer),
           subdir,
           {
             ...scope,
@@ -1056,7 +1069,12 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
     const bundle = lintBundleOf(bundleSourceAt(root, cfg).adapterId, root, resolveSourceEntries(root, cfg));
     const asset = assetAtKey(bundle, path.relative(realRoot, absFile).split(path.sep).join("/"));
     const lintOne = (writer: AssetWriter | undefined): void =>
-      lintSweepFile({ ...sweepFileOf(realRoot, absFile, asset, writer) }, subdir as string, scope, sinks);
+      lintSweepFile(
+        { ...sweepFileOf({ ...bundle, path: realRoot }, absFile, asset, writer) },
+        subdir as string,
+        scope,
+        sinks,
+      );
     if (scope.fix || scope.fixMovedRefs) writeAssets(fixTarget(bundle), { purpose: "lint-fix" }, lintOne);
     else lintOne(undefined);
   } else {
