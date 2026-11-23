@@ -3259,8 +3259,8 @@ AKM_VALUE="$TOKEN" akm secret set secrets/api --from-env AKM_VALUE
 The value is **never accepted via positional arguments**. With stdin, a single
 trailing newline is stripped (so `echo "$TOKEN" | akm secret set …` stores the
 token without the shell-added newline); use `--from-file` for byte-exact storage
-of multi-line material. Writes are atomic (mode 0600) under an exclusive
-`<secret>.lock`. Maximum size is 5 MB.
+of multi-line material. Writes are atomic (mode 0600) and take the asset-mutation lease; there is no
+per-secret lock file. Maximum size is 5 MB.
 
 `secret set` selects its write destination like every other write command: an
 explicit `--bundle <source>` wins, else `defaultWriteTarget`, else the working

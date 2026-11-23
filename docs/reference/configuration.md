@@ -931,18 +931,44 @@ and `defaultBundle` are the 0.9 source configuration shape — see
 [Concepts](../guides/concepts.md) and the [CLI reference](cli.md) for the
 full bundle model (`path`, `git`, `website`, `npm`, `location`, `writable`,
 `registryId`, `adapter`, `root`, `lint`). A bundle carries exactly one of `path`,
-`git`, `website`, `npm` and `location`. `location` is where the bundle's `adapter`
-finds a bundle that is not a directory (it needs `adapter`): a keyring
-(`secret-tool`) or an Azure Key Vault (`azure-key-vault`), see
-[Environment & Secrets](env-and-secrets.md#secrets-kept-by-a-secret-manager).
-An adapter that reads a store needs a `location` and a directory adapter cannot have
-one; a bundle that breaks this is a config error, which `akm config set` refuses.
-`defaultBundle` must name a key in `bundles` when set. A
-bundle's `adapter` key pins it to a specific format adapter
-instead of relying on auto-detection. `root` (a `path` or `git` bundle) is the content
-root inside the bundle. The retired `components` map is read as these keys, with a
-warning, and `akm migrate apply` rewrites the file — see [Bundle Types](bundle-types.md)
-for the full adapter list and what each one reads/writes.
+`git`, `website`, `npm` and `location`.
+
+```json
+"bundles": {
+  "main":    { "path": "~/akm", "adapter": "akm", "writable": true },
+  "skills":  { "git": "https://example.com/skills.git", "root": "skills", "adapter": "agent-skills" },
+  "keyring": { "adapter": "secret-tool", "location": "akm" },
+  "vault":   { "adapter": "azure-key-vault", "location": "team-vault" }
+}
+```
+
+| Key | Purpose |
+| --- | --- |
+| `adapter` | The id of the [adapter](../architecture/adapters.md) that reads the bundle (`akm`, `okf`, `secret-tool`, ...). Without it, akm detects one from the bundle's content. An unknown id is a config error that names the valid ones. |
+| `root` | The content root inside the bundle. Only with `path` or `git`. |
+| `writable` | The one writability key. Default: `true` for a local `path` and for `location`, `false` for the rest. |
+| `location` | Where the adapter finds a bundle that is not a directory: a keyring's or a Key Vault's name. It needs `adapter`. |
+
+`location` names a keyring (`secret-tool`) or an Azure Key Vault
+(`azure-key-vault`); see
+[Environment & Secrets](env-and-secrets.md#secrets-kept-by-a-secret-manager) for
+how each is found, unlocked and used. An adapter that reads a store needs a
+`location` and a directory adapter cannot have one; a bundle that breaks this is
+a config error, which `akm config set` refuses and `akm doctor` reports.
+`akm bundle add <location> --adapter <id>` writes the `location`.
+`akm bundle list` shows each bundle's `adapter` and whether it was `detected`,
+and `status.exists` comes from the adapter: whether the directory, keyring or
+vault is there.
+
+`defaultBundle` must name a key in `bundles` when set. A bundle's `adapter` key
+pins it to a specific format adapter instead of relying on auto-detection.
+`root` (a `path` or `git` bundle) is the content root inside the bundle. The
+retired `components` map is read as these keys, with a warning, and
+`akm migrate apply` rewrites the file; `akm config set
+bundles.<name>.components.*` is refused, naming `bundles.<name>.adapter`, `root`
+and `writable`. See [Bundle Types](bundle-types.md) for the full adapter list
+and what each one reads and writes.
+<!-- 4e.1: a config entry without `adapter` is resolved once at config load and never probed at call time; the implicit stash and AKM_BUNDLE_DIR become in-memory bundles -->
 
 A bundle entry also carries the lint policy for its own files:
 

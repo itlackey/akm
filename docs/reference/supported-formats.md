@@ -11,7 +11,9 @@ A directory AKM indexes this way is a **bundle**. AKM auto-detects which
 format a bundle uses — you never declare it yourself unless you want to pin
 one explicitly. AKM recognizes 12 directory formats. A bundle can also be
 kept by a secret manager, which is not a directory: its config entry names the
-keyring or vault and one of 2 adapters that read it.
+keyring or vault and one of 2 adapters that read it
+(`"adapter": "secret-tool", "location": "<keyring>"`; see
+[Configuration](configuration.md#bundles-and-write-target)).
 
 ## Format compatibility
 
@@ -22,7 +24,7 @@ keyring or vault and one of 2 adapters that read it.
 | `claude` | `CLAUDE.md` as `instruction`; `commands/`, `agents/`, `skills/<name>/SKILL.md` as their matching types | Root `CLAUDE.md` plus at least one of `commands/`, `agents/`, `skills/` | Read-only | Point AKM at an existing Claude Code `.claude` tool directory |
 | `opencode` | Same shape as `claude`, rooted on `AGENTS.md` | `opencode.json`/`opencode.jsonc`, or root `AGENTS.md` plus a canonical plural tool directory | Read-only | Point AKM at an existing OpenCode `.opencode` tool directory |
 | `dotenv` | `env` entries as key names only (never values); `secret` entries as file names only (never content) | Every top-level directory is `env/` and/or `secrets/`, with at least one present | Writable, narrowly — `akm env create`/`env remove`/`secret set`/`secret remove` only | A standalone env/secrets-only bundle |
-| `akm-workflow` | Workflow steps, name, description, tags | A top-level `.md` file with explicit `type: workflow` frontmatter | Writable — `akm workflow create` only | A standalone workflow bundle, one workflow per file. Deprecated with workflows; removed in 0.11 |
+| `akm-workflow` | Workflow steps, name, description, tags; once the bundle is claimed, every `.md` except a README is a workflow | A top-level `.md` file with explicit `type: workflow` frontmatter | Writable — `akm workflow create` only | A standalone workflow bundle, one workflow per file. Deprecated with workflows; removed in 0.11 |
 | `akm-task` | Task source v4 (`version: 4`) `.yml` sources as type `task`, including local schedules/manual triggers and the exact authored YAML | A top-level `.yml` file accepted by the task source v4 parser (`version: 4`, one `uses`/`run` executable selector, optional top-level `schedule:`) | Read-only | A standalone scheduled-task bundle; `.yaml` is rejected |
 | `llm-wiki` | `raw/` sources as `wiki-source`; `pages/` as their `pageKind` (default `note`), with resolved cross-reference links | Root `schema.md` plus a `pages/` directory | Read-only (author by writing directly into `pages/`; AKM indexes and serves the result) | [Karpathy's LLM-wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — agent-authored reference wikis |
 | `akm` (native) | AKM's own 15 native asset types — see [Asset Types](asset-types.md) | A `.stash` marker directory, or two-plus native subdirectories, or the fallback when nothing else matches | Fully writable — every AKM-native write command | Your working bundle, and any bundle authored as AKM's own format |
