@@ -4,6 +4,7 @@
 
 /** What a bundle's adapter writes, for callers that decide before they write. `bundle.ts` itself stays inside the facade. */
 
+import { akmAdapter } from "../adapter/adapters/akm-adapter";
 import { adapterForId, clearAdapterCaches as clearRegistryCaches } from "../adapter/registry";
 import type { UsageErrorCode } from "../errors";
 import { assetBundleOf } from "./bundle";
@@ -36,6 +37,11 @@ export function adapterAddressedBy(adapterId: string): "root" | "location" | und
 /** Whether the bundle's storage is there: a directory exists, a keyring or vault answers. It reads no asset and never prompts. */
 export function bundleStorageExists(source: GateSource): boolean {
   return assetBundleOf(source).exists();
+}
+
+/** The stash subfolders akm owns in an AKM workspace under `root` (git stages only these and `.akm`). */
+export function assetDirectories(root: string): string[] {
+  return akmAdapter.directoryList({ id: "akm", root });
 }
 
 /** Forget what the adapters read of their keyrings and vaults. The CLI calls it per command and Desktop per request: a store changes between them. */

@@ -35,7 +35,7 @@
     "asset-io": {
       "existsSync": 2,
       "lstatSync": 2,
-      "readFileSync": 4,
+      "readFileSync": 2,
       "writeFileAtomic": 1
     }
   },
@@ -54,33 +54,14 @@
     }
   },
   "src/commands/improve/consolidate.ts": {
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "detectAdapterId": 2
-    },
     "asset-io": {
-      "existsSync": 5,
-      "readFileSync": 6,
-      "readdirSync": 2,
+      "existsSync": 1,
+      "readdirSync": 1,
       "statSync": 2
-    }
-  },
-  "src/commands/improve/consolidate/chunking.ts": {
-    "asset-io": {
-      "readFileSync": 1
-    }
-  },
-  "src/commands/improve/consolidate/coverage.ts": {
-    "asset-io": {
-      "readFileSync": 1
     }
   },
   "src/commands/improve/consolidate/pair-pass.ts": {
     "asset-io": {
-      "existsSync": 5,
-      "readFileSync": 2,
       "statSync": 1
     }
   },
@@ -90,22 +71,6 @@
       "readFileSync": 5,
       "statSync": 1,
       "writeFileSync": 1
-    }
-  },
-  "src/commands/improve/eligibility.ts": {
-    "asset-io": {
-      "existsSync": 3,
-      "readFileSync": 2
-    }
-  },
-  "src/commands/improve/improve.ts": {
-    "adapter-import": {
-      "src/core/adapter/adapters/akm-adapter": 1
-    }
-  },
-  "src/commands/improve/loop-stages.ts": {
-    "asset-io": {
-      "readFileSync": 1
     }
   },
   "src/commands/improve/memory/memory-belief.ts": {
@@ -128,15 +93,7 @@
   },
   "src/commands/improve/preparation.ts": {
     "asset-io": {
-      "existsSync": 4,
-      "readFileSync": 4,
-      "statSync": 2
-    }
-  },
-  "src/commands/improve/reflect.ts": {
-    "asset-io": {
-      "existsSync": 2,
-      "readFileSync": 1
+      "statSync": 1
     }
   },
   "src/commands/improve/retrieval-scope.ts": {
@@ -182,12 +139,6 @@
     },
     "entry-file": {
       "entry.file": 2
-    }
-  },
-  "src/commands/proposal/drain.ts": {
-    "asset-io": {
-      "existsSync": 1,
-      "readFileSync": 2
     }
   },
   "src/commands/proposal/repository.ts": {
@@ -397,8 +348,7 @@
   },
   "src/core/assets/read.ts": {
     "facade-export": {
-      "FindOptions": 1,
-      "requireAsset": 1
+      "FindOptions": 1
     }
   },
   "src/core/assets/type.ts": {

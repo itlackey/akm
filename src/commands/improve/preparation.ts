@@ -17,8 +17,6 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { stateBundleId } from "../../core/bundle-at-dir";
 import { daysToMs } from "../../core/common";
 import type { ImproveProfileConfig } from "../../core/config/config";
@@ -69,6 +67,7 @@ import type {
   ReindexFn,
 } from "./improve-run-types";
 import type { ResolvedImprovePlan } from "./improve-strategies";
+import { assetInStash, plannedAsset } from "./indexed-asset";
 import {
   isLedgerBlocked,
   type LedgerSnapshot,
@@ -128,6 +127,7 @@ function withRunState<T>(
 function fileSize(filePath: string | undefined): number | undefined {
   if (!filePath) return undefined;
   try {
+    // asset-io: disk-usage the planner budgets by size
     return fs.statSync(filePath).size;
   } catch {
     return undefined;
@@ -425,13 +425,9 @@ export async function runValidationAndRepairPass(args: {
   const { postCleanupRefs, options, resolvedPlan, repairValidationFailures } = args;
   const validate = async (candidate: ImproveEligibleRef): Promise<string | undefined> => {
     try {
-      const filePath =
-        candidate.filePath && fs.existsSync(candidate.filePath)
-          ? candidate.filePath
-          : await findAssetFilePath(candidate.ref, options.stashDir);
-      if (!filePath) return "file not found on disk";
-      if (path.extname(filePath).toLowerCase() !== ".md") return undefined;
-      if (candidate.type === "lesson" && !parseFrontmatter(fs.readFileSync(filePath, "utf8")).data.description) {
+      const held = plannedAsset(candidate, options.stashDir);
+      if (!held) return "file not found on disk";
+      if (candidate.type === "lesson" && !held.entry.frontmatter()?.description) {
         return "missing description";
       }
       return undefined;
@@ -664,10 +660,10 @@ function assessMemoryIndex(
   warnings: string[],
 ): { lineCount: number; overBudget: boolean } | undefined {
   if (!primaryStashDir) return undefined;
-  const memoryMdPath = path.join(primaryStashDir, "memories", "MEMORY.md");
-  if (!fs.existsSync(memoryMdPath)) return undefined;
+  const memoryMd = assetInStash(primaryStashDir, "memories/MEMORY");
+  if (!memoryMd) return undefined;
   try {
-    const lineCount = fs.readFileSync(memoryMdPath, "utf8").split("\n").length;
+    const lineCount = memoryMd.entry.content().split("\n").length;
     if (lineCount >= 180) {
       warnings.push(`MEMORY.md has ${lineCount} lines (budget: 200). Consolidation strongly recommended.`);
     }
@@ -696,13 +692,19 @@ function isSignalEvent(metadata: unknown): boolean {
  * last write: its mtime, the one the retrieval scope reads for new material. A
  * candidate with no readable file is not flagged.
  */
-export function isFlaggedSinceLastEdit(candidate: ImproveEligibleRef, eventsCtx?: EventsContext): boolean {
+export function isFlaggedSinceLastEdit(
+  candidate: ImproveEligibleRef,
+  eventsCtx?: EventsContext,
+  stashDir?: string,
+): boolean {
   if (!candidate.filePath) return false;
   let editedAtMs: number;
   let bodyHash: string;
   try {
     editedAtMs = fs.statSync(candidate.filePath).mtimeMs;
-    bodyHash = contentHash(fs.readFileSync(candidate.filePath, "utf8"), "body");
+    const held = plannedAsset(candidate, stashDir);
+    if (!held) return false;
+    bodyHash = contentHash(held.entry.content(), "body");
   } catch {
     return false;
   }
@@ -719,10 +721,10 @@ export function isFlaggedSinceLastEdit(candidate: ImproveEligibleRef, eventsCtx?
  * true is no source for a lesson (the 2026-10-08 distill-tune run: 26 of ~900 memories carry the state, none gave
  * a lesson). `contradicted` is left out: it means a conflict is open, not that the note is retired.
  */
-export function isDeprecatedOrSuperseded(candidate: ImproveEligibleRef): boolean {
+export function isDeprecatedOrSuperseded(candidate: ImproveEligibleRef, stashDir?: string): boolean {
   if (!candidate.filePath) return false;
   try {
-    const state = parseFrontmatter(fs.readFileSync(candidate.filePath, "utf8")).data.beliefState;
+    const state = plannedAsset(candidate, stashDir)?.entry.frontmatter()?.beliefState;
     return state === "deprecated" || state === "superseded";
   } catch {
     return false;
@@ -863,7 +865,7 @@ export function partitionBySignalDelta(args: {
     if (reflectOk) {
       if (!distillOk) out.distillCooledRefs.add(r.ref);
       out.eligibleRefs.push(r);
-    } else if (distillOk && isDistillCandidateRef(r)) {
+    } else if (distillOk && isDistillCandidateRef(r, args.options.stashDir)) {
       out.distillOnlyRefs.push(r);
     } else if (
       !latestFeedbackTs.has(r.ref) &&
@@ -1284,11 +1286,7 @@ async function dropRefsMissingOnDisk(
   const actionableRefs: ImproveEligibleRef[] = [];
   const missing: string[] = [];
   for (const candidate of sorted) {
-    const filePath =
-      candidate.filePath && fs.existsSync(candidate.filePath)
-        ? candidate.filePath
-        : await findAssetFilePath(candidate.ref, options.stashDir);
-    if (filePath && fs.existsSync(filePath)) actionableRefs.push(candidate);
+    if (plannedAsset(candidate, options.stashDir)) actionableRefs.push(candidate);
     else missing.push(candidate.ref);
   }
   if (persist && missing.length > 0) {

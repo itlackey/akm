@@ -32,7 +32,7 @@ import { appendEvent } from "../../../../src/core/events";
 import type { ImproveEligibleRef } from "../../../../src/core/improve-types";
 import { openStateDatabase } from "../../../../src/core/state-db";
 import { nextEligibleAt, recordImproveLedger } from "../../../../src/storage/repositories/improve-ledger-repository";
-import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../../../_helpers/sandbox";
+import { type SandboxedDir, sandboxStashDir, sandboxXdgDataHome } from "../../../_helpers/sandbox";
 
 const disposers: Array<{ cleanup: () => void }> = [];
 
@@ -43,7 +43,7 @@ afterEach(() => {
 function freshStash(): string {
   const dataSb = sandboxXdgDataHome();
   disposers.push(dataSb);
-  const stash: SandboxedDir = makeStashDir();
+  const stash: SandboxedDir = sandboxStashDir(); // the default bundle: the facade reads memories through it
   disposers.push(stash);
   return stash.dir;
 }

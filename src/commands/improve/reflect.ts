@@ -14,9 +14,7 @@
  * pre-dispatch refusals still emit both).
  */
 
-import fs from "node:fs";
 import path from "node:path";
-import { parseBundleRef } from "../../core/asset/asset-ref";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { AssetRef } from "../../core/asset/resolve-ref";
@@ -40,7 +38,6 @@ import type { Parsed } from "../../core/structured";
 import { warnOnce } from "../../core/warn";
 import { type Notice, noticeSet } from "../../execution/notices";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
-import { lookupBundleRef } from "../../indexer/indexer";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { AgentFailureReason } from "../../integrations/agent";
 import {
@@ -61,7 +58,6 @@ import type { CreateProposalInput, ProposalsContext } from "../proposal/reposito
 import { isValidDescription } from "../proposal/validators/proposal-quality-validators";
 import { CHARS_PER_TOKEN, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
 import { contentHash } from "./content-hash";
-import { findAssetFilePath } from "./eligibility";
 import { resolveImproveExecution } from "./execution";
 import { recordLedgerAttempt, stateKey } from "./ledger";
 import {
@@ -745,15 +741,12 @@ async function resolveReflectSource(
   let assetFile: string | undefined;
   if (assetContent === undefined) {
     try {
-      const qualifiedRef = options.itemRef ?? options.ref;
-      const localFilePath = await findAssetFilePath(qualifiedRef, stash);
-      if (localFilePath && fs.existsSync(localFilePath)) {
-        assetFile = localFilePath;
-      } else {
-        const entry = await lookupBundleRef(parseBundleRef(qualifiedRef));
-        if (entry?.filePath && fs.existsSync(entry.filePath)) assetFile = entry.filePath;
+      const held = owned ?? findAsset(options.itemRef ?? options.ref, { quiet: true });
+      if (held) {
+        // asset-io: display the layout guard below names the file in its refusal
+        assetFile = held.entry.file;
+        assetContent = held.entry.content();
       }
-      if (assetFile !== undefined) assetContent = fs.readFileSync(assetFile, "utf8");
     } catch {
       // An index miss is not fatal: reflect then has no content to patch.
     }

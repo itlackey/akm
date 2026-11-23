@@ -10,9 +10,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { assetDirectories } from "../../core/assets/gate";
 import { type AkmConfig, bundlesToSourceEntries, loadConfig } from "../../core/config/config";
 import { collectCredentialValues } from "../../core/config/credentials";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
@@ -1042,7 +1042,7 @@ function syncBeforeRun(run: ImproveRunSetup, eventsCtx: EventsContext): ImproveS
 
 /** Changed paths under the asset directories and `.akm`, minus ignored ones (git refuses to stage those). */
 function managedFallbackPaths(repoDir: string, changedPaths: string[]): string[] {
-  const ownedDirs = akmAdapter.directoryList({ id: "akm", root: repoDir });
+  const ownedDirs = assetDirectories(repoDir);
   const prefixes = [...ownedDirs, ".akm"];
   const managed = changedPaths.filter((changedPath) =>
     prefixes.some((prefix) => changedPath === prefix || changedPath.startsWith(`${prefix}/`)),

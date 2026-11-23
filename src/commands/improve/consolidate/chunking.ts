@@ -4,9 +4,9 @@
 
 /** Consolidate's chunk sizing and per-chunk prompt (pure token math and text). */
 
-import fs from "node:fs";
 import type { MemoryEntry } from "../consolidate";
 import { contentHash, stripFrontmatterBody } from "../content-hash";
+import { indexedContent } from "../indexed-asset";
 
 /** A conservative chars-per-token estimate, shared by every context-length budget. */
 export const CHARS_PER_TOKEN = 3;
@@ -48,12 +48,7 @@ export function buildChunkPrompt(
     "",
   ];
   memories.forEach((m, i) => {
-    let body: string;
-    try {
-      body = fs.readFileSync(m.filePath, "utf8");
-    } catch {
-      body = "(unreadable)";
-    }
+    const body = indexedContent(m.bundleId, m.ref) ?? "(unreadable)";
     const annotationSuffix = pendingProposalBodyHashes.has(contentHash(body, "body")) ? " (already queued)" : "";
     lines.push(
       `[${i + 1}] memories/${m.name}${annotationSuffix}`,

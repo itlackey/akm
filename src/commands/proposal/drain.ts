@@ -27,7 +27,6 @@
  * a generating stage routed to a person is left for that person.
  */
 
-import fs from "node:fs";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { addressOf } from "../../core/assets/write";
 import { slugForPath } from "../../core/bundle-id";
@@ -51,6 +50,7 @@ import {
   wordShingles,
 } from "../improve/consolidate/coverage";
 import { resolveImproveExecution } from "../improve/execution";
+import { assetInStash } from "../improve/indexed-asset";
 import { errMessage } from "../improve/stage";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
 import { isRetireProposal, PAIR_PASS_GATE, type ProposalDecider, STALE_TARGET_GATE_REASON } from "./proposal-types";
@@ -587,8 +587,9 @@ function promotionNeighbours(
   try {
     const memoryPath = addressOf({ name: slugForPath(stashDir), path: stashDir }, proposal.promotionSource).file;
     if (!memoryPath) return [];
+    const source = assetInStash(stashDir, proposal.promotionSource)?.entry.content();
+    if (source === undefined) return [];
     const existing = nearestKnowledgeNotes(memoryPath);
-    const source = fs.readFileSync(memoryPath, "utf8");
     const shingles = wordShingles(source);
     // Promotions accepted earlier in this drain are not in the index yet; the
     // ones sharing text with this memory join its neighbours (#1085).
@@ -615,8 +616,7 @@ function promotionNeighbours(
 /** The live asset a proposal would overwrite, if any. */
 function readLiveAssetContent(stashDir: string, ref: string): string | undefined {
   try {
-    const assetPath = addressOf({ name: slugForPath(stashDir), path: stashDir }, ref).file;
-    return assetPath && fs.existsSync(assetPath) ? fs.readFileSync(assetPath, "utf8") : undefined;
+    return assetInStash(stashDir, ref)?.entry.content();
   } catch {
     return undefined;
   }
