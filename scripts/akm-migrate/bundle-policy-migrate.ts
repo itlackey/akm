@@ -15,10 +15,10 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { walkStashFlat } from "../../src/core/adapter/directory/walker";
 import { documentStashDirs } from "../../src/core/asset/asset-placement";
 import { loadConfig, mutateConfig, resetConfigCache } from "../../src/core/config/config";
 import { getDataDir } from "../../src/core/paths";
-import { walkStashFlat } from "../../src/indexer/walk/walker";
 import { bundleRoots } from "./bundle-roots";
 import { type FileReplacement, replaceFilesWithBackups } from "./migrate/task-files";
 

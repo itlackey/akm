@@ -12,6 +12,8 @@ import {
   perTypeChecks,
   perTypeFrontend,
 } from "../../core/adapter/adapters/akm-lint";
+import { type FileContext, fileContextOfEntry } from "../../core/adapter/directory/file-context";
+import { walkStashFlat } from "../../core/adapter/directory/walker";
 import { adapterForId } from "../../core/adapter/registry";
 import type { Diagnostic } from "../../core/adapter/types";
 import type { FileDiagnostic } from "../../core/adapter/validate-context";
@@ -28,6 +30,7 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { bundleAdapterId } from "../../core/assets/gate";
 import { validateBundleAssets } from "../../core/assets/validate";
+import { bundleSourceAt } from "../../core/bundle-at-dir";
 import { deriveBundleIds } from "../../core/bundle-id";
 import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpath, samePath } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
@@ -37,8 +40,6 @@ import { defaultExcludedTypes } from "../../core/config/schema/search";
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
-import { walkStashFlat } from "../../indexer/walk/walker";
 import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../tasks/source-v3";
 import { isUsableWorkflowSource, isWorkflowSource, resolveWorkflowSourceDomains } from "../../workflows/source-files";
 import { runBaseChecks } from "./base-linter";
@@ -904,7 +905,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
   let subdir: string | undefined;
   if (root) {
     const sources = resolveSourceEntries(root, cfg);
-    const adapterId = bundleAdapterId(sources.find((s) => path.resolve(s.path) === path.resolve(root)) ?? {});
+    const { adapterId } = bundleSourceAt(root, cfg);
     const relPath = path.relative(realRoot as string, absFile);
     if (adapterId !== "akm") {
       const result = await lintViaAdapter(

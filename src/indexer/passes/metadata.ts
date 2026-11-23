@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { buildFileContext } from "../../core/adapter/directory/file-context";
 // The durable indexed-entry shape is `IndexDocument`. Its body
 // — and the sub-shapes it references — live in `core/adapter/types.ts` so
 // `IndexDocument` can reference them without a `metadata.ts ↔ types.ts` cycle;
@@ -22,7 +23,6 @@ import type { TocHeading } from "../../core/asset/markdown";
 import { asNonEmptyString } from "../../core/common";
 import { isoDay } from "../../core/time";
 import { isVerbose, warn, warnOnce } from "../../core/warn";
-import type { buildFileContext } from "../walk/file-context";
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 

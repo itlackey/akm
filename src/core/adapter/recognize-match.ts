@@ -23,7 +23,7 @@
  * index — winning). Returns null when no matcher claims the file.
  */
 
-import type { FileContext, MatchResult } from "../../indexer/walk/file-context";
+import type { FileContext, MatchResult } from "./directory/file-context";
 import {
   directoryMatcher,
   extensionMatcher,
@@ -31,7 +31,7 @@ import {
   type PathFileContext,
   parentDirHintMatcher,
   smartMdMatcher,
-} from "../../indexer/walk/matchers";
+} from "./directory/matchers";
 
 /**
  * Every matcher in registration order (the order breaks ties: of equal specificity the later one wins), the Markdown

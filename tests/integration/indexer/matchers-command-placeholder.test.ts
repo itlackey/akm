@@ -32,7 +32,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { recognizeMatch } from "../../../src/core/adapter/adapters/akm-adapter";
-import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { buildFileContext } from "../../../src/core/adapter/directory/file-context";
 
 const roots: string[] = [];
 afterAll(() => {

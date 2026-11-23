@@ -10,6 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { protectedTypeOf } from "../core/adapter/directory/place-rules";
 import { deriveCanonicalAssetName } from "../core/asset/asset-placement";
 import { assetRevision as digest } from "../core/assets/read";
 import {
@@ -21,7 +22,6 @@ import {
   writeEnvSecret,
 } from "../core/env-secret-ref";
 import { AkmError, UsageError } from "../core/errors";
-import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { interactive } from "./lease";
 
 /** The file: its ref, or its bundle-relative path in a named bundle. */
@@ -82,12 +82,12 @@ function locate(input: SensitiveSelector) {
   const bundle = asset.bundle;
   const file = asset.entry.file;
   // A secret a manager keeps has no file, and no link to refuse.
-  if (file) refuseLinked(file, asset.entry.relPath);
+  if (file) refuseLinked(file, asset.entry.key);
   return {
     bundle,
     file,
     type,
-    relative: asset.entry.relPath,
+    relative: asset.entry.key,
     ref: ref.includes("//") ? ref : `${bundle}//${ref}`,
     content: () => asset.entry.content(),
   };
@@ -161,7 +161,7 @@ function write(
     const found = findWriteTargetAsset(resolution);
     return {
       bundle,
-      file: found ? found.entry.relPath : conceptId,
+      file: found ? found.entry.key : conceptId,
       ref: `${bundle}//${conceptId}`,
       warnings,
       resolution,

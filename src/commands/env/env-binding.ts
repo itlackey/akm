@@ -53,8 +53,9 @@ export interface ResolvedEnvBinding {
  */
 export function resolveRefToken(
   ref: string,
+  from?: { bundle: string },
 ): { kind: "secret"; value: string } | { kind: "path"; path: string } | undefined {
-  const asset = resolveRefOwner(ref);
+  const asset = resolveRefOwner(ref, from);
   if (asset === undefined) return undefined;
   if (assetType(asset) === "secret") return { kind: "secret", value: secretValueOf(asset) };
   if (asset.entry.file === undefined) throw new UsageError(`"${asset.ref}" is not kept in a file, so it has no path.`);
@@ -131,7 +132,10 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
     secretValues,
   } = substituteRefTokens(
     envValues,
-    options.locateOnly ? (ref) => (resolveRefOwner(ref) ? { kind: "path", path: "" } : undefined) : resolveRefToken,
+    // A ref in the env file is looked up in the env's own bundle first, then in the configured order (§0.2 A9).
+    options.locateOnly
+      ? (ref) => (resolveRefOwner(ref, { bundle: bundleId }) ? { kind: "path", path: "" } : undefined)
+      : (ref) => resolveRefToken(ref, { bundle: bundleId }),
     isInstalledBundle,
   );
   if (missing.length > 0) {

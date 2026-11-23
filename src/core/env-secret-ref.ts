@@ -10,50 +10,30 @@
  */
 
 import path from "node:path";
-import { readUsableIndex } from "../indexer/index-readiness";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
-import { assetPathForName, stashDirFor } from "./asset/asset-placement";
+import { stashDirFor } from "./asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
-import { type Asset, findAsset, listAssets, scanBundle } from "./assets/read";
+import { type Asset, listAssets, lookupAsset, readAsset } from "./assets/read";
 import { assetType } from "./assets/type";
-import { fileOfRef, readAsset, type WriteResult, writeAssets } from "./assets/write";
+import { fileOfRef, type WriteResult, writeAssets } from "./assets/write";
 import { deriveBundleIds } from "./bundle-id";
-import { compareCodePoints, isWithin, scanEnvKeyNames } from "./common";
+import { isWithin, scanEnvKeyNames } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
 import { resolveMutationTarget } from "./mutation-target";
-import { assertWritePathsInsideSource, formatRefForMessage, type ResolvedWriteTarget } from "./write-source";
+import { formatRefForMessage, type ResolvedWriteTarget } from "./write-source";
 
 /**
  * The secrets in the type's folder (`secrets/`): the refs the secret commands accept. A file elsewhere that is typed
  * the same (`team/secrets/token`, which may be another bundle's `secrets/token`) is not listed. A keyring's or vault's
  * secrets come from the index (`akm index` refreshes them), so listing never reaches, or unlocks, the store.
  */
-function listSecretsInFolder(config: AkmConfig): Array<{ conceptId: string; bundle: string; entry?: Asset["entry"] }> {
+function listSecretsInFolder(): Asset[] {
   const prefix = `${stashDirFor("secret")}/`;
-  const sources = resolveSourceEntries(undefined, config);
-  const ids = deriveBundleIds(sources);
-  const indexed = readUsableIndex(
-    (db) =>
-      (db.prepare("SELECT item_ref FROM entries WHERE type = 'secret'").all() as Array<{ item_ref: string }>).map(
-        (row) => row.item_ref,
-      ),
-    [] as string[],
-  );
-  return sources.flatMap((source, index) => {
-    const bundle = ids[index] as string;
-    if (source.unresolved) return [];
-    if (scanBundle(source, bundle).isStore) {
-      return indexed
-        .filter((ref) => ref.startsWith(`${bundle}//${prefix}`))
-        .map((ref) => ({ conceptId: ref.slice(bundle.length + 2), bundle }))
-        .sort((left, right) => compareCodePoints(left.conceptId, right.conceptId));
-    }
-    return listAssets({ sources, bundle, type: "secret" }).filter(({ conceptId }) => conceptId.startsWith(prefix));
-  });
+  return listAssets({ type: "secret" }).filter(({ conceptId }) => conceptId.startsWith(prefix));
 }
 
 /**
@@ -74,13 +54,7 @@ export function listEnvsRecursive(
       .filter((relative) => relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative))
       .map((relative) => `${relative.split(path.sep).join("/")}/`),
   );
-  // A keyring or vault holds secrets only: `env list` never reaches it.
-  return sources
-    .flatMap((source, index) =>
-      source.unresolved || scanBundle(source, ids[index] as string).isStore
-        ? []
-        : listAssets({ sources, bundle: ids[index] as string, type: "env" }),
-    )
+  return listAssets({ type: "env" })
     .filter(({ bundle, conceptId }) => !nested[ids.indexOf(bundle)]?.some((folder) => conceptId.startsWith(folder)))
     .map(({ conceptId, bundle, entry }) => ({
       ref: makeEnvRef(conceptId, bundle, config),
@@ -91,9 +65,9 @@ export function listEnvsRecursive(
 
 /** Every listed secret, by ref. Its value is not read. */
 export function listSecrets(config: AkmConfig = loadConfig()): Array<{ ref: string; path?: string }> {
-  return listSecretsInFolder(config).map(({ conceptId, bundle, entry }) => ({
+  return listSecretsInFolder().map(({ conceptId, bundle, entry }) => ({
     ref: makeSecretRef(conceptId, bundle),
-    ...(entry?.file !== undefined ? { path: entry.file } : {}),
+    ...(entry.file !== undefined ? { path: entry.file } : {}),
   }));
 }
 
@@ -151,8 +125,8 @@ function ownerOfType(ref: string, type: "env" | "secret", form: string): { writt
 }
 
 /** The asset any ref names right now (a sensitive env file or secret included), or undefined when no bundle holds it. The lookup behind `${ref}` tokens. */
-export function resolveRefOwner(ref: string): Asset | undefined {
-  return findAsset(ref, { sources: resolveSourceEntries(undefined, loadConfig()) });
+export function resolveRefOwner(ref: string, from?: { bundle: string }): Asset | undefined {
+  return lookupAsset(ref, from);
 }
 
 /**
@@ -252,7 +226,7 @@ function resolveEnvSecretWriteTarget(
   // The file the name is kept in (a link included) must stay in the type's folder; a store keeps no file to look up.
   const { source } = resolved.target;
   const folder = stashDirFor(type);
-  const file = fileOfRef(source, conceptIdFromTypeName(type, parsed.name));
+  const file = fileOfRef(source.name, conceptIdFromTypeName(type, parsed.name));
   if (file !== undefined && folder !== undefined && !isWithin(file, path.join(source.path, folder))) {
     throw new UsageError(
       `${type === "env" ? "Env" : "Secret"} name "${parsed.name}" escapes the ${folder === "env" ? "env" : "secrets"} directory.`,
@@ -286,7 +260,7 @@ export function resolveSecretWriteTarget(
 
 /** The env file or secret a write resolution names, as the target bundle's adapter reads it; undefined when it has none. */
 export function findWriteTargetAsset(resolution: EnvSecretWriteResolution): Asset | undefined {
-  return readAsset(resolution.target.source, resolution.conceptId);
+  return readAsset(resolution.target.source.name, resolution.conceptId);
 }
 
 /**

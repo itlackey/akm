@@ -79,6 +79,8 @@ export const APPROVED_ROWS: ReadonlySet<string> = new Set([
   "P11",
   // P8 (state rows follow a bundle by its name, not its directory): owner "Approve"; shipped by 4d.4 with N10's state-unknown-bundle.
   "P8",
+  // P10 (an unqualified ref in `log --ref`, `feedback`, `curate` and show-usage is qualified like `show`'s): owner "Resolve like show"; shipped by 4e.2.
+  "P10",
   // F1 is provisional: set by the coordinator while the owner is unattended (design §0.2), pending the owner's answer.
   "F1",
   // F5 is provisional (Fable, design §0.2): a task held in an off-case file is scheduled by sync and accepted by enable.

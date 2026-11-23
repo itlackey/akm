@@ -17,13 +17,11 @@ import { withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
 import { upsertIndexRows, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../../indexer/index-written-assets";
 import { embeddingInputCap } from "../../indexer/materialize-embeddings";
 import { brokenWorkflowWarning, indexRowEntry } from "../../indexer/scan/drain-dir";
-import type { SearchSource } from "../../indexer/search/search-source";
-import { buildFileContext, fileContextOfEntry, type MatchResult } from "../../indexer/walk/file-context";
-import { declaredTypeForPath } from "../../indexer/walk/matchers";
 import { closeDatabase } from "../../storage/repositories/index-connection";
 import { deleteEntriesByIds } from "../../storage/repositories/index-entries-repository";
 import { hashContent } from "../adapter/adapters/shared";
-import { bundleAdapterId } from "../adapter/detect-adapter";
+import { buildFileContext, fileContextOfEntry, type MatchResult } from "../adapter/directory/file-context";
+import { declaredTypeForPath } from "../adapter/directory/matchers";
 import { recognizeMatch } from "../adapter/recognize-match";
 import type { IndexDocument } from "../adapter/types";
 import { loadConfig } from "../config/config";
@@ -32,8 +30,8 @@ import { isPathAbsent } from "../path-access";
 import { getDbPath } from "../paths";
 import { presentationFor } from "../type-presentation";
 import { warnVerbose } from "../warn";
-import { type Asset, sourceOf } from "./asset";
-import { assetBundleOf } from "./bundle";
+import { type Asset, bundleHolding } from "./asset";
+import type { AssetBundle } from "./bundle";
 
 /**
  * Recognize each of `assets` once and, when `persist` is set and a usable index serves their bundles, record the rows:
@@ -46,13 +44,7 @@ export function indexAssets(
 ): Map<Asset, IndexDocument> {
   const documents = new Map<Asset, IndexDocument>();
   for (const asset of assets) {
-    const source = sourceOf(asset);
-    const document = assetBundleOf({
-      name: asset.bundle,
-      path: source.path,
-      ...(source.location !== undefined ? { location: source.location } : {}),
-      adapterId: bundleAdapterId(source),
-    }).recognize(asset.entry);
+    const document = bundleHolding(asset).recognize(asset.entry);
     if (!document?.conceptId) throw assetNotFound(asset.ref);
     // No file holds the asset (a keyring's or vault's): the row is keyed under a path that leads nowhere, and says so.
     if (document.path === undefined) document.fileless = true;
@@ -90,7 +82,7 @@ function record(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean
 function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean): void {
   {
     const first = documents.keys().next().value as Asset;
-    const usable = openUsableIndex(sourceOf(first).path, { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
+    const usable = openUsableIndex(bundleHolding(first).root, { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
     if (!usable) return;
     try {
       const { db } = usable;
@@ -98,10 +90,10 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean)
       db.transaction(() => {
         const written: string[] = [];
         for (const [asset, document] of documents) {
-          const source = sourceOf(asset);
+          const held = bundleHolding(asset);
           // The scan drops a workflow that does not compile, so no ask of it records a row either.
-          if (brokenWorkflowWarning(document, fileContextOfEntry(source.path, asset.entry)) !== null) continue;
-          const file = asset.entry.file ?? path.join(source.path, asset.entry.relPath);
+          if (brokenWorkflowWarning(document, fileContextOfEntry(held.root, asset.entry)) !== null) continue;
+          const file = asset.entry.file ?? path.join(held.root, asset.entry.key);
           if (
             !supersede &&
             db.prepare("SELECT 1 FROM entries WHERE file_path = ? AND item_ref <> ?").get(file, asset.ref)
@@ -110,12 +102,12 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean)
           }
           upsertIndexRows(
             db,
-            { bundleId: asset.bundle, adapterId: bundleAdapterId(source) },
+            { bundleId: asset.bundle, adapterId: held.adapterId },
             [
               {
                 // The path the index keys the asset under: its file, else (no file holds it) a path inside the bundle.
                 file,
-                entry: indexRowEntry(document, path.basename(asset.entry.relPath)),
+                entry: indexRowEntry(document, path.basename(asset.entry.key)),
                 conceptId: document.conceptId as string,
                 contentHash: document.hash,
                 hasFile: asset.entry.file !== undefined,
@@ -138,16 +130,18 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean)
  * Take the row of one ref out of the index (an asset deleted or retired), under the same lock and with the same
  * fail-open rule as a write of a row.
  */
-export function forgetIndexedAsset(source: SearchSource, bundle: string, conceptId: string): void {
+export function forgetIndexedAsset(bundle: AssetBundle, conceptId: string): void {
   if (isPathAbsent(getDbPath())) return;
   try {
     withAssetMutationLeaseSync(
       "index-asset",
       () => {
-        const usable = openUsableIndex(source.path, { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
+        const usable = openUsableIndex(bundle.root, { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
         if (!usable) return;
         try {
-          const rows = usable.db.prepare("SELECT id FROM entries WHERE item_ref = ?").all(`${bundle}//${conceptId}`);
+          const rows = usable.db
+            .prepare("SELECT id FROM entries WHERE item_ref = ?")
+            .all(`${bundle.name}//${conceptId}`);
           deleteEntriesByIds(
             usable.db,
             (rows as Array<{ id: number }>).map((row) => row.id),
@@ -174,13 +168,7 @@ export function refreshIndexedAsset(asset: Asset): void {
 
 /** The freshness-variant prefix (adapter id and version) of the adapter that holds `asset`. */
 function variantPrefixOf(asset: Asset): string {
-  const source = sourceOf(asset);
-  return assetBundleOf({
-    name: asset.bundle,
-    path: source.path,
-    ...(source.location !== undefined ? { location: source.location } : {}),
-    adapterId: bundleAdapterId(source),
-  }).variantPrefix;
+  return bundleHolding(asset).variantPrefix;
 }
 
 /** The types of `assets`: their index rows', read through one connection; an asset with no row is indexed first. */
@@ -240,11 +228,11 @@ export function assetTypeFresh(asset: Asset): string {
 }
 
 /**
- * The path the index keys an asset under: its file, else (for an asset no file holds) `<root>/<relPath>`, which is
+ * The path the index keys an asset under: its file, else (for an asset no file holds) `<root>/<key>`, which is
  * not a path to anything.
  */
-export function indexedPathOf(asset: Asset, source: SearchSource): string {
-  return asset.entry.file ?? path.join(source.path, asset.entry.relPath);
+export function indexedPathOf(asset: Asset, source: { path: string }): string {
+  return asset.entry.file ?? path.join(source.path, asset.entry.key);
 }
 
 /**
@@ -267,7 +255,7 @@ export function presentationOf(
   if (renderer !== undefined) {
     return { type: row.type, specificity: Number.MAX_SAFE_INTEGER, renderer };
   }
-  return recognizeMatch(fileContextOfEntry(sourceOf(asset).path, asset.entry));
+  return recognizeMatch(fileContextOfEntry(bundleHolding(asset).root, asset.entry));
 }
 
 /**

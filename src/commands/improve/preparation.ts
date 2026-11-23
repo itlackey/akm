@@ -701,9 +701,10 @@ export function isFlaggedSinceLastEdit(
   let editedAtMs: number;
   let bodyHash: string;
   try {
-    editedAtMs = fs.statSync(candidate.filePath).mtimeMs;
     const held = plannedAsset(candidate, stashDir);
-    if (!held) return false;
+    const modified = held?.entry.modified?.();
+    if (!held || modified === undefined) return false;
+    editedAtMs = modified.getTime();
     bodyHash = contentHash(held.entry.content(), "body");
   } catch {
     return false;

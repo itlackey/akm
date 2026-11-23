@@ -15,6 +15,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { slugForPath } from "../../../src/core/bundle-id";
 import { getDbPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
@@ -65,8 +66,8 @@ test("usage + feedback survive a full rebuild via the item_ref relink", async ()
   // Chunk-8 WI-8.3: usage_events lives in state.db; entries in index.db.
   let stateDb = openStateDatabase();
   // Entries are keyed by the new-grammar `item_ref`; look them up by conceptId.
-  const alphaId = findEntryIdByRef(db, "memories/alpha");
-  const betaId = findEntryIdByRef(db, "memories/beta");
+  const alphaId = findEntryIdByRef(db, `${slugForPath(stashDir)}//memories/alpha`);
+  const betaId = findEntryIdByRef(db, `${slugForPath(stashDir)}//memories/beta`);
   expect(alphaId).toBeNumber();
   expect(betaId).toBeNumber();
   const alphaItemRef = getItemRefById(db, alphaId as number) as string;
@@ -110,8 +111,8 @@ test("usage + feedback survive a full rebuild via the item_ref relink", async ()
   db = openExistingDatabase(dbPath);
   stateDb = openStateDatabase();
   // Entry ids may have changed; resolve afresh (new-grammar conceptId lookup).
-  const alphaId2 = findEntryIdByRef(db, "memories/alpha") as number;
-  const betaId2 = findEntryIdByRef(db, "memories/beta") as number;
+  const alphaId2 = findEntryIdByRef(db, `${slugForPath(stashDir)}//memories/alpha`) as number;
+  const betaId2 = findEntryIdByRef(db, `${slugForPath(stashDir)}//memories/beta`) as number;
 
   // Retrieval counts SURVIVE and are still keyed by the caller's conceptId.
   const afterCounts = getRetrievalCounts(db, stateDb, ["memories/alpha", "memories/beta"]);

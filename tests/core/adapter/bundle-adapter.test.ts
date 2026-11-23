@@ -35,14 +35,15 @@ import type {
   BundleListing,
   Retirement,
 } from "../../../src/core/adapter/bundle-adapter";
+import type { FileContext } from "../../../src/core/adapter/directory/file-context";
 import type { AssetEdit, Bundle, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
-import type { FileContext } from "../../../src/indexer/walk/file-context";
 
 function makeFileContext(overrides: Partial<FileContext> = {}): FileContext {
   return {
     absPath: "/bundle/notes/example.md",
     file: "/bundle/notes/example.md",
     relPath: "notes/example.md",
+    key: "notes/example.md",
     ext: ".md",
     fileName: "example.md",
     parentDir: "notes",
@@ -89,8 +90,8 @@ const stubAdapter: BundleAdapter = {
   },
 
   recognize(_c: Bundle, file: AssetEntry): IndexDocument | null {
-    if (!file.relPath.endsWith(".md")) return null;
-    const conceptId = file.relPath.replace(/\.md$/, "");
+    if (!file.key.endsWith(".md")) return null;
+    const conceptId = file.key.replace(/\.md$/, "");
     return {
       ref: `stub//${conceptId}`,
       bundle: "stub",
@@ -100,7 +101,7 @@ const stubAdapter: BundleAdapter = {
       adapterId: "stub",
       // `type` is a required member of the merged IndexDocument (F4a M-core-1).
       type: "knowledge",
-      name: file.relPath.split("/").pop() as string,
+      name: file.key.split("/").pop() as string,
     };
   },
 
@@ -157,7 +158,10 @@ describe("BundleAdapter type-level conformance (WI-1.1)", () => {
   });
 
   test("recognize abstains (returns null) for a non-matching file", () => {
-    const doc = stubAdapter.recognize(makeComponent(), makeFileContext({ ext: ".txt", relPath: "notes/example.txt" }));
+    const doc = stubAdapter.recognize(
+      makeComponent(),
+      makeFileContext({ ext: ".txt", relPath: "notes/example.txt", key: "notes/example.txt" }),
+    );
     expect(doc).toBeNull();
   });
 

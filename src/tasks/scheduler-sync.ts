@@ -43,7 +43,6 @@ import { taskSourceErrorDetail } from "./source-v3";
 import {
   isShadowedByYml,
   type TaskBundleSource,
-  taskAssetsAmong,
   taskFileOf,
   taskIdOf,
   taskRefIn,

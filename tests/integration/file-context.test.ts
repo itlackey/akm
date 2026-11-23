@@ -4,21 +4,21 @@ import os from "node:os";
 import path from "node:path";
 import { recognizeMatch } from "../../src/core/adapter/adapters/akm-adapter";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "../../src/core/adapter/adapters/akm-metadata";
-import { recognizeMatchByPath } from "../../src/core/adapter/recognize-match";
-import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import {
   buildFileContext,
   buildRenderContext,
   getAllRenderers,
   getRenderer,
-} from "../../src/indexer/walk/file-context";
+} from "../../src/core/adapter/directory/file-context";
 import {
   directoryMatcher,
   looseMarkdownMatcher,
   parentDirHintMatcher,
   smartMdMatcher,
-} from "../../src/indexer/walk/matchers";
-import { walkStashFlat } from "../../src/indexer/walk/walker";
+} from "../../src/core/adapter/directory/matchers";
+import { walkStashFlat } from "../../src/core/adapter/directory/walker";
+import { recognizeMatchByPath } from "../../src/core/adapter/recognize-match";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
 
 // ── Temp directory helpers ──────────────────────────────────────────────────
 

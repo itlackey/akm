@@ -10,12 +10,12 @@
  * declares one.
  */
 
+import type { AssetRenderer, RenderContext } from "../core/adapter/directory/file-context";
 import { refForFile } from "../core/asset/asset-placement";
 import { displayRef } from "../core/asset/resolve-ref";
 import { isInstalledBundle, resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
 import { substituteRefTokens } from "../core/ref-token";
-import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
 import type {
   ShowResponse,
   WorkflowParameter,

@@ -71,7 +71,7 @@ const envCreateCommand = defineJsonCommand({
     const resolution = resolveEnvWriteTarget(args.name, args.bundle, { subPath: getStringArg(args, "path") });
     const { ref } = resolution;
     const { source } = resolution.target;
-    const held = addressOf(source, `${resolution.type}/${resolution.name}`);
+    const held = addressOf(source.name, `${resolution.type}/${resolution.name}`);
     const exists = held.exists;
 
     const fromFile = args["from-file"];
@@ -103,13 +103,7 @@ const envCreateCommand = defineJsonCommand({
     }
 
     // Without content, an env kept in the file a create writes is left as it is; one kept under another spelling is refused.
-    if (
-      exists &&
-      content === undefined &&
-      held.file !== undefined &&
-      held.placedFile !== undefined &&
-      path.resolve(held.file) !== path.resolve(held.placedFile)
-    ) {
+    if (exists && content === undefined && held.file !== undefined && held.heldElsewhere === true) {
       throw new UsageError(
         `Env "${ref}" already exists as ${path.relative(source.path, held.file).split(path.sep).join("/")}. Remove it first (\`akm env remove\`) or edit the file directly.`,
         "RESOURCE_ALREADY_EXISTS",

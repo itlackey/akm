@@ -14,9 +14,9 @@ import { normalizeAkmMarkdown } from "../../asset/akm-markdown";
 import { assetPathForName, stashDirFor } from "../../asset/asset-placement";
 import { UsageError } from "../../errors";
 import { warn, warnOnce } from "../../warn";
-import type { NewAsset } from "../bundle-adapter";
+import type { AssetPlacement, NewAsset } from "../bundle-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
-import type { Bundle } from "../types";
+import { type Bundle, rootOf } from "../types";
 
 /** MS-DOS device names Windows reserves in every directory, with or without an extension. */
 const WINDOWS_RESERVED_DEVICE_NAMES = new Set([
@@ -54,7 +54,7 @@ export function placeInTypeFolder(b: Bundle, { type, name }: Pick<NewAsset, "typ
   const typeDir = stashDirFor(type);
   if (!typeDir)
     throw new UsageError(`Unknown asset type "${type}". Cannot resolve a write path.`, "INVALID_FLAG_VALUE");
-  const typeRoot = path.join(b.root, typeDir);
+  const typeRoot = path.join(rootOf(b), typeDir);
   const file = assetPathForName(type, typeRoot, name);
   const relative = path.relative(typeRoot, file);
   if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
@@ -100,8 +100,11 @@ export abstract class AkmFormatAdapterBase extends DirectoryAdapterBase {
   }
 
   /** Display only: the type's folder holds the file even for a type this adapter does not write (a write refuses it). */
-  override placedFile(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string | undefined {
-    return this.writes.includes(asset.type) ? this.placeFile(b, asset) : placeInTypeFolder(b, asset);
+  override placement(b: Bundle, asset: Pick<NewAsset, "type" | "name">): AssetPlacement | undefined {
+    return this.placementOf(
+      b,
+      this.writes.includes(asset.type) ? this.placeFile(b, asset) : placeInTypeFolder(b, asset),
+    );
   }
 
   /** A name some tooling treats specially is warned about only when its asset is placed, never before a refusal. */

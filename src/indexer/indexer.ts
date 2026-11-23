@@ -5,8 +5,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { BundleListing } from "../core/adapter/bundle-adapter";
+import { type FileContext, fileContextOfEntry } from "../core/adapter/directory/file-context";
+import {
+  INCOMPLETE_SOURCES_META_KEY,
+  type IncompleteIndexSource,
+  type IndexVerification,
+  type RemovedIndexSource,
+  SEMANTIC_SEARCH_META_KEY,
+  type SemanticSearchRecord,
+} from "../core/adapter/directory/index-context";
+import type { WalkStashFlatResult } from "../core/adapter/directory/walker";
 import type { Bundle } from "../core/adapter/types";
-import { type Asset, type BundleScan, findAsset, scanBundle } from "../core/assets/read";
+import { type Asset, type BundleScan, lookupAsset, scanBundle } from "../core/assets/read";
 import { indexedPathOf } from "../core/assets/type";
 import { isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
@@ -124,16 +134,6 @@ import {
 import { drainDirDocuments } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
 import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
-import { type FileContext, fileContextOfEntry } from "./walk/file-context";
-import {
-  INCOMPLETE_SOURCES_META_KEY,
-  type IncompleteIndexSource,
-  type IndexVerification,
-  type RemovedIndexSource,
-  SEMANTIC_SEARCH_META_KEY,
-  type SemanticSearchRecord,
-} from "./walk/index-context";
-import type { WalkStashFlatResult } from "./walk/walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -1839,7 +1839,7 @@ async function lookupBundleRefWithResolutionUsing(
   };
   try {
     // An asset the walk does not reach is not in the bundle: `findAsset` does not find it.
-    const asset = findAsset(ref, { sources });
+    const asset = lookupAsset(makeBundleRef(ref.bundle, ref.conceptId));
     if (!asset) return resolved(null);
     const bundleId = asset.bundle;
     const source = sourceOfBundle(sources, bundleId);
@@ -1852,7 +1852,7 @@ async function lookupBundleRefWithResolutionUsing(
     const inputRef = makeBundleRef(qualified ? ref.bundle : undefined, asset.conceptId);
     let entry: IndexEntry | null | undefined;
     try {
-      const id = db ? findEntryIdByRef(db, inputRef, bundleId) : undefined;
+      const id = db ? findEntryIdByRef(db, asset.ref) : undefined;
       entry = id !== undefined && db ? readLookupEntry(db, id, ref.conceptId, source.path) : undefined;
     } catch (error) {
       // An index a build is still creating or rewriting cannot answer; the owner's file can.
@@ -1865,7 +1865,7 @@ async function lookupBundleRefWithResolutionUsing(
           assertIndexedWorkflowSourceIdentity(inputRef, entry.filePath, {
             path: ownerPath,
             realPath: safeRealpath(ownerPath),
-            relativePath: asset.entry.relPath,
+            relativePath: asset.entry.key,
             canonicalName: asset.conceptId,
           });
           if (entry.adapterId !== adapterId) {

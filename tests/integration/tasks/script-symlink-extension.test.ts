@@ -11,7 +11,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import type { AkmConfig } from "../../../src/core/config/config";
+import { type AkmConfig, resetConfigCache, saveConfig } from "../../../src/core/config/config";
 import { resolveAssetPath } from "../../../src/sources/resolve";
 import { prepareTaskV3Execution } from "../../../src/tasks/prepare/prepare";
 import { resolveBundleAsset } from "../../../src/tasks/run/load-task";
@@ -82,7 +82,12 @@ describe("a symlinked script keeps its authored interpreter", () => {
         bundleName: "work",
         bundleRoot: work,
         config,
-        resolveAsset: async ({ bundle, type, name }) => resolveBundleAsset(config, { bundle, type, name }),
+        resolveAsset: async ({ bundle, type, name }) => {
+          // The facade reads the config the process loads: make the fixture's the config.
+          saveConfig(config);
+          resetConfigCache();
+          return resolveBundleAsset(config, { bundle, type, name });
+        },
       });
       expect(prepared).toMatchObject({ kind: "script", extension: ".sh" });
       expect(Buffer.from((prepared as { bytesBase64: string }).bytesBase64, "base64").toString()).toBe(

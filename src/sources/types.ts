@@ -3,13 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { TargetRow } from "../commands/targets";
+import type { SemanticSearchStatus } from "../core/adapter/directory/index-context";
 import type { OkfProvenance } from "../core/adapter/types";
 import type { MarkdownTocEntry } from "../core/asset/markdown";
 import type { IncludeSelectors } from "../core/include";
 import type { ProjectView } from "../core/projects";
 import type { SkippedIndexReport } from "../indexer/index-build";
 import type { ScopeFilters } from "../indexer/passes/metadata";
-import type { SemanticSearchStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
 import type { WorkflowExec as ProgramExecCore } from "../workflows/plan";
 

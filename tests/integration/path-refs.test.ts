@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveRefToken } from "../../src/commands/env/env-binding";
 import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
+import { buildFileContext } from "../../src/core/adapter/directory/file-context";
 import {
   assetPathCandidatesForName,
   filesForRef,
@@ -10,14 +11,13 @@ import {
   refForFile,
 } from "../../src/core/asset/asset-placement";
 import type { Asset } from "../../src/core/assets/asset";
-import { findAsset } from "../../src/core/assets/read";
+import { findAsset, qualifyRef } from "../../src/core/assets/read";
 import { assetType } from "../../src/core/assets/type";
-import { loadConfig, resetConfigCache } from "../../src/core/config/config";
+import { resetConfigCache } from "../../src/core/config/config";
 import { isInstalledBundle, resolveEnvPath, resolveRefOwner } from "../../src/core/env-secret-ref";
 import { substituteRefTokens } from "../../src/core/ref-token";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
-import { resolveSourceEntries } from "../../src/indexer/search/search-source";
-import { buildFileContext } from "../../src/indexer/walk/file-context";
+import { configureBundles } from "../_helpers/bundle-config";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 import { withSeam } from "../_helpers/seams";
 
@@ -102,9 +102,11 @@ describe("recognition gives a file its path as its ref", () => {
     expect(document?.conceptId).toBe(ref);
     expect(document?.ref).toBe(`akm//${ref}`);
     // The ref inverts to the file.
-    expect(findAsset({ conceptId: ref }, { sources: [{ path: storage.stashDir, adapterId: "akm" }] })?.entry.file).toBe(
-      file,
-    );
+    expect(
+      findAsset(
+        qualifyRef(ref, { bundle: configureBundles([{ path: storage.stashDir, adapterId: "akm" }])[0] as string }),
+      )?.entry.file,
+    ).toBe(file);
   });
 });
 
@@ -113,7 +115,6 @@ describe("the old, type-folder-prefixed spelling of a loose file's ref", () => {
     const file = write("reports/x.md", "# Report\n");
     writeSandboxConfig({ semanticSearchMode: "off" });
     resetConfigCache();
-    const sources = resolveSourceEntries(undefined, loadConfig());
     const warnings: string[] = [];
     await withSeam(
       _setWarnSinkForTests,
@@ -121,13 +122,13 @@ describe("the old, type-folder-prefixed spelling of a loose file's ref", () => {
         if (level === "warn") warnings.push(args.map(String).join(" "));
       },
       async () => {
-        const current = findAsset({ conceptId: "reports/x" }, { sources });
+        const current = findAsset(qualifyRef("reports/x"));
         expect(current?.entry.file).toBe(file);
         expect(warnings).toEqual([]);
-        const old = findAsset({ conceptId: "knowledge/reports/x" }, { sources });
+        const old = findAsset(qualifyRef("knowledge/reports/x"));
         expect(old?.entry.file).toBe(file);
         expect(old?.conceptId).toBe("reports/x");
-        findAsset({ conceptId: "knowledge/reports/x" }, { sources });
+        findAsset(qualifyRef("knowledge/reports/x"));
       },
     );
     expect(warnings).toHaveLength(1);
@@ -138,8 +139,7 @@ describe("the old, type-folder-prefixed spelling of a loose file's ref", () => {
     write("reports/x.md", "# Report\n");
     writeSandboxConfig({ semanticSearchMode: "off" });
     resetConfigCache();
-    const sources = resolveSourceEntries(undefined, loadConfig());
-    expect(findAsset({ conceptId: "knowledge/reports/missing" }, { sources })).toBeUndefined();
+    expect(findAsset(qualifyRef("knowledge/reports/missing"))).toBeUndefined();
   });
 });
 

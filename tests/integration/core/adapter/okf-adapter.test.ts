@@ -19,11 +19,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { okfAdapter, resolveOkfLinks } from "../../../../src/core/adapter/adapters/okf-adapter";
+import { buildFileContext, type FileContext } from "../../../../src/core/adapter/directory/file-context";
 import type { FileChange } from "../../../../src/core/adapter/file-change";
 import type { Bundle } from "../../../../src/core/adapter/types";
 import type { FileDiagnostic, FileValidateContext } from "../../../../src/core/adapter/validate-context";
 import { presentationFor } from "../../../../src/core/type-presentation";
-import { buildFileContext, type FileContext } from "../../../../src/indexer/walk/file-context";
 import { checkChanges } from "../../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../../fixtures/bundles/okf-sample");
@@ -49,6 +49,7 @@ function synthetic(relPath: string, content: string): FileContext {
     absPath: path.join(FIXTURE_ROOT, relPath),
     file: path.join(FIXTURE_ROOT, relPath),
     relPath,
+    key: relPath,
     ext: path.extname(relPath).toLowerCase(),
     fileName: path.basename(relPath),
     parentDir: path.basename(path.dirname(relPath)),

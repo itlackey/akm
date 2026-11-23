@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { codeProjectAdapter, eligibleType } from "../../../../src/core/adapter/adapters/code-project-adapter";
+import { buildFileContext, type FileContext } from "../../../../src/core/adapter/directory/file-context";
+import { walkStashFlat } from "../../../../src/core/adapter/directory/walker";
 import type { Bundle } from "../../../../src/core/adapter/types";
 import type { FileValidateContext } from "../../../../src/core/adapter/validate-context";
-import { buildFileContext, type FileContext } from "../../../../src/indexer/walk/file-context";
-import { walkStashFlat } from "../../../../src/indexer/walk/walker";
 import { checkChanges, identify, spellings } from "../../../_helpers/adapter-hooks";
 
 const ROOT = path.join(import.meta.dir, "../../../fixtures/bundles/code-project");

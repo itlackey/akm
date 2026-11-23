@@ -4,11 +4,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { protectedTypeOf } from "../core/adapter/directory/place-rules";
 import { isWithin, relativeToRoot, safeRealpath } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
-import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAssetRefsForFiles } from "../storage/repositories/index-entries-repository";
 import { bundleWriteBlockers, fileActions, placeVerdict } from "./file-actions";

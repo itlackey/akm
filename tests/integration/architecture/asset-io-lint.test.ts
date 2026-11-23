@@ -217,11 +217,11 @@ describe("lint-asset-io", () => {
     ]);
   });
 
-  test("the walk and the metadata helpers may import adapter modules; other readers may not", () => {
+  test("the adapter layer (the walk included) and the metadata helpers may import adapter modules; other readers may not", () => {
     const code = 'import { x } from "../../core/adapter/registry";\nexport const a = x;\n';
     expect(
       violationsIn({
-        "src/indexer/walk/file-context.ts": code,
+        "src/core/adapter/directory/file-context.ts": code,
         "src/indexer/passes/metadata.ts": code,
         "src/indexer/passes/other.ts": code,
       }),

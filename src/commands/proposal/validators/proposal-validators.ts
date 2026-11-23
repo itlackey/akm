@@ -39,7 +39,8 @@ function refOfProposal(proposal: Proposal): AssetRef {
   const bound = proposal.acceptedTarget?.bundle ?? proposal.proposedTarget?.source;
   if (bound !== undefined) {
     try {
-      const { type, name, origin } = addressOf(resolveBundleWriteTarget(loadConfig(), bound).source, proposal.ref);
+      const { type, name } = addressOf(resolveBundleWriteTarget(loadConfig(), bound).source.name, proposal.ref);
+      const origin = parseBundleRef(proposal.ref).bundle;
       return { type, name, ...(origin !== undefined ? { origin } : {}) };
     } catch {
       // The bundle is not configured, or the ref is invalid: the ref alone decides, and refuses an invalid one.
@@ -54,7 +55,7 @@ function bundleRelativeFile(proposal: Proposal): string | undefined {
   if (bound === undefined) return undefined;
   try {
     const { source } = resolveBundleWriteTarget(loadConfig(), bound);
-    const { file } = addressOf(source, proposal.ref);
+    const { file } = addressOf(source.name, proposal.ref);
     return file === undefined ? undefined : path.relative(source.path, file).split(path.sep).join("/");
   } catch {
     return undefined;

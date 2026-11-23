@@ -19,10 +19,10 @@ import {
   secretToolAdapter,
 } from "../../../../src/core/adapter/adapters";
 import { akmAdapter } from "../../../../src/core/adapter/adapters/akm-adapter";
+import { walkStashFlat } from "../../../../src/core/adapter/directory/walker";
 import { DirectoryAdapterBase } from "../../../../src/core/adapter/directory-adapter";
 import { getAdapters } from "../../../../src/core/adapter/registry";
 import type { Bundle } from "../../../../src/core/adapter/types";
-import { walkStashFlat } from "../../../../src/indexer/walk/walker";
 import { identify, spellings } from "../../../_helpers/adapter-hooks";
 import { withFakeSecretStores } from "../../../_helpers/fake-secret-stores";
 import { sandboxStashDir } from "../../../_helpers/sandbox";
@@ -105,7 +105,7 @@ describe("identity is the path: every directory adapter, on its fixture", () => 
           const found = adapter.read(b, asset.conceptId);
           expect(found?.conceptId, `${adapter.id}:${asset.conceptId}`).toBe(asset.conceptId);
           expect(found?.entry.file, `${adapter.id}:${asset.conceptId}`).toBe(asset.entry.file);
-          expect(identify(adapter, asset.entry.relPath), `${adapter.id}:${asset.entry.relPath}`).toBe(asset.conceptId);
+          expect(identify(adapter, asset.entry.key), `${adapter.id}:${asset.entry.key}`).toBe(asset.conceptId);
         }
         const [type] = adapter.writes;
         if (type !== undefined) {
@@ -179,8 +179,8 @@ describe("a concept spelled twice: the first spelling wins for list, read and th
     denyReads(paths);
     try {
       const listed = adapter.list(b).assets.filter((asset) => asset.conceptId === conceptId);
-      expect(listed.map((asset) => asset.entry.relPath)).toEqual([winner]);
-      expect(adapter.read(b, conceptId)?.entry.relPath).toBe(winner);
+      expect(listed.map((asset) => asset.entry.key)).toEqual([winner]);
+      expect(adapter.read(b, conceptId)?.entry.key).toBe(winner);
       const [finding, ...rest] = await shadowFinding(adapter, b, conceptId);
       expect(rest).toEqual([]);
       expect(finding?.file).toBe(winner);
@@ -209,8 +209,8 @@ describe("a file name asks for its concept's winner", () => {
     }
     const byName = akmAdapter.read(b, fileName);
     expect(byName?.conceptId).toBe(conceptId);
-    expect(byName?.entry.relPath).toBe(winner);
-    expect(akmAdapter.read(b, conceptId)?.entry.relPath).toBe(winner);
+    expect(byName?.entry.key).toBe(winner);
+    expect(akmAdapter.read(b, conceptId)?.entry.key).toBe(winner);
   });
 });
 
@@ -233,7 +233,7 @@ describe("identity is the path: a secret manager's entries", () => {
         const { assets } = adapter.list(b);
         expect(assets.length, adapter.id).toBe(1);
         const [asset] = assets as [(typeof assets)[number]];
-        expect(asset.entry.relPath, adapter.id).toBe(asset.conceptId);
+        expect(asset.entry.key, adapter.id).toBe(asset.conceptId);
         expect(adapter.read(b, asset.conceptId)?.conceptId, adapter.id).toBe(asset.conceptId);
         expect(adapter.recognize(b, asset.entry)?.conceptId, adapter.id).toBe(asset.conceptId);
         expect(adapter.place(b, { type: "secret", name: "other" }), adapter.id).toBe("secrets/other");
@@ -258,7 +258,7 @@ describe("a validated create is checked at the file a create writes", () => {
       } catch {
         return; // a name the adapter refuses to place has no file to compare
       }
-      const placed = adapter.placedFile(b, asset);
+      const placed = adapter.placement(b, asset)?.file;
       expect(placed).toBeDefined();
       expect(
         path

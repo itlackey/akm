@@ -119,10 +119,10 @@ export function akmRules(input: {
   const found: Array<RuleItem & { shared: boolean; durableRef: string }> = [];
   for (const source of new Set(wanted)) {
     const bundle = installations[sources.indexOf(source)];
-    if (!bundle || source.unresolved || !adapterWrites({ ...source, name: bundle.id }, "rule")) continue;
+    if (!bundle || source.unresolved || !adapterWrites(bundle.id, "rule")) continue;
     bundles.push(bundle.id);
     // Only the rules folder decides a rule (as the walk always read it), so only its assets are described.
-    for (const asset of listAssets({ sources, bundle: bundle.id }).filter(({ conceptId }) =>
+    for (const asset of listAssets({ bundle: bundle.id }).filter(({ conceptId }) =>
       conceptId.startsWith(RULES_PREFIX),
     )) {
       // Read as the adapter describes it now, so a rule edited since the last index applies as written.

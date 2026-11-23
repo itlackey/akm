@@ -22,7 +22,7 @@ import { git, makeGitRepo } from "../../_helpers/git";
 import { sandboxStashDir } from "../../_helpers/sandbox";
 
 let sandbox: ReturnType<typeof sandboxStashDir>;
-let bundle: Bundle;
+let bundle: Bundle & { root: string };
 const CONCEPT = "memories/old-note";
 const NOTE = { ref: "memories/old-note", reason: "duplicate", proposalId: "p1", retiredAt: "2020-01-01T00:00:00.000Z" };
 
@@ -39,8 +39,10 @@ let written: string;
 function createMemory(): string {
   const created = akmAdapter.create(bundle, { type: "memory", name: "old-note", content: "# old\n" });
   expect(created.conceptId).toBe(CONCEPT);
-  written = fs.readFileSync(created.file as string, "utf8");
-  return created.file as string;
+  const file = path.join(bundle.root, "memories", "old-note.md");
+  expect(created.changed).toEqual([file]);
+  written = fs.readFileSync(file, "utf8");
+  return file;
 }
 
 describe("DirectoryArchive through the akm adapter", () => {
@@ -137,7 +139,7 @@ describe("DirectoryArchive through the akm adapter", () => {
       },
       restorable: true,
     });
-    expect(akmAdapter.restore(bundle, only?.handle as string).file).toBe(file);
+    expect(akmAdapter.restore(bundle, only?.handle as string).changed).toContain(file);
     expect(fs.readFileSync(file, "utf8")).toBe(written);
     akmAdapter.forget(bundle, only?.handle as string);
     expect(akmAdapter.retired(bundle)).toEqual([]);
@@ -176,7 +178,7 @@ describe("DirectoryArchive through the akm adapter", () => {
 
     const restored = akmAdapter.restore(bundle, handle);
     expect(restored.conceptId).toBe(CONCEPT);
-    expect(restored.file).toBe(file);
+    expect(restored.changed).toContain(file);
     expect(fs.readFileSync(file, "utf8")).toBe(written);
     expect(akmAdapter.retired(bundle).map((r) => r.handle)).toEqual([handle]);
     expect(akmAdapter.restore(bundle, handle).changed).toEqual([]); // again: already restored

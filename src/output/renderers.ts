@@ -13,6 +13,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { AssetRenderer, RenderContext } from "../core/adapter/directory/file-context";
+import { registerRenderer } from "../core/adapter/directory/file-context";
 import { refForFile } from "../core/asset/asset-placement";
 import { parseFrontmatter, readFrontmatterDate } from "../core/asset/frontmatter";
 import { displayRef } from "../core/asset/resolve-ref";
@@ -21,8 +23,6 @@ import { asNonEmptyString, hasErrnoCode, scanEnvKeyNames } from "../core/common"
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import type { IndexDocument } from "../indexer/passes/metadata";
 import { extractCommentMetadata } from "../indexer/passes/metadata";
-import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
-import { registerRenderer } from "../indexer/walk/file-context";
 import type { ShowResponse, SourceSearchHit } from "../sources/types";
 import { buildWorkflowAction, workflowMdRenderer } from "../workflows/renderer";
 

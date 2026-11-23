@@ -27,9 +27,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { planTaskToV4File } from "../../../scripts/akm-migrate/migrate/task-to-v4";
 import { resolveImproveScope } from "../../../src/commands/improve/eligibility";
+import { resolveAssetPath } from "../../../src/core/adapter/directory/path-resolver";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
-import { resolveAssetPath } from "../../../src/indexer/walk/path-resolver";
 import { type ProposalRow, proposalRowToProposal } from "../../../src/storage/repositories/proposals-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 

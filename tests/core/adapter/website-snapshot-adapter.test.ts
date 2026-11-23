@@ -24,10 +24,10 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { websiteSnapshotAdapter } from "../../../src/core/adapter/adapters/website-snapshot-adapter";
+import { buildFileContext } from "../../../src/core/adapter/directory/file-context";
 import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
 import type { FileValidateContext } from "../../../src/core/adapter/validate-context";
 import { presentationFor } from "../../../src/core/type-presentation";
-import { buildFileContext } from "../../../src/indexer/walk/file-context";
 import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/website-snapshot");

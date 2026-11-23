@@ -71,11 +71,11 @@
 
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../asset/frontmatter";
 import { LLM_WIKI_PAGES_DIR, looksLikeLlmWikiRoot } from "../../asset/llm-wiki-root";
 import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { toPosix } from "../../common";
+import type { FileContext } from "../directory/file-context";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import type { FileChange } from "../file-change";
 import type { Bundle, IndexMetadata } from "../types";

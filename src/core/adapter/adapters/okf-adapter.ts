@@ -30,14 +30,21 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { isScratchPath } from "../../asset/scratch";
 import { isRecord, toPosix } from "../../common";
+import type { FileContext } from "../directory/file-context";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import type { FileChange } from "../file-change";
-import type { Bundle, IndexDocument, IndexMetadata, OkfSourceEntry, OkfVerifiedEntry } from "../types";
+import {
+  type Bundle,
+  type IndexDocument,
+  type IndexMetadata,
+  type OkfSourceEntry,
+  type OkfVerifiedEntry,
+  rootOf,
+} from "../types";
 import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
@@ -258,7 +265,7 @@ function describe(file: FileContext, conceptId: string): IndexMetadata {
 
 async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
   const diagnostics: FileDiagnostic[] = [];
-  const { check } = createBaseChecker(c.root, ctx);
+  const { check } = createBaseChecker(rootOf(c), ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));

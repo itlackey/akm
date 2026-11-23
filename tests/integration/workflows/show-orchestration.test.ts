@@ -25,7 +25,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { recognizeMatch } from "../../../src/core/adapter/adapters/akm-adapter";
-import { buildFileContext, buildRenderContext, getRenderer } from "../../../src/indexer/walk/file-context";
+import { buildFileContext, buildRenderContext, getRenderer } from "../../../src/core/adapter/directory/file-context";
 import type { ShowResponse, WorkflowStepOrchestrationSummary } from "../../../src/sources/types";
 import { makeSandboxDir } from "../../_helpers/sandbox";
 

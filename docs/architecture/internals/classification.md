@@ -77,7 +77,7 @@ The walker itself skips VCS internals. It indexes a symlink to a file like any o
 
 ## How the akm adapter picks a type
 
-The `akm` adapter runs four matchers from `src/indexer/walk/matchers.ts`
+The `akm` adapter runs four matchers from `src/core/adapter/directory/matchers.ts`
 (`extensionMatcher`, `directoryMatcher`, `parentDirHintMatcher`,
 `smartMdMatcher`). `recognizeMatch` (`src/core/adapter/recognize-match.ts`)
 collects their results and picks the highest specificity. On a tie the matcher

@@ -21,8 +21,8 @@
  * optional: absence means "no runtime translation" and "never auto-detected".
  *
  * An asset is addressed by its concept id: the ref without its bundle. An
- * entry is one asset as its adapter holds it: `relPath` is the path it is
- * indexed under, and `content()` reads it once, when asked.
+ * entry is one asset as its adapter holds it: `key` is the adapter's
+ * storage key, and `content()` reads it once, when asked.
  */
 
 import type { AdapterRenderedExecutionSource } from "../../execution/source";
@@ -30,12 +30,14 @@ import type { AssetEdit, Bundle, Diagnostic, IndexDocument, ValidateContext } fr
 
 /** One entry of a bundle: an asset as its adapter holds it. */
 export interface AssetEntry {
-  /** POSIX path inside the bundle. The index keys the entry under it; the concept id derives from it. */
-  readonly relPath: string;
-  /** The absolute file that holds the asset, when the adapter keeps it as a file. Absent: no file holds it. */
+  /** The adapter's storage key (directory: the POSIX path inside the root; secret manager: `secrets/<name>`). Only the adapter interprets it; the concept id derives from it. */
+  readonly key: string;
+  /** The absolute file that holds the asset, when the adapter keeps it as a file. Display and handing to a program only. */
   readonly file?: string;
   /** Where a secret manager's store holds the asset (see `IndexDocument.store`); the index records it. */
   readonly store?: { item: string; attributes: Record<string, string> };
+  /** When the asset last changed, when the adapter knows (a directory: the file's mtime). Callers never stat `file`. */
+  modified?(): Date;
   /** The content as text, read once, when first asked. */
   content(): string;
   /** The content as bytes, read once, when first asked. */
@@ -84,12 +86,20 @@ export interface NewAsset {
 /** What a write did. */
 export interface AssetChange {
   conceptId: string;
-  /** The asset's file after the write, when it is a file. */
-  file?: string;
   /** The files the write changed, for the bundle's commit boundary. Empty when the bundle is not a directory. */
   changed: string[];
   /** The content the asset holds after the write. Absent after a delete, retire or forget. */
   content?: string | Buffer;
+}
+
+/** Where a create of an asset is kept. */
+export interface AssetPlacement {
+  /** The storage key the create writes. An asset held under another key is held under another spelling. */
+  key: string;
+  /** Whether anything is kept at the key now: an asset, or an entry no adapter reads as one (a directory). */
+  occupied: boolean;
+  /** The file to show for it, when one holds it. */
+  file?: string;
 }
 
 /** What the caller records with a retirement; kept with it and returned by `retired`. YAML-serializable. */
@@ -195,10 +205,11 @@ export interface BundleAdapter {
   /** Install-time probe; ordered by the registry. */
   looksLikeRoot?(root: string): boolean;
   /**
-   * The file a new asset of `asset`'s type and name would be kept at, when the adapter writes the type and keeps
-   * assets as files. Display only (`AssetAddress.file`, §0.2 P13); never stored.
+   * Where a create of `asset` is kept, when the adapter keeps assets as files: the storage key, whether anything
+   * (an asset or not) is there now, and the file to show for it (display only, `AssetAddress.file`, §0.2 P13; never
+   * stored). Undefined when it keeps no file for it. A name that cannot be placed throws, as `place` does.
    */
-  placedFile?(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string | undefined;
+  placement?(b: Bundle, asset: Pick<NewAsset, "type" | "name">): AssetPlacement | undefined;
   /**
    * The concept id a stored storage key (a bundle-relative path) holds, from the key alone, so it is valid when no
    * file exists. For converters of old stored records only (§8.4: `legacyRefOf`).

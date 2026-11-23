@@ -12,8 +12,8 @@ import * as p from "../../cli/clack";
 import { akmTasksSync } from "../../commands/tasks/tasks";
 import { stashDirFor } from "../../core/asset/asset-placement";
 import { makeBundleRef } from "../../core/asset/asset-ref";
-import { listAssets } from "../../core/assets/read";
-import { readAsset, writeAssets } from "../../core/assets/write";
+import { listAssets, readAsset } from "../../core/assets/read";
+import { writeAssets } from "../../core/assets/write";
 import { loadConfig, mutateConfig, resetConfigCache } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { commitWriteTargetBoundary, prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
@@ -172,7 +172,7 @@ export async function prepareSetupTaskDefinitions(
 
   const prepared = tasks.map((plan) => {
     const filePath = path.join(taskDir, `${plan.task.id}.yml`);
-    const original = readAsset(target.source, `tasks/${plan.task.id}`)?.entry.content();
+    const original = readAsset(target.source.name, `tasks/${plan.task.id}`)?.entry.content();
     let yaml: string;
     if (original !== undefined) {
       yaml = original;

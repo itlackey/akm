@@ -9,8 +9,8 @@ import { parseNonNegativeIntFlag, parseTimeoutValue } from "../cli/parse-args";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, reportChildExit } from "../cli/shared";
 import { assertKnownFlags, type FlagScanCommand, scanRoot } from "../cli/unknown-flags";
 import { setResolvedUsageAssetType } from "../cli/usage";
-import { parseBundleRef } from "../core/asset/asset-ref";
-import { type Asset, findAsset } from "../core/assets/read";
+import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
+import { type Asset, lookupAsset } from "../core/assets/read";
 import { assetTypeFresh } from "../core/assets/type";
 import { AkmError, NotFoundError, UsageError } from "../core/errors";
 import { registerInjectedSecretValues } from "../core/redaction";
@@ -115,7 +115,7 @@ export async function resolveRunTarget(runArgs: readonly string[]): Promise<RunT
       if (bundle !== undefined && bundleRef.bundle !== undefined && bundleRef.bundle !== bundle) {
         throw new UsageError("--bundle conflicts with the bundle in the asset ref.", "INVALID_FLAG_VALUE");
       }
-      const asset = findAsset({ ...bundleRef, ...(bundle === undefined ? {} : { bundle }) });
+      const asset = lookupAsset(makeBundleRef(bundle ?? bundleRef.bundle, bundleRef.conceptId));
       if (!asset) {
         throw new NotFoundError(
           `Asset not found for ref: ${ref}`,

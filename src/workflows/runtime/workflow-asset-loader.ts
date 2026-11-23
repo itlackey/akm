@@ -7,7 +7,7 @@ import fs from "node:fs";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 // asset-io: deprecated
 import { adapterWrites, bundleAdapterId, refuseByAdapter } from "../../core/assets/gate";
-import { findAsset } from "../../core/assets/read";
+import { lookupAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import { loadConfig } from "../../core/config/config";
 import { COMPOSITION_INVALID_MULTI_JOB_HINT, NotFoundError, UsageError } from "../../core/errors";
@@ -66,7 +66,7 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   const bundleRef = parseWorkflowRefInput(ref);
 
   const sources = resolveSourceEntries(undefined, loadConfig());
-  const asset = findAsset(bundleRef, { sources });
+  const asset = lookupAsset(makeBundleRef(bundleRef.bundle, bundleRef.conceptId, bundleRef.fragment));
   if (!asset) {
     if (bundleRef.bundle && resolveSourcesForOrigin(bundleRef.bundle, sources).length === 0) {
       throw new UsageError(
@@ -78,15 +78,9 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   }
   const bundleId = asset.bundle;
   const source = sourceOfBundle(sources, bundleId);
-  const bundle = {
-    name: bundleId,
-    path: source.path,
-    ...(source.location !== undefined ? { location: source.location } : {}),
-    ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
-  };
   // A workflow runs when its bundle's adapter holds workflows as its own: a read-only adapter's workflow is a document.
   const type = assetType(asset);
-  if (type !== "workflow" || !adapterWrites(bundle, "workflow")) {
+  if (type !== "workflow" || !adapterWrites(bundleId, "workflow")) {
     throw new UsageError(
       `${asset.ref} is not a native workflow: bundle "${bundleId}" holds it as a ${type} it does not run.`,
       "WORKFLOW_SOURCE_INVALID",
@@ -102,7 +96,7 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
     // asset-io: deprecated
     !isWorkflowSource(source.path, bundleAdapterId(source), assetPath)
   ) {
-    refuseByAdapter(bundle, "does not support native workflow execution", "WORKFLOW_SOURCE_INVALID");
+    refuseByAdapter(bundleId, "does not support native workflow execution", "WORKFLOW_SOURCE_INVALID");
   }
 
   // Canonicalize the stored ref: `workflows/foo.md` and `workflows/foo` resolve

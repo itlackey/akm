@@ -19,6 +19,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import {
+  buildFileContext,
+  buildRenderContext,
+  type FileContext,
+  fileContextOfEntry,
+  getRenderer,
+  type MatchResult,
+} from "../../core/adapter/directory/file-context";
 import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../../core/asset/asset-placement";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
@@ -65,14 +73,6 @@ import {
 } from "../../indexer/search/search-source";
 import { recentShowCount, recordShowUsage } from "../../indexer/usage/show-usage";
 import type { UsageEventSource } from "../../indexer/usage/usage-events";
-import {
-  buildFileContext,
-  buildRenderContext,
-  type FileContext,
-  fileContextOfEntry,
-  getRenderer,
-  type MatchResult,
-} from "../../indexer/walk/file-context";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import type { FragmentContextMode, ShowDetailLevel, ShowLinkGroup, ShowResponse } from "../../sources/types";
 import { withIndexDb } from "../../storage/repositories/index-db";

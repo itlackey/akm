@@ -3,10 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { findAsset } from "../../core/assets/read";
+import { lookupAsset } from "../../core/assets/read";
 import { parseEnvRef } from "../../core/env-secret-ref";
 import { UsageError } from "../../core/errors";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { FrozenWorkflowEnvironmentBinding, WorkflowExec } from "../plan";
 import type { FreezeStep, ResolutionContext } from "./step-values";
 
@@ -25,7 +24,7 @@ export function freezeEnvironment(
   const envRefs: FrozenWorkflowEnvironmentBinding[] = [];
   for (const [precedence, ref] of (source.unit?.env ?? []).entries()) {
     parseEnvRef(ref);
-    const qualified = qualifyEnvRef(ref, context);
+    const qualified = qualifyEnvRef(ref);
     if (seen.has(qualified)) continue;
     seen.add(qualified);
     envRefs.push(Object.freeze({ kind: "env-ref" as const, ref: qualified, precedence }));
@@ -34,12 +33,9 @@ export function freezeEnvironment(
 }
 
 /** Qualify an env ref a step names with the bundle that owns it right now, through the one walk. */
-function qualifyEnvRef(refInput: string, context: ResolutionContext): string {
+function qualifyEnvRef(refInput: string): string {
   const parsed = parseBundleRef(refInput);
-  const asset = findAsset(
-    { bundle: parsed.bundle, conceptId: parsed.conceptId },
-    { sources: resolveSourceEntries(undefined, context.config) },
-  );
+  const asset = lookupAsset(makeBundleRef(parsed.bundle, parsed.conceptId));
   if (!asset) throw new UsageError(`Workflow source target ${refInput} was not found.`, "INVALID_FLAG_VALUE");
   return makeBundleRef(asset.bundle, parsed.conceptId);
 }

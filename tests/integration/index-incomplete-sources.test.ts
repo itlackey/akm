@@ -10,10 +10,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { readIncompleteSources } from "../../src/core/adapter/directory/index-context";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
-import { readIncompleteSources } from "../../src/indexer/walk/index-context";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";

@@ -19,6 +19,7 @@ import {
   materializeFileLinks,
   stampCloneOrigin,
 } from "../commands/sources/source-clone";
+import { managedFolderOf, protectedTypeOf } from "../core/adapter/directory/place-rules";
 import { assertFlatAssetName, normalizeCreateSubPath } from "../core/asset/asset-create";
 import { isWithin, safeRealpath } from "../core/common";
 import { loadConfig } from "../core/config/config";
@@ -27,7 +28,6 @@ import { resolveBundleWriteTarget } from "../core/mutation-target";
 import { assertPlainWritable, commitWriteTargetBoundary, prepareWriteTargetForMutation } from "../core/write-source";
 import { indexWrittenAssets } from "../indexer/index-written-assets";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { managedFolderOf, protectedTypeOf } from "../indexer/walk/place-rules";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAssetRefsForFiles } from "../storage/repositories/index-entries-repository";
 import { folderBlocker, plainWriteBlocker } from "./file-actions";

@@ -56,13 +56,13 @@
 
 import type { ParsedBuiltinCommandAction } from "../../../commands/command/builtin-action";
 import type { IndexDocument } from "../../../indexer/passes/metadata";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
 import { compileWorkflowSource, workflowStepInstructions } from "../../../workflows/compile";
 import { parseFrontmatter, readFrontmatterDate } from "../../asset/frontmatter";
 import type { TocHeading } from "../../asset/markdown";
 import { parseMarkdownToc } from "../../asset/markdown";
 import { scanEnvKeyNames } from "../../common";
+import type { FileContext } from "../directory/file-context";
 import { nonEmptyString } from "./shared";
 
 /** The contributor-produced metadata fields, mirrored from the `IndexDocument` fields the 11 contributors mutate. */

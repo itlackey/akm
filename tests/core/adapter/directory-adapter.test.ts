@@ -18,7 +18,7 @@ import type { Bundle } from "../../../src/core/adapter/types";
 import { sandboxStashDir } from "../../_helpers/sandbox";
 
 let sandbox: ReturnType<typeof sandboxStashDir>;
-let bundle: Bundle;
+let bundle: Bundle & { root: string };
 
 beforeEach(() => {
   sandbox = sandboxStashDir();
@@ -75,7 +75,7 @@ describe("DirectoryAdapterBase", () => {
     expect(
       akmAdapter
         .list(bundle)
-        .assets.map((asset) => asset.entry.relPath)
+        .assets.map((asset) => asset.entry.key)
         .filter((rel) => rel.startsWith("tasks/same.")),
     ).toEqual(["tasks/same.yml"]);
 
@@ -95,15 +95,15 @@ describe("DirectoryAdapterBase", () => {
   test("create writes the asset, update replaces it, delete removes it", () => {
     const created = akmAdapter.create(bundle, { type: "knowledge", name: "idea", content: "# Idea\n" });
     expect(created.conceptId).toBe("knowledge/idea");
-    expect(created.file).toBe(path.join(bundle.root, "knowledge", "idea.md"));
-    expect(created.changed).toEqual([created.file as string]);
+    const ideaFile = path.join(bundle.root, "knowledge", "idea.md");
+    expect(created.changed).toEqual([ideaFile]);
 
     akmAdapter.update(bundle, "knowledge/idea", "changed\n");
     const read = akmAdapter.read(bundle, "knowledge/idea");
     expect(read?.entry.content()).toBe("changed\n");
     expect(read?.entry.bytes().toString("utf8")).toBe("changed\n");
 
-    expect(akmAdapter.delete(bundle, "knowledge/idea").changed).toEqual([created.file as string]);
+    expect(akmAdapter.delete(bundle, "knowledge/idea").changed).toEqual([ideaFile]);
     expect(akmAdapter.read(bundle, "knowledge/idea")).toBeUndefined();
   });
 
@@ -114,7 +114,7 @@ describe("DirectoryAdapterBase", () => {
       resources: [{ path: "scripts/run.sh", content: Buffer.from("echo old\n") }],
     });
     const dir = path.join(bundle.root, "skills", "demo");
-    expect(first.file).toBe(path.join(dir, "SKILL.md"));
+    expect(first.changed).toContain(path.join(dir, "SKILL.md"));
     expect(fs.readFileSync(path.join(dir, "scripts", "run.sh"), "utf8")).toBe("echo old\n");
 
     // The adapter refuses to create over an asset: the facade takes a package out whole first.

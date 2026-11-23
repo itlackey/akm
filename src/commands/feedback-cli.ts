@@ -11,9 +11,9 @@ import { type BundleRef, makeBundleRef, parseBundleRef } from "../core/asset/ass
 import { assembleAsset, serializeFrontmatter } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "../core/asset/frontmatter";
 import { type AssetRef, displayDefaultBundle, displayRef } from "../core/asset/resolve-ref";
-import { currentConceptId, findAsset, requireAsset } from "../core/assets/read";
+import { findAsset, qualifyRef, requireAsset } from "../core/assets/read";
 import { addressOf } from "../core/assets/write";
-import { bundleSourceAt } from "../core/bundle-at-dir";
+import { bundleIdAt } from "../core/bundle-at-dir";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, NotFoundError, TransientError, UsageError } from "../core/errors";
@@ -25,7 +25,7 @@ import { withWriteTargetMutation } from "../core/write-source";
 import { NO_INDEX_MESSAGE, openUsableIndex } from "../indexer/index-readiness";
 import { heldRebuildLock } from "../indexer/index-rebuild-lock";
 import { recomputeUtilityScores } from "../indexer/indexer";
-import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
+import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
 import { insertUsageEventStrict, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { Database } from "../storage/database";
@@ -97,13 +97,14 @@ function appendLessonStrength(
 ): { ref: string; strength: number } | null {
   // `findEntryIdByRef` keys on the stored `item_ref`; the lesson's type is the one its entry records.
   const config = loadConfig();
-  const conceptId = currentConceptId(parseBundleRef(raw), resolveSourceEntries(undefined, config));
+  const qualified = qualifyRef(raw);
+  const { conceptId } = parseBundleRef(qualified);
   let filePath: string | undefined;
   let bundleId: string | undefined;
   let type: string | undefined;
   const db = openExistingDatabase();
   try {
-    const entryId = findEntryIdByRef(db, makeBundleRef(origin, conceptId));
+    const entryId = findEntryIdByRef(db, qualified);
     if (entryId !== undefined) {
       const itemRef = getItemRefById(db, entryId);
       const parsedItemRef = itemRef ? parseBundleRef(itemRef) : undefined;
@@ -280,7 +281,7 @@ function recordFeedbackUsage(
 function judgedTextHash(type: string | undefined, filePath: string | undefined, itemRef: string): string | undefined {
   try {
     if (!filePath || type === "env" || type === "secret") return undefined;
-    const held = findAsset(itemRef, { quiet: true });
+    const held = findAsset(itemRef);
     return held ? contentHash(held.entry.content(), "body") : undefined;
   } catch {
     return undefined;
@@ -363,7 +364,7 @@ function assertFrontmatterStillParses(before: string, after: string, file: strin
  * not the indexed one, so accepting the proposal would leave the real one unfixed.
  */
 export function assertProposalWritesFile(itemRef: string, root: string, filePath: string): void {
-  const { type, file: writes } = addressOf(bundleSourceAt(path.resolve(root)), itemRef);
+  const { type, file: writes } = addressOf(bundleIdAt(path.resolve(root)), itemRef);
   if (writes !== undefined && safeRealpath(writes) === safeRealpath(filePath)) return;
   throw new UsageError(
     `akm cannot queue a fix for ${itemRef}: its file is ${filePath}, but a proposal would write ${writes ?? `no file (akm has no directory for "${type}" assets)`}. Edit the file directly.`,
@@ -380,9 +381,8 @@ type HistoryMark = { supersededBy: string } | { outdated: true };
  * The durable ref of the asset `--superseded-by` names. It must be indexed and
  * must not be the asset itself, or nothing is recorded.
  */
-function resolveSuccessorRef(db: Database, input: string, itemRef: string, sources: SearchSource[]): string {
-  const parsed = parseBundleRef(input);
-  const id = findEntryIdByRef(db, makeBundleRef(parsed.bundle, currentConceptId(parsed, sources)), parsed.bundle);
+function resolveSuccessorRef(db: Database, input: string, itemRef: string): string {
+  const id = findEntryIdByRef(db, qualifyRef(input));
   const successor = id === undefined ? null : getItemRefById(db, id);
   if (!successor) {
     throw new UsageError(
@@ -718,8 +718,7 @@ export const feedbackCommand = defineJsonCommand({
       if (parsedRef.bundle && !requestedSource) {
         throw new UsageError(`Source "${parsedRef.bundle}" is not configured.`, "INVALID_FLAG_VALUE");
       }
-      const lookupRef = makeBundleRef(parsedRef.bundle, currentConceptId(parsedRef, sources));
-      const entryId = findEntryIdByRef(db, lookupRef, parsedRef.bundle);
+      const entryId = findEntryIdByRef(db, qualifyRef(ref));
       if (entryId === undefined) {
         // NotFoundError (exit 1), not UsageError (exit 2): the flags parsed
         // fine, the asset just isn't there. The documented exit-code table
@@ -774,10 +773,10 @@ export const feedbackCommand = defineJsonCommand({
           }
           mark =
             supersededBy !== undefined
-              ? { supersededBy: resolveSuccessorRef(db, supersededBy.trim(), itemRef, sources) }
+              ? { supersededBy: resolveSuccessorRef(db, supersededBy.trim(), itemRef) }
               : { outdated: true };
         }
-        const before = requireAsset(itemRef, { quiet: true }).entry.content();
+        const before = requireAsset(itemRef).entry.content();
         let after = applyExactReplacements(before, fixPairs, filePath);
         if (mark) after = applyHistoryMark(after, mark, filePath);
         if (after === before) throw new UsageError("The fix changes nothing.", "INVALID_FLAG_VALUE");

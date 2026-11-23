@@ -225,7 +225,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
 
   const sched = deps.backend ?? selectBackend();
   return withSchedulerLock(async () => {
-    if (addressOf(bundle.resolved.source, `tasks/${id}`).exists && !input.force) {
+    if (addressOf(bundle.resolved.source.name, `tasks/${id}`).exists && !input.force) {
       throw new UsageError(
         `Task "${id}" already exists. Pass --force to overwrite, or delete its file and run \`akm doctor scheduler sync\` first.`,
         "RESOURCE_ALREADY_EXISTS",

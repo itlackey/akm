@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { walkStashFlat } from "../core/adapter/directory/walker";
 import { recognizeMatch } from "../core/adapter/recognize-match";
 import {
   assetPathForName,
@@ -14,7 +15,6 @@ import {
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
 import { hasErrnoCode, isContainedResolvedPath } from "../core/common";
 import { NotFoundError, UsageError } from "../core/errors";
-import { walkStashFlat } from "../indexer/walk/walker";
 
 /**
  * Resolve an asset path from a stash directory, type, and name. The path keeps

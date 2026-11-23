@@ -25,8 +25,6 @@ import {
   hasMarkdownFragmentContent,
   setMarkdownFragmentContent,
 } from "../../indexer/passes/metadata";
-import { buildFileContext, type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
-import { isWalkedFile, walkStashFlatWithStatus } from "../../indexer/walk/walker";
 import { makeBundleRef } from "../asset/asset-ref";
 import {
   compareCodePoints,
@@ -40,6 +38,7 @@ import { assetNotFound, ConfigError, UsageError } from "../errors";
 import type {
   AssetChange,
   AssetEntry,
+  AssetPlacement,
   AssetResource,
   BundleAdapter,
   BundleAsset,
@@ -48,6 +47,8 @@ import type {
   Retirement,
   RetireNote,
 } from "./bundle-adapter";
+import { buildFileContext, type FileContext, fileContextOfEntry } from "./directory/file-context";
+import { isWalkedFile, walkStashFlatWithStatus } from "./directory/walker";
 import {
   archiveFile,
   expireArchive,
@@ -61,7 +62,15 @@ import {
   type Tombstone,
 } from "./directory-archive";
 import type { FileChange } from "./file-change";
-import type { AssetEdit, Bundle, Diagnostic, IndexDocument, IndexMetadata, ValidateContext } from "./types";
+import {
+  type AssetEdit,
+  type Bundle,
+  type Diagnostic,
+  type IndexDocument,
+  type IndexMetadata,
+  rootOf,
+  type ValidateContext,
+} from "./types";
 import {
   buildOverlay,
   createFileValidateContext,
@@ -144,11 +153,11 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   // ── Template methods ────────────────────────────────────────────────────────
 
   exists(b: Bundle): boolean {
-    return fs.statSync(b.root, { throwIfNoEntry: false })?.isDirectory() === true;
+    return fs.statSync(rootOf(b), { throwIfNoEntry: false })?.isDirectory() === true;
   }
 
   list(b: Bundle): BundleListing {
-    const walked = walkStashFlatWithStatus(b.root, this.walkOptions());
+    const walked = walkStashFlatWithStatus(rootOf(b), this.walkOptions());
     // One asset per concept: the winner among the files that spell it. The path says which concept a file holds.
     const byConcept = new Map<string, FileContext[]>();
     for (const file of walked.files) {
@@ -173,7 +182,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
 
   /** The entry's metadata, then the identity its storage key names, which `describe` cannot change. */
   recognize(b: Bundle, entry: AssetEntry): IndexDocument | null {
-    const file = fileContextOfEntry(b.root, entry);
+    const file = fileContextOfEntry(rootOf(b), entry);
     const conceptId = this.identify(file.relPath);
     if (conceptId === null) return null;
     const metadata = this.describe(b, file, conceptId);
@@ -199,7 +208,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   read(b: Bundle, conceptId: string): BundleAsset | undefined {
     const held = this.holders(liveView(b), conceptId);
     const first = held?.files[0];
-    const file = first === undefined ? undefined : buildFileContext(b.root, path.join(b.root, first));
+    const file = first === undefined ? undefined : buildFileContext(rootOf(b), path.join(rootOf(b), first));
     return held && file && { conceptId: held.conceptId, entry: this.entryOf(file) };
   }
 
@@ -209,7 +218,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
    * found by {@link holders}, the function `read` uses, over a view of the live tree or of the snapshot.
    */
   async validate(b: Bundle, edits: AssetEdit[], ctx: ValidateContext): Promise<Diagnostic[]> {
-    const base = { root: b.root, sources: ctx.sources, config: ctx.config, readMoves: ctx.readMoves };
+    const base = { root: rootOf(b), sources: ctx.sources, config: ctx.config, readMoves: ctx.readMoves };
     const live = liveView(b);
     const changes: FileChange[] = [];
     for (const edit of edits) {
@@ -235,7 +244,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
    */
   protected async checkChanges(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     const diagnostics = await this.validateFiles(b, changes, ctx);
-    const view = snapshotView(b, buildOverlay(b.root, changes));
+    const view = snapshotView(b, buildOverlay(rootOf(b), changes));
     const seen = new Set<string>();
     for (const change of changes) {
       const conceptId = this.identify(change.path);
@@ -306,8 +315,13 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return dir === undefined ? file : { ...file, resources: () => packageResources(dir, file.absPath) };
   }
 
-  placedFile(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string | undefined {
-    return this.writes.includes(asset.type) ? this.placeFile(b, asset) : undefined;
+  placement(b: Bundle, asset: Pick<NewAsset, "type" | "name">): AssetPlacement | undefined {
+    return this.writes.includes(asset.type) ? this.placementOf(b, this.placeFile(b, asset)) : undefined;
+  }
+
+  /** The placement of `file`, which a create of an asset writes. */
+  protected placementOf(b: Bundle, file: string): AssetPlacement {
+    return { key: this.relPathOf(b, file), occupied: fs.existsSync(file), file };
   }
 
   identifyKey(_b: Bundle, key: string): string | null {
@@ -345,36 +359,36 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     }
     // A replacing create rewrites the file the concept is read from (`guide.MD`), never a twin beside it.
     const file = held?.entry.file ?? this.placeFile(b, asset);
-    const entry = buildFileContext(b.root, file);
+    const entry = buildFileContext(rootOf(b), file);
     const content = options.verbatim ? asset.content : this.serialize(asset.type, file, asset.content);
     const changed = asset.resources?.length
       ? this.writePackage(b, asset, entry, content, asset.resources)
       : this.writeFile(b, asset.type, file, content, options.replaceLink);
-    return { conceptId, file, changed, content: asset.content };
+    return { conceptId, changed, content: asset.content };
   }
 
   update(b: Bundle, conceptId: string, content: string | Buffer): AssetChange {
     const { conceptId: canonical, entry } = this.existing(b, conceptId);
     const file = entry.file as string;
-    this.writeFile(b, this.typeOf(entry.relPath), file, content);
-    return { conceptId: canonical, file, changed: [file], content };
+    this.writeFile(b, this.typeOf(entry.key), file, content);
+    return { conceptId: canonical, changed: [file], content };
   }
 
   delete(b: Bundle, conceptId: string): AssetChange {
     const { conceptId: canonical, entry } = this.existing(b, conceptId);
     const file = entry.file as string;
-    assertWritableFile(b.root, b.id, file);
+    assertWritableFile(rootOf(b), b.id, file);
     fs.rmSync(file);
-    return { conceptId: canonical, file, changed: [file] };
+    return { conceptId: canonical, changed: [file] };
   }
 
   retire(b: Bundle, conceptId: string, note: RetireNote): AssetChange & { handle: string } {
     const { conceptId: canonical, entry } = this.existing(b, conceptId);
-    this.requireRetires(b, this.typeOf(entry.relPath));
+    this.requireRetires(b, this.typeOf(entry.key));
     const file = entry.file as string;
-    assertWritableFile(b.root, b.id, file);
-    assertWritableFile(b.root, b.id, path.join(b.root, MEMORY_ARCHIVE_REL, "retirement"));
-    const written = archiveFile(b.root, file, {
+    assertWritableFile(rootOf(b), b.id, file);
+    assertWritableFile(rootOf(b), b.id, path.join(rootOf(b), MEMORY_ARCHIVE_REL, "retirement"));
+    const written = archiveFile(rootOf(b), file, {
       ref: note.ref ?? canonical,
       archivedAt: new Date().toISOString(),
       note,
@@ -384,32 +398,32 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   }
 
   retired(b: Bundle): Retirement[] {
-    return listTombstones(b.root).map((tombstone) => ({
+    return listTombstones(rootOf(b)).map((tombstone) => ({
       handle: tombstone.handle,
       conceptId: this.retiredConceptId(tombstone),
       note: qualifiedNote(b.id, noteOf(tombstone)),
-      restorable: tombstone.archivedPath !== undefined && fs.existsSync(path.join(b.root, tombstone.archivedPath)),
+      restorable: tombstone.archivedPath !== undefined && fs.existsSync(path.join(rootOf(b), tombstone.archivedPath)),
     }));
   }
 
   restore(b: Bundle, handle: string, fallback?: string | Buffer): AssetChange {
     this.requireRetiring(b);
-    const tombstone = readTombstone(b.root, handle);
+    const tombstone = readTombstone(rootOf(b), handle);
     const conceptId = this.retiredConceptId(tombstone);
     if (this.identify(tombstone.originalPath) !== null) this.requireRetires(b, this.typeOf(tombstone.originalPath));
-    const file = path.join(b.root, tombstone.originalPath);
-    assertWritableFile(b.root, b.id, file);
-    return { conceptId, file, changed: restoreArchive(b.root, tombstone, fallback) };
+    const file = path.join(rootOf(b), tombstone.originalPath);
+    assertWritableFile(rootOf(b), b.id, file);
+    return { conceptId, changed: restoreArchive(rootOf(b), tombstone, fallback) };
   }
 
   forget(b: Bundle, handle: string): { changed: string[] } {
     this.requireRetiring(b);
-    return { changed: forgetArchive(b.root, handle) };
+    return { changed: forgetArchive(rootOf(b), handle) };
   }
 
   expireRetired(b: Bundle, before: Date): { changed: string[] } {
     this.requireRetiring(b);
-    return { changed: expireArchive(b.root, before).changed };
+    return { changed: expireArchive(rootOf(b), before).changed };
   }
 
   // ── Internals ───────────────────────────────────────────────────────────────
@@ -440,8 +454,8 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   }
 
   /** `file`'s path relative to the root, as the index keys it. */
-  private relPathOf(b: Bundle, file: string): string {
-    return buildFileContext(b.root, file).relPath;
+  protected relPathOf(b: Bundle, file: string): string {
+    return buildFileContext(rootOf(b), file).relPath;
   }
 
   private existing(b: Bundle, conceptId: string): BundleAsset & { entry: AssetEntry & { file: string } } {
@@ -452,7 +466,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
 
   /** The bytes and file mode a write gives a file. */
   private writeFile(b: Bundle, type: string, file: string, bytes: string | Buffer, replaceLink = false): string[] {
-    assertWritableFile(b.root, b.id, file, { replaceLink });
+    assertWritableFile(rootOf(b), b.id, file, { replaceLink });
     fs.mkdirSync(path.dirname(file), { recursive: true });
     // Atomic: a crash or a full disk never leaves a half-written asset where a good one was.
     writeFileAtomic(file, bytes, this.fileMode(type) ?? existingFileMode(file));
@@ -476,7 +490,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
         `Bundle "${b.id}" (adapter "${this.id}") does not keep ${asset.type} assets with resources.`,
       );
     }
-    assertWritableFile(b.root, b.id, dir);
+    assertWritableFile(rootOf(b), b.id, dir);
     const existing = fs.lstatSync(dir, { throwIfNoEntry: false });
     const replaced = existing?.isDirectory() ? filesBelow(dir) : [];
     const staging = `${dir}.tmp-${randomUUID()}`;
@@ -554,7 +568,7 @@ function liveView(b: Bundle): FileView {
   return {
     rootExists() {
       try {
-        fs.realpathSync(b.root);
+        fs.realpathSync(rootOf(b));
         return true;
       } catch (error) {
         // A root that is gone holds nothing. Any other failure (EACCES) is not "nothing": say the root is unreadable.
@@ -564,14 +578,14 @@ function liveView(b: Bundle): FileView {
     },
     list(dir) {
       try {
-        return fs.readdirSync(path.join(b.root, dir));
+        return fs.readdirSync(path.join(rootOf(b), dir));
       } catch {
         return [];
       }
     },
     isFile(relPath) {
-      const authored = path.resolve(b.root, relPath);
-      if (!within(authored, b.root)) return false;
+      const authored = path.resolve(rootOf(b), relPath);
+      if (!within(authored, rootOf(b))) return false;
       try {
         const stat = fs.lstatSync(authored);
         if (!stat.isFile() && !stat.isSymbolicLink()) return false;
@@ -580,7 +594,7 @@ function liveView(b: Bundle): FileView {
         return false;
       }
     },
-    isWalked: (relPath, options) => isWalkedFile(b.root, path.join(b.root, relPath), options),
+    isWalked: (relPath, options) => isWalkedFile(rootOf(b), path.join(rootOf(b), relPath), options),
   };
 }
 

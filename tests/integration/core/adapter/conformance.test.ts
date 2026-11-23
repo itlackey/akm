@@ -48,14 +48,14 @@ import {
   secretToolAdapter,
 } from "../../../../src/core/adapter/adapters";
 import { hashContent } from "../../../../src/core/adapter/adapters/shared";
+import { buildFileContext } from "../../../../src/core/adapter/directory/file-context";
+import { walkStashFlat } from "../../../../src/core/adapter/directory/walker";
 import { DirectoryAdapterBase } from "../../../../src/core/adapter/directory-adapter";
 import { adapterForId, getAdapters } from "../../../../src/core/adapter/registry";
-import type { Bundle, IndexDocument } from "../../../../src/core/adapter/types";
+import { type Bundle, type IndexDocument, rootOf } from "../../../../src/core/adapter/types";
 import { assetBundleOf } from "../../../../src/core/assets/bundle";
 import { writeAssets } from "../../../../src/core/assets/write";
 import { assetNotFound, NotFoundError, UsageError } from "../../../../src/core/errors";
-import { buildFileContext } from "../../../../src/indexer/walk/file-context";
-import { walkStashFlat } from "../../../../src/indexer/walk/walker";
 import { fileMode, identify, serialize, spellings, typeOf } from "../../../_helpers/adapter-hooks";
 import { withFakeSecretStores } from "../../../_helpers/fake-secret-stores";
 import { findInBundle } from "../../../_helpers/find-in-bundle";
@@ -136,7 +136,7 @@ function refType(docs: IndexDocument[]): Array<{ ref: string | undefined; type: 
 /** fold(recognize): map `adapter.recognize` over the SAME `walkStashFlat(root)` files directly, dropping abstentions. */
 function foldRecognize(adapter: DirectoryAdapterBase, c: Bundle): IndexDocument[] {
   const out: IndexDocument[] = [];
-  for (const file of walkStashFlat(c.root)) {
+  for (const file of walkStashFlat(rootOf(c))) {
     const doc = adapter.recognize(c, file);
     if (doc !== null) out.push(doc);
   }
@@ -512,7 +512,7 @@ describe("conformance — declared writes and what an adapter refuses", () => {
         expect(assets.length, adapter.id).toBe(1);
         const entry = assets[0]?.entry;
         expect(entry?.file, adapter.id).toBeUndefined();
-        expect(entry?.relPath.startsWith("secrets/"), adapter.id).toBe(true);
+        expect(entry?.key.startsWith("secrets/"), adapter.id).toBe(true);
         const document = adapter.recognize(b, entry as NonNullable<typeof entry>);
         expect(document?.type, adapter.id).toBe("secret");
         expect(document, adapter.id).not.toHaveProperty("path");
@@ -548,8 +548,8 @@ describe("conformance — create, place and read agree", () => {
           expect(change.conceptId, `${adapter.id} ${type}`).toBe(conceptId);
           const read = adapter.read(b, conceptId);
           expect(read?.conceptId, `${adapter.id} ${type}`).toBe(conceptId);
-          expect(read?.entry.file, `${adapter.id} ${type}`).toBe(change.file);
-          expect(fs.existsSync(change.file as string), `${adapter.id} ${type}`).toBe(true);
+          expect(change.changed, `${adapter.id} ${type}`).toContain(read?.entry.file as string);
+          expect(fs.existsSync(read?.entry.file as string), `${adapter.id} ${type}`).toBe(true);
         } finally {
           sandbox.cleanup();
         }
@@ -624,16 +624,16 @@ describe("conformance — create, place and read agree", () => {
         const b = bundle("twin", root);
         const before = adapter.list(b).assets;
         expect(
-          before.map((asset) => asset.entry.relPath),
+          before.map((asset) => asset.entry.key),
           `${adapter.id} ${relPath}`,
         ).toContain(relPath);
         const change = adapter.create(b, { type, name, content: "# new\n" }, { replace: true });
-        expect(change.file, `${adapter.id} ${relPath}`).toBe(path.join(root, relPath));
+        expect(change.changed, `${adapter.id} ${relPath}`).toContain(path.join(root, relPath));
         expect(fs.readFileSync(path.join(root, relPath), "utf8"), `${adapter.id} ${relPath}`).not.toBe("old\n");
         expect(
-          adapter.list(b).assets.map((asset) => asset.entry.relPath),
+          adapter.list(b).assets.map((asset) => asset.entry.key),
           `${adapter.id} ${relPath}`,
-        ).toEqual(before.map((asset) => asset.entry.relPath));
+        ).toEqual(before.map((asset) => asset.entry.key));
       } finally {
         sandbox.cleanup();
       }
@@ -670,7 +670,7 @@ describe("conformance — create, place and read agree", () => {
       const listing = adapter.list(bundle(adapter.id, root));
       expect(Object.keys(listing).sort(), adapter.id).not.toContain("files");
       const walked = walkStashFlat(root, { includeAllDirectories: true }).map((file) => file.relPath);
-      const listed = listing.assets.map((asset) => asset.entry.relPath);
+      const listed = listing.assets.map((asset) => asset.entry.key);
       expect(listed, adapter.id).toEqual(walked.filter((relPath) => listed.includes(relPath)));
       const concepts = listing.assets.map((asset) => asset.conceptId);
       expect(new Set(concepts).size, adapter.id).toBe(concepts.length);
@@ -698,9 +698,8 @@ describe("conformance — create, place and read agree", () => {
         const read = adapter.read(b, listed.conceptId);
         expect(read?.conceptId, `${adapter.id}:${listed.conceptId}`).toBe(listed.conceptId);
         expect(read?.entry.file, `${adapter.id}:${listed.conceptId}`).toBe(listed.entry.file);
-        const fileSpelling = adapter.read(b, listed.entry.relPath);
-        if (fileSpelling)
-          expect(fileSpelling.entry.file, `${adapter.id}:${listed.entry.relPath}`).toBe(listed.entry.file);
+        const fileSpelling = adapter.read(b, listed.entry.key);
+        if (fileSpelling) expect(fileSpelling.entry.file, `${adapter.id}:${listed.entry.key}`).toBe(listed.entry.file);
       }
     }
     const sandbox = sandboxStashDir();

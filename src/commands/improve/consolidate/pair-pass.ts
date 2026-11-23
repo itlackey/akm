@@ -81,7 +81,7 @@ import {
 import type { AkmConsolidateOptions } from "../consolidate";
 import { contentHash, stripFrontmatterBody } from "../content-hash";
 import { resolveImproveExecution } from "../execution";
-import { indexedAsset, indexedContent } from "../indexed-asset";
+import { indexedAsset, indexedContent, indexedModifiedMs } from "../indexed-asset";
 import { loadLedgerSnapshot, PAIR_PASS_LEDGER_SOURCE, recordLedgerAttempt, stripBundle } from "../ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "../retrieval-scope";
 import { callStage } from "../stage";
@@ -345,11 +345,7 @@ function createdMsOf(
 ): number {
   const known = gitFirstAdded?.get(repoRelativeKey(stashDir, asset.filePath));
   if (known !== undefined) return known;
-  try {
-    return fs.statSync(asset.filePath).mtimeMs;
-  } catch {
-    return 0;
-  }
+  return indexedModifiedMs(asset.bundleId, asset.ref) ?? 0;
 }
 
 export interface Initiator extends PairAsset {

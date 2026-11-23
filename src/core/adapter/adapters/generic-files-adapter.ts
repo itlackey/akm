@@ -24,10 +24,10 @@
  */
 
 import path from "node:path";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import { SCRIPT_EXTENSIONS } from "../../recognition-util";
+import type { FileContext } from "../directory/file-context";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import type { FileChange } from "../file-change";
 import type { Bundle, IndexMetadata } from "../types";

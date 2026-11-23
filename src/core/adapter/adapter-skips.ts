@@ -30,10 +30,10 @@ export function adapterSkipOf(source: SkipSource): AdapterSkip | undefined {
 
   // A top-level directory the chosen adapter holds no asset in, where akm would hold some: the chosen adapter skips it.
   const topDirOf = (relPath: string): string | undefined => (relPath.includes("/") ? relPath.split("/")[0] : undefined);
-  const owned = new Set(chosen.assets.map(({ entry }) => topDirOf(entry.relPath)));
+  const owned = new Set(chosen.assets.map(({ entry }) => topDirOf(entry.key)));
   const skipped = new Map<string, number>();
   for (const { entry } of assetBundleOf({ ...source, adapterId: "akm" }).list().assets) {
-    const top = topDirOf(entry.relPath);
+    const top = topDirOf(entry.key);
     if (top !== undefined && !owned.has(top)) skipped.set(top, (skipped.get(top) ?? 0) + 1);
   }
   const count = [...skipped.values()].reduce((sum, n) => sum + n, 0);

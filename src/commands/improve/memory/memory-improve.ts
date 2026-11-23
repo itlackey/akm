@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { walkMarkdownFiles } from "../../../core/adapter/directory/walker";
 import { type ArchiveWrite, archiveFile, expireArchive } from "../../../core/adapter/directory-archive";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
 import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
@@ -22,7 +23,6 @@ import type {
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { warn } from "../../../core/warn";
 import { recordWrittenPath } from "../../../core/write-provenance";
-import { walkMarkdownFiles } from "../../../indexer/walk/walker";
 import { contentHash } from "../content-hash";
 import { isDerivedMemory, memoryIdentityRef, parseMemoryName, resolveParentRef } from "./derived-ref";
 

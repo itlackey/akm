@@ -12,7 +12,7 @@
  */
 
 import path from "node:path";
-import { detectBundleAdapter } from "./assets/gate";
+import { detectBundleAdapter, registerAdHocBundle } from "./assets/gate";
 import { bundleIdForDir } from "./bundle-id";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { bundleAtDir } from "./config/config-sources";
@@ -37,6 +37,24 @@ export function bundleSourceAt(
     path: dir,
     adapterId: configured?.adapter ?? detectBundleAdapter(dir),
   };
+}
+
+/**
+ * The id of the bundle at `dir`, for the facade, which takes bundle ids (`bundleFor`). A directory no configured bundle
+ * is at is recorded as an ad-hoc bundle, so its id resolves for the rest of the process.
+ */
+export function bundleIdAt(
+  dir: string,
+  config: AkmConfig = loadConfig(),
+  as: { name?: string; adapterId?: string } = {},
+): string {
+  const source = bundleSourceAt(dir, config);
+  const name = as.name ?? source.name;
+  // `as`: a name a stored record gave the directory (which no configured bundle may have any more) or an adapter a caller read it with.
+  if (as.name !== undefined ? !(as.name in (config.bundles ?? {})) : bundleAtDir(config, dir) === undefined) {
+    return registerAdHocBundle({ ...source, name, ...(as.adapterId !== undefined ? { adapterId: as.adapterId } : {}) });
+  }
+  return name;
 }
 
 /**

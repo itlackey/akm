@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { slugForPath } from "../../../src/core/bundle-id";
 import { getDbPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
@@ -56,7 +57,7 @@ function eventCount(ref: string): number {
 async function indexAndRecordDetachedEvent(name: string): Promise<string> {
   await akmIndex({ stashDir, full: true });
   const db = openExistingDatabase(getDbPath());
-  const id = findEntryIdByRef(db, `memories/${name}`) as number;
+  const id = findEntryIdByRef(db, `${slugForPath(stashDir)}//memories/${name}`) as number;
   const itemRef = getItemRefById(db, id) as string;
   closeDatabase(db);
   const stateDb = openStateDatabase();
@@ -105,7 +106,7 @@ test("deleteEntriesByIds (index --clean path) also deletes not-yet-linked events
   writeMemory("alpha", "Alpha body.");
   const ref = await indexAndRecordDetachedEvent("alpha");
   const db = openExistingDatabase(getDbPath());
-  deleteEntriesByIds(db, [findEntryIdByRef(db, "memories/alpha") as number]);
+  deleteEntriesByIds(db, [findEntryIdByRef(db, `${slugForPath(stashDir)}//memories/alpha`) as number]);
   closeDatabase(db);
   expect(eventCount(ref)).toBe(0);
 });
@@ -123,7 +124,7 @@ test("a ref re-inserted by another file in the same run keeps its not-yet-linked
   }
   await akmIndex({ stashDir, full: true });
   const db = openExistingDatabase(getDbPath());
-  const itemRef = getItemRefById(db, findEntryIdByRef(db, "notes/demo") as number) as string;
+  const itemRef = getItemRefById(db, findEntryIdByRef(db, `${slugForPath(stashDir)}//notes/demo`) as number) as string;
   closeDatabase(db);
   const stateDb = openStateDatabase();
   insertUsageEvent(stateDb, { event_type: "search", entry_ref: itemRef, source: "user" });

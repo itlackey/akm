@@ -16,9 +16,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-
+import { getAllRenderers, getRenderer } from "../../src/core/adapter/directory/file-context";
 import { initIndexer } from "../../src/indexer/init";
-import { getAllRenderers, getRenderer } from "../../src/indexer/walk/file-context";
 
 describe("initIndexer composition root", () => {
   test("registers the builtin renderer set after init", async () => {
