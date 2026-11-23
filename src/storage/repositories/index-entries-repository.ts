@@ -98,6 +98,8 @@ export function upsertEntry(
     const result = stmts.upsert.get(
       provenance.itemRef,
       provenance.bundleId,
+      // component_id (dropped in 0.11) holds the bundle id.
+      provenance.bundleId,
       provenance.conceptId,
       provenance.adapterId,
       entry.type,
@@ -189,7 +191,7 @@ function getUpsertStmts(db: Database): UpsertStmts {
         item_ref, bundle_id, component_id, concept_id, adapter_id, type,
         file_path, content_hash, document_json, derived_from, embed_hash
       )
-      VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(item_ref) DO UPDATE ${UPSERT_SET_CLAUSE}
       RETURNING id
     `),
