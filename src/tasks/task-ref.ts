@@ -11,15 +11,14 @@
 import { stashDirFor, withoutTypeHead } from "../core/asset/asset-placement";
 import { makeBundleRef } from "../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
-import { adapterDeclares, adapterWrites, bundleAdapterId } from "../core/assets/gate";
-import { type Asset, listAssets, readFrom, requireAsset } from "../core/assets/read";
+import { adapterDeclares, adapterWrites, bundleAdapterId, registerAdHocBundle } from "../core/assets/gate";
+import { type Asset, listAssets, readAsset, requireAsset } from "../core/assets/read";
 import { assetTypes } from "../core/assets/type";
 import { addressOf } from "../core/assets/write";
-import { NotFoundError, UsageError } from "../core/errors";
-import type { SearchSource } from "../indexer/search/search-source";
+import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 
-/** Where tasks are looked up: an explicit source, else the configured bundle with this id. */
-export type TaskScope = { sources: readonly SearchSource[] } | { bundle: string };
+/** Where tasks are looked up: the bundle with this id. */
+export type TaskScope = { bundle: string };
 
 /** A task bundle as the commands hold it. */
 export interface TaskBundleSource {
@@ -29,18 +28,22 @@ export interface TaskBundleSource {
   location?: string;
 }
 
-/** The scope of one source, under the id its refs use. */
-export function taskScopeOf(source: TaskBundleSource): { sources: readonly SearchSource[] } {
-  return {
-    sources: [
-      {
-        path: source.path,
-        registryId: source.name,
-        ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
-        ...(source.location !== undefined ? { location: source.location } : {}),
-      },
-    ],
-  };
+/**
+ * The scope of one source, under the id its refs use. A source no config entry names (a directory a command was
+ * handed) is recorded as an ad-hoc bundle, so the facade can take it by that id.
+ */
+export function taskScopeOf(source: TaskBundleSource): TaskScope {
+  return { bundle: taskBundleId(source) };
+}
+
+/** The id of the bundle `source` is, which the facade takes; an unconfigured directory is recorded under its name. */
+function taskBundleId(source: TaskBundleSource): string {
+  return registerAdHocBundle({
+    name: source.name,
+    path: source.path,
+    ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
+    ...(source.location !== undefined ? { location: source.location } : {}),
+  });
 }
 
 /** The file that holds a task, for messages and for the parser to name; the ref of a task no file holds. */
@@ -51,7 +54,8 @@ export function taskFileOf(asset: Asset): string {
 
 /** The asset `ref` names in the bundle held at `source`; a `NotFoundError` when it holds none. */
 export function requireAssetIn(source: TaskBundleSource, ref: string): Asset {
-  return requireAsset(ref, { sources: taskScopeOf(source).sources });
+  taskBundleId(source);
+  return requireAsset(ref);
 }
 
 /** The task assets of `candidates` (a listing made without a type), typed by the index. */
@@ -65,10 +69,14 @@ export function taskAssetsAmong(candidates: readonly Asset[]): Asset[] {
  * named so, when it writes tasks. Asked of the adapter, never assumed from its id.
  */
 function taskPrefixIn(source: TaskBundleSource): string {
+  return taskPrefixOf(taskBundleId(source));
+}
+
+function taskPrefixOf(bundle: string): string {
   // An adapter that does not write tasks places none: a task there is named by its concept id.
-  if (!adapterWrites(source, "task")) return "";
+  if (!adapterWrites(bundle, "task")) return "";
   const probe = "task-name-probe";
-  const placed = addressOf(source, conceptIdFromTypeName("task", probe)).conceptId;
+  const placed = addressOf(bundle, conceptIdFromTypeName("task", probe)).conceptId;
   return placed.endsWith(probe) ? placed.slice(0, placed.length - probe.length) : "";
 }
 
@@ -83,19 +91,15 @@ export function taskIdOf(asset: Asset, source: TaskBundleSource): string {
 
 /** The concept ids `input` can name: as written, or under the prefix tasks are placed under. */
 function spellingsOf(scope: TaskScope, input: string): string[] {
-  const source = "sources" in scope ? scope.sources[0] : undefined;
-  // A bundle named only by its id has no adapter to ask: the task type's own folder.
-  const folder = stashDirFor("task");
-  const prefix =
-    source?.registryId !== undefined
-      ? taskPrefixIn({
-          name: source.registryId,
-          path: source.path,
-          ...(source.adapterId ? { adapterId: source.adapterId } : {}),
-        })
-      : folder !== undefined
-        ? `${folder}/`
-        : "";
+  let prefix: string;
+  try {
+    prefix = taskPrefixOf(scope.bundle);
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+    // A bundle no config names has no adapter to ask: the task type's own folder.
+    const folder = stashDirFor("task");
+    prefix = folder !== undefined ? `${folder}/` : "";
+  }
   return [...new Set([input, `${prefix}${input}`])];
 }
 
@@ -105,13 +109,17 @@ export function findTask(scope: TaskScope, input: string): Asset | undefined {
   // Only the assets the input can name are typed, not the whole bundle.
   const named = taskAssetsAmong(listAssets(scope).filter((asset) => spellings.includes(asset.conceptId)));
   const listed = spellings.map((spelling) => named.find((asset) => asset.conceptId === spelling)).find(Boolean);
-  const source = "sources" in scope ? scope.sources[0] : undefined;
-  if (listed || !source?.registryId) return listed;
+  if (listed) return listed;
   // A spelling the adapter reads but does not list under (another letter case). One with a type folder in front is
   // not tried: reading it would resolve an outdated spelling of another asset, with a warning.
   for (const spelling of spellings) {
     if (withoutTypeHead(spelling) !== undefined) continue;
-    const asset = readFrom(source, source.registryId, spelling);
+    let asset: Asset | undefined;
+    try {
+      asset = readAsset(scope.bundle, spelling);
+    } catch (error) {
+      if (!(error instanceof ConfigError)) throw error;
+    }
     if (asset && taskAssetsAmong([asset]).length > 0) return asset;
   }
   return undefined;
@@ -122,7 +130,7 @@ export function findTask(scope: TaskScope, input: string): Asset | undefined {
  * that places tasks names one by a bare id or by `tasks/<id>`, nothing deeper.
  */
 export function taskNameOf(source: TaskBundleSource, input: string): string {
-  if (!adapterWrites(source, "task")) return input;
+  if (!adapterWrites(taskBundleId(source), "task")) return input;
   const prefix = taskPrefixIn(source);
   const name = prefix !== "" && input.startsWith(prefix) ? input.slice(prefix.length) : input;
   if (name.includes("/")) {
@@ -136,7 +144,7 @@ export function taskNameOf(source: TaskBundleSource, input: string): string {
 
 /** Refuse a bundle whose adapter declares no task type: it defines no task identity. */
 function refuseWithoutTasks(source: TaskBundleSource): void {
-  if (adapterDeclares(source, "task")) return;
+  if (adapterDeclares(taskBundleId(source), "task")) return;
   throw new UsageError(
     `Bundle adapter ${JSON.stringify(bundleAdapterId(source))} does not define task runtime identity.`,
     "INVALID_FLAG_VALUE",
@@ -180,8 +188,9 @@ export function taskRefIn(source: TaskBundleSource, input: string, options: { re
   const found = findTask(taskScopeOf(source), name);
   if (found) return found.ref;
   // An adapter that writes no task places none: a task there is named by its concept id.
+  const bundle = taskBundleId(source);
   return makeBundleRef(
-    source.name,
-    adapterWrites(source, "task") ? addressOf(source, conceptIdFromTypeName("task", name)).conceptId : name,
+    bundle,
+    adapterWrites(bundle, "task") ? addressOf(bundle, conceptIdFromTypeName("task", name)).conceptId : name,
   );
 }

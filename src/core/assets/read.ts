@@ -12,158 +12,115 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { deriveInstallations } from "../../indexer/installations";
-import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import type { SearchSource } from "../../indexer/search/search-source";
 import type { AssetEntry, BundleListing } from "../adapter/bundle-adapter";
 import type { IndexDocument } from "../adapter/types";
-import { stashDirFor, withoutTypeHead } from "../asset/asset-placement";
-import { type BundleRef, makeBundleRef, parseBundleRef } from "../asset/asset-ref";
-import { deriveBundleIds } from "../bundle-id";
+import { stashDirFor } from "../asset/asset-placement";
+import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { compareCodePoints, toErrorMessage } from "../common";
-import { loadConfig } from "../config/config";
 import { assetNotFound, ConfigError } from "../errors";
-import { warnOnce } from "../warn";
-import { type Asset, assetOf } from "./asset";
-import { type AssetBundle, assetBundleOf } from "./bundle";
+import { type Asset, assetOf, readExact, readFrom, readOutdated } from "./asset";
+import { type AssetBundle, assetBundleOf, bundleFor, orderedBundles } from "./bundle";
 import { assetTypes } from "./type";
 
 export type { Asset } from "./asset";
 
-export interface FindOptions {
-  /** The ordered sources to look in. Default: every configured source, default bundle first. */
-  sources?: readonly SearchSource[];
-  /** Resolve an outdated spelling without the warning: for a lookup of stored refs, which are not the caller's to fix. */
-  quiet?: boolean;
-}
-
-function defaultSources(options?: { sources?: readonly SearchSource[] }): readonly SearchSource[] {
-  return options?.sources ?? resolveSourceEntries(undefined, loadConfig());
-}
-
-/** The bundle a search source is, under the id refs use. */
-function bundleOfSource(source: SearchSource, id: string): AssetBundle {
-  return assetBundleOf({
-    name: id,
-    path: source.path,
-    ...(source.location !== undefined ? { location: source.location } : {}),
-    ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
-  });
-}
-
-/** The asset `conceptId` names in one source, as its adapter reads it, with no other spelling tried. */
-function readExact(source: SearchSource, bundle: string, conceptId: string): Asset | undefined {
-  const found = bundleOfSource(source, bundle).read(conceptId);
-  return found ? assetOf(bundle, source, found) : undefined;
+/** The bundles a lookup looks in, in order: a source set that cannot be read fails the lookup, as it always has. */
+function lookupBundles(): AssetBundle[] {
+  return orderedBundles({ adHoc: true });
 }
 
 /**
- * Releases before path refs prefixed a loose file's ref with its type folder (`knowledge/reports/x` for
- * `reports/x.md`), and that spelling is still in links, memories, scripts and stored proposals. A ref nothing holds is
- * read once more without that head, with a warning, and the asset comes back under its current ref. Whatever
- * adapter holds the bundle: the spelling is akm's, not the format's.
- */
-function readOutdated(
-  conceptId: string,
-  read: (conceptId: string) => Asset | undefined,
-  quiet = false,
-): Asset | undefined {
-  const current = withoutTypeHead(conceptId);
-  const found = current === undefined ? undefined : read(current);
-  if (found && !quiet) {
-    warnOnce(
-      `outdated-ref:${conceptId}`,
-      `Ref "${conceptId}" is outdated: refs are the path inside the bundle, so it is now "${found.conceptId}". Resolved it to that asset.`,
-    );
-  }
-  return found;
-}
-
-/** The asset `conceptId` names in one source, as its adapter reads it; an outdated spelling of it too. */
-export function readFrom(source: SearchSource, bundle: string, conceptId: string): Asset | undefined {
-  return (
-    readExact(source, bundle, conceptId) ?? readOutdated(conceptId, (current) => readExact(source, bundle, current))
-  );
-}
-
-function findAmong(ref: BundleRef, sources: readonly SearchSource[], quiet = false): Asset | undefined {
-  const installations = deriveInstallations([...sources]);
-  const find = (conceptId: string): Asset | undefined => {
-    for (const [index, source] of sources.entries()) {
-      const bundle = installations[index]?.id;
-      if (!bundle || (ref.bundle !== undefined && bundle !== ref.bundle)) continue;
-      const found = readExact(source, bundle, conceptId);
-      if (found) return found;
-    }
-    return undefined;
-  };
-  // The ref as written, in every source, before the outdated spelling is tried in any.
-  return find(ref.conceptId) ?? readOutdated(ref.conceptId, find, quiet);
-}
-
-/**
- * An input ref, qualified: the one place an unqualified ref is resolved to a bundle (§4.2). `input` is returned
- * qualified, its outdated type-folder spelling (`knowledge/reports/x` for `reports/x.md`) mapped to the asset's current
+ * An input ref, qualified: the one place an unqualified ref is resolved to a bundle (§4.2). A qualified `input` keeps its
+ * bundle, its outdated type-folder spelling (`knowledge/reports/x` for `reports/x.md`) mapped to the asset's current
  * concept id with the warning; an unqualified one gets the first bundle, in the order `from`, the default bundle, the
  * configured order, whose adapter reads it as written, else (the outdated spelling, with the warning) the first that
- * reads it that way, else `<from or default>//<input>`. Reads no content. A source set that cannot be read leaves the
- * ref as written (the lookup that follows reports why).
+ * reads it that way, else `<from or default>//<input>`. Reads no content. A source set that cannot be read is a
+ * `ConfigError`.
  */
 export function qualifyRef(input: string, from?: { bundle: string }): string {
+  return resolveInput(input, from).ref;
+}
+
+/**
+ * {@link qualifyRef} and {@link findAsset} in one pass: the asset an input ref names, as `qualifyRef` would qualify it
+ * (the same bundle order, the same warning), read once. Undefined when no bundle holds it.
+ */
+export function lookupAsset(input: string, from?: { bundle: string }): Asset | undefined {
+  return resolveInput(input, from).asset;
+}
+
+function resolveInput(input: string, from?: { bundle: string }): { ref: string; asset?: Asset } {
   const parsed = parseBundleRef(input);
-  let sources: readonly SearchSource[];
-  let ids: string[];
-  try {
-    sources = defaultSources();
-    ids = deriveBundleIds([...sources]);
-  } catch (error) {
-    if (error instanceof ConfigError) return makeBundleRef(parsed.bundle, parsed.conceptId, parsed.fragment);
-    throw error;
-  }
-  const order = sources.flatMap((source, index) =>
-    source.unresolved ? [] : [{ source, bundle: ids[index] as string }],
-  );
-  if (from) order.sort((a, b) => Number(b.bundle === from.bundle) - Number(a.bundle === from.bundle));
-  const candidates = parsed.bundle === undefined ? order : order.filter(({ bundle }) => bundle === parsed.bundle);
+  const all = lookupBundles();
+  const order = from ? [...all].sort((a, b) => Number(b.name === from.bundle) - Number(a.name === from.bundle)) : all;
+  const candidates = parsed.bundle === undefined ? order : order.filter((bundle) => bundle.name === parsed.bundle);
   const find = (conceptId: string): Asset | undefined => {
-    for (const { source, bundle } of candidates) {
-      const found = readExact(source, bundle, conceptId);
+    for (const bundle of candidates) {
+      const found = readExact(bundle, conceptId);
       if (found) return found;
     }
     return undefined;
   };
-  const held = find(parsed.conceptId) ?? readOutdated(parsed.conceptId, find);
-  if (held) return makeBundleRef(held.bundle, held.conceptId, parsed.fragment);
-  const bundle = parsed.bundle ?? from?.bundle ?? ids[sources.findIndex((source) => source.isDefault)] ?? undefined;
-  return makeBundleRef(bundle, parsed.conceptId, parsed.fragment);
+  const held = find(parsed.conceptId) ?? readOutdated(parsed.conceptId, find, true);
+  if (held) return { ref: makeBundleRef(held.bundle, held.conceptId, parsed.fragment), asset: held };
+  const bundle = parsed.bundle ?? from?.bundle ?? all[0]?.name;
+  return { ref: makeBundleRef(bundle, parsed.conceptId, parsed.fragment) };
 }
 
 /**
- * The one "where is asset X right now?" lookup. The first source that holds the ref ends it; a qualified ref only
- * considers its own bundle. The asset comes back under its canonical ref, whichever spelling the adapter read.
+ * The one "where is asset X right now?" lookup. `ref` is qualified (`qualifyRef` qualifies an input), or a stored ref with
+ * no bundle, found in the first bundle that holds it; the asset comes back under its canonical ref, whichever spelling the adapter read, and an outdated spelling of a stored ref is read
+ * without a warning.
  */
-export function findAsset(ref: string | BundleRef, options: FindOptions = {}): Asset | undefined {
-  return findAmong(typeof ref === "string" ? parseBundleRef(ref) : ref, defaultSources(options), options.quiet);
+export function findAsset(ref: string): Asset | undefined {
+  const parsed = parseBundleRef(ref);
+  // A ref with no bundle (a stored row of an older record) is looked up in every bundle, silently: it is no user's input.
+  return findIn(
+    lookupBundles().filter((bundle) => parsed.bundle === undefined || bundle.name === parsed.bundle),
+    parsed.conceptId,
+  );
+}
+
+/** The asset `conceptId` names in the first of `candidates` that holds it as written, else under its outdated spelling; no warning. */
+function findIn(candidates: readonly AssetBundle[], conceptId: string): Asset | undefined {
+  const find = (id: string): Asset | undefined => {
+    for (const bundle of candidates) {
+      const found = readExact(bundle, id);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  // The ref as written first, then its outdated spelling.
+  return find(conceptId) ?? readOutdated(conceptId, find);
 }
 
 /** {@link findAsset}, refused with a `NotFoundError` when no bundle holds the ref. */
-export function requireAsset(ref: string | BundleRef, options: FindOptions = {}): Asset {
-  const found = findAsset(ref, options);
+export function requireAsset(ref: string): Asset {
+  const found = findAsset(ref);
   if (!found) {
-    const parsed = typeof ref === "string" ? parseBundleRef(ref) : ref;
+    const parsed = parseBundleRef(ref);
     throw assetNotFound(makeBundleRef(parsed.bundle, parsed.conceptId));
   }
   return found;
 }
 
 /**
- * Every asset across the sources, one per concept as each bundle's adapter lists it, in the order of the bundles and
+ * The asset `conceptId` names in the bundle `bundle`, as its adapter reads it (an outdated spelling of it too), read
+ * outside a write session.
+ */
+export function readAsset(bundle: string, conceptId: string): Asset | undefined {
+  return readFrom(bundleFor(bundle), conceptId);
+}
+
+/**
+ * Every asset across the bundles, one per concept as each bundle's adapter lists it, in the order of the bundles and
  * then by concept id within each. With `type`, the ones the index says are of that type. A bundle that cannot be listed
- * completely lists what it could (only `akm index` reports it, §0.2 P4); one that cannot be reached at all fails the
- * listing with `BUNDLE_UNREACHABLE` when it holds what is asked for.
+ * completely lists what it could (only `akm index` reports it, §0.2 P4); one that cannot be reached at all fails the listing with
+ * `BUNDLE_UNREACHABLE` when it holds what is asked for.
  */
 export function listAssets(
   options: {
-    sources?: readonly SearchSource[];
     bundle?: string;
     type?: string;
     /**
@@ -174,17 +131,15 @@ export function listAssets(
     requireComplete?: boolean;
   } = {},
 ): Asset[] {
-  const sources = defaultSources(options);
-  const ids = deriveBundleIds([...sources]);
   const found: Asset[] = [];
-  for (const [index, source] of sources.entries()) {
-    const bundle = ids[index] as string;
-    if (source.unresolved || (options.bundle !== undefined && bundle !== options.bundle)) continue;
-    const held = bundleOfSource(source, bundle);
+  // A bundle named by its id may be an ad-hoc directory a command was handed; a listing of every bundle never is.
+  for (const held of orderedBundles({ adHoc: options.bundle !== undefined })) {
+    const bundle = held.name;
+    if (options.bundle !== undefined && bundle !== options.bundle) continue;
     if (options.requireComplete) {
       if (!held.exists()) continue;
       const folder = options.type === undefined ? undefined : stashDirFor(options.type);
-      const dir = folder === undefined ? undefined : path.join(source.path, folder);
+      const dir = folder === undefined ? undefined : path.join(held.root, folder);
       if (dir !== undefined && fs.existsSync(dir) && !fs.statSync(dir).isDirectory()) {
         throw new ConfigError(`ENOTDIR: not a directory, scandir '${dir}'`, "BUNDLE_UNREACHABLE");
       }
@@ -204,7 +159,7 @@ export function listAssets(
     }
     found.push(
       ...listing.assets
-        .map((asset) => assetOf(bundle, source, asset))
+        .map((asset) => assetOf(held, asset))
         .sort((left, right) => compareCodePoints(left.conceptId, right.conceptId)),
     );
   }
@@ -226,9 +181,18 @@ export interface BundleScan {
   recognize(entry: AssetEntry): IndexDocument | null;
 }
 
-/** The bundle `source` is, as `akm index` scans it: refused when its adapter is not one akm has (`requireAdapter`). */
+/**
+ * The bundle `source` is, as `akm index` scans it: refused when its adapter is not one akm has (`requireAdapter`). The
+ * indexer scans the sources it resolved itself (an override directory, a source not yet in config), so it is handed
+ * the source, not an id to resolve again for each bundle.
+ */
 export function scanBundle(source: SearchSource, bundle: string): BundleScan {
-  const held = bundleOfSource(source, bundle);
+  const held = assetBundleOf({
+    name: bundle,
+    path: source.path,
+    ...(source.location !== undefined ? { location: source.location } : {}),
+    ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
+  });
   return {
     adapterId: held.adapterId,
     variantPrefix: held.variantPrefix,
@@ -239,15 +203,14 @@ export function scanBundle(source: SearchSource, bundle: string): BundleScan {
 }
 
 /**
- * The conceptId `ref` names now, for a lookup of stored rows: the holding asset's, so an old spelling maps to the
- * asset's ref with one warning (none with `quiet`); as written when no asset holds it.
+ * The conceptId the stored `ref` names now, for a lookup of stored rows: the holding asset's, so an old spelling maps
+ * to the asset's ref, silently; as written when no asset holds it.
  */
-export function currentConceptId(
-  ref: BundleRef,
-  sources: readonly SearchSource[],
-  options: { quiet?: boolean } = {},
-): string {
-  return findAsset(ref, { sources, ...options })?.conceptId ?? ref.conceptId;
+export function currentConceptId(ref: string): string {
+  const { bundle, conceptId } = parseBundleRef(ref);
+  // A stored ref with no bundle (an older record) names its asset by concept id alone: whichever bundle holds it now.
+  const candidates = lookupBundles().filter((held) => bundle === undefined || held.name === bundle);
+  return findIn(candidates, conceptId)?.conceptId ?? conceptId;
 }
 
 /** An asset's revision: the SHA-256 of its content. */

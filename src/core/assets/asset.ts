@@ -4,9 +4,11 @@
 
 /** An asset as the facade hands it out: its identity and the entry that holds it. */
 
-import type { SearchSource } from "../../indexer/search/search-source";
 import type { AssetEntry, BundleAsset } from "../adapter/bundle-adapter";
+import { withoutTypeHead } from "../asset/asset-placement";
 import { makeBundleRef } from "../asset/asset-ref";
+import { warnOnce } from "../warn";
+import type { AssetBundle } from "./bundle";
 
 /** One asset, found in its bundle. */
 export interface Asset {
@@ -19,23 +21,56 @@ export interface Asset {
   readonly entry: AssetEntry;
 }
 
-/** Where each asset was found, for `assetType` to index it on a miss. Not part of the asset: no caller gets a root. */
-const sourceOfAsset = new WeakMap<Asset, SearchSource>();
+/** The bundle each asset was found in, for `assetType` to index it on a miss. Not part of the asset: no caller gets a root. */
+const bundleOfAsset = new WeakMap<Asset, AssetBundle>();
 
-export function assetOf(bundle: string, source: SearchSource, found: BundleAsset): Asset {
+export function assetOf(bundle: AssetBundle, found: BundleAsset): Asset {
   const asset: Asset = {
-    bundle,
+    bundle: bundle.name,
     conceptId: found.conceptId,
-    ref: makeBundleRef(bundle, found.conceptId),
+    ref: makeBundleRef(bundle.name, found.conceptId),
     entry: found.entry,
   };
-  sourceOfAsset.set(asset, source);
+  bundleOfAsset.set(asset, bundle);
   return asset;
 }
 
-/** The source that holds `asset`, as it was found. */
-export function sourceOf(asset: Asset): SearchSource {
-  const source = sourceOfAsset.get(asset);
-  if (!source) throw new Error(`Asset "${asset.ref}" was not found through the asset facade.`);
-  return source;
+/** The bundle that holds `asset`, as it was found. */
+export function bundleHolding(asset: Asset): AssetBundle {
+  const bundle = bundleOfAsset.get(asset);
+  if (!bundle) throw new Error(`Asset "${asset.ref}" was not found through the asset facade.`);
+  return bundle;
+}
+
+/** The asset `conceptId` names in one bundle, as its adapter reads it, with no other spelling tried. */
+export function readExact(bundle: AssetBundle, conceptId: string): Asset | undefined {
+  const found = bundle.read(conceptId);
+  return found ? assetOf(bundle, found) : undefined;
+}
+
+/**
+ * Releases before path refs prefixed a loose file's ref with its type folder (`knowledge/reports/x` for
+ * `reports/x.md`), and that spelling is still in links, memories, scripts and stored proposals. A ref nothing holds is
+ * read once more without that head and the asset comes back under its current ref. Whatever adapter holds the bundle:
+ * the spelling is akm's, not the format's. Only `qualifyRef` (the input boundary) warns, once, for a ref the user typed.
+ */
+export function readOutdated(
+  conceptId: string,
+  read: (conceptId: string) => Asset | undefined,
+  warnUser = false,
+): Asset | undefined {
+  const current = withoutTypeHead(conceptId);
+  const found = current === undefined ? undefined : read(current);
+  if (found && warnUser) {
+    warnOnce(
+      `outdated-ref:${conceptId}`,
+      `Ref "${conceptId}" is outdated: refs are the path inside the bundle, so it is now "${found.conceptId}". Resolved it to that asset.`,
+    );
+  }
+  return found;
+}
+
+/** The asset `conceptId` names in a bundle already held (an outdated spelling of it too): `readAsset` without the id. */
+export function readFrom(held: AssetBundle, conceptId: string): Asset | undefined {
+  return readExact(held, conceptId) ?? readOutdated(conceptId, (current) => readExact(held, current));
 }

@@ -5,9 +5,11 @@
 /** The refs an improve run may consider, read from the index, and the small predicates over them. */
 
 import path from "node:path";
-import { parseBundleRef } from "../../core/asset/asset-ref";
+import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef, resolveRef } from "../../core/asset/resolve-ref";
 import { findAsset } from "../../core/assets/read";
+import { bundleIdAt } from "../../core/bundle-at-dir";
+import { deriveBundleIds } from "../../core/bundle-id";
 import { closestMatch } from "../../core/closest-match";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -348,8 +350,10 @@ export function memoryCleanupParentRef(scope: Scope, stashDir?: string): string 
   const parsed = scopePlacement(scope.value);
   if (parsed?.type !== "memory") return undefined;
   if (!parsed.name.endsWith(".derived")) return conceptIdFromTypeName(parsed.type, parsed.name);
-  for (const source of resolveSourceEntries(stashDir)) {
-    const held = findAsset(conceptIdFromTypeName("memory", parsed.name), { sources: [source], quiet: true });
+  if (stashDir !== undefined) bundleIdAt(stashDir);
+  const sources = resolveSourceEntries(stashDir);
+  for (const id of deriveBundleIds(sources)) {
+    const held = findAsset(makeBundleRef(id, conceptIdFromTypeName("memory", parsed.name)));
     if (!held) continue;
     const fm = held.entry.frontmatter() ?? {};
     const parent = parseMemoryRef(typeof fm.source === "string" ? fm.source : undefined);

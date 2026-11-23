@@ -22,9 +22,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
 import type { Asset } from "../../../src/core/assets/asset";
-import { assetRevision, currentConceptId, findAsset, listAssets, requireAsset } from "../../../src/core/assets/read";
+import * as facade from "../../../src/core/assets/read";
+import { assetRevision } from "../../../src/core/assets/read";
 import { assetType, assetTypeFresh } from "../../../src/core/assets/type";
-import { addressOf, writeAssets } from "../../../src/core/assets/write";
+import * as facadeWrite from "../../../src/core/assets/write";
+import { writeAssets } from "../../../src/core/assets/write";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { NotFoundError, UsageError } from "../../../src/core/errors";
 import { getDbPath } from "../../../src/core/paths";
@@ -35,6 +37,7 @@ import { akmIndex } from "../../../src/indexer/indexer";
 import { resolveSourceEntries, type SearchSource } from "../../../src/indexer/search/search-source";
 import { buildFileContext, type FileContext } from "../../../src/indexer/walk/file-context";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
+import { configureBundles } from "../../_helpers/bundle-config";
 import { withFakeSecretStores } from "../../_helpers/fake-secret-stores";
 import { findInBundle } from "../../_helpers/find-in-bundle";
 import {
@@ -44,6 +47,38 @@ import {
   withIsolatedAkmStorage,
   writeSandboxConfig,
 } from "../../_helpers/sandbox";
+
+// The facade takes bundle ids and bundles are the config's: these wrappers make a test's sources the config's bundles
+// first, so each test still names the bundles it reads.
+type Sources = { sources: readonly SearchSource[] };
+const asBundle = (source: SearchSource) => ({
+  path: source.path,
+  ...(source.registryId !== undefined ? { registryId: source.registryId } : {}),
+  ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
+  ...(source.location !== undefined ? { location: source.location } : {}),
+});
+const findAsset = (ref: string, options?: Sources) => {
+  if (options) configureBundles(options.sources.map(asBundle));
+  return facade.findAsset(options ? facade.qualifyRef(ref) : ref);
+};
+const requireAsset = (ref: string, { sources }: Sources) => {
+  configureBundles(sources.map(asBundle));
+  return facade.requireAsset(facade.qualifyRef(ref));
+};
+const listAssets = ({ sources, ...options }: Sources & { bundle?: string; type?: string }) => {
+  configureBundles(sources.map(asBundle));
+  return facade.listAssets(options);
+};
+const currentConceptId = (ref: { conceptId: string }, sources: readonly SearchSource[]) => {
+  configureBundles(sources.map(asBundle));
+  return facade.currentConceptId(ref.conceptId);
+};
+const addressOf = (source: { name: string; path: string; adapterId?: string }, ref: string) => {
+  const [id] = configureBundles([
+    { path: source.path, registryId: source.name, ...(source.adapterId ? { adapterId: source.adapterId } : {}) },
+  ]);
+  return facadeWrite.addressOf(id as string, ref);
+};
 
 describe("finding an asset in one bundle — closed-form candidates (#857)", () => {
   test("spellings for a nested-off-canonical conceptId resolve without any readdirSync count growing with unrelated tree size", () => {
@@ -445,7 +480,6 @@ describe("findAsset", () => {
 
     expect(findAsset("scripts/missing.sh", { sources: [stash] })).toBeUndefined();
     expect(findAsset("nobody//scripts/deploy.sh", { sources: [stash] })).toBeUndefined();
-    expect(findAsset("scripts/deploy.sh", { sources: [] })).toBeUndefined();
   });
 
   test("requireAsset refuses a ref no bundle holds with a not-found error", () => {
@@ -551,7 +585,6 @@ describe("addressOf", () => {
     });
     expect(addressOf(source, "stash//knowledge/reports/release")).toMatchObject({
       conceptId: "reports/release",
-      origin: "stash",
       exists: true,
     });
   });

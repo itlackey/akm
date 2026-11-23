@@ -13,7 +13,7 @@ import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "
 import { type AssetRef, displayDefaultBundle, displayRef } from "../core/asset/resolve-ref";
 import { findAsset, qualifyRef, requireAsset } from "../core/assets/read";
 import { addressOf } from "../core/assets/write";
-import { bundleSourceAt } from "../core/bundle-at-dir";
+import { bundleIdAt } from "../core/bundle-at-dir";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, NotFoundError, TransientError, UsageError } from "../core/errors";
@@ -281,7 +281,7 @@ function recordFeedbackUsage(
 function judgedTextHash(type: string | undefined, filePath: string | undefined, itemRef: string): string | undefined {
   try {
     if (!filePath || type === "env" || type === "secret") return undefined;
-    const held = findAsset(itemRef, { quiet: true });
+    const held = findAsset(itemRef);
     return held ? contentHash(held.entry.content(), "body") : undefined;
   } catch {
     return undefined;
@@ -364,7 +364,7 @@ function assertFrontmatterStillParses(before: string, after: string, file: strin
  * not the indexed one, so accepting the proposal would leave the real one unfixed.
  */
 export function assertProposalWritesFile(itemRef: string, root: string, filePath: string): void {
-  const { type, file: writes } = addressOf(bundleSourceAt(path.resolve(root)), itemRef);
+  const { type, file: writes } = addressOf(bundleIdAt(path.resolve(root)), itemRef);
   if (writes !== undefined && safeRealpath(writes) === safeRealpath(filePath)) return;
   throw new UsageError(
     `akm cannot queue a fix for ${itemRef}: its file is ${filePath}, but a proposal would write ${writes ?? `no file (akm has no directory for "${type}" assets)`}. Edit the file directly.`,
@@ -776,7 +776,7 @@ export const feedbackCommand = defineJsonCommand({
               ? { supersededBy: resolveSuccessorRef(db, supersededBy.trim(), itemRef) }
               : { outdated: true };
         }
-        const before = requireAsset(itemRef, { quiet: true }).entry.content();
+        const before = requireAsset(itemRef).entry.content();
         let after = applyExactReplacements(before, fixPairs, filePath);
         if (mark) after = applyHistoryMark(after, mark, filePath);
         if (after === before) throw new UsageError("The fix changes nothing.", "INVALID_FLAG_VALUE");

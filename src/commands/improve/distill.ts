@@ -24,11 +24,11 @@ import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } fr
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
-import { findAsset } from "../../core/assets/read";
+import { lookupAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import { addressOf } from "../../core/assets/write";
 import { authoringRulesForType } from "../../core/authoring-rules";
-import { bundleSourceAt } from "../../core/bundle-at-dir";
+import { bundleIdAt } from "../../core/bundle-at-dir";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
@@ -51,7 +51,6 @@ import {
   scopeFromFrontmatter,
   stampScope,
 } from "../../indexer/passes/metadata";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { chatCompletion } from "../../llm/client";
@@ -480,7 +479,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const config = options.config ?? loadConfig();
   const stash = options.stashDir ?? resolveStashDir();
   // An existing input is addressed where its file is; only a ref no file owns is read by placement.
-  const address = addressOf(bundleSourceAt(stash), inputRef);
+  const address = addressOf(bundleIdAt(stash), inputRef);
   const profile = options.improveProfile ?? resolveImproveStrategy(undefined, config).config;
   options = { ...options, improveProfile: profile };
   const targetKind = options.proposalKind ?? "lesson";
@@ -501,7 +500,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const ledgerRef = options.itemRef ?? inputRef;
   const eligMeta = options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {};
   // The input's type is its file's; the ref's first folder names it only for a ref no file owns.
-  const owned = findAsset(inputRef, { sources: resolveSourceEntries(options.stashDir, config) });
+  const owned = lookupAsset(inputRef, { bundle: bundleIdAt(stash) });
   const inputType = owned ? assetType(owned) : address.type;
   if (isDistillRefusedInputType(inputType)) {
     const secret = inputType === "env" || inputType === "secret";

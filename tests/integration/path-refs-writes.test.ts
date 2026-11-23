@@ -20,6 +20,7 @@ import { createProposal, createRetireProposal, getProposal } from "../../src/com
 import { addressOf } from "../../src/core/assets/write";
 import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
+import { configureBundles } from "../_helpers/bundle-config";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -70,15 +71,21 @@ const LOOSE: Array<[rel: string, ref: string]> = [
   ["release.md", "release"],
 ];
 
+/** The address of `ref` in the bundle `stash`, which the test makes the config's bundle. */
+function addressIn(ref: string) {
+  const [id] = configureBundles([{ path: stash, registryId: "stash" }]);
+  return addressOf(id as string, ref);
+}
+
 describe("the write address of an existing asset", () => {
   test.each(LOOSE)("%s is written at its own file, with the type its file is recognized as", async (rel, ref) => {
     const file = write(rel, NOTE);
-    expect(addressOf({ name: "stash", path: stash }, ref)).toMatchObject({ type: "knowledge", conceptId: ref, file });
+    expect(addressIn(ref)).toMatchObject({ type: "knowledge", conceptId: ref, file });
   });
 
   test("its ref in the outdated type-folder spelling writes the same file", () => {
     const file = write("reports/release.md", NOTE);
-    expect(addressOf({ name: "stash", path: stash }, "knowledge/reports/release")).toMatchObject({
+    expect(addressIn("knowledge/reports/release")).toMatchObject({
       type: "knowledge",
       conceptId: "reports/release",
       file,
@@ -86,7 +93,7 @@ describe("the write address of an existing asset", () => {
   });
 
   test("a new asset is placed in its ref's type folder", () => {
-    expect(addressOf({ name: "stash", path: stash }, "lessons/new-one")).toMatchObject({
+    expect(addressIn("lessons/new-one")).toMatchObject({
       type: "lesson",
       conceptId: "lessons/new-one",
       file: path.join(stash, "lessons", "new-one.md"),

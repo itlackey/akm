@@ -9,9 +9,11 @@ import { assetPathForName, stashDirFor } from "../../src/core/asset/asset-placem
 import { parseBundleRef } from "../../src/core/asset/asset-ref";
 import type { AssetRef } from "../../src/core/asset/resolve-ref";
 import { conceptIdFromTypeName, displayRef } from "../../src/core/asset/resolve-ref";
-import { readAsset, writeAssets } from "../../src/core/assets/write";
+import { readAsset } from "../../src/core/assets/read";
+import { writeAssets } from "../../src/core/assets/write";
 import type { SourceConfigEntry } from "../../src/core/config/config";
 import type { WriteTargetSource } from "../../src/core/write-source";
+import { configureBundles } from "./bundle-config";
 
 export async function writeAssetToSource(
   source: WriteTargetSource,
@@ -24,7 +26,7 @@ export async function writeAssetToSource(
   );
   const { conceptId } = parseBundleRef(change.ref);
   return {
-    path: readAsset(source, conceptId)?.entry.file ?? placedPath(source, ref),
+    path: readAssetIn(source, conceptId)?.entry.file ?? placedPath(source, ref),
     ref: displayRef({ conceptId, bundleId: ref.origin }),
   };
 }
@@ -35,7 +37,7 @@ export async function deleteAssetFromSource(
   ref: AssetRef,
 ): Promise<{ path?: string; ref: string }> {
   const conceptId = conceptIdFromTypeName(ref.type, ref.name);
-  const path = readAsset(source, conceptId)?.entry.file;
+  const path = readAssetIn(source, conceptId)?.entry.file;
   writeAssets({ source, config }, { purpose: "test-delete" }, (w) => w.delete(conceptId));
   return {
     ...(path !== undefined ? { path } : {}),
@@ -47,4 +49,12 @@ export async function deleteAssetFromSource(
 function placedPath(source: WriteTargetSource, ref: AssetRef): string {
   const typeDir = stashDirFor(ref.type) as string;
   return assetPathForName(ref.type, path.join(source.path, typeDir), ref.name);
+}
+
+/** The asset in a write target's bundle, which a test has not configured: make it the config's bundle first. */
+function readAssetIn(source: WriteTargetSource, conceptId: string) {
+  const [id] = configureBundles([
+    { path: source.path, registryId: source.name, ...(source.adapterId ? { adapterId: source.adapterId } : {}) },
+  ]);
+  return readAsset(id as string, conceptId);
 }

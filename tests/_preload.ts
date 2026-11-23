@@ -47,6 +47,7 @@ import path from "node:path";
 import { registerTestRoot } from "../scripts/sweep-test-tmp";
 
 import { _resetParsedInvocationForTests } from "../src/cli/invocation";
+import { clearAdHocBundles } from "../src/core/assets/bundle";
 import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-writer-lock";
@@ -368,6 +369,8 @@ function healSandboxEnv(): void {
 /** Reset every known module-level singleton in production code. */
 function resetSingletons(): void {
   resetAllSeams();
+  // Directories a test named (`--dir`) are bundles of that test alone.
+  clearAdHocBundles();
   resetConfigCache();
   clearEmbeddingCache();
   resetLocalEmbedder();

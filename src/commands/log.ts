@@ -12,8 +12,10 @@
  * `JSON.stringify` fallback).
  */
 
-import { qualifyRef } from "../core/assets/read";
-import { UsageError } from "../core/errors";
+import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
+import { lookupAsset, qualifyRef } from "../core/assets/read";
+import { loadConfig } from "../core/config/config";
+import { ConfigError, UsageError } from "../core/errors";
 import { type EventsContext, readEvents } from "../core/events";
 import type { EventEnvelope } from "../core/events-types";
 import { parseSinceToIso } from "../core/time";
@@ -85,8 +87,21 @@ function validateRef(ref: string | undefined): string | undefined {
     throw new UsageError("--ref cannot be empty.", "INVALID_FLAG_VALUE");
   }
   // Event refs are recorded fully qualified. An unqualified one is qualified like `show`'s: the first bundle that holds
-  // it. An old spelling matches the events re-keyed to the asset's ref.
-  return qualifyRef(trimmed);
+  // it. An old spelling matches the events re-keyed to the asset's ref. A ref nothing holds names the default bundle, and
+  // stays as written when there is none.
+  const parsed = parseBundleRef(trimmed);
+  try {
+    const held = parsed.bundle === undefined ? lookupAsset(trimmed) : undefined;
+    if (held) return held.ref;
+    if (parsed.bundle === undefined && loadConfig().defaultBundle === undefined) {
+      return makeBundleRef(undefined, parsed.conceptId);
+    }
+    return qualifyRef(trimmed);
+  } catch (error) {
+    // Without readable sources the ref stays as written: events are recorded qualified, and the filter simply finds none.
+    if (error instanceof ConfigError) return makeBundleRef(parsed.bundle, parsed.conceptId);
+    throw error;
+  }
 }
 
 function validateRunId(run: string | undefined): string | undefined {

@@ -747,7 +747,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
     // Pre-flight: existence + force semantics. The helper itself overwrites
     // unconditionally; the CLI surfaces a friendlier UsageError before any
     // disk activity when --force is absent.
-    if (addressOf(source, conceptIdFromTypeName(options.type, normalizedName)).exists && !options.force) {
+    if (addressOf(source.name, conceptIdFromTypeName(options.type, normalizedName)).exists && !options.force) {
       throw new UsageError(
         `${options.type === "knowledge" ? "Knowledge" : "Memory"} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
         "RESOURCE_ALREADY_EXISTS",

@@ -30,10 +30,12 @@ import { MEMORY_ARCHIVE_REL } from "../../core/asset/memory-archive";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { stalePathRoots } from "../../core/asset/stale-path";
 import { assertAdapterWrites } from "../../core/assets/gate";
-import { currentConceptId } from "../../core/assets/read";
-import { type AssetAddress, addressOf, legacyRefOf, readAsset, writeAssets } from "../../core/assets/write";
-import { bundleSourceAt, stateBundleId } from "../../core/bundle-at-dir";
+import { currentConceptId, qualifyRef, readAsset } from "../../core/assets/read";
+import { type AssetAddress, addressOf, legacyRefOf, writeAssets } from "../../core/assets/write";
+import { bundleIdAt, stateBundleId } from "../../core/bundle-at-dir";
+import { bundleIdForDir } from "../../core/bundle-id";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
+import { bundleAtDir } from "../../core/config/config-sources";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import type { MemoryPruneCandidate } from "../../core/improve-types";
@@ -263,7 +265,9 @@ function refFilter(stashDir: string, ref: string): (proposalRef: string) => bool
   }
   const sources = resolveSourceEntries(stashDir, loadConfig());
   // The filter's own outdated spelling is the caller's to fix (one warning); a stored ref is not, so it resolves silently.
-  const wanted = currentConceptId(filter, sources);
+  const wanted = parseBundleRef(
+    qualifyRef(makeBundleRef(filter.bundle, filter.conceptId), { bundle: bundleIdAt(stashDir) }),
+  ).conceptId;
   const asked = new Map<string, string>();
   const current = (identity: ProposalRefIdentity): string => {
     const key = `${identity.bundle ?? ""}//${identity.conceptId}`;
@@ -271,7 +275,7 @@ function refFilter(stashDir: string, ref: string): (proposalRef: string) => bool
     if (known !== undefined) return known;
     // A stored ref whose bundle is not configured names its asset by concept id alone: whichever bundle holds it now.
     const held = identity.bundle === undefined || resolveSourcesForOrigin(identity.bundle, sources).length > 0;
-    const conceptId = currentConceptId(held ? identity : { conceptId: identity.conceptId }, sources, { quiet: true });
+    const conceptId = currentConceptId(makeBundleRef(held ? identity.bundle : undefined, identity.conceptId));
     asked.set(key, conceptId);
     return conceptId;
   };
@@ -290,7 +294,8 @@ function refFilter(stashDir: string, ref: string): (proposalRef: string) => bool
  * indexer mints for the accepted asset.
  */
 function proposalDurableRef(
-  { conceptId, origin }: Pick<AssetAddress, "conceptId" | "origin">,
+  { conceptId }: Pick<AssetAddress, "conceptId">,
+  origin: string | undefined,
   target: NonNullable<CreateProposalInput["target"]>,
 ): string {
   if (!isBundleSlug(target.source)) {
@@ -334,7 +339,10 @@ export function resolveProposalQueueTarget(
   const sources = resolveSourceEntries(root, config);
   const sourceIndex = sources.findIndex((source) => path.resolve(source.path) === root);
   const source = sources[sourceIndex];
-  const bundleId = sourceIndex >= 0 ? deriveInstallations(sources)[sourceIndex]?.id : undefined;
+  const bundleId =
+    sourceIndex >= 0
+      ? (bundleAtDir(config, root) ?? bundleIdForDir(root, new Set(Object.keys(config.bundles ?? {}))))
+      : undefined;
   if (!source || !bundleId) {
     throw new ConfigError(`No bundle owns proposal queue ${root}.`, "INVALID_CONFIG_FILE");
   }
@@ -427,7 +435,7 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
   }
 
   const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, origin);
-  const targetSource = { ...bundleSourceAt(proposalTarget.root), name: proposalTarget.source };
+  const targetSource = bundleIdAt(proposalTarget.root, loadConfig(), { name: proposalTarget.source });
   let parsedRef: AssetAddress;
   try {
     parsedRef = addressOf(targetSource, input.ref);
@@ -453,7 +461,7 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
 
   // The change envelope, and the target's before-hashes as of mint (the freshness check at accept compares against
   // them).
-  const normalizedRef = proposalDurableRef(parsedRef, proposalTarget);
+  const normalizedRef = proposalDurableRef(parsedRef, origin, proposalTarget);
   let beforeContent: string | undefined;
   try {
     if (parsedRef.exists) beforeContent = readAsset(targetSource, parsedRef.conceptId)?.entry.content();
@@ -596,7 +604,7 @@ export function createRetireProposal(
     throw invalid(err);
   }
   const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, origin);
-  const targetSource = { ...bundleSourceAt(proposalTarget.root), name: proposalTarget.source };
+  const targetSource = bundleIdAt(proposalTarget.root, loadConfig(), { name: proposalTarget.source });
   let parsedRef: AssetAddress;
   try {
     parsedRef = addressOf(targetSource, input.ref);
@@ -609,7 +617,7 @@ export function createRetireProposal(
       "INVALID_PROPOSAL",
     );
   }
-  const normalizedRef = proposalDurableRef(parsedRef, proposalTarget);
+  const normalizedRef = proposalDurableRef(parsedRef, origin, proposalTarget);
   const target = parsedRef.exists ? readAsset(targetSource, parsedRef.conceptId) : undefined;
   if (!target) {
     throw new UsageError(
@@ -655,26 +663,15 @@ export function createRetireProposal(
   );
 }
 
-/**
- * The bundle a proposal is bound to, as a source to address its ref in: the bundle `proposedTarget` names, else the
- * queue's own directory.
- */
-function proposalBundleSource(
-  stashDir: string,
-  proposal: Proposal,
-  config: AkmConfig,
-): { name: string; path: string; adapterId?: string } {
+/** The bundle a proposal is bound to, to address its ref in: the bundle `proposedTarget` names, else the queue's own directory. */
+function proposalBundleId(stashDir: string, proposal: Proposal, config: AkmConfig): string {
   const bound = proposal.proposedTarget?.source;
-  if (bound === undefined) return bundleSourceAt(stashDir);
+  if (bound === undefined) return bundleIdAt(stashDir, config);
   try {
-    const { source } = resolveBundleWriteTarget(config, bound);
-    return {
-      name: bound,
-      path: source.path,
-      ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
-    };
+    resolveBundleWriteTarget(config, bound);
+    return bound;
   } catch {
-    return { ...bundleSourceAt(stashDir), name: bound };
+    return bundleIdAt(stashDir, config, { name: bound });
   }
 }
 
@@ -694,7 +691,7 @@ function queryProposals(db: Database, stashDir: string, options: ListProposalsOp
     if (matchesRef !== undefined && !matchesRef(p.ref)) return false;
     if (!options.type || !config) return true;
     try {
-      return addressOf(proposalBundleSource(stashDir, p, config), p.ref).type === options.type;
+      return addressOf(proposalBundleId(stashDir, p, config), p.ref).type === options.type;
     } catch {
       return false;
     }
@@ -944,7 +941,7 @@ export function purgeOrphanProposals(
     if (parsed.type === "lesson" || !spec) continue;
     const exists = sourceDirs.some((root) => {
       try {
-        return addressOf(bundleSourceAt(root), p.ref).exists;
+        return addressOf(bundleIdAt(root), p.ref).exists;
       } catch {
         return false;
       }
@@ -1482,11 +1479,11 @@ export function preflightProposalPromotion(
     );
   }
   const target = resolveProposalWriteTarget(config, prepared, options.target, options.queueTarget);
-  const ref = addressOf(target.source, prepared.ref);
+  const ref = addressOf(target.source.name, prepared.ref);
   if (!ref.exists && ref.file === undefined && stashDirFor(ref.type) === undefined) {
     throw new UsageError(`Proposal ${proposal.id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
-  assertAdapterWrites(target.source, ref.type);
+  assertAdapterWrites(target.source.name, ref.type);
   const assetPath = ref.file;
   if (!assetPath) {
     throw new UsageError(`Proposal ${proposal.id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
@@ -1673,7 +1670,7 @@ export function commitCollectedAccepts(collector: AcceptCommitCollector, label: 
 function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Proposal, paths: string[]): void {
   if (!accepted.promotionSource) return;
   try {
-    const sourceRef = addressOf(mutationTarget.source, accepted.promotionSource);
+    const sourceRef = addressOf(mutationTarget.source.name, accepted.promotionSource);
     const sourcePath = sourceRef.exists ? sourceRef.file : undefined;
     if (!sourcePath || !fs.existsSync(sourcePath)) return;
     if (!accepted.promotionSourceHash) {
@@ -1775,7 +1772,7 @@ async function promoteProposalWithLease(
   if (!address || !plannedPath)
     throw new UsageError(`Cannot resolve proposal target ${proposal.ref}.`, "INVALID_PROPOSAL");
   const backup = readFreshProposalTarget(proposal, plannedPath, preflight.stampedContent);
-  assertAdapterWrites(mutationTarget.source, address.type);
+  assertAdapterWrites(mutationTarget.source.name, address.type);
   const refIdentity = proposalRefIdentity(preflight.proposal.ref);
   const proposalForMutation: Proposal =
     refIdentity?.bundle === undefined
@@ -2090,7 +2087,7 @@ async function retireProposalWithLease(
         "INVALID_FLAG_VALUE",
       );
     }
-    assertAdapterWrites(target.source, ref.type);
+    assertAdapterWrites(target.source.name, ref.type);
     // Phase 1: record intent BEFORE any move, and BEFORE the supersede edge:
     // `backupContent` is `currentBytes`, read
     // above, before any mutation of this file. Recording first means a crash
@@ -2110,7 +2107,7 @@ async function retireProposalWithLease(
       }
     }
   } else {
-    assertAdapterWrites(target.source, ref.type);
+    assertAdapterWrites(target.source.name, ref.type);
     assertRetiringTaskUnchanged(ref, assetPath, intent, proposal);
     // Revalidate the survivor even after a partial archive. The recorded original
     // is the judged retired side when its file has already moved.
@@ -2392,7 +2389,7 @@ async function unretireProposalWithLease(
   }
   const target = prepareWriteTargetForMutation(boundTarget);
   /** Whether a tombstone's original file is the asset the proposal retired (not its `.derived` twin). */
-  const isPrimary = (originalRel: string): boolean => legacyRefOf(target.source, originalRel) === recorded.ref;
+  const isPrimary = (originalRel: string): boolean => legacyRefOf(target.source.name, originalRel) === recorded.ref;
   interface PendingRestore {
     dirAbs: string;
     auditPath: string;
@@ -2586,7 +2583,7 @@ async function revertProposalWithLease(
     return { proposal, assetPath, ref: proposal.ref };
   }
   const target = prepareWriteTargetForMutation(boundTarget);
-  const accepted = readAsset(target.source, parseBundleRef(recorded.ref).conceptId);
+  const accepted = readAsset(target.source.name, parseBundleRef(recorded.ref).conceptId);
   if (!accepted || contentHash(accepted.entry.bytes()) !== recorded.contentHash) {
     // By-ref resolution skips retire proposals, so reverting by ref when a
     // SEPARATE retire proposal
@@ -2881,7 +2878,7 @@ function resolveAssetFilePathSafe(source: WriteTargetSource, ref: string): strin
 
 function resolveAddressSafe(source: WriteTargetSource, ref: string): AssetAddress | undefined {
   try {
-    return addressOf(source, ref);
+    return addressOf(source.name, ref);
   } catch {
     return undefined;
   }

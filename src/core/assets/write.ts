@@ -10,7 +10,6 @@
 
 import fs from "node:fs";
 import { withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
-import type { SearchSource } from "../../indexer/search/search-source";
 import type { AssetChange, NewAsset, Retirement, RetireNote } from "../adapter/bundle-adapter";
 import { stashDirFor } from "../asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
@@ -24,8 +23,9 @@ import {
   type ResolvedWriteTarget,
   recordWriteTargetPath,
 } from "../write-source";
-import { type AssetBundle, assetBundleOf } from "./bundle";
-import { type Asset, assetRevision, readFrom } from "./read";
+import { type Asset, readFrom } from "./asset";
+import { type AssetBundle, assetBundleOf, bundleFor } from "./bundle";
+import { assetRevision } from "./read";
 import { assetType, forgetIndexedAsset, refreshIndexedAsset } from "./type";
 
 /**
@@ -49,8 +49,6 @@ export interface AssetAddress {
   type: string;
   /** The name within the type (`prod` for `env/prod`). */
   name: string;
-  /** The bundle the ref names, when it names one. */
-  origin?: string;
   /**
    * Whether an asset holds the ref now: the asset the ref names, else the one at the concept a create of the ref
    * places, else a non-asset entry (a directory) where a create would write. Otherwise `conceptId` is where a new asset
@@ -91,21 +89,10 @@ export interface AssetWriter {
   expireRetired(before: Date): void;
 }
 
-type WriteSource = { name: string; path: string; location?: string; adapterId?: string };
-
-function searchSourceOf(source: WriteSource): SearchSource {
-  return {
-    path: source.path,
-    registryId: source.name,
-    ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
-    ...(source.location !== undefined ? { location: source.location } : {}),
-  };
-}
-
 /** `gate`: refuse a new asset of a type the bundle's adapter does not write, as a write would. */
-function addressIn(held: AssetBundle, source: WriteSource, ref: string, gate: boolean): AssetAddress {
-  const readIn = (id: string): Asset | undefined => readFrom(searchSourceOf(source), source.name, id);
-  const { bundle: origin, conceptId: written, fragment } = parseBundleRef(ref);
+function addressIn(held: AssetBundle, ref: string, gate: boolean): AssetAddress {
+  const readIn = (id: string): Asset | undefined => readFrom(held, id);
+  const { conceptId: written, fragment } = parseBundleRef(ref);
   const holding = (found: Asset, placedFile: () => string | undefined): AssetAddress => {
     const { conceptId } = found;
     const type = assetType(found);
@@ -117,7 +104,6 @@ function addressIn(held: AssetBundle, source: WriteSource, ref: string, gate: bo
       conceptId,
       type,
       name,
-      ...(origin !== undefined ? { origin } : {}),
       exists: true,
       ...(found.entry.file !== undefined ? { file: found.entry.file } : {}),
       ...(placedAt !== undefined ? { placedFile: placedAt } : {}),
@@ -135,7 +121,7 @@ function addressIn(held: AssetBundle, source: WriteSource, ref: string, gate: bo
     });
   }
   const placed = parsePlacementRef(ref);
-  const named = { type: placed.type, name: placed.name, ...(origin !== undefined ? { origin } : {}), exists: false };
+  const named = { type: placed.type, name: placed.name, exists: false };
   if (!held.writes(placed.type)) {
     if (gate) held.assertWrites(placed.type);
     // Not a write: the asset is named as written; the file is only the display path the adapter would give it.
@@ -168,34 +154,30 @@ function addressIn(held: AssetBundle, source: WriteSource, ref: string, gate: bo
 }
 
 /**
- * Where a write to `ref` goes in `source`'s bundle, without a write session. Unlike {@link AssetWriter.address} it
+ * Where a write to `ref` goes in the bundle `bundle`, without a write session. Unlike {@link AssetWriter.address} it
  * refuses nothing a write would refuse (a type the bundle's adapter does not write, a name it cannot place): nothing is
  * written, so the write refuses where it is made. Only an invalid ref throws.
  */
-export function addressOf(source: WriteSource, ref: string): AssetAddress {
-  return addressIn(assetBundleOf(source), source, ref, false);
+export function addressOf(bundle: string, ref: string): AssetAddress {
+  return addressIn(bundleFor(bundle), ref, false);
 }
 
 /**
  * The file `ref` is kept in (the existing asset's, else the one a create would write) in a bundle that keeps assets as
  * files; undefined for a store, which keeps none and is not asked. For checks on where a name lands, never to find it.
  */
-export function fileOfRef(source: WriteSource, ref: string): string | undefined {
-  return assetBundleOf(source).isStore ? undefined : addressOf(source, ref).file;
+export function fileOfRef(bundle: string, ref: string): string | undefined {
+  const held = bundleFor(bundle);
+  return held.isStore ? undefined : addressIn(held, ref, false).file;
 }
 
 /**
  * The ref of the asset an old stored record named by a bundle-relative path (`changes[].path`), for converters only
  * (§8.4). Valid when no file holds the asset any more; undefined when the path is no asset's.
  */
-export function legacyRefOf(source: WriteSource, relPath: string): string | undefined {
-  const conceptId = assetBundleOf(source).identifyKey(relPath);
-  return conceptId === null ? undefined : makeBundleRef(source.name, conceptId);
-}
-
-/** The asset `conceptId` names in `source`'s bundle, read outside a write session. */
-export function readAsset(source: WriteSource, conceptId: string): Asset | undefined {
-  return readFrom(searchSourceOf(source), source.name, conceptId);
+export function legacyRefOf(bundle: string, relPath: string): string | undefined {
+  const conceptId = bundleFor(bundle).identifyKey(relPath);
+  return conceptId === null ? undefined : makeBundleRef(bundle, conceptId);
 }
 
 function writerFor(target: ResolvedWriteTarget): AssetWriter {
@@ -211,9 +193,9 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
   };
   /** What the index holds for the asset a change touched: its row is written again, or dropped with the asset. */
   const reindex = (change: AssetChange, kept: boolean): void => {
-    const asset = kept ? readAsset(source, change.conceptId) : undefined;
+    const asset = kept ? readFrom(held, change.conceptId) : undefined;
     if (asset) refreshIndexedAsset(asset);
-    else forgetIndexedAsset(searchSourceOf(source), source.name, change.conceptId);
+    else forgetIndexedAsset(held, change.conceptId);
   };
   const result = (change: AssetChange, kept = true): WriteResult => {
     record(change);
@@ -226,7 +208,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
   /** The asset a change applies to, after the gates every change to an existing asset passes. */
   const existing = (conceptId: string, options?: { revision?: string; retire?: boolean }): Asset => {
     gate(source, config);
-    const asset = readAsset(source, conceptId);
+    const asset = readFrom(held, conceptId);
     if (!asset) throw assetNotFound(`${source.name}//${conceptId}`);
     const type = assetType(asset);
     held.assertWrites(type);
@@ -240,8 +222,8 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     return asset;
   };
   return {
-    read: (conceptId) => readAsset(source, conceptId),
-    address: (ref) => addressIn(held, source, ref, true),
+    read: (conceptId) => readFrom(held, conceptId),
+    address: (ref) => addressIn(held, ref, true),
     create(asset, options) {
       gate(source, config);
       held.assertWrites(asset.type);

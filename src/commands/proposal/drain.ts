@@ -29,7 +29,7 @@
 
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { addressOf } from "../../core/assets/write";
-import { bundleSourceAt } from "../../core/bundle-at-dir";
+import { bundleIdAt } from "../../core/bundle-at-dir";
 import type { AkmConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { appendEvent, type EventsContext } from "../../core/events";
@@ -585,7 +585,7 @@ function promotionNeighbours(
 ): ReturnType<typeof nearestKnowledgeNotes> {
   if (!isPromotionProposal(proposal) || proposal.promotionSource === undefined) return [];
   try {
-    const memoryPath = addressOf(bundleSourceAt(stashDir), proposal.promotionSource).file;
+    const memoryPath = addressOf(bundleIdAt(stashDir), proposal.promotionSource).file;
     if (!memoryPath) return [];
     const source = assetInStash(stashDir, proposal.promotionSource)?.entry.content();
     if (source === undefined) return [];

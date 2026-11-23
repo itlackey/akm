@@ -101,15 +101,7 @@ function refOfPath(bundle: ConfiguredBundle | undefined, root: unknown, file: st
   const relPath = path.isAbsolute(file)
     ? path.relative(typeof root === "string" ? root : bundle.source.path, file)
     : file;
-  const found = legacyRefOf(
-    {
-      name: bundle.id,
-      path: bundle.source.path,
-      ...(bundle.source.adapterId !== undefined ? { adapterId: bundle.source.adapterId } : {}),
-      ...(bundle.source.location !== undefined ? { location: bundle.source.location } : {}),
-    },
-    relPath.split(path.sep).join("/"),
-  );
+  const found = legacyRefOf(bundle.id, relPath.split(path.sep).join("/"));
   return found ?? fallback;
 }
 

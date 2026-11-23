@@ -72,7 +72,7 @@ import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { toErrorMessage } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { ConfigError } from "../../core/errors";
 import {
   applyInputDefaults,
   type InputContract,

@@ -7,12 +7,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { placementSpecFor, stashDirFor } from "../../core/asset/asset-placement";
-import { isBundleSlug } from "../../core/asset/asset-ref";
+import { isBundleSlug, makeBundleRef } from "../../core/asset/asset-ref";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, replaceFrontmatterBlocks } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parseQualifiedPlacementRef } from "../../core/asset/resolve-ref";
 import { findAsset } from "../../core/assets/read";
 import { assetTypeFresh } from "../../core/assets/type";
+import { bundleIdAt } from "../../core/bundle-at-dir";
 import { isWithin, safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -331,7 +332,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
  * index use, so a clone sees exactly the file the index holds for the ref.
  */
 function resolveOpaqueAsset(source: SearchSource, conceptId: string): { path: string; type?: string } | undefined {
-  const asset = findAsset({ conceptId }, { sources: [source] });
+  const asset = findAsset(makeBundleRef(bundleIdAt(source.path), conceptId));
   if (!asset?.entry.file) return undefined;
   return { path: safeRealpath(asset.entry.file), type: assetTypeFresh(asset) };
 }

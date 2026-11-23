@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { BundleListing } from "../core/adapter/bundle-adapter";
 import type { Bundle } from "../core/adapter/types";
-import { type Asset, type BundleScan, findAsset, scanBundle } from "../core/assets/read";
+import { type Asset, type BundleScan, lookupAsset, scanBundle } from "../core/assets/read";
 import { indexedPathOf } from "../core/assets/type";
 import { isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
@@ -1831,7 +1831,7 @@ async function lookupBundleRefWithResolutionUsing(
   };
   try {
     // An asset the walk does not reach is not in the bundle: `findAsset` does not find it.
-    const asset = findAsset(ref, { sources });
+    const asset = lookupAsset(makeBundleRef(ref.bundle, ref.conceptId));
     if (!asset) return resolved(null);
     const bundleId = asset.bundle;
     const source = sourceOfBundle(sources, bundleId);

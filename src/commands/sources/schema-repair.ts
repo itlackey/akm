@@ -18,16 +18,16 @@
 import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { findAsset } from "../../core/assets/read";
+import { lookupAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import { authoringRulesForType } from "../../core/authoring-rules";
+import { bundleIdAt } from "../../core/bundle-at-dir";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { info } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { ChatMessage, chatCompletion } from "../../llm/client";
@@ -117,7 +117,7 @@ async function classifySchemaRepairs(args: {
     }
     try {
       // The asset is read through its bundle's adapter; its type is the index's (which fields to repair, and the type's standards and rules).
-      const owned = findAsset(failure.ref, { sources: resolveSourceEntries(stashDir) });
+      const owned = lookupAsset(failure.ref, { bundle: bundleIdAt(stashDir) });
       if (!owned) {
         repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
         continue;

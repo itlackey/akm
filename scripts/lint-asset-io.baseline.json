@@ -213,11 +213,6 @@
       "statSync": 1
     }
   },
-  "src/core/assets/read.ts": {
-    "facade-export": {
-      "FindOptions": 1
-    }
-  },
   "src/core/assets/type.ts": {
     "facade-export": {
       "forgetIndexedAsset": 1,

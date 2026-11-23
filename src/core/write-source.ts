@@ -43,12 +43,11 @@ import {
 } from "../sources/providers/git";
 import { listIgnoredExactPaths } from "../sources/providers/git-stash";
 import { findAbsoluteHomePaths } from "./adapter/adapters/akm-format";
-import type { AssetChange } from "./adapter/bundle-adapter";
 import { assertWritableFile } from "./adapter/directory-adapter";
 import { normalizeAkmMarkdown } from "./asset/akm-markdown";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName } from "./asset/resolve-ref";
-import { assertAdapterWrites, detectBundleAdapter } from "./assets/gate";
+import { assertAdapterWrites, detectBundleAdapter, registerAdHocBundle } from "./assets/gate";
 import { bundleIdForDir } from "./bundle-id";
 import { existingFileMode, isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
@@ -208,9 +207,15 @@ export function resolveWorkingStashTarget(
     if (allConfiguredSources.some((source) => source.name === configuredBundleId)) {
       throw new ConfigError("The AKM_BUNDLE_DIR source is disabled in config.", "INVALID_CONFIG_FILE");
     }
-    const bundleId = bundleIdForDir(stashDir, new Set(Object.keys(akmConfig.bundles ?? {})));
+    const adapterId = detectBundleAdapter(stashDir);
+    // The directory is a bundle no config entry names: the facade takes it by the id it is registered under.
+    const bundleId = registerAdHocBundle({
+      name: bundleIdForDir(stashDir, new Set(Object.keys(akmConfig.bundles ?? {}))),
+      path: stashDir,
+      adapterId,
+    });
     return {
-      source: { kind: "filesystem", name: bundleId, path: stashDir, adapterId: detectBundleAdapter(stashDir) },
+      source: { kind: "filesystem", name: bundleId, path: stashDir, adapterId },
       config: { type: "filesystem", name: bundleId, path: stashDir, writable: true },
     };
   }
@@ -335,7 +340,7 @@ function checkWriteTarget(
   target: ResolvedWriteTarget,
   kind: WriteKind = {},
 ): { target: ResolvedWriteTarget; repoPath?: string } {
-  if (!kind.plain) assertAdapterWrites(target.source, kind.assetType);
+  if (!kind.plain) assertAdapterWrites(target.source.name, kind.assetType);
   if (target.source.kind !== "git") return { target };
 
   const contentRoot = path.resolve(target.source.path);
@@ -417,7 +422,7 @@ export function prepareWriteTargetForMutation(target: ResolvedWriteTarget, kind:
 /** The gates an asset write passes: {@link assertPlainWritable}, and an adapter that writes assets of `type`. */
 export function assertWritableSource(source: WriteTargetSource, config: SourceConfigEntry, type?: string): void {
   assertPlainWritable(source, config);
-  assertAdapterWrites(source, type);
+  assertAdapterWrites(source.name, type);
 }
 
 /** The gates of a plain file write: the source takes writes and is a kind akm writes, whatever its adapter. */

@@ -32,7 +32,7 @@ import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { listAssets, requireAsset } from "../../core/assets/read";
-import { bundleSourceAt } from "../../core/bundle-at-dir";
+import { bundleIdAt, bundleSourceAt } from "../../core/bundle-at-dir";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-types";
@@ -337,7 +337,8 @@ export function loadExistingKnowledgeBodyHashes(targetRoot: string): Set<string>
   const hashes = new Set<string>();
   const bundle = resolveConsolidationSourceOwner({}, targetRoot)?.bundleId;
   if (bundle === undefined) return hashes;
-  for (const asset of listAssets({ sources: resolveSourceEntries(targetRoot), bundle })) {
+  bundleIdAt(targetRoot, undefined, { name: bundle });
+  for (const asset of listAssets({ bundle })) {
     if (!asset.conceptId.startsWith("knowledge/")) continue;
     try {
       hashes.add(contentHash(asset.entry.content(), "body"));
@@ -506,8 +507,10 @@ function resolveConsolidationSourceOwner(
     const targetIndex = sources.findIndex((source) => path.resolve(source.path) === targetRoot);
     const target = deriveInstallations(sources)[targetIndex];
     if (!target) return undefined;
+    // The directory is a bundle the facade takes by its id, which config may not name (an override directory).
+    const bundleId = bundleIdAt(stashDir, opts.config, { name: target.id });
     return {
-      bundleId: target.id,
+      bundleId,
       sourceRoot: targetRoot,
       excludedSourceRoots: new Set(
         sources
@@ -523,7 +526,7 @@ function resolveConsolidationSourceOwner(
 
 /** The memory's text, read through its bundle; throws when no bundle holds it any more. */
 function requireMemoryContent(memory: MemoryEntry): string {
-  return requireAsset(makeBundleRef(memory.bundleId, memory.ref), { quiet: true }).entry.content();
+  return requireAsset(makeBundleRef(memory.bundleId, memory.ref)).entry.content();
 }
 
 const mtimeMsOf = (memory: MemoryEntry): number => {

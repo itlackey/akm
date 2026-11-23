@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import type { AkmConfig } from "../../../src/core/config/config";
+import { type AkmConfig, resetConfigCache, saveConfig } from "../../../src/core/config/config";
 import { NotFoundError, UsageError } from "../../../src/core/errors";
 import { writeLockfile } from "../../../src/integrations/lockfile";
 import { resolveBundleAsset } from "../../../src/tasks/run/load-task";
@@ -31,6 +31,13 @@ function bundleRoot(prefix: string, files: Record<string, string>): string {
   return root.dir;
 }
 
+/** The facade reads the config the process loads: make the fixture's the config. */
+function resolveWith(config: AkmConfig, target: Parameters<typeof resolveBundleAsset>[1]) {
+  saveConfig(config);
+  resetConfigCache();
+  return resolveBundleAsset(config, target);
+}
+
 describe("resolveBundleAsset", () => {
   test("resolves a script in a read-only filesystem bundle", () => {
     const work = bundleRoot("akm-task-work", { "scripts/local.sh": "echo local\n" });
@@ -40,7 +47,7 @@ describe("resolveBundleAsset", () => {
       bundles: { work: { path: work }, shared: { path: shared, writable: false } },
     } as unknown as AkmConfig;
 
-    const resolved = resolveBundleAsset(config, { bundle: "shared", type: "script", name: "deploy.sh" });
+    const resolved = resolveWith(config, { bundle: "shared", type: "script", name: "deploy.sh" });
 
     expect(resolved).toEqual({ file: fs.realpathSync(path.join(shared, "scripts", "deploy.sh")), bundleRoot: shared });
   });
@@ -56,7 +63,7 @@ describe("resolveBundleAsset", () => {
       bundles: { work: { path: work }, tools: { npm: "tools" } },
     } as unknown as AkmConfig;
 
-    const resolved = resolveBundleAsset(config, { bundle: "tools", type: "script", name: "build.sh" });
+    const resolved = resolveWith(config, { bundle: "tools", type: "script", name: "build.sh" });
 
     expect(resolved).toEqual({
       file: fs.realpathSync(path.join(installed, "scripts", "build.sh")),
@@ -68,10 +75,8 @@ describe("resolveBundleAsset", () => {
     const work = bundleRoot("akm-task-work", { "scripts/local.sh": "echo local\n" });
     const config = { defaultBundle: "work", bundles: { work: { path: work } } } as unknown as AkmConfig;
 
-    expect(() => resolveBundleAsset(config, { bundle: "ghost", type: "script", name: "x.sh" })).toThrow(UsageError);
-    expect(() => resolveBundleAsset(config, { bundle: "work", type: "script", name: "missing.sh" })).toThrow(
-      NotFoundError,
-    );
+    expect(() => resolveWith(config, { bundle: "ghost", type: "script", name: "x.sh" })).toThrow(UsageError);
+    expect(() => resolveWith(config, { bundle: "work", type: "script", name: "missing.sh" })).toThrow(NotFoundError);
   });
 
   test("resolves an asset in another bundle while AKM_BUNDLE_DIR names a disabled configured bundle", () => {
@@ -83,7 +88,7 @@ describe("resolveBundleAsset", () => {
     } as unknown as AkmConfig;
 
     const resolved = withEnvSync({ AKM_BUNDLE_DIR: mine }, () =>
-      resolveBundleAsset(config, { bundle: "shared", type: "script", name: "deploy.sh" }),
+      resolveWith(config, { bundle: "shared", type: "script", name: "deploy.sh" }),
     );
 
     expect(resolved).toEqual({ file: fs.realpathSync(path.join(shared, "scripts", "deploy.sh")), bundleRoot: shared });
@@ -97,11 +102,9 @@ describe("resolveBundleAsset", () => {
       bundles: { work: { path: work }, off: { path: off, enabled: false } },
     } as unknown as AkmConfig;
 
-    expect(() => resolveBundleAsset(config, { bundle: "off", type: "script", name: "x.sh" })).toThrow(
+    expect(() => resolveWith(config, { bundle: "off", type: "script", name: "x.sh" })).toThrow(
       'Bundle "off" is disabled.',
     );
-    expect(() => resolveBundleAsset(config, { bundle: "ghost", type: "script", name: "x.sh" })).toThrow(
-      /is not configured/,
-    );
+    expect(() => resolveWith(config, { bundle: "ghost", type: "script", name: "x.sh" })).toThrow(/is not configured/);
   });
 });

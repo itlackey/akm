@@ -3,12 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmShowUnified } from "../../../src/commands/read/show";
 import { parseBundleRef } from "../../../src/core/asset/asset-ref";
-import { findAsset } from "../../../src/core/assets/read";
+import { findAsset, qualifyRef } from "../../../src/core/assets/read";
 import { assetType } from "../../../src/core/assets/type";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { _resetWarnOnceForTests } from "../../../src/core/warn";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex, lookupBundleRef } from "../../../src/indexer/indexer";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
@@ -107,14 +106,10 @@ describe("workflow source canonical-ref collisions", () => {
     const fixture = configure(kind);
     const sourcePath = path.join(fixture.ownedDir, `collision${extension}`);
     fs.writeFileSync(sourcePath, source(`sole-${kind}-${extension.slice(1).toLowerCase()}`));
-    const adapterId = kind === "ordinary" ? "akm" : "akm-workflow";
     const canonicalConceptId = kind === "ordinary" ? "workflows/collision" : "collision";
 
     for (const ref of fixture.aliases) {
-      const owner = findAsset(
-        { conceptId: parseBundleRef(ref).conceptId },
-        { sources: [{ path: fixture.root, registryId: "test", adapterId }] },
-      );
+      const owner = findAsset(qualifyRef(ref));
       expect(owner, ref).toMatchObject({
         conceptId: canonicalConceptId,
         entry: { file: sourcePath },

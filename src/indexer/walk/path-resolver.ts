@@ -2,9 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { findAsset } from "../../core/assets/read";
 import { indexedPathOf } from "../../core/assets/type";
+import { bundleIdAt } from "../../core/bundle-at-dir";
+import { deriveBundleIds } from "../../core/bundle-id";
 import { safeRealpath } from "../../core/common";
 import { lookupBundleRef } from "../indexer";
 import { deriveInstallations, sourceOfBundle } from "../installations";
@@ -36,7 +38,12 @@ function resolveViaDisk(ref: BundleRef, options: ResolveAssetPathOptions): strin
       })
     : allSources;
   const bundle = options.honorOrigin !== false ? ref.bundle : undefined;
-  const asset = findAsset({ bundle, conceptId: ref.conceptId }, { sources });
+  // The first of the sources, in order (the named directory's bundle first), that holds the ref.
+  if (options.stashDir !== undefined) bundleIdAt(options.stashDir);
+  const asset = deriveBundleIds([...sources])
+    .filter((id) => bundle === undefined || id === bundle)
+    .map((id) => findAsset(makeBundleRef(id, ref.conceptId)))
+    .find((found) => found !== undefined);
   return asset ? safeRealpath(indexedPathOf(asset, sourceOfBundle(sources, asset.bundle))) : null;
 }
 

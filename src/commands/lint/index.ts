@@ -28,6 +28,7 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { bundleAdapterId } from "../../core/assets/gate";
 import { validateBundleAssets } from "../../core/assets/validate";
+import { bundleSourceAt } from "../../core/bundle-at-dir";
 import { deriveBundleIds } from "../../core/bundle-id";
 import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpath, samePath } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
@@ -904,7 +905,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
   let subdir: string | undefined;
   if (root) {
     const sources = resolveSourceEntries(root, cfg);
-    const adapterId = bundleAdapterId(sources.find((s) => path.resolve(s.path) === path.resolve(root)) ?? {});
+    const { adapterId } = bundleSourceAt(root, cfg);
     const relPath = path.relative(realRoot as string, absFile);
     if (adapterId !== "akm") {
       const result = await lintViaAdapter(

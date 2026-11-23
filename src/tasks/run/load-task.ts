@@ -12,13 +12,12 @@
 
 import { makeBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
+import { activeSources } from "../../core/assets/gate";
 import { findAsset } from "../../core/assets/read";
 import { bundleSourceAt } from "../../core/bundle-at-dir";
-import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
-import { bundleAtDir } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { NotFoundError, UsageError } from "../../core/errors";
 import { assertBundleNotDisabled } from "../../core/write-source";
 import {
   applyInputDefaults,
@@ -29,7 +28,7 @@ import {
 } from "../../execution/input-contract";
 import type { ExecutionJsonObject } from "../../execution/json";
 import { sourceOfBundle } from "../../indexer/installations";
-import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import type { SearchSource } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
 import type { TaskInvocation } from "../model/invocation";
@@ -61,15 +60,7 @@ const CONFIG_FREE_TASK_RUNTIME: AkmConfig = Object.freeze({
  * other bundles still resolve.
  */
 export function activeTaskSources(config: AkmConfig): SearchSource[] {
-  try {
-    return resolveSourceEntries(undefined, config);
-  } catch (cause) {
-    const working = bundleAtDir(config, resolveStashDir());
-    const entry = working ? config.bundles?.[working] : undefined;
-    if (!(cause instanceof ConfigError) || !working || !entry || entry.enabled !== false) throw cause;
-    const enabled = { ...config, bundles: { ...config.bundles, [working]: { ...entry, enabled: true } } };
-    return resolveSourceEntries(undefined, enabled).filter((source) => source.registryId !== working);
-  }
+  return activeSources(config);
 }
 
 /**
@@ -84,7 +75,7 @@ export function resolveBundleAsset(
 ): { file: string; bundleRoot: string } {
   const conceptId = conceptIdFromTypeName(type, name);
   const sources = activeTaskSources(config);
-  const asset = findAsset({ bundle, conceptId }, { sources });
+  const asset = findAsset(makeBundleRef(bundle, conceptId));
   // asset-io: exec the file is handed to the script interpreter
   const file = asset?.entry.file;
   if (asset && file !== undefined) {

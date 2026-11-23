@@ -13,31 +13,31 @@ import {
   requireAdapter,
 } from "../adapter/registry";
 import type { UsageErrorCode } from "../errors";
-import { assetBundleOf } from "./bundle";
+import { assetBundleOf, bundleFor, clearAdHocBundles } from "./bundle";
 
-type GateSource = { name: string; path: string; location?: string; adapterId?: string };
+export { activeSources, registerAdHocBundle } from "./bundle";
 
 /**
  * Refuse an asset write the bundle's adapter does not make: an adapter that writes nothing, or (with `type`) one
  * that does not write assets of that type.
  */
-export function assertAdapterWrites(source: GateSource, type?: string): void {
-  assetBundleOf(source).assertWrites(type);
+export function assertAdapterWrites(bundle: string, type?: string): void {
+  bundleFor(bundle).assertWrites(type);
 }
 
 /** Whether the bundle's adapter declares assets of `type`, written or only recognized. */
-export function adapterDeclares(source: GateSource, type: string): boolean {
-  return assetBundleOf(source).declares(type);
+export function adapterDeclares(bundle: string, type: string): boolean {
+  return bundleFor(bundle).declares(type);
 }
 
 /** Whether the bundle's adapter writes assets of `type`: it holds them as its own, not as files it reads. */
-export function adapterWrites(source: GateSource, type: string): boolean {
-  return assetBundleOf(source).writes(type);
+export function adapterWrites(bundle: string, type: string): boolean {
+  return bundleFor(bundle).writes(type);
 }
 
 /** Refuse with a message naming the bundle and its adapter: `Bundle "x" uses adapter "y", which <what>.` */
-export function refuseByAdapter(source: GateSource, what: string, code: UsageErrorCode): never {
-  return assetBundleOf(source).refuse(what, code);
+export function refuseByAdapter(bundle: string, what: string, code: UsageErrorCode): never {
+  return bundleFor(bundle).refuse(what, code);
 }
 
 /** How config names the bundles of adapter `adapterId`: by a directory (`root`) or by a store's `location`. Undefined: akm has no such adapter. */
@@ -77,13 +77,20 @@ export function akmOwnedDirNames(root: string): string[] {
 }
 
 /** Whether the bundle's storage is there: a directory exists, a keyring or vault answers. It reads no asset and never prompts. */
-export function bundleStorageExists(source: GateSource): boolean {
+export function bundleStorageExists(source: {
+  name: string;
+  path: string;
+  location: string;
+  adapterId: string;
+}): boolean {
+  // Not `bundleFor`: `akm bundle list` reports a bundle that is disabled, which no lookup resolves.
   return assetBundleOf(source).exists();
 }
 
 /** Forget what the adapters read of their keyrings and vaults. The CLI calls it per command and Desktop per request: a store changes between them. */
 export function clearAdapterCaches(): void {
   clearRegistryCaches();
+  clearAdHocBundles();
 }
 
 export { bundleAdapterId } from "../adapter/detect-adapter";
