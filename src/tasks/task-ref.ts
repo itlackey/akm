@@ -9,7 +9,7 @@
  */
 
 import { stashDirFor, withoutTypeHead } from "../core/asset/asset-placement";
-import { makeBundleRef } from "../core/asset/asset-ref";
+import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
 import { adapterDeclares, adapterWrites, bundleAdapterId, registerAdHocBundle } from "../core/assets/gate";
 import { type Asset, listAssets, readAsset, requireAsset } from "../core/assets/read";
@@ -54,8 +54,9 @@ export function taskFileOf(asset: Asset): string {
 
 /** The asset `ref` names in the bundle held at `source`; a `NotFoundError` when it holds none. */
 export function requireAssetIn(source: TaskBundleSource, ref: string): Asset {
-  taskBundleId(source);
-  return requireAsset(ref);
+  const bundle = taskBundleId(source);
+  const parsed = parseBundleRef(ref);
+  return requireAsset(parsed.bundle === source.name ? makeBundleRef(bundle, parsed.conceptId, parsed.fragment) : ref);
 }
 
 /** The task assets of `candidates` (a listing made without a type), typed by the index. */

@@ -41,15 +41,40 @@ const adHocIdOfDir = new Map<string, string>();
 
 /**
  * Make the bundle of a directory a caller holds addressable by an id (`bundleFor`): one no config entry names, or one
- * config names but did not resolve to a directory (a git bundle not yet cloned that a write has just made). Returns the id: the one the
+ * config names but did not resolve to a directory (a git bundle not yet cloned that a write has just made; it keeps the
+ * adapter and location config gives it). A configured bundle keeps its adapter and location, and a store is never replaced. Returns the id: the one the
  * directory already has, else `source.name`, else (another directory holds that id) an id derived from this
  * directory that no configured name and no other registered directory has. Use the returned id, not the one asked for.
  */
 export function registerAdHocBundle(source: BundleSource): string {
   const config = loadConfig();
+  const entry = config.bundles?.[source.name];
+  const named = entry !== undefined;
+  if (named) {
+    // A configured bundle keeps the adapter and location config gives it, whatever the caller holds.
+    let held: SearchSource | undefined;
+    try {
+      const sources = activeSources(config);
+      held = sources[deriveBundleIds(sources).indexOf(source.name)];
+    } catch {
+      // The configured sources cannot be resolved as a set: this bundle is then taken as the caller holds it.
+    }
+    // A store, or a directory bundle the caller holds at the directory config resolves it to, is config's as it is.
+    if (held !== undefined && !held.unresolved) {
+      if (entry.location !== undefined || safeRealpath(held.path) === safeRealpath(source.path)) return source.name;
+    }
+    // Otherwise the caller holds the directory somewhere else (a scratch copy a task is checked in) or config has not
+    // resolved it yet (a git bundle a write just cloned): it is kept where the caller has it.
+    const adapterId = entry.adapter ?? held?.adapterId;
+    source = {
+      name: source.name,
+      path: source.path,
+      ...(adapterId !== undefined ? { adapterId } : {}),
+      ...(entry.location !== undefined ? { location: entry.location } : {}),
+    };
+  }
   const dir = safeRealpath(source.path);
   // A name config gives a bundle is its id, whatever id the directory was registered under before (a rename).
-  const named = config.bundles?.[source.name] !== undefined;
   let id = named ? source.name : (adHocIdOfDir.get(dir) ?? source.name);
   const holder = adHocBundles.get(id);
   // An id whose directory is gone (a removed temporary directory) is free again.
