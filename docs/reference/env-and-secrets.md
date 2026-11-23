@@ -346,6 +346,32 @@ such a bundle after the bundles before it in priority.
   directory bundles; the Desktop protected-file view shows, edits, creates and
   deletes these secrets too.
 
+### Unlocking a keyring, and unattended work
+
+**Interactive use: keep akm's secrets in the wallet your login unlocks.** On
+most desktops PAM unlocks one keyring when you log in: GNOME's `login` keyring
+(`libpam-gnome-keyring`) and KWallet's `kdewallet` (`pam_kwallet5`, or
+`ksecretd --pam-login`). It works only when that wallet's password is your
+login password, and on KWallet only for a classic (blowfish) wallet, not a GPG
+one. Point the bundle's `location` at that wallet, and reads need no prompt for
+as long as you are logged in. A dedicated wallet is not unlocked at login: the
+first read after it locks shows the keyring manager's own password prompt, and
+someone has to answer it.
+
+**What a keyring cannot do:** akm run without your desktop session (a
+scheduled akm task, cron, a container, an SSH session) usually cannot reach
+your session's D-Bus at all, so there is no keyring to talk to, locked or not.
+Setting `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/<uid>/bus` in that
+environment reaches it only while you are logged in and the wallet is unlocked;
+otherwise akm fails saying the keyring is locked or cannot be reached. Nobody
+is there to answer a prompt, and an unanswered KWallet dialog blocks every
+KWallet request until it is answered.
+
+**For unattended work** (scheduled tasks, CI, containers, anything that runs
+while you are logged out) **use file-based secrets** (a bundle's `env/` and
+`secrets/` files) **or an Azure Key Vault bundle**, not a desktop keyring.
+Keyring bundles are for interactive use.
+
 ## Write-target resolution
 
 Env and secret mutations (`env create`, `env remove`, `secret set`, `secret remove`) choose their
