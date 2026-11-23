@@ -147,7 +147,7 @@ describe("lint-asset-io", () => {
       violationsIn(
         Object.fromEntries(
           [
-            "src/core/adapter/directory/walker.ts",
+            "src/indexer/walk/walker.ts",
             "src/indexer/passes/metadata.ts",
             "src/workflows/source-files.ts",
             "src/indexer/indexer.ts",
@@ -221,7 +221,7 @@ describe("lint-asset-io", () => {
     const code = 'import { x } from "../../core/adapter/registry";\nexport const a = x;\n';
     expect(
       violationsIn({
-        "src/core/adapter/directory/file-context.ts": code,
+        "src/indexer/walk/file-context.ts": code,
         "src/indexer/passes/metadata.ts": code,
         "src/indexer/passes/other.ts": code,
       }),
