@@ -14,6 +14,7 @@ import { stashDirFor } from "../asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { parsePlacementRef } from "../asset/resolve-ref";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
+import { warn } from "../warn";
 import { recordWrittenPath } from "../write-provenance";
 import {
   commitWriteTargetBoundary,
@@ -189,8 +190,13 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
   /** What the index holds for the asset a change touched: its row is written again, or dropped with the asset. */
   const reindex = (change: AssetChange, kept: boolean): void => {
     const asset = kept ? readFrom(held, change.conceptId) : undefined;
-    if (asset) refreshIndexedAsset(asset);
-    else forgetIndexedAsset(held, change.conceptId);
+    const updated = asset ? refreshIndexedAsset(asset) : forgetIndexedAsset(held, change.conceptId);
+    // A store's asset is found through its index row alone: a row not updated is a secret later commands miss or still list.
+    if (!updated && held.isStore) {
+      warn(
+        `The index was not updated for "${makeBundleRef(source.name, change.conceptId)}" (no index, or another akm is writing it): run \`akm index\` so other commands see the change.`,
+      );
+    }
   };
   const result = (change: AssetChange, kept = true): WriteResult => {
     record(change);

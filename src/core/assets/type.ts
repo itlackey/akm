@@ -62,15 +62,16 @@ export function indexAsset(
   return indexAssets([asset], options).get(asset) as IndexDocument;
 }
 
-/** Write the index rows of `documents`, when a usable index serves them. See {@link write} for `supersede`. */
-function record(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean): void {
+/** Write the index rows of `documents`, when a usable index serves them, and say whether they were. See {@link write} for `supersede`. */
+function record(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean): boolean {
   // No index, nothing to write, and no lock file made either.
-  if (isPathAbsent(getDbPath())) return;
+  if (isPathAbsent(getDbPath())) return false;
   try {
     // The index-writer lock the indexer takes; held by a running rebuild, nothing is written (no waiting).
-    withAssetMutationLeaseSync("index-asset", () => write(documents, supersede), { maxWaitMs: 0 });
+    return withAssetMutationLeaseSync("index-asset", () => write(documents, supersede), { maxWaitMs: 0 });
   } catch (error) {
     warnVerbose("Index update skipped (the assets are indexed by the next `akm index`):", error);
+    return false;
   }
 }
 
@@ -79,11 +80,11 @@ function record(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean
  * replaced. Without it (a read found no row for the ref) that row stays: bundles whose roots nest share files, and a
  * read must not move a file from one bundle's row to the other's.
  */
-function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean): void {
+function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean): boolean {
   {
     const first = documents.keys().next().value as Asset;
     const usable = openUsableIndex(bundleHolding(first).root, { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
-    if (!usable) return;
+    if (!usable) return false;
     try {
       const { db } = usable;
       const cap = embeddingInputCap(loadConfig());
@@ -120,6 +121,7 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean)
         }
         addIndexOnMissRefs(db, written);
       })();
+      return true;
     } finally {
       closeDatabase(usable.db);
     }
@@ -128,16 +130,16 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean)
 
 /**
  * Take the row of one ref out of the index (an asset deleted or retired), under the same lock and with the same
- * fail-open rule as a write of a row.
+ * fail-open rule as a write of a row. Says whether the index was updated.
  */
-export function forgetIndexedAsset(bundle: AssetBundle, conceptId: string): void {
-  if (isPathAbsent(getDbPath())) return;
+export function forgetIndexedAsset(bundle: AssetBundle, conceptId: string): boolean {
+  if (isPathAbsent(getDbPath())) return false;
   try {
-    withAssetMutationLeaseSync(
+    return withAssetMutationLeaseSync(
       "index-asset",
       () => {
         const usable = openUsableIndex(bundle.root, { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
-        if (!usable) return;
+        if (!usable) return false;
         try {
           const rows = usable.db
             .prepare("SELECT id FROM entries WHERE item_ref = ?")
@@ -146,6 +148,7 @@ export function forgetIndexedAsset(bundle: AssetBundle, conceptId: string): void
             usable.db,
             (rows as Array<{ id: number }>).map((row) => row.id),
           );
+          return true;
         } finally {
           closeDatabase(usable.db);
         }
@@ -154,15 +157,17 @@ export function forgetIndexedAsset(bundle: AssetBundle, conceptId: string): void
     );
   } catch (error) {
     warnVerbose("Index update skipped (the next `akm index` drops the row):", error);
+    return false;
   }
 }
 
-/** Record the row of one asset that akm wrote: the same refresh a miss in {@link assetType} makes. */
-export function refreshIndexedAsset(asset: Asset): void {
+/** Record the row of one asset that akm wrote: the same refresh a miss in {@link assetType} makes. Says whether it was recorded. */
+export function refreshIndexedAsset(asset: Asset): boolean {
   try {
-    indexAsset(asset);
+    return record(new Map([[asset, indexAsset(asset, { persist: false })]]), true);
   } catch (error) {
     warnVerbose(`Index update for ${asset.ref} skipped:`, error);
+    return false;
   }
 }
 

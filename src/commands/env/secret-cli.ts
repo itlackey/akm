@@ -20,6 +20,7 @@ import fs from "node:fs";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output, reportChildExit } from "../../cli/shared";
+import { unindexedHint } from "../../core/assets/read";
 import {
   findWriteTargetAsset,
   listSecrets,
@@ -195,7 +196,9 @@ const secretRemoveCommand = defineJsonCommand({
       stderr().write("Aborted.\n");
       return;
     }
-    if (!findWriteTargetAsset(resolution)) throw new NotFoundError(`Secret not found: ${ref}`);
+    if (!findWriteTargetAsset(resolution)) {
+      throw new NotFoundError(`Secret not found: ${ref}`, "ASSET_NOT_FOUND", unindexedHint(ref));
+    }
     writeEnvSecret(resolution, { op: "delete" });
     output("secret-remove", { ref, removed: true });
   },

@@ -16,7 +16,7 @@ import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "
 import { stashDirFor } from "./asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
-import { type Asset, listAssets, lookupAsset, readAsset } from "./assets/read";
+import { type Asset, listAssets, lookupAsset, readAsset, unindexedHint } from "./assets/read";
 import { assetType } from "./assets/type";
 import { fileOfRef, type WriteResult, writeAssets } from "./assets/write";
 import { deriveBundleIds } from "./bundle-id";
@@ -112,7 +112,11 @@ function ownerOfType(ref: string, type: "env" | "secret", form: string): { writt
   if (!asset) {
     // Not found: a typed placement address reads as "not found", anything else as the wrong kind of ref.
     parseTypedRef(ref, type, form);
-    throw new NotFoundError(`${type === "env" ? "Env" : "Secret"} not found: ${ref}`);
+    throw new NotFoundError(
+      `${type === "env" ? "Env" : "Secret"} not found: ${ref}`,
+      "ASSET_NOT_FOUND",
+      unindexedHint(ref),
+    );
   }
   if (assetType(asset) !== type) {
     throw new UsageError(

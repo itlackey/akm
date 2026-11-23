@@ -17,6 +17,7 @@ import type { IndexDocument } from "../adapter/types";
 import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { compareCodePoints } from "../common";
 import { assetNotFound, ConfigError } from "../errors";
+import { warnOnce } from "../warn";
 import { type Asset, assetOf, readExact, readFrom, readOutdated } from "./asset";
 import { type AssetBundle, assetBundleOf, bundleFor, orderedBundles } from "./bundle";
 import { assetTypes } from "./type";
@@ -135,7 +136,7 @@ export function listAssets(
     const bundle = held.name;
     if (options.bundle !== undefined && bundle !== options.bundle) continue;
     if (held.isStore) {
-      found.push(...indexedAssets(held));
+      found.push(...indexedAssets(held, options.type));
       continue;
     }
     if (options.requireComplete && !held.exists()) continue;
@@ -156,16 +157,28 @@ export function listAssets(
   return found.filter((asset) => types === undefined || types.get(asset) === options.type);
 }
 
-/** A store's assets as the index recorded them, by concept id; a value is read from the store only when asked. */
-function indexedAssets(held: AssetBundle): Asset[] {
+/**
+ * A store's assets as the index recorded them, by concept id; a value is read from the store only when asked. With no
+ * usable index there are none, and a listing of what the store holds (`type` absent or one it writes) says so once.
+ */
+function indexedAssets(held: AssetBundle, type?: string): Asset[] {
   const rows = readUsableIndex(
     (db) =>
       db.prepare("SELECT concept_id, document_json FROM entries WHERE bundle_id = ?").all(held.name) as Array<{
         concept_id: string;
         document_json: string;
       }>,
-    [],
+    undefined,
   );
+  if (rows === undefined) {
+    if (type === undefined || held.writes(type)) {
+      warnOnce(
+        `unindexed-store:${held.name}`,
+        `Bundle "${held.name}" is listed from the index, and there is no usable index: run \`akm index\`.`,
+      );
+    }
+    return [];
+  }
   return rows
     .map((row) =>
       assetOf(held, { conceptId: row.concept_id, entry: indexedEntry(held, row.concept_id, row.document_json) }),
@@ -189,6 +202,24 @@ function indexedEntry(held: AssetBundle, conceptId: string, documentJson: string
     frontmatter: () => live().frontmatter(),
     ...(locator !== undefined ? { locator } : {}),
   };
+}
+
+/**
+ * The hint for a ref no bundle holds: when it names a store's bundle (a keyring, a vault), whose entries akm finds
+ * through the index alone, `akm index`; otherwise none.
+ */
+export function unindexedHint(ref: string): string | undefined {
+  const { bundle } = parseBundleRef(ref);
+  if (bundle === undefined) return undefined;
+  let held: AssetBundle;
+  try {
+    held = bundleFor(bundle);
+  } catch {
+    // No bundle has that id: the not-found message says what it says.
+    return undefined;
+  }
+  if (!held.isStore) return undefined;
+  return `akm finds the entries of bundle "${bundle}" through the index: run \`akm index\` if this one was added since it last ran.`;
 }
 
 /** What the index scan asks of one bundle: its adapter's id, one listing, and the description of one entry. */

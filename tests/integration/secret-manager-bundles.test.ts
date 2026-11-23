@@ -179,6 +179,34 @@ describe("secret manager bundles", () => {
     });
   });
 
+  test("a keyring's secret is found through its index row: without one, akm says to run akm index", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, vaults: VAULT }, async () => {
+      // No index yet: the list says so, and so does a read and a write.
+      const unindexed = await runCliCapture(["secret", "list", "--format", "json"]);
+      expect(unindexed.code).toBe(0);
+      expect(unindexed.stderr).toContain('Bundle "keyring" is listed from the index, and there is no usable index');
+      expect(unindexed.stderr).toContain('Bundle "vault" is listed from the index');
+      const missing = await akm("secret", "run", "keyring//secrets/wifi", "WIFI", "--", "true");
+      expect(missing.code).toBe(1);
+      expect(missing.json).toMatchObject({ code: "ASSET_NOT_FOUND", error: "Secret not found: keyring//secrets/wifi" });
+      expect(String(missing.json.hint)).toContain('akm finds the entries of bundle "keyring" through the index');
+      const set = await runCliCapture([
+        "secret",
+        "set",
+        "keyring//secrets/fresh",
+        "--from-file",
+        writeValueFile("fresh", "v"),
+        "--format",
+        "json",
+      ]);
+      expect(set.code).toBe(0);
+      expect(set.stderr).toContain('The index was not updated for "keyring//secrets/fresh"');
+      // A directory bundle's secret is found without the index: its hint is the usual one.
+      const local = await akm("secret", "run", "secrets/nope", "X", "--", "true");
+      expect(String(local.json.hint ?? "")).not.toContain("akm finds the entries");
+    });
+  });
+
   test("secret list shows the indexed entries while the store is unreachable", async () => {
     await withFakeSecretStores({ keyrings: KEYRING, vaults: VAULT }, async () => {
       await akmIndex({ stashDir: storage.stashDir, full: true });

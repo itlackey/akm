@@ -17,6 +17,7 @@
  *   - Resolved values must never be written to stdout or logs by callers.
  */
 
+import { unindexedHint } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import {
   isInstalledBundle,
@@ -142,8 +143,11 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
     throw new NotFoundError(
       `Env "${envRef}" references asset(s) that no bundle owns: ${missing.join(", ")}. Nothing was injected.`,
       "FILE_NOT_FOUND",
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
-      "Write each `${ref}` as a full akm ref that exists, e.g. `${secrets/name}` or `${team//scripts/run.sh}`.",
+      [
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
+        "Write each `${ref}` as a full akm ref that exists, e.g. `${secrets/name}` or `${team//scripts/run.sh}`.",
+        ...new Set(missing.map(unindexedHint).filter((hint) => hint !== undefined)),
+      ].join(" "),
     );
   }
   envValues = substituted;
