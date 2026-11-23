@@ -241,35 +241,6 @@ export function findWriteTargetAsset(resolution: EnvSecretWriteResolution): Asse
 }
 
 /**
- * The asset a create of this name would meet: the one the name's ref holds, else the one at the concept the name is
- * placed at (`env/default.env` is placed as `env/default`, which `env/.env` holds), under any spelling.
- */
-export function findCreateTargetAsset(resolution: EnvSecretWriteResolution): Asset | undefined {
-  const { source } = resolution.target;
-  return (
-    findWriteTargetAsset(resolution) ??
-    readAsset(source, addressOf(source, `${resolution.type}/${resolution.name}`).conceptId)
-  );
-}
-
-/** Refuse, as a write would, the file that holds the asset a resolution names when its path passes a symbolic link. */
-export function assertEnvSecretFileWritable(resolution: EnvSecretWriteResolution): void {
-  const { source } = resolution.target;
-  const { file } = addressOf(source, `${resolution.type}/${resolution.name}`);
-  if (file !== undefined) assertWritePathsInsideSource(source, [file]);
-}
-
-/**
- * Whether the asset a resolution finds is kept in a file other than the one a new one is placed at (`env/default.env`;
- * the default env is placed at `env/.env`), so creating it again would write a twin beside it.
- */
-export function heldUnderOtherSpelling(resolution: EnvSecretWriteResolution, held: Asset): boolean {
-  const typeDir = stashDirFor(resolution.type);
-  if (typeDir === undefined) return false;
-  return toPosix(assetPathForName(resolution.type, typeDir, resolution.name)) !== held.entry.relPath;
-}
-
-/**
  * Create, update or delete the env file or secret a resolution names, through the target bundle's adapter, as one
  * operation committed at the target's boundary. A removal deletes: an env file or secret is never retired.
  */

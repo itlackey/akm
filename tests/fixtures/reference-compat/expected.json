@@ -10405,6 +10405,139 @@
         }
       }
     },
+    "task symlinks :: import task over escaping link": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Task \"es\" already exists. Pass --force to overwrite.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      }
+    },
+    "task symlinks :: import task over escaping link --force": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Resolved asset path escapes its source: \"es\" in source \"main\".",
+        "code": "PATH_ESCAPE_VIOLATION"
+      }
+    },
+    "task symlinks :: import task over broken link": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": "t.yml",
+        "path": "<SANDBOX>/fixture/main/tasks/br.yml",
+        "ref": "main//tasks/br",
+        "shape": "import",
+        "schemaVersion": 1
+      }
+    },
+    "task symlinks :: import task over broken link --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": "t.yml",
+        "path": "<SANDBOX>/fixture/main/tasks/br.yml",
+        "ref": "main//tasks/br",
+        "shape": "import",
+        "schemaVersion": 1
+      }
+    },
+    "task symlinks :: import task over directory": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Task \"dd\" already exists. Pass --force to overwrite.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      }
+    },
+    "task symlinks :: task add over directory": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Task \"dd\" already exists. Pass --force to overwrite, or delete its file and run `akm doctor scheduler sync` first.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      }
+    },
+    "task symlinks :: tasks": {
+      "value": {
+        "es": "link to ../../../outside/es.yml",
+        "br": "file",
+        "dd": "directory"
+      }
+    },
+    "writes into a bundle whose adapter does not write the type :: remember": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Bundle \"denv\" uses adapter \"dotenv\", which does not support AKM asset writes.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "writes into a bundle whose adapter does not write the type :: import": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Bundle \"denv\" uses adapter \"dotenv\", which does not support AKM asset writes.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "writes into a bundle whose adapter does not write the type :: import task": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Bundle \"denv\" uses adapter \"dotenv\", which does not support AKM asset writes.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "writes into a bundle whose adapter does not write the type :: task add": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Bundle \"denv\" uses adapter \"dotenv\", which does not support AKM asset writes.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "writes into a bundle whose adapter does not write the type :: workflow create": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm workflow create is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Unknown flag \"--bundle\".",
+        "code": "UNKNOWN_FLAG",
+        "hint": "Run the command with `--help` to see its accepted flags."
+      }
+    },
+    "writes into a bundle whose adapter does not write the type :: env create": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "denv//env/new",
+        "shape": "env-create",
+        "schemaVersion": 1
+      }
+    },
+    "writes into a bundle whose adapter does not write the type :: secret set knowledge": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "denv//secrets/s",
+        "shape": "secret-set",
+        "schemaVersion": 1
+      }
+    },
     "task in an off-case file :: task enable tasks/Up": {
       "exit": 1,
       "errorJson": {

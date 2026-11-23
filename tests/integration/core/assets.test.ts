@@ -673,7 +673,7 @@ describe("writeAssets", () => {
     const target = targetOf(dotenv);
     expect(() =>
       writeAssets(target, { purpose: "test" }, (w) => w.create({ type: "knowledge", name: "note", content: "x" })),
-    ).toThrow('Bundle "env-only" uses adapter "dotenv", which does not write knowledge assets.');
+    ).toThrow('Bundle "env-only" uses adapter "dotenv", which does not support AKM asset writes.');
     expect(writeAssets(target, { purpose: "test" }, (w) => w.update("env/prod", "A=2\n")).ref).toBe(
       "env-only//env/prod",
     );
@@ -690,7 +690,7 @@ describe("writeAssets", () => {
     const stash = bundleOf("stash", { "env/prod.env": "A=1\n", "memories/m.md": "---\ndescription: m\n---\nm\n" });
     const target = targetOf(stash);
     expect(() => writeAssets(target, { purpose: "test" }, (w) => w.retire("env/prod", {}))).toThrow(
-      'Bundle "stash" uses adapter "akm", which does not retire env assets.',
+      'Bundle "stash" uses adapter "akm", which does not support AKM asset writes.',
     );
     const retired = writeAssets(target, { purpose: "test" }, (w) => {
       const change = w.retire("memories/m", { reason: "test" });
@@ -791,9 +791,9 @@ describe("a keyring bundle behind the facade", () => {
           expect(findAsset("keyring//secrets/other", { sources })).toBeUndefined();
           expect(() =>
             writeAssets(target, { purpose: "test" }, (w) => w.create({ type: "knowledge", name: "k", content: "x" })),
-          ).toThrow('Bundle "keyring" uses adapter "secret-tool", which does not write knowledge assets.');
+          ).toThrow('Bundle "keyring" uses adapter "secret-tool", which does not support AKM asset writes.');
           expect(() => writeAssets(target, { purpose: "test" }, (w) => w.retire("secrets/gh_token", {}))).toThrow(
-            "which does not retire secret assets.",
+            "which does not support AKM asset writes.",
           );
         },
       );

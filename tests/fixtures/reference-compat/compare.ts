@@ -76,6 +76,8 @@ export const APPROVED_ROWS: ReadonlySet<string> = new Set([
   "F1",
   // F5 is provisional (Fable, design §0.2): a task held in an off-case file is scheduled by sync and accepted by enable.
   "F5",
+  // F8 is provisional (Fable, design §0.2): a broken symbolic link where an import writes is refused, the link left.
+  "F8",
 ]);
 
 /** True when `row` names only approved §0.2 rows (`A3`, or `A3+A5`). */

@@ -8,6 +8,7 @@
  * same order, whichever adapter holds the bundle, and its files are recorded for the target's boundary commit.
  */
 
+import fs from "node:fs";
 import { withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
 import type { SearchSource } from "../../indexer/search/search-source";
 import type { AssetChange, NewAsset, Retirement, RetireNote } from "../adapter/bundle-adapter";
@@ -34,13 +35,19 @@ export interface AssetAddress {
   name: string;
   /** The bundle the ref names, when it names one. */
   origin?: string;
-  /** Whether an asset holds the ref now. Otherwise `conceptId` is where a new asset of the ref's type goes. */
+  /**
+   * Whether an asset holds the ref now: the asset the ref names, else the one at the concept a create of the ref
+   * places, else a non-asset entry (a directory) where a create would write. Otherwise `conceptId` is where a new asset
+   * of the ref's type goes.
+   */
   exists: boolean;
   /**
    * The file that holds the asset, when it exists, else the file a new one would be kept at; absent when its bundle
    * keeps no file for it. Display only (§0.2 P13): never stored, never an identity.
    */
   file?: string;
+  /** The file a create of the ref writes when no asset holds it; differs from `file` when the asset is held under another spelling. */
+  placedFile?: string;
 }
 
 /** What a write tells its caller: the asset's ref and the content it now holds (absent after a delete or retire). */
@@ -80,13 +87,13 @@ function searchSourceOf(source: WriteSource): SearchSource {
 function addressIn(held: AssetBundle, source: WriteSource, ref: string, gate: boolean): AssetAddress {
   const readIn = (id: string): Asset | undefined => readFrom(searchSourceOf(source), source.name, id);
   const { bundle: origin, conceptId: written, fragment } = parseBundleRef(ref);
-  const found = fragment === undefined ? readIn(written) : undefined;
-  if (found) {
+  const holding = (found: Asset, placedFile: () => string | undefined): AssetAddress => {
     const { conceptId } = found;
     const type = assetType(found);
     const typeDir = stashDirFor(type);
     const name =
       typeDir !== undefined && conceptId.startsWith(`${typeDir}/`) ? conceptId.slice(typeDir.length + 1) : conceptId;
+    const placedAt = placedFile();
     return {
       conceptId,
       type,
@@ -94,7 +101,19 @@ function addressIn(held: AssetBundle, source: WriteSource, ref: string, gate: bo
       ...(origin !== undefined ? { origin } : {}),
       exists: true,
       ...(found.entry.file !== undefined ? { file: found.entry.file } : {}),
+      ...(placedAt !== undefined ? { placedFile: placedAt } : {}),
     };
+  };
+  const found = fragment === undefined ? readIn(written) : undefined;
+  if (found) {
+    // Where a create of the ref would write, for a ref a create can place; the ref of any other asset has none.
+    return holding(found, () => {
+      try {
+        return held.placedFile(parsePlacementRef(ref));
+      } catch {
+        return undefined;
+      }
+    });
   }
   const placed = parsePlacementRef(ref);
   const named = { type: placed.type, name: placed.name, ...(origin !== undefined ? { origin } : {}), exists: false };
@@ -120,11 +139,13 @@ function addressIn(held: AssetBundle, source: WriteSource, ref: string, gate: bo
     }
   };
   const file = attempt(() => held.placedFile(placed));
-  return {
-    conceptId: attempt(() => held.place(placed)) ?? written,
-    ...named,
-    ...(file !== undefined ? { file } : {}),
-  };
+  const conceptId = attempt(() => held.place(placed)) ?? written;
+  // A create replaces the asset at the concept it places (`env/default` is placed as the concept `env/.env` holds).
+  const there = conceptId !== written && fragment === undefined ? readIn(conceptId) : undefined;
+  if (there) return holding(there, () => file);
+  // A directory, or any other entry no adapter reads as an asset, at the file a create writes holds the ref too.
+  const occupied = file !== undefined && fs.existsSync(file);
+  return { conceptId, ...named, exists: occupied, ...(file !== undefined ? { file } : {}) };
 }
 
 /**

@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef } from "../../core/asset/asset-ref";
-import { readAsset, writeAssets } from "../../core/assets/write";
+import { addressOf, writeAssets } from "../../core/assets/write";
 import { loadConfig, mutateConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { commitWriteTargetBoundary, prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
@@ -44,7 +44,7 @@ export async function importTaskFile(
   const target = resolveWriteTarget(config, input.target, { requireWritable: true, flag: "--bundle" });
   const file = assetPathForName("task", path.join(target.source.path, "tasks"), id);
   return withSchedulerLock(async () => {
-    const existed = fs.existsSync(file) || readAsset(target.source, `tasks/${id}`) !== undefined;
+    const existed = addressOf(target.source, `tasks/${id}`).exists;
     if (existed && !input.force) {
       throw new UsageError(`Task "${id}" already exists. Pass --force to overwrite.`, "RESOURCE_ALREADY_EXISTS");
     }

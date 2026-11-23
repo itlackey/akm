@@ -859,12 +859,14 @@ describe("conformance — refusal and not-found sentences have one home", () => 
         'Bundle "wiki" uses adapter "okf", which does not support AKM asset writes.',
       );
       expect(() => akm.assertWrites("nope")).toThrow(
-        'Bundle "stash" uses adapter "akm", which does not write nope assets.',
+        'Bundle "stash" uses adapter "akm", which does not support AKM asset writes.',
       );
       expect(() => akm.assertRetires("env")).toThrow(
-        'Bundle "stash" uses adapter "akm", which does not retire env assets.',
+        'Bundle "stash" uses adapter "akm", which does not support AKM asset writes.',
       );
-      expect(() => readOnly.assertRetiring()).toThrow('Bundle "wiki" (adapter "okf") does not retire assets.');
+      expect(() => readOnly.assertRetiring()).toThrow(
+        'Bundle "wiki" uses adapter "okf", which does not support AKM asset writes.',
+      );
     } finally {
       sandbox.cleanup();
     }

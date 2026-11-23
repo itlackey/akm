@@ -12,6 +12,7 @@
 import path from "node:path";
 import { normalizeAkmMarkdown } from "../../asset/akm-markdown";
 import { assetPathForName, stashDirFor } from "../../asset/asset-placement";
+import { isWithin } from "../../common";
 import { UsageError } from "../../errors";
 import { warn, warnOnce } from "../../warn";
 import type { NewAsset } from "../bundle-adapter";
@@ -57,9 +58,10 @@ export function placeInTypeFolder(b: Bundle, { type, name }: Pick<NewAsset, "typ
   const typeRoot = path.join(b.root, typeDir);
   const file = assetPathForName(type, typeRoot, name);
   const relative = path.relative(typeRoot, file);
-  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
+  // Also where the file is a link that leaves the folder; a link to nowhere is the symbolic-link refusal's, at the write.
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative) || !isWithin(file, typeRoot)) {
     throw new UsageError(
-      `Resolved asset path escapes its source: "${name}" in bundle "${b.id}".`,
+      `Resolved asset path escapes its source: "${name}" in source "${b.id}".`,
       "PATH_ESCAPE_VIOLATION",
     );
   }

@@ -22,7 +22,7 @@ import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement"
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
-import { readAsset, writeAssets } from "../../core/assets/write";
+import { addressOf, writeAssets } from "../../core/assets/write";
 import { isHttpUrl, isWithin, resolveStashDir, safeRealpath, samePath, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -745,8 +745,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
     // Pre-flight: existence + force semantics. The helper itself overwrites
     // unconditionally; the CLI surfaces a friendlier UsageError before any
     // disk activity when --force is absent.
-    const held = readAsset(source, conceptIdFromTypeName(options.type, normalizedName));
-    if ((held !== undefined || fs.existsSync(assetPath)) && !options.force) {
+    if (addressOf(source, conceptIdFromTypeName(options.type, normalizedName)).exists && !options.force) {
       throw new UsageError(
         `${options.type === "knowledge" ? "Knowledge" : "Memory"} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
         "RESOURCE_ALREADY_EXISTS",
