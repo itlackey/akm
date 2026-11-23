@@ -9,6 +9,7 @@
  * here is a secret's, for the callers that inject it ({@link readSecret}); no value is surfaced.
  */
 
+import path from "node:path";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
@@ -19,7 +20,7 @@ import { type Asset, findAsset, listAssets } from "./assets/read";
 import { assetType } from "./assets/type";
 import { addressOf, readAsset, type WriteResult, writeAssets } from "./assets/write";
 import { deriveBundleIds } from "./bundle-id";
-import { scanEnvKeyNames, toPosix } from "./common";
+import { isWithin, scanEnvKeyNames } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
 import { resolveMutationTarget } from "./mutation-target";
@@ -210,6 +211,17 @@ function resolveEnvSecretWriteTarget(
     parsed.name = combineCreatePath(normalizeCreateSubPath(create.subPath), parsed.name);
   }
   const resolved = resolveMutationTarget(loadConfig(), parsed, writeTarget);
+  // The file the name is kept in (a link included) must stay in the type's folder; a store keeps no file to look up.
+  const { source } = resolved.target;
+  const folder = stashDirFor(type);
+  const file =
+    source.location === undefined ? addressOf(source, conceptIdFromTypeName(type, parsed.name)).file : undefined;
+  if (file !== undefined && folder !== undefined && !isWithin(file, path.join(source.path, folder))) {
+    throw new UsageError(
+      `${type === "env" ? "Env" : "Secret"} name "${parsed.name}" escapes the ${folder === "env" ? "env" : "secrets"} directory.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
   return {
     type,
     name: parsed.name,

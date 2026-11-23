@@ -21,7 +21,7 @@ import path from "node:path";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output, reportChildExit } from "../../cli/shared";
-import { addressOf, readAsset } from "../../core/assets/write";
+import { addressOf } from "../../core/assets/write";
 import { writeFileAtomic } from "../../core/common";
 import {
   findWriteTargetAsset,
@@ -74,8 +74,7 @@ const envCreateCommand = defineJsonCommand({
     const { ref } = resolution;
     const { source } = resolution.target;
     const held = addressOf(source, `${resolution.type}/${resolution.name}`);
-    // A directory (or other entry that is no asset) where the file goes is left to the write, which refuses it.
-    const exists = held.exists && readAsset(source, held.conceptId) !== undefined;
+    const exists = held.exists;
 
     const fromFile = args["from-file"];
     const fromStdin = args["from-stdin"] === true;
@@ -119,7 +118,7 @@ const envCreateCommand = defineJsonCommand({
       );
     }
     if (!exists || content !== undefined) {
-      writeEnvSecret(resolution, { op: "create", content: content ?? "" });
+      writeEnvSecret(resolution, { op: "create", content: content ?? "", exclusive: true });
     } else {
       // Left as it is, but a file the write would have refused (a symbolic link) is refused still.
       if (held.file !== undefined) assertWritePathsInsideSource(source, [held.file]);

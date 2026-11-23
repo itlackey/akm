@@ -412,6 +412,71 @@ export const SCENARIOS: Scenario[] = [
     },
   },
   {
+    // A file that is a link leaving its type's folder, written over (each type refuses in its own words: workflow and
+    // memory by the symbolic-link refusal, env and secret by their name refusal), and an env over a directory (a no-op;
+    // refused when given content).
+    id: "links leaving the type folder",
+    setup: (sb) => {
+      const doc = "---\ndescription: d\n---\n\nD.\n";
+      for (const [dir, name] of [
+        ["workflows", "wfl.md"],
+        ["memories", "mml.md"],
+        ["knowledge", "kkl.md"],
+        ["env", "evl.env"],
+        ["secrets", "sel"],
+      ] as const) {
+        write(path.join(sb.root, "outside", name), name.endsWith(".env") || name === "sel" ? "A=1\n" : doc);
+        fs.symlinkSync(`../../../outside/${name}`, path.join(sb.fixture, "main", dir, name));
+      }
+      fs.mkdirSync(path.join(sb.fixture, "main/env/evd.env"));
+      write(path.join(sb.root, "work/seed.env"), "S=1\n");
+      write(path.join(sb.root, "work/doc.md"), doc);
+    },
+    cases: [
+      c("workflow create over link --force", ["workflow", "create", "wfl", "--force"]),
+      c("remember over link --force", ["remember", "x", "--name", "mml", "--force"]),
+      c("import over link --force", ["import", "doc.md", "--name", "kkl", "--force"]),
+      c("env create over link", ["env", "create", "env/evl"]),
+      c("env create over link --from-file", ["env", "create", "env/evl", "--from-file", "seed.env"]),
+      c("secret set over link", ["secret", "set", "secrets/sel"], { stdin: "v" }),
+      c("env create over directory", ["env", "create", "env/evd"]),
+      c("env create over directory --from-file", ["env", "create", "env/evd", "--from-file", "seed.env"]),
+    ],
+  },
+  {
+    // `--force` over a link that stays inside its folder (F9): refused as a symbolic link, the link left; `1f2e58c9`
+    // replaced the link with a regular file.
+    id: "write over a link inside the folder",
+    setup: (sb) => {
+      const doc = "---\ndescription: d\n---\n\nD.\n";
+      write(path.join(sb.root, "work/doc.md"), doc);
+      fs.copyFileSync(path.join(sb.fixture, "main/tasks/nightly.yml"), path.join(sb.root, "work/t.yml"));
+      write(path.join(sb.fixture, "main/knowledge/real-k.md"), doc);
+      write(path.join(sb.fixture, "main/memories/real-m.md"), doc);
+      fs.copyFileSync(path.join(sb.fixture, "main/tasks/nightly.yml"), path.join(sb.fixture, "main/tasks/real-t.yml"));
+      fs.symlinkSync("real-k.md", path.join(sb.fixture, "main/knowledge/lk.md"));
+      fs.symlinkSync("real-m.md", path.join(sb.fixture, "main/memories/lm.md"));
+      fs.symlinkSync("real-t.yml", path.join(sb.fixture, "main/tasks/lt.yml"));
+      fs.symlinkSync("real-t.yml", path.join(sb.fixture, "main/tasks/lta.yml"));
+    },
+    prep: [["index", "--quiet"]],
+    cases: [
+      c("import --force", ["import", "doc.md", "--name", "lk", "--force"]),
+      c("import task --force", ["import", "t.yml", "--type", "task", "--name", "lt", "--force"]),
+      c("task add --force", ["task", "add", "lta", "--schedule", "@daily", "--command", "echo x", "--force"]),
+      c("remember --force", ["remember", "x", "--name", "lm", "--force"]),
+    ],
+    finals: {
+      links: (sb) =>
+        Object.fromEntries(
+          ["knowledge/lk.md", "memories/lm.md", "tasks/lt.yml", "tasks/lta.yml"].map((rel) => {
+            const file = path.join(sb.fixture, "main", rel);
+            return [rel, fs.lstatSync(file).isSymbolicLink() ? `link to ${fs.readlinkSync(file)}` : "file"];
+          }),
+        ),
+    },
+  },
+  {
     // A write into a bundle whose adapter does not write the type is refused with the one sentence `1f2e58c9` gave
     // (`which does not support AKM asset writes`), whatever the type.
     id: "writes into a bundle whose adapter does not write the type",

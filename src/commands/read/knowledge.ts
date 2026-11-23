@@ -779,7 +779,10 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
     let writtenFile: string | undefined;
     const change = writeAssets({ source, config }, { purpose: "markdown-write" }, (w) => {
       writtenFile = w.address(conceptIdFromTypeName(resolved.ref.type, resolved.ref.name)).file;
-      return w.create({ type: resolved.ref.type, name: resolved.ref.name, content: options.content });
+      return w.create(
+        { type: resolved.ref.type, name: resolved.ref.name, content: options.content },
+        { exclusive: !options.force },
+      );
     });
     const { conceptId } = parseBundleRef(change.ref);
     const durableRef = displayRef({ conceptId, bundleId: resolved.ref.origin });

@@ -78,6 +78,8 @@ export const APPROVED_ROWS: ReadonlySet<string> = new Set([
   "F5",
   // F8 is provisional (Fable, design §0.2): a broken symbolic link where an import writes is refused, the link left.
   "F8",
+  // F9 is provisional (design §0.2): a write over a symbolic link that stays inside its folder is refused, the link left.
+  "F9",
 ]);
 
 /** True when `row` names only approved §0.2 rows (`A3`, or `A3+A5`). */

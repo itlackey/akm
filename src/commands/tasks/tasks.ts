@@ -241,7 +241,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     const writtenPath =
       writeAssets(bundle.resolved, { purpose: "task-add" }, (w) => {
         const { file } = w.address(`tasks/${id}`);
-        w.create({ type: "task", name: id, content: yaml });
+        w.create({ type: "task", name: id, content: yaml }, { exclusive: !input.force });
         return file;
       }) ?? assetPath;
     (deps.commitBoundary ?? commitWriteTargetBoundary)(bundle.resolved, `Update tasks/${id}`);

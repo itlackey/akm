@@ -10469,6 +10469,145 @@
         "dd": "directory"
       }
     },
+    "links leaving the type folder :: workflow create over link --force": {
+      "exit": 2,
+      "stderr": [
+        "[deprecated] akm workflow create is deprecated and is removed in 0.11: workflows go in 0.11, and tasks take over their ordered steps. See STABILITY.md."
+      ],
+      "errorJson": {
+        "ok": false,
+        "error": "Write path contains a symbolic link below source \"main\": workflows/wfl.md",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "links leaving the type folder :: remember over link --force": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Resolved memory path escapes the stash: \"mml\"",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "links leaving the type folder :: import over link --force": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Resolved knowledge path escapes the stash: \"kkl\"",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "links leaving the type folder :: env create over link": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Env name \"evl\" escapes the env directory.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "links leaving the type folder :: env create over link --from-file": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Env name \"evl\" escapes the env directory.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "links leaving the type folder :: secret set over link": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Secret name \"sel\" escapes the secrets directory.",
+        "code": "INVALID_FLAG_VALUE",
+        "hint": "Run `akm <command> --help` to see accepted values."
+      }
+    },
+    "links leaving the type folder :: env create over directory": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "env/evd",
+        "shape": "env-create",
+        "schemaVersion": 1
+      }
+    },
+    "links leaving the type folder :: env create over directory --from-file": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Env \"env/evd\" already exists. Remove it first (`akm env remove`) or edit the file directly.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      }
+    },
+    "write over a link inside the folder :: import --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": "doc.md",
+        "ref": "knowledge/lk",
+        "path": "<SANDBOX>/fixture/main/knowledge/lk.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "import",
+        "schemaVersion": 1
+      }
+    },
+    "write over a link inside the folder :: import task --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "source": "t.yml",
+        "path": "<SANDBOX>/fixture/main/tasks/lt.yml",
+        "ref": "main//tasks/lt",
+        "shape": "import",
+        "schemaVersion": 1
+      }
+    },
+    "write over a link inside the folder :: task add --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "id": "lta",
+        "ref": "tasks/lta",
+        "path": "<SANDBOX>/fixture/main/tasks/lta.yml",
+        "bundleDir": "<SANDBOX>/fixture/main",
+        "schedule": "@daily",
+        "enabled": true,
+        "backend": "cron",
+        "target": {
+          "kind": "run",
+          "run": "echo x"
+        },
+        "shape": "task-add",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm task add is deprecated and is removed in 0.11: use `akm import <file> --type task`. See STABILITY.md.",
+        "Scheduled tasks now run akm from a source checkout (<BUN> <TREE>/src/cli.ts); they run whatever the checkout holds when they fire. Install akm with `npm install --global akm-cli` or a standalone release, then run `akm doctor scheduler sync --rebind`."
+      ]
+    },
+    "write over a link inside the folder :: remember --force": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "ref": "memories/lm",
+        "path": "<SANDBOX>/fixture/main/memories/lm.md",
+        "stashDir": "<SANDBOX>/fixture/main",
+        "shape": "remember",
+        "schemaVersion": 1
+      }
+    },
+    "write over a link inside the folder :: links": {
+      "value": {
+        "knowledge/lk.md": "file",
+        "memories/lm.md": "file",
+        "tasks/lt.yml": "file",
+        "tasks/lta.yml": "file"
+      }
+    },
     "writes into a bundle whose adapter does not write the type :: remember": {
       "exit": 2,
       "errorJson": {
