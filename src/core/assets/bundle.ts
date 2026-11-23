@@ -74,6 +74,12 @@ export class AssetBundle {
     );
   }
 
+  /** Refuse retirement bookkeeping (restore, forget, expire) on a bundle whose adapter retires no type. */
+  assertRetiring(): void {
+    if (this.#adapter.retires.length > 0) return;
+    throw new UsageError(`Bundle "${this.name}" (adapter "${this.#adapter.id}") does not retire assets.`);
+  }
+
   list(): BundleListing {
     return this.#adapter.list(this.#bundle);
   }

@@ -448,6 +448,11 @@ export class NotFoundError extends AkmError {
   }
 }
 
+/** The refusal for an asset `ref` (`<bundle>//<conceptId>`) that no bundle holds: the one sentence every adapter and the asset facade use. */
+export function assetNotFound(ref: string): NotFoundError {
+  return new NotFoundError(`Asset not found: ${ref}`, "ASSET_NOT_FOUND");
+}
+
 /**
  * Test-isolation guard helper.
  *

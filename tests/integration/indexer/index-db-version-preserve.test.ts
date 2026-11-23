@@ -15,7 +15,6 @@ import path from "node:path";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { getEntryCount, upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
-import { SERVED_AS_IS_INDEX_LAYOUT } from "../../../src/storage/repositories/index-entry-schema";
 import { getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { DB_VERSION } from "../../../src/storage/repositories/index-schema";
 import { getEmbeddingCount, upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
@@ -33,7 +32,7 @@ describe("index.db layout marker", () => {
         deriveEntryProvenance({ bundleId: "s", adapterId: "akm" }, "memory", "a"),
       );
       upsertEmbedding(db, id, [1, 0, 0, 0]);
-      setMeta(db, "version", String(SERVED_AS_IS_INDEX_LAYOUT - 1));
+      setMeta(db, "version", String(DB_VERSION - 1));
       closeDatabase(db);
 
       db = openIndexDatabase(dbPath);

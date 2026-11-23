@@ -84,7 +84,12 @@ import { upsertUtilityScore } from "../storage/repositories/index-utility-reposi
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { withImmediateTransaction } from "../storage/sqlite-transaction";
 import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo, vacuumIfReclaimable } from "../storage/state-db-integrity";
-import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
+import {
+  assertIndexedWorkflowSourceIdentity,
+  isUsableWorkflowSource,
+  WorkflowSourceIdentityError,
+  workflowNameForSourcePath,
+} from "../workflows/source-files";
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations, sourceOfBundle } from "./installations";
 import { legacyRefMove, rekeyLegacyEntry } from "./legacy-refs";
@@ -1096,9 +1101,7 @@ function reportAdapterSkips(db: Database, plans: readonly SourceScanPlan[]): voi
 /** A bundle's listing as the walk's result: every entry a `FileContext` keyed under the bundle's root. */
 function walkResultOf(listing: BundleListing, root: string): WalkStashFlatResult {
   return {
-    files: [...listing.assets.map(({ entry }) => entry), ...(listing.unclaimed ?? [])].map((entry) =>
-      fileContextOfEntry(root, entry),
-    ),
+    files: (listing.files ?? listing.assets.map(({ entry }) => entry)).map((entry) => fileContextOfEntry(root, entry)),
     complete: listing.complete,
     ...(listing.incompleteReason !== undefined ? { incompleteReason: listing.incompleteReason } : {}),
   };
@@ -1878,6 +1881,10 @@ async function lookupBundleRefWithResolutionUsing(
     const source = sourceOfBundle(sources, bundleId);
     const adapterId = adapterIdOf(source);
     const ownerPath = indexedPathOf(asset, source);
+    // A workflow source that is a symlink to a file of another extension is warned about once, as before.
+    if (workflowNameForSourcePath(source.path, adapterId, ownerPath) !== undefined) {
+      isUsableWorkflowSource(source.path, ownerPath);
+    }
     const inputRef = makeBundleRef(qualified ? ref.bundle : undefined, asset.conceptId);
     let entry: IndexEntry | null | undefined;
     try {

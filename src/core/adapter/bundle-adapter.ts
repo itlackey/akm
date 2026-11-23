@@ -60,10 +60,12 @@ export interface BundleAsset {
 export interface BundleListing {
   assets: BundleAsset[];
   /**
-   * Files the listing reached that are no asset. No command lists them; the index scans their directories as it always
-   * has, so a directory that holds only such files is still counted, fingerprinted and reported.
+   * The files the listing reached that an asset holds or that no asset is (a spelling that lost to the winner is in
+   * neither), in the order the walk found them. No command lists the files that are no asset; the index scans their
+   * directories as it always has, so a directory that holds only such files is still counted, fingerprinted and
+   * reported, in the walk's order.
    */
-  unclaimed?: AssetEntry[];
+  files?: AssetEntry[];
   /** False when part of the bundle could not be read: the index keeps the rows it had. */
   complete: boolean;
   /** When `complete` is false: why. */
@@ -106,7 +108,7 @@ export interface RetireNote {
 
 /** A recoverable retirement. */
 export interface Retirement {
-  /** The adapter's stable name for it. Callers persist it (a proposal's `retiredArchive.dirs`). */
+  /** The adapter's stable name for it. Callers pass it back to `restore` and `forget`. */
   handle: string;
   /** The concept id the asset had. */
   conceptId: string;

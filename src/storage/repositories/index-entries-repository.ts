@@ -166,6 +166,7 @@ const upsertStmtsByDb = new WeakMap<Database, UpsertStmts>();
 // an upsert that omits it (`contentHash` is optional) cannot wipe a scan hash.
 const UPSERT_SET_CLAUSE = `SET
         bundle_id = excluded.bundle_id,
+        component_id = excluded.component_id,
         concept_id = excluded.concept_id,
         adapter_id = excluded.adapter_id,
         type = excluded.type,
@@ -175,14 +176,6 @@ const UPSERT_SET_CLAUSE = `SET
         embed_hash = excluded.embed_hash,
         content_hash = COALESCE(excluded.content_hash, content_hash)`;
 
-/**
- * A layout-26 index (what releases before the adapter refactor wrote) still has `entries.component_id`, `NOT NULL`,
- * and is served as it is until `akm migrate apply` drops it: its rows carry the bundle's id there, as they always did.
- */
-function hasComponentColumn(db: Database): boolean {
-  return db.prepare("SELECT 1 FROM pragma_table_info('entries') WHERE name = 'component_id'").get() != null;
-}
-
 function getUpsertStmts(db: Database): UpsertStmts {
   const existing = upsertStmtsByDb.get(db);
   if (existing) return existing;
@@ -190,27 +183,16 @@ function getUpsertStmts(db: Database): UpsertStmts {
     // RETURNING id handles ON CONFLICT DO UPDATE correctly — no second
     // SELECT round-trip needed (last_insert_rowid() is unreliable for
     // ON CONFLICT). Use `.get()` so a single row comes back.
-    upsert: db.prepare(
-      hasComponentColumn(db)
-        ? `
+    // Layout 26 keeps `component_id`, the retired name of a bundle's one component; its value is the bundle's id.
+    upsert: db.prepare(`
       INSERT INTO entries (
         item_ref, bundle_id, component_id, concept_id, adapter_id, type,
         file_path, content_hash, document_json, derived_from, embed_hash
       )
       VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-      ON CONFLICT(item_ref) DO UPDATE ${UPSERT_SET_CLAUSE.replace("bundle_id = excluded.bundle_id,", "bundle_id = excluded.bundle_id,\n        component_id = excluded.component_id,")}
-      RETURNING id
-    `
-        : `
-      INSERT INTO entries (
-        item_ref, bundle_id, concept_id, adapter_id, type,
-        file_path, content_hash, document_json, derived_from, embed_hash
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(item_ref) DO UPDATE ${UPSERT_SET_CLAUSE}
       RETURNING id
-    `,
-    ),
+    `),
     findByItemRef: db.prepare("SELECT id, embed_hash FROM entries WHERE item_ref = ?"),
     documentById: db.prepare("SELECT document_json FROM entries WHERE id = ?"),
   };

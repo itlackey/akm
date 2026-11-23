@@ -546,8 +546,6 @@
   "src/core/assets/read.ts": {
     "facade-export": {
       "FindOptions": 1,
-      "assetOfEntry": 1,
-      "isRetired": 1,
       "readFrom": 1,
       "requireAsset": 1
     }
@@ -659,17 +657,8 @@
     }
   },
   "src/indexer/lookup/indexed-owner.ts": {
-    "adapter-import": {
-      "src/core/adapter/detect-adapter": 1
-    },
-    "adapter-probe": {
-      "adapterIdOf": 1
-    },
     "entry-file": {
       "entry.file": 1
-    },
-    "facade-internal": {
-      "src/core/assets/asset": 1
     }
   },
   "src/indexer/passes/dir-staleness.ts": {
@@ -926,13 +915,12 @@
   },
   "src/workflows/source-files.ts": {
     "adapter-id": {
-      "akm": 4,
-      "akm-workflow": 4
+      "akm": 3,
+      "akm-workflow": 3
     },
     "asset-io": {
       "buildFileContext": 1,
       "lstatSync": 1,
-      "readdirSync": 1,
       "statSync": 1
     }
   },

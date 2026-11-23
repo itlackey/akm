@@ -152,68 +152,13 @@ export function workflowNameForSourcePath(
 }
 
 /**
- * Enumerate every owned source path that maps to `name` under one bundle.
- * Ownership is decided before parsing so a malformed peer cannot be hidden by
- * a valid source. Results retain authored extension case for diagnostics.
- */
-export function listWorkflowSourceFiles(sourceRoot: string, adapterId: string, name: string): WorkflowSourceFile[] {
-  if (adapterId !== "akm" && adapterId !== "akm-workflow") return [];
-
-  const canonicalName = canonicalizeWorkflowName(normalizeName(name));
-  if (!isSafeRelativeName(canonicalName)) {
-    throw new UsageError("Workflow ref resolves outside the bundle root.", "PATH_ESCAPE_VIOLATION");
-  }
-
-  let realRoot: string;
-  const authoredRoot = path.resolve(sourceRoot);
-  try {
-    realRoot = fs.realpathSync(authoredRoot);
-  } catch {
-    return [];
-  }
-  const parent = path.join(authoredRoot, path.dirname(canonicalName));
-  if (!isWithinResolved(parent, authoredRoot)) {
-    throw new UsageError("Workflow ref resolves outside the bundle root.", "PATH_ESCAPE_VIOLATION");
-  }
-
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(parent, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const basename = path.basename(canonicalName);
-  const candidates: WorkflowSourceCandidate[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-    const extension = path.extname(entry.name);
-    const lowerExtension = extension.toLowerCase();
-    if (!(WORKFLOW_EXTENSIONS as readonly string[]).includes(lowerExtension)) continue;
-    if (entry.name.slice(0, -extension.length) !== basename) continue;
-
-    const candidatePath = path.join(parent, entry.name);
-    if (!ownsWorkflowFile(authoredRoot, adapterId, candidatePath)) continue;
-    candidates.push({
-      path: candidatePath,
-      relativePath: toPosix(path.relative(authoredRoot, candidatePath)),
-      lowerExtension,
-      extensionlessStem: entry.name.slice(0, -extension.length),
-    });
-  }
-
-  candidates.sort((left, right) => compareCodePoints(left.relativePath, right.relativePath));
-  return inspectWorkflowSourceDomain(candidates, canonicalName, realRoot);
-}
-
-/**
  * Resolve a pre-enumerated set of authored workflow candidates in one batch.
  *
  * Callers that already walked a bundle (for example full lint/index scans)
  * must use this surface instead of point-resolving every canonical ref and
  * re-reading the same parent directory once per workflow. Candidate
  * inspection, symlink containment/format rules, nested-suffix rejection, and
- * collision construction remain shared with {@link listWorkflowSourceFiles}.
+ * collision construction are shared by every resolution of a workflow source.
  */
 export function resolveWorkflowSourceDomains(
   sourceRoot: string,
@@ -391,17 +336,6 @@ function inspectWorkflowSourceCandidate(
   };
 }
 
-/** Return the sole owner, throw on a collision, or return undefined when absent. */
-export function resolveUniqueWorkflowSource(
-  sourceRoot: string,
-  adapterId: string,
-  name: string,
-): WorkflowSourceFile | undefined {
-  const sources = listWorkflowSourceFiles(sourceRoot, adapterId, name);
-  const canonicalName = sources[0]?.canonicalName ?? canonicalizeWorkflowName(normalizeName(name));
-  return pickWorkflowSource(canonicalName, sources);
-}
-
 /** Compare an indexed path with the single authoritative on-disk source. */
 export function assertIndexedWorkflowSourceIdentity(
   ref: string,
@@ -426,10 +360,6 @@ export function assertIndexedWorkflowSourceIdentity(
   }
 }
 
-function normalizeName(name: string): string {
-  return name.replaceAll("\\", "/");
-}
-
 function isSafeRelativeName(name: string): boolean {
   return (
     name.length > 0 &&
@@ -438,9 +368,4 @@ function isSafeRelativeName(name: string): boolean {
     !name.startsWith("../") &&
     path.posix.normalize(name) === name
   );
-}
-
-function isWithinResolved(candidate: string, root: string): boolean {
-  const relative = path.relative(root, path.resolve(candidate));
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }

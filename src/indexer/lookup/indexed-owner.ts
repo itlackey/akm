@@ -8,8 +8,7 @@
  */
 
 import path from "node:path";
-import { adapterIdOf } from "../../core/adapter/detect-adapter";
-import type { Asset } from "../../core/assets/asset";
+import type { Asset } from "../../core/assets/read";
 import { indexAsset } from "../../core/assets/type";
 import { safeRealpath } from "../../core/common";
 import type { IndexEntry } from "../indexer";
@@ -32,9 +31,9 @@ export function indexedPathOf(asset: Asset, source: SearchSource): string {
  */
 export function entryOnMiss(asset: Asset, source: SearchSource, persist: boolean): IndexEntry | undefined {
   const bundleId = asset.bundle;
-  const adapterId = adapterIdOf(source);
   try {
     const document = indexAsset(asset, { persist });
+    const adapterId = document.adapterId as string;
     const { itemRef, conceptId } = deriveEntryProvenance(
       { bundleId, adapterId },
       document.type,

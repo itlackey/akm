@@ -239,6 +239,25 @@ describe("secret manager bundles", () => {
     });
   });
 
+  test("secret set over an existing secret replaces it, in a vault and in a directory bundle", async () => {
+    fs.writeFileSync(path.join(storage.stashDir, "secrets", "local"), "old-file-value");
+    await withFakeSecretStores({ vaults: VAULT }, async (stores) => {
+      const vault = await akm(
+        "secret",
+        "set",
+        "vault//secrets/deploy-token",
+        "--from-file",
+        writeValueFile("v1", "vault-2"),
+      );
+      expect(vault.code).toBe(0);
+      expect(stores.state().vaults["team-vault"]).toEqual({ "deploy-token": "vault-2" });
+
+      const file = await akm("secret", "set", "secrets/local", "--from-file", writeValueFile("v2", "new-file-value"));
+      expect(file.code).toBe(0);
+      expect(fs.readFileSync(path.join(storage.stashDir, "secrets", "local"), "utf8")).toBe("new-file-value");
+    });
+  });
+
   test("secret set and remove work on a vault", async () => {
     await withFakeSecretStores({ vaults: VAULT }, async (stores) => {
       const file = writeValueFile("v", "line-1\nline-2\n");

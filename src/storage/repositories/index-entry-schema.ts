@@ -15,11 +15,6 @@
  * upgrade.
  */
 
-// 27: `entries` has no `component_id`, the retired name of a bundle's one component. `akm migrate apply` drops the
-// column in place (`dropComponentColumn`, index-schema.ts); embeddings, utility scores and every other row stay. Until
-// then a layout-26 index is served as it is ({@link SERVED_AS_IS_INDEX_LAYOUT}): no opener warns about it, upgrades it
-// or changes its version, and a write fills `component_id` as it always did, so a release before the adapter refactor
-// keeps reading it.
 // 26: declared links (#935) live in `asset_links`, one row per link, owned by
 // the entry that declares it. The writable opener derives them in place from
 // each entry's stored `document_json` (`migrateToDeclaredLinks`,
@@ -34,16 +29,14 @@
 // 23 and earlier stored a second copy of every indexed field in FTS5's own
 // content shadow tables. `ensureFtsLayout` (index-schema.ts) rebuilds the FTS
 // tables from the stored entries when it finds the older layout.
-export const CANONICAL_INDEX_DB_VERSION = 27;
-
-/** The layout of the index releases before the adapter refactor wrote: still served as it is, never upgraded on open. */
-export const SERVED_AS_IS_INDEX_LAYOUT = 26;
+export const CANONICAL_INDEX_DB_VERSION = 26;
 
 export const CANONICAL_ENTRY_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS entries (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     item_ref      TEXT NOT NULL UNIQUE,
     bundle_id     TEXT NOT NULL,
+    component_id  TEXT NOT NULL,
     concept_id    TEXT NOT NULL,
     adapter_id    TEXT NOT NULL,
     type          TEXT NOT NULL,
@@ -139,6 +132,7 @@ const REQUIRED_ENTRY_COLUMNS = [
   "id",
   "item_ref",
   "bundle_id",
+  "component_id",
   "concept_id",
   "adapter_id",
   "type",

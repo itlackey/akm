@@ -50,9 +50,12 @@ import {
 import { DirectoryAdapterBase } from "../../../../src/core/adapter/directory-adapter";
 import { adapterForId, getAdapters } from "../../../../src/core/adapter/registry";
 import type { Bundle, IndexDocument } from "../../../../src/core/adapter/types";
+import { assetBundleOf } from "../../../../src/core/assets/bundle";
+import { writeAssets } from "../../../../src/core/assets/write";
+import { assetNotFound, NotFoundError, UsageError } from "../../../../src/core/errors";
 import { buildFileContext } from "../../../../src/indexer/walk/file-context";
 import { walkStashFlat } from "../../../../src/indexer/walk/walker";
-import { identify, spellings } from "../../../_helpers/adapter-hooks";
+import { fileMode, identify, serialize, spellings, typeOf } from "../../../_helpers/adapter-hooks";
 import { withFakeSecretStores } from "../../../_helpers/fake-secret-stores";
 import { findInBundle } from "../../../_helpers/find-in-bundle";
 
@@ -514,5 +517,367 @@ describe("conformance — declared writes and what an adapter refuses", () => {
         expect(document, adapter.id).not.toHaveProperty("path");
       }
     });
+  });
+});
+
+// ── 3. Writes: one refusal per gate ──────────────────────────────────────────
+
+/** The adapters that write files. */
+function writableDirectoryAdapters(): DirectoryAdapterBase[] {
+  return directoryAdapters().filter((adapter) => adapter.writes.length > 0);
+}
+
+/** A name every type of a writing adapter can place (a script's file needs an extension). */
+function probeName(type: string, name: string): string {
+  return type === "script" ? `${name}.sh` : name;
+}
+
+/** Names that would place a file no adapter recognizes (a reserved name, a sidecar) next to ordinary ones. */
+const HOSTILE_NAMES = ["index", "log", "a/index", "x.lock", "x.sensitive", "README", "ok", "nested/ok"];
+
+describe("conformance — create, place and read agree", () => {
+  test("a created asset is read back under the id place gave, and its entry is the file create wrote", () => {
+    for (const adapter of writableDirectoryAdapters()) {
+      for (const type of adapter.writes) {
+        const sandbox = sandboxStashDir();
+        try {
+          const b = bundle("round-trip", path.join(sandbox.dir, "b"));
+          const conceptId = adapter.place(b, { type, name: probeName(type, "probe/sample") });
+          const change = adapter.create(b, { type, name: probeName(type, "probe/sample"), content: "# probe\n" });
+          expect(change.conceptId, `${adapter.id} ${type}`).toBe(conceptId);
+          const read = adapter.read(b, conceptId);
+          expect(read?.conceptId, `${adapter.id} ${type}`).toBe(conceptId);
+          expect(read?.entry.file, `${adapter.id} ${type}`).toBe(change.file);
+          expect(fs.existsSync(change.file as string), `${adapter.id} ${type}`).toBe(true);
+        } finally {
+          sandbox.cleanup();
+        }
+      }
+    }
+  });
+
+  test("place never returns an id that is no concept: it names a file the adapter lists, or it refuses", () => {
+    for (const adapter of writableDirectoryAdapters()) {
+      for (const type of adapter.writes) {
+        for (const name of HOSTILE_NAMES) {
+          const sandbox = sandboxStashDir();
+          try {
+            const b = bundle("place", path.join(sandbox.dir, "b"));
+            let conceptId: string;
+            try {
+              conceptId = adapter.place(b, { type, name });
+            } catch (error) {
+              expect(error, `${adapter.id} ${type} "${name}"`).toBeInstanceOf(UsageError);
+              expect(() => adapter.create(b, { type, name, content: "x" }), `${adapter.id} ${type} "${name}"`).toThrow(
+                UsageError,
+              );
+              continue;
+            }
+            adapter.create(b, { type, name, content: "x" });
+            expect(
+              adapter.list(b).assets.map((asset) => asset.conceptId),
+              `${adapter.id} ${type} "${name}"`,
+            ).toContain(conceptId);
+          } finally {
+            sandbox.cleanup();
+          }
+        }
+      }
+    }
+  });
+
+  test("create over an existing concept is refused without replace, by every writing adapter", () => {
+    for (const adapter of writableDirectoryAdapters()) {
+      for (const type of adapter.writes) {
+        const sandbox = sandboxStashDir();
+        try {
+          const b = bundle("twice", path.join(sandbox.dir, "b"));
+          adapter.create(b, { type, name: probeName(type, "probe"), content: "# one\n" });
+          expect(
+            () => adapter.create(b, { type, name: probeName(type, "probe"), content: "# two\n" }),
+            `${adapter.id} ${type}`,
+          ).toThrow(/over an existing asset/);
+          expect(() =>
+            adapter.create(b, { type, name: probeName(type, "probe"), content: "# two\n" }, { replace: true }),
+          ).not.toThrow();
+        } finally {
+          sandbox.cleanup();
+        }
+      }
+    }
+  });
+
+  test("a secret manager refuses a create over an existing secret without replace, and replaces with it", async () => {
+    const keyring = [
+      { path: "/org/freedesktop/secrets/collection/akm/1", label: "t", attributes: { akm: "akm/t" }, secret: "v1" },
+    ];
+    await withFakeSecretStores({ keyrings: { akm: keyring }, vaults: { vault: { t: "v1" } } }, async () => {
+      for (const [adapter, location] of [
+        [secretToolAdapter, "akm"],
+        [azureKeyVaultAdapter, "vault"],
+      ] as const) {
+        const b: Bundle = { id: "managed", root: "/not/a/directory", location };
+        expect(() => adapter.create(b, { type: "secret", name: "t", content: "v2" }), adapter.id).toThrow(
+          /over an existing secret/,
+        );
+        expect(adapter.read(b, "secrets/t")?.entry.content(), adapter.id).toBe("v1");
+        adapter.create(b, { type: "secret", name: "t", content: "v2" }, { replace: true });
+        expect(adapter.read(b, "secrets/t")?.entry.content(), adapter.id).toBe("v2");
+        adapter.create(b, { type: "secret", name: "fresh", content: "v3" });
+        expect(adapter.read(b, "secrets/fresh")?.entry.content(), adapter.id).toBe("v3");
+      }
+    });
+  });
+
+  test("list reports the files an index scan needs in the order the walk found them, claimed or not", () => {
+    for (const adapter of directoryAdapters()) {
+      const root = OWN_ROOT_BY_ID[adapter.id]!;
+      const listing = adapter.list(bundle(adapter.id, root));
+      const walked = walkStashFlat(root, { includeAllDirectories: true }).map((file) => file.relPath);
+      const listed = (listing.files ?? []).map((entry) => entry.relPath);
+      // Every listed file is one the walk found, and in its order.
+      expect(listed, adapter.id).toEqual(walked.filter((relPath) => listed.includes(relPath)));
+      // Every asset is among them.
+      for (const asset of listing.assets) expect(listed, adapter.id).toContain(asset.entry.relPath);
+    }
+  });
+
+  test("list and read agree on the winner, for every listed asset and for a file spelling of it", () => {
+    for (const adapter of directoryAdapters()) {
+      const b = bundle(adapter.id, OWN_ROOT_BY_ID[adapter.id]!);
+      for (const listed of adapter.list(b).assets) {
+        const read = adapter.read(b, listed.conceptId);
+        expect(read?.conceptId, `${adapter.id}:${listed.conceptId}`).toBe(listed.conceptId);
+        expect(read?.entry.file, `${adapter.id}:${listed.conceptId}`).toBe(listed.entry.file);
+        const fileSpelling = adapter.read(b, listed.entry.relPath);
+        if (fileSpelling)
+          expect(fileSpelling.entry.file, `${adapter.id}:${listed.entry.relPath}`).toBe(listed.entry.file);
+      }
+    }
+    const sandbox = sandboxStashDir();
+    try {
+      const root = path.join(sandbox.dir, "akm");
+      fs.mkdirSync(path.join(root, "tasks"), { recursive: true });
+      fs.writeFileSync(path.join(root, "tasks", "dup.md"), "# note\n");
+      fs.writeFileSync(path.join(root, "tasks", "dup.yml"), "name: dup\n");
+      const b = bundle("akm", root);
+      const winner = akmAdapter.list(b).assets.filter((asset) => asset.conceptId === "tasks/dup");
+      expect(winner.map((asset) => asset.entry.file)).toEqual([path.join(root, "tasks", "dup.yml")]);
+      for (const asked of ["tasks/dup", "tasks/dup.md", "tasks/dup.yml"]) {
+        expect(akmAdapter.read(b, asked)?.entry.file, asked).toBe(path.join(root, "tasks", "dup.yml"));
+      }
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  test("the facade writes the same bytes each time it creates one asset", () => {
+    for (const adapter of writableDirectoryAdapters()) {
+      for (const type of adapter.writes) {
+        const sandbox = sandboxStashDir();
+        try {
+          const root = path.join(sandbox.dir, "b");
+          fs.mkdirSync(root, { recursive: true });
+          const target = {
+            source: { kind: "filesystem" as const, name: "b", path: root, adapterId: adapter.id },
+            config: { type: "filesystem" as const, name: "b", path: root, writable: true },
+          };
+          const create = () =>
+            writeAssets(target, { purpose: "conformance" }, (w) => {
+              const result = w.create({ type, name: probeName(type, "probe"), content: "# probe\n" });
+              return fs.readFileSync(w.read(result.ref.slice("b//".length))?.entry.file as string);
+            });
+          const first = create();
+          expect(create().equals(first), `${adapter.id} ${type}`).toBe(true);
+        } finally {
+          sandbox.cleanup();
+        }
+      }
+    }
+  });
+});
+
+describe("conformance — the gate rule: a content type has its path type's write behaviour", () => {
+  /** Content that gives a loose or typed Markdown file a different type than its path alone. */
+  const CONTENTS = [
+    "# plain\n",
+    "Use $ARGUMENTS exactly.\n",
+    "---\nagent: planner\n---\nbody\n",
+    "---\nmodel: local\n---\nbody\n",
+    "---\ntype: workflow\n---\n\n# W\n",
+    "---\ntype: knowledge\n---\nbody\n",
+    "---\ntype: command\n---\nbody\n",
+    "---\ntype: memory\n---\nbody\n",
+  ];
+  const PATHS = [
+    "loose.md",
+    "docs/loose.md",
+    "knowledge/k.md",
+    "commands/c.md",
+    "agents/a.md",
+    "memories/m.md",
+    "workflows/w.md",
+    "lessons/l.md",
+    "tasks/t.md",
+    "env/e.env",
+    "secrets/s",
+  ];
+
+  /** What a file of `type` holds for a sample, with the type's name left out. */
+  const serializedAs = (adapter: DirectoryAdapterBase, type: string, file: string): string =>
+    String(serialize(adapter, type, file, "# sample\n")).replace(/^type: .*$/m, "type: <type>");
+
+  test("for every writing adapter, each type recognize gives a path has the writes, retires, file mode and bytes of typeOf(path)", () => {
+    for (const adapter of writableDirectoryAdapters()) {
+      const sandbox = sandboxStashDir();
+      try {
+        const root = path.join(sandbox.dir, adapter.id);
+        const b = bundle(adapter.id, root);
+        let checked = 0;
+        for (const relPath of PATHS) {
+          const file = path.join(root, relPath);
+          fs.mkdirSync(path.dirname(file), { recursive: true });
+          for (const content of CONTENTS) {
+            fs.writeFileSync(file, content);
+            const document = adapter.recognize(b, buildFileContext(root, file));
+            if (!document) continue;
+            const pathType = typeOf(adapter, relPath);
+            const label = `${adapter.id}:${relPath} ${JSON.stringify(content.slice(0, 24))} (${document.type} vs ${pathType})`;
+            expect(adapter.writes.includes(document.type), label).toBe(adapter.writes.includes(pathType));
+            expect(adapter.retires.includes(document.type), label).toBe(adapter.retires.includes(pathType));
+            expect(fileMode(adapter, document.type), label).toBe(fileMode(adapter, pathType));
+            // Serialization records the type's own name in the document (`type: command`); it is the same otherwise.
+            expect(serializedAs(adapter, document.type, file), label).toEqual(serializedAs(adapter, pathType, file));
+            checked += 1;
+          }
+        }
+        expect(checked, adapter.id).toBeGreaterThan(0);
+      } finally {
+        sandbox.cleanup();
+      }
+    }
+  });
+});
+
+describe("conformance — refusal and not-found sentences have one home", () => {
+  test("a missing asset is refused with assetNotFound's sentence, by every adapter and by the facade", async () => {
+    for (const adapter of writableDirectoryAdapters()) {
+      const sandbox = sandboxStashDir();
+      try {
+        const root = path.join(sandbox.dir, "b");
+        fs.mkdirSync(root, { recursive: true });
+        const b = bundle("b", root);
+        const type = adapter.writes[0] as string;
+        const asked = adapter.place(b, { type, name: "none" });
+        const expected = assetNotFound(`b//${asked}`);
+        const changes = [() => adapter.update(b, asked, "x"), () => adapter.delete(b, asked)];
+        if (adapter.retires.length > 0) changes.push(() => adapter.retire(b, asked, {}));
+        for (const change of changes) expect(change, adapter.id).toThrow(expected.message);
+        const target = {
+          source: { kind: "filesystem" as const, name: "b", path: root, adapterId: adapter.id },
+          config: { type: "filesystem" as const, name: "b", path: root, writable: true },
+        };
+        let failure: unknown;
+        try {
+          writeAssets(target, { purpose: "conformance" }, (w) => w.update(asked, "x"));
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure, adapter.id).toBeInstanceOf(NotFoundError);
+        expect((failure as NotFoundError).message, adapter.id).toBe(expected.message);
+        expect((failure as NotFoundError).code, adapter.id).toBe("ASSET_NOT_FOUND");
+      } finally {
+        sandbox.cleanup();
+      }
+    }
+    await withFakeSecretStores({ keyrings: { akm: [] }, vaults: { vault: {} } }, async () => {
+      for (const [adapter, location] of [
+        [secretToolAdapter, "akm"],
+        [azureKeyVaultAdapter, "vault"],
+      ] as const) {
+        const b: Bundle = { id: "managed", root: "/not/a/directory", location };
+        const expected = assetNotFound("managed//secrets/none");
+        expect(() => adapter.update(b, "secrets/none", "x"), adapter.id).toThrow(expected.message);
+        expect(() => adapter.delete(b, "secrets/none"), adapter.id).toThrow(expected.message);
+      }
+    });
+  });
+
+  test("the user-facing gate sentences are the facade's, word for word", () => {
+    const sandbox = sandboxStashDir();
+    try {
+      const akm = assetBundleOf({ name: "stash", path: sandbox.dir, adapterId: "akm" });
+      const readOnly = assetBundleOf({ name: "wiki", path: sandbox.dir, adapterId: "okf" });
+      expect(() => readOnly.assertWrites("knowledge")).toThrow(
+        'Bundle "wiki" uses adapter "okf", which does not support AKM asset writes.',
+      );
+      expect(() => akm.assertWrites("nope")).toThrow(
+        'Bundle "stash" uses adapter "akm", which does not write nope assets.',
+      );
+      expect(() => akm.assertRetires("env")).toThrow(
+        'Bundle "stash" uses adapter "akm", which does not retire env assets.',
+      );
+      expect(() => readOnly.assertRetiring()).toThrow('Bundle "wiki" (adapter "okf") does not retire assets.');
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  test("an adapter's own gate failures are invariant errors, never the facade's user-facing refusals", () => {
+    const sandbox = sandboxStashDir();
+    try {
+      const root = path.join(sandbox.dir, "b");
+      fs.mkdirSync(path.join(root, "env"), { recursive: true });
+      fs.writeFileSync(path.join(root, "env", "prod.env"), "A=1\n");
+      const b = bundle("b", root);
+      const keyring: Bundle = { ...b, location: "akm" };
+      const errors: unknown[] = [];
+      for (const run of [
+        () => okfAdapter.create(b, { type: "knowledge", name: "a", content: "x" }),
+        () => akmAdapter.retire(b, "env/prod", {}),
+        () => okfAdapter.restore(b, "h"),
+        () => okfAdapter.forget(b, "h"),
+        () => okfAdapter.expireRetired(b, new Date()),
+        () => secretToolAdapter.create(keyring, { type: "knowledge", name: "a", content: "x" }),
+        () => secretToolAdapter.retire(keyring, "secrets/a", {}),
+      ]) {
+        try {
+          run();
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      expect(errors).toHaveLength(7);
+      for (const error of errors) {
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(UsageError);
+        expect(error).not.toBeInstanceOf(NotFoundError);
+      }
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  test("create refuses a name whose file would be no asset, with one sentence (N12)", () => {
+    const sandbox = sandboxStashDir();
+    try {
+      const root = path.join(sandbox.dir, "b");
+      fs.mkdirSync(root, { recursive: true });
+      const target = {
+        source: { kind: "filesystem" as const, name: "b", path: root, adapterId: "akm" },
+        config: { type: "filesystem" as const, name: "b", path: root, writable: true },
+      };
+      for (const [type, name, file] of [
+        ["knowledge", "index", "knowledge/index.md"],
+        ["secret", "x.lock", "secrets/x.lock"],
+      ] as const) {
+        expect(() =>
+          writeAssets(target, { purpose: "conformance" }, (w) => w.create({ type, name, content: "x" })),
+        ).toThrow(`Cannot create ${type} "${name}" in bundle "b": it would be kept at ${file}, which is not an asset.`);
+        expect(fs.existsSync(path.join(root, file))).toBe(false);
+      }
+    } finally {
+      sandbox.cleanup();
+    }
   });
 });

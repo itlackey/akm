@@ -10,7 +10,6 @@
  */
 
 import { createHash } from "node:crypto";
-import path from "node:path";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { withoutTypeHead } from "../asset/asset-placement";
@@ -18,7 +17,7 @@ import { type BundleRef, makeBundleRef, parseBundleRef } from "../asset/asset-re
 import { deriveBundleIds } from "../bundle-id";
 import { compareCodePoints } from "../common";
 import { loadConfig } from "../config/config";
-import { ConfigError, NotFoundError } from "../errors";
+import { assetNotFound, ConfigError } from "../errors";
 import { warn, warnOnce } from "../warn";
 import { type Asset, assetOf } from "./asset";
 import { type AssetBundle, assetBundleOf } from "./bundle";
@@ -29,6 +28,8 @@ export type { Asset } from "./asset";
 export interface FindOptions {
   /** The ordered sources to look in. Default: every configured source, default bundle first. */
   sources?: readonly SearchSource[];
+  /** Resolve an outdated spelling without the warning: for a lookup of stored refs, which are not the caller's to fix. */
+  quiet?: boolean;
 }
 
 function defaultSources(options?: { sources?: readonly SearchSource[] }): readonly SearchSource[] {
@@ -57,10 +58,14 @@ function readExact(source: SearchSource, bundle: string, conceptId: string): Ass
  * read once more without that head, with a warning, and the asset comes back under its current ref. Whatever
  * adapter holds the bundle: the spelling is akm's, not the format's.
  */
-function readOutdated(conceptId: string, read: (conceptId: string) => Asset | undefined): Asset | undefined {
+function readOutdated(
+  conceptId: string,
+  read: (conceptId: string) => Asset | undefined,
+  quiet = false,
+): Asset | undefined {
   const current = withoutTypeHead(conceptId);
   const found = current === undefined ? undefined : read(current);
-  if (found) {
+  if (found && !quiet) {
     warnOnce(
       `outdated-ref:${conceptId}`,
       `Ref "${conceptId}" is outdated: refs are the path inside the bundle, so it is now "${found.conceptId}". Resolved it to that asset.`,
@@ -76,7 +81,7 @@ export function readFrom(source: SearchSource, bundle: string, conceptId: string
   );
 }
 
-function findAmong(ref: BundleRef, sources: readonly SearchSource[]): Asset | undefined {
+function findAmong(ref: BundleRef, sources: readonly SearchSource[], quiet = false): Asset | undefined {
   const installations = deriveInstallations([...sources]);
   const find = (conceptId: string): Asset | undefined => {
     for (const [index, source] of sources.entries()) {
@@ -88,7 +93,7 @@ function findAmong(ref: BundleRef, sources: readonly SearchSource[]): Asset | un
     return undefined;
   };
   // The ref as written, in every source, before the outdated spelling is tried in any.
-  return find(ref.conceptId) ?? readOutdated(ref.conceptId, find);
+  return find(ref.conceptId) ?? readOutdated(ref.conceptId, find, quiet);
 }
 
 /**
@@ -96,7 +101,7 @@ function findAmong(ref: BundleRef, sources: readonly SearchSource[]): Asset | un
  * considers its own bundle. The asset comes back under its canonical ref, whichever spelling the adapter read.
  */
 export function findAsset(ref: string | BundleRef, options: FindOptions = {}): Asset | undefined {
-  return findAmong(typeof ref === "string" ? parseBundleRef(ref) : ref, defaultSources(options));
+  return findAmong(typeof ref === "string" ? parseBundleRef(ref) : ref, defaultSources(options), options.quiet);
 }
 
 /** {@link findAsset}, refused with a `NotFoundError` when no bundle holds the ref. */
@@ -104,23 +109,9 @@ export function requireAsset(ref: string | BundleRef, options: FindOptions = {})
   const found = findAsset(ref, options);
   if (!found) {
     const parsed = typeof ref === "string" ? parseBundleRef(ref) : ref;
-    throw new NotFoundError(`Asset not found: ${makeBundleRef(parsed.bundle, parsed.conceptId)}`, "ASSET_NOT_FOUND");
+    throw assetNotFound(makeBundleRef(parsed.bundle, parsed.conceptId));
   }
   return found;
-}
-
-/** The asset an index row names, read from the source that holds it: the row's bundle, else the row's root. */
-export function assetOfEntry(
-  entry: { bundleId: string; conceptId: string; stashDir: string },
-  options: FindOptions = {},
-): Asset | undefined {
-  const sources = defaultSources(options);
-  const installations = deriveInstallations([...sources]);
-  let index = installations.findIndex((bundle) => bundle.id === entry.bundleId);
-  if (index < 0) index = sources.findIndex((source) => path.resolve(source.path) === path.resolve(entry.stashDir));
-  const source = sources[index];
-  const bundle = installations[index]?.id;
-  return source && bundle ? readFrom(source, bundle, entry.conceptId) : undefined;
 }
 
 /**
@@ -162,22 +153,14 @@ export function listAssets(
 
 /**
  * The conceptId `ref` names now, for a lookup of stored rows: the holding asset's, so an old spelling maps to the
- * asset's ref with one warning; as written when no asset holds it.
+ * asset's ref with one warning (none with `quiet`); as written when no asset holds it.
  */
-export function currentConceptId(ref: BundleRef, sources: readonly SearchSource[]): string {
-  return findAsset(ref, { sources })?.conceptId ?? ref.conceptId;
-}
-
-/** Whether a bundle holds a retirement of the asset `ref` names: it was retired recoverably, not deleted. */
-export function isRetired(ref: BundleRef, sources: readonly SearchSource[] = defaultSources()): boolean {
-  const installations = deriveInstallations([...sources]);
-  return sources.some((source, index) => {
-    const bundle = installations[index]?.id;
-    if (!bundle || (ref.bundle !== undefined && bundle !== ref.bundle)) return false;
-    return bundleOfSource(source, bundle)
-      .retired()
-      .some((retirement) => retirement.conceptId === ref.conceptId);
-  });
+export function currentConceptId(
+  ref: BundleRef,
+  sources: readonly SearchSource[],
+  options: { quiet?: boolean } = {},
+): string {
+  return findAsset(ref, { sources, ...options })?.conceptId ?? ref.conceptId;
 }
 
 /** An asset's revision: the SHA-256 of its content. */

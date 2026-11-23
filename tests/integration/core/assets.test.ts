@@ -22,15 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
 import type { Asset } from "../../../src/core/assets/asset";
-import {
-  assetOfEntry,
-  assetRevision,
-  currentConceptId,
-  findAsset,
-  isRetired,
-  listAssets,
-  requireAsset,
-} from "../../../src/core/assets/read";
+import { assetRevision, currentConceptId, findAsset, listAssets, requireAsset } from "../../../src/core/assets/read";
 import { assetType, assetTypeFresh } from "../../../src/core/assets/type";
 import { addressOf, writeAssets } from "../../../src/core/assets/write";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
@@ -111,6 +103,78 @@ describe("finding an asset in one bundle — closed-form candidates (#857)", () 
       // unrelated conceptIds), never a count that scales with the 1,000
       // unrelated noise files/dirs created above.
       expect(readdirSpy.mock.calls.length).toBeLessThan(10);
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  test("read cost does not grow with tree size: no content read, at most one git process (10,000 files)", () => {
+    const sandbox = sandboxStashDir();
+    try {
+      const bin = path.join(sandbox.dir, "bin");
+      const gitLog = path.join(sandbox.dir, "git-calls.log");
+      const realGit = Bun.which("git");
+      if (!realGit) throw new Error("git is required for this test");
+      fs.mkdirSync(bin, { recursive: true });
+      // A `git` on PATH that counts each process the facade starts, then runs the real one.
+      fs.writeFileSync(path.join(bin, "git"), `#!/bin/sh\necho "$@" >> "${gitLog}"\nexec "${realGit}" "$@"\n`, {
+        mode: 0o755,
+      });
+
+      const build = (name: string, files: number): string => {
+        const root = path.join(sandbox.dir, name);
+        fs.mkdirSync(root, { recursive: true });
+        for (let dir = 0; dir < Math.ceil(files / 100); dir++) {
+          const folder = path.join(root, "knowledge", `d${dir}`);
+          fs.mkdirSync(folder, { recursive: true });
+          for (let file = 0; file < 100 && dir * 100 + file < files; file++) {
+            fs.writeFileSync(path.join(folder, `f${file}.md`), "# note\n");
+          }
+        }
+        fs.writeFileSync(path.join(root, "knowledge", "d0", "target.md"), "# target\n");
+        Bun.spawnSync(["git", "init", "-q"], { cwd: root });
+        return root;
+      };
+      const small = build("small", 100);
+      const large = build("large", 10_000);
+
+      const readOnce = (root: string): { ms: number; contentReads: number; gitCalls: number } => {
+        fs.rmSync(gitLog, { force: true });
+        const originalRead = fs.readFileSync;
+        let contentReads = 0;
+        const readSpy = spyOn(fs, "readFileSync").mockImplementation(((candidate, options) => {
+          if (String(candidate).startsWith(root)) contentReads += 1;
+          return originalRead(candidate, options as never);
+        }) as typeof fs.readFileSync);
+        const savedPath = process.env.PATH;
+        process.env.PATH = `${bin}${path.delimiter}${savedPath ?? ""}`;
+        try {
+          const started = performance.now();
+          const owner = findInBundle({ name: "test", path: root }, "akm", "knowledge/d0/target");
+          const ms = performance.now() - started;
+          expect(owner?.entry.file).toBe(path.join(root, "knowledge", "d0", "target.md"));
+          const gitCalls = fs.existsSync(gitLog)
+            ? fs.readFileSync(gitLog, "utf8").split("\n").filter(Boolean).length
+            : 0;
+          return { ms, contentReads, gitCalls };
+        } finally {
+          process.env.PATH = savedPath;
+          readSpy.mockRestore();
+        }
+      };
+
+      const best = (root: string) => {
+        const runs = [readOnce(root), readOnce(root), readOnce(root)];
+        return { ms: Math.min(...runs.map((run) => run.ms)), runs };
+      };
+      const smallRun = best(small);
+      const largeRun = best(large);
+      for (const run of [...smallRun.runs, ...largeRun.runs]) {
+        expect(run.contentReads).toBe(0);
+        expect(run.gitCalls).toBeLessThanOrEqual(1);
+      }
+      // 100 times the files, not 100 times the time.
+      expect(largeRun.ms).toBeLessThan(Math.max(smallRun.ms * 10, 100));
     } finally {
       sandbox.cleanup();
     }
@@ -612,7 +676,6 @@ describe("writeAssets", () => {
     });
     expect(retired.handle).toBeTruthy();
     expect(fs.existsSync(path.join(stash.path, "memories", "m.md"))).toBe(false);
-    expect(isRetired({ conceptId: "memories/m" }, [stash])).toBe(true);
     writeAssets(target, { purpose: "test" }, (w) => w.restore(retired.handle));
     expect(fs.existsSync(path.join(stash.path, "memories", "m.md"))).toBe(true);
   });
@@ -698,16 +761,6 @@ describe("a keyring bundle behind the facade", () => {
             "keyring//secrets/gh_token",
           ]);
 
-          const indexed = assetOfEntry(
-            {
-              bundleId: "keyring",
-              conceptId: "secrets/gh_token",
-              stashDir: sources.find((source) => source.registryId === "keyring")?.path ?? "",
-            },
-            { sources },
-          );
-          expect(indexed?.entry.content()).toBe("ghp-value");
-
           const target = resolveWriteTarget(loadConfig(), "keyring");
           writeAssets(target, { purpose: "test" }, (w) => w.create({ type: "secret", name: "other", content: "v2" }));
           expect(findAsset("keyring//secrets/other", { sources })?.entry.content()).toBe("v2");
@@ -780,10 +833,16 @@ describe("assetType", () => {
   });
 
   test("with no index at all it says what the adapter says, and builds none", () => {
-    const stash = bundleOf("stash", { "knowledge/a.md": "# a\n", "env/prod.env": "A=1\n" });
-    expect(assetType(findAsset("knowledge/a", { sources: [stash] }) as Asset)).toBe("knowledge");
-    expect(assetType(findAsset("env/prod", { sources: [stash] }) as Asset)).toBe("env");
-    expect(fs.existsSync(getDbPath())).toBe(false);
+    // Its own data directory: the process-wide one holds the index an earlier test file in the same run built.
+    const storage = withIsolatedAkmStorage();
+    try {
+      const stash = bundleOf("stash", { "knowledge/a.md": "# a\n", "env/prod.env": "A=1\n" });
+      expect(assetType(findAsset("knowledge/a", { sources: [stash] }) as Asset)).toBe("knowledge");
+      expect(assetType(findAsset("env/prod", { sources: [stash] }) as Asset)).toBe("env");
+      expect(fs.existsSync(getDbPath())).toBe(false);
+    } finally {
+      storage.cleanup();
+    }
   });
 });
 
@@ -859,6 +918,8 @@ describe("the directory adapter's writes", () => {
     const stash = bundleOf("stash", { "knowledge/a.md": "# a\n" });
     const bundle = { id: "stash", root: stash.path };
     expect(akmAdapter.update(bundle, "knowledge/a.md", "# b\n").conceptId).toBe("knowledge/a");
-    expect(() => akmAdapter.create(bundle, { type: "knowledge", name: "a", content: "x" })).toThrow(/already exists/);
+    expect(() => akmAdapter.create(bundle, { type: "knowledge", name: "a", content: "x" })).toThrow(
+      /over an existing asset/,
+    );
   });
 });

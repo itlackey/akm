@@ -117,8 +117,9 @@ const envPathCommand = defineJsonCommand({
     quiet: { type: "boolean", alias: "q", description: "Suppress the unsafe-source warning", default: false },
   },
   async run({ args }) {
-    const absPath = resolveEnvPath(args.ref).asset.entry.file;
-    if (absPath === undefined) throw new UsageError(`Env "${args.ref}" is not kept in a file, so it has no path.`);
+    const { asset } = resolveEnvPath(args.ref);
+    const absPath = asset.entry.file;
+    if (absPath === undefined) throw new UsageError(`"${asset.ref}" is not kept in a file, so it has no path.`);
     // The raw `.env` may contain `X=$(cmd)`, which executes if `source`d.
     // Warning goes to stderr (never contaminates the path on stdout) and is
     // suppressed with --quiet for the legitimate `_FILE` / `--env-file` use.

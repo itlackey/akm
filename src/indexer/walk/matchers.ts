@@ -10,6 +10,7 @@
  * `MatchResult` shape expected by the rest of the indexer.
  */
 
+import { isSecretSidecar } from "../../core/asset/asset-placement";
 import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
 import { presentationFor } from "../../core/type-presentation";
 import type { FileContext, MatchResult } from "./file-context";
@@ -101,7 +102,7 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
     // Any regular file under secrets/ is a secret value, except the lock and
     // sensitive-marker sidecars. The whole file is the value (no extension or
     // body parsing — see the secret-file renderer + indexer guards).
-    test: (_, fileName) => !fileName.endsWith(".lock") && !fileName.endsWith(".sensitive"),
+    test: (_, fileName) => !isSecretSidecar(fileName),
   },
   {
     dir: "tasks",

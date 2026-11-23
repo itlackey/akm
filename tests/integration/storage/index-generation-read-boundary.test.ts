@@ -12,10 +12,7 @@ import {
   openReadonlyExistingDatabase,
 } from "../../../src/storage/repositories/index-connection";
 import { getEntryCount } from "../../../src/storage/repositories/index-entries-repository";
-import {
-  CANONICAL_INDEX_DB_VERSION,
-  SERVED_AS_IS_INDEX_LAYOUT,
-} from "../../../src/storage/repositories/index-entry-schema";
+import { CANONICAL_INDEX_DB_VERSION } from "../../../src/storage/repositories/index-entry-schema";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 function stampGeneration(dbPath: string, version: string | undefined): void {
@@ -61,7 +58,7 @@ describe("index openers and the layout marker", () => {
   });
 
   test("an older layout is served by both readers with one line naming akm index", () => {
-    const dbPath = setup(String(SERVED_AS_IS_INDEX_LAYOUT - 1));
+    const dbPath = setup(String(CANONICAL_INDEX_DB_VERSION - 1));
     expectServed(() => openExistingDatabase(dbPath));
     expectServed(() => openReadonlyExistingDatabase(dbPath));
     expect(warnings.filter((line) => line.includes("older layout"))).toHaveLength(1);

@@ -32,7 +32,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
-import { assetPathCandidatesForName } from "../../asset/asset-placement";
+import { assetPathCandidatesForName, isSecretSidecar } from "../../asset/asset-placement";
 import { isScratchPath } from "../../asset/scratch";
 import { scanEnvKeyNames, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
@@ -45,8 +45,6 @@ import { hashContent } from "./shared";
 const ENV_DIR = "env";
 /** The `secrets/` content subdir (whole-file secrets). */
 const SECRETS_DIR = "secrets";
-/** Sidecar suffixes under `secrets/` that are not secrets (`.sensitive` is a retired marker, left in older bundles). */
-const SECRET_SKIP_SUFFIXES = [".lock", ".sensitive"];
 
 type DotenvType = "env" | "secret";
 
@@ -61,7 +59,7 @@ function classify(relPath: string): DotenvType | null {
     return base === ".env" || base.endsWith(".env") ? "env" : null;
   }
   if (head === SECRETS_DIR) {
-    return SECRET_SKIP_SUFFIXES.some((s) => base.endsWith(s)) ? null : "secret";
+    return isSecretSidecar(base) ? null : "secret";
   }
   return null;
 }

@@ -229,25 +229,17 @@ describe("OKF first-class conformance", () => {
     });
     expect(parseType(native.path)).toBe("memory");
 
-    const warnings: string[] = [];
-    _resetWarnOnceForTests();
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-    try {
-      const reserved = await writeMarkdownAsset({
+    // A name whose file would be no asset (a reserved one) is refused, and nothing is written (§0.2 N12).
+    await expect(
+      writeMarkdownAsset({
         type: "memory",
         content: "Reserved.",
         name: "index",
         fallbackPrefix: "memory",
         target: "local",
-      });
-      expect(parseType(reserved.path)).toBe("memory");
-      expect(warnings.some((w) => w.includes("index"))).toBe(true);
-    } finally {
-      _setWarnSinkForTests(undefined);
-    }
-    expect(fs.existsSync(path.join(storage.stashDir, "memories", "index.md"))).toBe(true);
+      }),
+    ).rejects.toThrow('Cannot create memory "index" in bundle "local": it would be kept at memories/index.md');
+    expect(fs.existsSync(path.join(storage.stashDir, "memories", "index.md"))).toBe(false);
   });
 
   test("an adapter change invalidates incremental freshness and updates the canonical row in place", async () => {

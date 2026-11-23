@@ -36,7 +36,6 @@ import {
   missingEntryColumns,
   readTableSql,
   retiredEntryColumns,
-  SERVED_AS_IS_INDEX_LAYOUT,
   supportsContentlessDelete,
   tableExists,
 } from "./index-entry-schema";
@@ -148,15 +147,6 @@ function dropVecMirror(db: Database): void {
   } catch {
     // sqlite-vec is not loadable here.
   }
-}
-
-/**
- * Layout 27 drops `entries.component_id`. `NOT NULL`, so a table that still has it takes none of this release's
- * inserts. One statement, in the caller's transaction; every row, vector and score stays.
- */
-function dropComponentColumn(db: Database): void {
-  if (!tableExists(db, "entries") || !tableHasColumn(db, "entries", "component_id")) return;
-  db.exec("ALTER TABLE entries DROP COLUMN component_id");
 }
 
 /**
@@ -277,9 +267,6 @@ function applySchema(db: Database): void {
   if (storedVersion > DB_VERSION) throw newerIndexLayoutError(storedVersion);
 
   ensureEntriesLayout(db);
-  // A layout-26 index is served as it is: its `component_id` goes, and its version moves, with `akm migrate apply`.
-  const servedAsIs = storedVersion === SERVED_AS_IS_INDEX_LAYOUT;
-  if (!servedAsIs) dropComponentColumn(db);
 
   const hadFragmentSource = tableExists(db, "entry_fragments");
   db.exec(CANONICAL_ENTRY_SCHEMA_SQL);
@@ -451,7 +438,6 @@ function applySchema(db: Database): void {
   // Migrating an existing layout drops tables and columns; the next `akm index`
   // VACUUMs the pages they leave free (`vacuumIndexDb`, indexer.ts), since a
   // writable open may run inside a caller's transaction, where VACUUM cannot.
-  if (servedAsIs) return;
   if (storedVersion > 0 && storedVersion < DB_VERSION) setMeta(db, VACUUM_PENDING_META, "1");
   setMeta(db, "version", String(DB_VERSION));
 }

@@ -54,7 +54,7 @@ export interface RegisteredDifference extends DifferenceNode {
  */
 export const APPROVED_ROWS: ReadonlySet<string> = new Set([
   ...Array.from({ length: 16 }, (_, i) => `A${i + 1}`),
-  ...[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13].map((n) => `N${n}`),
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15].map((n) => `N${n}`),
 ]);
 
 /** True when `row` names only approved §0.2 rows (`A3`, or `A3+A5`). */

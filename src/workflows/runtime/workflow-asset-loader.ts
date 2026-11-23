@@ -16,7 +16,7 @@ import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { compileWorkflowSource } from "../compile";
 import type { WorkflowPlan } from "../plan";
-import { isUsableWorkflowSource } from "../source-files";
+import { isUsableWorkflowSource, workflowNameForSourcePath } from "../source-files";
 
 /** A resolved workflow asset, compiled from either authored format into its plan. */
 export type WorkflowAsset = {
@@ -93,8 +93,12 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   }
   const assetPath = asset.entry.file;
   if (assetPath === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
-  // A symlink to a file of another extension is no workflow source (a warning says which): it is not run.
-  if (!isUsableWorkflowSource(source.path, assetPath)) {
+  // A symlink to a file of another extension, or a file no workflow folder owns (a loose `.md` with `type: workflow`),
+  // is no workflow source: it is not run.
+  if (
+    !isUsableWorkflowSource(source.path, assetPath) ||
+    workflowNameForSourcePath(source.path, source.adapterId ?? "akm", assetPath) === undefined
+  ) {
     refuseByAdapter(bundle, "does not support native workflow execution", "WORKFLOW_SOURCE_INVALID");
   }
 

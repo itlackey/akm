@@ -118,18 +118,13 @@ describe("writeAssetToSource warns instead of refusing reserved basenames and Wi
     };
   }
 
-  test("warns and still writes a concept literally named `index`", async () => {
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args);
-    });
+  test("refuses a concept literally named `index`: its file would be no asset (N12)", async () => {
     const { source, config } = sink();
     const ref: AssetRef = { type: "knowledge", name: "index" };
 
-    const res = await writeAssetToSource(source, config, ref, "body\n");
-
-    expect(fs.existsSync(res.path)).toBe(true);
-    const joined = warnings.map((a) => a.map(String).join(" ")).join("\n");
-    expect(joined).toContain("index");
+    await expect(writeAssetToSource(source, config, ref, "body\n")).rejects.toThrow(
+      'Cannot create knowledge "index" in bundle',
+    );
   });
 
   test("warns and still writes a concept named after a reserved Windows device name", async () => {

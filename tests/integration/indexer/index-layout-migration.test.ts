@@ -38,7 +38,7 @@ import {
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
 import { CANONICAL_INDEX_DB_VERSION } from "../../../src/storage/repositories/index-entry-schema";
 import { searchFts } from "../../../src/storage/repositories/index-fts-repository";
-import { deleteMeta, getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
+import { deleteMeta, getMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { VACUUM_PENDING_META } from "../../../src/storage/repositories/index-schema";
 import { getEmbeddingCount, searchVec } from "../../../src/storage/repositories/index-vec-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -483,84 +483,6 @@ describe("index.db layout 24 → 25", () => {
       expect(getEmbeddingCount(db, FINGERPRINT)).toBe(3);
     } finally {
       closeDatabase(db);
-    }
-  });
-});
-
-describe("index.db layout 26 is served as it is until `akm migrate apply` moves it", () => {
-  let storage: IsolatedAkmStorage;
-  let dbPath = "";
-
-  beforeEach(() => {
-    storage = withIsolatedAkmStorage();
-    dbPath = path.join(storage.root, "layout-26.db");
-    // Layout 26 is the current one plus `component_id`, `NOT NULL`, the retired name of a bundle's one component.
-    const db = openIndexDatabase(dbPath);
-    try {
-      for (const fixture of ENTRIES) {
-        upsertEntry(
-          db,
-          path.join(storage.stashDir, "knowledge", `${fixture.name}.md`),
-          fixtureDocument(fixture),
-          deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "knowledge", fixture.name),
-        );
-      }
-      db.exec("ALTER TABLE entries ADD COLUMN component_id TEXT NOT NULL DEFAULT 'main'");
-      setMeta(db, "version", "26");
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  afterEach(() => {
-    storage.cleanup();
-  });
-
-  test("it opens read-only without a word and answers keyword queries", () => {
-    const warnings: string[] = [];
-    _setWarnSinkForTests((_level, args) => warnings.push(args.map(String).join(" ")));
-    try {
-      const db = openReadonlyExistingDatabase(dbPath);
-      if (!db) throw new Error("expected a handle");
-      try {
-        expect(searchFts(db, "backup", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/bravo-backup"]);
-        expect(getMeta(db, "version")).toBe("26");
-      } finally {
-        closeDatabase(db);
-      }
-    } finally {
-      _setWarnSinkForTests();
-    }
-    expect(warnings).toEqual([]);
-  });
-
-  test("the writable open leaves its version and columns alone, and a write fills component_id as it always did", () => {
-    const db = openIndexDatabase(dbPath);
-    try {
-      expect(getMeta(db, "version")).toBe("26");
-      expect(entryColumns(db)).toContain("component_id");
-      expect(getMeta(db, VACUUM_PENDING_META)).toBeFalsy();
-      expect(count(db, "entries")).toBe(ENTRIES.length);
-      const added = { ...ENTRIES[0]!, name: "added-note" };
-      upsertEntry(
-        db,
-        path.join(storage.stashDir, "knowledge", `${added.name}.md`),
-        fixtureDocument(added),
-        deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "knowledge", added.name),
-      );
-      expect(count(db, "entries")).toBe(ENTRIES.length + 1);
-      expect(
-        db.prepare("SELECT component_id FROM entries WHERE item_ref = 'stash//knowledge/added-note'").get(),
-      ).toEqual({ component_id: "stash" });
-    } finally {
-      closeDatabase(db);
-    }
-    // Opened again, it is still as the release before the adapter refactor wrote it.
-    const again = openIndexDatabase(dbPath);
-    try {
-      expect(getMeta(again, "version")).toBe("26");
-    } finally {
-      closeDatabase(again);
     }
   });
 });

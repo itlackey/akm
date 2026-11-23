@@ -41,7 +41,7 @@ import { resolveSourceEntries, type SearchSource } from "../../indexer/search/se
 import { type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
 import { walkStashFlat } from "../../indexer/walk/walker";
 import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../tasks/source-v3";
-import { resolveWorkflowSourceDomains } from "../../workflows/source-files";
+import { resolveWorkflowSourceDomains, workflowNameForSourcePath } from "../../workflows/source-files";
 import { runBaseChecks } from "./base-linter";
 import { bundleLintSkip } from "./bundle-skip";
 import { checkEnvForDangerousKeys } from "./env-key-rules";
@@ -146,6 +146,8 @@ function markdownAssetsByType(root: string): Map<string, string[]> {
   for (const file of walkStashFlat(root)) {
     if (file.ext !== ".md" || file.ancestorDirs.some((dir) => dir === "env" || dir === "secrets")) continue;
     const type = classifyAkmFile(file.relPath, file)?.match.type;
+    // A loose `.md` typed workflow by its content is no workflow source, so the sweep never linted it.
+    if (type === "workflow" && workflowNameForSourcePath(root, "akm", file.absPath) === undefined) continue;
     const dir = type === undefined ? undefined : documentStashDirFor(type);
     if (dir === undefined || documentFormatForStashDir(dir) !== "markdown") continue;
     byDir.set(dir, [...(byDir.get(dir) ?? []), file.absPath]);
@@ -187,19 +189,10 @@ function resolveWorkflowLintOwnership(stashRoot: string, files: readonly string[
 
 // ── Non-akm adapter dispatch (real `adapter.validate()`, not a re-implementation) ──
 //
-// akm 0.9.0 lint/adapter-dispatch wiring: `akm lint` used to special-case
-// exactly one non-akm adapter (`okf`, via a hand-rolled `missing-type`-only
-// `lintOkfBundle` re-implementation this change deletes) and silently route
-// every OTHER non-akm bundle (llm-wiki, dotenv, claude, opencode,
-// agent-skills, website-snapshot, generic-files, akm-task, akm-workflow)
-// through the AKM-shaped akm sweep — the wrong linter for the wrong
-// format, and the reason those adapters' own `validate()` checks (OKF's
-// `missing-ref`; llm-wiki's `uncited-raw`/`missing-description`/`broken-xref`/
-// `broken-source`) were unreachable dead code. Every bundle is now linted by
-// its OWN configured/detected adapter's `validate()` — the single definition
-// of that format's rules, shared with the (now also wired, advisory-only)
-// change-transaction pre-commit gate in `commands/proposal/repository.ts`.
-// The adapter-dispatch work intentionally stays outside the `akm` sweep below.
+// Every bundle is linted by its own configured or detected adapter's `validate()`: the one definition of that
+// format's rules, shared with the advisory change-transaction pre-commit gate in `commands/proposal/repository.ts`.
+// Routing a non-akm bundle through the akm sweep below would apply the wrong linter to the wrong format and leave the
+// adapter's own checks unreachable, so the dispatch stays outside that sweep.
 // The sweep's workflow branch separately supports authoritative peer `.md` and
 // `.yml` sources while preserving the pinned Markdown findings/`--fix` bytes.
 
@@ -710,6 +703,7 @@ async function addAdapterFindings(
     // Nothing under `env/` or `secrets/` is read, as in the sweep.
     if (file.ancestorDirs.some((dir) => dir === "env" || dir === "secrets")) return false;
     const type = classifyAkmFile(file.relPath, file)?.match.type;
+    if (type === "workflow" && workflowNameForSourcePath(stashRoot, "akm", file.absPath) === undefined) return false;
     const dir = type === undefined ? undefined : documentStashDirFor(type);
     return dir !== undefined && dirs.has(dir);
   };

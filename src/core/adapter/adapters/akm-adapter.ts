@@ -68,6 +68,7 @@ import type { PathFileContext } from "../../../indexer/walk/matchers";
 import {
   assetPathCandidatesForName,
   deriveCanonicalAssetNameFromStashRoot,
+  isSecretSidecar,
   placementTypes,
   refForFile,
   stashDirNames,
@@ -126,7 +127,7 @@ function akmStashAbstains(relPath: string): boolean {
   // Any ancestor directory counts, matching the directory matcher's rule, so a
   // nested `projects/x/secrets/` honors its markers too.
   const ancestorDirs = segments.slice(0, -1);
-  return ancestorDirs.includes("secrets") && (relPath.endsWith(".sensitive") || relPath.endsWith(".lock"));
+  return ancestorDirs.includes("secrets") && isSecretSidecar(relPath);
 }
 
 /**

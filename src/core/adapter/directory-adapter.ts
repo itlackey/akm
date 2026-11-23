@@ -28,7 +28,7 @@ import {
 import { buildFileContext, type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
 import { isWalkedFile, walkStashFlatWithStatus } from "../../indexer/walk/walker";
 import { compareCodePoints, existingFileMode, hasErrnoCode, writeFileAtomic } from "../common";
-import { ConfigError, NotFoundError, UsageError } from "../errors";
+import { assetNotFound, ConfigError, UsageError } from "../errors";
 import type { FileChange } from "../file-change";
 import type {
   AssetChange,
@@ -80,8 +80,10 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
    */
   protected abstract identify(relPath: string): string | null;
   /**
-   * Every path (relative to the root) the asset `conceptId` can be kept at, the winner first. Of the files that hold the
-   * concept, the first of these that exists wins; a spelling `identify` does not map back to the concept is ignored.
+   * Every path (relative to the root) the asset `conceptId` can be kept at, the winner first. The first of these that
+   * exists decides the answer: the concept its file holds (`identify`) wins, and the asset comes back under that id.
+   * This is how a file spelling (`knowledge/guide.md`) resolves to its asset (`knowledge/guide`). A path `identify` gives
+   * no concept is skipped.
    */
   protected abstract spellings(conceptId: string): string[];
   /** What the index records about `file`, the asset `conceptId` names. It may read the file. */
@@ -142,7 +144,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
         const conceptId = winners.get(file);
         return conceptId === undefined ? [] : [{ conceptId, entry: this.entryOf(file) }];
       }),
-      unclaimed: walked.files.filter((file) => !conceptOf.has(file)),
+      files: walked.files.filter((file) => winners.has(file) || !conceptOf.has(file)).map((file) => this.entryOf(file)),
       complete: walked.complete,
       ...(walked.incompleteReason !== undefined ? { incompleteReason: walked.incompleteReason } : {}),
     };
@@ -261,9 +263,16 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return dir === undefined ? file : { ...file, resources: () => packageResources(dir, file.absPath) };
   }
 
+  /** The concept id a new asset gets; refused when its file would be no asset (`knowledge` named `index`, `secret` named `x.lock`). */
   place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {
     const relPath = this.relPathOf(b, this.placeFile(b, asset));
-    return this.identify(relPath) ?? relPath;
+    const conceptId = this.identify(relPath);
+    if (conceptId === null) {
+      throw new UsageError(
+        `Cannot create ${asset.type} "${asset.name}" in bundle "${b.id}": it would be kept at ${relPath}, which is not an asset.`,
+      );
+    }
+    return conceptId;
   }
 
   create(b: Bundle, asset: NewAsset, options: { replace?: boolean; verbatim?: boolean } = {}): AssetChange {
@@ -272,12 +281,14 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
         `Adapter "${this.id}" does not write ${asset.type} assets in bundle "${b.id}"; the asset facade checks \`writes\` first.`,
       );
     }
-    const file = this.placeFile(b, asset);
-    const entry = buildFileContext(b.root, file);
     const conceptId = this.place(b, asset);
     if (!options.replace && this.read(b, conceptId)) {
-      throw new UsageError(`Asset "${b.id}//${conceptId}" already exists.`, "RESOURCE_ALREADY_EXISTS");
+      throw new Error(
+        `Adapter "${this.id}" will not create "${b.id}//${conceptId}" over an existing asset without \`replace\`; the asset facade checks \`exclusive\` first.`,
+      );
     }
+    const file = this.placeFile(b, asset);
+    const entry = buildFileContext(b.root, file);
     const content = options.verbatim ? asset.content : this.serialize(asset.type, file, asset.content);
     const changed = asset.resources?.length
       ? this.writePackage(b, asset, entry, content, asset.resources)
@@ -344,13 +355,17 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
 
   private requireRetiring(b: Bundle): void {
     if (this.retires.length === 0) {
-      throw new UsageError(`Bundle "${b.id}" (adapter "${this.id}") does not retire assets.`);
+      throw new Error(
+        `Adapter "${this.id}" does not retire assets in bundle "${b.id}"; the asset facade checks \`retires\` first.`,
+      );
     }
   }
 
   private requireRetires(b: Bundle, type: string): void {
     if (!this.retires.includes(type)) {
-      throw new UsageError(`Bundle "${b.id}" (adapter "${this.id}") does not retire ${type} assets.`);
+      throw new Error(
+        `Adapter "${this.id}" does not retire ${type} assets in bundle "${b.id}"; the asset facade checks \`retires\` first.`,
+      );
     }
   }
 
@@ -370,7 +385,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
 
   private existing(b: Bundle, conceptId: string): BundleAsset & { entry: AssetEntry & { file: string } } {
     const found = this.read(b, conceptId);
-    if (!found?.entry.file) throw new NotFoundError(`Asset not found: ${b.id}//${conceptId}`);
+    if (!found?.entry.file) throw assetNotFound(`${b.id}//${conceptId}`);
     return found as BundleAsset & { entry: AssetEntry & { file: string } };
   }
 

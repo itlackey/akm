@@ -43,7 +43,7 @@ export async function deleteAssetFromSource(
   };
 }
 
-/** Where a new asset of `ref` is placed in a directory bundle, for one the adapter does not recognize (a reserved name). */
+/** Where a new asset of `ref` is placed in a directory bundle, for one the walk does not reach (a git-ignored file, §0.2 A6): no read finds it, so the path comes from placement. */
 function placedPath(source: WriteTargetSource, ref: AssetRef): string {
   const typeDir = stashDirFor(ref.type) as string;
   return assetPathForName(ref.type, path.join(source.path, typeDir), ref.name);

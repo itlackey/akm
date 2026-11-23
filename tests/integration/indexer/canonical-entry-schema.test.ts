@@ -10,7 +10,6 @@ import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import { openDatabase } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
-import { SERVED_AS_IS_INDEX_LAYOUT } from "../../../src/storage/repositories/index-entry-schema";
 import { searchFts } from "../../../src/storage/repositories/index-fts-repository";
 import { DB_VERSION, ensureSchema } from "../../../src/storage/repositories/index-schema";
 
@@ -18,6 +17,7 @@ const CURRENT_ENTRY_COLUMNS: string[] = [
   "id",
   "item_ref",
   "bundle_id",
+  "component_id",
   "concept_id",
   "adapter_id",
   "type",
@@ -56,6 +56,28 @@ describe("canonical derived-index entry schema", () => {
     });
   });
 
+  test("a fresh index is layout 26, so the release before the adapter refactor reads it, and a write fills component_id", () => {
+    withTempIndex((dbPath) => {
+      const db = openIndexDatabase(dbPath);
+      try {
+        expect(DB_VERSION).toBe(26);
+        expect(db.prepare("SELECT value FROM index_meta WHERE key = 'version'").get()).toEqual({ value: "26" });
+        upsertEntry(
+          db,
+          "/stash/knowledge/a.md",
+          { type: "knowledge" as const, name: "a", filename: "a.md" },
+          deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "knowledge", "a"),
+        );
+        expect(db.prepare("SELECT bundle_id, component_id FROM entries").get()).toEqual({
+          bundle_id: "stash",
+          component_id: "stash",
+        });
+      } finally {
+        closeDatabase(db);
+      }
+    });
+  });
+
   test("does not stamp a generation until every required DDL surface succeeds", () => {
     withTempIndex((dbPath) => {
       const partial = openDatabase(dbPath);
@@ -83,7 +105,7 @@ describe("canonical derived-index entry schema", () => {
       const legacy = openDatabase(dbPath);
       legacy.exec(`
         CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        INSERT INTO index_meta (key, value) VALUES ('version', '${SERVED_AS_IS_INDEX_LAYOUT - 1}');
+        INSERT INTO index_meta (key, value) VALUES ('version', '${DB_VERSION - 1}');
         CREATE TABLE entries (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           entry_key TEXT NOT NULL UNIQUE,

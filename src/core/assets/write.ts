@@ -14,7 +14,7 @@ import type { AssetChange, NewAsset, Retirement, RetireNote } from "../adapter/b
 import { stashDirFor } from "../asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { parsePlacementRef } from "../asset/resolve-ref";
-import { NotFoundError, UsageError } from "../errors";
+import { assetNotFound, UsageError } from "../errors";
 import { recordWrittenPath } from "../write-provenance";
 import {
   commitWriteTargetBoundary,
@@ -142,7 +142,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
   const existing = (conceptId: string, options?: { revision?: string; retire?: boolean }): Asset => {
     ensureWritable(source, config);
     const asset = readAsset(source, conceptId);
-    if (!asset) throw new NotFoundError(`Asset not found: ${source.name}//${conceptId}`);
+    if (!asset) throw assetNotFound(`${source.name}//${conceptId}`);
     const type = assetType(asset);
     held.assertWrites(type);
     if (options?.retire) held.assertRetires(type);
@@ -185,14 +185,17 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     retired: () => held.retired(),
     restore(handle, fallback) {
       ensureWritable(source, config);
+      held.assertRetiring();
       return result(held.restore(handle, fallback));
     },
     forget(handle) {
       ensureWritable(source, config);
+      held.assertRetiring();
       record(held.forget(handle));
     },
     expireRetired(before) {
       ensureWritable(source, config);
+      held.assertRetiring();
       record(held.expireRetired(before));
     },
   };

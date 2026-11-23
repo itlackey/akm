@@ -64,6 +64,11 @@ const workflowSpec: Omit<AssetSpec, "stashDir"> = {
   },
 };
 
+/** Whether `fileName` is a sidecar under `secrets/` (`.lock`, or a `.sensitive` marker left in older bundles), not a secret. The one rule for placement, the walk and the adapters. */
+export function isSecretSidecar(fileName: string): boolean {
+  return fileName.endsWith(".lock") || fileName.endsWith(".sensitive");
+}
+
 const markdownSpec: Omit<AssetSpec, "stashDir"> = {
   documentFormat: "markdown",
   isRelevantFile: (fileName) => path.extname(fileName).toLowerCase() === ".md",
@@ -145,7 +150,7 @@ const BUILTIN_PLACEMENT_SPECS = {
   // sidecars; the canonical name preserves the natural filename.
   secret: {
     stashDir: "secrets",
-    isRelevantFile: (fileName) => !fileName.endsWith(".lock") && !fileName.endsWith(".sensitive"),
+    isRelevantFile: (fileName) => !isSecretSidecar(fileName),
     toCanonicalName: (typeRoot, filePath) => toPosix(path.relative(typeRoot, filePath)),
     toAssetPath: (typeRoot, name) => path.join(typeRoot, name),
   },

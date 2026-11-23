@@ -24,7 +24,7 @@ import { hashContent } from "../adapter/adapters/shared";
 import { adapterIdOf } from "../adapter/detect-adapter";
 import type { IndexDocument } from "../adapter/types";
 import { loadConfig } from "../config/config";
-import { NotFoundError } from "../errors";
+import { assetNotFound } from "../errors";
 import { isPathAbsent } from "../path-access";
 import { getDbPath } from "../paths";
 import { warnVerbose } from "../warn";
@@ -49,7 +49,7 @@ export function indexAssets(
       ...(source.location !== undefined ? { location: source.location } : {}),
       adapterId: adapterIdOf(source),
     }).recognize(asset.entry);
-    if (!document?.conceptId) throw new NotFoundError(`Asset not found: ${asset.ref}`, "ASSET_NOT_FOUND");
+    if (!document?.conceptId) throw assetNotFound(asset.ref);
     // No file holds the asset (a keyring's or vault's): the row is keyed under a path that leads nowhere, and says so.
     if (document.path === undefined) document.fileless = true;
     documents.set(asset, document);

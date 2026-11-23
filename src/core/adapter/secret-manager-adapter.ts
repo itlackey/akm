@@ -15,7 +15,7 @@
 
 import { spawnSync } from "node:child_process";
 import { toErrorMessage } from "../common";
-import { ConfigError, NotFoundError, UsageError } from "../errors";
+import { assetNotFound, ConfigError } from "../errors";
 import type { FileChange } from "../file-change";
 import { hashContent } from "./adapters/shared";
 import type {
@@ -43,12 +43,10 @@ function secretNameOf(entry: string): string | undefined {
   return entry.startsWith(prefix) && entry.length > prefix.length ? entry.slice(prefix.length) : undefined;
 }
 
-/** The secret `conceptId` names, refused when it names none: these bundles hold secrets only. */
-function requireSecretName(conceptId: string): string {
+/** The secret `conceptId` names. The facade reads the asset before it changes it, so an id outside `secrets/` is never asked of an adapter. */
+function requireSecretName(bundle: string, conceptId: string): string {
   const name = secretNameOf(conceptId);
-  if (name === undefined) {
-    throw new UsageError(`This bundle holds secrets only, under ${SECRETS_DIR}/; got "${conceptId}".`);
-  }
+  if (name === undefined) throw assetNotFound(`${bundle}//${conceptId}`);
   return name;
 }
 
@@ -94,10 +92,12 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     );
   }
 
-  /** The name a new asset gives a secret, refused for any other type. */
+  /** The name a new asset gives a secret. The facade checks `writes` first, so another type is never asked of the adapter. */
   private secretNameFor(asset: Pick<NewAsset, "type" | "name">): string {
     if (asset.type !== "secret") {
-      throw new UsageError(`The ${this.id} adapter holds secrets only; it cannot create a ${asset.type} asset.`);
+      throw new Error(
+        `Adapter "${this.id}" does not write ${asset.type} assets; the asset facade checks \`writes\` first.`,
+      );
     }
     return asset.name;
   }
@@ -158,24 +158,30 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     return secretEntryPath(this.secretNameFor(asset));
   }
 
-  create(b: Bundle, asset: NewAsset): AssetChange {
+  create(b: Bundle, asset: NewAsset, options: { replace?: boolean; verbatim?: boolean } = {}): AssetChange {
     const name = this.secretNameFor(asset);
-    this.storeSecret(this.locationOf(b), name, Buffer.from(asset.content));
+    const location = this.locationOf(b);
+    if (!options.replace && this.findSecret(location, name)) {
+      throw new Error(
+        `Adapter "${this.id}" will not create "${b.id}//${secretEntryPath(name)}" over an existing secret without \`replace\`; the asset facade checks \`exclusive\` first.`,
+      );
+    }
+    this.storeSecret(location, name, Buffer.from(asset.content));
     return this.change(name, asset.content);
   }
 
   update(b: Bundle, conceptId: string, content: string | Buffer): AssetChange {
     const location = this.locationOf(b);
-    const name = requireSecretName(conceptId);
-    if (!this.findSecret(location, name)) throw new NotFoundError(`Secret not found: ${b.id}//${conceptId}`);
+    const name = requireSecretName(b.id, conceptId);
+    if (!this.findSecret(location, name)) throw assetNotFound(`${b.id}//${conceptId}`);
     this.storeSecret(location, name, Buffer.from(content));
     return this.change(name, content);
   }
 
   delete(b: Bundle, conceptId: string): AssetChange {
     const location = this.locationOf(b);
-    const name = requireSecretName(conceptId);
-    if (!this.deleteSecret(location, name)) throw new NotFoundError(`Secret not found: ${b.id}//${conceptId}`);
+    const name = requireSecretName(b.id, conceptId);
+    if (!this.deleteSecret(location, name)) throw assetNotFound(`${b.id}//${conceptId}`);
     return this.change(name);
   }
 
@@ -200,7 +206,7 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   }
 
   private refuseRetire(): never {
-    throw new UsageError(`The ${this.id} adapter deletes secrets; it does not retire them.`);
+    throw new Error(`Adapter "${this.id}" does not retire assets; the asset facade checks \`retires\` first.`);
   }
 }
 

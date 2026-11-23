@@ -261,23 +261,23 @@ function refFilter(stashDir: string, ref: string): (proposalRef: string) => bool
     );
   }
   const sources = resolveSourceEntries(stashDir, loadConfig());
+  // The filter's own outdated spelling is the caller's to fix (one warning); a stored ref is not, so it resolves silently.
+  const wanted = currentConceptId(filter, sources);
   const asked = new Map<string, string>();
   const current = (identity: ProposalRefIdentity): string => {
     const key = `${identity.bundle ?? ""}//${identity.conceptId}`;
     const known = asked.get(key);
     if (known !== undefined) return known;
-    const conceptId = currentConceptId(identity, sources);
+    const conceptId = currentConceptId(identity, sources, { quiet: true });
     asked.set(key, conceptId);
     return conceptId;
   };
-  const wanted = current(filter);
   return (proposalRef) => {
     const proposal = proposalRefIdentity(proposalRef);
-    return (
-      proposal !== undefined &&
-      (filter.bundle === undefined || proposal.bundle === filter.bundle) &&
-      current(proposal) === wanted
-    );
+    if (proposal === undefined) return false;
+    if (filter.bundle !== undefined && proposal.bundle !== filter.bundle) return false;
+    // As written (what a filter always found), or the same asset under another spelling.
+    return proposal.conceptId === filter.conceptId || proposal.conceptId === wanted || current(proposal) === wanted;
   };
 }
 
