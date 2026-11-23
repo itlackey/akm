@@ -725,32 +725,14 @@ export function findEntryIdByRef(db: Database, ref: string, bundleId?: string): 
   return findEntryIdByBundleRef(db, ref, bundleId);
 }
 
-/** `name` plus its `.md`-toggled sibling — the markdown ext-keep/strip ambiguity. */
-export function withMdVariants(name: string): string[] {
-  return name.endsWith(".md") ? [name, name.slice(0, -3)] : [name, `${name}.md`];
-}
-
-/** True when `file` is a `.md` file named by the last segment of `conceptId`, up to its `.md`. */
-export function namesMarkdownFile(conceptId: string, file: string): boolean {
-  const last = (conceptId.split("/").pop() ?? "").replace(/\.md$/, "");
-  return path.extname(file) === ".md" && path.basename(file, ".md") === last;
-}
-
 /**
  * Current (`[bundle//]conceptId`) id lookup: match `item_ref` exactly when
  * bundle-qualified or by `//conceptId` suffix when short.
  */
 function findEntryIdByBundleRef(db: Database, ref: string, bundleId?: string): number | undefined {
   const parsed = parseBundleRef(ref);
-  // item_ref is the canonical stored spelling post-flip.
-  const exact = matchIdByItemRef(db, parsed.bundle, parsed.conceptId, bundleId);
-  if (exact !== undefined) return exact;
-  // The `.md` toggle names a markdown file by its own name: `tasks/x.md` is not a spelling of `tasks/x.yml`,
-  // nor `skills/x.md` of `skills/x/SKILL.md`.
-  const [, toggled] = withMdVariants(parsed.conceptId);
-  const id = matchIdByItemRef(db, parsed.bundle, toggled!, bundleId);
-  const file = id === undefined ? undefined : getEntryFilePathById(db, id);
-  return file !== undefined && namesMarkdownFile(parsed.conceptId, file) ? id : undefined;
+  // item_ref is the canonical stored spelling: the ref is matched as written.
+  return matchIdByItemRef(db, parsed.bundle, parsed.conceptId, bundleId);
 }
 
 /**
@@ -1037,17 +1019,13 @@ export function getLiveRefSnapshot(db: Database): LiveRefSnapshot {
 
 /**
  * `getEntryByRef`'s liveness check (bundle-qualified exact match, or bare
- * `//conceptId` suffix match across bundles, each tried with the `.md`
- * toggle {@link withMdVariants} applies) against a prebuilt
+ * `//conceptId` suffix match across bundles, as written) against a prebuilt
  * {@link LiveRefSnapshot} instead of the database — no query per call.
  */
 export function isRefLiveInSnapshot(snapshot: LiveRefSnapshot, ref: string): boolean {
   const parsed = parseBundleRef(ref);
-  const conceptVariants = withMdVariants(parsed.conceptId);
-  if (parsed.bundle !== undefined) {
-    return conceptVariants.some((conceptId) => snapshot.itemRefs.has(`${parsed.bundle}//${conceptId}`));
-  }
-  return conceptVariants.some((conceptId) => snapshot.conceptIds.has(conceptId));
+  if (parsed.bundle !== undefined) return snapshot.itemRefs.has(`${parsed.bundle}//${parsed.conceptId}`);
+  return snapshot.conceptIds.has(parsed.conceptId);
 }
 
 /**

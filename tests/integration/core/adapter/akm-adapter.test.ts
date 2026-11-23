@@ -137,17 +137,17 @@ describe("akm adapter — recognize reproduces runMatchers classification (§5.1
 
 // ── 2. recognizeMatch — content/extension winners (§5.1) ─────────────────────
 
-describe("akm adapter — recognizeMatch classifies content/extension winners (§5.1)", () => {
-  test("classifies hand-built contexts where smartMd/extension is the winner", () => {
+describe("akm adapter — recognizeMatch classifies by the path alone (§5.1)", () => {
+  test("classifies files outside any type dir by extension and a Markdown default, never by content", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-adapter-sync-"));
     tmpDirs.push(tmp);
-    // Files placed OUTSIDE any type dir so the winner comes from a content/ext
-    // probe, not a directory hint — exercising branches the all-types fixture's
-    // parentDir-hint winners mask (§1 covers the dir-hint winners against the golden).
+    // Files placed OUTSIDE any type dir so the winner comes from the extension or the loose-Markdown default, not a
+    // directory hint — exercising branches the all-types fixture's parentDir-hint winners mask (§1 covers the dir-hint
+    // winners against the golden). A body placeholder or a frontmatter key is no signal.
     const cases: Array<[rel: string, content: string, type: string]> = [
-      ["note.md", "# Just knowledge\n\nplain body\n", "knowledge"], // smartMd knowledge @5
-      ["cmd.md", "# Command\n\nUse $ARGUMENTS to pass input\n", "command"], // smartMd command @18 (body probe)
-      ["agent.md", "---\nmodel: local\n---\n\n# Agent\n", "agent"], // smartMd agent @8 (frontmatter probe)
+      ["note.md", "# Just knowledge\n\nplain body\n", "knowledge"], // loose Markdown @5
+      ["cmd.md", "# Command\n\nUse $ARGUMENTS to pass input\n", "knowledge"], // a body placeholder is no signal
+      ["agent.md", "---\nmodel: local\nagent: x\n---\n\n# Agent\n", "knowledge"], // nor is frontmatter
       ["run.sh", "#!/bin/sh\necho hi\n", "script"], // extension script @3
     ];
     for (const [rel, content, type] of cases) {
@@ -438,33 +438,27 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
     ).toBeNull();
   });
 
-  test("a `wikis/<name>/` root-level infra file (schema.md) is abstained", () => {
-    const root = makeStashWith({ "wikis/team/schema.md": "# schema\n" });
-    const c = bundle({ root, id: "s" });
-    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "wikis/team/schema.md")))).toBeNull();
-  });
-
-  test("raw/ of a wiki nested in the bundle is `wiki-source` with the bundle-relative ref; pages and plain raw/ dirs are unchanged", () => {
+  test("a wiki is a bundle of its own: its files inside an akm bundle are ordinary akm files", () => {
     const root = makeStashWith({
       "wikis/team/schema.md": "# schema\n",
       "wikis/team/pages/p.md": "# page\n",
       "wikis/team/raw/x.md": "# raw\n",
-      "notes/raw/y.md": "# not a wiki\n",
+      "schema.md": "# schema\n",
+      "pages/p.md": "# page\n",
+      "raw/y.md": "# raw\n",
+      "notes/raw/z.md": "# not a wiki\n",
     });
     const c = bundle({ root, id: "s" });
     const recognize = (rel: string) => akmAdapter.recognize(c, buildFileContext(root, path.join(root, rel)));
-    expect(recognize("wikis/team/raw/x.md")).toMatchObject({ type: "wiki-source", ref: "s//wikis/team/raw/x" });
-    expect(recognize("wikis/team/pages/p.md")?.type).toBe("knowledge");
-    expect(recognize("notes/raw/y.md")?.type).toBe("knowledge");
-  });
-
-  test("raw/ of a bundle whose root is itself a wiki is `wiki-source`", () => {
-    const root = makeStashWith({ "schema.md": "# schema\n", "pages/p.md": "# page\n", "raw/x.md": "# raw\n" });
-    const c = bundle({ root, id: "s" });
-    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "raw/x.md")))).toMatchObject({
-      type: "wiki-source",
-      ref: "s//raw/x",
-    });
+    for (const rel of [
+      "wikis/team/schema.md",
+      "wikis/team/pages/p.md",
+      "wikis/team/raw/x.md",
+      "raw/y.md",
+      "notes/raw/z.md",
+    ]) {
+      expect(recognize(rel), rel).toMatchObject({ type: "knowledge", ref: `s//${rel.replace(/\.md$/, "")}` });
+    }
   });
 
   test("bytes-never-read: the sidecar/vaults abstention never calls content() or frontmatter()", () => {

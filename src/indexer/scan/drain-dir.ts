@@ -26,14 +26,10 @@
  * import cycle.
  */
 
-import path from "node:path";
 import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
 import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
 import type { Bundle, IndexDocument } from "../../core/adapter/types";
-import { compareCodePoints } from "../../core/common";
-import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import { compileWorkflowSource } from "../../workflows/compile";
-import { resolveWorkflowSourceDomains, workflowNameForSourcePath } from "../../workflows/source-files";
 import { buildMetadataSkipWarning, type StashFile } from "../passes/metadata";
 import { buildFileContext, type FileContext } from "../walk/file-context";
 import { indexDocumentToStashEntry } from "./doc-to-entry";
@@ -55,10 +51,6 @@ export interface DrainedDir {
    * `item_ref` verbatim (D-R3: identity comes from the owning adapter).
    */
   conceptIdByFile: Map<string, string>;
-  /** Authored paths rejected by workflow source-ownership preflight. */
-  rejectedPaths: Set<string>;
-  /** Adapter-owned canonical concept ids rejected before workflow parsing. */
-  rejectedConceptIds: Set<string>;
 }
 
 /**
@@ -79,54 +71,8 @@ export function drainDirDocuments(
   const warnings: string[] = [];
   const hashByFile = new Map<string, string>();
   const conceptIdByFile = new Map<string, string>();
-  const rejectedPaths = new Set<string>();
-  const rejectedConceptIds = new Set<string>();
-  // A full directory drain may contain both peer workflow formats for one
-  // canonical ref.  Ownership arbitration must happen *before* recognition:
-  // otherwise both documents reach the persistence fold and SQLite's final
-  // row is determined by the walk/readdir order.  Resolve exactly the paths
-  // this drain owns, so a full scan retains only the deterministic `.md`
-  // winner while a targeted one-file reindex deliberately keeps its written
-  // source and therefore marks an existing peer row stale for read fallback.
-  const workflowOwnerPathByCanonicalName = new Map(
-    resolveWorkflowSourceDomains(
-      bundle.root,
-      adapter.id,
-      fileContexts.map((file) => file.absPath),
-    )
-      .filter((resolution) => resolution.source !== undefined)
-      .map((resolution) => [resolution.canonicalName, path.resolve(resolution.source!.path)]),
-  );
-  const invalidWorkflowOwnerNames = new Set<string>();
-  const orderedFileContexts = [...fileContexts].sort((left, right) => {
-    const leftName = workflowNameForSourcePath(bundle.root, adapter.id, left.absPath);
-    const rightName = workflowNameForSourcePath(bundle.root, adapter.id, right.absPath);
-    const leftOwner =
-      leftName !== undefined &&
-      workflowOwnerPathByCanonicalName.get(canonicalizeWorkflowName(leftName)) === path.resolve(left.absPath);
-    const rightOwner =
-      rightName !== undefined &&
-      workflowOwnerPathByCanonicalName.get(canonicalizeWorkflowName(rightName)) === path.resolve(right.absPath);
-    if (leftOwner !== rightOwner) return leftOwner ? -1 : 1;
-    return compareCodePoints(left.absPath, right.absPath);
-  });
 
-  for (const file of orderedFileContexts) {
-    if (rejectedPaths.has(file.absPath)) continue;
-
-    const workflowName = workflowNameForSourcePath(bundle.root, adapter.id, file.absPath);
-    if (workflowName !== undefined) {
-      const canonicalName = canonicalizeWorkflowName(workflowName);
-      const ownerPath = workflowOwnerPathByCanonicalName.get(canonicalName);
-      if (
-        ownerPath !== undefined &&
-        ownerPath !== path.resolve(file.absPath) &&
-        !invalidWorkflowOwnerNames.has(canonicalName)
-      ) {
-        continue;
-      }
-    }
-
+  for (const file of fileContexts) {
     const doc = adapter.recognize(bundle, file);
     if (doc === null) continue;
     if (!doc.conceptId) {
@@ -146,7 +92,6 @@ export function drainDirDocuments(
     const dropWarning = handleWorkflowDoc(doc, file);
     if (dropWarning !== null) {
       warnings.push(dropWarning);
-      if (workflowName !== undefined) invalidWorkflowOwnerNames.add(canonicalizeWorkflowName(workflowName));
       continue;
     }
 
@@ -155,7 +100,7 @@ export function drainDirDocuments(
     entries.push(entry);
   }
 
-  return { entries, warnings, hashByFile, conceptIdByFile, rejectedPaths, rejectedConceptIds };
+  return { entries, warnings, hashByFile, conceptIdByFile };
 }
 
 /**

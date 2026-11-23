@@ -458,7 +458,7 @@ describe("secret manager bundles: what the stores do that a file does not", () =
   test("a locked keyring lists as incomplete and refuses a read with unlock guidance", async () => {
     await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async () => {
       const b = bundle("keyring", "akm");
-      expect(secretToolAdapter.list(b)).toMatchObject({ entries: [], complete: false });
+      expect(secretToolAdapter.list(b)).toMatchObject({ assets: [], complete: false });
       expect(() => secretToolAdapter.read(b, "secrets/gh_token")).toThrow(/locked/);
     });
   });

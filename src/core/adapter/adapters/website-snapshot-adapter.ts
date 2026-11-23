@@ -8,10 +8,9 @@
  * A READ-ONLY (Mode A) view over a materialized crawl snapshot written by
  * `src/sources/snapshot-fetchers/website-ingest.ts`. The on-disk
  * pages are KNOWLEDGE-shaped markdown under `stash/knowledge/**` with no `type:`
- * field; this adapter RE-TYPES them to the open `type: website`. The re-type
- * is GATED — it
- * applies only to a page carrying the `website` tag / a `sourceUrl` (a page
- * lacking both is not re-typed); the document KEEPS its `sourceUrl` (surfaced as
+ * field; this adapter types them `type: website`. Every Markdown file there
+ * is a page, by its path (the fetcher always writes a `sourceUrl`); the
+ * document KEEPS its `sourceUrl` (surfaced as
  * `sourceRef` on `documentJson`); and the conceptId STRIPS the
  * `stash/knowledge/` prefix. `manifest.json` is snapshot PROVENANCE
  * (`{url, fetchedAt}`), read by the probe but never indexed as a concept.
@@ -33,28 +32,24 @@ import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate } from "./shared";
 
 /** The crawl page root the snapshot writer materializes pages under. */
 const PAGES_PREFIX = "stash/knowledge/";
 /** The provenance manifest basename (probe marker only, never indexed). */
 const MANIFEST_FILE = "manifest.json";
-/** The tag the snapshot writer stamps on every crawled page. */
-const WEBSITE_TAG = "website";
 
 /** The snapshot-page fields the adapter reads (a real YAML parse so list-valued `tags:` round-trips). */
 interface SnapshotFrontmatter {
   title?: string;
   description?: string;
   sourceUrl?: string;
-  tags: string[];
 }
 
 function parseSnapshotFrontmatter(raw: string): SnapshotFrontmatter {
-  const out: SnapshotFrontmatter = { tags: [] };
+  const out: SnapshotFrontmatter = {};
   const block = parseFrontmatterBlock(raw);
   if (!block) return out;
   let data: Record<string, unknown> = {};
@@ -67,9 +62,6 @@ function parseSnapshotFrontmatter(raw: string): SnapshotFrontmatter {
   out.title = nonEmptyString(data.title);
   out.description = nonEmptyString(data.description);
   out.sourceUrl = nonEmptyString(data.sourceUrl);
-  if (Array.isArray(data.tags)) {
-    out.tags = data.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0).map((t) => t.trim());
-  }
   return out;
 }
 
@@ -79,33 +71,19 @@ function isSnapshotPage(relPath: string): boolean {
   return posix.startsWith(PAGES_PREFIX) && posix.toLowerCase().endsWith(".md");
 }
 
-/** The GATED re-type predicate (open-question-3): the page carries the `website` tag OR a `sourceUrl`. */
-function isReTypeGated(fm: SnapshotFrontmatter): boolean {
-  return fm.sourceUrl !== undefined || fm.tags.includes(WEBSITE_TAG);
-}
-
 /** conceptId = page path − `stash/knowledge/` prefix − `.md`. */
 function conceptIdOf(relPath: string): string {
   return toPosix(relPath).slice(PAGES_PREFIX.length).replace(/\.md$/i, "");
 }
 
-function recognize(c: Bundle, file: FileContext): IndexDocument | null {
-  if (file.ext !== ".md" || !isSnapshotPage(file.relPath)) return null;
+function describe(file: FileContext, conceptId: string): IndexMetadata {
   const raw = file.content();
   const fm = parseSnapshotFrontmatter(raw);
-  if (!isReTypeGated(fm)) return null; // not a re-typed website page
-
-  const conceptId = conceptIdOf(file.relPath);
   const name = fm.title ?? conceptId.split("/").pop() ?? conceptId;
   const body = parseFrontmatter(raw).content;
 
-  const doc: IndexDocument = {
-    ref: `${c.id}//${conceptId}`,
-    bundle: c.id,
-    conceptId,
-    path: file.absPath,
+  const doc: IndexMetadata = {
     hash: hashContent(raw),
-    adapterId: "website-snapshot",
     ownsPresentation: true,
     type: "website",
     name,
@@ -133,20 +111,24 @@ async function validate(c: Bundle, changes: FileChange[], ctx: ValidateContext):
 
 export class WebsiteSnapshotAdapter extends DirectoryAdapterBase {
   readonly id = "website-snapshot";
-  readonly version = "0.9.0";
+  readonly version = "0.10.0";
   override readonly extensions = [".md"];
 
-  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
-    return recognize(b, file);
+  /** Every Markdown page under `stash/knowledge/` is a page of the snapshot (the fetcher always writes its `sourceUrl`). */
+  protected identify(relPath: string): string | null {
+    return isSnapshotPage(relPath) ? conceptIdOf(relPath) : null;
+  }
+
+  protected describe(_b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
+    return describe(file, conceptId);
   }
 
   protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
     return validate(b, changes, ctx);
   }
 
-  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
-    const canonical = toPosix(conceptId).replace(/\.md$/i, "");
-    return [{ path: path.join(c.root, PAGES_PREFIX, `${canonical}.md`), conceptId: canonical }];
+  protected spellings(conceptId: string): string[] {
+    return [`${PAGES_PREFIX}${toPosix(conceptId).replace(/\.md$/i, "")}.md`];
   }
 
   // The snapshot is READ-ONLY (Mode A). Export (Mode B) routes content through

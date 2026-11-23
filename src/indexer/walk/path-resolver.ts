@@ -37,7 +37,7 @@ function resolveViaDisk(ref: BundleRef, options: ResolveAssetPathOptions): strin
     : allSources;
   const bundle = options.honorOrigin !== false ? ref.bundle : undefined;
   const asset = findAsset({ bundle, conceptId: ref.conceptId }, { sources });
-  return asset?.listed ? safeRealpath(indexedPathOf(asset, sourceOfBundle(sources, asset.bundle))) : null;
+  return asset ? safeRealpath(indexedPathOf(asset, sourceOfBundle(sources, asset.bundle))) : null;
 }
 
 export async function resolveAssetPath(ref: string, options: ResolveAssetPathOptions = {}): Promise<string | null> {

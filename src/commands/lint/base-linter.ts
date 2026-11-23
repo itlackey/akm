@@ -678,8 +678,7 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
   /** Findings whose `fixed: true` is only true once the flush below succeeds. */
   const pendingFixes: LintIssue[] = [];
 
-  const shouldRun = (rule: string) =>
-    ruleApplies(rule, { relPath: ctx.relPath, llmWiki: ctx.llmWiki, skip: ctx.lintSkip });
+  const shouldRun = (rule: string) => ruleApplies(rule, { relPath: ctx.relPath, skip: ctx.lintSkip });
 
   if (shouldRun("redacted-content") && containsRedactedContent(stripQuotedExamples(currentRaw))) {
     issues.push({

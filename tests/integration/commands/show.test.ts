@@ -533,7 +533,7 @@ describe("akmShow content-based classification", () => {
     expect(result.run).toBe("akm run scripts/build.sh");
   });
 
-  test("$ARGUMENTS in an untyped directory still discovers a command", async () => {
+  test("$ARGUMENTS in an untyped directory is knowledge: a type is the path's", async () => {
     writeFile(
       path.join(stashDir, "loose", "deploy-cmd.md"),
       ["---", "description: Deploy helper", "---", "Deploy $ARGUMENTS to staging."].join("\n"),
@@ -541,11 +541,11 @@ describe("akmShow content-based classification", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "commands/loose/deploy-cmd" });
+    const result = await akmShow({ ref: "loose/deploy-cmd" });
 
-    expect(result.type).toBe("command");
-    expect(result.template).toBe("Deploy $ARGUMENTS to staging.");
-    expect(result.description).toBe("Deploy helper");
+    expect(result.type).toBe("knowledge");
+    expect(result.content).toContain("Deploy $ARGUMENTS to staging.");
+    expect(result.template).toBeUndefined();
   });
 
   for (const [dir, type] of [
@@ -565,9 +565,8 @@ describe("akmShow content-based classification", () => {
     });
   }
 
-  test("agent frontmatter classifies .md as command even outside commands/", async () => {
-    // agent frontmatter (specificity 18) beats agents/ directory hint (15).
-    // The indexer classifies this as a command based on content.
+  test("agent frontmatter does not retype a file: under agents/ it is an agent", async () => {
+    // The folder is the type; `akm lint` says the content looks like a command (`type-from-content`).
     writeFile(
       path.join(stashDir, "agents", "build-cmd.md"),
       ["---", "agent: build", "description: Build dispatch", "---", "Build the project."].join("\n"),
@@ -575,11 +574,10 @@ describe("akmShow content-based classification", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "commands/agents/build-cmd" });
+    const result = await akmShow({ ref: "agents/build-cmd" });
 
-    expect(result.type).toBe("command");
-    expect(result.template).toBe("Build the project.");
-    expect(result.agent).toBe("build");
+    expect(result.type).toBe("agent");
+    expect(result.template).toBeUndefined();
   });
 });
 

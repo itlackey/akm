@@ -4,38 +4,26 @@
 
 /**
  * Finding and listing assets: the one read side of the asset facade. An asset is found in the bundles' adapters,
- * in source order, and comes back as an {@link Asset} whatever adapter holds it. Synchronous and index-free: it
- * never opens a database, so a caller may use it at dispatch.
+ * in source order, and comes back as an {@link Asset} whatever adapter holds it. Synchronous and index-free: finding
+ * and listing read no database and no file content, so a caller may use it at dispatch. Only `listAssets({ type })`
+ * asks the index, because a type is index metadata.
  */
 
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import type { AssetEntry, BundleAsset } from "../adapter/bundle-adapter";
-import { stashDirNames } from "../asset/asset-placement";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { deriveBundleIds } from "../bundle-id";
 import { compareCodePoints } from "../common";
 import { loadConfig } from "../config/config";
 import { NotFoundError } from "../errors";
-import { warn, warnOnce } from "../warn";
+import { warn } from "../warn";
+import { type Asset, assetOf } from "./asset";
 import { type AssetBundle, assetBundleOf } from "./bundle";
+import { assetTypes } from "./type";
 
-/** One asset, found in its bundle. */
-export interface Asset {
-  /** The id of the bundle that holds it. */
-  readonly bundle: string;
-  readonly conceptId: string;
-  /** `<bundle>//<conceptId>`. */
-  readonly ref: string;
-  /** The asset's type, as its adapter knows it. Asked for, not copied: it can cost a read of the file. */
-  readonly type: string;
-  /** `entry.file`, `entry.content()`, `entry.bytes()`, `entry.frontmatter()`. */
-  readonly entry: AssetEntry;
-  /** Whether `listAssets` lists it. False when a full walk would not reach it (a skipped or ignored directory). */
-  readonly listed: boolean;
-}
+export type { Asset } from "./asset";
 
 export interface FindOptions {
   /** The ordered sources to look in. Default: every configured source, default bundle first. */
@@ -44,17 +32,6 @@ export interface FindOptions {
 
 function defaultSources(options?: { sources?: readonly SearchSource[] }): readonly SearchSource[] {
   return options?.sources ?? resolveSourceEntries(undefined, loadConfig());
-}
-
-function assetOf(bundle: string, found: BundleAsset): Asset {
-  return {
-    bundle,
-    conceptId: found.conceptId,
-    ref: makeBundleRef(bundle, found.conceptId),
-    type: found.type,
-    entry: found.entry,
-    listed: found.listed,
-  };
 }
 
 /** The bundle a search source is, under the id refs use. */
@@ -70,7 +47,7 @@ function bundleOfSource(source: SearchSource, id: string): AssetBundle {
 /** The asset `conceptId` names in one source, as its adapter reads it. */
 export function readFrom(source: SearchSource, bundle: string, conceptId: string): Asset | undefined {
   const found = bundleOfSource(source, bundle).read(conceptId);
-  return found ? assetOf(bundle, found) : undefined;
+  return found ? assetOf(bundle, source, found) : undefined;
 }
 
 function findAmong(ref: BundleRef, sources: readonly SearchSource[]): Asset | undefined {
@@ -86,17 +63,10 @@ function findAmong(ref: BundleRef, sources: readonly SearchSource[]): Asset | un
 
 /**
  * The one "where is asset X right now?" lookup. The first source that holds the ref ends it; a qualified ref only
- * considers its own bundle. A ref in the outdated type-folder spelling is retried once without it, with a warning.
+ * considers its own bundle. The asset comes back under its canonical ref, whichever spelling the adapter read.
  */
 export function findAsset(ref: string | BundleRef, options: FindOptions = {}): Asset | undefined {
-  const parsed = typeof ref === "string" ? parseBundleRef(ref) : ref;
-  const sources = defaultSources(options);
-  const found = findAmong(parsed, sources);
-  if (found) return found;
-  const current = withoutTypeHead(parsed.conceptId);
-  const legacy = current === undefined ? undefined : findAmong({ ...parsed, conceptId: current }, sources);
-  if (legacy) warnOutdatedRef(parsed.conceptId, current as string);
-  return legacy;
+  return findAmong(typeof ref === "string" ? parseBundleRef(ref) : ref, defaultSources(options));
 }
 
 /** {@link findAsset}, refused with a `NotFoundError` when no bundle holds the ref. */
@@ -124,9 +94,9 @@ export function assetOfEntry(
 }
 
 /**
- * Every listed asset across the sources, as each bundle's adapter lists and recognizes it, sorted by the file
- * it is held in. A bundle that cannot be listed completely is
- * reported with a warning naming it.
+ * Every asset across the sources, one per concept as each bundle's adapter lists it, sorted by the file it is held
+ * in. With `type`, the ones the index says are of that type. A bundle that cannot be listed completely is reported
+ * with a warning naming it.
  */
 export function listAssets(
   options: { sources?: readonly SearchSource[]; bundle?: string; type?: string } = {},
@@ -137,18 +107,16 @@ export function listAssets(
   for (const [index, source] of sources.entries()) {
     const bundle = ids[index] as string;
     if (source.unresolved || (options.bundle !== undefined && bundle !== options.bundle)) continue;
-    const held = bundleOfSource(source, bundle);
-    const listing = held.list();
+    const listing = bundleOfSource(source, bundle).list();
     if (!listing.complete && listing.incompleteReason) {
       warn(`Bundle "${source.registryId ?? source.path}" was not listed completely: ${listing.incompleteReason}`);
     }
-    for (const entry of listing.entries) {
-      const document = held.recognize(entry);
-      if (!document?.conceptId || (options.type !== undefined && document.type !== options.type)) continue;
-      found.push(assetOf(bundle, { conceptId: document.conceptId, type: document.type, entry, listed: true }));
-    }
+    for (const asset of listing.assets) found.push(assetOf(bundle, source, asset));
   }
-  return found.sort((left, right) => compareCodePoints(sortKey(left), sortKey(right)));
+  const types = options.type === undefined ? undefined : assetTypes(found);
+  return found
+    .filter((asset) => types === undefined || types.get(asset) === options.type)
+    .sort((left, right) => compareCodePoints(sortKey(left), sortKey(right)));
 }
 
 /** Where an asset sorts: its file, else its path inside its bundle. */
@@ -179,24 +147,4 @@ export function isRetired(ref: BundleRef, sources: readonly SearchSource[] = def
 /** An asset's revision: the SHA-256 of its content. */
 export function assetRevision(content: string | Buffer): string {
   return createHash("sha256").update(content).digest("hex");
-}
-
-/**
- * Releases before path refs prefixed a loose file's ref with its type folder
- * (`knowledge/reports/x` for `reports/x.md`), and that spelling is still in
- * links, memories, scripts and stored proposals. A ref that misses is retried
- * without that head: this is the head-less ref, or undefined when it has none.
- */
-export function withoutTypeHead(conceptId: string): string | undefined {
-  const slash = conceptId.indexOf("/");
-  if (slash <= 0 || !stashDirNames().includes(conceptId.slice(0, slash))) return undefined;
-  return conceptId.slice(slash + 1);
-}
-
-/** Warn that a ref is in the outdated type-folder spelling and was resolved to `current`. */
-export function warnOutdatedRef(outdated: string, current: string): void {
-  warnOnce(
-    `outdated-ref:${outdated}`,
-    `Ref "${outdated}" is outdated: refs are the path inside the bundle, so it is now "${current}". Resolved it to that asset.`,
-  );
 }

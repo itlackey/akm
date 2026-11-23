@@ -3,7 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Regression gate for #824.
+ * Regression gate for #824, and since the type of a file became its path's alone (the index records the type, and the
+ * path is all that decides it), the pin that no content (a placeholder, an `agent` or `model` key, a `type:`) retypes a
+ * file: `akm lint` reports `type-from-content` for such a file instead.
  *
  * `classifyBySmartMd`'s command-placeholder heuristic used
  * `/\$ARGUMENTS|\$[123]\b/`, which matches the `$2` inside `$2,000` — `\b`
@@ -82,21 +84,17 @@ describe("#824: currency in prose must not retype an asset as a command", () => 
   });
 });
 
-describe("#824: real command placeholders still classify as commands", () => {
-  test("a command living outside commands/ is still recognized by its placeholders", () => {
-    // This is the case the heuristic exists for; narrowing it must not
-    // silently disable it.
-    expect(classify("loose/deploy.md", `${MEMORY_FRONTMATTER}Deploy to $1 using tag $2.`)).toBe("command");
+describe("real command placeholders no longer classify a file: its path does", () => {
+  test("a command living outside commands/ is knowledge, whatever its placeholders say", () => {
+    expect(classify("loose/deploy.md", `${MEMORY_FRONTMATTER}Deploy to $1 using tag $2.`)).toBe("knowledge");
   });
 
-  test("$ARGUMENTS outside commands/ is still recognized", () => {
-    expect(classify("loose/ship.md", `${MEMORY_FRONTMATTER}Ship version $ARGUMENTS.`)).toBe("command");
+  test("$ARGUMENTS outside commands/ is knowledge", () => {
+    expect(classify("loose/ship.md", `${MEMORY_FRONTMATTER}Ship version $ARGUMENTS.`)).toBe("knowledge");
   });
 
-  test("a placeholder ending a sentence still matches", () => {
-    // `$1.` is a placeholder followed by a period; only a period followed by a
-    // DIGIT indicates a decimal.
-    expect(classify("loose/run.md", `${MEMORY_FRONTMATTER}Run it against $1.`)).toBe("command");
+  test("a placeholder ending a sentence is knowledge", () => {
+    expect(classify("loose/run.md", `${MEMORY_FRONTMATTER}Run it against $1.`)).toBe("knowledge");
   });
 
   test("a file under commands/ is a command regardless of body", () => {
@@ -121,8 +119,8 @@ describe("#1300: body placeholders defer to directory declarations", () => {
         });
       }
     }
-    test(`explicit agent frontmatter can still declare a command under ${dir}/`, () => {
-      expect(classify(`${dir}/deploy.md`, "---\nagent: build\n---\nDeploy $ARGUMENTS.")).toBe("command");
+    test(`agent frontmatter does not make a command of a file under ${dir}/: the folder is the type`, () => {
+      expect(classify(`${dir}/deploy.md`, "---\nagent: build\n---\nDeploy $ARGUMENTS.")).toBe(type);
     });
   }
 
@@ -138,10 +136,10 @@ describe("#1300: body placeholders defer to directory declarations", () => {
     });
   }
 
-  test("agent frontmatter still outranks an agents/ directory hint", () => {
+  test("agent frontmatter does not outrank an agents/ directory hint", () => {
     expect(
       classify("agents/build-cmd.md", "---\nagent: build\ndescription: Build dispatch\n---\nBuild the project."),
-    ).toBe("command");
+    ).toBe("agent");
   });
 });
 
@@ -173,8 +171,8 @@ describe("#1063/#1084: a skill's folder is declared context for command placehol
     expect(classify("skills/demo/references/run.md", `${MEMORY_FRONTMATTER}Run $ARGUMENTS.`)).toBe("knowledge");
   });
 
-  test("agent frontmatter keeps a skill resource as a command", () => {
-    expect(classify("skills/demo/references/run.md", "---\nagent: run\n---\nRun $ARGUMENTS.")).toBe("command");
+  test("agent frontmatter does not make a command of a skill resource", () => {
+    expect(classify("skills/demo/references/run.md", "---\nagent: run\n---\nRun $ARGUMENTS.")).toBe("knowledge");
   });
 
   test("a file under commands/ with $1 is still a command", () => {

@@ -111,11 +111,14 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   list(b: Bundle): BundleListing {
     try {
       return {
-        entries: this.listSecrets(this.locationOf(b)).map(({ name, read }) => secretEntry(name, read)),
+        assets: this.listSecrets(this.locationOf(b)).map(({ name, read }) => ({
+          conceptId: secretEntryPath(name),
+          entry: secretEntry(name, read),
+        })),
         complete: true,
       };
     } catch (error) {
-      return { entries: [], complete: false, incompleteReason: toErrorMessage(error) };
+      return { assets: [], complete: false, incompleteReason: toErrorMessage(error) };
     }
   }
 
@@ -123,12 +126,10 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     const name = secretNameOf(conceptId);
     if (name === undefined) return undefined;
     const found = this.findSecret(this.locationOf(b), name);
-    return found === undefined
-      ? undefined
-      : { conceptId: secretEntryPath(name), type: "secret", entry: secretEntry(name, found.read), listed: true };
+    return found === undefined ? undefined : { conceptId: secretEntryPath(name), entry: secretEntry(name, found.read) };
   }
 
-  /** A secret is recognized from its path alone: its name, and nothing of its value. */
+  /** A secret is described from its path alone: its name, and nothing of its value. */
   recognize(b: Bundle, entry: AssetEntry): IndexDocument | null {
     const name = secretNameOf(entry.relPath);
     if (name === undefined) return null;

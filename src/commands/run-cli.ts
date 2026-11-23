@@ -12,6 +12,7 @@ import { assertKnownFlags, type FlagScanCommand, scanRoot } from "../cli/unknown
 import { setResolvedUsageAssetType } from "../cli/usage";
 import { parseBundleRef } from "../core/asset/asset-ref";
 import { findAsset } from "../core/assets/read";
+import { assetType } from "../core/assets/type";
 import { AkmError, NotFoundError, UsageError } from "../core/errors";
 import { registerInjectedSecretValues } from "../core/redaction";
 import { scriptProgram } from "../tasks/frozen-script";
@@ -125,13 +126,7 @@ export async function resolveRunTarget(runArgs: readonly string[]): Promise<RunT
       }
       const file = asset.entry.file;
       if (file === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
-      let type = "unknown";
-      try {
-        type = asset.type;
-      } catch (error) {
-        // An asset its adapter does not recognise is run as an unknown type, which refuses it below.
-        if (!(error instanceof UsageError)) throw error;
-      }
+      const type = assetType(asset);
       if (type === "script") return { kind: "script", refIndex, ref, file };
       return { kind: "asset", refIndex, ref, type, target: asset.ref, file };
     };

@@ -23,7 +23,8 @@ import {
   recordWriteTargetPath,
 } from "../write-source";
 import { type AssetBundle, assetBundleOf } from "./bundle";
-import { type Asset, assetRevision, readFrom, warnOutdatedRef, withoutTypeHead } from "./read";
+import { type Asset, assetRevision, readFrom } from "./read";
+import { assetType, forgetIndexedAsset, refreshIndexedAsset } from "./type";
 
 /** Where a write to a ref goes. */
 export interface AssetAddress {
@@ -48,7 +49,7 @@ export interface WriteResult {
 export interface AssetWriter {
   /** The asset `conceptId` names in the target's bundle, or undefined. */
   read(conceptId: string): Asset | undefined;
-  /** An existing asset by ref (the outdated spelling retried), else where a new one of the ref's type goes. */
+  /** An existing asset by ref, else where a new one of the ref's type goes. */
   address(ref: string): AssetAddress;
   create(asset: NewAsset, options?: { exclusive?: boolean }): WriteResult;
   update(conceptId: string, content: string | Buffer, options?: { revision?: string }): WriteResult;
@@ -73,19 +74,11 @@ function searchSourceOf(source: WriteSource): SearchSource {
 
 function addressIn(held: AssetBundle, source: WriteSource, ref: string): AssetAddress {
   const readIn = (id: string): Asset | undefined => readFrom(searchSourceOf(source), source.name, id);
-  const { bundle: origin, conceptId: asWritten, fragment } = parseBundleRef(ref);
-  let conceptId = asWritten;
-  let found = fragment === undefined ? readIn(conceptId) : undefined;
-  const current = fragment === undefined && !found ? withoutTypeHead(asWritten) : undefined;
-  if (current !== undefined) {
-    found = readIn(current);
-    if (found) {
-      warnOutdatedRef(asWritten, current);
-      conceptId = current;
-    }
-  }
+  const { bundle: origin, conceptId: written, fragment } = parseBundleRef(ref);
+  const found = fragment === undefined ? readIn(written) : undefined;
   if (found) {
-    const { type } = found;
+    const { conceptId } = found;
+    const type = assetType(found);
     const typeDir = stashDirFor(type);
     const name =
       typeDir !== undefined && conceptId.startsWith(`${typeDir}/`) ? conceptId.slice(typeDir.length + 1) : conceptId;
@@ -130,8 +123,15 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
       recordWrittenPath(file);
     }
   };
-  const result = (change: AssetChange): WriteResult => {
+  /** What the index holds for the asset a change touched: its row is written again, or dropped with the asset. */
+  const reindex = (change: AssetChange, kept: boolean): void => {
+    const asset = kept ? readAsset(source, change.conceptId) : undefined;
+    if (asset) refreshIndexedAsset(asset);
+    else forgetIndexedAsset(searchSourceOf(source), source.name, change.conceptId);
+  };
+  const result = (change: AssetChange, kept = true): WriteResult => {
     record(change);
+    reindex(change, kept);
     return {
       ref: makeBundleRef(source.name, change.conceptId),
       ...(change.content !== undefined ? { content: change.content } : {}),
@@ -142,7 +142,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     ensureWritable(source, config);
     const asset = readAsset(source, conceptId);
     if (!asset) throw new NotFoundError(`Asset not found: ${source.name}//${conceptId}`);
-    const { type } = asset;
+    const type = assetType(asset);
     held.assertWrites(type);
     if (options?.retire) held.assertRetires(type);
     if (options?.revision !== undefined && assetRevision(asset.entry.bytes()) !== options.revision) {
@@ -165,6 +165,15 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
           throw new UsageError(`Asset "${source.name}//${conceptId}" already exists.`, "RESOURCE_ALREADY_EXISTS");
         }
       }
+      // Without `exclusive` a create replaces the asset, and the adapter refuses to create over one: its content is
+      // updated (the store keeps what else it holds of it), or a package is taken out whole first.
+      if (!options?.exclusive) {
+        const conceptId = held.place(asset);
+        if (held.read(conceptId)) {
+          if (!asset.resources?.length) return result(held.update(conceptId, asset.content));
+          record(held.delete(conceptId));
+        }
+      }
       return result(held.create(asset));
     },
     update(conceptId, content, options) {
@@ -173,12 +182,12 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     },
     delete(conceptId, options) {
       existing(conceptId, options);
-      return result(held.delete(conceptId));
+      return result(held.delete(conceptId), false);
     },
     retire(conceptId, note, options) {
       existing(conceptId, { ...options, retire: true });
       const change = held.retire(conceptId, note);
-      return { ...result(change), handle: change.handle };
+      return { ...result(change, false), handle: change.handle };
     },
     retired: () => held.retired(),
     restore(handle, fallback) {

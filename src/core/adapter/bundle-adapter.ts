@@ -50,23 +50,19 @@ export interface AssetResource {
   bytes(): Buffer;
 }
 
-/** Every entry of a bundle. */
+/** One asset, as its adapter reads it: its identity and the entry that holds it. The type is index metadata (`recognize`). */
+export interface BundleAsset {
+  conceptId: string;
+  entry: AssetEntry;
+}
+
+/** Every asset of a bundle, one per concept. Listing reads no content. */
 export interface BundleListing {
-  entries: AssetEntry[];
+  assets: BundleAsset[];
   /** False when part of the bundle could not be read: the index keeps the rows it had. */
   complete: boolean;
   /** When `complete` is false: why. */
   incompleteReason?: string;
-}
-
-/** One asset, as its adapter reads it. */
-export interface BundleAsset {
-  conceptId: string;
-  /** The asset's type, as the adapter knows it, also for an asset `list` leaves out. */
-  type: string;
-  entry: AssetEntry;
-  /** Whether `list` lists it. False when a full walk would not reach it (a skipped or ignored directory). */
-  listed: boolean;
 }
 
 /** An asset to create: its type and its name within the type (`env/prod` is type `env`, name `prod`). */
@@ -118,14 +114,21 @@ export interface BundleAdapter {
   /** Types it retires recoverably; a subset of `writes`. Empty: it deletes only. */
   readonly retires: readonly string[];
 
-  /** Every entry of the bundle. The indexer describes each with `recognize`. */
+  /**
+   * Every asset of the bundle, one per concept. Identity comes from each entry's storage key alone: no content is read.
+   * The indexer describes each with `recognize`.
+   */
   list(b: Bundle): BundleListing;
   /**
-   * The asset `conceptId` names, or undefined when the bundle has none. When storage holds the concept under more
-   * than one spelling the adapter picks one by a rule of its own, the same for every caller; `validate` reports the rest.
+   * The asset `conceptId` names, or undefined when the bundle has none (an asset a full listing would not reach is
+   * none). When storage holds the concept under more than one spelling the adapter picks the first by its spelling
+   * order, the same for every caller and without reading content; `validate` reports the rest.
    */
   read(b: Bundle, conceptId: string): BundleAsset | undefined;
-  /** An entry's metadata for the index; null when it is no asset. */
+  /**
+   * An entry's metadata for the index, the only place a type is given; null when it is no asset. The concept id is the
+   * one the entry's storage key names. May read content.
+   */
   recognize(b: Bundle, entry: AssetEntry): IndexDocument | null;
   /**
    * Native validation (change-transaction pre-commit and `akm lint`). It must not write and must not read the live

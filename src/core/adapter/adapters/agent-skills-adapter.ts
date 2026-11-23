@@ -49,9 +49,8 @@ import { parseFrontmatter } from "../../asset/frontmatter";
 import { isScratchPath } from "../../asset/scratch";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
 import { hashContent, nonEmptyString, readTags } from "./shared";
 
 /** The skill manifest basename (the item marker). */
@@ -76,10 +75,8 @@ function skillPackage(relPath: string): { conceptId: string; dirName: string } |
   return { conceptId, dirName };
 }
 
-function recognize(c: Bundle, file: FileContext): IndexDocument | null {
-  const pkg = skillPackage(file.relPath);
-  if (pkg === null) return null;
-
+function describe(file: FileContext): IndexMetadata {
+  const pkg = skillPackage(file.relPath) as { dirName: string };
   const raw = file.content();
   const parsed = parseFrontmatter(raw);
   const data = parsed.data;
@@ -90,13 +87,8 @@ function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   const description = nonEmptyString(data.description);
   const tags = readTags(data.tags);
 
-  const doc: IndexDocument = {
-    ref: `${c.id}//${pkg.conceptId}`,
-    bundle: c.id,
-    conceptId: pkg.conceptId,
-    path: file.absPath,
+  const doc: IndexMetadata = {
     hash: hashContent(raw),
-    adapterId: "agent-skills",
     type: "skill",
     name,
     content: body,
@@ -250,8 +242,12 @@ export class AgentSkillsAdapter extends DirectoryAdapterBase {
   readonly version = "0.9.0";
   override readonly extensions = [".md"];
 
-  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
-    return recognize(b, file);
+  protected identify(relPath: string): string | null {
+    return skillPackage(relPath)?.conceptId ?? null;
+  }
+
+  protected describe(_b: Bundle, file: FileContext): IndexMetadata {
+    return describe(file);
   }
 
   protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
@@ -263,13 +259,8 @@ export class AgentSkillsAdapter extends DirectoryAdapterBase {
     return file.fileName === SKILL_MANIFEST ? file.parentDirAbs : undefined;
   }
 
-  /** Every package's entry is a skill, whatever its content says. */
-  protected override declaredType(file: FileContext): string | undefined {
-    return file.fileName === SKILL_MANIFEST ? "skill" : undefined;
-  }
-
-  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
-    return [{ path: path.join(c.root, conceptId, SKILL_MANIFEST), conceptId }];
+  protected spellings(conceptId: string): string[] {
+    return [`${toPosix(conceptId)}/${SKILL_MANIFEST}`];
   }
 
   /** Install-time probe: a root that directly contains one or more `<name>/SKILL.md` skill packages. */

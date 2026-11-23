@@ -20,6 +20,7 @@ import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { findAsset } from "../../core/assets/read";
+import { assetType } from "../../core/assets/type";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -119,20 +120,21 @@ async function classifySchemaRepairs(args: {
       const raw = fs.readFileSync(filePath, "utf8");
       const frontmatter = parseFrontmatter(raw);
       // The asset's type is its file's (which fields to repair, and the type's standards and rules).
-      const assetType = findAsset(failure.ref, { sources: resolveSourceEntries(stashDir) })?.type ?? "";
+      const owned = findAsset(failure.ref, { sources: resolveSourceEntries(stashDir) });
+      const kind = owned ? assetType(owned) : "";
       const missingFields: string[] = [];
       if (!frontmatter.data.description) missingFields.push("description");
-      if (assetType === "lesson" && !frontmatter.data.when_to_use) missingFields.push("when_to_use");
+      if (kind === "lesson" && !frontmatter.data.when_to_use) missingFields.push("when_to_use");
       if (missingFields.length === 0) {
         repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
         continue;
       }
       const fieldList = missingFields.join(" and ");
-      const standardsContext = resolveStandardsContext(assetType, stashDir);
+      const standardsContext = resolveStandardsContext(kind, stashDir);
       const standardsSection = standardsContext.trim()
         ? `\n\nStandards to follow (the rulebook for this target):\n${standardsContext.trim()}`
         : "";
-      const authoringRules = authoringRulesForType(assetType);
+      const authoringRules = authoringRulesForType(kind);
       const authoringRulesSection = authoringRules ? `\n\n${authoringRules}` : "";
       eligibleRepairs.push({
         failure,
@@ -146,7 +148,7 @@ async function classifySchemaRepairs(args: {
           },
           {
             role: "user",
-            content: `Generate the missing frontmatter fields (${fieldList}) for this ${assetType} asset. Return ONLY valid JSON like {"description": "...", "when_to_use": "..."}${standardsSection}${authoringRulesSection}\n\n${(frontmatter.content ?? raw).slice(0, 2000)}`,
+            content: `Generate the missing frontmatter fields (${fieldList}) for this ${kind} asset. Return ONLY valid JSON like {"description": "...", "when_to_use": "..."}${standardsSection}${authoringRulesSection}\n\n${(frontmatter.content ?? raw).slice(0, 2000)}`,
           },
         ],
       });

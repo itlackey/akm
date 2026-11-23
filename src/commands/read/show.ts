@@ -323,7 +323,7 @@ export async function showLocal(input: {
 
   const resolution = input.readOnly
     ? await lookupBundleRefWithResolutionReadonly(parsed)
-    : await lookupBundleRefWithResolution(parsed);
+    : await lookupBundleRefWithResolution(parsed, true);
   // The index is not needed to find the asset: an absent, locked, corrupt or
   // still-building index just means no row. Only a refusal that names a remedy
   // (a newer layout, a file akm may not read) surfaces.
@@ -447,7 +447,11 @@ export async function showLocal(input: {
   if (indexedEntry.document?.fileless) {
     delete response.path;
     // Nor is its value "the file contents".
-    if (response.action) response.action = response.action.replace("the file contents are", "its content is");
+    if (response.action)
+      response.action = response.action.replace(
+        "the file contents are the value and are never",
+        "its content is the value and is never",
+      );
   }
   const defaultBundle = displayDefaultBundle(config.defaultBundle, source, indexedEntry.bundleId);
   const canonicalRef = displayRef(

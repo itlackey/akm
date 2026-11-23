@@ -59,14 +59,11 @@ recognizes and indexes them.
 
 ## Classification taxonomy
 
-Scripts and knowledge are classified by **what they are**: a `.sh` file is a
-script; a plain `.md` file is knowledge. Commands and agents are classified
-by **how an LLM should use them**: a `.md` file under `commands/` or with
-`agent` frontmatter is a command template; one under `agents/` is an agent
-definition. Body placeholders such as `$ARGUMENTS` also discover commands in
-untyped directories, but do not override knowledge, memory, or other typed
-directory placement. Workflow assets are `.md`, classified by `type: workflow`
-or placement. Skills are a
+An asset's type comes from its path alone: akm never reads a file to say what it is. A `.sh` file is a
+script; a `.md` file under `commands/` is a command template, under `agents/` an agent definition, under
+`workflows/` a workflow, and any other `.md` file is knowledge. Frontmatter (`type`, `agent`, `model`) and body
+placeholders such as `$ARGUMENTS` do not change a type; `akm lint` reports `type-from-content` for a file whose
+content suggests another type than its path gives, and names the folder to move it to. Skills are a
 **packaging convention**: a directory containing a `SKILL.md` file.
 
 See [Classification](../architecture/internals/classification.md) for the

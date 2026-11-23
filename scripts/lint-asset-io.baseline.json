@@ -251,7 +251,7 @@
   },
   "src/workspace/check-text.ts": {
     "adapter-import": 3,
-    "asset-io": 6,
+    "asset-io": 4,
     "adapter-id": 2
   },
   "src/workspace/documents.ts": {

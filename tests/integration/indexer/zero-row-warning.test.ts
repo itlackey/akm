@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * A directory whose files the bundle's adapter does not treat as assets (a bundle-root README.md) is a
- * zero-row directory by the adapter's own contract: `akm index` reports it under `--verbose` only.
+ * A file the bundle's adapter does not treat as an asset (a bundle-root README.md) is not listed: its directory is not
+ * scanned, so `akm index` has no zero-row directory to report, by default or under `--verbose`.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -58,9 +58,10 @@ test("a bundle root holding only a README.md prints no zero-row line by default"
   expect(lines.filter((l) => l.includes("zero-row"))).toEqual([]);
 });
 
-test("--verbose still reports the zero-row directory", async () => {
+test("--verbose reports no zero-row directory either: the README is not listed, so its directory is not scanned", async () => {
   const stashDir = rootWithReadmeAndKnowledge();
   setVerbose(true);
-  const { lines } = await indexLines(stashDir);
-  expect(lines.some((l) => l.includes(`zero-row ${stashDir}: empty-generated-set`))).toBe(true);
+  const { lines, totalEntries } = await indexLines(stashDir);
+  expect(totalEntries).toBe(1);
+  expect(lines.filter((l) => l.includes("zero-row"))).toEqual([]);
 });

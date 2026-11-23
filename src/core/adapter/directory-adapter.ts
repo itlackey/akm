@@ -6,24 +6,30 @@
  * The mechanics every adapter of a directory bundle shares: its assets are
  * files under the bundle's root. `DirectoryAdapterBase` implements every
  * `BundleAdapter` member once, as template methods: the walk that lists the
- * files, the arbitration that reads one by its concept id, and the atomic
+ * files, the lookup that reads one by its concept id, and the atomic
  * writes that create, update, delete and retire them. A subclass supplies the format
- * through the hooks below (how a file is recognized, validated and placed) and
- * does not override the template methods.
+ * through the hooks below and does not override the template methods.
+ *
+ * Identity is a pure function of the storage key: `identify(relPath)` gets no bundle, no file system and no content,
+ * so `list`, `read`, `place` and the retired-asset id cannot read a file. Of the files that spell one concept the
+ * first in `spellings` order wins, for every caller. The type of an asset is index metadata: only `describe` (through
+ * `recognize`) says it, and it may read content.
  */
 
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { AdapterRenderedExecutionSource } from "../../execution/source";
+import {
+  getMarkdownFragmentContent,
+  hasMarkdownFragmentContent,
+  setMarkdownFragmentContent,
+} from "../../indexer/passes/metadata";
 import { buildFileContext, type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
 import { isWalkedFile, walkStashFlatWithStatus } from "../../indexer/walk/walker";
-import { resolveUniqueWorkflowSource } from "../../workflows/source-files";
-import { parseFrontmatter } from "../asset/frontmatter";
 import { compareCodePoints, existingFileMode, hasErrnoCode, writeFileAtomic } from "../common";
 import { ConfigError, NotFoundError, UsageError } from "../errors";
 import type { FileChange } from "../file-change";
-import { warnOnce } from "../warn";
 import type {
   AssetChange,
   AssetEntry,
@@ -46,16 +52,7 @@ import {
   restoreArchive,
   type Tombstone,
 } from "./directory-archive";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "./types";
-
-/** A file that may hold a concept: where a placement could put it, and the identity it would then own. */
-export interface AdapterReadCandidate {
-  path: string;
-  /** Canonical concept identity this authored path may own. */
-  conceptId: string;
-}
-
-const CONTENT_READ_REQUIRED = Symbol("adapter ownership probe requires content");
+import type { Bundle, Diagnostic, IndexDocument, IndexMetadata, ValidateContext } from "./types";
 
 export abstract class DirectoryAdapterBase implements BundleAdapter {
   abstract readonly id: string;
@@ -77,13 +74,18 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
 
   // ── Hooks a subclass supplies ───────────────────────────────────────────────
 
-  /** The index document for one file, or null when the file is no asset. */
-  protected abstract recognizeFile(b: Bundle, file: FileContext): IndexDocument | null;
   /**
-   * Every file any placement could give `conceptId` (no walk). Each carries that identity, so `read` arbitrates
-   * without reading authored bytes; recognition then decides which candidate owns it.
+   * The concept id the file at `relPath` holds, or null when it is no asset. A pure function of the path: it gets no
+   * bundle and reads nothing, so listing and reading an asset cannot read a file.
    */
-  protected abstract readCandidates(b: Bundle, conceptId: string): AdapterReadCandidate[];
+  protected abstract identify(relPath: string): string | null;
+  /**
+   * Every path (relative to the root) the asset `conceptId` can be kept at, the winner first. Of the files that hold the
+   * concept, the first of these that exists wins; a spelling `identify` does not map back to the concept is ignored.
+   */
+  protected abstract spellings(conceptId: string): string[];
+  /** What the index records about `file`, the asset `conceptId` names. It may read the file. */
+  protected abstract describe(b: Bundle, file: FileContext, conceptId: string): IndexMetadata;
   protected abstract validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]>;
 
   /** Where a new asset of `type` and `name` is kept. */
@@ -100,9 +102,11 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   protected fileMode(_type: string): number | undefined {
     return undefined;
   }
-  /** The type `file`'s location declares, for a file `recognizeFile` abstains on. */
-  protected declaredType(_file: FileContext): string | undefined {
-    return undefined;
+  /** The type of the asset kept at `relPath`, from the path alone. Only an adapter that writes says it. */
+  protected typeOf(relPath: string): string {
+    throw new Error(
+      `Adapter "${this.id}" does not write assets (${relPath}); the asset facade checks \`writes\` first.`,
+    );
   }
   /** The folder holding `file` and the resources that belong to it, when it is the entry of a package (a skill). */
   protected packageDir(_file: FileContext): string | undefined {
@@ -119,61 +123,58 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
 
   list(b: Bundle): BundleListing {
     const walked = walkStashFlatWithStatus(b.root, this.walkOptions());
-    // One entry per concept: where several files hold one, the winner `read` acts on. A file's concept comes from its
-    // path when that says; otherwise it is read (once: the entry keeps its bytes for the caller's `recognize`).
+    // One asset per concept: the winner among the files that spell it. The path says which concept a file holds.
     const byConcept = new Map<string, FileContext[]>();
+    const conceptOf = new Map<FileContext, string>();
     for (const file of walked.files) {
-      let conceptId: string | undefined;
-      try {
-        const document = this.pathDocument(b, file);
-        conceptId = (document === undefined ? this.recognizeFile(b, file) : document)?.conceptId;
-      } catch {
-        // A file that cannot be recognized is listed as it is; the caller's `recognize` reports it.
-      }
-      if (conceptId) byConcept.set(conceptId, [...(byConcept.get(conceptId) ?? []), file]);
+      const conceptId = this.identify(file.relPath);
+      if (conceptId === null) continue;
+      conceptOf.set(file, conceptId);
+      byConcept.set(conceptId, [...(byConcept.get(conceptId) ?? []), file]);
     }
-    const shadowed = new Set<FileContext>();
-    for (const group of byConcept.values()) {
-      if (group.length < 2) continue;
-      const winner = this.winner(b, { found: group, pathTypes: new Map() });
-      for (const file of group) if (file !== winner) shadowed.add(file);
+    const winners = new Map<FileContext, string>();
+    for (const [conceptId, files] of byConcept) {
+      const ranked = [...files].sort((left, right) => this.compareSpellings(conceptId, left.relPath, right.relPath));
+      winners.set(ranked[0] as FileContext, conceptId);
     }
     return {
-      entries: walked.files.filter((file) => !shadowed.has(file)),
+      assets: walked.files.flatMap((file) => {
+        const conceptId = winners.get(file);
+        return conceptId === undefined ? [] : [{ conceptId, entry: this.entryOf(file) }];
+      }),
       complete: walked.complete,
       ...(walked.incompleteReason !== undefined ? { incompleteReason: walked.incompleteReason } : {}),
     };
   }
 
+  /** The entry's metadata, then the identity its storage key names, which `describe` cannot change. */
   recognize(b: Bundle, entry: AssetEntry): IndexDocument | null {
-    return this.recognizeFile(b, fileContextOfEntry(b.root, entry));
+    const file = fileContextOfEntry(b.root, entry);
+    const conceptId = this.identify(file.relPath);
+    if (conceptId === null) return null;
+    const metadata = this.describe(b, file, conceptId);
+    const document: IndexDocument = {
+      ...metadata,
+      ref: `${b.id}//${conceptId}`,
+      bundle: b.id,
+      conceptId,
+      adapterId: this.id,
+      path: file.absPath,
+    };
+    // The fragment projection follows the described document by identity (see `metadata.ts`), not as a field.
+    if (hasMarkdownFragmentContent(metadata)) {
+      setMarkdownFragmentContent(document, getMarkdownFragmentContent(metadata));
+    }
+    return document;
   }
 
   /**
-   * The asset `conceptId` names, without reading authored bytes to find it: workflow arbitration first, then every
-   * spelling `readCandidates` inverts the concept id into, each probed with a byte-denying context so the
-   * adapter's path-level abstention decides.
+   * The asset `conceptId` names, found without reading any file: the first of its `spellings` that exists inside the
+   * root, that a full listing reaches and that `identify` gives a concept id. The asset comes back under that id.
    */
   read(b: Bundle, conceptId: string): BundleAsset | undefined {
     const held = this.holders(b, conceptId);
-    if (!held) return undefined;
-    const { resolved, pathTypes } = held;
-    const file = this.winner(b, held);
-    if (!file) return undefined;
-    const dir = this.packageDir(file);
-    const entry: AssetEntry =
-      dir === undefined ? file : { ...file, resources: () => packageResources(dir, file.absPath) };
-    // The type recognizing the path gave, else the one its place declares, else what reading it says (which a path
-    // alone settles for most adapters, so finding an asset reads no authored bytes). A file none gives one is no asset.
-    const type = pathTypes.get(file) ?? this.declaredType(file) ?? this.recognizeFile(b, file)?.type;
-    if (type === undefined) return undefined;
-    return {
-      conceptId: resolved,
-      type,
-      entry,
-      // Not listed: a full walk would not reach it (a skipped or ignored directory).
-      listed: this.walksFile(b, file.absPath),
-    };
+    return held && { conceptId: held.conceptId, entry: this.entryOf(held.files[0] as FileContext) };
   }
 
   /**
@@ -184,31 +185,28 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const diagnostics = await this.validateFiles(b, changes, ctx);
     const seen = new Set<string>();
     for (const change of changes) {
-      const file = candidateFile(b, path.join(b.root, change.path));
-      const conceptId = file ? this.recognizeFile(b, file)?.conceptId : undefined;
-      if (!conceptId || seen.has(conceptId)) continue;
+      const conceptId = this.identify(change.path);
+      if (conceptId === null || seen.has(conceptId)) continue;
       seen.add(conceptId);
       const held = this.holders(b, conceptId);
-      if (!held || held.found.length < 2) continue;
-      const winner = this.winner(b, held);
-      if (!winner) continue;
-      const ignored = held.found.filter((other) => other !== winner).map((other) => other.relPath);
+      if (!held || held.files.length < 2) continue;
+      const [winner, ...ignored] = held.files.map((file) => file.relPath);
       diagnostics.push({
-        file: winner.relPath,
+        file: winner as string,
         issue: "shadowed-spelling",
-        detail: `"${conceptId}" is held by more than one file; "${winner.relPath}" is used and ${ignored.join(", ")} ignored. Remove the ignored ${ignored.length === 1 ? "file" : "files"}.`,
+        detail: `"${held.conceptId}" is held by more than one file; "${winner}" is used and ${ignored.join(", ")} ignored. Remove the ignored ${ignored.length === 1 ? "file" : "files"}.`,
         fixed: false,
       });
     }
     return diagnostics;
   }
 
-  /** Every file that holds `conceptId`, by code point, with the types their paths gave. Undefined: the root is gone. */
-  private holders(
-    b: Bundle,
-    conceptId: string,
-  ): { resolved: string; found: FileContext[]; pathTypes: Map<FileContext, string> } | undefined {
-    const normalized = normalizedConceptId(conceptId);
+  /**
+   * The files that hold the asset `conceptId` names, the winner first, and the concept id they hold. Existence checks
+   * and directory listings only. Undefined: the root is gone or no spelling of it exists.
+   */
+  private holders(b: Bundle, asked: string): { conceptId: string; files: FileContext[] } | undefined {
+    const normalized = normalizedConceptId(asked);
     if (!normalized) return undefined;
     try {
       fs.realpathSync(b.root);
@@ -217,53 +215,42 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
       if (hasErrnoCode(error, "ENOENT")) return undefined;
       throw new ConfigError(`Unable to read bundle directory at "${b.root}".`, "STASH_DIR_UNREADABLE");
     }
-
-    const owners = new Map<string, FileContext>();
-    /** The type a file's path alone gave, found while claiming it: knowing it then reads nothing. */
-    const pathTypes = new Map<FileContext, string>();
-    const workflowSource = resolveUniqueWorkflowSource(b.root, this.id, normalized);
-    const resolved = workflowSource ? workflowSource.canonicalName : normalized;
-    if (workflowSource) owners.set(path.resolve(workflowSource.path), buildFileContext(b.root, workflowSource.path));
-
-    const spellings = this.readCandidates(b, resolved).flatMap((candidate) => candidateSpellings(candidate, b.root));
-    const candidates = [...new Map(spellings.map((candidate) => [path.resolve(candidate.path), candidate])).values()]
-      .filter((candidate) => candidate.conceptId === resolved)
-      .sort((left, right) => compareCodePoints(left.path, right.path));
-    for (const candidate of candidates) {
-      const key = path.resolve(candidate.path);
-      if (owners.has(key)) continue;
-      const file = candidateFile(b, candidate.path);
-      if (!file) continue;
-      const claim = this.claimsWithoutContent(b, file, resolved);
-      if (claim?.type !== undefined) pathTypes.set(file, claim.type);
-      if (claim) owners.set(key, file);
-    }
-    const found = [...owners.values()].sort((left, right) => compareCodePoints(left.absPath, right.absPath));
-    return { resolved, found, pathTypes };
-  }
-
-  /**
-   * The file that is the concept when several hold it, by the one rule the adapter owns: the spelling `place` gives
-   * for the concept's type and name, else the first by code point. Reads, updates, deletes and retires all act on it.
-   */
-  private winner(b: Bundle, { found, pathTypes }: { found: FileContext[]; pathTypes: Map<FileContext, string> }) {
-    if (found.length < 2) return found[0];
-    for (const file of found) {
-      try {
-        const document = this.recognizeFile(b, file);
-        const type = pathTypes.get(file) ?? document?.type ?? this.declaredType(file);
-        if (document && type && path.resolve(this.placeFile(b, { type, name: document.name })) === file.absPath) {
-          return file;
-        }
-      } catch {
-        // A file that cannot be recognized or placed is not the placed spelling.
+    const found = new Map<string, FileContext>();
+    for (const spelling of this.spellings(normalized)) {
+      for (const relPath of caseVariants(b.root, spelling)) {
+        const file = candidateFile(b, path.join(b.root, relPath));
+        if (!file || found.has(file.absPath) || this.identify(file.relPath) === null) continue;
+        if (!isWalkedFile(b.root, file.absPath, this.walkOptions())) continue;
+        found.set(file.absPath, file);
       }
     }
-    return found[0];
+    const first = [...found.values()][0];
+    if (!first) return undefined;
+    const conceptId = this.identify(first.relPath) as string;
+    return { conceptId, files: [...found.values()].filter((file) => this.identify(file.relPath) === conceptId) };
+  }
+
+  /** Which of two files that hold `conceptId` wins: the earlier spelling, the exact one before its case variants. */
+  private compareSpellings(conceptId: string, left: string, right: string): number {
+    const order = this.spellings(conceptId);
+    const rank = (relPath: string): number => {
+      const exact = order.indexOf(relPath);
+      if (exact >= 0) return exact * 2;
+      const variant = order.findIndex((spelling) => isCaseVariant(spelling, relPath));
+      return variant >= 0 ? variant * 2 + 1 : order.length * 2;
+    };
+    return rank(left) - rank(right) || compareCodePoints(left, right);
+  }
+
+  /** The entry of a file: itself, with the resources of its package when it is one's entry. */
+  private entryOf(file: FileContext): AssetEntry {
+    const dir = this.packageDir(file);
+    return dir === undefined ? file : { ...file, resources: () => packageResources(dir, file.absPath) };
   }
 
   place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {
-    return this.placedConceptId(b, asset, "");
+    const relPath = this.relPathOf(b, this.placeFile(b, asset));
+    return this.identify(relPath) ?? relPath;
   }
 
   create(b: Bundle, asset: NewAsset): AssetChange {
@@ -274,7 +261,10 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     }
     const file = this.placeFile(b, asset);
     const entry = buildFileContext(b.root, file);
-    const conceptId = this.placedConceptId(b, asset, String(asset.content));
+    const conceptId = this.place(b, asset);
+    if (this.read(b, conceptId)) {
+      throw new UsageError(`Asset "${b.id}//${conceptId}" already exists.`, "RESOURCE_ALREADY_EXISTS");
+    }
     const content = this.serialize(asset.type, file, asset.content);
     const changed = asset.resources?.length
       ? this.writePackage(b, asset, entry, content, asset.resources)
@@ -283,35 +273,35 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   }
 
   update(b: Bundle, conceptId: string, content: string | Buffer): AssetChange {
-    const { entry, type } = this.existing(b, conceptId);
+    const { conceptId: canonical, entry } = this.existing(b, conceptId);
     const file = entry.file as string;
-    this.writeFile(b, type, file, content);
-    return { conceptId, file, changed: [file], content };
+    this.writeFile(b, this.typeOf(entry.relPath), file, content);
+    return { conceptId: canonical, file, changed: [file], content };
   }
 
   delete(b: Bundle, conceptId: string): AssetChange {
-    const { entry } = this.existing(b, conceptId);
+    const { conceptId: canonical, entry } = this.existing(b, conceptId);
     const file = entry.file as string;
     assertWritableFile(b.root, b.id, file);
     fs.rmSync(file);
-    return { conceptId, file, changed: [file] };
+    return { conceptId: canonical, file, changed: [file] };
   }
 
   retire(b: Bundle, conceptId: string, note: RetireNote): AssetChange & { handle: string } {
-    const { entry, type } = this.existing(b, conceptId);
-    this.requireRetires(b, type);
+    const { conceptId: canonical, entry } = this.existing(b, conceptId);
+    this.requireRetires(b, this.typeOf(entry.relPath));
     const file = entry.file as string;
     assertWritableFile(b.root, b.id, file);
     assertWritableFile(b.root, b.id, path.join(b.root, MEMORY_ARCHIVE_REL, "retirement"));
-    const ref = note.ref ?? `${b.id}//${conceptId}`;
+    const ref = note.ref ?? `${b.id}//${canonical}`;
     const written = archiveFile(b.root, file, { ref, archivedAt: new Date().toISOString(), note });
-    return { conceptId, changed: written.changed, handle: written.handle };
+    return { conceptId: canonical, changed: written.changed, handle: written.handle };
   }
 
   retired(b: Bundle): Retirement[] {
     return listTombstones(b.root).map((tombstone) => ({
       handle: tombstone.handle,
-      conceptId: this.describeRetired(b, tombstone).conceptId,
+      conceptId: this.retiredConceptId(tombstone),
       note: noteOf(tombstone),
       restorable: tombstone.archivedPath !== undefined && fs.existsSync(path.join(b.root, tombstone.archivedPath)),
     }));
@@ -320,8 +310,8 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   restore(b: Bundle, handle: string, fallback?: string | Buffer): AssetChange {
     this.requireRetiring(b);
     const tombstone = readTombstone(b.root, handle);
-    const { conceptId, type } = this.describeRetired(b, tombstone);
-    if (type !== undefined) this.requireRetires(b, type);
+    const conceptId = this.retiredConceptId(tombstone);
+    if (this.identify(tombstone.originalPath) !== null) this.requireRetires(b, this.typeOf(tombstone.originalPath));
     const file = path.join(b.root, tombstone.originalPath);
     assertWritableFile(b.root, b.id, file);
     return { conceptId, file, changed: restoreArchive(b.root, tombstone, fallback) };
@@ -351,77 +341,18 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     }
   }
 
-  /**
-   * The concept id (and type, when known) a retired file had, from its original path and the content it kept: the
-   * archived copy while there is one. A file the adapter cannot describe is named by its path without extension.
-   */
-  private describeRetired(b: Bundle, tombstone: Tombstone): { conceptId: string; type?: string } {
-    const original = path.join(b.root, tombstone.originalPath);
-    const archived = tombstone.archivedPath === undefined ? undefined : path.join(b.root, tombstone.archivedPath);
-    const source = archived !== undefined && fs.existsSync(archived) ? archived : original;
-    const file: FileContext = {
-      ...buildFileContext(b.root, original),
-      content: () => fs.readFileSync(source, "utf8"),
-      bytes: () => fs.readFileSync(source),
-      frontmatter: () => {
-        const data = parseFrontmatter(fs.readFileSync(source, "utf8")).data;
-        return Object.keys(data).length > 0 ? data : null;
-      },
-    };
-    try {
-      const document = this.recognizeFile(b, file);
-      const type = document?.type ?? this.declaredType(file);
-      return { conceptId: document?.conceptId ?? file.relPath.replace(/\.[^./]+$/, ""), ...(type ? { type } : {}) };
-    } catch {
-      return { conceptId: file.relPath.replace(/\.[^./]+$/, "") };
-    }
-  }
-
-  /** Whether a full walk of the bundle would list `file`: not in a skipped or ignored directory. */
-  private walksFile(b: Bundle, file: string): boolean {
-    return isWalkedFile(b.root, file, this.walkOptions());
+  /** The concept id a retired file had: its original path's, even when the file is gone. A path no asset has is named by itself without extension. */
+  private retiredConceptId(tombstone: Tombstone): string {
+    return this.identify(tombstone.originalPath) ?? tombstone.originalPath.replace(/\.[^./]+$/, "");
   }
 
   private walkOptions() {
     return { includeAllDirectories: this.walkMode === "all-directories" };
   }
 
-  /** The document the adapter gives `file` from its path alone: undefined when it needs the file's bytes to say. */
-  private pathDocument(b: Bundle, file: FileContext): IndexDocument | null | undefined {
-    let requestedBytes = false;
-    const denyBytes = (): never => {
-      requestedBytes = true;
-      throw CONTENT_READ_REQUIRED;
-    };
-    try {
-      const document = this.recognizeFile(b, { ...file, content: denyBytes, bytes: denyBytes, frontmatter: denyBytes });
-      return requestedBytes ? undefined : document;
-    } catch (error) {
-      if (error === CONTENT_READ_REQUIRED) return undefined;
-      throw error;
-    }
-  }
-
-  /**
-   * Whether the adapter recognizes `file` as `conceptId` from its path alone (an adapter that needs bytes claims it,
-   * with no type yet); a claim carries the type the path gave.
-   */
-  private claimsWithoutContent(b: Bundle, file: FileContext, conceptId: string): { type?: string } | undefined {
-    const document = this.pathDocument(b, file);
-    if (document === undefined) return {};
-    return document?.conceptId === conceptId ? { type: document.type } : undefined;
-  }
-
-  /** The concept id the adapter gives the file a new asset is placed in; its relative path when it recognizes none. */
-  private placedConceptId(b: Bundle, asset: Pick<NewAsset, "type" | "name">, content: string): string {
-    const entry = buildFileContext(b.root, this.placeFile(b, asset));
-    const document = this.recognizeFile(b, {
-      ...entry,
-      content: () => content,
-      bytes: () => Buffer.from(content),
-      frontmatter: () => null,
-    });
-    return document?.conceptId ?? entry.relPath;
+  /** `file`'s path relative to the root, as the index keys it. */
+  private relPathOf(b: Bundle, file: string): string {
+    return buildFileContext(b.root, file).relPath;
   }
 
   private existing(b: Bundle, conceptId: string): BundleAsset & { entry: AssetEntry & { file: string } } {
@@ -506,28 +437,33 @@ function within(candidate: string, root: string): boolean {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }
 
-/** Add case-only suffix spellings beside an adapter-authored read candidate. */
-function candidateSpellings(candidate: AdapterReadCandidate, root: string): AdapterReadCandidate[] {
-  const authored = path.resolve(candidate.path);
-  if (!within(authored, root)) return [{ ...candidate, path: authored }];
-  const parent = path.dirname(authored);
-  let entries: fs.Dirent[];
+/** Whether `other` is `spelling` with the case of its extension changed (`x.MD` for `x.md`). */
+function isCaseVariant(spelling: string, other: string): boolean {
+  const extension = path.posix.extname(spelling);
+  return (
+    extension !== "" &&
+    path.posix.dirname(spelling) === path.posix.dirname(other) &&
+    path.posix.basename(spelling, extension) === path.posix.basename(other, path.posix.extname(other)) &&
+    extension.toLowerCase() === path.posix.extname(other).toLowerCase()
+  );
+}
+
+/** `spelling` and the names in its folder that differ from it only in the case of the extension: the exact one first, then by code point. */
+function caseVariants(root: string, spelling: string): string[] {
+  const extension = path.posix.extname(spelling);
+  if (!extension) return [spelling];
+  let names: string[];
   try {
-    entries = fs.readdirSync(parent, { withFileTypes: true });
+    names = fs.readdirSync(path.join(root, path.posix.dirname(spelling)));
   } catch {
-    return [{ ...candidate, path: authored }];
+    return [spelling];
   }
-  const extension = path.extname(authored);
-  if (!extension) return [{ ...candidate, path: authored }];
-  const stem = path.basename(authored, extension);
-  return entries
-    .filter((entry) => {
-      const entryExtension = path.extname(entry.name);
-      return (
-        path.basename(entry.name, entryExtension) === stem && entryExtension.toLowerCase() === extension.toLowerCase()
-      );
-    })
-    .map((entry) => ({ ...candidate, path: path.join(parent, entry.name) }));
+  const dir = path.posix.dirname(spelling);
+  const variants = names
+    .map((name) => (dir === "." ? name : `${dir}/${name}`))
+    .filter((relPath) => relPath !== spelling && isCaseVariant(spelling, relPath))
+    .sort(compareCodePoints);
+  return [spelling, ...variants];
 }
 
 /** The file a candidate names, when it is a file (or a link to one) inside the bundle. */

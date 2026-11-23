@@ -137,15 +137,16 @@ describe("current ref lookup", () => {
     }
   });
 
-  test("markdown extension aliases preserve short and qualified identity", () => {
+  test("an index lookup is by the exact ref: a file-name spelling is not a row", () => {
     const db = openDb();
     try {
       const bundle = slugForPath(stashDir);
       const targetId = findEntryIdByRef(db, "knowledge/guide");
       expect(targetId).toBeDefined();
-      // .md-suffixed spellings resolve to the same ext-stripped canonical row.
-      expect(findEntryIdByRef(db, "knowledge/guide.md")).toBe(targetId);
-      expect(findEntryIdByRef(db, `${bundle}//knowledge/guide.md`)).toBe(targetId);
+      // The adapter maps a spelling to the canonical ref before the index is asked.
+      expect(findEntryIdByRef(db, "knowledge/guide.md")).toBeUndefined();
+      expect(findEntryIdByRef(db, `${bundle}//knowledge/guide.md`)).toBeUndefined();
+      expect(findEntryIdByRef(db, `${bundle}//knowledge/guide`)).toBe(targetId);
     } finally {
       db.close();
     }

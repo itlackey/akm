@@ -4,9 +4,10 @@ import path from "node:path";
 import { akmShowUnified } from "../../../src/commands/read/show";
 import { parseBundleRef } from "../../../src/core/asset/asset-ref";
 import { findAsset } from "../../../src/core/assets/read";
+import { assetType } from "../../../src/core/assets/type";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
-import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
+import { _resetWarnOnceForTests } from "../../../src/core/warn";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex, lookupBundleRef } from "../../../src/indexer/indexer";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
@@ -14,7 +15,6 @@ import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { listWorkflowRuns, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../../src/workflows/runtime/workflow-asset-loader";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
-import { withSeam } from "../../_helpers/seams";
 
 type BundleKind = "ordinary" | "standalone";
 
@@ -117,9 +117,10 @@ describe("workflow source canonical-ref collisions", () => {
       );
       expect(owner, ref).toMatchObject({
         conceptId: canonicalConceptId,
-        type: "workflow",
         entry: { file: sourcePath },
       });
+      // The type is the index's; with no index it is what the adapter says of the asset, and nothing is built.
+      expect(assetType(owner as NonNullable<typeof owner>), ref).toBe("workflow");
       await expect(loadWorkflowAsset(ref), ref).resolves.toMatchObject({
         ref: fixture.canonicalRef,
         path: sourcePath,
@@ -216,19 +217,10 @@ describe("workflow source canonical-ref collisions", () => {
       path: authoredPath,
     });
 
+    // The authored path says what the file is; a link to another format is refused when its content is loaded.
     fs.unlinkSync(authoredPath);
     fs.symlinkSync(path.basename(yamlTarget), authoredPath);
-    const warnings: string[] = [];
-    await withSeam(
-      _setWarnSinkForTests,
-      (level, args) => {
-        if (level === "warn") warnings.push(args.map(String).join(" "));
-      },
-      async () => {
-        await expect(loadWorkflowAsset(fixture.canonicalRef)).rejects.toBeInstanceOf(Error);
-      },
-    );
-    expect(warnings.some((w) => /collision\.md.*target\.yml.*different extension/is.test(w))).toBe(true);
+    await expect(loadWorkflowAsset(fixture.canonicalRef)).rejects.toBeInstanceOf(Error);
     expect(fs.existsSync(getDbPath())).toBe(false);
     expect(indexSnapshot()).toBe(0);
     expect((await listWorkflowRuns()).runs).toHaveLength(0);

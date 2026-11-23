@@ -41,20 +41,21 @@ describe("DirectoryAdapterBase", () => {
     expect(() => okfAdapter.delete(bundle, "a")).toThrow();
   });
 
-  test("read tells an asset a full walk would not reach (a dot-directory) from one it lists", () => {
+  test("an asset a full walk would not reach (a dot-directory) is no asset: read and list agree", () => {
     for (const rel of ["knowledge/ok.md", ".hidden/knowledge/x.md"]) {
       fs.mkdirSync(path.dirname(path.join(bundle.root, rel)), { recursive: true });
       fs.writeFileSync(path.join(bundle.root, rel), "# x\n");
     }
-    expect(akmAdapter.read(bundle, "knowledge/ok")).toMatchObject({ type: "knowledge", listed: true });
-    expect(akmAdapter.read(bundle, ".hidden/knowledge/x")).toMatchObject({ type: "knowledge", listed: false });
+    expect(akmAdapter.read(bundle, "knowledge/ok")?.conceptId).toBe("knowledge/ok");
+    expect(akmAdapter.read(bundle, ".hidden/knowledge/x")).toBeUndefined();
+    expect(akmAdapter.list(bundle).assets.map((asset) => asset.conceptId)).toEqual(["knowledge/ok"]);
   });
 
-  test("read knows an asset's type when it returns it, and finds nothing for a file it cannot type", () => {
+  test("read finds a loose file under its path-derived concept id, and nothing for a file that is not there", () => {
     const file = path.join(bundle.root, "stray", "note.md");
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, "# a note\n");
-    expect(akmAdapter.read(bundle, "stray/note")?.type).toBe("knowledge");
+    expect(akmAdapter.read(bundle, "stray/note")?.entry.file).toBe(file);
     expect(akmAdapter.read(bundle, "stray/none")).toBeUndefined();
   });
 
@@ -74,7 +75,7 @@ describe("DirectoryAdapterBase", () => {
     expect(
       akmAdapter
         .list(bundle)
-        .entries.map((entry) => entry.relPath)
+        .assets.map((asset) => asset.entry.relPath)
         .filter((rel) => rel.startsWith("tasks/same.")),
     ).toEqual(["tasks/same.yml"]);
 
@@ -105,7 +106,6 @@ describe("DirectoryAdapterBase", () => {
 
     akmAdapter.update(bundle, "knowledge/idea", "changed\n");
     const read = akmAdapter.read(bundle, "knowledge/idea");
-    expect(read?.type).toBe("knowledge");
     expect(read?.entry.content()).toBe("changed\n");
     expect(read?.entry.bytes().toString("utf8")).toBe("changed\n");
 
@@ -123,6 +123,8 @@ describe("DirectoryAdapterBase", () => {
     expect(first.file).toBe(path.join(dir, "SKILL.md"));
     expect(fs.readFileSync(path.join(dir, "scripts", "run.sh"), "utf8")).toBe("echo old\n");
 
+    // The adapter refuses to create over an asset: the facade takes a package out whole first.
+    akmAdapter.delete(bundle, "skills/demo");
     const second = akmAdapter.create(bundle, {
       ...skill,
       resources: [{ path: "notes.txt", content: Buffer.from("new") }],
@@ -151,7 +153,7 @@ describe("DirectoryAdapterBase", () => {
     expect(fs.existsSync(path.join(bundle.root, "skills", "demo"))).toBe(false);
   });
 
-  test("an env file is private, read as listed, and a leftover `.sensitive` marker beside it changes nothing", () => {
+  test("an env file is private, and a leftover `.sensitive` marker beside it changes nothing", () => {
     const created = akmAdapter.create(bundle, { type: "env", name: "prod", content: "A=1\n" });
     const file = path.join(bundle.root, "env", "prod.env");
     const marker = path.join(bundle.root, "env", "prod.sensitive");
@@ -159,20 +161,18 @@ describe("DirectoryAdapterBase", () => {
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     fs.writeFileSync(marker, "");
 
-    const read = akmAdapter.read(bundle, "env/prod");
-    expect(read?.listed).toBe(true);
-    expect(read?.type).toBe("env");
+    expect(akmAdapter.read(bundle, "env/prod")?.conceptId).toBe("env/prod");
 
     // Delete removes the asset's file only: a marker left in the bundle is not the asset's.
     expect(akmAdapter.delete(bundle, "env/prod").changed).toEqual([file]);
     expect(fs.existsSync(marker)).toBe(true);
   });
 
-  test("an asset in a directory a full walk skips is read as not listed", () => {
+  test("a file in a directory a full walk skips is not an asset of the bundle", () => {
     fs.mkdirSync(path.join(bundle.root, "knowledge", ".hidden"), { recursive: true });
     fs.writeFileSync(path.join(bundle.root, "knowledge", ".hidden", "idea.md"), "x\n");
     akmAdapter.create(bundle, { type: "knowledge", name: "idea", content: "x\n" });
-    expect(akmAdapter.read(bundle, "knowledge/idea")?.listed).toBe(true);
-    expect(akmAdapter.read(bundle, "knowledge/.hidden/idea")?.listed).toBe(false);
+    expect(akmAdapter.read(bundle, "knowledge/idea")?.conceptId).toBe("knowledge/idea");
+    expect(akmAdapter.read(bundle, "knowledge/.hidden/idea")).toBeUndefined();
   });
 });

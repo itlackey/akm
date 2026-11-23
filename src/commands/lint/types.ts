@@ -42,6 +42,10 @@ export const LINT_RULES = [
   "missing-description",
   "broken-xref",
   "broken-source",
+  /** A concept stored under more than one spelling: the first is used and the others ignored (`BundleAdapter.read`). */
+  "shadowed-spelling",
+  /** An akm asset whose content suggests another type than its path gives: akm goes by the path. */
+  "type-from-content",
   /**
    * Non-fatal workflow compile ADVISORY (`compileWorkflowPlan().warnings` —
    * e.g. a step with no `output:` schema, or a `params.<name>` reference to an
@@ -133,11 +137,6 @@ export interface LintContext {
   lintSkip?: readonly string[];
   /** The refs the index recorded as moved; a `missing-ref` to one carries the new ref. */
   moves?: MovedRefs;
-  /**
-   * The file sits inside an LLM Wiki: written by the wiki's own process, not authored as an akm asset, so the rules that
-   * state what an authored asset carries (`missing-updated`, `missing-name-or-type`) do not apply to it.
-   */
-  llmWiki?: boolean;
   /** Bundle id to root, so a qualified ref is checked in the bundle it names. */
   bundleRoots?: ReadonlyMap<string, string>;
   /** Rewrite the links to moved refs only (`fix` rewrites them too, with every other fix). */

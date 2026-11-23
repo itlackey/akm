@@ -311,6 +311,14 @@ export interface IndexDocument {
   documentJson?: unknown;
 }
 
+/**
+ * What an adapter says about an asset for the index: everything of an {@link IndexDocument} but its identity, which is
+ * the storage key's (`ref`, `bundle`, `conceptId`, `adapterId`, `path`) and which `recognize` sets last.
+ */
+export type IndexMetadata = Omit<IndexDocument, "ref" | "bundle" | "conceptId" | "adapterId" | "path"> & {
+  type: string;
+};
+
 // ── OKF v0.2 trust/provenance/lifecycle family (okf-support.md v0.2 note) ───
 //
 // Landed under NEW, NAMESPACED names — never overloading the three AKM-native

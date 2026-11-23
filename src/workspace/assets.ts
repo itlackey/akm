@@ -12,6 +12,7 @@ import { parseBundleRef } from "../core/asset/asset-ref";
 import { readFrontmatter } from "../core/asset/frontmatter-edit";
 import { parseMarkdownToc, uniqueHeadingSlugs } from "../core/asset/markdown";
 import { markdownLinkTargets } from "../core/asset/markdown-link-targets";
+import { assetType } from "../core/assets/type";
 import { loadConfig } from "../core/config/config";
 import { defaultExcludedTypes } from "../core/config/schema/search";
 import { resolveRefOwner } from "../core/env-secret-ref";
@@ -175,7 +176,8 @@ function feedbackFor(durableRef: string | null) {
 export async function show(input: { ref: string }) {
   const ref = (input.ref ?? "").trim();
   if (!ref) throw new UsageError("An asset ref is required.", "MISSING_REQUIRED_ARGUMENT");
-  const type = resolveRefOwner(ref)?.type;
+  const owner = resolveRefOwner(ref);
+  const type = owner ? assetType(owner) : undefined;
   if (type === "env" || type === "secret") {
     // Values never leave the machine's own files through the UI, whatever the renderers would show.
     return { redacted: true, type, ref, note: "Env and secret values are never shown in the UI." };

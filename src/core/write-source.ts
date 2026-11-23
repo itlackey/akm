@@ -49,7 +49,7 @@ import { assertWritableFile } from "./adapter/directory-adapter";
 import { normalizeAkmMarkdown } from "./asset/akm-markdown";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName } from "./asset/resolve-ref";
-import { assertAdapterWrites } from "./assets/bundle";
+import { assertAdapterWrites } from "./assets/gate";
 import { deriveBundleId } from "./bundle-id";
 import { existingFileMode, isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";

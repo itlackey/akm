@@ -9,8 +9,7 @@
  * EXPLICIT-CONFIG ONLY (`akm bundle add . --adapter code-project`): there is no
  * `looksLikeRoot`, so it is never auto-detected.
  *
- * What a document is, in the order `recognize` decides it (path first, so the
- * ownership probe, which treats any content read as a claim, stays exact):
+ * What a document is, in the order `identify` and `describe` decide it (the path first, then the content):
  *   - the path must pass {@link isEligible}: a fixed extension/filename
  *     allowlist (source, Markdown/text docs, a few named config files) minus
  *     generated, lock and secret-shaped names and vendored/build directories.
@@ -19,7 +18,7 @@
  *     is parsed (a YAML config starting with `---` keeps its header).
  *
  * Refs are the file's bundle-relative path, extension included, so
- * `readCandidates` is the identity inversion. Types are open and the adapter
+ * `spellings` is the identity inversion. Types are open and the adapter
  * owns their presentation: `source`, `doc` and `config`. The language is a tag.
  *
  * The walk (`walkMode: "all-directories"`) lists every directory except `.git`
@@ -35,9 +34,8 @@ import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
 import { hashContent, nonEmptyString, readTags, validateChangesWithBaseChecks } from "./shared";
 
 const LANGUAGE_BY_EXTENSION: Readonly<Record<string, string>> = {
@@ -172,22 +170,14 @@ export function languageOf(relPath: string): string | undefined {
   return LANGUAGE_BY_EXTENSION[path.extname(relPath).toLowerCase()];
 }
 
-function recognize(c: Bundle, file: FileContext): IndexDocument | null {
-  const conceptId = toPosix(file.relPath);
-  const type = eligibleType(conceptId);
-  if (type === undefined) return null; // decided before any byte is read
-
+function describe(file: FileContext, conceptId: string): IndexMetadata {
+  const type = eligibleType(conceptId) as CodeType;
   const raw = file.content();
   const isMarkdown = MARKDOWN_EXTENSIONS.has(file.ext.toLowerCase());
   const parsed = isMarkdown ? parseFrontmatter(raw) : undefined;
 
-  const doc: IndexDocument = {
-    ref: `${c.id}//${conceptId}`,
-    bundle: c.id,
-    conceptId,
-    path: file.absPath,
+  const doc: IndexMetadata = {
     hash: hashContent(raw),
-    adapterId: "code-project",
     ownsPresentation: true,
     type,
     name: conceptId,
@@ -211,8 +201,14 @@ export class CodeProjectAdapter extends DirectoryAdapterBase {
   override readonly extensions = [...MARKDOWN_EXTENSIONS];
   protected override readonly walkMode = "all-directories" as const;
 
-  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
-    return recognize(b, file);
+  /** An eligible file is its own concept: its path, extension included. */
+  protected identify(relPath: string): string | null {
+    const posix = toPosix(relPath);
+    return eligibleType(posix) === undefined ? null : posix;
+  }
+
+  protected describe(_b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
+    return describe(file, conceptId);
   }
 
   // The base checks misfire on source (`stale-path` flags `/tmp/...` literals,
@@ -225,8 +221,8 @@ export class CodeProjectAdapter extends DirectoryAdapterBase {
     );
   }
 
-  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
-    return [{ path: path.join(c.root, conceptId), conceptId }];
+  protected spellings(conceptId: string): string[] {
+    return [conceptId];
   }
 }
 

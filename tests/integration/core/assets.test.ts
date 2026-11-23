@@ -10,11 +10,10 @@
  * capped at 16,384 files / 4,096 directories), throwing
  * `AdapterConceptScanError` past the cap — a hard operational wall on any
  * bundle bigger than the cap (issue #857). That walk is gone: each adapter's
- * `readCandidates` now enumerates the CLOSED-FORM set of physical spellings a
+ * `spellings` enumerates the CLOSED-FORM set of physical spellings a
  * conceptId could own directly (canonical, loose off-canonical, and any
  * type-specific duality), so lookups cost a small, bundle-size-INDEPENDENT
- * number of `readdirSync` calls (`candidateSpellings`'s per-candidate parent
- * listing), never a walk.
+ * number of `readdirSync` calls (one parent listing per spelling), never a walk.
  */
 
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
@@ -22,6 +21,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
+import type { Asset } from "../../../src/core/assets/asset";
 import {
   assetOfEntry,
   assetRevision,
@@ -31,14 +31,18 @@ import {
   listAssets,
   requireAsset,
 } from "../../../src/core/assets/read";
+import { assetType } from "../../../src/core/assets/type";
 import { addressOf, writeAssets } from "../../../src/core/assets/write";
-import { loadConfig } from "../../../src/core/config/config";
+import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { NotFoundError, UsageError } from "../../../src/core/errors";
+import { getDbPath } from "../../../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import { beginWriteProvenance } from "../../../src/core/write-provenance";
 import { type ResolvedWriteTarget, resolveWriteTarget } from "../../../src/core/write-source";
+import { akmIndex } from "../../../src/indexer/indexer";
 import { resolveSourceEntries, type SearchSource } from "../../../src/indexer/search/search-source";
 import { buildFileContext, type FileContext } from "../../../src/indexer/walk/file-context";
+import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { withFakeSecretStores } from "../../_helpers/fake-secret-stores";
 import { findInBundle } from "../../_helpers/find-in-bundle";
 import {
@@ -50,7 +54,7 @@ import {
 } from "../../_helpers/sandbox";
 
 describe("finding an asset in one bundle — closed-form candidates (#857)", () => {
-  test("readCandidates for a nested-off-canonical conceptId resolves without any readdirSync count growing with unrelated tree size", () => {
+  test("spellings for a nested-off-canonical conceptId resolve without any readdirSync count growing with unrelated tree size", () => {
     const sandbox = sandboxStashDir();
     try {
       const root = path.join(sandbox.dir, "akm");
@@ -341,12 +345,15 @@ describe("findAsset", () => {
     expect(findAsset("scripts/deploy.sh", { sources: [third, second, first] })?.bundle).toBe("third");
   });
 
-  test("an asset carries its type, and reads as its adapter holds it", () => {
+  test("an asset reads as its adapter holds it; its type is the index's, asked for separately", () => {
     const stash = bundleOf("stash", { "knowledge/note.md": "---\ndescription: A note\n---\nBody\n" });
 
     const found = findAsset("knowledge/note", { sources: [stash] });
 
-    expect(found).toMatchObject({ type: "knowledge", conceptId: "knowledge/note", listed: true });
+    expect(found).toMatchObject({ conceptId: "knowledge/note", bundle: "stash" });
+    expect(found).not.toHaveProperty("type");
+    expect(found).not.toHaveProperty("listed");
+    expect(assetType(found as Asset)).toBe("knowledge");
     expect(found?.entry.frontmatter()).toMatchObject({ description: "A note" });
     expect(found?.entry.content()).toContain("Body");
   });
@@ -360,9 +367,9 @@ describe("findAsset", () => {
     });
 
     const env = findAsset("env/prod", { sources: [stash] });
-    expect(env).toMatchObject({ type: "env", listed: true });
+    expect(assetType(env as Asset)).toBe("env");
     expect(env?.entry.file).toBe(path.join(stash.path, "env", "prod.env"));
-    expect(findAsset("secrets/token", { sources: [stash] })).toMatchObject({ type: "secret", listed: true });
+    expect(assetType(findAsset("secrets/token", { sources: [stash] }) as Asset)).toBe("secret");
     expect(listAssets({ sources: [stash] }).map((asset) => asset.ref)).toEqual([
       "stash//env/prod",
       "stash//secrets/token",
@@ -386,6 +393,31 @@ describe("findAsset", () => {
     const stash = bundleOf("stash", { "tasks/same.md": "# Same note\n", "tasks/same.yml": "name: same\n" });
 
     expect(findAsset("tasks/same", { sources: [stash] })?.entry.file).toBe(path.join(stash.path, "tasks", "same.yml"));
+  });
+
+  test("every spelling of a ref reads the asset under its one canonical ref", () => {
+    const stash = bundleOf("stash", {
+      "knowledge/guide.md": "# Guide\n",
+      "tasks/nightly.yml": "name: nightly\n",
+      "scripts/deploy.sh": "echo\n",
+    });
+
+    for (const [spelling, canonical] of [
+      ["knowledge/guide", "knowledge/guide"],
+      ["knowledge/guide.md", "knowledge/guide"],
+      ["tasks/nightly", "tasks/nightly"],
+      ["tasks/nightly.yml", "tasks/nightly"],
+      ["scripts/deploy.sh", "scripts/deploy.sh"],
+    ] as const) {
+      const found = findAsset(spelling, { sources: [stash] });
+      expect(found?.conceptId).toBe(canonical);
+      expect(found?.ref).toBe(`stash//${canonical}`);
+    }
+    expect(listAssets({ sources: [stash] }).map((asset) => asset.ref)).toEqual([
+      "stash//knowledge/guide",
+      "stash//scripts/deploy.sh",
+      "stash//tasks/nightly",
+    ]);
   });
 
   test("a ref in the outdated type-folder spelling finds the asset, with one warning", () => {
@@ -485,7 +517,7 @@ describe("writeAssets", () => {
     expect(fs.existsSync(path.join(stash.path, "knowledge", "note.md"))).toBe(true);
 
     writeAssets(target, { purpose: "test" }, (w) => {
-      expect(w.read("knowledge/note")?.type).toBe("knowledge");
+      expect(assetType(w.read("knowledge/note") as Asset)).toBe("knowledge");
       w.update("knowledge/note", "---\ndescription: n\n---\nChanged\n");
     });
     expect(fs.readFileSync(path.join(stash.path, "knowledge", "note.md"), "utf8")).toContain("Changed");
@@ -622,7 +654,8 @@ describe("a keyring bundle behind the facade", () => {
         async () => {
           const sources = resolveSourceEntries(undefined, loadConfig());
           const found = findAsset("keyring//secrets/gh_token", { sources });
-          expect(found).toMatchObject({ type: "secret", bundle: "keyring" });
+          expect(found).toMatchObject({ bundle: "keyring" });
+          expect(assetType(found as Asset)).toBe("secret");
           expect(found?.entry.file).toBeUndefined();
           expect(found?.entry.content()).toBe("ghp-value");
           expect(listAssets({ sources, type: "secret" }).map((asset) => asset.ref)).toEqual([
@@ -655,5 +688,112 @@ describe("a keyring bundle behind the facade", () => {
     } finally {
       storage.cleanup();
     }
+  });
+});
+
+describe("assetType", () => {
+  /** The index's row for `ref`, or undefined. */
+  function indexedType(ref: string): string | undefined {
+    const db = openExistingDatabase(getDbPath());
+    try {
+      return (db.prepare("SELECT type FROM entries WHERE item_ref = ?").get(ref) as { type: string } | undefined)?.type;
+    } finally {
+      closeDatabase(db);
+    }
+  }
+
+  test("reads the type from the index, and a file added outside akm is indexed on the first ask", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({
+        semanticSearchMode: "off",
+        defaultBundle: "main",
+        bundles: { main: { path: storage.stashDir, writable: true } },
+      });
+      resetConfigCache();
+      fs.mkdirSync(path.join(storage.stashDir, "knowledge"), { recursive: true });
+      fs.writeFileSync(path.join(storage.stashDir, "knowledge", "known.md"), "# known\n");
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+      expect(indexedType("main//knowledge/known")).toBe("knowledge");
+
+      // Added by hand after the index was built: the index has no row for it.
+      const added = path.join(storage.stashDir, "commands", "added.md");
+      fs.mkdirSync(path.dirname(added), { recursive: true });
+      fs.writeFileSync(added, "Use $ARGUMENTS exactly.\n");
+      expect(indexedType("main//commands/added")).toBeUndefined();
+
+      const asset = findAsset("main//commands/added") as Asset;
+      expect(asset.entry.file).toBe(added);
+      expect(assetType(asset)).toBe("command");
+      // The ask recorded the row; the next one reads the index and not the file.
+      expect(indexedType("main//commands/added")).toBe("command");
+      const original = fs.readFileSync;
+      const readSpy = spyOn(fs, "readFileSync").mockImplementation(((candidate, options) => {
+        if (path.resolve(String(candidate)) === added) throw new Error("the type of an indexed asset must not be read");
+        return original(candidate, options as never);
+      }) as typeof fs.readFileSync);
+      try {
+        expect(assetType(asset)).toBe("command");
+        expect(assetType(findAsset("main//knowledge/known") as Asset)).toBe("knowledge");
+      } finally {
+        readSpy.mockRestore();
+      }
+    } finally {
+      storage.cleanup();
+    }
+  });
+
+  test("with no index at all it says what the adapter says, and builds none", () => {
+    const stash = bundleOf("stash", { "knowledge/a.md": "# a\n", "env/prod.env": "A=1\n" });
+    expect(assetType(findAsset("knowledge/a", { sources: [stash] }) as Asset)).toBe("knowledge");
+    expect(assetType(findAsset("env/prod", { sources: [stash] }) as Asset)).toBe("env");
+    expect(fs.existsSync(getDbPath())).toBe(false);
+  });
+});
+
+describe("assetType and an index an older adapter version wrote", () => {
+  test("a row described by another adapter version is described again, for that one ref", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({
+        semanticSearchMode: "off",
+        defaultBundle: "main",
+        bundles: { main: { path: storage.stashDir, writable: true } },
+      });
+      resetConfigCache();
+      fs.mkdirSync(path.join(storage.stashDir, "knowledge"), { recursive: true });
+      fs.writeFileSync(path.join(storage.stashDir, "knowledge", "a.md"), "# a\n");
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+
+      const db = openExistingDatabase(getDbPath());
+      try {
+        db.prepare("UPDATE entries SET type = 'stale' WHERE item_ref = 'main//knowledge/a'").run();
+        db.prepare("UPDATE index_dir_state SET index_variant = 'akm@0.0.1+content1'").run();
+      } finally {
+        closeDatabase(db);
+      }
+      const asset = findAsset("main//knowledge/a") as Asset;
+      expect(assetType(asset)).toBe("knowledge");
+      const check = openExistingDatabase(getDbPath());
+      try {
+        expect(
+          (check.prepare("SELECT type FROM entries WHERE item_ref = 'main//knowledge/a'").get() as { type: string })
+            .type,
+        ).toBe("knowledge");
+      } finally {
+        closeDatabase(check);
+      }
+    } finally {
+      storage.cleanup();
+    }
+  });
+});
+
+describe("the directory adapter's writes", () => {
+  test("update names the asset by its canonical concept id, and create refuses one that exists", () => {
+    const stash = bundleOf("stash", { "knowledge/a.md": "# a\n" });
+    const bundle = { id: "stash", root: stash.path };
+    expect(akmAdapter.update(bundle, "knowledge/a.md", "# b\n").conceptId).toBe("knowledge/a");
+    expect(() => akmAdapter.create(bundle, { type: "knowledge", name: "a", content: "x" })).toThrow(/already exists/);
   });
 });

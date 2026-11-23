@@ -131,7 +131,7 @@ export function buildFileContext(stashRoot: string, absPath: string): FileContex
   };
 }
 
-// ── MatchResult / AssetMatcher ───────────────────────────────────────────────
+// ── MatchResult ───────────────────────────────────────────────
 
 /**
  * Describes the result of a successful asset match.
@@ -154,12 +154,6 @@ export interface MatchResult {
   /** Optional pass-through data forwarded to the renderer */
   meta?: Record<string, unknown>;
 }
-
-/**
- * A function that inspects a FileContext and either claims the file by
- * returning a MatchResult, or returns null to abstain.
- */
-export type AssetMatcher = (ctx: FileContext) => MatchResult | null;
 
 // ── RenderContext / AssetRenderer ────────────────────────────────────────────
 

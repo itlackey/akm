@@ -16,6 +16,7 @@ import { stashDirFor } from "./asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
 import { type Asset, findAsset, listAssets } from "./assets/read";
+import { assetType } from "./assets/type";
 import { readAsset, type WriteResult, writeAssets } from "./assets/write";
 import { deriveBundleIds } from "./bundle-id";
 import { scanEnvKeyNames } from "./common";
@@ -92,7 +93,7 @@ function ownerOfType(ref: string, type: "env" | "secret", form: string): Asset {
     parseTypedRef(ref, type, form);
     throw new NotFoundError(`${type === "env" ? "Env" : "Secret"} not found: ${ref}`);
   }
-  if (asset.type !== type) {
+  if (assetType(asset) !== type) {
     throw new UsageError(
       `Expected ${type === "env" ? "an" : "a"} ${type} ref (${form} or <bundle>//${form}); got "${ref}". Write the full ref.`,
       "INVALID_FLAG_VALUE",

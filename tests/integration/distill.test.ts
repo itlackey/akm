@@ -2590,8 +2590,9 @@ describe("akmDistill — a lesson already at the target ref", () => {
   test("is left as it is: skipped with a reason before the call, no proposal, nothing written", async () => {
     const stash = makeStashDir();
     const existing = writeLesson(stash, "skill-deploy-lesson");
-    const source = path.join(stash, "skills", "deploy.md");
-    const sourceContent = "---\ndescription: Deploy safely\n---\n\nCheck deployment prerequisites.\n";
+    const source = path.join(stash, "skills", "deploy", "SKILL.md");
+    const sourceContent = "---\nname: deploy\ndescription: Deploy safely\n---\n\nCheck deployment prerequisites.\n";
+    fs.mkdirSync(path.dirname(source), { recursive: true });
     fs.writeFileSync(source, sourceContent);
     let called = false;
 

@@ -9,7 +9,7 @@ import { adapterIdOf, detectAdapterId } from "../core/adapter/detect-adapter";
 import { adapterForId, requireAdapter } from "../core/adapter/registry";
 import type { Bundle } from "../core/adapter/types";
 import { type Asset, findAsset } from "../core/assets/read";
-import { compareCodePoints, isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
+import { isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
 import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
@@ -88,10 +88,9 @@ import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations, sourceOfBundle } from "./installations";
 import { legacyRefMove, rekeyLegacyEntry } from "./legacy-refs";
-import { entryFromFiles, indexedPathMatchesOwner, indexedPathOf } from "./lookup/indexed-owner";
+import { entryOnMiss, indexedPathMatchesOwner, indexedPathOf } from "./lookup/indexed-owner";
 import { type EmbeddingGenerationResult, embeddingInputCap, generateEmbeddingsForDb } from "./materialize-embeddings";
 import {
-  canUseIncrementalSkip,
   computeDirFingerprint,
   type DirFingerprint,
   type DirStaleReason,
@@ -775,16 +774,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     const tWalkStart = Date.now();
     // Walk every source and pre-generate all metadata outside any transaction…
     const { dirRecords, scannedDirs, skippedDirs, generatedCount, warnings, complete, incompleteSources } =
-      await scanSourceDirs(
-        db,
-        sources,
-        isIncremental,
-        builtAtMs,
-        removedSources.length > 0,
-        config,
-        onProgress,
-        !clean,
-      );
+      await scanSourceDirs(db, sources, isIncremental, builtAtMs, config, onProgress, !clean);
     // …then write it in one transaction: `item_ref = <bundle>//<conceptId>`
     // plus canonical bundle/adapter provenance per source root.
     const bundleByRoot = buildIndexedSourceOwners(sources);
@@ -1047,45 +1037,24 @@ interface AdapterSkip {
 
 function adapterSkippedAkmContent(
   bundle: Bundle,
-  files: readonly FileContext[],
+  claimed: ReadonlyArray<{ entry: { relPath: string } }>,
   adapter: BundleAdapter,
 ): AdapterSkip | undefined {
-  if (adapter.id === "akm") return undefined;
+  // A bundle a secret manager keeps is no directory: there is nothing akm could read in it.
+  if (adapter.id === "akm" || bundle.location !== undefined) return undefined;
   const akm = adapterForId("akm");
   if (!akm) return undefined;
 
-  const byTopDir = new Map<string, FileContext[]>();
-  for (const file of files) {
-    const top = file.ancestorDirs[0];
-    if (!top) continue; // a root-level file is not a "skipped directory" concern
-    const group = byTopDir.get(top);
-    if (group) group.push(file);
-    else byTopDir.set(top, [file]);
+  // A top-level directory the chosen adapter holds no asset in, where akm would hold some: the chosen adapter skips it.
+  const topDirOf = (relPath: string): string | undefined => (relPath.includes("/") ? relPath.split("/")[0] : undefined);
+  const owned = new Set(claimed.map(({ entry }) => topDirOf(entry.relPath)));
+  const skipped = new Map<string, number>();
+  for (const { entry } of akm.list(bundle).assets) {
+    const top = topDirOf(entry.relPath);
+    if (top !== undefined && !owned.has(top)) skipped.set(top, (skipped.get(top) ?? 0) + 1);
   }
-
-  let count = 0;
-  const dirs: string[] = [];
-  for (const [dir, dirFiles] of byTopDir) {
-    const chosenRecognizesAny = dirFiles.some((file) => {
-      try {
-        return adapter.recognize(bundle, file) !== null;
-      } catch {
-        return false;
-      }
-    });
-    if (chosenRecognizesAny) continue; // the chosen adapter owns this dir; nothing skipped
-    const akmCandidates = dirFiles.filter((file) => {
-      try {
-        return akm.recognize(bundle, file) !== null;
-      } catch {
-        return false;
-      }
-    });
-    if (akmCandidates.length === 0) continue; // akm would drop it too — not a shadowing case
-    count += akmCandidates.length;
-    dirs.push(dir);
-  }
-  return count === 0 ? undefined : { adapter: adapter.id, count, dirs: dirs.sort() };
+  const count = [...skipped.values()].reduce((sum, n) => sum + n, 0);
+  return count === 0 ? undefined : { adapter: adapter.id, count, dirs: [...skipped.keys()].sort() };
 }
 
 /** `index_meta` key holding each bundle's {@link AdapterSkip}, so a skip is reported once, and again only when it changes. */
@@ -1127,7 +1096,7 @@ function reportAdapterSkips(db: Database, plans: readonly SourceScanPlan[]): voi
 /** A bundle's listing as the walk's result: every entry a `FileContext` keyed under the bundle's root. */
 function walkResultOf(listing: BundleListing, root: string): WalkStashFlatResult {
   return {
-    files: listing.entries.map((entry) => fileContextOfEntry(root, entry)),
+    files: listing.assets.map(({ entry }) => fileContextOfEntry(root, entry)),
     complete: listing.complete,
     ...(listing.incompleteReason !== undefined ? { incompleteReason: listing.incompleteReason } : {}),
   };
@@ -1161,9 +1130,10 @@ function buildSourceScanPlans(
     }
     // A bundle that names an adapter akm does not have stops the index before it changes anything.
     const adapter = requireAdapter(bundle.id, adapterIdOf(sourceAdded));
-    const walked = walkResultOf(adapter.list(bundle), currentStashDir);
+    const listing = adapter.list(bundle);
+    const walked = walkResultOf(listing, currentStashDir);
     const dirGroups = groupFileContextsByDir(walked.files);
-    const adapterSkip = adapterSkippedAkmContent(bundle, walked.files, adapter);
+    const adapterSkip = adapterSkippedAkmContent(bundle, listing.assets, adapter);
     return {
       currentStashDir,
       bundle,
@@ -1262,7 +1232,6 @@ async function scanSourceDirs(
   allSourceEntries: SearchSource[],
   isIncremental: boolean,
   builtAtMs: number,
-  hadRemovedSources: boolean,
   config: AkmConfig,
   onProgress?: (event: IndexProgressEvent) => void,
   reconcileMissingDirs = true,
@@ -1278,7 +1247,6 @@ async function scanSourceDirs(
 
   const dirRecords: DirRecord[] = [];
   let processedDirs = 0;
-  let priorDirsChanged = hadRemovedSources;
 
   const reportScanProgress = (message: string) =>
     onProgress?.({ phase: "scan", message, processed: processedDirs, total: allSourceEntries.length });
@@ -1339,7 +1307,6 @@ async function scanSourceDirs(
     for (const removal of removals) {
       dirRecords.push(removal);
       scannedDirs++;
-      priorDirsChanged = true;
       reportDirDecision("scan", removal.dirPath, currentStashDir, removal.reason);
     }
 
@@ -1367,7 +1334,7 @@ async function scanSourceDirs(
       const cachedState =
         isIncremental &&
         !forceScan &&
-        getCachedDirState(db, dirPath, indexableFiles, builtAtMs, priorDirsChanged, indexVariant, fingerprint);
+        getCachedDirState(db, dirPath, indexableFiles, builtAtMs, indexVariant, fingerprint);
       if (cachedState) {
         skippedDirs++;
         dirRecords.push({
@@ -1402,12 +1369,7 @@ async function scanSourceDirs(
       // either a skip (unchanged + eligible) or a scan carrying the drained stash.
       const previousState = getDirIndexState(db, dirPath, staleFiles, builtAtMs, indexVariant, fingerprint);
       const { persistedRowCount } = previousState;
-      if (
-        isIncremental &&
-        !forceScan &&
-        !previousState.stale &&
-        canUseIncrementalSkip(previousState, priorDirsChanged)
-      ) {
+      if (isIncremental && !forceScan && !previousState.stale) {
         skippedDirs++;
         const reason = previousState.reason;
         dirRecords.push({
@@ -1425,7 +1387,6 @@ async function scanSourceDirs(
         continue;
       }
       scannedDirs++;
-      priorDirsChanged = true;
       const reason = isIncremental ? previousState.reason : ({ kind: "full-rebuild" } satisfies DirScanReason);
       dirRecords.push({
         dirPath,
@@ -1633,10 +1594,8 @@ function persistDirRecords(
         getIndexDirState(db, dirPath)?.indexVariant === indexVariant;
 
       let persistedRows = 0;
-      let dedupedRows = 0;
 
       if (stash) {
-        const sourceRoot = `${path.resolve(currentStashDir)}${path.sep}`;
         for (const entry of stash.entries) {
           const found = identifyEntry(dirPath, bundle, entry, conceptIdByFile);
           if ("problem" in found) {
@@ -1648,29 +1607,8 @@ function persistDirRecords(
           // file's path. A missing hash preserves the existing value on upsert.
           const contentHash = hashByFile?.get(entryPath);
 
-          // Two files of one source can claim one ref (a skill's references/a.md and
-          // knowledge/skills/x/references/a.md are both knowledge/skills/x/references/a). The file with
-          // the smaller path holds it, whichever directories this run drains and in whatever order the
-          // walk met them (#1050): an entry yields to a row held by a file with a smaller path and
-          // otherwise takes the ref over. The same concept in another bundle is a different row, and a
-          // holder whose file is gone is no claim.
+          // The adapter lists one entry per ref (the spelling it reads wins), so the ref has one holder.
           const holder = (findPersisted.get(provenance.itemRef) as PersistedEntryRow | null) ?? undefined;
-          if (
-            holder &&
-            holder.file_path !== entryPath &&
-            holder.file_path.startsWith(sourceRoot) &&
-            fs.existsSync(holder.file_path)
-          ) {
-            const yields = compareCodePoints(holder.file_path, entryPath) < 0;
-            const [indexed, skipped] = yields ? [holder.file_path, entryPath] : [entryPath, holder.file_path];
-            warnings.push(`Two files claim ${provenance.itemRef}: indexed ${indexed}, skipped ${skipped}.`);
-            if (yields) {
-              dedupedRows++;
-              continue;
-            }
-            // The directory the ref comes from now has a row fewer than its files: drain it again.
-            deleteIndexDirState(db, path.dirname(holder.file_path));
-          }
           keptItemRefs.add(provenance.itemRef);
           persistedRows++;
 
@@ -1709,7 +1647,7 @@ function persistDirRecords(
       const persistedFingerprint = fingerprint ?? computeDirFingerprint(dirPath, files, indexVariant);
       const persistedReason =
         persistedRows === 0
-          ? inferZeroRowReason(stash, reason, warnings, dirPath, dedupedRows)
+          ? inferZeroRowReason(stash, reason, warnings, dirPath)
           : reason?.kind === "full-rebuild"
             ? "full-rebuild"
             : (reason?.kind ?? "updated");
@@ -1717,11 +1655,7 @@ function persistDirRecords(
         dirPath,
         ...persistedFingerprint,
         reason: persistedReason,
-        // A directory that lost rows to per-source dedup depends on the
-        // directories persisted before it, not only on its own files, so it
-        // must keep draining every run (as it did before the gate) until a
-        // drain persists it without dedup. NULL keeps the gate closed.
-        rowCount: dedupedRows === 0 ? persistedRows : undefined,
+        rowCount: persistedRows,
         indexVariant,
       });
       if (persistedRows === 0) warnVerbose(`[index] zero-row ${dirPath}: ${persistedReason}`);
@@ -1908,6 +1842,8 @@ async function lookupBundleRefWithResolutionUsing(
   openLookupDatabase: LookupDatabaseOpener,
   /** The opener hands out a handle the caller owns and closes. */
   borrowed = false,
+  /** Record the row an asset the index lacks (a file added outside akm); otherwise the index is left as it is. */
+  persist = false,
 ): Promise<BundleRefLookupResolution> {
   const sources = await resolveLookupSources();
   if (sources.length === 0) return { entry: null };
@@ -1921,8 +1857,10 @@ async function lookupBundleRefWithResolutionUsing(
   } catch (error) {
     indexError = error;
   }
-  const resolved = (entry: IndexEntry | null, asset?: Asset): BundleRefLookupResolution => {
-    const fileEntry = !entry && asset ? entryFromFiles(asset, sourceOfBundle(sources, asset.bundle)) : undefined;
+  /** `absent`: the index holds no row for the asset at all, so a read-write lookup records one; a stale row is `akm index`'s. */
+  const resolved = (entry: IndexEntry | null, asset?: Asset, absent = false): BundleRefLookupResolution => {
+    const fileEntry =
+      !entry && asset ? entryOnMiss(asset, sourceOfBundle(sources, asset.bundle), persist && absent) : undefined;
     return {
       entry,
       ...(asset ? { asset } : {}),
@@ -1931,9 +1869,8 @@ async function lookupBundleRefWithResolutionUsing(
     };
   };
   try {
-    // An asset its adapter keeps out of listings (a sensitive env file, a file outside the walk) is not served.
-    const found = findAsset(ref, { sources });
-    const asset = found?.listed ? found : undefined;
+    // An asset the walk does not reach is not in the bundle: `findAsset` does not find it.
+    const asset = findAsset(ref, { sources });
     if (!asset) return resolved(null);
     const bundleId = asset.bundle;
     const source = sourceOfBundle(sources, bundleId);
@@ -1950,7 +1887,7 @@ async function lookupBundleRefWithResolutionUsing(
       return resolved(null, asset);
     }
     if (entry) {
-      if (asset.type === "workflow") {
+      if (entry.type === "workflow") {
         try {
           assertIndexedWorkflowSourceIdentity(inputRef, entry.filePath, {
             path: ownerPath,
@@ -1973,14 +1910,21 @@ async function lookupBundleRefWithResolutionUsing(
     }
     // A physical owner with a missing/incomplete index row still owns this
     // concept: no later source can retarget it.
-    return resolved(null, asset);
+    return resolved(null, asset, true);
   } finally {
     if (db && !borrowed) closeDatabase(db);
   }
 }
 
-export async function lookupBundleRefWithResolution(ref: BundleRef): Promise<BundleRefLookupResolution> {
-  return lookupBundleRefWithResolutionUsing(ref, openExistingDatabase);
+/**
+ * Resolve index and physical ownership together. With `persist` (`akm show`), an asset the index has no row for is
+ * indexed as it is found: one `recognize`, one upsert.
+ */
+export async function lookupBundleRefWithResolution(
+  ref: BundleRef,
+  persist = false,
+): Promise<BundleRefLookupResolution> {
+  return lookupBundleRefWithResolutionUsing(ref, openExistingDatabase, false, persist);
 }
 
 /**

@@ -23,8 +23,14 @@
  * index — winning). Returns null when no matcher claims the file.
  */
 
-import type { AssetMatcher, FileContext, MatchResult } from "../../indexer/walk/file-context";
-import { directoryMatcher, extensionMatcher, parentDirHintMatcher, smartMdMatcher } from "../../indexer/walk/matchers";
+import type { MatchResult } from "../../indexer/walk/file-context";
+import {
+  directoryMatcher,
+  extensionMatcher,
+  looseMarkdownMatcher,
+  type PathFileContext,
+  parentDirHintMatcher,
+} from "../../indexer/walk/matchers";
 
 /**
  * The four builtin matchers, in registration order. The array index IS the
@@ -35,11 +41,11 @@ import { directoryMatcher, extensionMatcher, parentDirHintMatcher, smartMdMatche
  * path-owned by residence under `workflows/`, with Markdown frontmatter as an
  * additional signal.)
  */
-const AKM_MATCHERS: readonly AssetMatcher[] = [
+const AKM_MATCHERS: readonly ((file: PathFileContext) => MatchResult | null)[] = [
   extensionMatcher,
   directoryMatcher,
   parentDirHintMatcher,
-  smartMdMatcher,
+  looseMarkdownMatcher,
 ];
 
 function winningMatch(hits: Array<{ result: MatchResult; index: number }>): MatchResult | null {
@@ -60,7 +66,7 @@ function winningMatch(hits: Array<{ result: MatchResult; index: number }>): Matc
  * later-registered matcher — higher index — winning). Returns null when no
  * matcher claims the file.
  */
-export function recognizeMatch(file: FileContext): MatchResult | null {
+export function recognizeMatch(file: PathFileContext): MatchResult | null {
   const hits: Array<{ result: MatchResult; index: number }> = [];
   for (let i = 0; i < AKM_MATCHERS.length; i++) {
     const result = AKM_MATCHERS[i]!(file);

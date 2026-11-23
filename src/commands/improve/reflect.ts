@@ -21,6 +21,7 @@ import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { AssetRef } from "../../core/asset/resolve-ref";
 import { findAsset } from "../../core/assets/read";
+import { assetType } from "../../core/assets/type";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import { isWithin, resolveStashDir, safeRealpath } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
@@ -728,10 +729,8 @@ async function resolveReflectSource(
   // the file that owns it wherever it is (a file in another bundle is `createProposal`'s to refuse, #1000).
   const root = path.resolve(options.target?.root ?? stash);
   const address = resolveProposalAddress(root, options.ref);
-  const ownedType = findAsset(options.itemRef ?? options.ref, {
-    sources: resolveSourceEntries(stash),
-  })?.type;
-  const parsedRef: WriteAddress = { ...address, type: ownedType ?? address.type };
+  const owned = findAsset(options.itemRef ?? options.ref, { sources: resolveSourceEntries(stash) });
+  const parsedRef: WriteAddress = { ...address, type: owned ? assetType(owned) : address.type };
   // A secret's content is never read, whatever it looks like.
   if (REFLECT_REFUSED_TYPES.has(parsedRef.type)) {
     return unsupportedTypeFailure(

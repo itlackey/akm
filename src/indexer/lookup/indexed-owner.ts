@@ -9,10 +9,9 @@
 
 import path from "node:path";
 import { adapterIdOf } from "../../core/adapter/detect-adapter";
-import { assetBundleOf } from "../../core/assets/bundle";
-import type { Asset } from "../../core/assets/read";
+import type { Asset } from "../../core/assets/asset";
+import { indexAsset } from "../../core/assets/type";
 import { safeRealpath } from "../../core/common";
-import { withMdVariants } from "../../storage/repositories/index-entries-repository";
 import type { IndexEntry } from "../indexer";
 import { deriveEntryProvenance } from "../installations";
 import type { SearchSource } from "../search/search-source";
@@ -26,30 +25,21 @@ export function indexedPathOf(asset: Asset, source: SearchSource): string {
 }
 
 /**
- * The index entry the holding file and its adapter give without the index: the adapter's own recognition of
- * the file, so `show` serves it though no row exists. Undefined when the walk would not list the file (a
- * skipped or ignored directory, a symlinked one, ...: it is not in the bundle as far as the index goes) or the
- * adapter does not recognise it, or when the ref is not the concept ID the index would key the file under, up to its
- * `.md` (a file-name spelling such as `tasks/nightly.yml`): an index miss refuses that spelling, so does this. It has
+ * The index entry of an asset whose bundle has no row for it (a file added outside akm): the asset's adapter recognizes
+ * it once and, with `persist`, the row is recorded, so the next ask finds it in the index. Undefined when the adapter
+ * does not recognize it. Without `persist` (a read-only lookup) the entry is served and the index left as it is; it has
  * no links, usage or indexed fragments.
  */
-export function entryFromFiles(asset: Asset, source: SearchSource): IndexEntry | undefined {
+export function entryOnMiss(asset: Asset, source: SearchSource, persist: boolean): IndexEntry | undefined {
   const bundleId = asset.bundle;
   const adapterId = adapterIdOf(source);
   try {
-    if (!asset.listed) return undefined;
-    const document = assetBundleOf({
-      name: bundleId,
-      path: source.path,
-      ...(source.location !== undefined ? { location: source.location } : {}),
-      adapterId,
-    }).recognize(asset.entry);
-    if (!document?.conceptId || !withMdVariants(asset.conceptId).includes(document.conceptId)) return undefined;
+    const document = indexAsset(asset, { persist });
     const { itemRef, conceptId } = deriveEntryProvenance(
       { bundleId, adapterId },
       document.type,
       document.name,
-      document.conceptId,
+      document.conceptId as string,
     );
     return {
       filePath: indexedPathOf(asset, source),

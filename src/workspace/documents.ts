@@ -18,7 +18,7 @@ import { akmClone, type CloneResponse } from "../commands/sources/source-clone";
 import { assertFlatAssetName, normalizeCreateSubPath } from "../core/asset/asset-create";
 import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
 import { parseBundleRef } from "../core/asset/asset-ref";
-import { assertAdapterWrites } from "../core/assets/bundle";
+import { assertAdapterWrites } from "../core/assets/gate";
 import { resolveStashDir, toErrorMessage } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";

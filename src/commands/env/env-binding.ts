@@ -17,6 +17,7 @@
  *   - Resolved values must never be written to stdout or logs by callers.
  */
 
+import { assetType } from "../../core/assets/type";
 import {
   isInstalledBundle,
   makeEnvRef,
@@ -55,7 +56,7 @@ export function resolveRefToken(
 ): { kind: "secret"; value: string } | { kind: "path"; path: string } | undefined {
   const asset = resolveRefOwner(ref);
   if (asset === undefined) return undefined;
-  if (asset.type === "secret") return { kind: "secret", value: secretValueOf(asset) };
+  if (assetType(asset) === "secret") return { kind: "secret", value: secretValueOf(asset) };
   if (asset.entry.file === undefined) throw new UsageError(`"${asset.ref}" is not kept in a file, so it has no path.`);
   return { kind: "path", path: asset.entry.file };
 }

@@ -5,7 +5,7 @@ import { codeProjectAdapter, eligibleType } from "../../../../src/core/adapter/a
 import type { Bundle, ValidateContext } from "../../../../src/core/adapter/types";
 import { buildFileContext, type FileContext } from "../../../../src/indexer/walk/file-context";
 import { walkStashFlat } from "../../../../src/indexer/walk/walker";
-import { readCandidates } from "../../../_helpers/read-candidates";
+import { identify, spellings } from "../../../_helpers/adapter-hooks";
 
 const ROOT = path.join(import.meta.dir, "../../../fixtures/bundles/code-project");
 const GOLDEN = JSON.parse(
@@ -96,10 +96,10 @@ describe("code-project recognize", () => {
     expect(codeProjectAdapter.recognize(bundle, cfg)?.content).toBe("---\nkey: v\n---\nbody");
   });
 
-  test("readCandidates is the identity inversion", () => {
-    expect(readCandidates(codeProjectAdapter, bundle, "src/auth/oauth.ts")).toEqual([
-      { path: path.join(ROOT, "src/auth/oauth.ts"), conceptId: "src/auth/oauth.ts" },
-    ]);
+  test("a path is its own concept, and spellings invert it", () => {
+    expect(identify(codeProjectAdapter, "src/auth/oauth.ts")).toBe("src/auth/oauth.ts");
+    expect(identify(codeProjectAdapter, "assets/logo.png")).toBeNull();
+    expect(spellings(codeProjectAdapter, "src/auth/oauth.ts")).toEqual(["src/auth/oauth.ts"]);
     expect(codeProjectAdapter.looksLikeRoot).toBeUndefined();
   });
 });

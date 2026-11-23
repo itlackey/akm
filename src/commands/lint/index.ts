@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { classifyAkmFile } from "../../core/adapter/adapters/akm-adapter";
+import { classifyAkmPath } from "../../core/adapter/adapters/akm-adapter";
 import {
   derivedSiblingPath,
   MAX_SKILL_GROUP_DEPTH,
@@ -12,6 +12,7 @@ import {
   perTypeChecks,
   perTypeFrontend,
 } from "../../core/adapter/adapters/akm-lint";
+import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
 import type { Bundle, Diagnostic } from "../../core/adapter/types";
@@ -143,7 +144,7 @@ function markdownAssetsByType(root: string): Map<string, string[]> {
   const byDir = new Map<string, string[]>();
   for (const file of walkStashFlat(root)) {
     if (file.ext !== ".md" || file.ancestorDirs.some((dir) => dir === "env" || dir === "secrets")) continue;
-    const type = classifyAkmFile(root, file)?.match.type;
+    const type = classifyAkmPath(file.relPath)?.match.type;
     const dir = type === undefined ? undefined : documentStashDirFor(type);
     if (dir === undefined || documentFormatForStashDir(dir) !== "markdown") continue;
     byDir.set(dir, [...(byDir.get(dir) ?? []), file.absPath]);
@@ -223,6 +224,8 @@ const KNOWN_ADAPTER_ISSUE_TYPES: ReadonlySet<string> = new Set<LintIssueType>([
   "missing-description",
   "broken-xref",
   "broken-source",
+  "shadowed-spelling",
+  "type-from-content",
   "invalid-workflow-structure",
   "workflow-warning",
 ]);
@@ -231,6 +234,41 @@ const KNOWN_ADAPTER_ISSUE_TYPES: ReadonlySet<string> = new Set<LintIssueType>([
 export function diagnosticToLintIssue(diag: Diagnostic): LintIssue {
   if (KNOWN_ADAPTER_ISSUE_TYPES.has(diag.issue)) return { ...diag, issue: diag.issue as LintIssueType };
   return { ...diag, issue: "adapter-diagnostic", detail: `[${diag.issue}] ${diag.detail}` };
+}
+
+/**
+ * What the adapter's `validate()` reports for the assets of the bundle at `stashRoot` that `keep` admits (all of them
+ * by default), as lint findings. The changes are the assets the adapter lists (one per concept): `validate` finds the
+ * files it ignores itself.
+ */
+async function adapterFindings(
+  adapter: BundleAdapter,
+  stashRoot: string,
+  keep: ((relPath: string) => boolean) | undefined,
+  sources: SearchSource[],
+  cfg: AkmConfig,
+  options: AkmLintOptions,
+): Promise<LintIssue[]> {
+  const ids = deriveBundleIds(sources);
+  const sourceIndex = sources.findIndex((s) => samePath(s.path, stashRoot));
+  const bundle: Bundle = {
+    id: sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot,
+    root: stashRoot,
+  };
+  const changes: FileChange[] = adapter
+    .list(bundle)
+    .assets // akm's own resolved registry-cache copies are not the bundle's content.
+    .filter(({ entry }) => entry.file === undefined || !isAkmRegistryCachePath(entry.file))
+    .filter(({ entry }) => keep === undefined || keep(entry.relPath))
+    .map(({ entry }) => ({ path: entry.relPath, op: "update" }));
+
+  const ctx = createValidateContext({
+    root: stashRoot,
+    sources,
+    config: cfg,
+    readMoves: options.readMoves ?? readRecordedMoves,
+  });
+  return (await adapter.validate(bundle, changes, ctx)).map(diagnosticToLintIssue);
 }
 
 /**
@@ -269,27 +307,8 @@ async function lintViaAdapter(
     );
   }
 
-  const ids = deriveBundleIds(sources);
-  const sourceIndex = sources.findIndex((s) => samePath(s.path, stashRoot));
-  const bundle: Bundle = {
-    id: sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot,
-    root: stashRoot,
-  };
-  const changes: FileChange[] = adapter
-    .list(bundle)
-    .entries // akm's own resolved registry-cache copies are not the bundle's content.
-    .filter((entry) => entry.file === undefined || !isAkmRegistryCachePath(entry.file))
-    .map((entry) => ({ path: entry.relPath, op: "update" }));
+  const mapped = await adapterFindings(adapter, stashRoot, undefined, sources, cfg, options);
 
-  const ctx = createValidateContext({
-    root: stashRoot,
-    sources,
-    config: cfg,
-    readMoves: options.readMoves ?? readRecordedMoves,
-  });
-  const diagnostics = await adapter.validate(bundle, changes, ctx);
-
-  const mapped = diagnostics.map(diagnosticToLintIssue);
   // Advisory diagnostics travel in their own channel — never `flagged`, so a
   // `--fail-on-flagged` gate is not tripped by a non-fatal warning. Classified
   // by the shared `ADVISORY_LINT_ISSUES` set rather than a code spelled out
@@ -496,7 +515,7 @@ export function lintAssetFile(ctx: LintContext, subdir: string): LintIssue[] {
     frontmatter: ctx.frontmatter,
     body: ctx.body,
     ext: path.extname(ctx.relPath).toLowerCase(),
-    rules: { relPath: ctx.relPath, llmWiki: ctx.llmWiki, skip: ctx.lintSkip },
+    rules: { relPath: ctx.relPath, skip: ctx.lintSkip },
     derivedSiblingExists: fs.existsSync(derivedSiblingPath(ctx.filePath)),
   });
   issues.push(...found.map((finding) => deleteStubWhenFixing(ctx, finding)));
@@ -510,8 +529,6 @@ interface SweepScope {
   fixMovedRefs: boolean;
   moves: MovedRefs;
   bundleRoots: ReadonlyMap<string, string>;
-  /** Whether a bundle-relative file sits inside an LLM Wiki of the bundle. */
-  inLlmWiki: (relPath: string) => boolean;
   pruneDanglingEdges: boolean;
   /** Rules to skip for this run, on top of the bundle's `lint.skip`. */
   lintSkip?: string[];
@@ -551,17 +568,8 @@ function lintDocument(
   scope: SweepScope,
   { fixed, flagged, warnings }: SweepSinks,
 ): void {
-  const {
-    stashRoot,
-    extraStashRoots,
-    fix,
-    fixMovedRefs,
-    moves,
-    bundleRoots,
-    inLlmWiki,
-    pruneDanglingEdges,
-    stalePathRoots,
-  } = scope;
+  const { stashRoot, extraStashRoots, fix, fixMovedRefs, moves, bundleRoots, pruneDanglingEdges, stalePathRoots } =
+    scope;
   const lintSkip = [...(scope.lintSkip ?? []), ...(scope.bundleSkip?.(relPath) ?? [])];
 
   let data: Record<string, unknown>;
@@ -612,7 +620,6 @@ function lintDocument(
           fixMovedRefs,
           moves,
           bundleRoots,
-          llmWiki: inLlmWiki(relPath),
           pruneDanglingEdges,
           stashRoot,
           stalePathRoots,
@@ -677,6 +684,49 @@ function lintDocument(
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+/** The stash folders the sweep reads: the document folders, less the types an untyped search leaves out unless `--type` names one. */
+function sweepDirs(cfg: AkmConfig, options: AkmLintOptions): string[] {
+  const leftOut = new Set(defaultExcludedTypes(cfg).map((type) => stashDirFor(type)));
+  return documentStashDirs().filter((d) => (options.typeFilter ? d === options.typeFilter : !leftOut.has(d)));
+}
+
+/**
+ * Add what the akm adapter's own `validate()` finds in the assets the sweep reads (the same scope), the findings the
+ * sweep already made left out: `validate` is where an adapter says what is wrong with its storage, such as a concept
+ * held by two files, which the sweep cannot see. Findings are deduped by `lintIssueDedupeKey`.
+ */
+async function addAdapterFindings(
+  found: LintFindings,
+  stashRoot: string,
+  sources: SearchSource[],
+  cfg: AkmConfig,
+  options: AkmLintOptions,
+): Promise<void> {
+  const adapter = adapterForId("akm");
+  if (!adapter) return;
+  const dirs = new Set(sweepDirs(cfg, options));
+  const inSweep = (relPath: string): boolean => {
+    // Nothing under `env/` or `secrets/` is read, as in the sweep.
+    if (
+      relPath
+        .split("/")
+        .slice(0, -1)
+        .some((dir) => dir === "env" || dir === "secrets")
+    )
+      return false;
+    const type = classifyAkmPath(relPath)?.match.type;
+    const dir = type === undefined ? undefined : documentStashDirFor(type);
+    return dir !== undefined && dirs.has(dir);
+  };
+  const seen = new Set([...found.fixed, ...found.flagged, ...found.warnings].map(lintIssueDedupeKey));
+  for (const issue of await adapterFindings(adapter, stashRoot, inSweep, sources, cfg, options)) {
+    const key = lintIssueDedupeKey(issue);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    (isAdvisoryLintIssue(issue) ? found.warnings : found.flagged).push(issue);
+  }
+}
+
 /**
  * The `akm`-adapter sweep: document-folder walk + per-file `lintAssetFile` +
  * the env dangerous-key pass. UNTOUCHED by the adapter-dispatch wiring above
@@ -703,11 +753,7 @@ function lintAkmSweep(
   const warnings: LintIssue[] = [];
 
   const scope = lintScope(stashRoot, cfg, sources, options.readMoves ?? readRecordedMoves);
-  // Types left out of an untyped search are left out of the sweep unless `--type` names one.
-  const leftOut = new Set(defaultExcludedTypes(cfg).map((type) => stashDirFor(type)));
-  const dirsToScan = documentStashDirs().filter((d) =>
-    options.typeFilter ? d === options.typeFilter : !leftOut.has(d),
-  );
+  const dirsToScan = sweepDirs(cfg, options);
 
   const markdownAssets = markdownAssetsByType(stashRoot);
   for (const subdir of dirsToScan) {
@@ -1056,7 +1102,12 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
     );
     options = { ...options, typeFilter: undefined };
   }
+  // The sweep and the adapter's checks both ask about moved refs: the recorded moves are read once between them.
+  const readMoves = options.readMoves ?? readRecordedMoves;
+  let moves: ReturnType<ReadMoves> | undefined;
+  options = { ...options, readMoves: () => (moves ??= readMoves()) };
   const found = lintAkmSweep(stashRoot, extraStashRoots, cfg, sources, options);
+  await addAdapterFindings(found, stashRoot, sources, cfg, options);
   found.flagged.push(...trackedSecretIssues(stashRoot));
   return finishLint(found, cfg, options, stashRoot);
 }

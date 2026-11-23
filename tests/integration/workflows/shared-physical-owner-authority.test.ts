@@ -134,7 +134,7 @@ describe("shared adapter physical-owner authority", () => {
     "complete",
     "missing",
     "stale",
-  ] as const)("loose AKM smart-Markdown preserves the first owner with a %s row; show serves its file", async (state) => {
+  ] as const)("loose AKM Markdown preserves the first owner with a %s row; show serves its file", async (state) => {
     const early = fixture(`early-loose-command-${state}`, "akm");
     const later = fixture(`later-loose-command-${state}`, "akm-workflow");
     const earlyPath = write(early.root, "same.md", "Use $ARGUMENTS exactly.\n");
@@ -193,7 +193,7 @@ describe("shared adapter physical-owner authority", () => {
     await akmIndex({ stashDir: early.root, full: true });
     mutateEntry("early//skills/once", "missing", "");
 
-    const candidateSpy = spyOn(opencodeAdapter as unknown as { readCandidates(): unknown }, "readCandidates");
+    const candidateSpy = spyOn(opencodeAdapter as unknown as { spellings(): unknown }, "spellings");
     try {
       expect((await showLocal({ ref: "skills/once" })).path).toBe(earlyPath);
       expect(candidateSpy).toHaveBeenCalledTimes(1);
@@ -214,7 +214,7 @@ describe("shared adapter physical-owner authority", () => {
   )("%s rejects a loose AKM command owner with a %s row before mutation", async (surface, state) => {
     const early = fixture(`early-loose-runtime-${surface}-${state}`, "akm");
     const later = fixture(`later-loose-runtime-${surface}-${state}`, "akm-workflow");
-    write(early.root, "same.md", "Use $ARGUMENTS exactly.\n");
+    const earlyPath = write(early.root, "same.md", "Use $ARGUMENTS exactly.\n");
     const laterPath = write(later.root, "commands/same.md", getWorkflowTemplate());
     configure(early, later);
     await akmIndex({ stashDir: early.root, full: true });
@@ -223,21 +223,26 @@ describe("shared adapter physical-owner authority", () => {
     const stateBefore = stateDbSnapshot();
     let dispatches = 0;
 
-    // The loose file's type is the one thing read about it: that is how it is told from a workflow.
-    const operation =
-      surface === "load"
-        ? loadWorkflowAsset("same")
-        : surface === "start"
-          ? startWorkflowRun("same")
-          : runWorkflowSteps({
-              target: "same",
-              summaryJudge: null,
-              dispatcher: async () => {
-                dispatches++;
-                return { ok: true as const, text: "unexpected" };
-              },
-            });
-    await expect(operation).rejects.toThrow(/not a native workflow/i);
+    // The loose file is typed by its path and the index records it: its bytes are never read to tell it from a workflow.
+    const readSpy = denyAssetRead(earlyPath);
+    try {
+      const operation =
+        surface === "load"
+          ? loadWorkflowAsset("same")
+          : surface === "start"
+            ? startWorkflowRun("same")
+            : runWorkflowSteps({
+                target: "same",
+                summaryJudge: null,
+                dispatcher: async () => {
+                  dispatches++;
+                  return { ok: true as const, text: "unexpected" };
+                },
+              });
+      await expect(operation).rejects.toThrow(/not a native workflow/i);
+    } finally {
+      readSpy.mockRestore();
+    }
     expect(dispatches).toBe(0);
     expect(stateDbSnapshot()).toEqual(stateBefore);
     expect((await listWorkflowRuns()).runs).toHaveLength(0);
@@ -299,11 +304,11 @@ describe("shared adapter physical-owner authority", () => {
     expect((await loadWorkflowAsset("skills/pkg/nested")).path).toBe(laterPath);
   });
 
-  test("generic document collisions: the winner is no workflow, so runtime is refused without state, runs, or dispatch", async () => {
+  test("generic document collisions reject runtime without reads, state, runs, or dispatch: the first spelling is no workflow", async () => {
     const early = fixture("early-generic-collision", "generic-files");
     const later = fixture("later-generic-collision", "akm-workflow");
-    write(early.root, "collision.md", "# markdown owner\n");
-    write(early.root, "collision.txt", "text owner\n");
+    const markdown = write(early.root, "collision.md", "# markdown owner\n");
+    const text = write(early.root, "collision.txt", "text owner\n");
     const laterPath = write(later.root, "collision.md", getWorkflowTemplate());
     configure(early, later);
     await akmIndex({ stashDir: early.root, full: true });
@@ -312,18 +317,25 @@ describe("shared adapter physical-owner authority", () => {
     const stateBefore = stateDbSnapshot();
     let dispatches = 0;
 
-    await expect(loadWorkflowAsset("collision")).rejects.toThrow(/not a native workflow/i);
-    await expect(startWorkflowRun("collision")).rejects.toThrow(/not a native workflow/i);
-    await expect(
-      runWorkflowSteps({
-        target: "collision",
-        summaryJudge: null,
-        dispatcher: async () => {
-          dispatches++;
-          return { ok: true as const, text: "unexpected" };
-        },
-      }),
-    ).rejects.toThrow(/not a native workflow/i);
+    const markdownSpy = denyAssetRead(markdown);
+    const textSpy = denyAssetRead(text);
+    try {
+      await expect(loadWorkflowAsset("collision")).rejects.toThrow(/not a native workflow/i);
+      await expect(startWorkflowRun("collision")).rejects.toThrow(/not a native workflow/i);
+      await expect(
+        runWorkflowSteps({
+          target: "collision",
+          summaryJudge: null,
+          dispatcher: async () => {
+            dispatches++;
+            return { ok: true as const, text: "unexpected" };
+          },
+        }),
+      ).rejects.toThrow(/not a native workflow/i);
+    } finally {
+      markdownSpy.mockRestore();
+      textSpy.mockRestore();
+    }
     expect(dispatches).toBe(0);
     expect(stateDbSnapshot()).toEqual(stateBefore);
     expect((await listWorkflowRuns()).runs).toHaveLength(0);
@@ -434,7 +446,9 @@ describe("shared adapter physical-owner authority", () => {
     const stateBefore = stateDbSnapshot();
     let dispatches = 0;
 
-    const readSpy = denyAssetRead(earlyPath);
+    // An asset with a row is typed from the index and never read. One with no row is indexed first: the read that
+    // describes it for the index is the only one.
+    const readSpy = state === "missing" ? undefined : denyAssetRead(earlyPath);
     try {
       const operation =
         surface === "load"
@@ -451,7 +465,7 @@ describe("shared adapter physical-owner authority", () => {
               });
       await expect(operation).rejects.toThrow(/not a native workflow/i);
     } finally {
-      readSpy.mockRestore();
+      readSpy?.mockRestore();
     }
     expect(dispatches).toBe(0);
     expect(stateDbSnapshot()).toEqual(stateBefore);

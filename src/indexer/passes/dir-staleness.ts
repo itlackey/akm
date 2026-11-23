@@ -114,14 +114,13 @@ export function getDirIndexState(
  * persisted row cannot recognize differently than last time, so it is skipped
  * before `drainDirDocuments` reads a single file. A row that recorded a real
  * generation (`rowCount > 0`) is skipped outright; a zero-row or pre-#900 row
- * goes through the entries-aware check so the dedup-order guard still applies.
+ * goes through the entries-aware check.
  */
 export function getCachedDirState(
   db: Database,
   dirPath: string,
   files: string[],
   builtAtMs: number,
-  priorDirsChanged: boolean,
   indexVariant: string,
   fingerprint: DirFingerprint,
 ): DirIndexState | undefined {
@@ -132,16 +131,7 @@ export function getCachedDirState(
   }
   const state = getDirIndexState(db, dirPath, files, builtAtMs, indexVariant, fingerprint);
   if (state.stale || state.reason.kind !== "cached-zero-row-state") return undefined;
-  if (!canUseIncrementalSkip(state, priorDirsChanged)) return undefined;
   return state;
-}
-
-export function canUseIncrementalSkip(state: DirIndexState, priorDirsChanged: boolean): boolean {
-  return !(
-    priorDirsChanged &&
-    state.reason.kind === "cached-zero-row-state" &&
-    state.reason.detail === "deduped-zero-row"
-  );
 }
 
 export function computeDirFingerprint(_dirPath: string, files: string[], indexVariant = ""): DirFingerprint {
@@ -225,9 +215,7 @@ export function inferZeroRowReason(
   priorReason: { kind: string; detail?: string } | undefined,
   warnings: string[],
   dirPath: string,
-  dedupedRows: number,
 ): string {
-  if (dedupedRows > 0) return "deduped-zero-row";
   const workflowNoise = warnings.some(
     (warning) => warning.startsWith("Skipped workflow ") && warning.includes(dirPath),
   );

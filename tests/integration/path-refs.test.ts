@@ -9,7 +9,9 @@ import {
   placementTypes,
   refForFile,
 } from "../../src/core/asset/asset-placement";
+import type { Asset } from "../../src/core/assets/asset";
 import { findAsset } from "../../src/core/assets/read";
+import { assetType } from "../../src/core/assets/type";
 import { loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { isInstalledBundle, resolveEnvPath, resolveRefOwner } from "../../src/core/env-secret-ref";
 import { substituteRefTokens } from "../../src/core/ref-token";
@@ -157,7 +159,7 @@ describe("env and secrets outside their folder", () => {
     expect(isInstalledBundle("team")).toBe(true);
 
     const owner = resolveRefOwner("team//projects/x/secrets/key.pem");
-    expect(owner?.type).toBe("secret");
+    expect(assetType(owner as Asset)).toBe("secret");
     expect(resolveRefToken("team//projects/x/secrets/key.pem")).toEqual({ kind: "secret", value: "s3cr3t-value" });
 
     const { values, missing, secretValues } = substituteRefTokens(
@@ -183,7 +185,7 @@ describe("env and secrets outside their folder", () => {
     const file = write("notes/token.md", "# not a secret\n");
     configure();
     expect(resolveRefToken("team//notes/token")).toEqual({ kind: "path", path: file });
-    expect(resolveRefOwner("team//notes/token")?.type).not.toBe("secret");
+    expect(assetType(resolveRefOwner("team//notes/token") as Asset)).not.toBe("secret");
   });
 
   test("an env outside env/ resolves by its owning file; a secret ref is refused as an env", () => {

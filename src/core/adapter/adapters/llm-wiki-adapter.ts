@@ -77,9 +77,8 @@ import { LLM_WIKI_PAGES_DIR, looksLikeLlmWikiRoot } from "../../asset/llm-wiki-r
 import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
 import { hashContent, nonEmptyString } from "./shared";
 
 /** The adapter's own `type` for immutable ingested sources under `raw/` (recognition golden, reading A). */
@@ -251,34 +250,34 @@ function resolveSources(fm: WikiPageFrontmatter): string[] {
   return out;
 }
 
-function recognize(c: Bundle, file: FileContext): IndexDocument | null {
-  if (file.ext !== ".md") return null;
+/** What a path is in a wiki: a `raw/` source, a `pages/` page, or nothing (reserved root files, a root README, any other folder). */
+function wikiRoleOf(relPath: string): "raw" | "page" | null {
+  const posix = toPosix(relPath);
+  if (path.posix.extname(posix).toLowerCase() !== ".md" || isReservedRootFile(posix)) return null;
+  const head = firstSegment(posix);
+  if (head === RAW_SUBDIR && posix.includes("/")) return "raw";
+  if (head === LLM_WIKI_PAGES_DIR && posix.includes("/")) return "page";
+  return null;
+}
+
+/** The concept a path holds: its path without `.md`, for a `raw/` source or a `pages/` page. */
+function wikiConceptIdOf(relPath: string): string | null {
+  return wikiRoleOf(relPath) === null ? null : conceptIdOf(relPath);
+}
+
+function describe(b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
   const relPath = toPosix(file.relPath);
-
-  // Reserved root files (schema/index/log) are recognized but never indexed.
-  if (isReservedRootFile(relPath)) return null;
-
-  const head = firstSegment(relPath);
-  const isRaw = head === RAW_SUBDIR && relPath.includes("/");
-  const isPage = head === LLM_WIKI_PAGES_DIR && relPath.includes("/");
-  // Only `raw/` sources and `pages/` pages are wiki assets. Everything else
-  // (root README, stray root `.md`, other dirs) is abstained on.
-  if (!isRaw && !isPage) return null;
-
-  const conceptId = conceptIdOf(relPath);
+  const isRaw = wikiRoleOf(relPath) === "raw";
+  const isPage = !isRaw;
   const lastSegment = conceptId.split("/").pop() ?? conceptId;
   const raw = file.content();
   const fm = parseWikiFrontmatter(raw);
   const body = parseFrontmatter(raw).content;
 
-  const doc: IndexDocument = {
-    ref: `${c.id}//${conceptId}`,
-    bundle: c.id,
-    conceptId,
-    path: file.absPath,
+  const doc: IndexMetadata = {
     hash: hashContent(raw),
-    adapterId: "llm-wiki",
     ownsPresentation: true,
+    // Metadata only: a page's `pageKind` never changes what it is.
     type: isRaw ? WIKI_SOURCE_TYPE : (fm.pageKind ?? DEFAULT_PAGE_KIND),
     name: lastSegment,
     content: body,
@@ -286,7 +285,7 @@ function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   if (fm.description !== undefined) doc.description = fm.description;
 
   if (isPage) {
-    const links = resolvePageLinks(fm, body, relPath, c.id);
+    const links = resolvePageLinks(fm, body, relPath, b.id);
     if (links.length > 0) doc.links = links;
     const sources = resolveSources(fm);
     // wiki page extras (adapter-owned; plan §4.3 — wikiRole/pageKind + citations).
@@ -315,15 +314,12 @@ async function validate(c: Bundle, changes: FileChange[], ctx: ValidateContext):
     const raw = change.after ?? (await ctx.readFile(change.path));
     if (typeof raw !== "string") continue;
     const relPath = toPosix(change.path);
-    if (isReservedRootFile(relPath)) continue; // reserved files are not concepts — no page checks
-    const head = firstSegment(relPath);
-    const isRaw = head === RAW_SUBDIR && relPath.includes("/");
-    const isPage = head === LLM_WIKI_PAGES_DIR && relPath.includes("/");
-    if (!isRaw && !isPage) continue;
+    const role = wikiRoleOf(relPath); // reserved files and other folders are not concepts — no page checks
+    if (role === null) continue;
     items.push({
       relPath,
       conceptId: conceptIdOf(relPath),
-      kind: isRaw ? "raw" : "page",
+      kind: role,
       fm: parseWikiFrontmatter(raw),
       body: parseFrontmatter(raw).content,
     });
@@ -403,17 +399,20 @@ export class LlmWikiAdapter extends DirectoryAdapterBase {
   readonly version = "0.9.0";
   override readonly extensions = [".md"];
 
-  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
-    return recognize(b, file);
+  protected identify(relPath: string): string | null {
+    return wikiConceptIdOf(relPath);
+  }
+
+  protected describe(b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
+    return describe(b, file, conceptId);
   }
 
   protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
     return validate(b, changes, ctx);
   }
 
-  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
-    const canonical = toPosix(conceptId).replace(/\.md$/i, "");
-    return [{ path: path.join(c.root, `${canonical}.md`), conceptId: canonical }];
+  protected spellings(conceptId: string): string[] {
+    return [`${toPosix(conceptId).replace(/\.md$/i, "")}.md`];
   }
 
   /** The wiki owns its whole root (schema/index/log at root plus pages/ + raw/). */

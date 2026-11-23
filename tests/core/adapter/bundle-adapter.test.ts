@@ -85,7 +85,7 @@ const stubAdapter: BundleAdapter = {
   retires: [],
 
   list(): BundleListing {
-    return { entries: [], complete: true };
+    return { assets: [], complete: true };
   },
 
   read(): BundleAsset | undefined {

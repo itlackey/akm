@@ -157,31 +157,45 @@ content the asset now holds.
 
 ### Directory adapters
 
-`directoryAdapter` (`adapters/directory-assets.ts`) builds every directory
-adapter from its format: `recognize`, `validate`, `readCandidates` and, for a
-writable format, a `DirectoryWrites` (the types it writes, where a new asset
-goes, how its content is serialized). The builder adds the file mechanics
-every directory adapter shares:
+`DirectoryAdapterBase` (`src/core/adapter/directory-adapter.ts`) implements every
+member once as template methods; a directory adapter supplies its format through
+four hooks and the base adds the file mechanics every directory adapter shares:
+
+- `identify(relPath)` gives the concept id a path holds, or `null` when the path
+  is no asset. It is a pure function of the path (no bundle, no file system, no
+  content), so listing, finding, placing and naming a retired asset cannot read a
+  file.
+- `spellings(conceptId)` lists the paths a concept can be kept at, the winner
+  first. A spelling `identify` does not map back to the concept is ignored.
+- `describe(b, file, conceptId)` is the index metadata for one file (the type,
+  name, description, hash and the rest), and may read the content. `recognize`
+  returns `describe`'s metadata with the identity `identify` gives, set last, so
+  the metadata cannot change it. A type is index metadata: only `recognize` gives
+  one, and every read of a type goes to the index (`assetType`,
+  `src/core/assets/type.ts`), which indexes an asset it has no row for.
+- `validate` is the format's own checks.
+
+The base's template methods:
 
 - `list` is the bundle walk (`walkStashFlatWithStatus`), with the adapter's
-  `walkMode`.
-- `read` finds the one file that holds a concept id: workflow arbitration
-  first, then every spelling `readCandidates` inverts the id into (plus
-  case-only siblings), each probed with a byte-denying `FileContext` so the
-  adapter's path-level abstention decides. Where more than one file holds the
-  id, one rule picks the winner for every caller: the spelling `place` gives for
-  the asset's type and name, else the first by code point. `list` returns only
-  the winner, and `validate` reports the ignored files (`shadowed-spelling`,
-  shown by `akm lint`). An asset a full walk
-  would not reach reads with `listed: false`.
+  `walkMode`, one asset per concept.
+- `read` finds the one file that holds a concept id: the first of its
+  `spellings` (an exact spelling before its case variants) that is a file inside
+  the root, that a full walk reaches and that `identify` names a concept. Where
+  more than one file holds the concept, that rule picks the winner for every
+  caller, `list` included, with no read of any file; `validate` reports the
+  ignored files (`shadowed-spelling`, shown by `akm lint`). An asset a full walk
+  would not reach is not in the bundle.
 - `create` places and serializes the asset, `update` writes the content
   given, and `delete` removes the file. Every
   write is atomic and refuses a path that leaves the bundle or passes through
   a symbolic link below its root (`assertWritableFile`). An env file or secret
-  is written at mode 0600.
+  is written at mode 0600. A writable adapter also says `typeOf(relPath)`, the
+  type of what it holds at a path, for the types its `writes` and `retires`
+  gates check.
 
-`readCandidates` is intentionally distinct from `extensions`: extensions are
-non-exhaustive walk hints. Read candidates preserve canonical directory
+`spellings` is intentionally distinct from `extensions`: extensions are
+non-exhaustive walk hints. Spellings preserve canonical directory
 manifests (for example `skills/<name>/SKILL.md`) so lookup, index-backed show,
 and workflow runtime share one physical-owner decision. Path-derived
 recognition (`toCanonicalName`/`toAssetPath`,

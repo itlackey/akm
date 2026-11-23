@@ -17,7 +17,6 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import { adapterIdOf } from "../core/adapter/detect-adapter";
 import { adapterForId } from "../core/adapter/registry";
 import { loadConfig } from "../core/config/config";
@@ -104,7 +103,6 @@ export async function indexWrittenAssets(
     const adapterId = adapterIdOf(writtenSource);
     const pairs: Array<{ file: string; entry: IndexDocument; conceptId: string; contentHash?: string }> = [];
     const unindexable = new Set<string>();
-    const rejectedConceptIds = new Set<string>();
     for (const file of files) {
       if (!fs.existsSync(file)) {
         let authoredDanglingSymlink = false;
@@ -122,8 +120,6 @@ export async function indexWrittenAssets(
       const adapter = adapterForId(adapterId);
       if (!adapter) throw new Error(`Unknown adapter "${adapterId}" for ${stashDir}`);
       const drained = drainDirDocuments(adapter, bundle, [ctx]);
-      for (const rejectedPath of drained.rejectedPaths) unindexable.add(rejectedPath);
-      for (const conceptId of drained.rejectedConceptIds) rejectedConceptIds.add(conceptId);
       const entry = drained.entries[0];
       // A broken workflow drains to zero entries and is treated as
       // unindexable; valid peer sources have already compiled to source IR.
@@ -150,18 +146,6 @@ export async function indexWrittenAssets(
                   AND adapter_id = ?`,
             )
             .all(file, bundle.id, adapterId) as Array<{ id: number }>;
-          for (const row of rows) unindexableEntryIds.add(row.id);
-        }
-        for (const conceptId of rejectedConceptIds) {
-          const itemRef = `${bundle.id}//${conceptId}`;
-          const rows = db
-            .prepare(
-              `SELECT id FROM entries
-                WHERE bundle_id = ? AND adapter_id = ?
-                  AND type = 'workflow'
-                  AND (concept_id = ? OR item_ref = ?)`,
-            )
-            .all(bundle.id, adapterId, conceptId, itemRef) as Array<{ id: number }>;
           for (const row of rows) unindexableEntryIds.add(row.id);
         }
         deleteEntriesByIds(db, [...unindexableEntryIds]);

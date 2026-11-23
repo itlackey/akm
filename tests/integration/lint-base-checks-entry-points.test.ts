@@ -5,7 +5,7 @@
 /**
  * The base asset checks have one implementation (`runBaseChecks`) and one decision on whether a rule applies to a file
  * (`ruleApplies`). The `akm lint` sweep and an adapter's `validate` reach them by different routes, so one fixture is run
- * through both and the findings must be the same: the skill and LLM Wiki exemptions and the bundle's `lint.skip` hold on
+ * through both and the findings must be the same: the skill exemption and the bundle's `lint.skip` hold on
  * either route.
  */
 
@@ -109,22 +109,10 @@ const FIXTURE: Array<{ name: string; rel: string; content: string; expected: Fin
     reportedAt: "skills/broken",
   },
   {
-    name: "an LLM Wiki page is exempt from missing-updated",
+    name: "a file in a wikis/ folder is an ordinary akm file: missing-updated applies",
     rel: "wikis/notes/pages/page.md",
     content: "---\ndescription: A page\npageKind: concept\n---\n\nBody.\n",
-    expected: [],
-  },
-  {
-    name: "an LLM Wiki raw snapshot is exempt from missing-updated",
-    rel: "wikis/notes/raw/snap.md",
-    content: "---\nname: snap\ndescription: Snapshot\nsourceUrl: https://example.test\ntags: [a]\n---\n\nSnapshot.\n",
-    expected: [],
-  },
-  {
-    name: "an LLM Wiki file that reads as a command is exempt from missing-name-or-type",
-    rel: "wikis/notes/pages/runs.md",
-    content: "---\ndescription: Runs\npageKind: concept\n---\n\nRun $ARGUMENTS.\n",
-    expected: [],
+    expected: [["missing-updated", "no updated field in frontmatter"]],
   },
   {
     name: "an unquoted colon in the description",

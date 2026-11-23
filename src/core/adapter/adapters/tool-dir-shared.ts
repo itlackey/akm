@@ -55,10 +55,9 @@ import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { AssetEntry } from "../bundle-adapter";
-import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
 import { skillDirectoryDiagnostics } from "./akm-lint";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
@@ -128,10 +127,14 @@ function classify(relPath: string, layout: ToolDirLayout): ToolDirClassification
   return null;
 }
 
-/** recognize() for a tool-dir adapter: derive the open `type`, project the OKF-shaped fields. */
-export function recognizeToolDir(layout: ToolDirLayout, c: Bundle, file: FileContext): IndexDocument | null {
-  const cls = classify(file.relPath, layout);
-  if (cls === null) return null;
+/** identify() for a tool-dir adapter: the concept a path holds, from the path alone. */
+export function identifyToolDir(layout: ToolDirLayout, relPath: string): string | null {
+  return classify(relPath, layout)?.conceptId ?? null;
+}
+
+/** describe() for a tool-dir adapter: derive the open `type`, project the OKF-shaped fields. */
+export function describeToolDir(layout: ToolDirLayout, file: FileContext): IndexMetadata {
+  const cls = classify(file.relPath, layout) as ToolDirClassification;
 
   const raw = file.content();
   const parsed = parseFrontmatter(raw);
@@ -144,13 +147,8 @@ export function recognizeToolDir(layout: ToolDirLayout, c: Bundle, file: FileCon
   const description = nonEmptyString(data.description);
   const tags = readTags(data.tags);
 
-  const doc: IndexDocument = {
-    ref: `${c.id}//${cls.conceptId}`,
-    bundle: c.id,
-    conceptId: cls.conceptId,
-    path: file.absPath,
+  const doc: IndexMetadata = {
     hash: hashContent(raw),
-    adapterId: layout.adapterId,
     type: cls.type,
     name,
     content: body,
@@ -161,23 +159,19 @@ export function recognizeToolDir(layout: ToolDirLayout, c: Bundle, file: FileCon
   return doc;
 }
 
-/** List native read spellings. */
-export function readCandidatesToolDir(layout: ToolDirLayout, c: Bundle, conceptId: string): AdapterReadCandidate[] {
+/** The native paths a concept can be kept at. */
+export function spellingsToolDir(layout: ToolDirLayout, conceptId: string): string[] {
   const posix = toPosix(conceptId);
-  if (posix === layout.instructionConceptId) {
-    return [{ path: path.join(c.root, layout.instructionFile), conceptId: posix }];
-  }
+  if (posix === layout.instructionConceptId) return [layout.instructionFile];
 
   const segs = posix.split("/").filter((segment) => segment.length > 0);
   const head = segs[0];
   const rest = segs.slice(1).join("/");
   if (!head || !rest) return [];
   if (layout.skillDirs.has(head)) {
-    return segs.length === 2 ? [{ path: path.join(c.root, head, rest, SKILL_MANIFEST), conceptId: posix }] : [];
+    return segs.length === 2 ? [`${head}/${rest}/${SKILL_MANIFEST}`] : [];
   }
-  if (layout.commandDirs.has(head) || layout.agentDirs.has(head)) {
-    return [{ path: path.join(c.root, head, `${rest}.md`), conceptId: posix }];
-  }
+  if (layout.commandDirs.has(head) || layout.agentDirs.has(head)) return [`${head}/${rest}.md`];
   return [];
 }
 
@@ -277,8 +271,12 @@ export abstract class ToolDirAdapterBase extends DirectoryAdapterBase {
     this.id = layout.adapterId;
   }
 
-  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
-    return recognizeToolDir(this.layout, b, file);
+  protected identify(relPath: string): string | null {
+    return identifyToolDir(this.layout, relPath);
+  }
+
+  protected describe(_b: Bundle, file: FileContext): IndexMetadata {
+    return describeToolDir(this.layout, file);
   }
 
   override renderExecutionSource(b: Bundle, entry: AssetEntry): AdapterRenderedExecutionSource | null {
@@ -289,8 +287,8 @@ export abstract class ToolDirAdapterBase extends DirectoryAdapterBase {
     return validateToolDir(this.layout, b, changes, ctx);
   }
 
-  protected readCandidates(b: Bundle, conceptId: string): AdapterReadCandidate[] {
-    return readCandidatesToolDir(this.layout, b, conceptId);
+  protected spellings(conceptId: string): string[] {
+    return spellingsToolDir(this.layout, conceptId);
   }
 
   override directoryList(): string[] {
@@ -300,10 +298,5 @@ export abstract class ToolDirAdapterBase extends DirectoryAdapterBase {
   /** A skill's folder holds its `SKILL.md` and the resources that belong to it. */
   protected override packageDir(file: FileContext): string | undefined {
     return file.fileName === SKILL_MANIFEST ? file.parentDirAbs : undefined;
-  }
-
-  /** The type its place gives, without reading the file. */
-  protected override declaredType(file: FileContext): string | undefined {
-    return classify(file.relPath, this.layout)?.type;
   }
 }

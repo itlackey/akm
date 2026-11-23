@@ -4,7 +4,6 @@
 
 import fs from "node:fs";
 import type { BundleSourceRef } from "../../core/adapter/types";
-import { isInLlmWiki } from "../../core/asset/llm-wiki-root";
 import { stalePathRoots } from "../../core/asset/stale-path";
 import type { AkmConfig } from "../../core/config/config";
 import { bundleLintSkip } from "./bundle-skip";
@@ -23,28 +22,11 @@ export interface LintScope {
   stalePathRoots: string[];
   /** The bundle's `lint.skip` rules for a bundle-relative path. */
   bundleSkip: (relPath: string) => string[];
-  /** Whether a bundle-relative file is inside an LLM Wiki of the bundle; each directory is probed once. */
-  inLlmWiki: (relPath: string) => boolean;
 }
 
 /** The root of each configured bundle by its id, for the checks that look a qualified ref up in the bundle it names. */
 function bundleRootsOf(sources: readonly BundleSourceRef[]): ReadonlyMap<string, string> {
   return new Map(sources.flatMap((source) => (source.registryId ? [[source.registryId, source.path] as const] : [])));
-}
-
-/** Whether a bundle-relative file is inside an LLM Wiki of the bundle at `root`; each directory is probed once. */
-export function llmWikiPredicate(root: string): (relPath: string) => boolean {
-  const byDir = new Map<string, boolean>();
-  return (relPath) => {
-    const dirs = relPath.split(/[\\/]/).slice(0, -1);
-    const key = dirs.join("/");
-    let inside = byDir.get(key);
-    if (inside === undefined) {
-      inside = isInLlmWiki(root, dirs);
-      byDir.set(key, inside);
-    }
-    return inside;
-  };
 }
 
 /**
@@ -64,6 +46,5 @@ export function lintScope(
     moves: readMovedRefs(readMoves),
     stalePathRoots: stalePathRoots(cfg, root),
     bundleSkip: bundleLintSkip(cfg, root),
-    inLlmWiki: llmWikiPredicate(root),
   };
 }

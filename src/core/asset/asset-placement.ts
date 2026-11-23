@@ -25,7 +25,6 @@
  * is a filesystem concern, presentation is a rendering concern.
  */
 
-import fs from "node:fs";
 import path from "node:path";
 import { toPosix } from "../common";
 import { type KnownType, SCRIPT_EXTENSIONS, WORKFLOW_EXTENSIONS } from "../recognition-util";
@@ -60,12 +59,7 @@ const workflowSpec: Omit<AssetSpec, "stashDir"> = {
     for (const ext of WORKFLOW_EXTENSIONS) {
       if (lower.endsWith(ext)) return path.join(typeRoot, name);
     }
-    // Probe in canonical extension priority order and fall back
-    // to the markdown path so error messages keep naming the canonical file.
-    for (const ext of WORKFLOW_EXTENSIONS) {
-      const candidate = path.join(typeRoot, `${name}${ext}`);
-      if (fs.existsSync(candidate)) return candidate;
-    }
+    // A name is placed by its path alone, never by what is on disk: the one workflow extension.
     return path.join(typeRoot, `${name}.md`);
   },
 };
@@ -274,6 +268,17 @@ export function stashDirNames(): string[] {
 }
 
 /**
+ * Releases before path refs prefixed a loose file's ref with its type folder (`knowledge/reports/x` for
+ * `reports/x.md`), and that spelling is still in links, memories, scripts and stored proposals. This is the
+ * head-less ref, or undefined when the ref has no such head.
+ */
+export function withoutTypeHead(conceptId: string): string | undefined {
+  const slash = conceptId.indexOf("/");
+  if (slash <= 0 || !stashDirNames().includes(conceptId.slice(0, slash))) return undefined;
+  return conceptId.slice(slash + 1);
+}
+
+/**
  * Mutate the placement registry to add/replace a type's spec. Used by the
  * custom-asset-type registration surface (extension types); built-ins are
  * baked into {@link PLACEMENT_SPECS} above.
@@ -347,7 +352,7 @@ export function assetPathForName(assetType: string, typeRoot: string, name: stri
  * "default" alias is genuinely dual-owned: both `<dir>/.env` and
  * `<dir>/default.env` derive the same canonical name (`toCanonicalName`
  * above), so a physical-owner lookup must consider both without reading
- * either file. Every other placement type has exactly one inverse spelling —
+ * either file (the spelling placement gives comes first). Every other placement type has exactly one inverse spelling —
  * including `memory`: `<name>.derived.md` is a separate item that owns
  * `<name>.derived`, never a second spelling of `<name>`.
  */
@@ -358,5 +363,6 @@ export function assetPathCandidatesForName(assetType: string, typeRoot: string, 
   if (base === undefined) return [primary];
   const dotForm = path.join(typeRoot, base, ".env");
   const namedForm = path.join(typeRoot, base, "default.env");
-  return [...new Set([primary, dotForm, namedForm])];
+  // The spelling a new default env file is placed at (`.env`) first: of two that exist, it is the asset.
+  return [...new Set([dotForm, namedForm, primary])];
 }

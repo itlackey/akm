@@ -25,6 +25,7 @@ import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/f
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { findAsset } from "../../core/assets/read";
+import { assetType } from "../../core/assets/type";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
@@ -499,8 +500,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const ledgerRef = options.itemRef ?? inputRef;
   const eligMeta = options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {};
   // The input's type is its file's; the ref's first folder names it only for a ref no file owns.
-  const inputType =
-    findAsset(inputRef, { sources: resolveSourceEntries(options.stashDir, config) })?.type ?? address.type;
+  const owned = findAsset(inputRef, { sources: resolveSourceEntries(options.stashDir, config) });
+  const inputType = owned ? assetType(owned) : address.type;
   if (isDistillRefusedInputType(inputType)) {
     const secret = inputType === "env" || inputType === "secret";
     const proposalRef = secret ? inputRef : conceptIdFromTypeName("lesson", address.name);

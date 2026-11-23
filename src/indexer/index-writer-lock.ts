@@ -201,7 +201,7 @@ export async function withAssetMutationLease<T>(
 }
 
 /** Synchronous asset-write boundary over the same interprocess lease. */
-export function withAssetMutationLeaseSync<T>(purpose: string, run: () => T): T {
+export function withAssetMutationLeaseSync<T>(purpose: string, run: () => T, options: { maxWaitMs?: number } = {}): T {
   const lockPath = getIndexWriterLockPath();
   const inherited = leaseContext.getStore();
   if (inherited?.has(lockPath)) return run();
@@ -209,7 +209,7 @@ export function withAssetMutationLeaseSync<T>(purpose: string, run: () => T): T 
   const context = inherited ?? new Set<string>();
   const execute = (): T => {
     const startedAt = Date.now();
-    const maxWaitMs = syncTimingOverridesForTests?.maxWaitMs ?? DEFAULT_ASSET_MUTATION_MAX_WAIT_MS;
+    const maxWaitMs = options.maxWaitMs ?? syncTimingOverridesForTests?.maxWaitMs ?? DEFAULT_ASSET_MUTATION_MAX_WAIT_MS;
     const waitNoticeIntervalMs =
       syncTimingOverridesForTests?.waitNoticeIntervalMs ?? ASSET_MUTATION_WAIT_NOTICE_INTERVAL_MS;
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });

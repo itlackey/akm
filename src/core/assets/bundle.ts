@@ -38,6 +38,11 @@ export class AssetBundle {
     this.#bundle = bundleOf(source);
   }
 
+  /** The prefix of the freshness variant the index records for this adapter's rows: id and version. */
+  get variantPrefix(): string {
+    return `${this.#adapter.id}@${this.#adapter.version}+`;
+  }
+
   /** Whether this bundle's adapter writes assets of `type`: it holds them as its own, not as files it reads. */
   writes(type: string): boolean {
     return this.#adapter.writes.includes(type);
@@ -105,12 +110,4 @@ export class AssetBundle {
 /** The bundle of a source. */
 export function assetBundleOf(source: BundleSource): AssetBundle {
   return new AssetBundle(source);
-}
-
-/**
- * Refuse an asset write the bundle's adapter does not make: an adapter that writes nothing, or (with `type`) one
- * that does not write assets of that type.
- */
-export function assertAdapterWrites(source: BundleSource, type?: string): void {
-  assetBundleOf(source).assertWrites(type);
 }

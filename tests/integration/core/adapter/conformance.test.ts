@@ -52,9 +52,10 @@ import { adapterForId, getAdapters } from "../../../../src/core/adapter/registry
 import type { Bundle, IndexDocument } from "../../../../src/core/adapter/types";
 import { buildFileContext } from "../../../../src/indexer/walk/file-context";
 import { walkStashFlat } from "../../../../src/indexer/walk/walker";
+import { identify, spellings } from "../../../_helpers/adapter-hooks";
 import { withFakeSecretStores } from "../../../_helpers/fake-secret-stores";
 import { findInBundle } from "../../../_helpers/find-in-bundle";
-import { readCandidates } from "../../../_helpers/read-candidates";
+
 import { sandboxStashDir } from "../../../_helpers/sandbox";
 
 /** The `okf` reference bundle's own root (root `index.md`, no `TYPE_DIRS` subdir). */
@@ -226,38 +227,34 @@ describe("conformance — fold(recognize) over the walk", () => {
   });
 });
 
-describe("conformance — read candidates and recognition are two-way canonical peers", () => {
-  test("every registered adapter maps each recognized fixture file back from its canonical concept", () => {
+describe("conformance — identity and spellings are two-way canonical peers", () => {
+  test("every registered adapter spells each recognized fixture file back from its canonical concept", () => {
     for (const adapter of directoryAdapters()) {
       const root = OWN_ROOT_BY_ID[adapter.id]!;
       const c = bundle(adapter.id, root);
       for (const file of walkStashFlat(root)) {
         const document = adapter.recognize(c, file);
         if (!document?.conceptId) continue;
-        const candidates = readCandidates(adapter, c, document.conceptId);
+        expect(identify(adapter, file.relPath), `${adapter.id}:${file.relPath}`).toBe(document.conceptId);
         expect(
-          candidates.some(
-            (candidate) =>
-              candidate.conceptId === document.conceptId && path.resolve(candidate.path) === path.resolve(file.absPath),
-          ),
+          spellings(adapter, document.conceptId).map((spelling) => spelling.toLowerCase()),
           `${adapter.id}:${document.conceptId} must include ${file.relPath}`,
-        ).toBe(true);
+        ).toContain(file.relPath.toLowerCase());
       }
     }
   });
 
-  test("every existing fixture candidate either abstains or recognizes the queried canonical concept", () => {
+  test("every existing fixture spelling either is no asset or names the queried canonical concept", () => {
     for (const adapter of directoryAdapters()) {
       const root = OWN_ROOT_BY_ID[adapter.id]!;
       const c = bundle(adapter.id, root);
       for (const file of walkStashFlat(root)) {
         const indexed = adapter.recognize(c, file);
         if (!indexed?.conceptId) continue;
-        for (const candidate of readCandidates(adapter, c, indexed.conceptId)) {
-          expect(candidate.conceptId, `${adapter.id}:${candidate.path}`).toBe(indexed.conceptId);
-          if (!fs.existsSync(candidate.path)) continue;
-          const recognized = adapter.recognize(c, buildFileContext(root, candidate.path));
-          if (recognized) expect(recognized.conceptId, `${adapter.id}:${candidate.path}`).toBe(indexed.conceptId);
+        for (const spelling of spellings(adapter, indexed.conceptId)) {
+          if (!fs.existsSync(path.join(root, spelling))) continue;
+          const identified = identify(adapter, spelling);
+          if (identified !== null) expect(identified, `${adapter.id}:${spelling}`).toBe(indexed.conceptId);
         }
       }
     }
@@ -283,9 +280,9 @@ describe("conformance — read candidates and recognition are two-way canonical 
       );
 
       fs.writeFileSync(path.join(genericRoot, "docs", "format.md"), "# collision");
-      // Two spellings: the first by code point wins (generic-files places nothing): `.TEXT` sorts before `.md`.
+      // Two spellings: the first in the adapter's order wins, `.md` before `.TEXT`.
       expect(findInBundle({ name: "test", path: genericRoot }, "generic-files", "docs/format")?.entry.file).toBe(
-        upperText,
+        path.join(genericRoot, "docs", "format.md"),
       );
 
       const extensionless = path.join(genericRoot, "LICENSE");
@@ -313,20 +310,15 @@ describe("conformance — read candidates and recognition are two-way canonical 
       expect(dotenvAdapter.recognize(dotenvComponent, buildFileContext(dotenvRoot, defaultEnv))?.conceptId).toBe(
         "env/default",
       );
-      expect(readCandidates(dotenvAdapter, dotenvComponent, "env/default")).toContainEqual({
-        path: defaultEnv,
-        conceptId: "env/default",
-      });
-      expect(findInBundle({ name: "test", path: dotenvRoot }, "dotenv", "env/default")).toMatchObject({
-        listed: true,
-      });
+      expect(spellings(dotenvAdapter, "env/default")).toContain("env/.env");
+      expect(findInBundle({ name: "test", path: dotenvRoot }, "dotenv", "env/default")?.entry.file).toBe(defaultEnv);
 
       const toolComponent = bundle("tool", toolRoot);
       const singular = path.join(toolRoot, "skill", "pkg", "SKILL.md");
       fs.mkdirSync(path.dirname(singular), { recursive: true });
       fs.writeFileSync(singular, "---\nname: pkg\ndescription: pkg\n---\n");
       expect(opencodeAdapter.recognize(toolComponent, buildFileContext(toolRoot, singular))).toBeNull();
-      expect(readCandidates(opencodeAdapter, toolComponent, "skill/pkg")).toEqual([]);
+      expect(spellings(opencodeAdapter, "skill/pkg")).toEqual([]);
 
       const canonicalSkill = path.join(toolRoot, "skills", "pkg", "SKILL.md");
       fs.mkdirSync(path.dirname(canonicalSkill), { recursive: true });
@@ -334,21 +326,18 @@ describe("conformance — read candidates and recognition are two-way canonical 
       expect(opencodeAdapter.recognize(toolComponent, buildFileContext(toolRoot, canonicalSkill))?.conceptId).toBe(
         "skills/pkg",
       );
-      expect(readCandidates(opencodeAdapter, toolComponent, "skills/pkg")[0]).toEqual({
-        path: canonicalSkill,
-        conceptId: "skills/pkg",
-      });
+      expect(spellings(opencodeAdapter, "skills/pkg")[0]).toBe("skills/pkg/SKILL.md");
       const nested = path.join(toolRoot, "skills", "pkg", "nested", "SKILL.md");
       fs.mkdirSync(path.dirname(nested), { recursive: true });
       fs.writeFileSync(nested, "---\nname: nested\ndescription: nested\n---\n");
       expect(opencodeAdapter.recognize(toolComponent, buildFileContext(toolRoot, nested))).toBeNull();
-      expect(readCandidates(opencodeAdapter, toolComponent, "skills/pkg/nested")).toEqual([]);
+      expect(spellings(opencodeAdapter, "skills/pkg/nested")).toEqual([]);
     } finally {
       sandbox.cleanup();
     }
   });
 
-  test("real recognition mechanically resolves every noncanonical AKM omission and nested dotenv default", () => {
+  test("real recognition mechanically resolves every noncanonical AKM omission and nested dotenv default without bytes", () => {
     const sandbox = sandboxStashDir();
     try {
       const akmRoot = path.join(sandbox.dir, "akm");
@@ -397,15 +386,26 @@ describe("conformance — read candidates and recognition are two-way canonical 
         conceptId: dotenvDocument.conceptId,
       });
 
-      // The owner is chosen from paths; only the one chosen file is read, for its type.
-      for (const entry of expected) {
-        expect(
-          findInBundle({ name: "test", path: entry.root }, entry.adapterId, entry.conceptId),
-          entry.conceptId,
-        ).toMatchObject({
-          entry: { file: entry.path },
-          conceptId: entry.conceptId,
-        });
+      const protectedPaths = new Set(expected.map((entry) => path.resolve(entry.path)));
+      const originalRead = fs.readFileSync;
+      const readSpy = spyOn(fs, "readFileSync").mockImplementation(((candidate, options) => {
+        if (protectedPaths.has(path.resolve(String(candidate)))) {
+          throw new Error(`owner resolution must not read ${candidate}`);
+        }
+        return originalRead(candidate, options as never);
+      }) as typeof fs.readFileSync);
+      try {
+        for (const entry of expected) {
+          expect(
+            findInBundle({ name: "test", path: entry.root }, entry.adapterId, entry.conceptId),
+            entry.conceptId,
+          ).toMatchObject({
+            entry: { file: entry.path },
+            conceptId: entry.conceptId,
+          });
+        }
+      } finally {
+        readSpy.mockRestore();
       }
 
       for (const entry of expected) {
@@ -420,7 +420,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
     }
   });
 
-  test("two files that invert to one ref read as the one place gives, and the other is ignored", () => {
+  test("two files that invert to one ref collide without reading either file: the first spelling is the asset", () => {
     const sandbox = sandboxStashDir();
     try {
       const root = path.join(sandbox.dir, "akm");
@@ -429,8 +429,25 @@ describe("conformance — read candidates and recognition are two-way canonical 
       fs.mkdirSync(path.dirname(canonical), { recursive: true });
       fs.writeFileSync(loose, "Use $ARGUMENTS exactly.\n");
       fs.writeFileSync(canonical, "name: same\n");
-      const owner = findInBundle({ name: "test", path: root }, "akm", "tasks/same");
-      expect(owner?.entry.file).toBe(canonical);
+      const originalRead = fs.readFileSync;
+      const readSpy = spyOn(fs, "readFileSync").mockImplementation(((candidate, options) => {
+        if ([loose, canonical].some((entry) => path.resolve(entry) === path.resolve(String(candidate)))) {
+          throw new Error(`owner resolution must not read ${candidate}`);
+        }
+        return originalRead(candidate, options as never);
+      }) as typeof fs.readFileSync);
+      try {
+        const owner = findInBundle({ name: "test", path: root }, "akm", "tasks/same");
+        expect(owner?.entry.file).toBe(canonical);
+        expect(
+          akmAdapter
+            .list({ id: "test", root })
+            .assets.filter((asset) => asset.conceptId === "tasks/same")
+            .map((asset) => asset.entry.file),
+        ).toEqual([canonical]);
+      } finally {
+        readSpy.mockRestore();
+      }
     } finally {
       sandbox.cleanup();
     }
@@ -486,10 +503,10 @@ describe("conformance — declared writes and what an adapter refuses", () => {
         [azureKeyVaultAdapter, "vault"],
       ] as const) {
         const b: Bundle = { id: "bundle", root: "/not/a/directory", location };
-        const { entries, complete } = adapter.list(b);
+        const { assets, complete } = adapter.list(b);
         expect(complete, adapter.id).toBe(true);
-        expect(entries.length, adapter.id).toBe(1);
-        const [entry] = entries;
+        expect(assets.length, adapter.id).toBe(1);
+        const entry = assets[0]?.entry;
         expect(entry?.file, adapter.id).toBeUndefined();
         expect(entry?.relPath.startsWith("secrets/"), adapter.id).toBe(true);
         const document = adapter.recognize(b, entry as NonNullable<typeof entry>);

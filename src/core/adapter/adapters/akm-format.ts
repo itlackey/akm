@@ -10,8 +10,6 @@
  */
 
 import path from "node:path";
-import type { FileContext } from "../../../indexer/walk/file-context";
-import { declaredTypeForPath } from "../../../indexer/walk/matchers";
 import { normalizeAkmMarkdown } from "../../asset/akm-markdown";
 import { assetPathForName, stashDirFor } from "../../asset/asset-placement";
 import { UsageError } from "../../errors";
@@ -95,6 +93,9 @@ export function serializeAkmContent(type: string, file: string, content: string 
 }
 
 export abstract class AkmFormatAdapterBase extends DirectoryAdapterBase {
+  /** The type of the asset kept at `relPath`, by the adapter's own path rule. */
+  protected abstract override typeOf(relPath: string): string;
+
   /** Everything it writes is retired, not deleted, except an env file or a secret: those are always deleted. */
   override get retires(): readonly string[] {
     return this.writes.filter((type) => type !== "env" && type !== "secret");
@@ -111,9 +112,5 @@ export abstract class AkmFormatAdapterBase extends DirectoryAdapterBase {
   /** Env files and secrets are readable by their owner only. */
   protected override fileMode(type: string): number | undefined {
     return type === "env" || type === "secret" ? 0o600 : undefined;
-  }
-
-  protected override declaredType(file: FileContext): string | undefined {
-    return declaredTypeForPath(file);
   }
 }

@@ -36,9 +36,16 @@ import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { isScratchPath } from "../../asset/scratch";
 import { isRecord, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
-import type { Bundle, Diagnostic, IndexDocument, OkfSourceEntry, OkfVerifiedEntry, ValidateContext } from "../types";
+import type {
+  Bundle,
+  Diagnostic,
+  IndexDocument,
+  IndexMetadata,
+  OkfSourceEntry,
+  OkfVerifiedEntry,
+  ValidateContext,
+} from "../types";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
 /** v0.2 frontmatter keys consumed into first-class fields below (§0.1) — excluded from the generic `documentJson` extras fold alongside the v0.1 five, so nothing is duplicated between a first-class field and the opaque extras bag. */
@@ -183,19 +190,20 @@ export function resolveOkfLinks(body: string, fileRelPath: string): string[] {
   return out;
 }
 
-function recognize(c: Bundle, file: FileContext): IndexDocument | null {
-  // `okf` owns `.md` only (extensions: [".md"]). No directory gate anywhere.
-  if (file.ext !== ".md") return null;
-  // Reserved OKF files are recognized (excluded), never indexed as concepts.
-  if (isReservedFileName(file.fileName)) return null;
+/** The concept a path holds: `okf` owns `.md` only, with no directory gate; reserved OKF files are structure, never concepts. */
+function conceptIdOf(relPath: string): string | null {
+  const posix = toPosix(relPath);
+  if (path.posix.extname(posix).toLowerCase() !== ".md" || isReservedFileName(path.posix.basename(posix))) return null;
+  return posix.replace(/\.md$/i, "");
+}
 
-  const conceptId = toPosix(file.relPath).replace(/\.md$/i, "");
+function describe(file: FileContext, conceptId: string): IndexMetadata {
   const raw = file.content();
   const parsed = parseFrontmatter(raw);
   const data = parsed.data;
   const body = parsed.content;
 
-  // §5.1 BINDING: `type` from FRONTMATTER; default `knowledge` when absent.
+  // §5.1 BINDING: `type` from FRONTMATTER; default `knowledge` when absent. It is metadata only: identity is the path.
   const type = nonEmptyString(data.type) ?? "knowledge";
   // §0.1/§3 OKF field projection.
   const lastSegment = conceptId.split("/").pop() ?? conceptId;
@@ -233,15 +241,10 @@ function recognize(c: Bundle, file: FileContext): IndexDocument | null {
   // concepts with it is neither rejected nor silently ignored.
   const okfVersion = nonEmptyString(data.okf_version);
 
-  const doc: IndexDocument = {
-    ref: `${c.id}//${conceptId}`,
-    bundle: c.id,
-    conceptId,
-    path: file.absPath,
+  const doc: IndexMetadata = {
     // hash over the full raw file (frontmatter + body) so any edit invalidates
     // incrementality/fingerprints (`types.ts` hash doc comment).
     hash: hashContent(raw),
-    adapterId: "okf",
     ownsPresentation: true,
     type,
     name,
@@ -311,17 +314,20 @@ export class OkfAdapter extends DirectoryAdapterBase {
   override readonly extensions = [".md"];
   protected override readonly walkMode = "all-directories" as const;
 
-  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
-    return recognize(b, file);
+  protected identify(relPath: string): string | null {
+    return conceptIdOf(relPath);
+  }
+
+  protected describe(_b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
+    return describe(file, conceptId);
   }
 
   protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
     return validate(b, changes, ctx);
   }
 
-  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
-    const canonical = conceptId.replace(/\\/g, "/").replace(/\.md$/i, "");
-    return [{ path: path.join(c.root, `${canonical}.md`), conceptId: canonical }];
+  protected spellings(conceptId: string): string[] {
+    return [`${toPosix(conceptId).replace(/\.md$/i, "")}.md`];
   }
 
   /** OKF concepts live anywhere under the bundle root (§5). */

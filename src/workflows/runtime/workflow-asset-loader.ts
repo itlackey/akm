@@ -5,8 +5,9 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { assetBundleOf } from "../../core/assets/bundle";
+import { adapterWrites } from "../../core/assets/gate";
 import { findAsset } from "../../core/assets/read";
+import { assetType } from "../../core/assets/type";
 import { loadConfig } from "../../core/config/config";
 import { COMPOSITION_INVALID_MULTI_JOB_HINT, NotFoundError, UsageError } from "../../core/errors";
 import { canonicalizeWorkflowName } from "../../core/recognition-util";
@@ -76,17 +77,21 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   const bundleId = asset.bundle;
   const source = sourceOfBundle(sources, bundleId);
   // A workflow runs when its bundle's adapter holds workflows as its own: a read-only adapter's workflow is a document.
+  const type = assetType(asset);
   if (
-    asset.type !== "workflow" ||
-    !assetBundleOf({
-      name: bundleId,
-      path: source.path,
-      ...(source.location !== undefined ? { location: source.location } : {}),
-      ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
-    }).writes("workflow")
+    type !== "workflow" ||
+    !adapterWrites(
+      {
+        name: bundleId,
+        path: source.path,
+        ...(source.location !== undefined ? { location: source.location } : {}),
+        ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
+      },
+      "workflow",
+    )
   ) {
     throw new UsageError(
-      `${asset.ref} is not a native workflow: bundle "${bundleId}" holds it as a ${asset.type} it does not run.`,
+      `${asset.ref} is not a native workflow: bundle "${bundleId}" holds it as a ${type} it does not run.`,
       "WORKFLOW_SOURCE_INVALID",
     );
   }

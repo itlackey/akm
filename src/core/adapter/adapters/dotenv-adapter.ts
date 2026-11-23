@@ -30,13 +30,13 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { assetPathCandidatesForName } from "../../asset/asset-placement";
 import { isScratchPath } from "../../asset/scratch";
 import { scanEnvKeyNames, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate } from "../directory-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
 import { AkmFormatAdapterBase } from "./akm-format";
 import { dangerousEnvKeyDiagnostics } from "./akm-lint";
 import { hashContent } from "./shared";
@@ -73,43 +73,21 @@ function conceptIdForPath(type: DotenvType, relativePath: string): string {
   return stripped.endsWith("/") ? `${stripped}default` : stripped;
 }
 
-function recognize(c: Bundle, file: FileContext): IndexDocument | null {
-  const type = classify(file.relPath);
-  if (type === null) return null;
-  const posix = toPosix(file.relPath);
+function describe(file: FileContext, conceptId: string): IndexMetadata {
+  const type = classify(file.relPath) as DotenvType;
   const raw = file.content();
 
   if (type === "env") {
     // env: strip `.env`; surface KEY NAMES only (never values/comments/content).
-    const conceptId = conceptIdForPath(type, posix);
     const name = (conceptId.split("/").pop() ?? conceptId) || "default";
     const keys = scanEnvKeyNames(raw);
-    const doc: IndexDocument = {
-      ref: `${c.id}//${conceptId}`,
-      bundle: c.id,
-      conceptId,
-      path: file.absPath,
-      hash: hashContent(raw),
-      adapterId: "dotenv",
-      type: "env",
-      name,
-    };
+    const doc: IndexMetadata = { hash: hashContent(raw), type: "env", name };
     if (keys.length > 0) doc.hints = keys;
     return doc;
   }
 
   // secret: keep the natural path; surface the FILE NAME only — never keys/content.
-  const name = posix.split("/").pop() ?? posix;
-  return {
-    ref: `${c.id}//${posix}`,
-    bundle: c.id,
-    conceptId: posix,
-    path: file.absPath,
-    hash: hashContent(raw),
-    adapterId: "dotenv",
-    type: "secret",
-    name,
-  };
+  return { hash: hashContent(raw), type: "secret", name: conceptId.split("/").pop() ?? conceptId };
 }
 
 async function validate(_c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
@@ -132,8 +110,19 @@ export class DotenvAdapter extends AkmFormatAdapterBase {
   override readonly writes = ["env", "secret"];
   override readonly extensions = [".env"];
 
-  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
-    return recognize(b, file);
+  protected identify(relPath: string): string | null {
+    const type = classify(relPath);
+    return type === null ? null : conceptIdForPath(type, relPath);
+  }
+
+  protected describe(_b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
+    return describe(file, conceptId);
+  }
+
+  protected override typeOf(relPath: string): string {
+    const type = classify(relPath);
+    if (type === null) throw new Error(`"${relPath}" is no env or secret file.`);
+    return type;
   }
 
   protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
@@ -141,15 +130,14 @@ export class DotenvAdapter extends AkmFormatAdapterBase {
   }
 
   /**
-   * Closed-form owner candidates (#857): the ref is the file's path under the
-   * bundle root (`conceptIdForPath`), so it is inverted for the two types
-   * this adapter recognizes. `assetPathCandidatesForName` expands `env`'s
-   * `.env`/`<name>.env` duality. `recognize` decides which candidate really owns the ref.
+   * Closed-form spellings (#857): the ref is the file's path under the bundle root (`conceptIdForPath`), so it is
+   * inverted for the two types this adapter holds. `assetPathCandidatesForName` expands `env`'s `.env`/`<name>.env`
+   * duality; `identify` decides which spelling really holds the ref.
    */
-  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
+  protected spellings(conceptId: string): string[] {
     const posix = toPosix(conceptId);
-    const expanded = (["env", "secret"] as const).flatMap((type) => assetPathCandidatesForName(type, c.root, posix));
-    return [...new Set(expanded)].map((candidatePath) => ({ path: candidatePath, conceptId: posix }));
+    const expanded = (["env", "secret"] as const).flatMap((type) => assetPathCandidatesForName(type, ".", posix));
+    return [...new Set(expanded.map((candidate) => toPosix(path.normalize(candidate))))];
   }
 
   /** The dotenv bundle owns its `env/` + `secrets/` dirs. */

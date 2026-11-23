@@ -29,7 +29,7 @@ import {
 import { MEMORY_ARCHIVE_REL } from "../../core/asset/memory-archive";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { stalePathRoots } from "../../core/asset/stale-path";
-import { assertAdapterWrites } from "../../core/assets/bundle";
+import { assertAdapterWrites } from "../../core/assets/gate";
 import { currentConceptId } from "../../core/assets/read";
 import { writeAssets } from "../../core/assets/write";
 import { type AkmConfig, loadConfig } from "../../core/config/config";

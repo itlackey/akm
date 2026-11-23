@@ -43,35 +43,45 @@ import {
 } from "../../../tasks/source-v3";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
-import type { AdapterReadCandidate } from "../directory-adapter";
 import { DirectoryAdapterBase } from "../directory-adapter";
-import type { Bundle, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { Bundle, Diagnostic, IndexMetadata, ValidateContext } from "../types";
 import { hashContent } from "./shared";
 
 /** The task YAML extension. */
 const TASK_EXT = TASK_EXTENSION;
 
-function recognize(c: Bundle, file: FileContext): IndexDocument | null {
-  if (file.ext !== TASK_EXT) return null;
-  const conceptId = toPosix(file.relPath).replace(/\.yml$/i, "");
-  const name = conceptId.split("/").pop() ?? conceptId;
+function describe(file: FileContext, conceptId: string): IndexMetadata {
   const raw = file.content();
+  return { hash: hashContent(raw), type: "task", name: conceptId.split("/").pop() ?? conceptId, content: raw };
+}
 
-  return {
-    ref: `${c.id}//${conceptId}`,
-    bundle: c.id,
-    conceptId,
-    path: file.absPath,
-    hash: hashContent(raw),
-    adapterId: "akm-task",
-    type: "task",
-    name,
-    content: raw,
-  };
+/**
+ * Every `.yaml` file of the bundle, by path. A `.yaml` file is no task, so the bundle does not list it and no change
+ * names it: it is found by scanning the bundle through {@link ValidateContext.list}, to say what it is (issue #760).
+ */
+async function nearMissFiles(ctx: ValidateContext, dir = "."): Promise<string[]> {
+  const found: string[] = [];
+  for (const name of await ctx.list(dir)) {
+    if (name.startsWith(".") || name === "node_modules") continue;
+    const relPath = dir === "." ? name : `${dir}/${name}`;
+    if (path.posix.extname(name).toLowerCase() === TASK_NEAR_MISS_EXTENSION) found.push(relPath);
+    else found.push(...(await nearMissFiles(ctx, relPath)));
+  }
+  return found;
 }
 
 async function validate(_c: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
+  const changed = new Set(changes.map((change) => toPosix(change.path)));
+  for (const relPath of await nearMissFiles(ctx)) {
+    if (changed.has(relPath)) continue; // reported with the changes below
+    diagnostics.push({
+      file: relPath,
+      issue: "invalid-task-yaml",
+      detail: taskExtensionDetail(relPath),
+      fixed: false,
+    });
+  }
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
@@ -114,20 +124,21 @@ export class AkmTaskAdapter extends DirectoryAdapterBase {
   // silently skipped (issue #760).
   override readonly extensions = [TASK_EXT, TASK_NEAR_MISS_EXTENSION];
 
-  protected recognizeFile(b: Bundle, file: FileContext): IndexDocument | null {
-    return recognize(b, file);
+  /** A `.yml` file is a task; its concept id is its path without the extension. */
+  protected identify(relPath: string): string | null {
+    return path.posix.extname(relPath).toLowerCase() === TASK_EXT ? toPosix(relPath).replace(/\.yml$/i, "") : null;
+  }
+
+  protected describe(_b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
+    return describe(file, conceptId);
   }
 
   protected validateFiles(b: Bundle, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
     return validate(b, changes, ctx);
   }
 
-  protected readCandidates(c: Bundle, conceptId: string): AdapterReadCandidate[] {
-    const posix = toPosix(conceptId).replace(/\.ya?ml$/i, "");
-    return [
-      { path: path.join(c.root, `${posix}.yml`), conceptId: posix },
-      { path: path.join(c.root, `${posix}.yaml`), conceptId: posix },
-    ];
+  protected spellings(conceptId: string): string[] {
+    return [`${toPosix(conceptId).replace(/\.ya?ml$/i, "")}.yml`];
   }
 
   /** Tasks live anywhere under the bundle root. */
