@@ -11,7 +11,7 @@ import { type BundleRef, makeBundleRef, parseBundleRef } from "../core/asset/ass
 import { assembleAsset, serializeFrontmatter } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "../core/asset/frontmatter";
 import { type AssetRef, displayDefaultBundle, displayRef } from "../core/asset/resolve-ref";
-import { currentConceptId } from "../core/assets/read";
+import { currentConceptId, findAsset, requireAsset } from "../core/assets/read";
 import { addressOf } from "../core/assets/write";
 import { bundleSourceAt } from "../core/bundle-at-dir";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
@@ -277,10 +277,11 @@ function recordFeedbackUsage(
  * Reflect compares it with the asset's current body to tell feedback given on
  * an earlier version of the text. An env or secret file is never read.
  */
-function judgedTextHash(type: string | undefined, filePath: string | undefined): string | undefined {
+function judgedTextHash(type: string | undefined, filePath: string | undefined, itemRef: string): string | undefined {
   try {
     if (!filePath || type === "env" || type === "secret") return undefined;
-    return contentHash(fs.readFileSync(filePath, "utf8"), "body");
+    const held = findAsset(itemRef, { quiet: true });
+    return held ? contentHash(held.entry.content(), "body") : undefined;
   } catch {
     return undefined;
   }
@@ -747,7 +748,7 @@ export const feedbackCommand = defineJsonCommand({
         displayDefaultBundle(config.defaultBundle, filePath ? findSourceForPath(filePath, sources) : undefined, bundle),
       );
       const entryType = getEntryById(db, entryId)?.entry.type;
-      const textHash = judgedTextHash(entryType, filePath);
+      const textHash = judgedTextHash(entryType, filePath, itemRef);
       if (textHash) metadataObj.contentHash = textHash;
       if (fixPairs.length > 0 || hasMark) {
         // Checked before anything is recorded, so a fix that does not apply leaves no trace.
@@ -776,7 +777,7 @@ export const feedbackCommand = defineJsonCommand({
               ? { supersededBy: resolveSuccessorRef(db, supersededBy.trim(), itemRef, sources) }
               : { outdated: true };
         }
-        const before = fs.readFileSync(filePath, "utf8");
+        const before = requireAsset(itemRef, { quiet: true }).entry.content();
         let after = applyExactReplacements(before, fixPairs, filePath);
         if (mark) after = applyHistoryMark(after, mark, filePath);
         if (after === before) throw new UsageError("The fix changes nothing.", "INVALID_FLAG_VALUE");

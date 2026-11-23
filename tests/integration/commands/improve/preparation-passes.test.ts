@@ -26,13 +26,14 @@ import {
 } from "../../../../src/commands/improve/preparation";
 import { archiveProposal, createProposal } from "../../../../src/commands/proposal/repository";
 import { typeForStashDir } from "../../../../src/core/asset/asset-placement";
+import { listAssets } from "../../../../src/core/assets/read";
 import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { appendEvent } from "../../../../src/core/events";
 import type { ImproveEligibleRef } from "../../../../src/core/improve-types";
 import { openStateDatabase } from "../../../../src/core/state-db";
 import { nextEligibleAt, recordImproveLedger } from "../../../../src/storage/repositories/improve-ledger-repository";
-import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../../../_helpers/sandbox";
+import { type SandboxedDir, sandboxStashDir, sandboxXdgDataHome } from "../../../_helpers/sandbox";
 
 const disposers: Array<{ cleanup: () => void }> = [];
 
@@ -43,7 +44,7 @@ afterEach(() => {
 function freshStash(): string {
   const dataSb = sandboxXdgDataHome();
   disposers.push(dataSb);
-  const stash: SandboxedDir = makeStashDir();
+  const stash: SandboxedDir = sandboxStashDir(); // the default bundle: the facade reads memories through it
   disposers.push(stash);
   return stash.dir;
 }
@@ -519,11 +520,13 @@ describe("isFlaggedSinceLastEdit", () => {
   });
 
   test("feedback is read under the candidate's durable item_ref", () => {
-    const candidate = candidateEditedAgo(3 * DAY_MS, { itemRef: `stash//${memory}` });
+    const candidate = candidateEditedAgo(3 * DAY_MS, {});
+    const itemRef = (listAssets().find((asset) => asset.conceptId === memory) as { ref: string }).ref;
+    candidate.itemRef = itemRef;
     feedbackAgo(DAY_MS, { signal: "negative", reason: "the default port is 4096" });
     expect(isFlaggedSinceLastEdit(candidate)).toBe(false);
 
-    feedbackAgo(DAY_MS, { signal: "negative", reason: "the default port is 4096" }, `stash//${memory}`);
+    feedbackAgo(DAY_MS, { signal: "negative", reason: "the default port is 4096" }, itemRef);
     expect(isFlaggedSinceLastEdit(candidate)).toBe(true);
   });
 

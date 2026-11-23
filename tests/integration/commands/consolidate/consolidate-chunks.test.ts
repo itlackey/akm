@@ -34,8 +34,8 @@ function makeTempDir(prefix: string): string {
 
 /**
  * Create a MemoryEntry backed by a real temp file containing `body`.
- * buildChunkPrompt calls fs.readFileSync on m.filePath, so real files
- * are the simplest way to feed it controlled content without module mocking.
+ * buildChunkPrompt reads the memory through its bundle, so a real file in the bundle at `dir`
+ * (`AKM_BUNDLE_DIR`, set below) is the simplest way to feed it controlled content without module mocking.
  */
 function makeMemoryEntry(
   dir: string,
@@ -43,7 +43,8 @@ function makeMemoryEntry(
   body: string,
   opts: { description?: string; tags?: string[] } = {},
 ): MemoryEntry {
-  const filePath = path.join(dir, `${name}.md`);
+  const filePath = path.join(dir, "memories", `${name}.md`);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, body, "utf8");
   return {
     name,
@@ -84,11 +85,17 @@ function buildChunks(memories: MemoryEntry[], chunkSize: number): MemoryEntry[][
 
 let tempDir: string;
 
+let priorBundleDir: string | undefined;
+
 beforeEach(() => {
   tempDir = makeTempDir("akm-consolidate-chunks-");
+  priorBundleDir = process.env.AKM_BUNDLE_DIR;
+  process.env.AKM_BUNDLE_DIR = tempDir;
 });
 
 afterEach(() => {
+  if (priorBundleDir === undefined) delete process.env.AKM_BUNDLE_DIR;
+  else process.env.AKM_BUNDLE_DIR = priorBundleDir;
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }

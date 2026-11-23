@@ -46,12 +46,12 @@
  * whole-body checks still run, and nothing throws.
  */
 
-import fs from "node:fs";
 import type { Database } from "../../../storage/database";
 import { closeDatabase, openExistingDatabase } from "../../../storage/repositories/index-connection";
 import { getEntryById, getEntryIdByFilePath } from "../../../storage/repositories/index-entries-repository";
 import { getNeighborsByEntryId } from "../../../storage/repositories/index-vec-repository";
 import { stripFrontmatterBody } from "../content-hash";
+import { indexedContent } from "../indexed-asset";
 import { PAIR_NEIGHBOR_FETCH_K } from "./pair-pass";
 
 /** Words per shingle. */
@@ -112,12 +112,8 @@ function knowledgeNeighbours(db: Database, bundleId: string, filePath: string): 
   for (const hit of getNeighborsByEntryId(db, entryId, PAIR_NEIGHBOR_FETCH_K, { type: "knowledge", bundleId })) {
     const neighbour = getEntryById(db, hit.id);
     if (!neighbour) continue;
-    let raw: string;
-    try {
-      raw = fs.readFileSync(neighbour.filePath, "utf8");
-    } catch {
-      continue; // the index outlived the file
-    }
+    const raw = indexedContent(neighbour.bundleId, neighbour.conceptId);
+    if (raw === undefined) continue; // the index outlived the asset
     out.push({
       ref: neighbour.conceptId,
       description: neighbour.entry.description ?? "",
