@@ -87,7 +87,3 @@ export function clearAdapterCaches(): void {
 }
 
 export { bundleAdapterId } from "../adapter/detect-adapter";
-export {
-  allowPrompts as allowAdapterPrompts,
-  withoutPrompts as withoutAdapterPrompts,
-} from "../adapter/secret-manager-adapter";

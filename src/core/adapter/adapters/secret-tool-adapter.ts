@@ -26,7 +26,6 @@ import { ConfigError, UsageError } from "../../errors";
 import { warn } from "../../warn";
 import {
   type Client,
-  mayPrompt,
   requireClient,
   runClient,
   type SecretItem,
@@ -142,7 +141,6 @@ function ensureUnlocked(keyring: string, collection: Collection): void {
       "BUNDLE_UNREACHABLE",
       "Unlock the keyring (your keyring manager asks for its password), then try again.",
     );
-  if (!mayPrompt()) throw refusal(", and this command does not ask to unlock it");
   const [unlocked, prompt] = bus<[string[], string]>(`unlock keyring "${keyring}"`, [
     "call",
     SERVICE,

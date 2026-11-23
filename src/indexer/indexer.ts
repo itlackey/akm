@@ -1395,8 +1395,8 @@ function canonicalizeStoredPaths(db: Database): void {
   if (moves.length === 0) return;
   const rewrite = (table: string, column: string, exact: boolean) =>
     db.prepare(
-      `UPDATE OR IGNORE ${table} SET ${column} = ?1 || substr(${column}, ?2) WHERE substr(${column}, 1, ?3) = ?4${
-        exact ? ` OR ${column} = ?5` : ""
+      `UPDATE OR IGNORE ${table} SET ${column} = ? || substr(${column}, ?) WHERE substr(${column}, 1, ?) = ?${
+        exact ? ` OR ${column} = ?` : ""
       }`,
     );
   db.transaction(() => {

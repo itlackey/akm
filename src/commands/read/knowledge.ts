@@ -783,7 +783,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
       writtenFile = w.address(conceptIdFromTypeName(resolved.ref.type, resolved.ref.name)).file;
       return w.create(
         { type: resolved.ref.type, name: resolved.ref.name, content: options.content },
-        { exclusive: !options.force },
+        { exclusive: !options.force, replaceLink: true },
       );
     });
     const { conceptId } = parseBundleRef(change.ref);

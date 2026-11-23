@@ -113,7 +113,7 @@ export class AssetBundle {
   identifyKey(key: string): string | null {
     return this.#adapter.identifyKey?.(this.#bundle, key) ?? null;
   }
-  create(asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean }): AssetChange {
+  create(asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean }): AssetChange {
     return this.#adapter.create(this.#bundle, asset, options);
   }
   update(conceptId: string, content: string | Buffer): AssetChange {
