@@ -674,6 +674,13 @@ function runCase(sandbox: Sandbox, norm: ReturnType<typeof normaliser>, c: Corpu
 
 /** Run every case of the corpus on `sandbox`'s tree, in order, and return the normalised results by case id. */
 export function runCorpus(sandbox: Sandbox, onCase?: (id: string) => void): Record<string, CorpusResult> {
+  const results = runMainCorpus(sandbox, onCase);
+  for (const scenario of SCENARIOS) Object.assign(results, runScenario(sandbox, scenario, onCase));
+  return results;
+}
+
+/** The main corpus: every command of the home, and what the run left behind. The scenarios are run apart. */
+export function runMainCorpus(sandbox: Sandbox, onCase?: (id: string) => void): Record<string, CorpusResult> {
   const norm = normaliser(sandbox);
   const results: Record<string, CorpusResult> = {};
   for (const c of corpusCases()) {
@@ -697,7 +704,6 @@ export function runCorpus(sandbox: Sandbox, onCase?: (id: string) => void): Reco
   results["file crontab"] = {
     value: fs.existsSync(crontab) ? norm.text(fs.readFileSync(crontab, "utf8")).split("\n") : "<none>",
   };
-  for (const scenario of SCENARIOS) Object.assign(results, runScenario(sandbox, scenario, onCase));
   return results;
 }
 
