@@ -30,7 +30,7 @@
 import fs from "node:fs";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { addressOf } from "../../core/assets/write";
-import { slugForPath } from "../../core/bundle-id";
+import { bundleSourceAt } from "../../core/bundle-at-dir";
 import type { AkmConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { appendEvent, type EventsContext } from "../../core/events";
@@ -585,7 +585,7 @@ function promotionNeighbours(
 ): ReturnType<typeof nearestKnowledgeNotes> {
   if (!isPromotionProposal(proposal) || proposal.promotionSource === undefined) return [];
   try {
-    const memoryPath = addressOf({ name: slugForPath(stashDir), path: stashDir }, proposal.promotionSource).file;
+    const memoryPath = addressOf(bundleSourceAt(stashDir), proposal.promotionSource).file;
     if (!memoryPath) return [];
     const existing = nearestKnowledgeNotes(memoryPath);
     const source = fs.readFileSync(memoryPath, "utf8");
@@ -615,7 +615,7 @@ function promotionNeighbours(
 /** The live asset a proposal would overwrite, if any. */
 function readLiveAssetContent(stashDir: string, ref: string): string | undefined {
   try {
-    const assetPath = addressOf({ name: slugForPath(stashDir), path: stashDir }, ref).file;
+    const assetPath = addressOf(bundleSourceAt(stashDir), ref).file;
     return assetPath && fs.existsSync(assetPath) ? fs.readFileSync(assetPath, "utf8") : undefined;
   } catch {
     return undefined;

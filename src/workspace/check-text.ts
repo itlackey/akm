@@ -14,12 +14,12 @@ import path from "node:path";
 import { parseDocument } from "yaml";
 import { lintDocumentText } from "../commands/lint";
 import { classifyAkmText } from "../core/adapter/adapters/akm-adapter";
-import { adapterIdOf } from "../core/adapter/detect-adapter";
 import { adapterForId } from "../core/adapter/registry";
 import type { Bundle } from "../core/adapter/types";
 import { normalizeAkmMarkdown } from "../core/asset/akm-markdown";
 import { documentStashDirFor } from "../core/asset/asset-placement";
 import { parseFrontmatterBlock } from "../core/asset/frontmatter";
+import { bundleAdapterId } from "../core/assets/gate";
 import { isWithin, toPosix } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
@@ -78,7 +78,7 @@ export function akmBundleFile(input: { bundle: string; path: string; content: st
     (entry) => entry.registryId === bundle && !entry.unresolved,
   );
   if (!source) throw new UsageError(`Bundle "${bundle}" is disabled or unavailable.`);
-  const adapter = adapterIdOf(source);
+  const adapter = bundleAdapterId(source);
   if (!anyAdapter && adapter !== "akm")
     throw new UsageError(`akm checks the files of akm bundles; "${bundle}" is not one.`);
   const blocked =

@@ -6,10 +6,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
-import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
 import type { Bundle } from "../../core/adapter/types";
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { bundleAdapterId } from "../../core/assets/gate";
 import { isContainedResolvedPath, isWithin } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { bundlesToSourceEntries } from "../../core/config/config-sources";
@@ -88,7 +88,7 @@ function implicitBundleForEntry(entry: IndexEntry, config: AkmConfig): Bundle | 
     const source = sources[index];
     if (!source) continue;
     const canonicalRoot = realDirectory(installation.root, `Canonical implicit source root for ${entry.bundleId}`);
-    const adapterId = adapterIdOf(source);
+    const adapterId = bundleAdapterId(source);
     if (adapterId !== entry.adapterId) {
       warnOnce(
         `execution-source-adapter-drift:${entry.itemRef}`,

@@ -69,8 +69,8 @@
  */
 
 import fs from "node:fs";
-import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { bundleAdapterId } from "../../core/assets/gate";
 import { findAsset } from "../../core/assets/read";
 import { toErrorMessage } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -423,7 +423,7 @@ async function resolveExecutionSettings(
 export async function akmTaskExplain(ref: string, options: TaskExplainOptions = {}): Promise<TaskExplainEnvelope> {
   const parsedRef = parseTaskRef(ref);
   const bundle = resolveTaskReadBundle(parsedRef.bundle, options.target);
-  const adapterId = adapterIdOf(bundle.source);
+  const adapterId = bundleAdapterId(bundle.source);
   const id = taskIdForAdapter(parsedRef.id, adapterId);
   if (adapterId === "akm-task") validateTaskConceptId(id);
   else validateTaskId(id);

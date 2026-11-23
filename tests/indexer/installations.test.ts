@@ -15,7 +15,7 @@
 
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
-import { adapterIdOf } from "../../src/core/adapter/detect-adapter";
+import { bundleAdapterId, detectBundleAdapter } from "../../src/core/assets/gate";
 import { slugForRegistryId } from "../../src/core/bundle-id";
 import {
   deriveBundleId,
@@ -69,17 +69,17 @@ describe("slugForRegistryId", () => {
   });
 });
 
-describe("adapterIdOf — adapter selection (ordered §1.2 probe)", () => {
+describe("detectBundleAdapter — adapter selection (ordered §1.2 probe)", () => {
   test("akm workspace stash → akm adapter", () => {
-    expect(adapterIdOf({ path: AKM_ROOT })).toBe("akm");
+    expect(detectBundleAdapter(AKM_ROOT)).toBe("akm");
   });
 
   test("okf reference bundle → okf adapter", () => {
-    expect(adapterIdOf({ path: OKF_ROOT })).toBe("okf");
+    expect(detectBundleAdapter(OKF_ROOT)).toBe("okf");
   });
 
   test("llm-wiki bundle → llm-wiki adapter (more-specific probe wins over okf)", () => {
-    expect(adapterIdOf({ path: LLM_WIKI_ROOT })).toBe("llm-wiki");
+    expect(detectBundleAdapter(LLM_WIKI_ROOT)).toBe("llm-wiki");
   });
 
   test("a root no probe claims falls back to akm (recorded deviation from spec §1.2(3)'s okf)", () => {
@@ -87,21 +87,19 @@ describe("adapterIdOf — adapter selection (ordered §1.2 probe)", () => {
     // status-quo-preserving / workspace-root-discipline choice in this
     // pre-config-adapter transitional model (see installations.ts). Pins that
     // decision so a future 0.9.1 flip to `okf` is a deliberate, visible change.
-    expect(adapterIdOf({ path: "/nonexistent/empty/root" })).toBe("akm");
+    expect(detectBundleAdapter("/nonexistent/empty/root")).toBe("akm");
   });
 
   test("the ordered probe is genuinely consulted in production — non-akm roots no longer all collapse to akm", () => {
     // The pre-wiring bug: an empty registry made EVERY source fall back to
     // `akm`. Now distinct bundle shapes resolve to distinct adapters through
     // the same `deriveInstallations` call sites production uses.
-    const adapters = [{ path: AKM_ROOT }, { path: OKF_ROOT }, { path: LLM_WIKI_ROOT }].map((source) =>
-      adapterIdOf(source),
-    );
+    const adapters = [AKM_ROOT, OKF_ROOT, LLM_WIKI_ROOT].map((root) => detectBundleAdapter(root));
     expect(adapters).toEqual(["akm", "okf", "llm-wiki"]);
   });
 
-  test("configured adapter ownership wins over filesystem probing", () => {
-    expect(adapterIdOf({ path: AKM_ROOT, adapterId: "okf" })).toBe("okf");
+  test("a configured adapter is the bundle's adapter", () => {
+    expect(bundleAdapterId({ adapterId: "okf" })).toBe("okf");
   });
 });
 

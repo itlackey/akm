@@ -21,9 +21,8 @@
 
 import path from "node:path";
 import { legacyRefOf } from "../../core/assets/write";
-import { deriveBundleIds } from "../../core/bundle-id";
-import { safeRealpath } from "../../core/common";
-import { loadConfig } from "../../core/config/config";
+import { type AkmConfig, loadConfig } from "../../core/config/config";
+import { bundleAtDir } from "../../core/config/config-sources";
 import { rethrowIfTestIsolationError } from "../../core/errors";
 import { warnOnce } from "../../core/warn";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
@@ -51,45 +50,54 @@ export function isLegacyProposalMetadata(meta: Meta): boolean {
   );
 }
 
+/** The configured bundles a record can name, found by id and, for a stored root, by `bundleAtDir`. */
+interface RecordBundles {
+  /** The bundle a stored `(source, root)` names: the configured bundle called `source`, else the one at `root`. */
+  of(name: unknown, root: unknown): ConfiguredBundle | undefined;
+}
+
 interface ConfiguredBundle {
   id: string;
-  source: SearchSource;
+  source: SearchSource | undefined;
 }
 
-let cached: { config: unknown; bundles: ConfiguredBundle[] } | undefined;
+const sourcesOf = new WeakMap<AkmConfig, SearchSource[]>();
 
-/**
- * The configured bundles, in order, as the proposal queue sees them; none when the config cannot be read. Computed
- * once for a loaded config (a command's reads share it), and only a record of the old shape asks.
- */
-function configuredBundles(): ConfiguredBundle[] {
+/** The bundles of the loaded config (its sources are resolved once per loaded config); none when it cannot be read. */
+function recordBundles(): RecordBundles {
+  let config: AkmConfig | undefined;
   try {
-    const config = loadConfig();
-    if (cached?.config === config) return cached.bundles;
-    const sources = resolveSourceEntries(undefined, config);
-    const ids = deriveBundleIds(sources);
-    const bundles = sources.map((source, index) => ({ id: ids[index] as string, source }));
-    cached = { config, bundles };
-    return bundles;
+    config = loadConfig();
   } catch (error) {
     rethrowIfTestIsolationError(error);
-    return [];
   }
-}
-
-function sameRoot(left: string, right: string): boolean {
-  return path.resolve(left) === path.resolve(right) || safeRealpath(left) === safeRealpath(right);
-}
-
-/** The bundle a stored `(source, root)` names: the configured bundle called `source`, else the one at `root`. */
-function bundleOfRecord(bundles: ConfiguredBundle[], name: unknown, root: unknown): ConfiguredBundle | undefined {
-  const named = typeof name === "string" ? bundles.find((bundle) => bundle.id === name) : undefined;
-  if (named) return named;
-  return typeof root === "string" ? bundles.find((bundle) => sameRoot(bundle.source.path, root)) : undefined;
+  const found = (id: string): ConfiguredBundle => {
+    if (!config) return { id, source: undefined };
+    let sources = sourcesOf.get(config);
+    if (!sources) {
+      try {
+        sources = resolveSourceEntries(undefined, config);
+      } catch (error) {
+        // A config whose sources cannot be resolved (a disabled working bundle) converts no record; nothing is cached.
+        rethrowIfTestIsolationError(error);
+        return { id, source: undefined };
+      }
+      sourcesOf.set(config, sources);
+    }
+    return { id, source: sources.find((source) => source.registryId === id) };
+  };
+  return {
+    of(name, root) {
+      if (!config) return undefined;
+      if (typeof name === "string" && config.bundles?.[name] !== undefined) return found(name);
+      const id = typeof root === "string" ? bundleAtDir(config, root) : undefined;
+      return id === undefined ? undefined : found(id);
+    },
+  };
 }
 
 function refOfPath(bundle: ConfiguredBundle | undefined, root: unknown, file: string, fallback: string): string {
-  if (!bundle) return fallback;
+  if (!bundle?.source) return fallback;
   const relPath = path.isAbsolute(file)
     ? path.relative(typeof root === "string" ? root : bundle.source.path, file)
     : file;
@@ -109,17 +117,13 @@ function refOfPath(bundle: ConfiguredBundle | undefined, root: unknown, file: st
  * `meta` in the current shape, and whether it was old. A record already current comes back as given. Fields that are
  * not recognised are left as they are: the repository's own checks refuse a malformed record, as they always did.
  */
-export function convertLegacyProposalMetadata(
-  meta: Meta,
-  proposalRef: string,
-  given?: ConfiguredBundle[],
-): { meta: Meta; legacy: boolean } {
+export function convertLegacyProposalMetadata(meta: Meta, proposalRef: string): { meta: Meta; legacy: boolean } {
   if (!isLegacyProposalMetadata(meta)) return { meta, legacy: false };
-  const bundles = given ?? configuredBundles();
+  const bundles = recordBundles();
   const out: Meta = { ...meta };
   const proposed = isRecord(meta.proposedTarget) ? meta.proposedTarget : undefined;
   const accepted = isRecord(meta.acceptedTarget) ? meta.acceptedTarget : undefined;
-  const target = proposed ? bundleOfRecord(bundles, proposed.source, proposed.root) : undefined;
+  const target = proposed ? bundles.of(proposed.source, proposed.root) : undefined;
   const bundleName = target?.id ?? (typeof proposed?.source === "string" ? proposed.source : undefined);
   if (proposed) out.proposedTarget = { source: bundleName ?? proposed.source };
   if (Array.isArray(meta.changes)) {
@@ -134,7 +138,7 @@ export function convertLegacyProposalMetadata(
     });
   }
   if (accepted) {
-    const bundle = bundleOfRecord(bundles, accepted.source, accepted.root) ?? target;
+    const bundle = bundles.of(accepted.source, accepted.root) ?? target;
     out.acceptedTarget = {
       bundle: bundle?.id ?? accepted.source,
       ref:

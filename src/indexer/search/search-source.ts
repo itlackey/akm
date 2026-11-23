@@ -4,15 +4,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { detectBundleAdapter } from "../../core/assets/gate";
 import { isWithin, relativeToRoot, resolveStashDir, safeRealpath, toErrorMessage } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
-import {
-  bundleKeyForContentRoot,
-  bundlesToSourceEntries,
-  getSources,
-  isBundleEnabled,
-  loadConfig,
-} from "../../core/config/config";
+import { bundleAtDir, bundlesToSourceEntries, getSources, isBundleEnabled, loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import { getLocationBundleRoot, getUnresolvedSourcesDir } from "../../core/paths";
 import { warn } from "../../core/warn";
@@ -33,7 +28,7 @@ export interface SearchSource {
   writable?: boolean;
   /** Configured provider kind when this source has a config owner. */
   type?: SourceConfigEntry["type"];
-  /** The adapter the bundle is configured with. Index preflight fills and persists missing ownership. */
+  /** The adapter that reads the bundle: its configured one, else found once when the sources are resolved. */
   adapterId?: string;
   /** Set when the source's provider/path could not be resolved this run: why, and its real directory when it has one. */
   unresolved?: { reason: string; path?: string };
@@ -74,7 +69,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
   const configuredEntries = bundlesToSourceEntries(config) ?? [];
   const implicitStash = implicitStashDir(config, overrideStashDir);
 
-  const implicitConfiguredBundle = implicitStash ? bundleKeyForContentRoot(config, implicitStash) : undefined;
+  const implicitConfiguredBundle = implicitStash ? bundleAtDir(config, implicitStash) : undefined;
   if (implicitConfiguredBundle && !isBundleEnabled(config, implicitConfiguredBundle)) {
     throw new ConfigError(
       `The requested working source is disabled as bundle ${JSON.stringify(implicitConfiguredBundle)}.`,
@@ -87,7 +82,15 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
   // A source's path is its real path, so one directory reached through two spellings
   // (a symlink, macOS `/tmp` and `/private/tmp`) keys the same index rows.
   const sources: SearchSource[] = implicitStash
-    ? [{ path: safeRealpath(implicitStash), writable: true, isDefault: true, type: "filesystem" }]
+    ? [
+        {
+          path: safeRealpath(implicitStash),
+          writable: true,
+          isDefault: true,
+          type: "filesystem",
+          adapterId: detectBundleAdapter(safeRealpath(implicitStash)),
+        },
+      ]
     : [];
   const seen = new Set<string>(implicitStash ? [safeRealpath(implicitStash)] : []);
 
@@ -116,7 +119,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
         if (isDefault) existing.isDefault = true;
         existing.type = type;
         existing.writable = writable;
-        existing.adapterId = adapterId;
+        existing.adapterId = adapterId ?? existing.adapterId;
       }
       if (existing && unresolved) existing.unresolved = unresolved;
       return;
@@ -131,7 +134,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       ...(isDefault ? { isDefault: true } : {}),
       writable,
       type,
-      ...(adapterId ? { adapterId } : {}),
+      adapterId: adapterId ?? detectBundleAdapter(identity),
       ...(unresolved ? { unresolved } : {}),
       ...(location ? { location } : {}),
     });

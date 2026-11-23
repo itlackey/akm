@@ -4,11 +4,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
-import { requireAdapter } from "../../core/adapter/registry";
 import { isBundleSlug } from "../../core/asset/asset-ref";
 import { adapterSkipMessage, adapterSkipOf } from "../../core/assets/adapter-skips";
-import { adapterAddressedBy } from "../../core/assets/gate";
+import { adapterAddressedBy, assertKnownAdapter, detectBundleAdapter } from "../../core/assets/gate";
 import { slugForRegistryId, validateExplicitBundleName } from "../../core/bundle-id";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
@@ -100,9 +98,9 @@ async function addLocalSource(
 ): Promise<AddResponse> {
   const stashRoot = detectStashRoot(sourcePath);
   const resolvedPath = path.resolve(stashRoot);
-  const adapter = explicitAdapter ?? detectAdapterId(resolvedPath);
+  const adapter = explicitAdapter ?? detectBundleAdapter(resolvedPath);
   let bundleKey = explicitName ?? toReadableId(resolvedPath);
-  requireAdapter(bundleKey, adapter);
+  assertKnownAdapter(bundleKey, adapter);
   mutateConfig((config) => {
     const existing = bundleKeyForPath(config, resolvedPath);
     if (existing) {
@@ -458,7 +456,7 @@ export function upsertInstalledRegistryEntry(
       ...(effectiveCredential ? { credential: effectiveCredential } : {}),
       ...(entry.writable === true ? { writable: true } : {}),
       ...(entry.id !== bundleId ? { registryId: entry.id } : {}),
-      adapter: existing?.adapter ?? detectAdapterId(path.resolve(entry.stashRoot)),
+      adapter: existing?.adapter ?? detectBundleAdapter(path.resolve(entry.stashRoot)),
       ...(existing?.root !== undefined ? { root: existing.root } : {}),
     };
     return { ...current, bundles: placeBundle(bundles, bundleId, nextEntry, position) };

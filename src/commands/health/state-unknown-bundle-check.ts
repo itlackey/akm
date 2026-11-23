@@ -18,7 +18,7 @@ import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { withReadonlyStateDb } from "../../core/state-db";
-import { STATE_BUNDLE_ID_COLUMNS } from "../../storage/bundle-id-columns";
+import { BUNDLE_ID_COLUMNS, isPathKey } from "../../storage/bundle-id-columns";
 import type { HealthCheckResult } from "./types";
 
 interface UnknownRows {
@@ -52,13 +52,13 @@ export function collectStateUnknownBundleCheck(
   }
   const byId = new Map<string, UnknownRows>();
   withReadonlyStateDb((db) => {
-    for (const { table, column } of STATE_BUNDLE_ID_COLUMNS) {
+    for (const { table, column } of BUNDLE_ID_COLUMNS) {
       const counted = db
         .prepare(`SELECT ${column} AS id, COUNT(*) AS n FROM ${table} GROUP BY ${column} ORDER BY ${column}`)
         .all() as Array<{ id: string; n: number }>;
       for (const { id, n } of counted) {
         if (known.has(id)) continue;
-        const entry = byId.get(id) ?? { id, kind: /[/\\:]/.test(id) ? "directory" : "name", rows: {} };
+        const entry = byId.get(id) ?? { id, kind: isPathKey(id) ? "directory" : "name", rows: {} };
         entry.rows[table] = n;
         byId.set(id, entry);
       }

@@ -77,7 +77,7 @@ import { openSqliteReadSnapshot } from "../storage/sqlite-read-snapshot";
 import { pkgVersion } from "../version";
 import { ConfigError, rethrowIfTestIsolationError } from "./errors";
 import { getDataDir } from "./paths";
-import { type BundleAtDir, convertPathBundleIds } from "./state/bundle-id-conversion";
+import { convertPathBundleIds, hasPathValuedRows } from "./state/bundle-id-conversion";
 import { getStateMigrationSafety, STATE_MIGRATIONS } from "./state/migrations";
 import { warnOnce } from "./warn";
 
@@ -97,23 +97,6 @@ export {
  */
 export function getStateDbPath(): string {
   return path.join(getDataDir(), "state.db");
-}
-
-/**
- * How the state opener finds the bundle at a root (`bundleAtDir`, src/core/bundle-at-dir.ts). That module cannot be
- * imported here: it reaches the adapter registry, whose adapters reach `core/events`, which reaches this module. It
- * registers itself when it loads, and every caller that files rows by bundle (`stateBundleId`) has loaded it, so the
- * rows it filed under a path are re-filed by the next open that follows.
- */
-let bundleAtDirResolver: BundleAtDir | undefined;
-
-export function registerBundleAtDir(resolve: BundleAtDir): void {
-  bundleAtDirResolver = resolve;
-}
-
-/** Re-file rows still keyed by a directory a configured bundle is at, when `bundleAtDir` is known. */
-function convertPathKeys(db: Database): void {
-  if (bundleAtDirResolver) convertPathBundleIds(db, bundleAtDirResolver);
 }
 
 // ── Database open ────────────────────────────────────────────────────────────
@@ -170,7 +153,7 @@ function migrateStateDatabase(db: Database, dbPath: string): StateDatabaseMigrat
   warnNewerStateLedger(ledger);
   const pending = STATE_MIGRATIONS.slice(ledger.migrationIds.length);
   if (pending.length === 0) {
-    convertPathKeys(db);
+    convertPathBundleIds(db);
     return { applied: [] };
   }
   // A database with no applied migration holds nothing akm wrote: a fresh
@@ -178,7 +161,7 @@ function migrateStateDatabase(db: Database, dbPath: string): StateDatabaseMigrat
   const fresh = ledger.migrationIds.length === 0;
   const backupPath = fresh ? undefined : backupBeforeDestructiveMigration(db, dbPath, pending);
   const applied = runMigrations(db, STATE_MIGRATIONS);
-  convertPathKeys(db);
+  convertPathBundleIds(db);
   // The registry creates tables that later migrations drop (018, 028), which
   // leaves free pages behind; a database created by this open starts compact.
   if (fresh && applied.length > 0) db.exec("VACUUM");
@@ -259,7 +242,7 @@ export function openStateReadSnapshot(dbPath: string = getStateDbPath()): Databa
       try {
         const ledger = assertMigrationLedger(copy, STATE_MIGRATIONS);
         if (ledger.migrationIds.length < STATE_MIGRATIONS.length) runMigrations(copy, STATE_MIGRATIONS);
-        convertPathKeys(copy);
+        convertPathBundleIds(copy);
       } catch (error) {
         // Read what the copy holds: a ledger this akm refuses fails the real open with its own message.
         rethrowIfTestIsolationError(error);
@@ -295,9 +278,14 @@ export function withReadonlyStateDb<T>(fn: (db: Database) => T, fallback: T): T 
   const dbPath = getStateDbPath();
   try {
     if (!fs.existsSync(dbPath) || listPendingStateMigrations(dbPath).length > 0) return fallback;
-    const db = openDatabase(dbPath, { readonly: true, create: false });
+    let db = openDatabase(dbPath, { readonly: true, create: false });
     try {
       applyReadonlyPragmas(db);
+      // Rows still filed under a directory are read re-filed under their bundle, in a private copy; the file is not changed.
+      if (hasPathValuedRows(db)) {
+        db.close();
+        db = openStateReadSnapshot(dbPath) ?? db;
+      }
       return fn(db);
     } finally {
       db.close();

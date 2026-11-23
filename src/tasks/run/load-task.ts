@@ -11,14 +11,13 @@
  */
 
 import fs from "node:fs";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { makeBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { findAsset } from "../../core/assets/read";
-import { slugForPath } from "../../core/bundle-id";
+import { bundleSourceAt } from "../../core/bundle-at-dir";
 import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
-import { bundleKeyForContentRoot } from "../../core/config/config-sources";
+import { bundleAtDir } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { assertBundleNotDisabled } from "../../core/write-source";
@@ -65,7 +64,7 @@ export function activeTaskSources(config: AkmConfig): SearchSource[] {
   try {
     return resolveSourceEntries(undefined, config);
   } catch (cause) {
-    const working = bundleKeyForContentRoot(config, resolveStashDir());
+    const working = bundleAtDir(config, resolveStashDir());
     const entry = working ? config.bundles?.[working] : undefined;
     if (!(cause instanceof ConfigError) || !working || !entry || entry.enabled !== false) throw cause;
     const enabled = { ...config, bundles: { ...config.bundles, [working]: { ...entry, enabled: true } } };
@@ -106,13 +105,14 @@ export async function loadPreparedTask(
   options: RunTaskOptions,
 ): Promise<PreparedTaskV3Execution | PreparedTaskV5> {
   const bundleDir = options.bundleDir;
-  const adapterId = options.adapterId ?? detectAdapterId(bundleDir);
+  const bundle = bundleSourceAt(bundleDir);
+  const adapterId = options.adapterId ?? bundle.adapterId;
   if (adapterId === "akm-task") validateTaskConceptId(id);
   else validateTaskId(id);
   const taskConceptId = adapterId === "akm" ? `tasks/${id}` : id;
   const asset = findAsset(
     { conceptId: taskConceptId },
-    { sources: [{ path: bundleDir, registryId: options.bundleName ?? slugForPath(bundleDir), adapterId }] },
+    { sources: [{ path: bundleDir, registryId: options.bundleName ?? bundle.name, adapterId }] },
   );
   if (!asset) {
     throw new NotFoundError(

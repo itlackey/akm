@@ -17,8 +17,8 @@
  */
 
 import fs from "node:fs";
-import { adapterIdOf } from "../core/adapter/detect-adapter";
 import { adapterForId } from "../core/adapter/registry";
+import { bundleAdapterId } from "../core/assets/gate";
 import { loadConfig } from "../core/config/config";
 import { isDataDirUnreadableError, TransientError } from "../core/errors";
 import { isPathAbsent } from "../core/path-access";
@@ -141,7 +141,7 @@ export async function indexWrittenAssets(
     };
     const bundle = deriveInstallations([writtenSource])[0];
     if (!bundle) throw new Error(`Could not derive bundle provenance for ${stashDir}`);
-    const adapterId = adapterIdOf(writtenSource);
+    const adapterId = bundleAdapterId(writtenSource);
     const pairs: Array<{ file: string; entry: IndexDocument; conceptId: string; contentHash?: string }> = [];
     const unindexable = new Set<string>();
     for (const file of files) {

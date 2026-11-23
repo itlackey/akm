@@ -19,7 +19,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { recognizeMatch } from "../../core/adapter/recognize-match";
 import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../../core/asset/asset-placement";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
@@ -32,6 +31,7 @@ import {
 } from "../../core/asset/markdown-fragments";
 import { displayDefaultBundle, displayRef, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
+import { bundleAdapterId } from "../../core/assets/gate";
 import { asNonEmptyString, isContainedResolvedPath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import {
@@ -623,7 +623,7 @@ function findUnrecognizedScriptSource(
 
   for (const source of sources) {
     try {
-      if (adapterIdOf(source) !== "akm") continue;
+      if (bundleAdapterId(source) !== "akm") continue;
       const sourceRoot = path.resolve(source.path);
       // A script's ref is its path, so the candidate is the ref itself.
       const candidate = path.resolve(sourceRoot, conceptId);

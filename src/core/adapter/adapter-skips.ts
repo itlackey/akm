@@ -10,7 +10,7 @@
  */
 
 import { assetBundleOf } from "../assets/bundle";
-import { adapterIdOf } from "./detect-adapter";
+import { bundleAdapterId } from "./detect-adapter";
 
 export interface AdapterSkip {
   adapter: string;
@@ -23,7 +23,7 @@ type SkipSource = { name: string; path: string; location?: string; adapterId?: s
 /** What the adapter of `source` skips, or undefined: no skip, an incomplete listing, or a bundle that is no directory. */
 export function adapterSkipOf(source: SkipSource): AdapterSkip | undefined {
   // A bundle a secret manager keeps is no directory: there is nothing akm could read in it.
-  const adapter = adapterIdOf(source);
+  const adapter = bundleAdapterId(source);
   if (adapter === "akm" || source.location !== undefined) return undefined;
   const chosen = assetBundleOf({ ...source, adapterId: adapter }).list();
   if (!chosen.complete) return undefined;

@@ -28,7 +28,7 @@ import { findAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import { addressOf } from "../../core/assets/write";
 import { authoringRulesForType } from "../../core/authoring-rules";
-import { slugForPath } from "../../core/bundle-id";
+import { bundleSourceAt } from "../../core/bundle-at-dir";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
@@ -480,7 +480,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const config = options.config ?? loadConfig();
   const stash = options.stashDir ?? resolveStashDir();
   // An existing input is addressed where its file is; only a ref no file owns is read by placement.
-  const address = addressOf({ name: slugForPath(stash), path: stash }, inputRef);
+  const address = addressOf(bundleSourceAt(stash), inputRef);
   const profile = options.improveProfile ?? resolveImproveStrategy(undefined, config).config;
   options = { ...options, improveProfile: profile };
   const targetKind = options.proposalKind ?? "lesson";

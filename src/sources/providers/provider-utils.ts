@@ -5,9 +5,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { getAdapters } from "../../core/adapter/registry";
 import { stashDirNames } from "../../core/asset/asset-placement";
 import { isScratchPath } from "../../core/asset/scratch";
+import { looksLikeBundleRoot } from "../../core/assets/gate";
 import type { SourceSpec } from "../../core/config/config";
 import { fetchRegistry } from "../../registry/network";
 import { writeResponseToFileCapped } from "../../runtime";
@@ -22,23 +22,6 @@ export function sanitizeString(value: unknown, maxLength = 255): string {
 }
 
 /**
- * True when ANY built-in adapter's install-time `looksLikeRoot` probe claims
- * `root` — the ordered probe reduced to "is this the root of a bundle
- * of some format family?". A probe that throws (unreadable dir, race) does not
- * claim the root.
- */
-function looksLikeAnyBundleRoot(root: string): boolean {
-  for (const adapter of getAdapters()) {
-    try {
-      if (adapter.looksLikeRoot?.(root) === true) return true;
-    } catch {
-      // a throwing probe does not claim the root — try the next adapter
-    }
-  }
-  return false;
-}
-
-/**
  * Find the directory inside `extractedDir` that should be treated as the
  * bundle/stash root. Probes the top-level dir via the ordered registry
  * probe; if nothing claims it, BFS for the shallowest nested candidate.
@@ -47,11 +30,11 @@ export function detectStashRoot(extractedDir: string): string {
   const root = path.resolve(extractedDir);
 
   // The top-level root check routes through the ordered `looksLikeRoot` probe
-  // over ALL built-in adapters (`registry.getAdapters()`). `akm.looksLikeRoot`
+  // over ALL built-in adapters. `akm.looksLikeRoot`
   // covers the `.stash` marker and immediate stash subdirs; the other adapters
   // recognize NON-akm bundle roots (okf root index / llm-wiki / `.claude` / …).
   // Otherwise fall through to the shallowest-BFS nested-layout discovery.
-  if (looksLikeAnyBundleRoot(root)) {
+  if (looksLikeBundleRoot(root)) {
     return root;
   }
 

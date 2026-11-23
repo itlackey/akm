@@ -658,7 +658,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
 // SECOND bundle for it (auto-named `stash`, promoted to `defaultBundle`) —
 // the real shape a broken prior release wrote to a user's `config.json`.
 // Fixed by matching registration on the resolved content root
-// (`bundleContentRoot`/`bundleKeyForContentRoot` in
+// (`bundleContentRoot`/`bundleAtDir` in
 // `src/core/config/config-sources.ts`) instead of the bare configured
 // `path`. The current architecture rejects aliases at config load because
 // source ownership and grants cannot depend on which id a caller used. This

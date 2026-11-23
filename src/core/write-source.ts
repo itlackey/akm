@@ -44,16 +44,15 @@ import {
 import { listIgnoredExactPaths } from "../sources/providers/git-stash";
 import { findAbsoluteHomePaths } from "./adapter/adapters/akm-format";
 import type { AssetChange } from "./adapter/bundle-adapter";
-import { detectAdapterId } from "./adapter/detect-adapter";
 import { assertWritableFile } from "./adapter/directory-adapter";
 import { normalizeAkmMarkdown } from "./asset/akm-markdown";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName } from "./asset/resolve-ref";
-import { assertAdapterWrites } from "./assets/gate";
-import { deriveBundleId } from "./bundle-id";
+import { assertAdapterWrites, detectBundleAdapter } from "./assets/gate";
+import { bundleIdForDir } from "./bundle-id";
 import { existingFileMode, isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
-import { bundleKeyForContentRoot, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
+import { bundleAtDir, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
 import { ConfigError, UsageError } from "./errors";
 import { sanitizeCommitMessage } from "./git-message";
 import { getLocationBundleRoot } from "./paths";
@@ -197,7 +196,7 @@ export function resolveWorkingStashTarget(
   const requireWritable = options.requireWritable !== false;
   if (process.env.AKM_BUNDLE_DIR?.trim()) {
     const stashDir = resolveStashDir();
-    const configuredBundleId = bundleKeyForContentRoot(akmConfig, stashDir);
+    const configuredBundleId = bundleAtDir(akmConfig, stashDir);
     const configured = configuredSources.find((source) => source.name === configuredBundleId);
     if (configured) {
       const target = adaptConfiguredSource(configured);
@@ -209,9 +208,9 @@ export function resolveWorkingStashTarget(
     if (allConfiguredSources.some((source) => source.name === configuredBundleId)) {
       throw new ConfigError("The AKM_BUNDLE_DIR source is disabled in config.", "INVALID_CONFIG_FILE");
     }
-    const bundleId = deriveBundleId(undefined, stashDir, new Set(Object.keys(akmConfig.bundles ?? {})));
+    const bundleId = bundleIdForDir(stashDir, new Set(Object.keys(akmConfig.bundles ?? {})));
     return {
-      source: { kind: "filesystem", name: bundleId, path: stashDir, adapterId: detectAdapterId(stashDir) },
+      source: { kind: "filesystem", name: bundleId, path: stashDir, adapterId: detectBundleAdapter(stashDir) },
       config: { type: "filesystem", name: bundleId, path: stashDir, writable: true },
     };
   }
@@ -282,7 +281,7 @@ function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
   if (!isWithin(root, contentRoot)) {
     throw new ConfigError(`Root "${runtime.root}" escapes bundle "${runtime.name}".`, "INVALID_CONFIG_FILE");
   }
-  const adapterId = runtime.adapterId ?? detectAdapterId(root);
+  const adapterId = runtime.adapterId ?? detectBundleAdapter(root);
   const config: SourceConfigEntry = {
     type: runtime.type,
     name: runtime.name,

@@ -10,10 +10,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { bundleAtDir, bundleKeyForDir } from "../../../src/core/bundle-at-dir";
+import { bundleKeyForDir } from "../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../src/core/config/config";
+import { bundleAtDir } from "../../../src/core/config/config-sources";
 import { getLocationBundleRoot } from "../../../src/core/paths";
-import { resolveSourceEntries } from "../../../src/indexer/search/search-source";
+import { writeLockfile } from "../../../src/integrations/lockfile";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -46,19 +47,17 @@ describe("bundleAtDir", () => {
     expect(bundleAtDir(configOf({ notes: { path: real } }), path.join(storage.root, "alias"))).toBe("notes");
   });
 
-  test("two git bundles are two bundles: each checkout is its own", () => {
+  test("two git bundles are two bundles: each checkout is its own", async () => {
     const config = configOf({
       alpha: { git: "https://example.test/alpha.git" },
       beta: { git: "https://example.test/beta.git" },
     });
-    const roots = Object.fromEntries(
-      resolveSourceEntries(undefined, config)
-        .filter((source) => source.registryId !== undefined)
-        .map((source) => [source.registryId as string, source.path]),
+    const roots = { alpha: dir("alpha-checkout"), beta: dir("beta-checkout") };
+    await writeLockfile(
+      Object.entries(roots).map(([id, localRoot]) => ({ id, source: "git", ref: `git:${id}`, localRoot })),
     );
-    expect(roots.alpha).not.toBe(roots.beta);
-    expect(bundleAtDir(config, roots.alpha as string)).toBe("alpha");
-    expect(bundleAtDir(config, roots.beta as string)).toBe("beta");
+    expect(bundleAtDir(config, roots.alpha)).toBe("alpha");
+    expect(bundleAtDir(config, roots.beta)).toBe("beta");
   });
 
   test("a location bundle is the root its entries are indexed under", () => {

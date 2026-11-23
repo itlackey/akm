@@ -14,7 +14,7 @@ import path from "node:path";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
 import { deriveBundleId } from "../../src/core/bundle-id";
 import type { AkmConfig } from "../../src/core/config/config";
-import { bundleKeyForContentRoot, bundlesToSourceEntries } from "../../src/core/config/config-sources";
+import { bundleAtDir, bundlesToSourceEntries } from "../../src/core/config/config-sources";
 import { ConfigError } from "../../src/core/errors";
 import { warn } from "../../src/core/warn";
 import { resolveWritable } from "../../src/core/write-source";
@@ -123,7 +123,7 @@ export function bundleRoots(config: AkmConfig): BundleRoot[] {
   // must convert here too. A configured bundle at that directory, under any spelling, owns it as it does for the
   // runtime: the loop above took it with that bundle's policy, or left it as disabled.
   const stashRoot = workingStash(config);
-  if (stashRoot && !rootsByPath.has(stashRoot) && bundleKeyForContentRoot(config, stashRoot) === undefined) {
+  if (stashRoot && !rootsByPath.has(stashRoot) && bundleAtDir(config, stashRoot) === undefined) {
     const bundleId = deriveBundleId(undefined, stashRoot, new Set(Object.keys(config.bundles ?? {})));
     // The runtime reads this stash with the adapter it detects, or `akm`.
     rootsByPath.set(stashRoot, {

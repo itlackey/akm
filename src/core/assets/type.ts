@@ -21,7 +21,7 @@ import { fileContextOfEntry } from "../../indexer/walk/file-context";
 import { closeDatabase } from "../../storage/repositories/index-connection";
 import { deleteEntriesByIds } from "../../storage/repositories/index-entries-repository";
 import { hashContent } from "../adapter/adapters/shared";
-import { adapterIdOf } from "../adapter/detect-adapter";
+import { bundleAdapterId } from "../adapter/detect-adapter";
 import type { IndexDocument } from "../adapter/types";
 import { loadConfig } from "../config/config";
 import { assetNotFound } from "../errors";
@@ -47,7 +47,7 @@ export function indexAssets(
       name: asset.bundle,
       path: source.path,
       ...(source.location !== undefined ? { location: source.location } : {}),
-      adapterId: adapterIdOf(source),
+      adapterId: bundleAdapterId(source),
     }).recognize(asset.entry);
     if (!document?.conceptId) throw assetNotFound(asset.ref);
     // No file holds the asset (a keyring's or vault's): the row is keyed under a path that leads nowhere, and says so.
@@ -105,7 +105,7 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean)
           }
           upsertIndexRows(
             db,
-            { bundleId: asset.bundle, adapterId: adapterIdOf(source) },
+            { bundleId: asset.bundle, adapterId: bundleAdapterId(source) },
             [
               {
                 // The path the index keys the asset under: its file, else (no file holds it) a path inside the bundle.
@@ -171,7 +171,7 @@ function variantPrefixOf(asset: Asset): string {
     name: asset.bundle,
     path: source.path,
     ...(source.location !== undefined ? { location: source.location } : {}),
-    adapterId: adapterIdOf(source),
+    adapterId: bundleAdapterId(source),
   }).variantPrefix;
 }
 
@@ -229,4 +229,12 @@ export function assetTypeFresh(asset: Asset): string {
   );
   if (recorded?.content_hash === hashContent(asset.entry.content())) return assetType(asset);
   return indexAsset(asset, { persist: true, supersede: false }).type;
+}
+
+/**
+ * The path the index keys an asset under: its file, else (for an asset no file holds) `<root>/<relPath>`, which is
+ * not a path to anything.
+ */
+export function indexedPathOf(asset: Asset, source: SearchSource): string {
+  return asset.entry.file ?? path.join(source.path, asset.entry.relPath);
 }

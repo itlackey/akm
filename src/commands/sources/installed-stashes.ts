@@ -17,8 +17,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
-import { bundleStorageExists } from "../../core/assets/gate";
+import { bundleStorageExists, detectBundleAdapter } from "../../core/assets/gate";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
 import { getSources, loadConfig, resolveSecret, retiredBundleComponents } from "../../core/config/config";
@@ -167,7 +166,7 @@ function describeAdapter(
 ): { adapter: string; detected: boolean } {
   if (entry.adapter !== undefined) return { adapter: entry.adapter, detected: false };
   const contentRoot = bundleRoot !== undefined ? path.resolve(bundleRoot, entry.root ?? ".") : undefined;
-  return { adapter: contentRoot !== undefined ? detectAdapterId(contentRoot) : "akm", detected: true };
+  return { adapter: contentRoot !== undefined ? detectBundleAdapter(contentRoot) : "akm", detected: true };
 }
 
 /**
