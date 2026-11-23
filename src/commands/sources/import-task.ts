@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef } from "../../core/asset/asset-ref";
-import { writeAssets } from "../../core/assets/write";
+import { readAsset, writeAssets } from "../../core/assets/write";
 import { loadConfig, mutateConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { commitWriteTargetBoundary, prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
@@ -42,7 +42,7 @@ export async function importTaskFile(
   const target = resolveWriteTarget(config, input.target, { requireWritable: true, flag: "--bundle" });
   const file = assetPathForName("task", path.join(target.source.path, "tasks"), id);
   return withSchedulerLock(async () => {
-    const existed = fs.existsSync(file);
+    const existed = fs.existsSync(file) || readAsset(target.source, `tasks/${id}`) !== undefined;
     if (existed && !input.force) {
       throw new UsageError(`Task "${id}" already exists. Pass --force to overwrite.`, "RESOURCE_ALREADY_EXISTS");
     }
@@ -62,10 +62,11 @@ export async function importTaskFile(
       }
       if (schedulerEnabledRefs(loadConfig())?.includes(ref)) setSchedulerRefEnabled(ref, false);
     }
-    const change = writeAssets(prepared, { purpose: "import-task" }, (w) =>
-      w.create({ type: "task", name: id, content: yaml }),
-    );
+    // An overwrite rewrites the file the task is read from, whatever its spelling.
+    const written =
+      writeAssets(prepared, { purpose: "import-task" }, (w) => w.create({ type: "task", name: id, content: yaml }))
+        .file ?? file;
     commitWriteTargetBoundary(prepared, `Import tasks/${id}`);
-    return { path: file, ref };
+    return { path: written, ref };
   });
 }

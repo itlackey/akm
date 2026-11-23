@@ -22,7 +22,7 @@ ignored. Per-call tuning lives on a named connection under
 
 The command returns the entry count, per-phase timings, warnings, the `--clean` result, and a `verification` block with `semanticStatus` (`disabled`, `pending`, `ready-js`, or `blocked`) and the sources it could not scan completely (`incompleteSources`, recorded in `index_meta`; `akm doctor`'s `index-sources` check reads it). The run computes it (`verifyIndexState`) and records it in `index_meta` under `semanticSearch` (`unavailable` when the local runtime could not be downloaded or loaded), which `akm doctor`'s `semantic-search` check reads.
 
-When a bundle's adapter skips files in folders another adapter would index, `akm index` warns once per change of that bundle's skipped set, not on every run: `[index] bundle "<id>": <adapter> adapter skipped N files in a/ — set bundles.<id>.adapter to "akm" to index them`. The index records each bundle's skipped set in `index_meta` under `adapterSkips`, and a removed bundle takes its record with it.
+`akm index` does not warn when a bundle's adapter skips files in folders another adapter would index. `akm bundle add` prints `bundle "<id>": <adapter> adapter skipped N files in a/ — set bundles.<id>.adapter to "akm" to index them` when it adds such a bundle, and `akm doctor` reports it (`adapter-skipped-content`, silent when nothing is skipped).
 
 ## Modes
 

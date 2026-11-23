@@ -24,6 +24,7 @@ import { AkmConfigSchema, CURRENT_CONFIG_VERSION } from "./config-schema";
 import {
   bundleContentRoot,
   bundleContentRoots,
+  bundleOverlaps,
   bundleSourceId,
   bundlesToSourceEntries,
   filesystemBundleSourceId,
@@ -1021,9 +1022,17 @@ function saveConfigReal(config: AkmConfig): void {
   });
 }
 
-export function validateCompleteConfig(config: AkmConfig): AkmConfig {
+/**
+ * Validate a config about to be written. With `current` (the config on disk) a bundle that overlaps another (equal,
+ * inside or containing) and did not overlap it in `current` is refused: a write may not add an overlap, though a
+ * config that already has one keeps loading and can be written.
+ */
+export function validateCompleteConfig(config: AkmConfig, current?: AkmConfig): AkmConfig {
   const parseResult = AkmConfigSchema.safeParse(config);
-  if (parseResult.success) return parseResult.data;
+  if (parseResult.success) {
+    if (current) assertNoNewBundleOverlap(parseResult.data, current);
+    return parseResult.data;
+  }
   const lines = parseResult.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
   throw new ConfigError(
     `Refusing to save invalid config:\n${lines}`,
@@ -1031,6 +1040,30 @@ export function validateCompleteConfig(config: AkmConfig): AkmConfig {
     "Fix the listed fields, or undo the offending `akm config set`. " +
       "If this looks like an akm bug, re-run with --debug to attach the traceback.",
   );
+}
+
+function assertNoNewBundleOverlap(next: AkmConfig, current: AkmConfig): void {
+  const keyOf = (overlap: { bundles: readonly string[]; kind: string }) =>
+    `${[...overlap.bundles].sort().join("\0")}|${overlap.kind}`;
+  const present = new Set(bundleOverlaps(current).map(keyOf));
+  for (const overlap of bundleOverlaps(next)) {
+    if (present.has(keyOf(overlap))) continue;
+    const [first, second] = overlap.bundles;
+    const [firstRoot, secondRoot] = overlap.roots;
+    const [inner, outer] = overlap.inner === first ? [first, second] : [second, first];
+    const [innerRoot, outerRoot] = overlap.inner === first ? [firstRoot, secondRoot] : [secondRoot, firstRoot];
+    const what =
+      overlap.kind === "same"
+        ? `bundles ${JSON.stringify(first)} and ${JSON.stringify(second)} have the same content root ${firstRoot}`
+        : `bundle ${JSON.stringify(inner)} is inside bundle ${JSON.stringify(outer)} (${innerRoot} is inside ${outerRoot})`;
+    throw new ConfigError(
+      `Refusing to save config: ${what}.`,
+      "INVALID_CONFIG_FILE",
+      "Bundles that overlap share files, so both list them. Add the directory only once, or keep the directories apart " +
+        "(a wiki folder inside a bundle becomes its own bundle once moved out). A symbolic-link alias of a bundle's " +
+        "directory is not a separate bundle.",
+    );
+  }
 }
 
 export interface ConfigMutationResult {
@@ -1478,7 +1511,7 @@ export function mutateConfig(
       localRaw === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(localRaw, configPath);
     const mutated = mutate(current);
     if (mutated === current) return { config: current, written: false };
-    const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
+    const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION }, current);
     const unremoved: string[][] = [];
     const body = editedConfigFile(document, current, next, [], unremoved, options?.writeProjects);
     refuseRemovalFromRetiredForm(unremoved, document, localRaw);
@@ -1509,7 +1542,7 @@ export async function mutateConfigWithPrecommit<T>(
     const current =
       localRaw === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(localRaw, configPath);
     const mutated = mutate(current);
-    const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
+    const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION }, current);
     const unremoved: string[][] = [];
     const body = editedConfigFile(document, current, next, options?.persistTopLevelKeys, unremoved);
     if (mutated !== current) refuseRemovalFromRetiredForm(unremoved, document, localRaw);

@@ -22,7 +22,7 @@ import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement"
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
-import { writeAssets } from "../../core/assets/write";
+import { readAsset, writeAssets } from "../../core/assets/write";
 import { isHttpUrl, isWithin, resolveStashDir, safeRealpath, samePath, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -741,7 +741,8 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
     // Pre-flight: existence + force semantics. The helper itself overwrites
     // unconditionally; the CLI surfaces a friendlier UsageError before any
     // disk activity when --force is absent.
-    if (fs.existsSync(assetPath) && !options.force) {
+    const held = readAsset(source, conceptIdFromTypeName(options.type, normalizedName));
+    if ((held !== undefined || fs.existsSync(assetPath)) && !options.force) {
       throw new UsageError(
         `${options.type === "knowledge" ? "Knowledge" : "Memory"} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
         "RESOURCE_ALREADY_EXISTS",
@@ -771,12 +772,13 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
         return { ref: resolved.displayRef, path: assetPath, stashDir: source.path, unchanged: true as const };
       }
     }
+    // An overwrite rewrites the file the asset is read from (N19), so that is the path to report.
     const change = writeAssets({ source, config }, { purpose: "markdown-write" }, (w) =>
       w.create({ type: resolved.ref.type, name: resolved.ref.name, content: options.content }),
     );
     const { conceptId } = parseBundleRef(change.ref);
     const durableRef = displayRef({ conceptId, bundleId: resolved.ref.origin });
-    const result = { path: assetPath, ref: resolved.displayRef };
+    const result = { path: change.file ?? assetPath, ref: resolved.displayRef };
     // SPEC-5 (--supersedes): demote each superseded asset by mutating its
     // frontmatter (`beliefState: superseded` + sorted-set-append `supersededBy`;
     // every other key and the body are preserved). Ordered BEFORE

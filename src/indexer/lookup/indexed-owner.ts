@@ -26,13 +26,13 @@ export function indexedPathOf(asset: Asset, source: SearchSource): string {
 /**
  * The index entry of an asset whose bundle has no row for it (a file added outside akm): the asset's adapter recognizes
  * it once and, with `persist`, the row is recorded, so the next ask finds it in the index. Undefined when the adapter
- * does not recognize it. Without `persist` (a read-only lookup) the entry is served and the index left as it is; it has
+ * does not recognize it. A row another ref holds for the file stays (nested bundles share files). Without `persist` (a read-only lookup) the entry is served and the index left as it is; it has
  * no links, usage or indexed fragments.
  */
 export function entryOnMiss(asset: Asset, source: SearchSource, persist: boolean): IndexEntry | undefined {
   const bundleId = asset.bundle;
   try {
-    const document = indexAsset(asset, { persist });
+    const document = indexAsset(asset, { persist, supersede: false });
     const adapterId = document.adapterId as string;
     const { itemRef, conceptId } = deriveEntryProvenance(
       { bundleId, adapterId },

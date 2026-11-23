@@ -7,6 +7,7 @@ import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { requireAdapter } from "../../core/adapter/registry";
 import { isBundleSlug } from "../../core/asset/asset-ref";
+import { adapterSkipMessage, adapterSkipOf } from "../../core/assets/adapter-skips";
 import { slugForRegistryId, validateExplicitBundleName } from "../../core/bundle-id";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
@@ -19,6 +20,7 @@ import {
   resolveSecret,
 } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
+import { warn } from "../../core/warn";
 import { buildIndex, isSkippedIndexBuild, skippedIndexReport } from "../../indexer/index-build";
 import { deriveBundleId } from "../../indexer/installations";
 import { readLockfile, removeLockEntry, upsertLockEntry } from "../../integrations/lockfile";
@@ -118,6 +120,10 @@ async function addLocalSource(
     const entry: BundleConfigEntry = { path: resolvedPath, adapter };
     return { ...config, bundles: placeBundle(bundles, bundleKey, entry, position) };
   });
+
+  // The adapter is compared with akm's here and in `akm doctor`; the index no longer says it.
+  const skip = adapterSkipOf({ name: bundleKey, path: resolvedPath, adapterId: adapter });
+  if (skip) warn(adapterSkipMessage(bundleKey, skip));
 
   const index = await buildIndex({ stashDir });
   const updatedConfig = loadConfig();

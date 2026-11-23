@@ -41,7 +41,7 @@ import { resolveSourceEntries, type SearchSource } from "../../indexer/search/se
 import { type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
 import { walkStashFlat } from "../../indexer/walk/walker";
 import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../tasks/source-v3";
-import { isWorkflowSource, resolveWorkflowSourceDomains } from "../../workflows/source-files";
+import { isUsableWorkflowSource, isWorkflowSource, resolveWorkflowSourceDomains } from "../../workflows/source-files";
 import { runBaseChecks } from "./base-linter";
 import { bundleLintSkip } from "./bundle-skip";
 import { checkEnvForDangerousKeys } from "./env-key-rules";
@@ -136,6 +136,11 @@ function isNearMissTaskFileName(fileName: string): boolean {
   return fileName.toLowerCase().endsWith(TASK_NEAR_MISS_EXTENSION);
 }
 
+/** A loose `.md` typed workflow, or one a symlink makes unusable (`isUsableWorkflowSource`), is no workflow source: lint never read it. */
+function isLintableWorkflow(root: string, file: string): boolean {
+  return isWorkflowSource(root, "akm", file) && isUsableWorkflowSource(root, file);
+}
+
 /**
  * The Markdown assets of the bundle at `root` by the stash folder of their type: the files are the indexer's walk and
  * each file's type is the akm adapter's classification, so lint reads what the index holds, wherever a file sits.
@@ -147,7 +152,7 @@ function markdownAssetsByType(root: string): Map<string, string[]> {
     if (file.ext !== ".md" || file.ancestorDirs.some((dir) => dir === "env" || dir === "secrets")) continue;
     const type = classifyAkmFile(file.relPath, file)?.match.type;
     // A loose `.md` typed workflow by its content is no workflow source, so the sweep never linted it.
-    if (type === "workflow" && !isWorkflowSource(root, "akm", file.absPath)) continue;
+    if (type === "workflow" && !isLintableWorkflow(root, file.absPath)) continue;
     const dir = type === undefined ? undefined : documentStashDirFor(type);
     if (dir === undefined || documentFormatForStashDir(dir) !== "markdown") continue;
     byDir.set(dir, [...(byDir.get(dir) ?? []), file.absPath]);
@@ -703,7 +708,7 @@ async function addAdapterFindings(
     // Nothing under `env/` or `secrets/` is read, as in the sweep.
     if (file.ancestorDirs.some((dir) => dir === "env" || dir === "secrets")) return false;
     const type = classifyAkmFile(file.relPath, file)?.match.type;
-    if (type === "workflow" && !isWorkflowSource(stashRoot, "akm", file.absPath)) return false;
+    if (type === "workflow" && !isLintableWorkflow(stashRoot, file.absPath)) return false;
     const dir = type === undefined ? undefined : documentStashDirFor(type);
     return dir !== undefined && dirs.has(dir);
   };

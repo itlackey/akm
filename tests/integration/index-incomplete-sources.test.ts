@@ -4,8 +4,7 @@
 
 /**
  * `akm index` names each configured source it could not scan and why, reports a skipped `--clean` as skipped, and
- * records the list in the index for `akm doctor`. The adapter-skip warning names the bundle's config key and is
- * printed once per change of what is skipped.
+ * records the list in the index for `akm doctor`. The adapter-skip warning moved to `akm doctor` and `akm bundle add`.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -166,52 +165,17 @@ describe("a recorded but never-installed npm bundle on other commands", () => {
   }, 60_000);
 });
 
-describe("the adapter-skip warning", () => {
-  function narrowAdapter(): void {
+describe("the adapter-skip warning (§0.2 N18)", () => {
+  test("`akm index` no longer prints it, whatever the bundle's adapter skips", async () => {
+    expect((await runCliCapture(["bundle", "add", dir, "--name", "notes"])).code).toBe(0);
     const config = loadConfig();
     const entry = config.bundles?.notes;
     if (!entry) throw new Error("bundle missing");
     saveConfig({
       ...config,
-      bundles: {
-        ...config.bundles,
-        notes: { ...entry, adapter: "agent-skills", writable: false },
-      },
-    });
-  }
-
-  test("names the bundle and its config key, and is repeated only when the skipped set changes", async () => {
-    expect((await runCliCapture(["bundle", "add", dir, "--name", "notes"])).code).toBe(0);
-    narrowAdapter();
-
-    const first = await index("--full");
-    expect(first.stderr).toContain('bundle "notes"');
-    expect(first.stderr).toContain('bundles.notes.adapter to "akm"');
-
-    const again = await index("--full");
-    expect(again.stderr).not.toContain("adapter skipped");
-
-    fs.writeFileSync(path.join(dir, "knowledge", "second.md"), "---\ndescription: second\n---\n\n# Second\n");
-    const changed = await index("--full");
-    expect(changed.stderr).toContain("skipped 2 files");
-  }, 60_000);
-
-  test("a removed bundle takes its record with it, so a re-added bundle is warned about again", async () => {
-    expect((await runCliCapture(["bundle", "add", dir, "--name", "notes"])).code).toBe(0);
-    narrowAdapter();
-    expect((await index("--full")).stderr).toContain("adapter skipped");
-
-    expect((await runCliCapture(["bundle", "remove", "notes", "--yes"])).code).toBe(0);
-    await index("--full");
-    const config = loadConfig();
-    saveConfig({
-      ...config,
-      bundles: {
-        ...config.bundles,
-        notes: { path: dir, adapter: "agent-skills", writable: false },
-      },
+      bundles: { ...config.bundles, notes: { ...entry, adapter: "agent-skills", writable: false } },
     });
 
-    expect((await index("--full")).stderr).toContain("adapter skipped");
+    expect((await index("--full")).stderr).not.toContain("adapter skipped");
   }, 60_000);
 });

@@ -12,18 +12,29 @@
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
-import { stashDirFor } from "./asset/asset-placement";
+import { assetPathForName, stashDirFor } from "./asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
 import { type Asset, findAsset, listAssets } from "./assets/read";
 import { assetType } from "./assets/type";
 import { readAsset, type WriteResult, writeAssets } from "./assets/write";
 import { deriveBundleIds } from "./bundle-id";
-import { scanEnvKeyNames } from "./common";
+import { scanEnvKeyNames, toPosix } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
 import { resolveMutationTarget } from "./mutation-target";
 import { formatRefForMessage, type ResolvedWriteTarget } from "./write-source";
+
+/**
+ * The assets of `type` in the type's folder (`env/`, `secrets/`): the refs the env and secret commands accept. A file
+ * elsewhere that is typed the same (`team/env/app`, which may be another bundle's `env/app`) is not listed.
+ */
+function listInTypeFolder(type: "env" | "secret", config: AkmConfig): Asset[] {
+  const prefix = `${stashDirFor(type)}/`;
+  return listAssets({ sources: resolveSourceEntries(undefined, config), type }).filter(({ conceptId }) =>
+    conceptId.startsWith(prefix),
+  );
+}
 
 /**
  * Every listed env asset with its key names (never values or comments), for `commands/health` as well as
@@ -32,23 +43,19 @@ import { formatRefForMessage, type ResolvedWriteTarget } from "./write-source";
 export function listEnvsRecursive(
   config: AkmConfig = loadConfig(),
 ): Array<{ ref: string; path?: string; keys: string[] }> {
-  return listAssets({ sources: resolveSourceEntries(undefined, config), type: "env" }).map(
-    ({ conceptId, bundle, entry }) => ({
-      ref: makeEnvRef(conceptId, bundle, config),
-      ...(entry.file !== undefined ? { path: entry.file } : {}),
-      keys: scanEnvKeyNames(entry.content()),
-    }),
-  );
+  return listInTypeFolder("env", config).map(({ conceptId, bundle, entry }) => ({
+    ref: makeEnvRef(conceptId, bundle, config),
+    ...(entry.file !== undefined ? { path: entry.file } : {}),
+    keys: scanEnvKeyNames(entry.content()),
+  }));
 }
 
 /** Every listed secret, by ref. Its value is not read. */
 export function listSecrets(config: AkmConfig = loadConfig()): Array<{ ref: string; path?: string }> {
-  return listAssets({ sources: resolveSourceEntries(undefined, config), type: "secret" }).map(
-    ({ conceptId, bundle, entry }) => ({
-      ref: makeSecretRef(conceptId, bundle),
-      ...(entry.file !== undefined ? { path: entry.file } : {}),
-    }),
-  );
+  return listInTypeFolder("secret", config).map(({ conceptId, bundle, entry }) => ({
+    ref: makeSecretRef(conceptId, bundle),
+    ...(entry.file !== undefined ? { path: entry.file } : {}),
+  }));
 }
 
 export function parseEnvRef(ref: string): AssetRef {
@@ -231,6 +238,16 @@ export function resolveSecretWriteTarget(
 /** The env file or secret a write resolution names, as the target bundle's adapter reads it; undefined when it has none. */
 export function findWriteTargetAsset(resolution: EnvSecretWriteResolution): Asset | undefined {
   return readAsset(resolution.target.source, resolution.conceptId);
+}
+
+/**
+ * Whether the asset a resolution finds is kept in a file other than the one a new one is placed at (`env/default.env`;
+ * the default env is placed at `env/.env`), so creating it again would write a twin beside it.
+ */
+export function heldUnderOtherSpelling(resolution: EnvSecretWriteResolution, held: Asset): boolean {
+  const typeDir = stashDirFor(resolution.type);
+  if (typeDir === undefined) return false;
+  return toPosix(assetPathForName(resolution.type, typeDir, resolution.name)) !== held.entry.relPath;
 }
 
 /**

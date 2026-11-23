@@ -149,6 +149,51 @@ export function bundleContentRoots(config: AkmConfig): { id: string; contentRoot
   return out;
 }
 
+/** Two configured bundles whose content overlaps: the same directory (or location), or one directory inside the other. */
+export interface BundleOverlap {
+  /** The two bundle ids, in configured order. */
+  readonly bundles: readonly [string, string];
+  /** `same`, or `nested` with `inner` the bundle whose root is inside the other's. */
+  readonly kind: "same" | "nested";
+  readonly inner?: string;
+  /** What each of the two ids resolves to (a real path, or `<adapter>:<location>`), in the same order. */
+  readonly roots: readonly [string, string];
+}
+
+/**
+ * Every pair of bundles that overlap: path bundles by real content root (equal, or one inside the other), location
+ * bundles by adapter and location (equal only: a location is no directory). The one place overlap is decided: config
+ * load refuses equal roots, a config write refuses any new overlap, `akm doctor` reports the nested pairs.
+ */
+export function bundleOverlaps(config: AkmConfig): BundleOverlap[] {
+  const entries = Object.entries(config.bundles ?? {}).flatMap(([id, entry]) => {
+    if (typeof entry.path === "string" && entry.path.length > 0) {
+      return [{ id, root: bundlePhysicalContentRoot(entry.path, entry.root), location: false }];
+    }
+    if (typeof entry.location === "string") {
+      return [{ id, root: `${entry.adapter ?? ""}:${entry.location}`, location: true }];
+    }
+    return [];
+  });
+  const inside = (inner: string, outer: string): boolean => {
+    const relative = path.relative(outer, inner);
+    return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  };
+  const overlaps: BundleOverlap[] = [];
+  for (const [index, first] of entries.entries()) {
+    for (const second of entries.slice(index + 1)) {
+      if (first.location !== second.location) continue;
+      const bundles = [first.id, second.id] as const;
+      const roots = [first.root, second.root] as const;
+      if (first.root === second.root) overlaps.push({ bundles, kind: "same", roots });
+      else if (first.location) continue;
+      else if (inside(first.root, second.root)) overlaps.push({ bundles, kind: "nested", inner: first.id, roots });
+      else if (inside(second.root, first.root)) overlaps.push({ bundles, kind: "nested", inner: second.id, roots });
+    }
+  }
+  return overlaps;
+}
+
 /** The bundle id whose resolved content root already matches `resolvedContentRoot`, if any. */
 export function bundleKeyForContentRoot(config: AkmConfig, resolvedContentRoot: string): string | undefined {
   let physical = path.resolve(resolvedContentRoot);

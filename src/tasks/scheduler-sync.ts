@@ -18,6 +18,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
+import { readFrom } from "../core/assets/read";
 import { compareCodePoints, toPosix } from "../core/common";
 import type { AkmConfig } from "../core/config/config-types";
 import { UsageError } from "../core/errors";
@@ -91,17 +92,21 @@ async function compileTaskSources(
   desired: SchedulerBinding[],
   failures: SchedulerSourceFailure[],
 ): Promise<void> {
-  for (const file of taskSourceFiles(input.sourceRoot, input.adapterId)) {
-    const relative = toPosix(path.relative(input.sourceRoot, file));
-    const conceptId = relative.slice(0, -".yml".length);
-    const id = input.adapterId === "akm-task" ? conceptId : path.basename(file, ".yml");
+  const seen = new Set<string>();
+  for (const candidate of taskSourceFiles(input.sourceRoot, input.adapterId)) {
+    const conceptId = toPosix(path.relative(input.sourceRoot, candidate)).replace(/\.yml$/i, "");
+    const id = input.adapterId === "akm-task" ? conceptId : path.basename(candidate).replace(/\.yml$/i, "");
     const ref = sourceRef(input.bundleName, conceptId);
-    if (ref === undefined || (input.enabledRefs && !input.enabledRefs.has(ref))) continue;
+    if (ref === undefined || seen.has(ref) || (input.enabledRefs && !input.enabledRefs.has(ref))) continue;
+    seen.add(ref);
+    let file = candidate;
     try {
-      const parsed = parseTaskSource({
-        yaml: fs.readFileSync(file, "utf8"),
-        filePath: file,
-      });
+      // The file the task is read from is the one its asset is held in, whatever its spelling (`tt.YML`).
+      const held = readFrom({ path: input.sourceRoot, adapterId: input.adapterId }, input.bundleName, conceptId);
+      if (held === undefined || !/\.yml$/i.test(held.entry.relPath)) continue;
+      const relative = held.entry.relPath;
+      file = path.join(input.sourceRoot, relative);
+      const parsed = parseTaskSource({ yaml: held.entry.content(), filePath: file });
       // A task with no `schedule:` is run by hand or by a workflow step; it
       // contributes no binding and is not sync's to validate.
       if (parsed.schedule.length === 0) continue;
@@ -201,18 +206,21 @@ function scheduleStartFlags(entry: TaskSourceV5ScheduleBinding): SchedulerStartF
   };
 }
 
-/** Task candidates: `tasks/*.yml` for the akm adapter, every `.yml` in the tree for `akm-task`. */
+/**
+ * Task candidates: `tasks/*.yml` for the akm adapter, every `.yml` in the tree for `akm-task`, in any letter case of the
+ * extension. A candidate is only a name: the asset it names is found through the facade (phase 4e.3 finds them all so).
+ */
 function taskSourceFiles(sourceRoot: string, adapterId: string): string[] {
   if (adapterId === "akm") {
     const dir = path.join(sourceRoot, "tasks");
     const names = listDirectory(dir);
     return names
-      .filter((name) => name.endsWith(".yml"))
+      .filter((name) => name.toLowerCase().endsWith(".yml"))
       .map((name) => path.join(dir, name))
       .filter((file) => statOrUndefined(file)?.isFile() === true)
       .sort(compareCodePoints);
   }
-  if (adapterId === "akm-task") return walkFiles(sourceRoot).filter((file) => file.endsWith(".yml"));
+  if (adapterId === "akm-task") return walkFiles(sourceRoot).filter((file) => file.toLowerCase().endsWith(".yml"));
   return [];
 }
 

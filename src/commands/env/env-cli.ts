@@ -24,6 +24,7 @@ import { defineGroupCommand, defineJsonCommand, output, reportChildExit } from "
 import { writeFileAtomic } from "../../core/common";
 import {
   findWriteTargetAsset,
+  heldUnderOtherSpelling,
   listEnvsRecursive,
   makeEnvRef,
   resolveEnvPath,
@@ -70,7 +71,8 @@ const envCreateCommand = defineJsonCommand({
     // `--path` is the subdirectory; `--bundle` selects the writable destination bundle.
     const resolution = resolveEnvWriteTarget(args.name, args.bundle, { subPath: getStringArg(args, "path") });
     const { ref } = resolution;
-    const exists = findWriteTargetAsset(resolution) !== undefined;
+    const held = findWriteTargetAsset(resolution);
+    const exists = held !== undefined;
 
     const fromFile = args["from-file"];
     const fromStdin = args["from-stdin"] === true;
@@ -98,7 +100,13 @@ const envCreateCommand = defineJsonCommand({
       }
     }
 
-    // Without content, an existing env file is left as it is.
+    // Without content, an env kept in the file a create writes is left as it is; one kept under another spelling is refused.
+    if (held && content === undefined && heldUnderOtherSpelling(resolution, held)) {
+      throw new UsageError(
+        `Env "${ref}" already exists as ${held.entry.relPath}. Remove it first (\`akm env remove\`) or edit the file directly.`,
+        "RESOURCE_ALREADY_EXISTS",
+      );
+    }
     if (!exists || content !== undefined) {
       writeEnvSecret(resolution, { op: "create", content: content ?? "" });
     }

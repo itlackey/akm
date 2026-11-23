@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { BundleAdapter, BundleListing } from "../core/adapter/bundle-adapter";
 import { adapterIdOf, detectAdapterId } from "../core/adapter/detect-adapter";
-import { adapterForId, requireAdapter } from "../core/adapter/registry";
+import { requireAdapter } from "../core/adapter/registry";
 import type { Bundle } from "../core/adapter/types";
 import { type Asset, findAsset } from "../core/assets/read";
 import { isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
@@ -974,8 +974,6 @@ type SourceScanPlan = {
   incompleteReason?: string;
   /** For a source that did not resolve: its real directory, or `unknown`. */
   incompletePath?: string;
-  /** Content the source's adapter skips that the `akm` adapter would index. */
-  adapterSkip?: AdapterSkip;
 };
 
 type SourceScanResult = {
@@ -1028,76 +1026,6 @@ function sourceSnapshotRemovals(
     }));
 }
 
-/**
- * What the chosen adapter for a bundle entirely skips (#908): top-level directories that hold files the `akm`
- * adapter, the format-neutral superset, would have indexed. `detectAdapterId` corrects this for AUTO-DETECTION (a
- * mixed layout detects as `akm`); this covers what detection cannot see, an EXPLICITLY configured narrow adapter
- * (`adapter: "agent-skills"`, say) sitting next to ordinary akm content.
- */
-interface AdapterSkip {
-  adapter: string;
-  count: number;
-  dirs: string[];
-}
-
-function adapterSkippedAkmContent(
-  bundle: Bundle,
-  claimed: ReadonlyArray<{ entry: { relPath: string } }>,
-  adapter: BundleAdapter,
-): AdapterSkip | undefined {
-  // A bundle a secret manager keeps is no directory: there is nothing akm could read in it.
-  if (adapter.id === "akm" || bundle.location !== undefined) return undefined;
-  const akm = adapterForId("akm");
-  if (!akm) return undefined;
-
-  // A top-level directory the chosen adapter holds no asset in, where akm would hold some: the chosen adapter skips it.
-  const topDirOf = (relPath: string): string | undefined => (relPath.includes("/") ? relPath.split("/")[0] : undefined);
-  const owned = new Set(claimed.map(({ entry }) => topDirOf(entry.relPath)));
-  const skipped = new Map<string, number>();
-  for (const { entry } of akm.list(bundle).assets) {
-    const top = topDirOf(entry.relPath);
-    if (top !== undefined && !owned.has(top)) skipped.set(top, (skipped.get(top) ?? 0) + 1);
-  }
-  const count = [...skipped.values()].reduce((sum, n) => sum + n, 0);
-  return count === 0 ? undefined : { adapter: adapter.id, count, dirs: [...skipped.keys()].sort() };
-}
-
-/** `index_meta` key holding each bundle's {@link AdapterSkip}, so a skip is reported once, and again only when it changes. */
-const ADAPTER_SKIPS_META_KEY = "adapterSkips";
-
-/**
- * Warn about each bundle whose skipped content differs from what the last index recorded, then record this run's
- * skips. A configured bundle that was not scanned this run keeps its record.
- */
-function reportAdapterSkips(db: Database, plans: readonly SourceScanPlan[]): void {
-  let previous: Record<string, AdapterSkip> = {};
-  try {
-    previous = JSON.parse(getMeta(db, ADAPTER_SKIPS_META_KEY) ?? "{}") as Record<string, AdapterSkip>;
-  } catch (error) {
-    warn(`[index] the recorded adapter skips cannot be read (${toErrorMessage(error)}); each skip is reported again.`);
-    previous = {};
-  }
-  // A removed bundle takes its record with it.
-  const configured = new Set(plans.map((plan) => plan.bundle.id));
-  const next = Object.fromEntries(Object.entries(previous).filter(([id]) => configured.has(id)));
-  for (const plan of plans) {
-    if (!plan.adapter || !plan.walkComplete) continue;
-    const id = plan.bundle.id;
-    if (!plan.adapterSkip) {
-      delete next[id];
-      continue;
-    }
-    next[id] = plan.adapterSkip;
-    if (JSON.stringify(previous[id]) === JSON.stringify(plan.adapterSkip)) continue;
-    const { adapter, count, dirs } = plan.adapterSkip;
-    warn(
-      `[index] bundle "${id}": ${adapter} adapter skipped ${count} file${count === 1 ? "" : "s"} in ` +
-        `${dirs.map((dir) => `${dir}/`).join(", ")} — set bundles.${id}.adapter to "akm" to index them`,
-    );
-  }
-  if (JSON.stringify(next) !== JSON.stringify(previous)) setMeta(db, ADAPTER_SKIPS_META_KEY, JSON.stringify(next));
-}
-
 /** A bundle's listing as the walk's result: every entry a `FileContext` keyed under the bundle's root. */
 function walkResultOf(listing: BundleListing, root: string): WalkStashFlatResult {
   return {
@@ -1138,7 +1066,6 @@ function buildSourceScanPlans(
     const listing = adapter.list(bundle);
     const walked = walkResultOf(listing, currentStashDir);
     const dirGroups = groupFileContextsByDir(walked.files);
-    const adapterSkip = adapterSkippedAkmContent(bundle, listing.assets, adapter);
     return {
       currentStashDir,
       bundle,
@@ -1147,7 +1074,6 @@ function buildSourceScanPlans(
       removals: [],
       walkComplete: walked.complete,
       ...(walked.incompleteReason ? { incompleteReason: walked.incompleteReason } : {}),
-      ...(adapterSkip ? { adapterSkip } : {}),
     };
   });
 
@@ -1248,7 +1174,6 @@ async function scanSourceDirs(
   const incompleteSources: IncompleteIndexSource[] = [];
   const seenPaths = new Set<string>();
   const { plans, handoffDirs } = buildSourceScanPlans(db, allSourceEntries, isIncremental, reconcileMissingDirs);
-  reportAdapterSkips(db, plans);
 
   const dirRecords: DirRecord[] = [];
   let processedDirs = 0;

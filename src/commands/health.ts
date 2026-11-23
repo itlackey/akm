@@ -29,7 +29,8 @@ import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 import { getStateDbFreelistInfo, runStateDbIntegrityCheck } from "../storage/state-db-integrity";
 import { pkgVersion } from "../version";
 import { collectArchiveUsageAdvisory } from "./health/archive-usage";
-import { collectBundleAdaptersCheck } from "./health/bundle-adapters-check";
+import { collectAdapterSkipCheck, collectBundleAdaptersCheck } from "./health/bundle-adapters-check";
+import { collectBundleSharedPathCheck } from "./health/bundle-shared-path-check";
 import {
   HEALTH_CHECKS,
   type HealthCheckContext,
@@ -434,6 +435,12 @@ function gatherAncillaryAdvisories(
 
   const workflowFiles = collectWorkflowFilesAdvisory(options.stashDir);
   if (workflowFiles) advisories.push(workflowFiles);
+
+  // What the bundles' configuration does to their content: nested bundles share files, a narrow adapter skips some.
+  const bundleSharedPath = collectBundleSharedPathCheck();
+  if (bundleSharedPath) advisories.push(bundleSharedPath);
+  const adapterSkips = collectAdapterSkipCheck();
+  if (adapterSkips) advisories.push(adapterSkips);
 
   try {
     const opencodeMajor = collectOpencodeMajorAdvisory(Boolean(options.probe));

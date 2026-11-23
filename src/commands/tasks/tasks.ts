@@ -24,7 +24,7 @@ import { adapterIdOf, detectAdapterId } from "../../core/adapter/detect-adapter"
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
-import { writeAssets } from "../../core/assets/write";
+import { readAsset, writeAssets } from "../../core/assets/write";
 import { isWithin, resolveStashDir } from "../../core/common";
 import {
   defaultConnection,
@@ -215,7 +215,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
 
   const sched = deps.backend ?? selectBackend();
   return withSchedulerLock(async () => {
-    if (fs.existsSync(assetPath) && !input.force) {
+    if ((fs.existsSync(assetPath) || readAsset(bundle.resolved.source, `tasks/${id}`) !== undefined) && !input.force) {
       throw new UsageError(
         `Task "${id}" already exists. Pass --force to overwrite, or delete its file and run \`akm doctor scheduler sync\` first.`,
         "RESOURCE_ALREADY_EXISTS",
@@ -236,7 +236,10 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     }
     await ensureSchedulerChoice({ backend: sched });
     if (input.disabled) setSchedulerRefEnabled(qualifiedRef, false);
-    writeAssets(bundle.resolved, { purpose: "task-add" }, (w) => w.create({ type: "task", name: id, content: yaml }));
+    // The file the task is read from after the write: an overwrite rewrites the asset's own file (N19), whatever its spelling.
+    const writtenPath =
+      writeAssets(bundle.resolved, { purpose: "task-add" }, (w) => w.create({ type: "task", name: id, content: yaml }))
+        .file ?? assetPath;
     (deps.commitBoundary ?? commitWriteTargetBoundary)(bundle.resolved, `Update tasks/${id}`);
     if (!input.disabled) setSchedulerRefEnabled(qualifiedRef, true);
     const sync = await akmTasksSync(deps, bundle.bundleName, { rebind: input.rebind === true });
@@ -244,7 +247,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     const failure = sync.failures.find((candidate) => candidate.ref === qualifiedRef);
     if (failure) {
       throw new ConfigError(
-        `Task "${id}" was written to ${assetPath}${input.disabled ? "" : " and enabled"}, but it could not be scheduled: ${failure.reason}`,
+        `Task "${id}" was written to ${writtenPath}${input.disabled ? "" : " and enabled"}, but it could not be scheduled: ${failure.reason}`,
         "INVALID_CONFIG_FILE",
         "Fix the cause and run `akm doctor scheduler sync`.",
       );
@@ -252,7 +255,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     return {
       id,
       ref: conceptIdFromTypeName("task", id),
-      path: assetPath,
+      path: writtenPath,
       bundleDir: stashDir,
       schedule: first.cron,
       enabled: input.disabled !== true,

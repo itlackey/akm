@@ -546,7 +546,6 @@
   "src/core/assets/read.ts": {
     "facade-export": {
       "FindOptions": 1,
-      "readFrom": 1,
       "requireAsset": 1
     }
   },
@@ -638,9 +637,6 @@
     }
   },
   "src/indexer/indexer.ts": {
-    "adapter-id": {
-      "akm": 1
-    },
     "adapter-import": {
       "src/core/adapter/detect-adapter": 1,
       "src/core/adapter/registry": 1
@@ -650,7 +646,6 @@
       "detectAdapterId": 1
     },
     "asset-io": {
-      "adapterForId": 1,
       "lstatSync": 1,
       "readdirSync": 1,
       "statSync": 1
@@ -866,7 +861,6 @@
       "akm-task": 3
     },
     "asset-io": {
-      "readFileSync": 1,
       "readdirSync": 1,
       "statSync": 1
     }

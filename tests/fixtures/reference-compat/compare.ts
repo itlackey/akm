@@ -55,6 +55,8 @@ export interface RegisteredDifference extends DifferenceNode {
 export const APPROVED_ROWS: ReadonlySet<string> = new Set([
   ...Array.from({ length: 16 }, (_, i) => `A${i + 1}`),
   ...[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23].map((n) => `N${n}`),
+  // F1 is provisional: set by the coordinator while the owner is unattended (design §0.2), pending the owner's answer.
+  "F1",
 ]);
 
 /** True when `row` names only approved §0.2 rows (`A3`, or `A3+A5`). */

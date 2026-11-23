@@ -38,7 +38,7 @@ import { assetBundleOf } from "./bundle";
  */
 export function indexAssets(
   assets: readonly Asset[],
-  options: { persist: boolean } = { persist: true },
+  options: { persist: boolean; supersede?: boolean } = { persist: true },
 ): Map<Asset, IndexDocument> {
   const documents = new Map<Asset, IndexDocument>();
   for (const asset of assets) {
@@ -54,28 +54,36 @@ export function indexAssets(
     if (document.path === undefined) document.fileless = true;
     documents.set(asset, document);
   }
-  if (options.persist && assets.length > 0) record(documents);
+  if (options.persist && assets.length > 0) record(documents, options.supersede ?? true);
   return documents;
 }
 
 /** {@link indexAssets} for one asset. */
-export function indexAsset(asset: Asset, options: { persist: boolean } = { persist: true }): IndexDocument {
+export function indexAsset(
+  asset: Asset,
+  options: { persist: boolean; supersede?: boolean } = { persist: true },
+): IndexDocument {
   return indexAssets([asset], options).get(asset) as IndexDocument;
 }
 
-/** Write the index rows of `documents`, when a usable index serves them. */
-function record(documents: ReadonlyMap<Asset, IndexDocument>): void {
+/** Write the index rows of `documents`, when a usable index serves them. See {@link write} for `supersede`. */
+function record(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean): void {
   // No index, nothing to write, and no lock file made either.
   if (isPathAbsent(getDbPath())) return;
   try {
     // The index-writer lock the indexer takes; held by a running rebuild, nothing is written (no waiting).
-    withAssetMutationLeaseSync("index-asset", () => write(documents), { maxWaitMs: 0 });
+    withAssetMutationLeaseSync("index-asset", () => write(documents, supersede), { maxWaitMs: 0 });
   } catch (error) {
     warnVerbose("Index update skipped (the assets are indexed by the next `akm index`):", error);
   }
 }
 
-function write(documents: ReadonlyMap<Asset, IndexDocument>): void {
+/**
+ * A file has one row. With `supersede` (akm wrote the asset through its bundle) a row another ref holds for the file is
+ * replaced. Without it (a read found no row for the ref) that row stays: bundles whose roots nest share files, and a
+ * read must not move a file from one bundle's row to the other's.
+ */
+function write(documents: ReadonlyMap<Asset, IndexDocument>, supersede: boolean): void {
   {
     const first = documents.keys().next().value as Asset;
     const usable = openUsableIndex(sourceOf(first).path, { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
@@ -88,13 +96,20 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>): void {
           const source = sourceOf(asset);
           // The scan drops a workflow that does not compile, so no ask of it records a row either.
           if (brokenWorkflowWarning(document, fileContextOfEntry(source.path, asset.entry)) !== null) continue;
+          const file = asset.entry.file ?? path.join(source.path, asset.entry.relPath);
+          if (
+            !supersede &&
+            db.prepare("SELECT 1 FROM entries WHERE file_path = ? AND item_ref <> ?").get(file, asset.ref)
+          ) {
+            continue;
+          }
           upsertIndexRows(
             db,
             { bundleId: asset.bundle, adapterId: adapterIdOf(source) },
             [
               {
                 // The path the index keys the asset under: its file, else (no file holds it) a path inside the bundle.
-                file: asset.entry.file ?? path.join(source.path, asset.entry.relPath),
+                file,
                 entry: indexRowEntry(document, path.basename(asset.entry.relPath)),
                 conceptId: document.conceptId as string,
                 contentHash: document.hash,
@@ -180,7 +195,7 @@ export function assetTypes(assets: readonly Asset[]): Map<Asset, string> {
     assets.map(() => undefined),
   );
   const missing = assets.filter((_, position) => indexed[position] === undefined);
-  const documents = indexAssets(missing);
+  const documents = indexAssets(missing, { persist: true, supersede: false });
   for (const [position, asset] of assets.entries()) {
     types.set(asset, indexed[position] ?? (documents.get(asset) as IndexDocument).type);
   }
@@ -213,5 +228,5 @@ export function assetTypeFresh(asset: Asset): string {
     undefined,
   );
   if (recorded?.content_hash === hashContent(asset.entry.content())) return assetType(asset);
-  return indexAsset(asset).type;
+  return indexAsset(asset, { persist: true, supersede: false }).type;
 }

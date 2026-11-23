@@ -40,9 +40,13 @@ export interface AssetAddress {
   file?: string;
 }
 
-/** What a write tells its caller: the asset's ref, and the content it now holds (absent after a delete or retire). */
+/**
+ * What a write tells its caller: the asset's ref, the file it is kept in when it is a file, and the content it now holds
+ * (absent after a delete or retire).
+ */
 export interface WriteResult {
   ref: string;
+  file?: string;
   content?: string | Buffer;
 }
 
@@ -135,6 +139,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     reindex(change, kept);
     return {
       ref: makeBundleRef(source.name, change.conceptId),
+      ...(change.file !== undefined ? { file: change.file } : {}),
       ...(change.content !== undefined ? { content: change.content } : {}),
     };
   };

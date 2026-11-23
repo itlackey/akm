@@ -205,6 +205,23 @@ describe("akmTasksSync — schedule drift", () => {
     expect(exec.current()).not.toContain("task run alpha --bundle stash --scheduled");
   });
 
+  test("`akm task add --force` over a task kept in `tt.YML` rewrites that file, schedules it, and names it", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    fs.writeFileSync(path.join(tasksDir, "tt.YML"), "version: 4\nrun: echo old\nname: tt\n", "utf8");
+
+    const result = await akmTasksAdd(
+      { id: "tt", schedule: "0 3 * * *", command: "echo new", force: true },
+      { backend, commitBoundary() {} },
+    );
+
+    expect(result.path).toBe(path.join(tasksDir, "tt.YML"));
+    expect(fs.readFileSync(path.join(tasksDir, "tt.YML"), "utf8")).toContain("echo new");
+    expect(fs.existsSync(path.join(tasksDir, "tt.yml"))).toBe(false);
+    expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/tt")).toBe(true);
+    expect(exec.current()).toContain("task run tt --bundle stash --scheduled");
+  });
+
   test("a config without scheduler.enabled takes the installed rows with a backing file as the host's choice", async () => {
     const exec = memoryExec();
     const backend = backendFor(exec);

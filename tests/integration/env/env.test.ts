@@ -487,6 +487,35 @@ describe("env create --from-file / --from-stdin", () => {
   });
 });
 
+describe("env create over an env kept under another spelling (§0.2 N20)", () => {
+  test("`env/default` with `env/default.env` present is refused and writes nothing", async () => {
+    const stashDir = makeTempDir("akm-envcli-stash-");
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "default.env"), "KEEP=me\n", "utf8");
+
+    const result = await runCli(["env", "create", "env/default"], { AKM_BUNDLE_DIR: stashDir });
+
+    expect(result.status).toBe(2);
+    expect((JSON.parse(result.stderr) as { code?: string }).code).toBe("RESOURCE_ALREADY_EXISTS");
+    expect(fs.readdirSync(path.join(stashDir, "env"))).toEqual(["default.env"]);
+    expect(fs.readFileSync(path.join(stashDir, "env", "default.env"), "utf8")).toBe("KEEP=me\n");
+  });
+
+  test("an env already kept in the file a create writes is left as it is, exit 0", async () => {
+    const stashDir = makeTempDir("akm-envcli-stash-");
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "KEEP=me\n", "utf8");
+    fs.writeFileSync(path.join(stashDir, "env", ".env"), "KEEP=default\n", "utf8");
+
+    for (const ref of ["env/prod", "env/default"]) {
+      const result = await runCli(["env", "create", ref], { AKM_BUNDLE_DIR: stashDir });
+      expect(result.status).toBe(0);
+    }
+    expect(fs.readFileSync(path.join(stashDir, "env", "prod.env"), "utf8")).toBe("KEEP=me\n");
+    expect(fs.readFileSync(path.join(stashDir, "env", ".env"), "utf8")).toBe("KEEP=default\n");
+  });
+});
+
 describe("env remove", () => {
   test("removes an env file", async () => {
     const stashDir = makeTempDir("akm-envcli-stash-");

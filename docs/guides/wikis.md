@@ -65,7 +65,9 @@ with the `llm-wiki` adapter. From there:
 A wiki is always its own bundle: configure it as one (`adapter: llm-wiki`, or let akm detect it from its `schema.md`
 plus `pages/`). A wiki folder inside an ordinary akm bundle (for example `wikis/articles/`) gets no wiki handling from
 the akm adapter: its files are plain akm files, typed by akm's path rules (Markdown there is `knowledge`).
-Add the folder as a bundle of its own to have it indexed as a wiki.
+To have it indexed as a wiki, move the folder out of the akm bundle and add it as a bundle of its own. Do not add the
+folder in place as a nested bundle: bundles whose directories overlap share files, `akm bundle add` refuses it, and
+`akm doctor` warns (`bundle-shared-path`) about a pair that was configured before.
 
 ## Working with a wiki
 

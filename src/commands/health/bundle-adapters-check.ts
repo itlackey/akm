@@ -8,10 +8,13 @@
  */
 
 import { requireAdapter } from "../../core/adapter/registry";
+import { type AdapterSkip, adapterSkipMessage, adapterSkipOf } from "../../core/assets/adapter-skips";
+import { deriveBundleIds } from "../../core/bundle-id";
 import { toErrorMessage } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { resolveConfiguredSources } from "../../core/config/config-sources";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { HealthCheckResult } from "./types";
 
 export function collectBundleAdaptersCheck(readConfig: () => AkmConfig = loadConfig): HealthCheckResult {
@@ -39,4 +42,39 @@ export function collectBundleAdaptersCheck(readConfig: () => AkmConfig = loadCon
     };
   }
   return { ...base, status: "pass", message: "Every configured bundle names an adapter akm has." };
+}
+
+/**
+ * `adapter-skipped-content`: a bundle whose configured adapter holds none of the files in a folder where the `akm`
+ * adapter would hold some (an explicit `agent-skills` next to ordinary akm content), so the index leaves them out.
+ * Silent (undefined) when no bundle skips any, and when the bundles cannot be read.
+ */
+export function collectAdapterSkipCheck(readConfig: () => AkmConfig = loadConfig): HealthCheckResult | undefined {
+  const skips: Array<{ bundle: string } & AdapterSkip> = [];
+  try {
+    const sources = resolveSourceEntries(undefined, readConfig());
+    const ids = deriveBundleIds(sources);
+    for (const [index, source] of sources.entries()) {
+      if (source.unresolved) continue;
+      const name = ids[index] as string;
+      const skip = adapterSkipOf({
+        name,
+        path: source.path,
+        ...(source.location !== undefined ? { location: source.location } : {}),
+        ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
+      });
+      if (skip) skips.push({ bundle: name, ...skip });
+    }
+  } catch {
+    return undefined;
+  }
+  if (skips.length === 0) return undefined;
+  return {
+    name: "adapter-skipped-content",
+    kind: "deterministic",
+    confidence: "high",
+    status: "warn",
+    message: skips.map(({ bundle, ...skip }) => adapterSkipMessage(bundle, skip)).join("; "),
+    evidence: { skips },
+  };
 }
