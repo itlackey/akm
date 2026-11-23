@@ -15,6 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isRelevantAssetFile } from "../../core/asset/asset-placement";
 import { isScratchPath } from "../../core/asset/scratch";
+import { toErrorMessage } from "../../core/common";
 import { spawnSync } from "../../runtime";
 import { buildFileContext, type FileContext } from "./file-context";
 
@@ -109,6 +110,8 @@ export interface WalkStashFlatResult {
   files: FileContext[];
   /** False when any directory or candidate file could not be inspected. */
   complete: boolean;
+  /** When `complete` is false: the first filesystem error that stopped the walk. */
+  incompleteReason?: string;
 }
 
 export interface DirectoryGroup {
@@ -171,7 +174,11 @@ export function walkStashFlat(stashRoot: string, options: WalkStashFlatOptions =
 }
 
 export function walkStashFlatWithStatus(stashRoot: string, options: WalkStashFlatOptions = {}): WalkStashFlatResult {
-  if (!fs.existsSync(stashRoot)) return { files: [], complete: false };
+  try {
+    fs.statSync(stashRoot);
+  } catch (error) {
+    return { files: [], complete: false, incompleteReason: toErrorMessage(error) };
+  }
 
   // Try git-based walk first (respects .gitignore)
   const gitResult = walkStashGit(stashRoot, options);
@@ -232,6 +239,7 @@ function walkStashGit(stashRoot: string, options: WalkStashFlatOptions): WalkSta
 
   const results: FileContext[] = [];
   let complete = true;
+  let incompleteReason: string | undefined;
   for (const relFile of files) {
     const absPath = path.join(stashRoot, relFile);
     try {
@@ -242,13 +250,14 @@ function walkStashGit(stashRoot: string, options: WalkStashFlatOptions): WalkSta
       if (stat.isFile() || (stat.isSymbolicLink() && isFileOrFileSymlink(absPath))) {
         results.push(buildFileContext(stashRoot, absPath));
       }
-    } catch {
+    } catch (error) {
       // File may have been deleted since git ls-files ran
       complete = false;
+      incompleteReason ??= toErrorMessage(error);
     }
   }
 
-  return { files: results, complete };
+  return { files: results, complete, ...(incompleteReason ? { incompleteReason } : {}) };
 }
 
 /**
@@ -323,6 +332,7 @@ export function walkMarkdownFiles(root: string): WalkMarkdownFilesResult {
 function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): WalkStashFlatResult {
   const results: FileContext[] = [];
   let complete = true;
+  let incompleteReason: string | undefined;
 
   const stack = [stashRoot];
   while (stack.length > 0) {
@@ -331,8 +341,9 @@ function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): Walk
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(current, { withFileTypes: true });
-    } catch {
+    } catch (error) {
       complete = false;
+      incompleteReason ??= toErrorMessage(error);
       continue;
     }
     for (const entry of entries) {
@@ -353,7 +364,7 @@ function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): Walk
     }
   }
 
-  return { files: results, complete };
+  return { files: results, complete, ...(incompleteReason ? { incompleteReason } : {}) };
 }
 
 /** True for a regular file, or a symlink whose target is a regular file. */

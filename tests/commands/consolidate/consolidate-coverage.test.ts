@@ -187,7 +187,7 @@ describe("shapeSearchHit — registry brief projects name + score (#28)", () => 
 // D4 (Phase 2 triage): the "buildMemoryFrontmatter — description field (#20)"
 // describe block (5 tests: included/omitted-absent/omitted-empty/
 // omitted-whitespace/special-chars-serialised) was DELETED here. It is
-// superseded by tests/remember-unit.test.ts:36-97 ("buildMemoryFrontmatter —
+// superseded by tests/integration/remember-unit.test.ts:36-97 ("buildMemoryFrontmatter —
 // YAML injection guard"), which actually parses the emitted YAML (this file's
 // version only did substring `toContain` checks) and pins the same
 // included/omitted-absent/omitted-whitespace/special-chars behavior, plus the

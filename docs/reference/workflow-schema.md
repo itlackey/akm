@@ -33,8 +33,8 @@ that authoring format.
 
 ## Child workflows
 
-> **Experimental.** Child workflows are part of the Experimental `akm workflow`
-> surface (see `STABILITY.md`) and may change or be removed.
+> **Experimental.** Child workflows are part of the Deprecated `akm workflow`
+> surface (see `STABILITY.md`) and are removed with it in 0.11.
 
 A step can run another workflow as a **child run**. It declares the child in
 its `unit:` bag:
@@ -634,14 +634,23 @@ before anything is spawned.
   schema fails for it.
 - **An incomplete STDOUT capture is a failure, not a partial artifact.** Exiting
   0 is not on its own proof that stdout was fully read: a pipe can error, and a
-  background descendant that keeps the stdout handle open after the command
-  leader exits will hold the pipe past the drain deadline. Either way the
-  captured text is a *prefix* of the real output, so the unit fails
+  background descendant that started its own session (`setsid`) can keep the
+  stdout handle open after the command leader exits, past the drain deadline.
+  Either way the captured text is a *prefix* of the real output, so the unit fails
   `exec_capture_incomplete` rather than promoting the prefix. That reason is
   deliberately outside `retry.on`: the command already RAN, and re-dispatching
   identical argv to fix a capture problem would run its side effects again. If
-  you hit this, have the command wait for its children or redirect their
-  output.
+  you hit this, have the command wait for its children or redirect their output.
+
+  A background process the command leaves in its own process group (a server
+  started with `&` or `nohup`) is not a capture failure: when the command exits,
+  akm gives the pipes a short grace, then stops what is left in the group
+  (SIGINT, SIGTERM, SIGKILL) and the unit succeeds with the command's own result
+  and the output read. Redirecting the child's output does not keep it alive; a
+  process that must outlive the unit starts its own session and redirects its
+  output (`setsid server >server.log 2>&1 &`). Either alone fails: without its own
+  session it is stopped, and without the redirect the capture fails
+  `exec_capture_incomplete`.
 
   Only **stdout** is fatal here. stderr never contributes to the artifact, so a
   stderr drain that did not finish leaves the unit's actual result — a completed

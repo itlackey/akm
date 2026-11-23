@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Top-level `akm health` result shape (chunk-9 WI-9.5d per-domain split of
+ * Top-level `akm health` result shape (split out of
  * `./types`) — the return type of `akmHealth()`, combining every other
  * domain (checks, metrics, improve, per-run, window-compare).
  */
@@ -46,7 +46,8 @@ export interface AkmHealthResult {
   hardChecks: HealthCheckResult[];
   advisories: HealthCheckResult[];
   metrics: HealthMetrics;
-  improve: ImproveHealthMetrics;
+  /** `null` when state.db could not be read. */
+  improve: ImproveHealthMetrics | null;
   runs?: ImproveRunSummary[];
   windows?: WindowResult[];
   deltas?: Record<string, DeltaEntry>;
@@ -55,6 +56,3 @@ export interface AkmHealthResult {
 
 /** Event type recorded on each completed improve run. */
 export const IMPROVE_COMPLETED_EVENT = "improve_completed";
-
-/** An active task older than this (ms) is treated as stuck. */
-export const ACTIVE_RUN_WARN_MS = 15 * 60 * 1000;

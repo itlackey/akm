@@ -9,10 +9,8 @@
  * This module is a re-export BARREL: the actual implementations live in
  * cohesive sibling modules (`show-format.ts`, `show-directives.ts`,
  * `workflow-format.ts`, `proposal-format.ts`, `command-format.ts`,
- * `health-format.ts`, `lint-format.ts`) split out of what used to be a
- * single 1418-line / 59-function file. Every name that was previously
- * importable from `"./helpers"` (directly, or transitively via `../text.ts`)
- * stays importable from here unchanged — no import site needed to move.
+ * `health-format.ts`, `lint-format.ts`). Every name is importable from `"./helpers"` (directly,
+ * or transitively via `../text.ts`).
  *
  * No registry imports — no circular dependencies.
  */

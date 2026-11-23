@@ -23,22 +23,37 @@ is not enabled is only a `legacyTaskWarnings` line):
      file as written, with a note on what to fix
   2. pending state.db migrations (0.10 adds none). A state.db from before the
      0.9.32 floor is refused whole, with the recipe above, before any step runs
-  3. the retired `engine:` key on commands, agents, workflows and task
+  3. task files named on the command line, converted to task source v5
+     (`version: 5-beta.<n>`) under one backup directory per run, after the
+     same check a start makes of each; no file is converted that is not
+     named. What a version 4 task did that version 5 does not (values given
+     to steps as AKM_PARAMS/AKM_STEPS, values appended to prompts) is
+     listed per file, to change by hand, and a file with no version 5 form
+     is left as it is and reported. A workflow file named on the command
+     line (`workflows/<name>.md`) is not changed: a new task file
+     `tasks/<name>.yml` is made from it, after the same check, when the
+     workflow compiler reads it and every step is a prose step or an
+     exec step of plain words. A workflow that cannot convert (a fan-out,
+     a child workflow, a `${...}` in a step that is not an input or an
+     earlier step, and the rest) is reported with `reason`, `detail` and
+     `guidance`: what to change in the workflow, then run again. An
+     existing task file is never overwritten. Workflows are removed in 0.11
+  4. the retired `engine:` key on commands, agents, workflows and task
      sources rewritten to `connection:` or `harness:` by what the name is
      now, under one backup directory per run
-  4. refs in the text files akm indexes in writable bundles that still use
+  5. refs in the text files akm indexes in writable bundles that still use
      the spelling from before refs became bundle paths (`knowledge/WORK/x`,
      now `WORK/x`), in frontmatter and body: `[bundle//]<folder>/<path>`,
      `<type>:<path>` and `wiki:<path>`, rewritten under one backup directory
      per run. An old spelling that is now another file's ref is not
      rewritten, only listed
-  5. bundle policy in writable bundles: an asset's `lint_skip:` frontmatter
+  6. bundle policy in writable bundles: an asset's `lint_skip:` frontmatter
      is stripped (lint skips live in the bundle's `lint.skip` config); a
      `.gitignore` with the old marker for tracking env and secrets adds
      `"tracked-secrets": ["**"]` to that bundle's `lint.skip`. `.gitignore` is
      never modified. The config is written first, the files under one backup
      directory per run
-  6. the OS scheduler: the one entry that runs `akm task dispatch` replaces
+  7. the OS scheduler: the one entry that runs `akm task dispatch` replaces
      akm 0.9's per-task rows in one write (what `akm task sync` does). It runs
      `crontab`, `launchctl` or `schtasks` only when it has something to write;
      an installation that moves a location (a config file other than the default
@@ -60,5 +75,9 @@ add where the file is made.
 in its entrypoint (a current installation is a no-op).
 
 Commands:
-  status               Inspect every pending migration without changing anything.
-  apply                Back up and apply every pending migration.
+  status [<file>...]   Inspect every pending migration without changing anything,
+                       and report what apply would make of the named task and
+                       workflow files.
+  apply [<file>...]    Back up and apply every pending migration, and convert the
+                       named task files to task source v5 and the named workflow
+                       files to new v5 task files.

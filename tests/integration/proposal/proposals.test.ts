@@ -43,6 +43,7 @@ import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-l
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { pkgVersion } from "../../../src/version";
 import { makeConfig } from "../../_helpers/factories";
+import { spawnLiveHolder } from "../../_helpers/live-holder";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // ── Test setup ──────────────────────────────────────────────────────────────
@@ -840,11 +841,23 @@ describe("F-4: source allow-list validation and sourceRun advisory (#385)", () =
   test("createProposal accepts unknown source strings (backward-compatible)", () => {
     const stash = makeStashDir();
     // Unknown source should NOT throw — it emits a warning but creates the proposal.
-    createProposal(stash, {
-      ref: "lessons/f4-unknown-source",
-      source: "custom-extension",
-      payload: { content: VALID_LESSON },
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
     });
+    let created: ReturnType<typeof createProposal>;
+    try {
+      created = createProposal(stash, {
+        ref: "lessons/f4-unknown-source",
+        source: "custom-extension",
+        payload: { content: VALID_LESSON },
+      });
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    expect(created.source).toBe("custom-extension");
+    expect(getProposal(stash, created.id).source).toBe("custom-extension");
+    expect(warnings.filter((line) => line.includes("custom-extension"))).toHaveLength(1);
   });
 });
 
@@ -2145,11 +2158,15 @@ describe("akmProposalAccept succeeds while a live index rebuild holds the lock (
     // while an unrelated `akm index` run is in progress.
     const lockPath = getIndexRebuildLockPath();
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
-
-    const accepted = await akmProposalAccept({ stashDir: stash, id: created.id, config });
-
-    fs.rmSync(lockPath, { force: true });
+    const holder = spawnLiveHolder();
+    let accepted: Awaited<ReturnType<typeof akmProposalAccept>>;
+    try {
+      fs.writeFileSync(lockPath, holder.payload(), "utf8");
+      accepted = await akmProposalAccept({ stashDir: stash, id: created.id, config });
+    } finally {
+      fs.rmSync(lockPath, { force: true });
+      await holder.stop();
+    }
     expect(accepted.proposal.status).toBe("accepted");
     expect(getProposal(stash, created.id).status).toBe("accepted");
   });

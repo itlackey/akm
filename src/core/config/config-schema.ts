@@ -16,9 +16,7 @@
  *
  * Two responsibilities:
  * 1. **Validate + transform** the raw JSON-parsed config object into the runtime
- *    `AkmConfig` shape consumed by the rest of the codebase. Replaces the
- *    ~1.4k LOC of legacy per-shape parsers (parseLlmConfig, parseEmbeddingConfig,
- *    parseIndexConfig, etc.) — see `loadConfig` in `./config.ts`.
+ *    `AkmConfig` shape consumed by the rest of the codebase. See `loadConfig` in `./config.ts`.
  * 2. **Reject hard-errored values** (the retired `stashDir`, `sources` and
  *    `installed` source keys) at load time via `superRefine`.
  *

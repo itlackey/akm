@@ -16,6 +16,8 @@ current minute, and starts every task that is due as a separate, detached
 `akm task run`, then exits. Nothing about a task is copied into the OS:
 
 - editing a task's `schedule:` takes effect on the next minute;
+- a version 5 schedule entry's `env`, `secret` and `timeout` are passed as `--env`,
+  `--secret` and `--timeout` on the run dispatch starts for that entry;
 - `akm task enable`, `disable` and `add` edit your config and task files, then sync the entry:
   the first enabled task installs it and the last disabled one removes it;
 - a task that is still running from an earlier minute is not started again
@@ -81,7 +83,8 @@ changed. Run interactive `akm setup` to review, prepare, and activate tasks.
 
 ## Task definitions vs. scheduler state
 
-Task definitions live under `<bundle>/tasks/` as task source v4 `.yml` sources;
+Task definitions live under `<bundle>/tasks/` as task source v4 `.yml` sources
+(or the Experimental task source v5, which 0.11 makes the only format);
 the [task source reference](../reference/tasks.md) defines their executable and
 scheduling grammar. A definition cannot enable itself: the refs this host runs
 live separately in `config.json` under `scheduler.enabled`, a list of

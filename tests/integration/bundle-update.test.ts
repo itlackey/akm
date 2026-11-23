@@ -278,6 +278,7 @@ describe("akm bundle update: embedding durability (#954)", () => {
       releaseSecondBatch.resolve();
       const result = await updatePromise;
 
+      if ("skipped" in result.index) throw new Error("index build was skipped");
       expect(result.index.semanticStatus).toBeDefined();
       expect(result.index.semanticStatus).toBe("ready-js");
       const finalReader = openReadonlyExistingDatabase(getDbPath());
@@ -316,6 +317,7 @@ describe("akm bundle update: embedding durability (#954)", () => {
     try {
       const result = await akmUpdate({ target: id, stashDir: storage.stashDir });
 
+      if ("skipped" in result.index) throw new Error("index build was skipped");
       expect(result.processed).toHaveLength(1);
       expect(result.index.semanticStatus).toBe("blocked");
     } finally {

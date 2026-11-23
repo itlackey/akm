@@ -102,7 +102,7 @@ export function resolveImproveScope(scope: string | undefined, isIndexedRef?: (r
     parsePlacementRef(trimmed);
     return { mode: "ref", value: trimmed };
   } catch (err) {
-    // A bare word is a `--scope <type>` filter (an unknown type matches
+    // A bare word is a type scope (an unknown type matches
     // nothing), unless it is no type and an indexed asset has it as its ref (a
     // file at the bundle root): then it names that asset, the way a missed ref
     // is retried. A ref-shaped value that fails to parse is a real error.
@@ -111,11 +111,11 @@ export function resolveImproveScope(scope: string | undefined, isIndexedRef?: (r
       return { mode: asRef ? "ref" : "type", value: trimmed };
     }
     const message = err instanceof Error ? err.message : String(err);
-    throw new UsageError(`Invalid --scope "${trimmed}": ${message}`, "INVALID_FLAG_VALUE");
+    throw new UsageError(`Invalid scope "${trimmed}": ${message}`, "INVALID_FLAG_VALUE");
   }
 }
 
-/** Whether `word` is an indexed asset's ref and no indexed asset's type: a `--scope` naming a file at the bundle root. */
+/** Whether `word` is an indexed asset's ref and no indexed asset's type: a scope naming a file at the bundle root. */
 export function namesIndexedRootAsset(word: string): boolean {
   let db: Database | undefined;
   try {
@@ -339,7 +339,7 @@ function warnUnmatchedTypeScope(value: string, indexed: ReturnType<typeof getAll
   warn(`Scope "${value}" matches no asset in the stash.${suggestion ? ` Did you mean \`${suggestion}\`?` : ""}`);
 }
 
-/** The parent memory a `--scope <memory ref>` cleanup is restricted to. */
+/** The parent memory a memory-ref scope cleanup is restricted to. */
 export function memoryCleanupParentRef(scope: Scope, stashDir?: string): string | undefined {
   if (scope.mode !== "ref" || !scope.value) return undefined;
   const parsed = scopePlacement(scope.value);
@@ -381,7 +381,7 @@ export function shouldAnalyzeMemoryCleanup(
   return scope.value ? scopePlacement(scope.value)?.type === "memory" : false;
 }
 
-/** The placement a `--scope` ref spells; undefined for a bundle-root ref, which no type folder heads. */
+/** The placement a scope ref spells; undefined for a bundle-root ref, which no type folder heads. */
 function scopePlacement(value: string): AssetRef | undefined {
   try {
     return parsePlacementRef(value);

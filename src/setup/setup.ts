@@ -42,7 +42,7 @@ import { deepMergeConfig, isPlainObject } from "../core/config/deep-merge";
 import { ConfigError, UsageError } from "../core/errors";
 import { getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
 import { warn, warnOnce } from "../core/warn";
-import { buildIndex } from "../indexer/index-build";
+import { buildIndex, isSkippedIndexBuild } from "../indexer/index-build";
 import { readLockfile } from "../integrations/lockfile";
 import { checkEmbeddingAvailability } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
@@ -68,8 +68,7 @@ import { describeRuns, type SetupRuns } from "./summary";
 /**
  * Warn when an explicit `--dir /tmp/...` is persisted as the default bundle
  * path — `akm setup --dir $(mktemp -d)` resolves under this family on every
- * macOS machine (`/var/folders/...`), and used to be refused outright with
- * no discoverable remedy. The OS may reap the directory at any time, so the
+ * macOS machine (`/var/folders/...`). The OS may reap the directory at any time, so the
  * operator is told up front; `isolateTransientSetup` below keeps the config
  * and cache writes under `$stashDir/.akm/` instead of the user's host
  * `~/.config/akm`, which is what actually protects the host config (the
@@ -124,6 +123,14 @@ export interface SetupSummary {
    * `blocked: <reason>` when they do not, `skipped` for an offline run (`--no-probe`).
    */
   semanticAssets?: string;
+  /** Bundle entries the saved config no longer holds. Their directories are untouched; `akm bundle add` registers one again. */
+  removedBundles: RemovedBundle[];
+}
+
+interface RemovedBundle {
+  id: string;
+  /** The bundle's path, or its url or package for a bundle that has none; null when the entry names none. */
+  path: string | null;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -253,6 +260,13 @@ async function saveSetupConfig<T>(
     options,
   );
   return { config: result.config, precommit: result.precommit };
+}
+
+/** The bundle entries `before` held that `saved` no longer does: what a setup save removed. */
+function removedBundles(before: AkmConfig, saved: AkmConfig): RemovedBundle[] {
+  return Object.entries(before.bundles ?? {})
+    .filter(([id]) => !(id in (saved.bundles ?? {})))
+    .map(([id, entry]) => ({ id, path: entry.path ?? entry.git ?? entry.website?.url ?? entry.npm ?? null }));
 }
 
 /** Registry-managed bundles are not editable through setup's source picker. */
@@ -396,7 +410,7 @@ async function prepareLocalEmbeddings(config: AkmConfig, noProbe: boolean | unde
 async function indexConfiguredLibrary(stashDir: string): Promise<void> {
   if (!fs.existsSync(stashDir)) return;
   try {
-    await buildIndex({ stashDir, persistDetectedAdapters: false }, "wait");
+    await buildIndex({ stashDir, persistDetectedAdapters: false });
   } catch (err) {
     warn(`[akm setup] The search index was not built (${toErrorMessage(err)}); run \`akm index\` to build it.`);
   }
@@ -630,6 +644,7 @@ export async function runSetupWizard(opts?: {
   noProbe?: boolean;
 }): Promise<void> {
   assertSetupConfigPreflight();
+  await p.loadPrompts();
   p.intro("akm setup");
 
   const { current, configPath, resolvedStashDir } = resolveIsolatedSetupConfig(opts);
@@ -707,6 +722,13 @@ export async function runSetupWizard(opts?: {
     { persistTopLevelKeys: ["semanticSearchMode"] },
   );
 
+  const dropped = removedBundles(current, savedConfig);
+  if (dropped.length > 0) {
+    p.log.warn(
+      `Removed from the configuration (their directories are untouched): ${dropped.map((b) => `${b.id} (${b.path ?? "unknown"})`).join(", ")}`,
+    );
+  }
+
   // After config persistence, the task step reviews the plan and asks one
   // explicit confirmation before changing task files or scheduler state.
   // Non-interactive setup paths never reach this interactive-only step.
@@ -735,15 +757,19 @@ export async function runSetupWizard(opts?: {
   const spin = p.spinner();
   spin.start("Building search index...");
   try {
-    const indexResult = await buildIndex({ stashDir }, "wait");
-    spin.stop(`Indexed ${indexResult.totalEntries} assets.`);
-    if (savedConfig.semanticSearchMode === "auto") {
-      if (indexResult.verification.ok) {
-        p.log.success(indexResult.verification.message);
-      } else {
-        p.log.warn(indexResult.verification.message);
-        if (indexResult.verification.guidance) {
-          p.log.info(indexResult.verification.guidance);
+    const indexResult = await buildIndex({ stashDir });
+    if (isSkippedIndexBuild(indexResult)) {
+      spin.stop("Another index build is running; run `akm index` afterwards to index this library.");
+    } else {
+      spin.stop(`Indexed ${indexResult.totalEntries} assets.`);
+      if (savedConfig.semanticSearchMode === "auto") {
+        if (indexResult.verification.ok) {
+          p.log.success(indexResult.verification.message);
+        } else {
+          p.log.warn(indexResult.verification.message);
+          if (indexResult.verification.guidance) {
+            p.log.info(indexResult.verification.guidance);
+          }
         }
       }
     }
@@ -798,7 +824,7 @@ export async function runSetupWithDefaults(opts: {
   noProbe?: boolean;
 }): Promise<SetupSummary> {
   const explicitStashDir = opts.dir != null ? path.resolve(opts.dir) : undefined;
-  // R-066 #4: a second `assertSetupSandbox(stashDir, explicitStashDir != null)`
+  // a second `assertSetupSandbox(stashDir, explicitStashDir != null)`
   // + `isolateTransientSetup(stashDir, explicitStashDir != null)` pair used
   // to follow `stashDir`'s resolution below. It was strictly redundant: unlike
   // `runSetupFromConfig` (which can also derive an explicit stash dir from an
@@ -840,6 +866,7 @@ export async function runSetupWithDefaults(opts: {
     written: true,
     fields: Object.keys(finalConfig).filter((k) => finalConfig[k as keyof AkmConfig] !== undefined),
     runs: describeRuns(finalConfig),
+    removedBundles: removedBundles(current, savedConfig),
     ...(semanticAssets ? { semanticAssets } : {}),
   };
 }
@@ -886,7 +913,7 @@ export async function runSetupFromConfig(opts: {
   }
   // Derived from AkmConfigShape (via `listTopLevelConfigKeys`) rather than a
   // hand-copied set: a hand-copied allowlist silently fell out of sync as the
-  // schema grew (R-017 — `index`, `search`, `feedback`, `archiveRetentionDays`,
+  // schema grew, (`index`, `search`, `feedback`, `archiveRetentionDays`,
   // `workflow`, and `experimental` were all valid schema keys that this list
   // forgot, each dropped with only a warning while the command exited 0).
   // Every key the schema recognizes is a legitimate thing to set via
@@ -906,8 +933,8 @@ export async function runSetupFromConfig(opts: {
 
   // Phase 3: Merge with existing config
   //
-  // R-066 #4 (verified, NOT reduced — unlike the `runSetupWithDefaults` pair
-  // above, this one is NOT strictly redundant): the `assertSetupSandbox` +
+  // Unlike the `runSetupWithDefaults` pair above, this one is NOT strictly
+  // redundant: the `assertSetupSandbox` +
   // `isolateTransientSetup` pair below looks like a duplicate of the pair
   // here, but each guards a case the other cannot:
   //   - THIS early pair must run before `loadUserConfig()` so an explicit
@@ -985,6 +1012,7 @@ export async function runSetupFromConfig(opts: {
     written: true,
     fields: Object.keys(incoming).filter((k) => (incoming as Record<string, unknown>)[k] !== undefined),
     runs: describeRuns(finalizedMerged),
+    removedBundles: removedBundles(current, savedConfig),
     ...(semanticAssets ? { semanticAssets } : {}),
   };
 }

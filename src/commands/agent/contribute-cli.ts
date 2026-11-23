@@ -4,9 +4,7 @@
 
 /**
  * Contribution command cluster (`akm agent`, `akm lint`) — the asset
- * authoring / validation verbs. Extracted verbatim from src/cli.ts (WS6) so
- * the God Module shrinks; the `main.subCommands.{agent,lint}` keys and every
- * command's args / output shape stay byte-identical.
+ * authoring / validation verbs.
  *
  * These handlers branch on the result and set a non-zero `process.exitCode`
  * conditionally (exit 1 on a failed dispatch, or on `--fail-on-flagged` lint
@@ -14,21 +12,19 @@
  * the inline `runWithJsonErrors` form rather than migrating to
  * `defineJsonCommand` (which is reserved for plain runWithJsonErrors+output
  * handlers). `process.exitCode` (not `process.exit()`) so the process still
- * exits via natural event-loop drain rather than skipping pending cleanup —
- * see R-067 / F4.
+ * exits via natural event-loop drain rather than skipping pending cleanup.
  *
- * NOTE: the asset-authoring `propose` verb (formerly here) moved to
- * `akm proposal new` (0.9 CLI overhaul, S8) — see
- * src/commands/proposal/propose-cli.ts.
+ * Asset authoring is `akm proposal new` (src/commands/proposal/propose-cli.ts).
  */
 
 import fs from "node:fs";
 import { defineCommand } from "citty";
-import { getStringArg, parseTimeoutFlag } from "../../cli/parse-args";
+import { getExactStringArg, getStringArg, parseNonNegativeIntFlag, parseTimeoutFlag } from "../../cli/parse-args";
 import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { EXIT_CODES, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { retryDispatch } from "../../execution/retry";
 import { getHyphenatedBoolean } from "../../output/context";
 import { akmLint } from "../lint/index";
 import { akmAgentDispatch } from "./agent-dispatch";
@@ -64,6 +60,7 @@ export const agentCommand = defineCommand({
       description: `${SELECTION_ARGS.model.description}. Overrides the model specified in the agent asset.`,
     },
     timeout: { type: "string", description: "Override the agent CLI timeout: a duration (30s, 2m) or milliseconds" },
+    "max-retries": { type: "string", hidden: true, description: "Run again up to N times when the agent fails" },
     cwd: {
       type: "string",
       description: "Working directory for the spawned agent (defaults to the current directory)",
@@ -79,7 +76,7 @@ export const agentCommand = defineCommand({
       // Preserve the selector; the common execution-source adapter resolves it.
       const agentRef = getStringArg(args, "agent-ref");
 
-      const promptText = getStringArg(args, "prompt");
+      const promptText = getExactStringArg(args, "prompt");
       const promptStdin = args["prompt-stdin"] === true;
       if (promptStdin && promptText !== undefined) {
         throw new UsageError("--prompt-stdin cannot be combined with --prompt.", "INVALID_FLAG_VALUE");
@@ -92,26 +89,27 @@ export const agentCommand = defineCommand({
 
       const stdinPrompt = promptStdin ? readPromptStdin() : undefined;
 
-      const result = await akmAgentDispatch({
-        prompt: stdinPrompt ?? promptText,
-        ...(agentRef === undefined ? {} : { agentRef }),
-        agentConfig,
-        ...(Object.keys(selection).length === 0 ? {} : { selection }),
-        ...(cwd ? { cwd } : {}),
-        ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
-      });
+      const result = await retryDispatch(
+        parseNonNegativeIntFlag(getExactStringArg(args, "max-retries"), "--max-retries") ?? 0,
+        () =>
+          akmAgentDispatch({
+            prompt: stdinPrompt ?? promptText,
+            ...(agentRef === undefined ? {} : { agentRef }),
+            agentConfig,
+            ...(Object.keys(selection).length === 0 ? {} : { selection }),
+            ...(cwd ? { cwd } : {}),
+            ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+          }),
+      );
 
       output("agent-result", result);
 
       if (!result.ok) {
-        // R-067-style fix: this used to call `process.exit(EXIT_GENERAL)`
-        // directly, which terminates synchronously and skips any pending
-        // `finally`/cleanup up the call stack (including the dispatched
-        // agent process' own bookkeeping). `output()` has already run above,
-        // so there is nothing left in this handler that depends on
-        // terminating immediately — `process.exitCode` + `return` (this is
-        // the last statement anyway) lets the process exit naturally once
-        // the event loop drains.
+        // Set `process.exitCode` and return rather than calling
+        // `process.exit(EXIT_GENERAL)`, which would skip pending
+        // `finally`/cleanup up the call stack (including the dispatched agent
+        // process' own bookkeeping). `output()` has already run above, so the
+        // process can exit naturally once the event loop drains.
         process.exitCode = EXIT_GENERAL;
         return;
       }
@@ -126,7 +124,7 @@ export const lintCommand = defineCommand({
       "Scan bundle .md files for structural issues (unquoted colons, missing updated field, orphaned stubs, placeholder stubs, missing name/type, stale paths (paths the agent can find and correct; `--rule stale-path` lists them), tracked secrets, broken refs in body text and in refs/xrefs/supersededBy/contradictedBy frontmatter). Takes one file (`akm lint <file>`) or the whole bundle. Use --fix to auto-fix Tier 1 issues. Exits 0 on success regardless of findings; use --fail-on-flagged for CI fail-on-finding behavior.",
   },
   args: {
-    // R-051: `lint` is a raw `defineCommand` (not `defineJsonCommand`), so it
+    // `lint` is a raw `defineCommand` (not `defineJsonCommand`), so it
     // does not get `GLOBAL_OUTPUT_ARGS` for free. `--format`/`--detail`/
     // `--output` already parsed correctly here (this command has no
     // positional for a stray value to fall into), so this is purely a
@@ -161,7 +159,7 @@ export const lintCommand = defineCommand({
     },
     type: {
       type: "string",
-      description: "Only lint assets of this type (akm bundles only; e.g. workflows, tasks); with a file, its type",
+      description: "Only lint assets of this type (akm bundles only; e.g. skills, tasks); with a file, its type",
       default: undefined,
     },
     rule: {

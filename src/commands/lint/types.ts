@@ -31,7 +31,7 @@ export const LINT_RULES = [
    * already landed on disk (issue #761).
    */
   "lint-failed",
-  // ── non-akm adapter `validate()` codes (akm 0.9.0 lint/adapter-dispatch wiring) ──
+  // ── non-akm adapter `validate()` codes (akm) ──
   //
   // These four are `llm-wiki`'s native structural checks
   // (`core/adapter/adapters/llm-wiki-adapter.ts`), reachable now that `akm lint`

@@ -450,7 +450,7 @@ export function akmProposalDiff(options: ProposalDiffOptions): ProposalDiffResul
   };
 }
 
-// ── revert (Phase 6C / Advantage D6c) ────────────────────────────────────────
+// ── revert ────────────────────────────────────────
 
 export interface ProposalRevertOptions {
   stashDir?: string;
@@ -477,7 +477,7 @@ export interface ProposalRevertResult {
 
 /**
  * Restore an accepted proposal's prior content from the backup captured at
- * promotion time (Advantage D6c / Phase 6C).
+ * promotion time.
  *
  * Failure modes (all surface as typed errors so the CLI can map exit codes):
  *   - Proposal id does not resolve → `NotFoundError("FILE_NOT_FOUND")`
@@ -544,7 +544,7 @@ export interface BulkAdjudicateResult {
     ProposalAcceptResult | ProposalRejectResult | { id: string; ref: string; source: string; dryRun: true }
   >;
   /**
-   * S4: `action: "accept"` only — pending proposals from this generator that
+   * `action: "accept"` only — pending proposals from this generator that
    * matched every other filter (`--max-diff-lines`, `--older-than`) but were
    * skipped because they carry `retirement.continuityRisk`, never bulk
    * accepted (only acceptable by id). Always 0 for `action: "reject"`.
@@ -552,7 +552,7 @@ export interface BulkAdjudicateResult {
   skippedForContinuityRisk: number;
 }
 
-/** The retired file's current line count for `--max-diff-lines` (S6); unresolvable is never size-filtered here — the real accept/reject attempt fails cleanly on a genuinely stale target. */
+/** The retired file's current line count for `--max-diff-lines`; unresolvable is never size-filtered here — the real accept/reject attempt fails cleanly on a genuinely stale target. */
 function retiredTargetLineCount(
   stashDir: string,
   config: AkmConfig,
@@ -569,21 +569,19 @@ function retiredTargetLineCount(
 
 /**
  * Bulk accept/reject every pending proposal from one generator, applying the
- * shared `--max-diff-lines` / `--older-than` filters. Consolidates the two
- * near-identical loops that lived in `proposal-cli.ts` (Chunk 6 WI-6.6);
- * behavior is verbatim — same filter order, same per-item envelopes, same
- * dry-run record shape. The destructive-confirmation prompt stays CLI-side.
+ * shared `--max-diff-lines` / `--older-than` filters. Accept and reject share one
+ * loop: the same filter order, per-item envelopes and dry-run record shape. The destructive-confirmation prompt stays CLI-side.
  */
 export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): Promise<BulkAdjudicateResult> {
   const config = options.config ?? loadConfig();
   const { stashDir, target: queueTarget } = resolveProposalQueue(options.stashDir, options.queue, config);
   // Every filter EXCEPT the continuityRisk exclusion below — matched against
-  // separately so its own count (S4) can be reported apart from an ordinary
+  // Matched separately so its own count can be reported apart from an ordinary
   // --max-diff-lines/--older-than miss.
   const matched = listProposals(stashDir, { status: "pending" }).filter((p) => {
     if (p.source !== options.generator) return false;
     if (options.maxDiffLines !== undefined) {
-      // S6: a retire proposal's own payload is empty (it deletes its
+      // A retire proposal's own payload is empty (it deletes its
       // target) — proposalContent() would always read as 1 line, so
       // --max-diff-lines could never filter one out. Count the retired
       // file's own current line count instead.
@@ -598,7 +596,7 @@ export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): P
     }
     return true;
   });
-  // Item 1 (continuity check, alpha.9 plan §5.4, rule R3): a retire proposal
+  // A retire proposal
   // the check flagged is never bulk-accepted, by generator or any other
   // sweep — only a person accepting it by id can. Bulk reject is unaffected:
   // declining a risky proposal is never the unsafe direction.

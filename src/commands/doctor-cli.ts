@@ -9,6 +9,7 @@
  */
 
 import { defineGroupCommand, defineJsonCommand } from "../cli/shared";
+import type { FlagScanCommand } from "../cli/unknown-flags";
 import { runTaskExplain, runTaskSync, taskSyncArgs } from "./tasks/tasks-cli";
 import { runWorkflowPlan } from "./workflow-cli";
 
@@ -50,6 +51,10 @@ export const doctorExplainCommand = defineJsonCommand({
   },
   async run({ args, rawArgs }) {
     if (isWorkflowRef(args.ref)) await runWorkflowPlan(args.ref);
-    else await runTaskExplain(args, rawArgs);
+    else
+      await runTaskExplain(args, rawArgs, {
+        path: ["doctor", "explain"],
+        schema: doctorExplainCommand as FlagScanCommand,
+      });
   },
 });

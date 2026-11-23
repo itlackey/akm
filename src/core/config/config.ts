@@ -39,7 +39,7 @@ import { dropUnusableEntries, findUnusableEntries, resolveBundlePaths, type Unus
 export { stripJsonComments } from "./config-io";
 
 import { getConfigPath, resetConfiguredPathsCache } from "../paths";
-import { warn, warnOnce } from "../warn";
+import { warn, warnOnce, withWarningsSuppressed } from "../warn";
 
 // Re-export type surface from config-types.ts so call sites don't need to
 // move (the runtime values live here; the types are documentation-only).
@@ -349,8 +349,13 @@ export function unknownConfigKeyPaths(
 const RETIRED_ENGINE_KEY = /^(engines|defaults|improve(\.processes\.[^.]+|\.qualityGate)?\.engine)$/;
 
 function warnUnknownConfigKeys(raw: Record<string, unknown>, sourcePath?: string): void {
-  for (const keyPath of unknownConfigKeyPaths(raw)) {
+  const unknown = unknownConfigKeyPaths(raw);
+  if (unknown.length === 0) return;
+  // A key the schema refuses with its own message (`stashDir`, `sources`, `installed`) is reported by that message alone.
+  const refused = new Set(AkmConfigSchema.safeParse(raw).error?.issues.map((issue) => issue.path.join(".")) ?? []);
+  for (const keyPath of unknown) {
     const dotted = keyPath.join(".");
+    if (refused.has(dotted)) continue;
     const at = sourcePath ? ` at ${sourcePath}` : "";
     if (RETIRED_ENGINE_KEY.test(dotted)) {
       warnOnce(
@@ -361,7 +366,7 @@ function warnUnknownConfigKeys(raw: Record<string, unknown>, sourcePath?: string
     }
     warnOnce(
       `config:unknown-key:${sourcePath ?? "inline"}:${dotted}`,
-      `Unknown config key ${JSON.stringify(dotted)}${at} has no defined akm behavior and is ignored. Check the spelling; a key retired by this release or added by a newer one is dropped by \`akm migrate apply\`.`,
+      `Unknown config key ${JSON.stringify(dotted)}${at} has no defined akm behavior and is ignored. Check the spelling, or remove it from ${sourcePath ?? "the config"}.`,
     );
   }
 }
@@ -483,8 +488,19 @@ export function defaultHarness(config: AkmConfig): { name: string; harness: Harn
   return found ? { name: found.name, harness: found.entry } : undefined;
 }
 
-export function loadConfig(): AkmConfig {
-  return loadUserConfig();
+/**
+ * The effective config. `warn: false` is for a read nobody asked for (a background check): it emits no warning, takes
+ * no part in the once-per-process warning bookkeeping and leaves the config cache as it found it, so the command's
+ * own load still warns.
+ */
+export function loadConfig(options?: { warn?: boolean }): AkmConfig {
+  if (options?.warn !== false) return loadUserConfig();
+  const cached = cachedConfig;
+  try {
+    return withWarningsSuppressed(loadUserConfig);
+  } finally {
+    cachedConfig = cached;
+  }
 }
 
 export function saveConfig(config: AkmConfig): void {
@@ -797,8 +813,8 @@ export function resolveSecret(value: string | undefined, resolveFromStore?: Secr
       const name = (braced ?? bare) as string;
       const resolved = process.env[name];
       if (!resolved) {
-        // #953: an unset/empty $VAR used to substitute silently, so a gateway
-        // that enforces auth on inference (e.g. Bifrost) failed every call with
+        // An unset/empty $VAR would otherwise substitute silently, and a gateway
+        // that enforces auth on inference (e.g. Bifrost) would fail every call with
         // an opaque 401 instead of a diagnosable warning naming the variable.
         warnOnce(
           `config:empty-env-var:${name}`,

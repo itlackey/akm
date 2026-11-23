@@ -9,7 +9,7 @@
  */
 
 import path from "node:path";
-import { DURATION_UNITS, parseDuration } from "../../core/time";
+import { timeoutMilliseconds } from "../../cli/parse-args";
 import type { TaskSourceV4Step } from "../source/task-source-v4";
 import type { PreparableTaskDocument } from "../task-source";
 import { defaultTaskShell, environmentSnapshot, qualifyOwnedRef } from "./prepare-support";
@@ -19,7 +19,7 @@ type StepsDocument = PreparableTaskDocument & { target: Extract<PreparableTaskDo
 
 function timeoutMs(value: string | number | null | undefined): number | null | undefined {
   if (value === undefined || value === null || typeof value === "number") return value;
-  return parseDuration(value, DURATION_UNITS) ?? undefined;
+  return timeoutMilliseconds(value) ?? undefined;
 }
 
 /** The synthesized one-step command document: task-level keys are defaults, the step's own keys win. */

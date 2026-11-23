@@ -427,20 +427,21 @@ describe("materializeInputFlags — exact-name matching and coercion", () => {
     });
   });
 
-  test('a native-boolean flag on a string-declared input stringifies (String(true) === "true")', () => {
+  test('a flag given no value on a string-declared input throws invalidValue: it is not the text "true"', () => {
+    const probe = probeDiagnostics();
     const contract: InputContract = { name: { schema: { type: "string" }, required: false } };
-    expect(materializeInputFlags(contract, [{ name: "name", value: true }], poisonedDiagnostics())).toEqual({
-      name: "true",
-    });
+    const err = thrown(() => materializeInputFlags(contract, [{ name: "name", value: true }], probe.diagnostics));
+    expect(err).toBe(probe.errors.invalidValue);
+    expect(probe.calls.invalidValue).toEqual([{ name: "name", detail: "requires a value" }]);
   });
 
-  test("a native-boolean flag on a type it can satisfy neither as boolean nor string throws invalidValue", () => {
+  test("a flag given no value on an input that cannot be boolean throws invalidValue", () => {
     const probe = probeDiagnostics();
     const contract: InputContract = { count: { schema: { type: "integer" }, required: false } };
     const err = thrown(() => materializeInputFlags(contract, [{ name: "count", value: true }], probe.diagnostics));
     expect(err).toBe(probe.errors.invalidValue);
     expect((err as UsageError).code).toBe("INPUT_BINDING_INVALID");
-    expect(probe.calls.invalidValue).toEqual([{ name: "count", detail: "requires a value of type integer" }]);
+    expect(probe.calls.invalidValue).toEqual([{ name: "count", detail: "requires a value" }]);
   });
 
   test('numeric-looking string preserved exactly: --version 001 on type:"string" stays the string "001"', () => {

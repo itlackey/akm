@@ -715,7 +715,7 @@ function formatUpgradeHead(r: Record<string, unknown>): string | null {
     return `akm v${r.currentVersion} → v${r.latestVersion} requires --allow-downgrade (run 'akm upgrade --channel ${r.targetChannel} --allow-downgrade' to install)`;
   }
   if (r.updateAvailable === true) {
-    return `akm v${r.currentVersion} → v${r.latestVersion} available (run 'akm upgrade${r.targetChannel ? ` --channel ${r.targetChannel}` : r.channel === "next" ? " --channel next" : ""}' to install)`;
+    return `akm v${r.currentVersion} → v${r.latestVersion} available (run 'akm upgrade${r.targetChannel ? ` --channel ${r.targetChannel}` : r.channel === "next" && r.currentChannel !== "next" ? " --channel next" : ""}' to install)`;
   }
   if (r.updateAvailable === false && r.latestVersion) {
     return `akm v${r.currentVersion} is already the latest version`;

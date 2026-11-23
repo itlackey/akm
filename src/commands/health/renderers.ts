@@ -23,19 +23,41 @@
  * emitting an empty table.
  */
 
+import { ENVELOPE_META_KEYS, markdownSection, nullAsUnknown } from "../../output/generic-render";
 import { registerMdRenderer } from "../../output/render-registry";
-import { renderRunsDetailMd, renderWindowCompareMd } from "./md-report";
+import { renderChecksMd, renderPendingProposalsMd, renderRunsDetailMd, renderWindowCompareMd } from "./md-report";
 import type { AkmHealthResult } from "./types-result";
 
 function isHealthResult(value: unknown): value is AkmHealthResult {
   return value !== null && typeof value === "object" && "status" in value;
 }
 
+/** The fields rendered as their own sections below; every other field is rendered as the generic renderer does. */
+const BESPOKE_FIELDS = new Set(["status", "hardChecks", "advisories", "windows", "deltas", "runs"]);
+
+/** Every part the result holds: the status first, the bespoke sections, then each remaining field as a generic section. */
 registerMdRenderer("health", (result) => {
   if (!isHealthResult(result)) return null;
+  const sections: string[] = [
+    ...markdownSection("status", result.status),
+    "## Checks",
+    "",
+    renderChecksMd([...result.hardChecks, ...result.advisories]),
+    "",
+  ];
   if (result.windows && result.windows.length > 0) {
-    return renderWindowCompareMd(result.windows, result.deltas);
+    sections.push("## Window comparison", "", renderWindowCompareMd(result.windows, result.deltas), "");
   }
-  if (result.runs) return renderRunsDetailMd(result.runs);
-  return null;
+  if (result.runs) sections.push("## Runs", "", renderRunsDetailMd(result.runs), "");
+  if (result.report)
+    sections.push("## Pending proposals", "", renderPendingProposalsMd(result.report.pendingProposals), "");
+  const { pendingProposals: _queue, ...otherReport } = result.report ?? { pendingProposals: [] };
+  for (const [key, value] of Object.entries(result)) {
+    if (BESPOKE_FIELDS.has(key) || ENVELOPE_META_KEYS.has(key)) continue;
+    sections.push(...markdownSection(key, nullAsUnknown(key === "report" ? otherReport : value)));
+  }
+  return `${sections
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd()}\n`;
 });

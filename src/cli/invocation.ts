@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Single-parse argv normalization (plan §10.7, chunk-9 WI-9.9).
+ * Single-parse argv normalization.
  *
  * Before this module, ~46 `process.argv` read sites were scattered across
  * `src/**` (32 outside `src/cli.ts`), each re-scanning the raw argv array for
@@ -14,38 +14,34 @@
  * one parse instead of re-scanning the raw array.
  *
  * Deliberately import-free: this module must never join an import cycle
- * (cycle ratchet, plan §10.7 / chunk-9 D.3), so it depends on nothing but
+ * (the import-cycle check), so it depends on nothing but
  * global `process` — no `output/context`, no `core/errors`. The flag-parsing
  * primitives below are intentionally small, self-contained re-implementations
  * of the same algorithms `output/context.ts`'s `parseFlagValue`/
  * `hasBooleanFlag` and (the now-retired) `cli/shared.ts` `parseAllFlagValues`
  * used, kept byte-identical so every converted call site is behavior-
- * preserving — with ONE deliberate exception (R-033a): `getAllFlagValuesFrom`
+ * preserving — with ONE deliberate exception: `getAllFlagValuesFrom`
  * now stops at a literal `--` separator instead of scanning past it, fixing a
  * bug where a repeatable flag's value placed after `--` (meant to end flag
  * parsing) was still read as a real flag occurrence. See that function's
  * docstring.
  *
  * Singleton + fallback semantics (the design decision this module encodes):
- *  - `setParsedInvocation(argv)` is called exactly once, by `src/cli.ts`, in
- *    its startup block before any command handler can run. It
- *    snapshots that argv into an immutable {@link ParsedInvocation} that
- *    every subsequent `getParsedInvocation()` call returns unchanged for the
- *    rest of the process lifetime — "normalize argv exactly once at entry".
+ *  - `setParsedInvocation(argv)` is called by `src/cli.ts` in its startup
+ *    block before any command handler can run. It snapshots that argv into an
+ *    immutable {@link ParsedInvocation} that every subsequent
+ *    `getParsedInvocation()` call returns unchanged — "normalize argv at
+ *    entry". It also says which tokens are akm's (`ownArgs`) and which belong
+ *    to the child or script (`passthroughArgs()`): the first `--`, or, for
+ *    `akm run <script>`, the token after the ref.
  *  - `getParsedInvocation()` is the ONLY way leaf command modules read
- *    invocation state. When the singleton was never set — the common case
- *    for unit tests that call command logic directly, and for
- *    `tests/_helpers/cli.ts`'s in-process CLI harness, which drives citty's
- *    `runCommand` WITHOUT running `src/cli.ts`'s `import.meta.main` startup
- *    block (see that file's docstring) — it falls back to parsing the
- *    CURRENT `process.argv` fresh, on every call, uncached. That harness
- *    mutates `process.argv` itself per invocation and restores it in
- *    `finally`, and many suites issue several back-to-back in-process runs
- *    per test; caching the fallback parse would leak one run's flags into
- *    the next. So "lazily parses process.argv once" means "once PER CALL",
- *    not "once for the life of the process" — the fallback is intentionally
- *    request-scoped, mirroring how every pre-WI-9.9 leaf site read
- *    `process.argv` fresh at call time. Production code never touches the
+ *    invocation state. When the singleton was never set — the case for unit
+ *    tests that call command logic directly — it falls back to parsing the
+ *    CURRENT `process.argv` fresh, on every call, uncached, with the default
+ *    boundary. `tests/_helpers/cli.ts`'s in-process harness mutates
+ *    `process.argv` per run and mints the singleton through the same
+ *    `mintInvocation` as `src/cli.ts`; caching the fallback parse would leak
+ *    one run's flags into the next. Production code never touches the
  *    fallback path: the real entry point sets the singleton before any
  *    command handler can run.
  *  - `_resetParsedInvocationForTests()` clears an explicitly-set singleton
@@ -55,18 +51,17 @@
  *    `bun test`, but it exists so a test that DOES call
  *    `setParsedInvocation` directly can clean up after itself.
  *
- * Also folds two argv re-scanners that pre-dated this module (plan §10.7):
+ * Also folds two argv re-scanners that pre-dated this module:
  *  - `parseAllFlagValues` (moved from `cli/shared.ts`) — repeated-flag
  *    collection (`--tag foo --tag bar`), re-exported from `cli/shared.ts` so
  *    every existing importer (feedback-cli, observability-cli, remember-cli,
  *    search-cli, stash-cli, cli.ts) is unaffected.
  *  - `findCittyTopLevelCommand`/`findCittyTopLevelCommandIndex` (moved from
  *    `cli/parse-args.ts`, which had zero internal imports for this cluster) —
- *    re-exported from `cli/parse-args.ts` for `tests/tasks-core.test.ts`.
+ *    re-exported from `cli/parse-args.ts` for `tests/integration/tasks-core.test.ts`.
  */
 
-// ── Repeated-flag / `--`-passthrough primitives (byte-identical to the
-// pre-WI-9.9 per-site implementations they replace) ─────────────────────────
+// ── Repeated-flag / `--`-passthrough primitives (shared by every command) ─────────────────────────
 
 function getFlagValueFrom(argv: readonly string[], flag: string): string | undefined {
   for (let i = 0; i < argv.length; i++) {
@@ -88,14 +83,13 @@ function hasFlagIn(argv: readonly string[], flag: string): boolean {
 
 /**
  * Collect every `--flag value` / `--flag=value` occurrence, stopping at a
- * literal `--` separator (R-033a). `--` conventionally ends flag parsing —
+ * literal `--` separator. `--` conventionally ends flag parsing —
  * everything after it is positional/passthrough, never a flag akm should
  * interpret. Before this fix, a token like `--tag leaked:yes` placed AFTER
  * `--` (e.g. `akm feedback <ref> --positive -- --tag leaked:yes`) was still
  * picked up as a real `--tag` value, letting argv content past the boundary
- * leak into structured output. This is a deliberate BEHAVIOR CHANGE from the
- * pre-WI-9.9 per-site implementation this module otherwise keeps
- * byte-identical (see the module docstring) — every caller of
+ * leak into structured output. This is a deliberate exception to the
+ * byte-identical flag parsing described in the module docstring — every caller of
  * `parseAllFlagValues`/`getAllFlagValues` inherits the fix for free.
  */
 function getAllFlagValuesFrom(argv: readonly string[], flag: string): string[] {
@@ -115,16 +109,11 @@ function getAllFlagValuesFrom(argv: readonly string[], flag: string): string[] {
   return values;
 }
 
-/**
- * Tokens after a literal `--` marker in argv, or `[]` when there is no `--`
- * OR nothing follows it. Callers that previously threw a "Missing command"
- * UsageError on `dashIndex < 0 || dashIndex === argv.length - 1` now check
- * `passthroughArgs().length === 0` — the two conditions are equivalent.
- */
-function passthroughArgsFrom(argv: readonly string[]): string[] {
-  const dashIndex = argv.indexOf("--");
-  if (dashIndex < 0 || dashIndex === argv.length - 1) return [];
-  return argv.slice(dashIndex + 1);
+/** Where akm's own tokens end in `userArgs`: at the explicit boundary when one is given, else at the first `--`. */
+function ownLength(userArgs: readonly string[], passthroughFrom: number | undefined): number {
+  if (passthroughFrom !== undefined) return passthroughFrom;
+  const dashIndex = userArgs.indexOf("--");
+  return dashIndex < 0 ? userArgs.length : dashIndex;
 }
 
 // ── ParsedInvocation ─────────────────────────────────────────────────────────
@@ -134,38 +123,69 @@ export interface ParsedInvocation {
   readonly argv: readonly string[];
   /** `argv.slice(2)` — user-supplied tokens only, no runtime/script path. */
   readonly userArgs: readonly string[];
-  /** First occurrence of `--flag value` or `--flag=value` (undefined if absent). */
+  /** The user tokens akm parses: everything before the boundary. */
+  readonly ownArgs: readonly string[];
+  /**
+   * What citty parses: `ownArgs` and, behind the default boundary, its `--` and the tokens after it, which citty
+   * assigns like any positional (`akm bundle remove -- <name>`). An explicit boundary's tail is never given to citty.
+   */
+  readonly cittyArgs: readonly string[];
+  /** First occurrence of `--flag value` or `--flag=value` among `ownArgs` (undefined if absent). */
   getFlagValue(flag: string): string | undefined;
-  /** True when `--flag` or `--flag=true` appears anywhere in argv. */
+  /** True when `--flag` or `--flag=true` appears among `ownArgs`. */
   hasFlag(flag: string): boolean;
-  /** Every occurrence of a repeatable `--flag value` / `--flag=value` pair, in order. */
+  /** Every occurrence of a repeatable `--flag value` / `--flag=value` pair in `ownArgs`, in order. */
   getAllFlagValues(flag: string): string[];
-  /** Tokens after a literal `--` marker, or `[]` when absent / nothing follows. */
+  /**
+   * The part of `rawArgs` akm parses, where `rawArgs` is a tail of `cittyArgs` (what citty hands a subcommand).
+   */
+  ownArgsOf(rawArgs: readonly string[]): readonly string[];
+  /**
+   * The tokens after the boundary, verbatim and never re-parsed. With the default boundary (the first `--`, which
+   * belongs to neither side) that is everything after it; with an explicit one, everything after `passthroughFrom`,
+   * a `--` included. `[]` when there is no boundary or nothing follows it.
+   */
   passthroughArgs(): string[];
 }
 
-function createParsedInvocation(argv: readonly string[]): ParsedInvocation {
+export interface InvocationBoundary {
+  /** Index in `userArgs` where the passthrough tokens start. Absent: the boundary is the first `--`. */
+  passthroughFrom?: number;
+}
+
+/** A {@link ParsedInvocation} over `argv` as given; `src/cli.ts` mints the process-wide one. */
+export function createParsedInvocation(argv: readonly string[], boundary: InvocationBoundary = {}): ParsedInvocation {
   const snapshot: readonly string[] = Object.freeze([...argv]);
   const userArgs: readonly string[] = Object.freeze(snapshot.slice(2));
+  const end = ownLength(userArgs, boundary.passthroughFrom);
+  const ownArgs: readonly string[] = Object.freeze(userArgs.slice(0, end));
+  const own: readonly string[] = Object.freeze(snapshot.slice(0, 2 + end));
+  const cittyArgs = boundary.passthroughFrom !== undefined ? ownArgs : userArgs;
+  const passthrough: readonly string[] = Object.freeze(
+    userArgs.slice(boundary.passthroughFrom !== undefined ? end : end + 1),
+  );
   return {
     argv: snapshot,
     userArgs,
-    getFlagValue: (flag) => getFlagValueFrom(snapshot, flag),
-    hasFlag: (flag) => hasFlagIn(snapshot, flag),
-    getAllFlagValues: (flag) => getAllFlagValuesFrom(snapshot, flag),
-    passthroughArgs: () => passthroughArgsFrom(snapshot),
+    ownArgs,
+    cittyArgs,
+    ownArgsOf: (rawArgs) => ownArgs.slice(Math.max(0, cittyArgs.length - rawArgs.length)),
+    getFlagValue: (flag) => getFlagValueFrom(own, flag),
+    hasFlag: (flag) => hasFlagIn(own, flag),
+    getAllFlagValues: (flag) => getAllFlagValuesFrom(own, flag),
+    passthroughArgs: () => [...passthrough],
   };
 }
 
 let _invocation: ParsedInvocation | undefined;
 
 /**
- * Mint the process-wide {@link ParsedInvocation} singleton. Called exactly
- * once, by `src/cli.ts`, at startup — "normalize argv exactly once at entry"
- * (plan §10.7).
+ * Mint the process-wide {@link ParsedInvocation} singleton. `src/cli.ts` calls
+ * it at startup, before any command handler runs ("normalize argv at entry"); a `run` of a script mints it twice, as the boundary is only
+ * known once the ref has resolved (see `mintInvocation` there).
  */
-export function setParsedInvocation(argv: readonly string[]): ParsedInvocation {
-  _invocation = createParsedInvocation(argv);
+export function setParsedInvocation(argv: readonly string[], boundary: InvocationBoundary = {}): ParsedInvocation {
+  _invocation = createParsedInvocation(argv, boundary);
   return _invocation;
 }
 
@@ -174,8 +194,8 @@ export function setParsedInvocation(argv: readonly string[]): ParsedInvocation {
  * by `setParsedInvocation` when one exists; otherwise falls back to parsing
  * the CURRENT `process.argv` fresh (uncached — see the module docstring for
  * why caching the fallback would be wrong). The fallback is what every
- * leaf-command unit test and `tests/_helpers/cli.ts`'s in-process harness
- * exercise; production CLI runs always hit the singleton.
+ * leaf-command unit test exercises; production CLI runs and
+ * `tests/_helpers/cli.ts` always hit the singleton.
  */
 export function getParsedInvocation(): ParsedInvocation {
   if (_invocation) return _invocation;

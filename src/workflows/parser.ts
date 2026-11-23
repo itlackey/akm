@@ -309,7 +309,8 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
   checkEnvelopeFields(ctx, root, frontmatterEndLine);
 
   const description = typeof root.description === "string" ? root.description : undefined;
-  readTags(ctx, root.tags, frontmatterEndLine);
+  const whenToUse = typeof root.when_to_use === "string" ? root.when_to_use : undefined;
+  const tags = readTags(ctx, root.tags, frontmatterEndLine);
   const params = parseParams(ctx, root.params);
   const defaults = parseDefaults(ctx, root.defaults);
   const budget = parseBudget(ctx, root.budget);
@@ -377,6 +378,8 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
     ...(budget ? { budget } : {}),
     ...(defaults ? { defaults } : {}),
     ...(description ? { description } : {}),
+    ...(whenToUse ? { whenToUse } : {}),
+    ...(tags && tags.length > 0 ? { tags } : {}),
     ...(preamble ? { preamble } : {}),
     steps,
   };

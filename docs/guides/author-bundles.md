@@ -246,7 +246,7 @@ push happens.
 
 If your bundle includes env files under `env/`, `akm lint` reports any that set
 a variable name that changes how a process starts when the file is loaded with
-`akm env run`: 41 names, including `LD_PRELOAD`, `PATH`,
+`akm run --env`: 41 names, including `LD_PRELOAD`, `PATH`,
 `DYLD_INSERT_LIBRARIES` and `NODE_OPTIONS`, plus the `BASH_FUNC_*` and
 `GIT_CONFIG_*` prefixes. The finding is `dangerous-env-key`, a non-blocking
 warning. It is advice for you as the author, not a gate: installing a bundle is

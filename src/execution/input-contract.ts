@@ -235,9 +235,9 @@ function coerceFlagValue(
   if (types.length === 0) return raw;
 
   if (typeof raw === "boolean") {
+    // A flag given no value binds only to an input that can be boolean.
     if (types.includes("boolean")) return raw;
-    if (types.includes("string")) return String(raw);
-    throw diagnostics.invalidValue(name, `requires a value of type ${types.join(" | ")}`);
+    throw diagnostics.invalidValue(name, "requires a value");
   }
 
   // A union that permits strings keeps the caller's exact text. This
@@ -279,6 +279,19 @@ function coerceFlagValue(
   // Never echo the supplied value: typed-input flags can carry credentials,
   // and this detail lands in stderr envelopes that get pasted into CI logs.
   throw diagnostics.invalidValue(name, `must be ${types.join(" | ")}`);
+}
+
+/**
+ * The declared inputs that take a value: those with a type and no `boolean` among them. A flag naming one takes the
+ * next token as its value whatever that token starts with, as `--name=<value>` does.
+ */
+export function valueInputNames(contract: InputContract): Set<string> {
+  const names = new Set<string>();
+  for (const [name, declaration] of Object.entries(contract)) {
+    const types = schemaTypes(declaration.schema);
+    if (types.length > 0 && !types.includes("boolean")) names.add(name);
+  }
+  return names;
 }
 
 function schemaTypes(schema: Readonly<Record<string, unknown>> | undefined): string[] {

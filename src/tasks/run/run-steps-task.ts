@@ -24,16 +24,17 @@ import type { Parsed } from "../../core/structured";
 import { runManagedSubprocess } from "../../core/subprocess";
 import type { ExecutionJsonValue } from "../../execution/json";
 import { sortExecutionJson } from "../../execution/json";
-import { type Correction, isRefused, jsonParser, structuredLoop } from "../../llm/structured";
+import { type Correction, type Dispatched, isRefused, jsonParser, structuredLoop } from "../../llm/structured";
 import type { TaskHistoryStep } from "../../storage/repositories/task-history-repository";
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskStep, PreparedTaskSteps } from "../prepare/prepared-execution";
-import { finishAttempt } from "./attempt-lifecycle";
+import { abortOnTermination, finishAttempt } from "./attempt-lifecycle";
+import { taskEventSource } from "./provenance";
 import { withUnattendedTimeout } from "./run-command-task";
 import { shellCommand } from "./run-native-task";
 import { DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } from "./run-workflow-task";
-import { appendHistory, readTaskHistory } from "./task-history";
-import { persistRunLog, scrubTaskOutput, streamLines } from "./task-log";
+import { appendHistory, readTaskHistory, taskBundle } from "./task-history";
+import { appendStreamLines, persistRunLog, processFailure, scrubTaskOutput } from "./task-log";
 import type { RunTaskOptions, TaskRunResult } from "./task-result";
 
 /** A step's result is kept to this many bytes of text. */
@@ -42,7 +43,6 @@ export const STEP_RESULT_MAX_BYTES = 32 * 1024;
 const STEP_CAPTURE_MAX_BYTES = 64 * 1024;
 /** The serialized `AKM_STEPS` handed to a step may not exceed this. */
 export const STEPS_CONTEXT_MAX_BYTES = 96 * 1024;
-const SUMMARY_MAX_CHARS = 200;
 
 type StepValue = string | Record<string, unknown>;
 
@@ -59,11 +59,6 @@ function bound(text: string): string {
   const bytes = Buffer.byteLength(text);
   if (bytes <= STEP_RESULT_MAX_BYTES) return text;
   return `${Buffer.from(text).subarray(0, STEP_RESULT_MAX_BYTES).toString("utf8")}\n[truncated ${bytes - STEP_RESULT_MAX_BYTES} bytes]`;
-}
-
-function summarize(text: string): string {
-  const line = text.trim().split("\n")[0] ?? "";
-  return line.length > SUMMARY_MAX_CHARS ? `${line.slice(0, SUMMARY_MAX_CHARS)}...` : line;
 }
 
 function stepKind(step: PreparedTaskStep): TaskHistoryStep["kind"] {
@@ -129,6 +124,21 @@ function replyCheck(expect: readonly string[]): (raw: string) => Parsed<Record<s
   });
 }
 
+/** An agent's reply held to `expect:`: asked once more, with what failed the check, when it does. */
+export function expectLoop<S extends object = object>(
+  expect: readonly string[],
+  dispatch: (correction?: Correction) => Promise<Dispatched<{ failure: string } & NoInfer<S>, NoInfer<S>>>,
+) {
+  return structuredLoop<Record<string, unknown>, { failure: string } & S, S>({
+    dispatch,
+    parse: replyCheck(expect),
+    attempts: 2,
+    correct: (refusal) =>
+      `Your previous reply failed the check: ${refusal.errors.join("; ")}. ` +
+      `Reply again with ONLY a JSON object containing the keys: ${expect.join(", ")}.`,
+  });
+}
+
 export async function runStepsTask(input: {
   task: PreparedTaskSteps;
   logPath: string;
@@ -156,13 +166,7 @@ export async function runStepsTask(input: {
     records.push({ ...step, status: "reused", durationMs: 0, attempts: 0 });
   }
 
-  // akm's own termination signal stops the running step's whole process group.
-  const abort = new AbortController();
-  const onSignal = (signal: NodeJS.Signals) => abort.abort(new Error(`task runner received ${signal}`));
-  const onSigterm = () => onSignal("SIGTERM");
-  const onSigint = () => onSignal("SIGINT");
-  process.once("SIGTERM", onSigterm);
-  process.once("SIGINT", onSigint);
+  const { abort, stop } = abortOnTermination();
 
   let failure: { name: string; reason: string } | undefined;
   try {
@@ -192,8 +196,11 @@ export async function runStepsTask(input: {
       }
       const durationMs = Math.max(0, now().getTime() - begun.getTime());
       const header = `[akm task] step=${step.name} kind=${stepKind(step)} attempts=${attempts} ok=${outcome.ok}`;
-      lines.push(header, ...outcome.lines);
-      dbLines.push({ level: outcome.ok ? "info" : "error", line: header }, ...outcome.dbLines);
+      // Loops, not spreads: a step can print more lines than a call accepts as arguments.
+      lines.push(header);
+      for (const line of outcome.lines) lines.push(line);
+      dbLines.push({ level: outcome.ok ? "info" : "error", line: header });
+      for (const row of outcome.dbLines) dbLines.push(row);
       const text =
         outcome.value === undefined
           ? ""
@@ -206,7 +213,6 @@ export async function runStepsTask(input: {
         status: outcome.ok ? "completed" : "failed",
         durationMs,
         attempts,
-        ...(text ? { summary: scrubTaskOutput(task, summarize(text)) } : {}),
         ...(!outcome.ok && outcome.reason ? { reason: scrubTaskOutput(task, outcome.reason) } : {}),
         ...(outcome.startedAt ? { startedAt: outcome.startedAt } : {}),
       };
@@ -219,8 +225,7 @@ export async function runStepsTask(input: {
       records.push(record);
     }
   } finally {
-    process.off("SIGTERM", onSigterm);
-    process.off("SIGINT", onSigint);
+    stop();
   }
 
   const finishedAt = finishAttempt(startedAt, now());
@@ -247,6 +252,7 @@ export async function runStepsTask(input: {
     finishedAt: finishedAt.toISOString(),
     durationMs: finishedAt.getTime() - startedAt.getTime(),
     log: logPath,
+    ...taskBundle(task.taskRef),
     target: { kind: "steps" },
     ...(failure ? { detail: { reason: "step_failed", error: `${failure.name}: ${failure.reason}` } } : {}),
     steps,
@@ -293,7 +299,7 @@ async function runShellStep(step: Extract<PreparedTaskStep, { kind: "shell" }>, 
   const env: Record<string, string> = {
     ...childProcessEnv(),
     ...step.environment,
-    AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE ?? provenance.eventSource,
+    AKM_EVENT_SOURCE: taskEventSource(process.env, provenance),
     AKM_PARAMS: ctx.paramsJson,
     AKM_STEPS: ctx.stepsJson,
   };
@@ -314,9 +320,10 @@ async function runShellStep(step: Extract<PreparedTaskStep, { kind: "shell" }>, 
   });
   const out: StepOutcome = { ok: false, lines: [], dbLines: [] };
   if (result.spawnError) {
-    out.reason = `spawn_error: ${result.spawnError.message}`;
-    out.lines.push(`spawn_error=${result.spawnError.message}`);
-    out.dbLines.push({ level: "error", line: `spawn_error=${result.spawnError.message}` });
+    const { reason, error } = processFailure(result);
+    out.reason = `${reason}: ${error}`;
+    out.lines.push(`spawn_error=${error}`);
+    out.dbLines.push({ level: "error", line: `spawn_error=${error}` });
     return out;
   }
   const exitCode = result.exitCode ?? (result.timedOut ? 143 : 1);
@@ -328,15 +335,16 @@ async function runShellStep(step: Extract<PreparedTaskStep, { kind: "shell" }>, 
   }
   if (result.stdout) {
     out.lines.push("--- stdout ---", result.stdout);
-    out.dbLines.push(...streamLines(result.stdout, "stdout", "info"));
+    appendStreamLines(out.dbLines, result.stdout, "stdout", "info");
   }
   if (result.stderr) {
     out.lines.push("--- stderr ---", result.stderr);
-    out.dbLines.push(...streamLines(result.stderr, "stderr", "error"));
+    appendStreamLines(out.dbLines, result.stderr, "stderr", "error");
   }
-  if (result.timedOut) out.reason = "timeout";
-  else if (exitCode !== 0) out.reason = `exit code ${exitCode}`;
-  else {
+  if (result.timedOut || result.aborted || exitCode !== 0) {
+    const { reason, error } = processFailure({ ...result, exitCode });
+    out.reason = reason === "non_zero_exit" ? `${reason}: ${error}` : reason;
+  } else {
     out.ok = true;
     out.value = bound(result.stdout);
   }
@@ -361,11 +369,11 @@ async function runPromptStep(step: Extract<PreparedTaskStep, { kind: "command" }
     out.lines.push(`engine=${result.engine} ok=${result.ok} exit_code=${result.exitCode ?? "null"}`);
     if (result.stdout) {
       out.lines.push("--- agent stdout ---", result.stdout);
-      out.dbLines.push(...streamLines(result.stdout, "stdout", "info"));
+      appendStreamLines(out.dbLines, result.stdout, "stdout", "info");
     }
     if (result.stderr) {
       out.lines.push("--- agent stderr ---", result.stderr);
-      out.dbLines.push(...streamLines(result.stderr, "stderr", "error"));
+      appendStreamLines(out.dbLines, result.stderr, "stderr", "error");
     }
     return result.ok
       ? ({ ok: true, raw: result.stdout } as const)
@@ -382,15 +390,7 @@ async function runPromptStep(step: Extract<PreparedTaskStep, { kind: "command" }
     return out;
   }
 
-  const expect = step.expect;
-  const loop = await structuredLoop<Record<string, unknown>, { failure: string }>({
-    dispatch,
-    parse: replyCheck(expect),
-    attempts: 2,
-    correct: (refusal) =>
-      `Your previous reply failed the check: ${refusal.errors.join("; ")}. ` +
-      `Reply again with ONLY a JSON object containing the keys: ${expect.join(", ")}.`,
-  });
+  const loop = await expectLoop(step.expect, dispatch);
   if (loop.ok) {
     out.ok = true;
     out.value = loop.value;

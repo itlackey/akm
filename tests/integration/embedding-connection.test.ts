@@ -19,6 +19,7 @@ import { hasRemoteEndpoint } from "../../src/llm/embedders/remote";
 import { prepareSemanticSearchAssets } from "../../src/setup/semantic-assets";
 import { clearCredentials } from "../_helpers/credentials";
 import { withEnv } from "../_helpers/sandbox";
+import { scriptPrompts } from "../_helpers/setup-prompts";
 
 const LAB = { endpoint: "http://lab:8080/v1/chat/completions", models: { fast: "qwen3-8b" } };
 
@@ -146,6 +147,7 @@ describe("an embedding on the default connection sends that connection's key", (
 
 describe("setup's semantic-search preparation", () => {
   test("checks the endpoint of the connection that serves the embedding model, not the local model", async () => {
+    scriptPrompts();
     let checked: unknown;
     _setEmbedderForTests({
       checkEmbeddingAvailability: async (embedding) => {

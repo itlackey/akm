@@ -34,8 +34,8 @@ export function withTestImproveLlm(config: AkmConfig): AkmConfig {
  * merge/delete, memory-inference writes, the memory-cleanup and contradiction
  * passes, or triage `applyMode: "promote"`. Tests of the gate itself must NOT
  * use this: they need the shipped review-first default and build their configs
- * directly (`tests/improve-autonomy-gate.test.ts`,
- * `tests/improve-autonomy-gate.test.ts`).
+ * directly (`tests/integration/improve-autonomy-gate.test.ts`,
+ * `tests/integration/improve-autonomy-gate.test.ts`).
  */
 export function withImproveAutonomy(config: AkmConfig): AkmConfig {
   return {

@@ -78,7 +78,7 @@ function parseTrailingJsonEnvelope(stderr: string): { ok: boolean; error: string
 
 describe("akm index — index.db contention (field follow-up to #956, F1)", () => {
   test("a busy index.db reclassifies to exit 75 INDEX_DB_CONTENDED; " +
-    "with a live rebuild lock --skip-if-locked still skips at exit 0 without ever touching the DB", async () => {
+    "with a live rebuild lock `akm index` skips at exit 0 without ever touching the DB", async () => {
     writeMemory("note-0");
 
     // A writer outside any akm build holds an open write transaction on
@@ -96,17 +96,15 @@ describe("akm index — index.db contention (field follow-up to #956, F1)", () =
       expect(envelope.ok).toBe(false);
       expect(envelope.code).toBe("INDEX_DB_CONTENDED");
       expect(envelope.error).toContain("index database is busy");
-      expect(envelope.hint).toContain("--skip-if-locked");
+      expect(envelope.hint).toContain("retry shortly");
 
       // A second `akm index` already in progress holds the rebuild lock.
       plantHeldRebuildLock();
 
-      // --skip-if-locked, same live rebuild-lock + held index.db
-      // transaction: skips because of the rebuild-lock sentinel alone,
-      // before ever attempting to write index.db, so the still-open
-      // BEGIN IMMEDIATE above is irrelevant to this run — exit 0, no
-      // 30s wait.
-      const skipped = await runIndexChild(["--full", "--skip-if-locked", "--format=json"]);
+      // Same live rebuild lock and held index.db transaction: the build skips on the
+      // rebuild lock alone, before it would write index.db, so the open BEGIN
+      // IMMEDIATE above never matters to it: exit 0, no busy-timeout wait.
+      const skipped = await runIndexChild(["--full", "--format=json"]);
       expect(skipped.code).toBe(0);
       const skippedEnvelope = JSON.parse(skipped.stdout) as {
         ok: boolean;

@@ -101,6 +101,9 @@ export function parseRegistryRef(rawRef: string): ParsedRegistryRef {
   if (ref.startsWith("http://") || ref.startsWith("https://")) {
     return parseRemoteUrl(ref);
   }
+  if (ref.startsWith("git://") || ref.startsWith("ssh://")) {
+    return parseGitUrl(ref, ref);
+  }
   const localRef = tryParseLocalRef(ref, isPathLikeRef(ref));
   if (localRef) {
     return localRef;
@@ -144,6 +147,8 @@ export function buildInstallRef(
 const KNOWN_PREFIXES = ["npm:", "github:", "git+", "file:", "http://", "https://"];
 
 function detectRegistrySearchId(ref: string): string | undefined {
+  // A URL names its own transport; it is never a registry id.
+  if (ref.includes("://")) return undefined;
   const colonIdx = ref.indexOf(":");
   if (colonIdx < 1) return undefined;
 
@@ -330,7 +335,7 @@ function isPathLikeRef(ref: string): boolean {
   if (ref.startsWith("./") || ref.startsWith("../") || ref.startsWith(".\\") || ref.startsWith("..\\")) {
     return true;
   }
-  // R-007: a bare `owner/repo` (or `owner/repo#ref`) shorthand is ambiguous
+  // A bare `owner/repo` (or `owner/repo#ref`) shorthand is ambiguous
   // with a relative directory of the same shape, and is never an EXPLICIT
   // local path the way `./owner/repo` is. Treating it as non-path here means
   // `tryParseLocalRef` silently returns `undefined` (rather than throwing
@@ -391,7 +396,7 @@ function npmMetadataRegistry(): string {
   if (override) {
     // A malformed override must not be silently ignored (falling back to the
     // public registry as though nothing was configured) — that would install
-    // from the wrong registry without telling the operator (R-035).
+    // from the wrong registry without telling the operator.
     let url: URL;
     try {
       url = new URL(override);
@@ -550,7 +555,7 @@ async function resolveGitArtifact(parsed: ParsedGitRef, credential?: string): Pr
     // Unlike the GitHub path (which falls back to the REST API on a failed
     // `git ls-remote`), a plain git source has no fallback resolver — an
     // unresolved revision here would silently disable the post-clone
-    // revision-integrity check in `verifyClonedRevision` (R-011).
+    // revision-integrity check in `verifyClonedRevision`.
     throw new NotFoundError(
       `Unable to resolve ${parsed.requestedRef ?? "HEAD"} for ${parsed.url} via 'git ls-remote'; refusing to install without a verifiable revision.`,
       "REGISTRY_NOT_FOUND",

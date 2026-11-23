@@ -9,7 +9,7 @@
  * timeout, so this test —
  * the ONLY call site anywhere in the repo that exercises the default,
  * spawning path — lives in tests/integration/ rather than alongside its
- * sibling smoke tests in tests/fixture-stash-loader.test.ts (unit scope).
+ * sibling smoke tests in tests/integration/fixture-stash-loader.test.ts (unit scope).
  * Moved here (behaviour unchanged) so the unit target never spawns.
  *
  * #786 ORG-04: relocated out of tests/integration/fixtures/stashes/ — no

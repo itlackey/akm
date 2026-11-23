@@ -3,29 +3,21 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm bundle` command group — 0.9 CLI overhaul (S7).
+ * `akm bundle` command group: the bundle-lifecycle commands.
+ *   - `create` (src/commands/sources/init.ts), output shape `bundle-create`
+ *   - `add`    (src/commands/sources/add-cli.ts keeps its exported helpers)
+ *   - `list`, `remove`, `update`
+ *   - `show <name>` — a single-bundle detail view of the `list` payload,
+ *     output shape `bundle-show`.
  *
- * Consolidates the five former top-level bundle-lifecycle commands under one
- * group, hard break, no alias kept at the top level:
- *   - `create` (= old top-level `init`, src/commands/sources/init.ts)
- *   - `add`    (= old top-level `add`, src/commands/sources/add-cli.ts — the
- *     command definition moved here; `add-cli.ts` keeps its exported helpers)
- *   - `list`   (= old top-level `list`)
- *   - `remove` (= old top-level `remove`)
- *   - `update` (= old top-level `update`)
- *   - `show <name>` — NEW: a single-bundle detail view of the `list` payload.
- *
- * `add`/`list`/`remove`/`update` are pure relocations (payload and output
- * shape unchanged: `SourceEntry`/`RemoveResponse`/`UpdateResponse` keep their
- * bare `add`/`list`/`remove`/`update` output shape). `create` is a genuine
- * verb rename (was `init`), so its output shape is renamed to `bundle-create`
- * to match (the same convention S8 used for `propose` -> `proposal new`'s
- * `proposal-new` shape). `show` is a new shape, `bundle-show`.
+ * `add`/`list`/`remove`/`update` output the bare `SourceEntry`/`RemoveResponse`/
+ * `UpdateResponse` shapes.
  */
 
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import { NotFoundError, TransientError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { stderr } from "../../core/stdio";
 import { warn } from "../../core/warn";
 import type { SourceKind } from "../../sources/types";
 import { addCommand } from "./add-cli";
@@ -110,7 +102,7 @@ const removeCommand = defineJsonCommand({
       yes: args.yes === true,
     });
     if (!confirmed) {
-      process.stderr.write("Aborted.\n");
+      stderr().write("Aborted.\n");
       return;
     }
     const result = await akmRemove({ target: args.target });
@@ -149,7 +141,6 @@ const updateCommand = defineJsonCommand({
         target: args.target,
         all: args.all,
         force: args.force,
-        skipIfLocked: args["skip-if-locked"],
       });
     } catch (error) {
       const skippable = isSkippableBundleUpdateLock(error);

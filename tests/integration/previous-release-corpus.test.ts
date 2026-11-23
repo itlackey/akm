@@ -117,6 +117,7 @@ import {
   withIsolatedAkmStorage,
   writeSandboxConfig,
 } from "../_helpers/sandbox";
+import { parseV4TaskSource } from "../_helpers/task-source";
 
 const FIXTURES_DIR = path.join(import.meta.dir, "..", "fixtures", "previous-release-corpus");
 
@@ -850,7 +851,7 @@ describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () 
 
   test("OpenPalm's `uses:`/`with:` task source v4 file (builtin command target) parses without throwing", () => {
     const filePath = path.join(OPENPALM_DIR, "reddit-leads-ingest.yml");
-    const result = parseTaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
+    const result = parseV4TaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
     expect(result.version).toBe(4);
     expect(result.v4.target.kind).toBe("uses");
     expect(result.v4.execution.timeout).toBe(120000);
@@ -859,7 +860,7 @@ describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () 
 
   test("OpenPalm's `run:`/`shell:` task source v4 file (scheduled) parses without throwing", () => {
     const filePath = path.join(OPENPALM_DIR, "discord-wiki-articles-ingest.yml");
-    const result = parseTaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
+    const result = parseV4TaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
     expect(result.version).toBe(4);
     expect(result.v4.target.kind).toBe("run");
     expect(result.v4.execution.timeout).toBe(300000);
@@ -867,7 +868,7 @@ describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () 
 
   test("OpenPalm's `uses:` task source v4 file with no `timeout:` and no top-level `enabled:` parses without throwing", () => {
     const filePath = path.join(OPENPALM_DIR, "health-report.yml");
-    const result = parseTaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
+    const result = parseV4TaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
     expect(result.version).toBe(4);
     expect(result.v4.target.kind).toBe("uses");
     expect(result.v4.execution.timeout).toBeUndefined();
@@ -875,7 +876,7 @@ describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () 
 
   test("OpenPalm's manual (unscheduled) `run:`/`shell:` task source v4 file parses without throwing", () => {
     const filePath = path.join(OPENPALM_DIR, "manual-reindex.yml");
-    const result = parseTaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
+    const result = parseV4TaskSource({ yaml: fs.readFileSync(filePath, "utf8"), filePath });
     expect(result.version).toBe(4);
     expect(result.v4.target.kind).toBe("run");
     expect(result.v4.manualOnly).toBe(true);

@@ -11,6 +11,7 @@ import { SELECTION_ARGS, selectionFromArgs } from "../cli/selection";
 import { defineJsonCommand, EXIT_CODES, output, outputWithExitCode } from "../cli/shared";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
+import { isTerminal } from "../core/stdio";
 import { getJudge, listJudges, runJudge } from "../judges/registry";
 import { readStdin } from "../runtime";
 
@@ -18,7 +19,7 @@ export const judgeCommand = defineJsonCommand({
   meta: {
     name: "judge",
     description:
-      "Run one of akm's judges on one JSON input read from stdin, and print its verdict, or why it gave none. --list names the judges; --schema prints one's input and output schemas. For evaluating and tuning akm's judges.",
+      "Deprecated, removed in 0.11: use `akm doctor judge`. Run one of akm's judges on one JSON input read from stdin, and print its verdict, or why it gave none. --list names the judges; --schema prints one's input and output schemas. For evaluating and tuning akm's judges.",
   },
   args: {
     name: { type: "positional", description: "Judge name, such as reflect.quality", required: false },
@@ -49,7 +50,7 @@ export const judgeCommand = defineJsonCommand({
       output("judge-schema", { judge: name, description, schemaVersion, inputSchema, outputSchema, harnessReads });
       return;
     }
-    if (process.stdin.isTTY) {
+    if (isTerminal(0)) {
       throw new UsageError(`\`akm judge ${name}\` reads its input as JSON on stdin.`, "MISSING_REQUIRED_ARGUMENT");
     }
     let input: unknown;

@@ -44,7 +44,11 @@ export const CONFLICT_CODES: ReadonlySet<string>;
 
 export function scrubUrlCredentials(value: unknown): unknown;
 /** Refresh the existing index for files just written inside a bundle; fail-open, `false` when the index could not be updated. */
-export function indexWrittenAssets(stashDir: string, filePaths: string[], options?: { bundleId?: string }): Promise<boolean>;
+export function indexWrittenAssets(
+  stashDir: string,
+  filePaths: string[],
+  options?: { bundleId?: string },
+): Promise<boolean>;
 
 /** The file: its ref, or its bundle-relative path in a named bundle. */
 export interface SensitiveSelector {
@@ -113,7 +117,13 @@ export namespace assets {
    * renamed into place, indexed, committed by the bundle's Git policy, with a Markdown asset recording its origin in `sources`.
    * Nothing is overwritten; env and secret files and managed folders are refused.
    */
-  function copyEntry(input: { bundle: string; from: string; toBundle?: string; folder?: string; name: string }): Promise<{
+  function copyEntry(input: {
+    bundle: string;
+    from: string;
+    toBundle?: string;
+    folder?: string;
+    name: string;
+  }): Promise<{
     bundle: string;
     from: string;
     toBundle: string;
@@ -155,7 +165,12 @@ export namespace bundles {
   }>;
   function add(input: { source: string; name?: string; writable?: boolean }): Promise<unknown>;
   /** `akm index`: the incremental build. A file renamed or moved on disk is paired with the asset it was and keeps its history; the result's `moves` says which (`moved: [{from, to}]`, `unpaired`). */
-  function index(): Promise<{ totalEntries: number; mode: string; warnings?: string[]; moves?: { moved: Array<{ from: string; to: string }>; unpaired: number } }>;
+  function index(): Promise<{
+    totalEntries: number;
+    mode: string;
+    warnings?: string[];
+    moves?: { moved: Array<{ from: string; to: string }>; unpaired: number };
+  }>;
   function list(): Promise<unknown>;
   function remove(input: { bundle: string; confirm: boolean }): Promise<unknown>;
   function rename(input: { bundle: string; name: string; dryRun?: boolean }): Promise<unknown>;
@@ -237,7 +252,13 @@ export namespace documents {
     changes: Array<{ key: string; value?: unknown; remove?: true }>;
   }): { content: string; bodyStart: number };
   /** A new file in a folder of a bundle, for any type: the folder's type decides the starting text; a folder with no type gets an empty file. */
-  function createFile(input: { bundle: string; folder?: string; type?: string; name: string; content?: string }): Promise<{
+  function createFile(input: {
+    bundle: string;
+    folder?: string;
+    type?: string;
+    name: string;
+    content?: string;
+  }): Promise<{
     bundle: string;
     file: string;
     type: string | null;
@@ -304,7 +325,9 @@ export namespace sensitive {
   function readValue(input: SensitiveSelector): { content: string; revision: string };
   function remove(input: SensitiveSelector & { revision: string }): Promise<SensitiveWriteResult & { removed: true }>;
   /** Create (no `revision`; an existing file is refused) or replace (the `revision` last seen). */
-  function save(input: SensitiveSelector & { content: string; revision?: string }): Promise<SensitiveWriteResult & { revision: string }>;
+  function save(
+    input: SensitiveSelector & { content: string; revision?: string },
+  ): Promise<SensitiveWriteResult & { revision: string }>;
 }
 export namespace setup {
   interface Detected {

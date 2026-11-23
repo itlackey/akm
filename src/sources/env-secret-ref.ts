@@ -3,13 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Shared ref-resolution helpers for the `env` and `secret` command families
- * (WS6). These were duplicated/co-located inline in `src/cli.ts`; hoisting them
- * here lets `src/commands/env/env-cli.ts` and `src/commands/env/secret-cli.ts` import a
- * single copy of the parse/resolve/make + path-traversal-guard logic (the WS6
- * "env traversal-guard copies 5 → 1" KPI). Behaviour is byte-identical to the
- * inline forms: env/secret VALUES are never read or surfaced here — these
- * helpers only resolve refs to absolute paths and guard against directory
+ * Shared ref-resolution helpers for the `env` and `secret` command families.
+ * `src/commands/env/env-cli.ts` and `src/commands/env/secret-cli.ts` share the
+ * parse/resolve/make + path-traversal-guard logic here. env/secret VALUES are
+ * never read or surfaced here — these helpers only resolve refs to absolute paths and guard against directory
  * traversal.
  */
 
@@ -189,7 +186,7 @@ export function isInstalledBundle(bundle: string): boolean {
  * second time even when the walk itself honoured an injected one.
  */
 export function makeEnvRef(conceptId: string, source?: IndexSearchSource, config: AkmConfig = loadConfig()): string {
-  // F4b output-spelling flip: `env/name` in the primary stash, `bundle//env/name`
+  // Output spelling: `env/name` in the primary stash, `bundle//env/name`
   // for a slug-clean named source.
   return displayRef({ conceptId, bundleId: source?.registryId }, displayDefaultBundle(source, config));
 }
@@ -218,7 +215,7 @@ export function parseSecretRef(ref: string): AssetRef {
 }
 
 export function makeSecretRef(conceptId: string, source?: IndexSearchSource): string {
-  // F4b output-spelling flip: `secrets/name` in the primary stash,
+  // Output spelling: `secrets/name` in the primary stash,
   // `bundle//secrets/name` for a slug-clean named source.
   return displayRef({ conceptId, bundleId: source?.registryId }, displayDefaultBundle(source));
 }
@@ -241,11 +238,9 @@ export function resolveSecretPath(ref: string): {
 // ── Write-target resolution (env/secret mutations) ───────────────────────────
 //
 // READS (`env run`/`show`/`path`, `secret run`) ask the one ref-to-file walk
-// (`resolveConceptOwner`) above. (`secret path` used this same read-side
-// resolver too, until it was REMOVED from the CLI in 0.9.0 — R-027 / D-49 — with
-// `secret remove`, which resolved through the WRITE-target path below, so the two
-// could silently name different files for the same ref. `secret remove` is back
-// in 0.10, shaped like `env remove`: write-target resolution only.) WRITES route
+// (`resolveConceptOwner`) above. `secret remove`, like `env remove`, uses
+// write-target resolution only, so a read and a remove cannot name different
+// files for the same ref. WRITES route
 // through the canonical `resolveWriteTarget` selection every other write command
 // (remember/import/tasks/knowledge) shares: explicit `--bundle` wins, else
 // the working stash, and the chosen source must be writable (a non-writable

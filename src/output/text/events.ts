@@ -4,11 +4,7 @@
 
 // Output text formatter for `akm log` (#204).
 //
-// R-060: renamed from `events-list` to `log-list` — see
-// src/output/shapes/events.ts for the full rationale.
-//
-// 0.9.0 CLI overhaul (S3): `log tail` (and its `log-tail` formatter entry)
-// was dropped along with the command.
+// The formatter key is `log-list` — see src/output/shapes/events.ts.
 
 import { formatEventsPlain } from "./helpers";
 import type { TextFormatterEntry } from "./registry";

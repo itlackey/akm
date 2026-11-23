@@ -73,7 +73,7 @@ beforeAll(async () => {
   fs.mkdirSync(packageDir, { recursive: true });
   fs.mkdirSync(consumerDir, { recursive: true });
   fs.mkdirSync(nodeOnlyPathDir, { recursive: true });
-  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm"), launcher);
+  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm.mjs"), launcher);
   fs.chmodSync(launcher, 0o755);
   fs.writeFileSync(
     path.join(packageDir, "package.json"),

@@ -23,7 +23,12 @@ import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { isPortableExecutionAgentSelector, type UnresolvedExecutionDefaults } from "../../execution/source";
 import { executeInteractiveAgentInvocation } from "../../integrations/agent/runner-dispatch";
-import { executeCommandInvocation, type PrepareCommandInvocationOptions } from "../command/command-execution";
+import {
+  type DispatchPreparedCommandOptions,
+  executeCommandInvocation,
+  type PrepareCommandInvocationOptions,
+} from "../command/command-execution";
+import { ensureWorkingFolder } from "../env/injection";
 
 export interface AkmAgentDispatchOptions {
   prompt?: string;
@@ -36,12 +41,21 @@ export interface AkmAgentDispatchOptions {
    * directory the run's process starts in.
    */
   cwd?: string;
+  /** Variables set in the agent's environment. Absent: nothing added. */
+  env?: Readonly<Record<string, string>>;
+  /** The environment the agent starts from. Absent: the user's own, as akm has it. */
+  baseEnv?: Readonly<Record<string, string>>;
+  /** Cancels the run: the agent gets SIGINT, then SIGTERM and SIGKILL if it stays. */
+  signal?: AbortSignal;
   /** Current invocation-layer selections consumed by the execution cascade. */
   selection?: Pick<UnresolvedExecutionDefaults, "connection" | "harness" | "model" | "inference" | "outputSchema">;
 }
 
 export interface AkmAgentDispatchSeams {
-  readonly executeCommand?: (options: PrepareCommandInvocationOptions) => Promise<AkmAgentDispatchResult>;
+  readonly executeCommand?: (
+    options: PrepareCommandInvocationOptions,
+    dispatchOptions: DispatchPreparedCommandOptions,
+  ) => Promise<AkmAgentDispatchResult>;
   readonly executeInteractive?: typeof executeInteractiveAgentInvocation;
 }
 
@@ -98,12 +112,19 @@ async function delegateCanonicalCommand(
   action: { readonly content: string },
 ): Promise<AkmAgentDispatchResult> {
   const execute = seams.executeCommand ?? executeCommandInvocation;
-  const result = await execute({
-    action,
-    inlineContentMode: "literal",
-    config: options.agentConfig as AkmConfig,
-    current: canonicalCurrent(options),
-  });
+  const result = await execute(
+    {
+      action,
+      inlineContentMode: "literal",
+      config: options.agentConfig as AkmConfig,
+      current: canonicalCurrent(options),
+    },
+    {
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.env ? { env: options.env } : {}),
+      ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
+    },
+  );
   for (const message of result.warnings ?? []) warn(message);
   return result;
 }
@@ -116,8 +137,18 @@ export async function akmAgentDispatch(
     throw new UsageError("agent requires a valid config with a harness or connection.", "MISSING_REQUIRED_ARGUMENT");
 
   rejectInvalidAgentRef(options.agentRef);
+  if (options.cwd) ensureWorkingFolder(options.cwd);
 
-  if (options.prompt !== undefined) return delegateCanonicalCommand(options, seams, { content: options.prompt });
+  if (options.prompt !== undefined) {
+    if (options.prompt.trim() === "") {
+      throw new UsageError(
+        "The prompt is empty, so there is no turn to send.",
+        "MISSING_REQUIRED_ARGUMENT",
+        "Pass text with --prompt, or on stdin with --prompt-stdin. Without a prompt the harness is started for a person.",
+      );
+    }
+    return delegateCanonicalCommand(options, seams, { content: options.prompt });
+  }
 
   // No prompt: the harness is started for a person. Only where and which model ride along; the rest needs a task.
   const { connection, harness, model, ...needsTask } = options.selection ?? {};
@@ -125,6 +156,7 @@ export async function akmAgentDispatch(
     throw new UsageError(
       "An agent persona, inference setting or output schema applies to a task: pass --prompt or --prompt-stdin. Without a prompt only the harness (and a model) is started.",
       "MISSING_REQUIRED_ARGUMENT",
+      "Pass --prompt or --prompt-stdin, or drop the agent ref and the other settings to start the harness interactively.",
     );
   }
 

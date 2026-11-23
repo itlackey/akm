@@ -65,7 +65,7 @@ export function parseDetailLevel(value: string | undefined): DetailLevel | undef
   return "normal";
 }
 
-export function parseFlagValue(argv: string[], flag: string): string | undefined {
+export function parseFlagValue(argv: readonly string[], flag: string): string | undefined {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--") break;
@@ -75,7 +75,7 @@ export function parseFlagValue(argv: string[], flag: string): string | undefined
   return undefined;
 }
 
-export function hasBooleanFlag(argv: string[], flag: string): boolean {
+export function hasBooleanFlag(argv: readonly string[], flag: string): boolean {
   for (const arg of argv) {
     if (arg === "--") return false;
     if (arg === flag || arg === `${flag}=true`) return true;
@@ -111,7 +111,7 @@ export function getHyphenatedBoolean(args: unknown, key: string): boolean {
  * Resolve output mode from a synthetic argv array and config defaults.
  * No IO beyond the once-only unknown `--detail` warning. Suitable for unit tests.
  */
-export function resolveOutputMode(argv: string[], defaults: OutputDefaults | undefined = {}): OutputMode {
+export function resolveOutputMode(argv: readonly string[], defaults: OutputDefaults | undefined = {}): OutputMode {
   const format =
     parseOutputFormat(parseFlagValue(argv, "--format")) ?? (defaults?.format as OutputFormat | undefined) ?? "json";
 
@@ -128,7 +128,7 @@ let _mode: OutputMode | undefined;
  * Initialize the process-level output mode. Must be called once at startup
  * before any code calls `getOutputMode()`. Subsequent calls overwrite.
  */
-export function initOutputMode(argv: string[], defaults: OutputDefaults | undefined = {}): OutputMode {
+export function initOutputMode(argv: readonly string[], defaults: OutputDefaults | undefined = {}): OutputMode {
   _mode = resolveOutputMode(argv, defaults);
   return _mode;
 }

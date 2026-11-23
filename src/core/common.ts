@@ -8,11 +8,12 @@ import path from "node:path";
 import { ConfigError } from "./errors";
 import { stripJsonComments } from "./jsonc";
 import { getConfigPath, getRegistryCacheDir, getRegistryIndexCacheDir, resolveConfiguredBundlePath } from "./paths";
+import { isTerminal } from "./stdio";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
 // Moved to the platform leaf so paths.ts can use it without a common↔paths
-// cycle (chunk-8 WI-8.6, DoD 11); re-exported here for the existing surface.
+// cycle; re-exported here for the existing surface.
 export { IS_WINDOWS } from "./platform";
 // Moved to the `jsonc` / `paths` leaves so `paths.ts` can use them without a common↔paths cycle; re-exported for the existing surface.
 export { resolveConfiguredBundlePath, stripJsonComments };
@@ -323,15 +324,13 @@ export function isWithin(candidate: string, root: string): boolean {
  * read-only installed-source/registry-index copies that lint (and `--fix`)
  * must never touch.
  *
- * This is the single source of truth for that exclusion — it replaces what
- * used to be three independent unanchored substring checks
- * (`posixPath.includes("/.cache/") || posixPath.includes("/registry/")`).
- * That check matched ANY path merely containing the literal text `.cache` or
- * `registry` anywhere in it — a normal XDG `~/.cache/...` user bundle, or a
- * CI workspace checked out under a `.cache`-named directory, tripped it and
- * silently got zero lint findings. Using {@link isWithin} (realpath +
- * containment, not a string search) fixes that while still excluding the
- * real cache content the check was meant to skip.
+ * This is the single source of truth for that exclusion — it is anchored,
+ * unlike an unanchored substring check, which would match ANY path merely
+ * containing the literal text `.cache` or `registry` — a normal XDG
+ * `~/.cache/...` user bundle, or a CI workspace checked out under a
+ * `.cache`-named directory, would silently get zero lint findings. It uses
+ * {@link isWithin} (realpath + containment, not a string search), which still
+ * excludes the real cache content.
  */
 export function isAkmRegistryCachePath(filePath: string): boolean {
   return isWithin(filePath, getRegistryCacheDir()) || isWithin(filePath, getRegistryIndexCacheDir());
@@ -587,7 +586,7 @@ export function abortableDelay(ms: number, signal?: AbortSignal | null, abortMes
  * when stdin is a TTY (no pipe) or when the piped content is empty.
  */
 export function tryReadStdinText(): string | undefined {
-  if (process.stdin.isTTY) return undefined;
+  if (isTerminal(0)) return undefined;
   const input = fs.readFileSync(0, "utf8");
   return input.length > 0 ? input : undefined;
 }

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildShellExportScript, createEnv, listKeys, loadEnv } from "../../../src/commands/env/env";
+import { buildShellExportScript, createEnv, listKeys, loadEnv, parseEnvText } from "../../../src/commands/env/env";
 import { setSecret } from "../../../src/commands/env/secret";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
@@ -460,7 +460,7 @@ describe("env export / path (read-path safety)", () => {
     }
   });
 
-  test("env export without --out errors and points at akm exec", async () => {
+  test("env export without --out errors and points at akm run --env", async () => {
     const stashDir = makeTempDir("akm-envcli-stash-");
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=secret\n", "utf8");
@@ -473,7 +473,7 @@ describe("env export / path (read-path safety)", () => {
     const json = JSON.parse(result.stderr) as { code?: string };
     expect(json.code).toBe("MISSING_REQUIRED_ARGUMENT");
     expect(result.stderr).toContain("--out");
-    expect(result.stderr).toContain("akm exec --env");
+    expect(result.stderr).toContain("akm run --env");
     expect(result.stdout).not.toContain("secret");
   });
 
@@ -485,8 +485,8 @@ describe("env export / path (read-path safety)", () => {
     const result = await withBundle(stashDir, () => runCli(["env", "path", "env/prod"]));
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim().endsWith(path.join("env", "prod.env"))).toBe(true);
-    expect(result.stderr).toContain("akm exec --env");
+    expect(result.stdout.trim()).toBe(path.join(stashDir, "env", "prod.env"));
+    expect(result.stderr).toContain("akm run --env");
 
     // --quiet suppresses the warning (for the _FILE / --env-file convention).
     const quiet = await withBundle(stashDir, () => runCli(["env", "path", "env/prod", "--quiet"]));
@@ -511,33 +511,17 @@ describe("env create --from-file / --from-stdin", () => {
     }
   });
 
-  test("--from-file warns once per key with an unquoted # (key only) and writes the file unchanged", async () => {
+  test("--from-file writes the file unchanged and says nothing about a # in an unquoted value", async () => {
     const stashDir = makeTempDir("akm-envcli-stash-");
     const srcFile = path.join(stashDir, "source.env");
-    const text = 'A=#sekrit1\nB=x #sekrit2\nC="#sekrit3"\nD=plain\n';
+    const text = 'A=#sekrit1\nB=x #sekrit2\nC="#sekrit3"\nD=u#v\n';
     fs.writeFileSync(srcFile, text, "utf8");
 
     const result = await withBundle(stashDir, () => runCli(["env", "create", "env/prod", "--from-file", srcFile]));
 
     expect(result.status).toBe(0);
-    expect(result.stderr.match(/^A: /gm)?.length).toBe(1);
-    expect(result.stderr.match(/^B: /gm)?.length).toBe(1);
-    expect(result.stderr).not.toMatch(/^C: /m);
-    expect(result.stderr).not.toMatch(/^D: /m);
-    expect(result.stderr).not.toContain("sekrit");
+    expect(result.stderr).toBe("");
     expect(fs.readFileSync(path.join(stashDir, "env", "prod.env"), "utf8")).toBe(text);
-  });
-
-  test("--from-file never reports text inside a multi-line quoted value as a key", async () => {
-    const stashDir = makeTempDir("akm-envcli-stash-");
-    const srcFile = path.join(stashDir, "source.env");
-    fs.writeFileSync(srcFile, "W=\"line1\nX=val#frag\nline3\"\nY='\nurl=http://h/#f\n'\nZ=a#b\n", "utf8");
-
-    const result = await withBundle(stashDir, () => runCli(["env", "create", "env/prod", "--from-file", srcFile]));
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toMatch(/^Z: /m);
-    expect(result.stderr).not.toMatch(/^(X|url|W|Y): /m);
   });
 
   test("--from-file refuses to clobber an existing env", async () => {
@@ -756,6 +740,18 @@ describe("env-gitignored-indexing", () => {
           expect(shownSecret.stdout).not.toContain(SECRET_VALUE);
         },
       );
+    });
+  });
+});
+
+describe("parseEnvText: # in an unquoted value", () => {
+  test("starts a comment only after a space or tab", () => {
+    expect(parseEnvText("A=#abc\nB= #c\nC=x#frag\nD=v # note\nE=\t#t\n")).toEqual({
+      A: "#abc",
+      B: "",
+      C: "x#frag",
+      D: "v",
+      E: "",
     });
   });
 });

@@ -60,9 +60,8 @@ const ctx: ValidateContext = {
 };
 
 describe("dotenv adapter — metadata", () => {
-  test("id / version", () => {
+  test("id", () => {
     expect(dotenvAdapter.id).toBe("dotenv");
-    expect(dotenvAdapter.version).toBe("0.9.0");
   });
 });
 

@@ -3,17 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Per-proposal-source accept-rate metrics, folded into `akm health --report`
- * (0.9.0 CLI overhaul, S3).
+ * Per-proposal-source accept-rate metrics, part of `akm health --report`.
  *
  * Provides the core self-measurement metric for recursive self-improvement:
  * if reflect proposals are accepted at 20% and distill proposals at 60%,
  * that guides resource allocation to higher-ROI generators.
  *
- * Previously exposed as the removed `akm history --accept-rate-by-source`
- * flag (src/commands/sources/history.ts, F-4 / #385); `health` already reads
- * the pending proposal queue for its own `--report` dataset, so this is the
- * same read extended to the accepted/rejected archive.
+ * `health` reads the pending proposal queue for its own `--report` dataset;
+ * this is the same read extended to the accepted/rejected archive.
  */
 
 import { resolveStashDir } from "../../core/common";

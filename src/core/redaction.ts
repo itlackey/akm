@@ -179,7 +179,7 @@ export const MIN_INFERRED_SECRET_LENGTH = 8;
  * matches `MONKEY` and `BYPASS`. Whole-word matching gets `GH_TOKEN`,
  * `NPM_AUTH_TOKEN`, `MY_API_KEY`, `DB_PASS` and `AWS_SECRET_ACCESS_KEY` right.
  */
-const INFERRED_SECRET_NAME = /(?:^|_)(?:API_?KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|CREDENTIALS?|AUTH)(?:_|$)/i;
+const INFERRED_SECRET_NAME = /(?:^|_)(?:API_?KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PAT|CREDENTIALS?|AUTH)(?:_|$)/i;
 
 /**
  * Credential variables whose name is a single glued word, which no
@@ -514,11 +514,11 @@ export function redactCredentialPatterns(input: string): string {
  * once, so overlapping matches merge into a single `[REDACTED]` and no needle
  * can ever match inside a token an earlier needle produced.
  *
- * That last property is load-bearing. This function used to take a `replaceAll`
- * fast path that chained over a *mutating* accumulator, which meant any needle
- * drawn from the letters of `[REDACTED]` re-matched the tokens already injected
- * and the output grew geometrically: `redactSensitiveText("a".repeat(50),
- * ["a","E","D","T","C","R"])` returned 32,450 characters — 649x the input. On a
+ * That last property is load-bearing. A `replaceAll`
+ * fast path that chained over a *mutating* accumulator would let any needle
+ * drawn from the letters of `[REDACTED]` re-match the tokens already injected
+ * and the output grow geometrically: `redactSensitiveText("a".repeat(50),
+ * ["a","E","D","T","C","R"])` would return 32,450 characters — 649x the input. On a
  * path where the needle set is derived from configuration or the environment,
  * that is a memory-exhaustion hazard reachable from ordinary command output.
  * The encoded-form path never had the bug because it always worked this way.

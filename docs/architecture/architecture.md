@@ -32,7 +32,7 @@ written are in [Core Principles](akm-core-principles.md).
   carries `installRef` instead); `show` returns the payload; both commands list
   their matches under `results`, and `curate` at `normal` also carries `path`
   and `editable`. Pinned by
-  `tests/output-shapes-unit.test.ts` and `tests/output-baseline.test.ts`.
+  `tests/output-shapes-unit.test.ts` and `tests/integration/output-baseline-in-process.test.ts`.
 - **Every token earns its place.** Default output is lean: `--detail brief`
   lists only what is needed to choose the next asset, and `normal` and `full`
   widen it. `show` returns what a consumer needs to
@@ -46,13 +46,13 @@ written are in [Core Principles](akm-core-principles.md).
   identity. An agent passes the ref `search` returned to `show` and never
   parses or builds one. Pinned by `tests/asset-ref.test.ts`,
   `tests/resolve-ref.test.ts` and
-  `tests/contracts/ref-resolver-contract.test.ts`.
+  `tests/integration/contracts/ref-resolver-contract.test.ts`.
 - **Execution happens only through named surfaces.** Workflow runs, tasks,
   agent and command dispatch, `akm exec`, the improve and
   proposal processes, and fetcher modules in the working
   bundle's `scripts/wiki-fetchers/` directory during website sync. `search`
-  and `show` execute nothing; a script runs only as a task or workflow
-  target. Held by review.
+  and `show` execute nothing; a script runs only through `akm run`, a task
+  step or a workflow target. Held by review.
 - **Improvement is proposal-first.** Proposals are the unit of change: reflect,
   distill, extract and consolidate only emit proposals. Three lanes act
   without a person, and only with `experimental.improveAutonomy` on: memory
@@ -63,7 +63,7 @@ written are in [Core Principles](akm-core-principles.md).
   session extraction writes session assets, and `improve` purges graced
   archives, commits accepted proposals and auto-syncs a git-backed bundle.
   Pinned by
-  `tests/improve-autonomy-gate.test.ts`.
+  `tests/integration/improve-autonomy-gate.test.ts`.
 - **Writes resolve one way.** An explicit `--bundle`, then
   the working bundle, then an error. A
   destination that is not writable is an error, never a fallback. Env and
@@ -81,7 +81,7 @@ written are in [Core Principles](akm-core-principles.md).
   config, so editing config changes the next run and not the one in flight.
   The journaled runner is symbolic (a `$VAR` reference, or a connection's name
   for its stored key), so a credential is not frozen: dispatch materializes the
-  current key, for the frozen endpoint only. Pinned by `tests/workflows/child-plan-immutability.test.ts`
+  current key, for the frozen endpoint only. Pinned by `tests/integration/workflows/child-plan-immutability.test.ts`
   and `tests/workflows/immutable-execution-v4-red.test.ts`.
 - **Host authority is local and never inferred.** A disabled bundle (`enabled: false`) is inert across
   content reads, writes, indexing and execution; an explicit bundle lifecycle
@@ -92,8 +92,8 @@ written are in [Core Principles](akm-core-principles.md).
   without it schedules nothing
   (see [Configuration](../reference/configuration.md#scheduler-activation)).
   Anything else that would need a new trust decision is reported, never
-  invented. Pinned by `tests/config.test.ts` and
-  `tests/source-source.test.ts`.
+  invented. Pinned by `tests/integration/config.test.ts` and
+  `tests/integration/source-source.test.ts`.
 - **An unsafe override names one risk.** `--allow-insecure-transport` allows
   plain HTTP and nothing else, and there is no combined bypass. Pinned for the
   flag by `tests/integration/registry/registry-network-boundary.test.ts`; the
@@ -589,7 +589,7 @@ A config in the older `engines` form is converted to `connections` and
 `harnesses` by one pure function (`scripts/akm-migrate/config/convert-engines.ts`),
 run only by `akm migrate apply`; a load reads the current shape and names the retired form.
 
-Task source v4 execution and durable workflow dispatch use this runtime
+Task execution and durable workflow dispatch use this runtime
 boundary. Markdown workflows compile through source IR v1; new starts freeze
 `irVersion: 8`, which records a connection or harness where earlier versions
 recorded an engine. A stored plan that decodes runs whatever release froze it
@@ -599,7 +599,8 @@ which includes every earlier plan with a command step, is marked abandoned and
 refused, naming the upgrade. AKM does not support full GitHub Actions semantics
 or arbitrary remote action execution.
 
-Tasks are `tasks/<name>.yml` documents in task source v4 (`parseTaskSource`).
+Tasks are `tasks/<name>.yml` documents in task source v4 or the Experimental
+task source v5, `version: 5-beta.1` (`parseTaskSource`).
 Version 2 and 3 files are not read at runtime: they are refused with a message
 naming `akm migrate apply`, which converts them. Historical task-run metadata
 remains readable.

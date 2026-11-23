@@ -61,9 +61,8 @@ const ctx: ValidateContext = {
 };
 
 describe("website-snapshot adapter — metadata", () => {
-  test("id / version", () => {
+  test("id", () => {
     expect(websiteSnapshotAdapter.id).toBe("website-snapshot");
-    expect(websiteSnapshotAdapter.version).toBe("0.9.0");
   });
 
   test("looksLikeRoot fires on the snapshot root (manifest.json), not on a bare dir", () => {

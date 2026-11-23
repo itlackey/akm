@@ -4,11 +4,15 @@
 
 // Integration: reads real isolated state/index databases, without network or harness probes.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { akmHealth } from "../../../src/commands/health";
+import { readImproveRows } from "../../../src/commands/health/improve-metrics";
 import { buildPerRunSummaries } from "../../../src/commands/health/task-runs";
 import { recordImproveRunResult, recordTerminatedImproveRun } from "../../../src/commands/improve/improve-result-file";
+import { processIdentity } from "../../../src/core/file-lock";
 import type { AkmImproveResult } from "../../../src/core/improve-types";
 import { getDbPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
@@ -42,7 +46,7 @@ const health = (since = at(now - DAY)) =>
     akmHealth({ since, now: () => now, readOnly: true, probe: false, groupBy: "run" }),
   );
 
-function task(taskId: string, startedAt: number, status = "active"): void {
+function task(taskId: string, startedAt: number, status = "active", owner?: object): void {
   const row: TaskHistoryRow = {
     task_id: taskId,
     status,
@@ -52,7 +56,12 @@ function task(taskId: string, startedAt: number, status = "active"): void {
     log_path: null,
     target_kind: "shell",
     target_ref: null,
-    metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 10_000, detail: null }),
+    metadata_json: JSON.stringify({
+      metadataVersion: 2,
+      durationMs: 10_000,
+      detail: null,
+      ...(owner ? { owner } : {}),
+    }),
   };
   const db = openStateDatabase();
   try {
@@ -79,8 +88,17 @@ function improve(id: string, startedAt: number, overrides: Partial<AkmImproveRes
 
 describe("health reporting correctness", () => {
   test("still-active runs do not disappear outside the history lookback", async () => {
-    task("stuck", now - 2 * DAY);
-    task("recent", now - 60_000);
+    // `stuck`'s akm process is gone; `recent` is owned by this live process. Age decides neither.
+    const exited = spawnSync(process.execPath, ["-e", "0"]);
+    const host = os.hostname();
+    const bootId = processIdentity(process.pid)?.bootId;
+    task("stuck", now - 2 * DAY, "active", { pid: exited.pid, host, bootId, startTime: "1" });
+    task("recent", now - 60_000, "active", {
+      pid: process.pid,
+      host,
+      bootId,
+      startTime: processIdentity(process.pid)?.startTime,
+    });
     task("old-completed", now - 3 * DAY, "completed");
     const short = await health();
     const wide = await health(at(now - 7 * DAY));
@@ -95,6 +113,28 @@ describe("health reporting correctness", () => {
     expect(short.hardChecks.find((c) => c.name === "task-history-read")?.evidence?.rows).toBe(1);
     expect(short.metrics.taskFailRate).toBe(0);
     expect(short.status).toBe("warn");
+  });
+
+  test("a run started 2 days ago whose owner is alive is not stuck: age decides nothing", async () => {
+    const identity = processIdentity(process.pid);
+    task("long-run", now - 2 * DAY, "active", {
+      pid: process.pid,
+      host: os.hostname(),
+      bootId: identity?.bootId,
+      startTime: identity?.startTime,
+    });
+    const result = await health();
+    expect(result.hardChecks.find((c) => c.name === "active-runs")?.status).toBe("pass");
+    expect(result.metrics.stuckActiveRuns).toBe(0);
+  });
+
+  test("a run owned by another host is unknown, not pass", async () => {
+    task("elsewhere", now - 60_000, "active", { pid: 1, host: "other-host", bootId: "x", startTime: "1" });
+    const result = await health();
+    expect(result.hardChecks.find((c) => c.name === "active-runs")).toMatchObject({
+      status: "unknown",
+      reason: "blocked",
+    });
   });
 
   test.each(["auto", "off"] as const)("an unreadable index fails overall health in %s mode", async (mode) => {
@@ -119,7 +159,9 @@ describe("health reporting correctness", () => {
     improve("scheduled", start);
     const db = openStateDatabase();
     try {
-      expect(buildPerRunSummaries(db, at(now - DAY), at(now))[0]?.taskId).toBe(taskId);
+      expect(
+        buildPerRunSummaries(db, readImproveRows(db, at(now - DAY), at(now)), at(now - DAY), at(now))[0]?.taskId,
+      ).toBe(taskId);
     } finally {
       db.close();
     }
@@ -131,7 +173,9 @@ describe("health reporting correctness", () => {
     improve("manual", start);
     const db = openStateDatabase();
     try {
-      expect(buildPerRunSummaries(db, at(now - DAY), at(now))[0]?.taskId).toBe("manual");
+      expect(
+        buildPerRunSummaries(db, readImproveRows(db, at(now - DAY), at(now)), at(now - DAY), at(now))[0]?.taskId,
+      ).toBe("manual");
     } finally {
       db.close();
     }
@@ -150,7 +194,7 @@ describe("health reporting correctness", () => {
     });
     const result = await health();
     expect(result.runs?.[0]?.ok).toBe(ok);
-    expect(result.improve.actions.reflect.failed).toBe(1);
+    expect(result.improve?.actions.reflect.failed).toBe(1);
     expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
       status: "warn",
       evidence: { failedRuns: 1, runIds: ["failed"] },
@@ -164,8 +208,8 @@ describe("health reporting correctness", () => {
   ] as never[][])("a quality-rejected reflect candidate (%s) is counted but does not warn", async (mode, result) => {
     improve("rejected", now - 120_000, { actions: [{ mode, ref: "knowledge/fixture", result }] } as never);
     const health_ = await health();
-    expect(health_.improve.actions.reflect.rejected).toBe(1);
-    expect(health_.improve.actions.reflect.failed).toBe(0);
+    expect(health_.improve?.actions.reflect.rejected).toBe(1);
+    expect(health_.improve?.actions.reflect.failed).toBe(0);
     expect(health_.advisories.find((c) => c.name === "improve-failures")?.status).toBe("pass");
   });
 
@@ -211,7 +255,7 @@ describe("health reporting correctness", () => {
       },
     });
     const result = await health();
-    expect(result.improve.consolidation.failedChunks).toBe(1);
+    expect(result.improve?.consolidation.failedChunks).toBe(1);
     expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
       status: "warn",
       evidence: { failedRuns: 1, runIds: ["failed"] },
@@ -271,7 +315,7 @@ describe("health reporting correctness", () => {
       improve("after-legacy", now - 60_000);
     }
     const result = await health();
-    expect(result.improve.consolidation).toMatchObject({
+    expect(result.improve?.consolidation).toMatchObject({
       pairsJudged: judged,
       failedPairs: failed,
       deferredPairs: legacy ? null : deferred,
@@ -395,7 +439,7 @@ describe("health reporting correctness", () => {
       db.close();
     }
     const result = await health();
-    expect(result.improve.resultRows).toMatchObject({ included: 0, skipped: { invalid: 1 } });
+    expect(result.improve?.resultRows).toMatchObject({ included: 0, skipped: { invalid: 1 } });
     expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
       status: "warn",
       evidence: { failedRuns: 1, runIds: ["corrupt-failure"] },

@@ -9,7 +9,7 @@
  * (writable) open path. This module lives BELOW the
  * indexer, so the storage loan helpers (`index-db.ts`, `registry-index-cache-repository.ts`)
  * import their opener from a sibling here instead of reaching up into the
- * indexer — inverting the old storage→indexer arrow.
+ * indexer (no storage→indexer dependency).
  */
 
 import fs from "node:fs";
@@ -92,8 +92,8 @@ export function openExistingDatabase(dbPath?: string): Database {
   // they warn about an older layout and refuse a newer one (see checkIndexLayout).
   //
   // "Existing" is load-bearing: a missing file throws instead of being
-  // created. Create-on-open used to leave a schema-less index.db behind (a
-  // fire-and-forget telemetry read was enough), which every later opener then
+  // created. Create-on-open would leave a schema-less index.db behind (a
+  // fire-and-forget telemetry read would be enough), which every later opener then
   // saw as an existing-but-broken index ("no such table: entries") — the
   // curate→proposal file-order failure pinned by
   // tests/integration/storage/open-existing-database-no-create.test.ts. `create: false`

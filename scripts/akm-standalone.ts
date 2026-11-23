@@ -27,17 +27,19 @@ import { STANDALONE_FROZEN_SCRIPT_ARG } from "../src/tasks/standalone-script-ent
 
 if (process.argv[2] === STANDALONE_FROZEN_SCRIPT_ARG) {
   const file = process.argv[3];
-  if (process.argv.length !== 4 || !file || !path.isAbsolute(file) || ![".js", ".ts"].includes(path.extname(file))) {
+  if (!file || !path.isAbsolute(file)) {
     throw new Error("Invalid internal frozen-script invocation.");
   }
   const stat = fs.lstatSync(file);
   if (stat.isSymbolicLink() || !stat.isFile()) {
     throw new Error("Internal frozen-script target is not a no-follow regular file.");
   }
-  // Present conventional Bun script argv (`binary`, `script`) to authored code
-  // and consume standalone startup markers before the CLI import.
+  // Present conventional Bun script argv (`binary`, `script`, ...arguments) to authored code
+  // and consume standalone startup markers before the CLI import. Which scripts run here is
+  // decided by scriptCommand (src/tasks/prepare/script-capture.ts), the only code that emits
+  // this invocation, so the entry checks only the file it is given.
   const executable = process.argv[0] ?? process.execPath;
-  process.argv.splice(0, process.argv.length, executable, file);
+  process.argv.splice(0, process.argv.length, executable, file, ...process.argv.slice(4));
   delete process.env.AKM_STANDALONE_ENTRY;
   // Dynamic import normally leaves import.meta.main false because this
   // standalone wrapper remains Bun's entry module. Temporarily make the

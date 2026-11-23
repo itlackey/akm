@@ -149,7 +149,7 @@ test("improve --require-feedback-signal names the strategy setting; remember --a
   }
 });
 
-test("akm env run and akm secret run name akm exec", () => {
+test("akm env run and akm secret run name akm run on a script asset", () => {
   const messages: string[] = [];
   const notice = (userArgs: string[], commandPath: string[]) => {
     _resetWarnOnceForTests();
@@ -162,10 +162,10 @@ test("akm env run and akm secret run name akm exec", () => {
   try {
     const env = notice(["env", "run", "env/x", "--", "true"], ["env", "run"]);
     expect(env).toContain("[deprecated] akm env run is deprecated and is removed in 0.11");
-    expect(env).toContain("`akm exec --env <ref> -- <command>`");
+    expect(env).toContain("`akm run --env <ref> scripts/<file>`");
     const secret = notice(["secret", "run", "secrets/x", "X", "--", "true"], ["secret", "run"]);
     expect(secret).toContain("[deprecated] akm secret run is deprecated and is removed in 0.11");
-    expect(secret).toContain("`akm exec --secret <ref>:<VAR> -- <command>`");
+    expect(secret).toContain("`akm run --secret <ref>:<VAR> scripts/<file>`");
   } finally {
     _setWarnSinkForTests(undefined);
     _resetParsedInvocationForTests();

@@ -85,10 +85,9 @@ describe("the commands the 0.9 -> 0.10 guide tells a reader to run, on a config 
     expect(JSON.parse(status.stdout)).toMatchObject({ status: "current", ok: true });
   });
 
-  test("the verification commands that need no network run, and health names the check the guide names", async () => {
+  test("the verification commands that need no network run, and doctor names the check the guide names", async () => {
     expect((await guideStep("akm migrate apply")).code).toBe(0);
     for (const line of [
-      "akm task doctor",
       "akm improve --dry-run",
       "akm lint --type tasks",
       "akm lint --type workflows",
@@ -97,9 +96,9 @@ describe("the commands the 0.9 -> 0.10 guide tells a reader to run, on a config 
       const result = await guideStep(line);
       expect({ line, code: result.code, stderr: result.stderr }).toEqual({ line, code: 0, stderr: result.stderr });
     }
-    // `akm health` exits 0 when ok and 4 on a warning (a connection that is not reachable is one).
-    const health = await guideStep("akm health");
-    expect([0, 4]).toContain(health.code);
-    expect(health.stdout).toContain("connections-and-harnesses");
+    // `akm doctor` exits 0 when ok and 4 on a warning (a connection that is not reachable is one).
+    const doctor = await guideStep("akm doctor");
+    expect([0, 4]).toContain(doctor.code);
+    expect(doctor.stdout).toContain("connections-and-harnesses");
   });
 });

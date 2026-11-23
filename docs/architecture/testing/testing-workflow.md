@@ -30,19 +30,25 @@ covers the automated test workflow and test-authoring guidance.
 - `bun run test:integration` (`scripts/test-shards.sh integration`) runs
   `tests/integration/**` only.
 
-**Where a test goes.** A file belongs under `tests/integration/` if it opens a
-real database (`openIndexDatabase`, `openExistingDatabase`), touches the network
-(a loopback server included), or spawns a real process (`spawn`, `spawnSync`,
-`Bun.spawn`); `tests/integration/commands/sources/index-db-contention.test.ts`
-writes the reasoning out against a concrete file. Everything else, such as pure
-in-memory logic and mocked I/O, belongs under `tests/`, however deeply nested.
-The real OpenCode binary (its own SQLite database and a shell tool) and the
-loopback fake model are integration resources, and
-`tests/contracts/test-targets.test.ts` fails on a unit-target test that uses
-either. A file that seems to qualify for `tests/integration/` on any other
-ground says which clause it satisfies in a one-line header comment instead of
-being placed by feel. No `.test.ts` belongs under a `fixtures` or `_fixtures`
-path: those are data, not executable specs.
+**Where a test goes.** A test file stays in the unit target (`tests/`, outside `tests/integration/`) only if none of
+its tests, directly, through a test helper, or through the `src/` code it calls:
+
+1. starts a process (`spawn`, `spawnSync`, `Bun.spawn`, a fake binary that akm then runs such as `writeFakeHarness`
+   or `withOpencodeOnPath`, or product code that runs `git`);
+2. runs a CLI entry, in process or not (`runCliCapture`, `runCliStatus`, `main([...])`);
+3. opens a server or socket (`Bun.serve`, `http.createServer`);
+4. opens a SQLite file (state, index, logs, registry cache) or builds an index (`akmIndex`); `":memory:"` is fine;
+5. creates, writes, renames, chmods or deletes anything on disk: temp dirs (`mkdtemp`, `makeSandboxDir`,
+   `makeStashDir`, `withIsolatedAkmStorage`), and files written into the sandbox HOME/XDG by the test or by product
+   code (`writeSandboxConfig`, `seedLockEntries`, `saveConfig`, credentials).
+
+Injected doubles (`mock()`, `spyOn`, seams, `withMockedFetch`, a spawn function passed as a parameter), env changes and
+read-only reads of checked-in files are allowed in unit. There is no "single trivial temp file" exception, and a file
+moves whole if any one of its tests breaks the rule. The real OpenCode binary and the loopback fake model are
+integration resources. `tests/contracts/test-targets.test.ts` fails on a unit-target test that shows one of the
+unambiguous markers above. Files under `tests/fixtures/` are data, not executable specs: `scripts/test-unit.sh` skips them, and the one
+`.test.ts` there (`tests/fixtures/bundles/code-project/tests/oauth.test.ts`) is sample input that the code-project
+golden lists by path.
 
 **Green by default** ([principle 6](../akm-core-principles.md#6-the-suite-is-green-by-default-and-sandboxed-through-the-environment)).
 A test that must be disabled is `.skip`ped in the same change that links its
@@ -71,7 +77,7 @@ Relevant coverage:
 
 - `tests/integration/self-update.test.ts` - self-upgrade detection and checksum handling
 - `tests/integration/registry/*.test.ts`, `tests/provider-registry.test.ts` - registry search, index formats, and install resolution
-- `tests/setup-wizard.test.ts`, `tests/setup-scheduled-tasks.test.ts` - setup wizard orchestration and failure handling
+- `tests/integration/setup-wizard.test.ts`, `tests/integration/setup-scheduled-tasks.test.ts` - setup wizard orchestration and failure handling
 - `tests/integration/install/install-script.test.ts` - repeatable `install.sh` edge cases and permission paths
 
 ### Writing deterministic, isolated tests
@@ -225,7 +231,7 @@ can be:
 - `blocked` when semantic search cannot run with the current provider/setup
 
 These cases are covered by the setup and semantic-status suites
-(`tests/setup-wizard.test.ts`, `tests/integration/vector-search.test.ts`,
+(`tests/integration/setup-wizard.test.ts`, `tests/integration/vector-search.test.ts`,
 `tests/integration/update-no-op-semantic-status.test.ts`).
 
 The real-model gate runs with
@@ -499,6 +505,26 @@ Fetched previous-release tarballs are cached under
 runs do not re-hit the network. It is wired into CI as the `upgrade-rehearsal`
 job (`.github/workflows/ci.yml`), which runs on a release pull request (a pull
 request into `main`), the gate a stable release merges through.
+
+## Quality Measures
+
+On-demand measures of code quality and test strength. They are never part of `bun run check`, CI on a pull
+request, or a release, and nothing fails on a number: they exist to compare a change or a branch with its base.
+Each runs its tool through `bunx` at an exact version pinned in `scripts/quality/`, so no dependency is added to
+`package.json` or the lockfile. Reports go to `reports/quality/<tool>/` (gitignored): the tool's own JSON, a
+`summary.txt`, and a flat `metrics.json`. The same measures run from the manual `Quality` workflow
+(`.github/workflows/quality.yml`, `workflow_dispatch`), which uploads `reports/quality` as an artifact.
+
+| Command | Tool | Time | What the number means | What it does not mean |
+| --- | --- | --- | --- | --- |
+| `bun run quality:complexity` | fta-cli | about 1 s | Per-file FTA score (size, branching and Halstead volume combined); 60 and above is "Needs improvement". Lower is simpler. | Quality. Splitting a file lowers its score and removes no logic. Files under 6 lines are skipped. |
+| `bun run quality:duplication` | jscpd | about 1 s | Verbatim repeated blocks in `src/` TypeScript, as clones and duplicated lines. | Every repetition: renamed or reshaped copies are not found, and moving a copy to a shared file may not change the number. |
+| `bun run quality:dead-code` | knip | about 5 s | Files, exports and types in `src/` that nothing reachable from the entry points imports. Entry points are set in `scripts/quality/knip.json`; dependency checks are not run. | Safe to delete. A file loaded by path or spawned by a test, or an export used only by tests, is judged by the entry list, so review each hit. |
+| `bun run quality:coverage` | `bun test --coverage` | about 30 min (one serial process over the whole suite) | Line and function coverage of `src/` from one process over every test file. `src/` files with runtime code that no test loads count at 0% (estimated lines, no functions); type-only files are skipped. | A real figure. It is a lower bound: code run only in a child process the test spawns (tests that spawn the CLI) is not counted. A hit line is not an asserted line, bun counts a one-line function as hit when declared, and there is no branch data. |
+| `bun run quality:compare -- <base> [<head>=HEAD] [--coverage]` | the static tools above | about 10 s (suites twice with `--coverage`) | Both refs exported with `git archive`, measured with this checkout's configs, with `src/` and `tests/` file and line counts; delta is head minus base. | A verdict. Read it with the caveats of each tool. `--coverage` also runs `bun install` and the full suite on both trees. |
+
+Run coverage and `--coverage` compares one at a time and under a memory cap, for example
+`systemd-run --user --scope -p MemoryMax=8G -p MemorySwapMax=0 bun run quality:coverage`.
 
 ## Coverage Notes
 

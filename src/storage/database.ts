@@ -77,7 +77,7 @@ export interface Statement<Row = unknown> {
  * better-sqlite3 is not installed) and documents the actual contract.
  *
  * NOTE: `db.query()` (Bun-only) is intentionally absent — it is normalised to
- * `db.prepare().all()` at the call sites that previously used it.
+ * `db.prepare().all()` at the call sites that use it.
  */
 export interface Database {
   /**

@@ -34,7 +34,7 @@ function totalTokens(record: LlmUsageRecord): number {
   return record.totalTokens ?? (record.promptTokens ?? 0) + (record.completionTokens ?? 0);
 }
 
-/** A zeroed aggregate — also the value health reports when it could not read state.db at all (#791). */
+/** A zeroed aggregate. */
 export function emptyLlmUsageAggregate(): LlmUsageAggregate {
   return { ...emptyLlmUsageStageAggregate(), byStage: {}, byProcess: {}, byEngine: {} };
 }

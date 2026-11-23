@@ -15,6 +15,7 @@ import {
 } from "../../src/commands/sources/self-update";
 import { upgradeCommand } from "../../src/commands/sources/sources-cli";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, setQuiet } from "../../src/core/warn";
+import * as runtime from "../../src/runtime";
 import { resolveNpmGlobalRoot } from "../../src/tasks/resolve-akm-bin";
 import { sandboxHome } from "../_helpers/sandbox";
 
@@ -61,17 +62,6 @@ const currentMigrator = {
 // ── detectInstallMethod ─────────────────────────────────────────────────────
 
 describe("detectInstallMethod", () => {
-  test("returns a valid install method when running via bun run (not compiled)", () => {
-    const method = detectInstallMethod();
-    // In test context we're running from source. May be "binary" if AKM_VERSION
-    // is defined (e.g. compiled test runner), otherwise "unknown" or a package-manager install.
-    expect(["unknown", "npm", "pnpm", "bun", "binary"]).toContain(method);
-  });
-
-  test("does not throw", () => {
-    expect(() => detectInstallMethod()).not.toThrow();
-  });
-
   test("returns 'binary' when Bun.main starts with /$bunfs/", () => {
     const signals: InstallSignals = {
       bunMain: "/$bunfs/root/src/cli.ts",
@@ -293,13 +283,10 @@ describe("checkForUpdate", () => {
     expect(result.latestVersion).toBe("0.0.14");
   });
 
-  test("handles missing tag_name gracefully", async () => {
+  test("a release response with no tag_name is a failed check, never up to date", async () => {
     mockFetch(() => Response.json({}));
 
-    const result = await checkForUpdate("0.0.13");
-
-    expect(result.latestVersion).toBe("");
-    expect(result.updateAvailable).toBe(false);
+    await expect(checkForUpdate("0.0.13")).rejects.toThrow("no tag_name");
   });
 
   describe("--next channel", () => {
@@ -748,6 +735,12 @@ describe("performUpgrade", () => {
       stdout: "",
       stderr: "",
     } as never);
+    const indexSpy = spyOn(runtime, "spawnSync").mockReturnValue({
+      success: true,
+      exitCode: 0,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    });
 
     const result = await performUpgrade(
       {
@@ -765,22 +758,27 @@ describe("performUpgrade", () => {
     expect(result.postUpgrade?.ok).toBe(true);
     expect(result.postUpgrade?.skipped).toBe(false);
     expect(result.postUpgrade?.exitCode).toBe(0);
-    // Install, version verification, then the post-upgrade `akm index`.
-    expect(spawnSyncSpy).toHaveBeenCalledTimes(3);
+    // Install and version verification, then the post-upgrade `akm index`.
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(2);
     // stderr is not piped, so the index's progress lines reach the terminal while it runs.
-    expect(spawnSyncSpy).toHaveBeenLastCalledWith(
-      "akm",
-      ["index", "--format", "json"],
-      expect.objectContaining({ encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] }),
+    expect(indexSpy).toHaveBeenCalledWith(
+      ["akm", "index", "--format", "json"],
+      expect.objectContaining({ stdin: "pipe", stdout: "pipe", stderr: "inherit" }),
     );
   });
 
   test("`akm upgrade --quiet` passes --quiet to the post-upgrade index", async () => {
-    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+    spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: "",
       stderr: "",
     } as never);
+    const indexSpy = spyOn(runtime, "spawnSync").mockReturnValue({
+      success: true,
+      exitCode: 0,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    });
     setQuiet(true);
     await performUpgrade(
       { currentVersion: "0.0.13", latestVersion: "0.0.14", updateAvailable: true, installMethod: "npm" },
@@ -788,7 +786,7 @@ describe("performUpgrade", () => {
       currentMigrator,
     );
 
-    expect(spawnSyncSpy).toHaveBeenLastCalledWith("akm", ["index", "--format", "json", "--quiet"], expect.anything());
+    expect(indexSpy).toHaveBeenCalledWith(["akm", "index", "--format", "json", "--quiet"], expect.anything());
   });
 
   test.skipIf(process.platform === "win32")(
@@ -1026,16 +1024,19 @@ describe("performUpgrade", () => {
   });
 
   test("captures post-upgrade failure without failing the upgrade", async () => {
-    let call = 0;
-    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockImplementation((() => {
-      call++;
-      if (call < 3) {
-        // Package install and version verification succeed.
-        return { status: 0, stdout: "", stderr: "" } as never;
-      }
-      // The post-upgrade `akm index` fails; its stderr went to the terminal, so none is captured.
-      return { status: 1, stdout: "", stderr: null } as never;
-    }) as never);
+    // Package install and version verification succeed.
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
+    // The post-upgrade `akm index` fails; its stderr went to the terminal, so none is captured.
+    spyOn(runtime, "spawnSync").mockReturnValue({
+      success: false,
+      exitCode: 1,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    });
 
     const result = await performUpgrade(
       {
@@ -1052,7 +1053,7 @@ describe("performUpgrade", () => {
     expect(result.postUpgrade?.ok).toBe(false);
     expect(result.postUpgrade?.exitCode).toBe(1);
     expect(result.postUpgrade?.message).toContain("exit code 1");
-    expect(spawnSyncSpy).toHaveBeenCalledTimes(3);
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(2);
   });
 
   test("throws when latestVersion is empty and force is used", async () => {

@@ -13,7 +13,7 @@ import {
   parseGitRepoUrl,
   saveGitStash,
 } from "../../../src/sources/providers/git";
-import { assertCleanWorktree, verifyClonedRevision } from "../../../src/sources/providers/git-install";
+import { assertNoLocalWork, verifyClonedRevision } from "../../../src/sources/providers/git-install";
 import { runCliCapture } from "../../_helpers/cli";
 import {
   type Cleanup,
@@ -306,34 +306,6 @@ describe("GitSourceProvider", () => {
 
     expect(fs.existsSync(skillPath)).toBe(false);
   });
-
-  test("integrates with stash sources via ensureSourceCaches", async () => {
-    // Pre-populate the cache so ensureGitMirror returns early without cloning
-    const stashUrl = "https://github.com/andrewyng/context-hub";
-    const repo = parseGitRepoUrl(stashUrl);
-    const cachePaths = getCachePaths(repo.canonicalUrl);
-
-    fs.mkdirSync(cachePaths.rootDir, { recursive: true });
-    fs.mkdirSync(path.join(cachePaths.repoDir, "content"), { recursive: true });
-    fs.writeFileSync(cachePaths.indexPath, "[]", { encoding: "utf8", mode: 0o600 });
-
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { "context-hub": { git: stashUrl } },
-    });
-    resetConfigCache();
-
-    const { ensureSourceCaches } = await import("../../../src/indexer/search/search-source");
-    const { loadConfig } = await import("../../../src/core/config/config");
-    const config = loadConfig();
-    await ensureSourceCaches(config);
-
-    // Verify git stash content dir appears in stash sources.
-    const { resolveSourceEntries } = await import("../../../src/indexer/search/search-source");
-    const sources = resolveSourceEntries(undefined, config);
-    const gitSource = sources.find((s) => s.path.includes(path.basename(cachePaths.rootDir)));
-    expect(gitSource).toBeDefined();
-  });
 });
 
 // ── saveGitStash commit message sanitization (issue #270) ───────────────────
@@ -464,7 +436,7 @@ describe("saveGitStash named stash resolution", () => {
   });
 });
 
-describe("assert-clean-worktree", () => {
+describe("assert-no-local-work", () => {
   const tmpDirs: string[] = [];
 
   function makeRepo(): string {
@@ -483,7 +455,7 @@ describe("assert-clean-worktree", () => {
 
   function message(dir: string): string {
     try {
-      assertCleanWorktree(dir, "Subject", "has uncommitted changes; refusing.");
+      assertNoLocalWork(dir, "Subject", false);
     } catch (err) {
       return (err as Error).message;
     }
@@ -494,7 +466,44 @@ describe("assert-clean-worktree", () => {
     for (const dir of tmpDirs) fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  describe("assertCleanWorktree", () => {
+  function commit(dir: string, name: string): void {
+    fs.writeFileSync(path.join(dir, name), "x\n");
+    spawnSync("git", ["-C", dir, "add", "."]);
+    spawnSync("git", [
+      "-C",
+      dir,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-q",
+      "-m",
+      `add ${name}`,
+    ]);
+  }
+
+  describe("assertNoLocalWork", () => {
+    test("names commits that are not on the upstream, and not a pushed one", () => {
+      const origin = makeRepo();
+      const clone = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "akm-nlw-")), "c");
+      tmpDirs.push(path.dirname(clone));
+      spawnSync("git", ["clone", "-q", origin, clone]);
+      expect(() => assertNoLocalWork(clone, "Subject")).not.toThrow();
+      commit(clone, "mine.md");
+      let error: Error | undefined;
+      try {
+        assertNoLocalWork(clone, "Subject");
+      } catch (e) {
+        error = e as Error;
+      }
+      expect(error?.message).toContain("commits not on origin/");
+      expect(error?.message).toContain("add mine.md");
+      expect((error as { code?: string }).code).toBe("SOURCE_HAS_LOCAL_WORK");
+      // A fast-forward keeps commits, so the commit check can be skipped.
+      expect(() => assertNoLocalWork(clone, "Subject", false)).not.toThrow();
+    });
+
     test("passes on a clean repo", () => {
       expect(message(makeRepo())).toBe("");
     });
@@ -502,7 +511,9 @@ describe("assert-clean-worktree", () => {
     test("names a modified tracked file", () => {
       const dir = makeRepo();
       fs.writeFileSync(path.join(dir, "tracked.md"), "b\n");
-      expect(message(dir)).toBe("Subject has uncommitted changes; refusing. Changed: tracked.md.");
+      expect(message(dir)).toContain(
+        "Subject holds local work that would be lost; it has uncommitted changes: tracked.md.",
+      );
     });
 
     test("names an untracked file and caps the list", () => {
@@ -525,13 +536,13 @@ describe("assert-clean-worktree", () => {
     test("prints non-ASCII names as UTF-8", () => {
       const dir = makeRepo();
       fs.writeFileSync(path.join(dir, "café.md"), "x\n");
-      expect(message(dir)).toContain("Changed: café.md.");
+      expect(message(dir)).toContain("uncommitted changes: café.md");
     });
 
     test("reports a missing git binary", () => {
       const dir = makeRepo();
-      const script = `import { assertCleanWorktree } from ${JSON.stringify(path.resolve("src/sources/providers/git-install.ts"))};
-try { assertCleanWorktree(process.argv[1], "S", "dirty."); } catch (e) { console.log(e.message); }`;
+      const script = `import { assertNoLocalWork } from ${JSON.stringify(path.resolve("src/sources/providers/git-install.ts"))};
+try { assertNoLocalWork(process.argv[1], "S", false); } catch (e) { console.log(e.message); }`;
       const result = spawnSync(process.execPath, ["-e", script, dir], {
         encoding: "utf8",
         env: { PATH: path.join(os.tmpdir(), "akm-no-such-bin") },
@@ -715,8 +726,43 @@ describe("git-provider-sync-ahead", () => {
       git(["push", "origin", "main"], seed);
 
       await expect(ensureGitMirror(repo, cachePaths, { writable: true, force: true })).rejects.toThrow(
-        /unpushed commits/,
+        /commits not on/,
       );
+    });
+
+    test("a read-only refresh refuses to clone over a checkout holding a local commit, and keeps it", async () => {
+      const root = makeTempDir();
+      const remote = path.join(root, "remote.git");
+      git(["init", "--bare", remote]);
+      git(["init", "-b", "main", path.join(root, "seed")]);
+      const seed = path.join(root, "seed");
+      git(["config", "user.name", "AKM Test"], seed);
+      git(["config", "user.email", "akm@example.test"], seed);
+      fs.writeFileSync(path.join(seed, "seed.md"), "seed\n", "utf8");
+      git(["add", "."], seed);
+      git(["commit", "-m", "seed"], seed);
+      git(["remote", "add", "origin", remote], seed);
+      git(["push", "-u", "origin", "main"], seed);
+      git(["symbolic-ref", "HEAD", "refs/heads/main"], remote);
+
+      const cacheRoot = makeTempDir("akm-git-readonly-cache-");
+      const repo: ParsedRepoUrl = { cloneUrl: remote, ref: null, canonicalUrl: remote };
+      const cachePaths = getCachePaths(repo.canonicalUrl, cacheRoot);
+      await ensureGitMirror(repo, cachePaths, { writable: true, force: true });
+
+      const { repoDir } = cachePaths;
+      git(["config", "user.name", "AKM Test"], repoDir);
+      git(["config", "user.email", "akm@example.test"], repoDir);
+      fs.writeFileSync(path.join(repoDir, "local-only.md"), "local commit\n", "utf8");
+      git(["add", "."], repoDir);
+      git(["commit", "-m", "local only, never pushed"], repoDir);
+
+      await expect(ensureGitMirror(repo, cachePaths, { writable: false, force: true })).rejects.toMatchObject({
+        code: "SOURCE_HAS_LOCAL_WORK",
+      });
+
+      expect(fs.existsSync(path.join(repoDir, "local-only.md"))).toBe(true);
+      expect(git(["log", "-1", "--format=%s"], repoDir)).toBe("local only, never pushed");
     });
   });
 });

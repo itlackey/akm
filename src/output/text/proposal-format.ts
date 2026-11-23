@@ -5,11 +5,8 @@
 /**
  * Plain-text renderers for `akm proposal *` commands.
  *
- * Split out of `helpers.ts` (formerly 1418 lines / 59 fns) as its own
- * sibling module: proposal listing/show share the gate-decision summary
- * helpers. (`akm distill` has no registered top-level command — its former
- * plain-text renderer, `formatDistillPlain`, was dead code; removed per
- * R-063/B5.)
+ * A sibling module of `helpers.ts`: proposal listing/show share the gate-decision summary
+ * helpers. (`akm distill` has no registered top-level command.)
  */
 
 function appendLoweringNotices(lines: string[], result: Record<string, unknown>): void {
@@ -142,7 +139,7 @@ function retireVerdictLines(retirement: Record<string, unknown>): string[] {
         `${failingQueries} of the retired asset's own quer${failingQueries === 1 ? "y" : "ies"} would not have found the successor top 10`,
       );
     }
-    // S2: a query the search call never ran, or that fell back to
+    // a query the search call never ran, or that fell back to
     // keyword-only ranking, is never silently trusted OR silently
     // dropped — it excludes the proposal from bulk accept on its own.
     if (unverifiedQueries > 0) {
@@ -151,7 +148,7 @@ function retireVerdictLines(retirement: Record<string, unknown>): string[] {
       );
     }
     lines.push(`retire.continuityRisk: ${summary.join("; ")} — excluded from bulk accept`);
-    // N3 / S4: the actual failing query text, not just the count — a
+    // the actual failing query text, not just the count — a
     // reviewer deciding whether to accept by id needs to see what would
     // stop resolving, not just how many queries.
     const ranks = Array.isArray(continuityRisk.ranks) ? (continuityRisk.ranks as Array<Record<string, unknown>>) : [];
@@ -210,7 +207,7 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
     const why = entry.reopenReason ? ` (${String(entry.reopenReason)})` : "";
     lines.push(`reopened: ${String(entry.reopenedAt)}${why}, undoing ${was}`);
   }
-  // alpha.9: a consolidate retire proposal writes no content (`payload.content`
+  // A consolidate retire proposal writes no content (`payload.content`
   // is empty by design) — this is the reason a reviewer needs instead. `diff`
   // shows the body being retired.
   const retirement = p.retirement as Record<string, unknown> | undefined;

@@ -32,9 +32,9 @@ export function createWebsiteProvider(config: SourceConfigEntry): WebsiteSourceP
         requireStashDir: true,
         force: options?.force,
         // Feed the resolver into the injected mirror plumbing that
-        // already threads `resolveSecret` down to `FetcherContext`. This is the
-        // line that closes the bundle-update / sync() gap: previously the X
-        // fetcher on this path saw only `X_BEARER_TOKEN`, never the store.
+        // already threads `resolveSecret` down to `FetcherContext`. Without it the X
+        // fetcher on the bundle-update / sync() path would see only
+        // `X_BEARER_TOKEN`, never the store.
         ...(options?.secrets ? { resolveSecret: options.secrets.resolveSecret } : {}),
         ...(allowPrivateHosts ? { allowPrivateHosts: true } : {}),
       });

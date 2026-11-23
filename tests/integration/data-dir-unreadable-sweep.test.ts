@@ -35,13 +35,20 @@ import { getDataDir, getDbPath } from "../../src/core/paths";
 import { getStateDbPath } from "../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { indexWrittenAssets } from "../../src/indexer/index-written-assets";
-import { akmIndex } from "../../src/indexer/indexer";
+import { akmIndex, type IndexCleanResult, type IndexResponse } from "../../src/indexer/indexer";
 import { removeLockEntry, upsertLockEntry } from "../../src/integrations/lockfile";
 import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { rekeyEntryInPlace } from "../../src/storage/repositories/index-entries-repository";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { makePathUnresolvableInPlace, makeUnresolvablePath } from "../_helpers/unreadable-path";
+
+/** The `--clean` purge result; fails when the purge was skipped. */
+function purge(result: IndexResponse | undefined): IndexCleanResult {
+  const clean = result?.clean;
+  if (!clean || "skipped" in clean) throw new Error("--clean did not run");
+  return clean;
+}
 
 let storage: IsolatedAkmStorage;
 
@@ -241,8 +248,8 @@ describe("akm index --clean deletes absent files, never unreadable ones (#791)",
 
     // Pre-sweep: `existsSync` said the file was gone, so --clean DELETED its
     // index row and reported the deletion as a clean success.
-    expect(result?.clean?.removed).toBe(0);
-    expect(result?.clean?.removedRefs).toEqual([]);
+    expect(purge(result).removed).toBe(0);
+    expect(purge(result).removedRefs).toEqual([]);
     expect(warnings.join("\n")).toContain(restricted);
     expect(warnings.join("\n")).toMatch(/ELOOP/);
   });
@@ -259,8 +266,8 @@ describe("akm index --clean deletes absent files, never unreadable ones (#791)",
     fs.unlinkSync(gone);
 
     const result = await akmIndex({ stashDir, clean: true });
-    expect(result.clean?.removed).toBe(1);
-    expect(result.clean?.removedRefs[0]).toContain("gone");
+    expect(purge(result).removed).toBe(1);
+    expect(purge(result).removedRefs[0]).toContain("gone");
   });
 });
 

@@ -29,6 +29,7 @@ import { countLinksByKind } from "../../storage/repositories/index-links-reposit
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { isSqliteContentionError } from "../../storage/sqlite-transaction";
 import { pkgVersion } from "../../version";
+import { readSemanticSearchState, semanticSearchStatus } from "../health/semantic-search-check";
 import { applyAutonomyGate, configuredDirectAutonomyLanes, describeGatedLanes } from "../improve/autonomy-gate";
 import { resolveImproveStrategy } from "../improve/improve-strategies";
 import { type TargetRow, targetRows } from "../targets";
@@ -68,7 +69,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
   }
 
   // Primary stash directory + default bundle name — same resolution
-  // `akm sources list` uses (R-057), so `akm info` and `akm sources list`
+  // `akm sources list` uses, so `akm info` and `akm sources list`
   // agree on which stash is primary. No bundle created yet
   // (STASH_DIR_NOT_FOUND, the ordinary fresh-install state) reports where a
   // fresh `akm setup`/`akm bundle create` would put it, same as "report the
@@ -144,13 +145,17 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     ? readIndexStats(resolvedDbPath)
     : { entryCount: 0, byType: {}, lastBuiltAt: null, hasEmbeddings: false, unavailable: dataDirError };
 
-  // Semantic status is read live from the index's own state, not a cached
-  // verdict — a failed embed attempt at search time falls back to FTS and
-  // reports that in the search response, it never disables the mode here.
-  const semanticStatus: InfoResponse["semanticSearch"]["status"] =
-    config.semanticSearchMode === "off" ? "disabled" : indexStats.hasEmbeddings ? "ready-js" : "pending";
+  // Semantic status is what the index recorded at its last run, read now — not a cached
+  // verdict. A failed embed attempt at search time falls back to FTS and reports that in
+  // the search response; it never disables the mode here.
+  const semanticState = semanticSearchStatus(
+    readSemanticSearchState(config.semanticSearchMode, {
+      ...(resolvedDbPath ? { dbPath: resolvedDbPath } : {}),
+      busyTimeoutMs: INFO_INDEX_BUSY_TIMEOUT_MS,
+    }),
+  );
   const searchModes: string[] = ["fts"];
-  if (semanticStatus === "ready-js") {
+  if (config.semanticSearchMode !== "off" && indexStats.hasEmbeddings) {
     searchModes.push("semantic", "hybrid");
   }
 
@@ -170,7 +175,8 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     searchModes,
     semanticSearch: {
       mode: config.semanticSearchMode,
-      status: semanticStatus,
+      status: semanticState.status,
+      ...(semanticState.reason ? { reason: semanticState.reason } : {}),
     },
     registries,
     connectionsAndHarnesses: safeTargets(config),
@@ -285,8 +291,8 @@ function readIndexStats(resolvedPath: string): InfoResponse["indexStats"] {
   } catch (err) {
     // Surface the error so operators can diagnose mismatches between
     // `akm info` and `akm health` rather than silently returning zeros.
-    // Routed through core/warn's `error()` (not a raw process.stderr.write)
-    // so `--quiet`/`setQuiet()` actually gate this line (R-057).
+    // Routed through core/warn's `error()` (not a raw stderr write)
+    // so `--quiet`/`setQuiet()` actually gate this line.
     error(`[akm info] failed to read index stats from ${resolvedPath}: ${String(err)}`);
     return { ...EMPTY, unavailable: describeIndexReadFailure(err) };
   } finally {

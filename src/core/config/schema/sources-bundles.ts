@@ -208,10 +208,10 @@ export const BundleConfigEntrySchema = z
         message: "writable: true is only supported on path and git bundle sources",
       });
     }
-    // #909: an unrecognized `components.*.adapter` used to silently fall back
+    // An unrecognized `components.*.adapter` would silently fall back
     // to `akm` at detect-time with no error and no disclosure — a typo
-    // (`agent_skills`, `akm-native`, …) then silently changed which files got
-    // indexed. Reject it here instead, the same treatment other enum-valued
+    // (`agent_skills`, `akm-native`, …) would silently change which files got
+    // indexed. Reject it here, the same treatment other enum-valued
     // config fields get, listing the accepted values (derived from the
     // adapter registry, never hardcoded — see adapter-ids.ts).
     if (componentEntry !== undefined) {

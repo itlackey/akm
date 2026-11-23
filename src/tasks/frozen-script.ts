@@ -6,13 +6,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { assertNever } from "../core/assert";
-import type { TaskScriptInterpreter } from "./prepare/prepared-execution";
-import { STANDALONE_FROZEN_SCRIPT_ARG } from "./standalone-script-entry";
+import { type ScriptOrigin, scriptCommand, scriptOrigin } from "./prepare/script-capture";
 
 export interface FrozenScriptSnapshot {
   readonly sourceRef: string;
-  readonly interpreter: TaskScriptInterpreter;
   readonly extension: string;
   readonly bytesBase64: string;
   readonly byteLength: number;
@@ -36,34 +33,24 @@ export function materializeFrozenScript(script: FrozenScriptSnapshot): Materiali
   return Object.freeze({ directory, file });
 }
 
-export function frozenScriptCommand(script: FrozenScriptSnapshot, materializedPath: string): string[] {
-  switch (script.interpreter) {
-    case "bun":
-      return [process.execPath, materializedPath];
-    case "bun-standalone":
-      return [process.execPath, STANDALONE_FROZEN_SCRIPT_ARG, materializedPath];
-    case "node":
-      return ["node", materializedPath];
-    case "powershell":
-      return ["powershell", "-NoProfile", "-NonInteractive", "-File", materializedPath];
-    case "cmd":
-      return ["cmd", "/d", "/s", "/c", materializedPath];
-    case "go":
-      return ["go", "run", materializedPath];
-    case "kotlin":
-      return script.extension === ".kts" ? ["kotlinc", "-script", materializedPath] : ["kotlin", materializedPath];
-    case "sh":
-    case "python":
-    case "ruby":
-    case "perl":
-    case "php":
-    case "lua":
-    case "rscript":
-    case "swift":
-      return [script.interpreter, materializedPath];
-    default:
-      return assertNever(script.interpreter, "frozenScriptCommand");
-  }
+/** The program and arguments that run the frozen script at `materializedPath`, with `args` after it. */
+export function frozenScriptCommand(
+  script: Pick<FrozenScriptSnapshot, "sourceRef" | "extension" | "bytesBase64">,
+  materializedPath: string,
+  args: readonly string[] = [],
+): string[] {
+  const bytes = Buffer.from(script.bytesBase64, "base64");
+  return scriptCommand({ ref: script.sourceRef, bytes, extension: script.extension }, materializedPath, args);
+}
+
+/** The program and arguments that run the script asset `ref`, found at `file`, with `args` after it: what `akm run <ref>` runs. */
+export function scriptProgram(
+  ref: string,
+  file: string,
+  args: readonly string[],
+): { argv: string[]; script: ScriptOrigin } {
+  const script = { ref, bytes: fs.readFileSync(file), extension: path.extname(file).toLowerCase() };
+  return { argv: scriptCommand(script, file, args), script: scriptOrigin(script) };
 }
 
 export function cleanupFrozenScript(materialized: MaterializedFrozenScript): void {

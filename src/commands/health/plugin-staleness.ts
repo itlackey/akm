@@ -24,11 +24,10 @@ import {
 import { opencodeCacheDir } from "../../integrations/harnesses/opencode/roots";
 import { highestVersion, isExactSemver } from "../../registry/semver";
 import { semverOrder } from "../../runtime";
-import { codexMarketplace } from "../sources/plugin-channels";
 import {
   claudeMarketplace,
   codexConfigFile,
-  codexMarketplaceRef,
+  codexMarketplaceEntry,
   codexPluginVersion,
   marketplaceTargetVersion,
   openCodeConfigSpec,
@@ -71,7 +70,7 @@ interface OpencodePluginLocation {
   /** The update remedy the warning names. */
   remedy: string;
   /** The cache folders to read under the OpenCode cache root, with the spec each holds when the layout has one. */
-  folders: (cacheRoot: string) => { spec?: string; pinned?: string; folder: string }[];
+  folders: (cacheRoot: string, named: string | undefined) => { spec?: string; pinned?: string; folder: string }[];
 }
 
 const OPENCODE_PLUGIN_LOCATIONS: readonly OpencodePluginLocation[] = [
@@ -81,11 +80,10 @@ const OPENCODE_PLUGIN_LOCATIONS: readonly OpencodePluginLocation[] = [
     advisory: "opencode-plugin-version",
     label: "OpenCode's",
     remedy: "update the OpenCode plugin",
-    folders: (cacheRoot) => {
+    folders: (cacheRoot, named) => {
       // Cache residue is not an installation. Only a configured bare name may use the legacy bare cache.
       const { pkg } = OPENCODE_V1;
       const bare = { folder: path.join(cacheRoot, OPENCODE_V1.cacheFolder(pkg)) };
-      const named = openCodeConfigSpec(OPENCODE_V1)?.spec;
       if (named === undefined) return [];
       const spec = named === pkg ? `${pkg}@latest` : named;
       const folder = path.join(cacheRoot, OPENCODE_V1.cacheFolder(spec));
@@ -100,9 +98,8 @@ const OPENCODE_PLUGIN_LOCATIONS: readonly OpencodePluginLocation[] = [
     advisory: "opencode-v2-plugin-version",
     label: "OpenCode 2's akm-opencode-v2",
     remedy: "update the akm-opencode-v2 plugin",
-    folders: (cacheRoot) => {
+    folders: (cacheRoot, named) => {
       const { pkg } = OPENCODE_V2;
-      const named = openCodeConfigSpec(OPENCODE_V2)?.spec;
       if (named === undefined) return [];
       const loaded = named === pkg ? `${pkg}@latest` : named;
       const npmDir = path.join(cacheRoot, OPENCODE_V2.cacheFolder(""));
@@ -115,9 +112,9 @@ const OPENCODE_PLUGIN_LOCATIONS: readonly OpencodePluginLocation[] = [
  * The bundled `akm-cli` of each cached copy of `plugin`: its `package.json` is read, never executed,
  * mirroring {@link detectInstalledPlugins}'s manifest read. Copies with no bundled akm-cli are skipped.
  */
-function findBundledAkm(plugin: OpencodePluginLocation, cacheRoot: string): BundledAkm[] {
+function findBundledAkm(plugin: OpencodePluginLocation, cacheRoot: string, named: string | undefined): BundledAkm[] {
   const found: BundledAkm[] = [];
-  for (const { spec, pinned, folder } of plugin.folders(cacheRoot)) {
+  for (const { spec, pinned, folder } of plugin.folders(cacheRoot, named)) {
     const nodeModules = plugin.flavor.nodeModulesDir(folder);
     const version = nodeModules && readPackageVersion(path.join(nodeModules, "akm-cli", "package.json"));
     if (version !== undefined) found.push({ ...(spec ? { spec } : {}), ...(pinned ? { pinned } : {}), version });
@@ -291,19 +288,20 @@ export interface CodexPlugin {
   listed: ReturnType<typeof codexPluginVersion>;
 }
 
+/** Codex's config exists and could not be read or parsed, so whether it registers the marketplace is unknown. */
+interface CodexConfigUnreadable {
+  configError: string;
+}
+
 /** Codex is checked only when its config registers the akm-plugins marketplace, so a host without Codex runs nothing. */
-function readCodexPlugin(): CodexPlugin | undefined {
-  let source: unknown;
-  try {
-    const marketplace = codexMarketplace(codexConfigFile());
-    if (marketplace === undefined) return undefined;
-    source = marketplace.source;
-  } catch {
-    return undefined;
-  }
+function readCodexPlugin(): CodexPlugin | CodexConfigUnreadable | undefined {
+  const read = codexMarketplaceEntry();
+  if ("error" in read) return { configError: read.error };
+  const marketplace = read.entry;
+  if (marketplace === undefined) return undefined;
   return {
-    ref: codexMarketplaceRef(),
-    source: typeof source === "string" ? source : undefined,
+    ref: typeof marketplace.ref === "string" ? marketplace.ref : undefined,
+    source: typeof marketplace.source === "string" ? marketplace.source : undefined,
     listed: codexPluginVersion(),
   };
 }
@@ -405,7 +403,7 @@ export interface PluginStalenessOptions {
   /** Injectable channel reader; defaults to the one `akm upgrade` plans from. */
   readChannelVersion?: ReadChannelVersionFn;
   /** Injectable Codex reader; defaults to Codex's config.toml and `codex plugin list`. */
-  readCodex?: () => CodexPlugin | undefined;
+  readCodex?: () => CodexPlugin | CodexConfigUnreadable | undefined;
   /** Root of OpenCode's package cache. Defaults to `opencodeCacheDir()` (`$XDG_CACHE_HOME/opencode`). */
   opencodeCacheRoot?: string;
 }
@@ -442,14 +440,40 @@ export function collectPluginStalenessAdvisories(options: PluginStalenessOptions
   }
 
   const codex = (options.readCodex ?? readCodexPlugin)();
-  if (codex) {
+  if (codex && "configError" in codex) {
+    results.push({
+      name: "codex-plugin-version",
+      kind: "deterministic",
+      status: "unknown",
+      reason: "blocked",
+      confidence: "high",
+      message: `Codex's akm plugin was not checked: ${codex.configError}`,
+      evidence: { harness: "codex", installedVersion: null },
+    });
+  } else if (codex) {
     const advisory = buildCodexAdvisory(codex, options.cliVersion, probe, readChannelVersion);
     if (advisory) results.push(advisory);
   }
 
   const opencodeCacheRoot = options.opencodeCacheRoot ?? opencodeCacheDir();
   for (const plugin of OPENCODE_PLUGIN_LOCATIONS) {
-    for (const bundled of findBundledAkm(plugin, opencodeCacheRoot)) {
+    const configured = openCodeConfigSpec(plugin.flavor);
+    if (configured && "error" in configured) {
+      // Which spec OpenCode loads is unknown, so which cache it runs is too; a flavor with no cache has nothing to report.
+      if (fs.existsSync(path.join(opencodeCacheRoot, plugin.flavor.cacheFolder("")))) {
+        results.push({
+          name: plugin.advisory,
+          kind: "deterministic",
+          status: "unknown",
+          reason: "blocked",
+          confidence: "high",
+          message: `${plugin.label} plugin was not checked: ${configured.error}`,
+          evidence: { harness: plugin.flavor.harness, installedVersion: null },
+        });
+      }
+      continue;
+    }
+    for (const bundled of findBundledAkm(plugin, opencodeCacheRoot, configured?.spec)) {
       results.push(buildOpencodeBundledAdvisory(plugin, bundled, options.cliVersion));
     }
   }

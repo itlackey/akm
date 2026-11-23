@@ -19,6 +19,7 @@ import { SHIPPED_ALIAS } from "../core/config/model-aliases";
 import { ConfigError, UsageError } from "../core/errors";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { DURATION_UNITS, parseDuration as parseDurationSpec } from "../core/time";
+import { urlsInText } from "../core/urls";
 import { warn, warnOnce } from "../core/warn";
 import { noticeSet } from "../execution/notices";
 import type { LoweringNotice } from "../execution/resolved-request";
@@ -56,13 +57,13 @@ export interface MemoryFrontmatterFields {
   subjective?: boolean;
   scope?: StashEntryScope;
   /**
-   * Capture-mode marker (Phase 1B / Rec 7). `hot` marks memories written via
+   * Capture-mode marker. `hot` marks memories written via
    * the `akm remember` CLI; `background` is reserved for derived/inferred
    * memories. Persisted as the `captureMode:` frontmatter key.
    */
   captureMode?: "hot" | "background";
   /**
-   * Belief state marker (Phase 1B). Hot-path memories are written as
+   * Belief state marker. Hot-path memories are written as
    * `asserted`; the value is persisted verbatim into the `beliefState:`
    * frontmatter key for downstream consumers. Phase 1A widens the indexer's
    * union; until then, the indexer simply passes the string through.
@@ -102,7 +103,7 @@ export function parseDuration(s: string): number {
  * YAML metacharacters are safely quoted. The previous implementation
  * interpolated user input directly into `key: value` lines, which let a
  * `description` containing `\n` + `tags: [x]` inject additional keys into
- * the frontmatter — that is no longer possible here.
+ * the frontmatter — that cannot happen here.
  *
  * Only includes fields that are present (non-empty).
  */
@@ -265,8 +266,7 @@ export function runAutoHeuristics(body: string): HeuristicResult {
   const subjective = /\b(I|we|my|our)\b/.test(body) ? true : undefined;
 
   // First URL-shaped token → source
-  const urlMatch = body.match(/https?:\/\/[^\s)>'"]+/);
-  const source = urlMatch ? urlMatch[0] : undefined;
+  const source = urlsInText(body)[0];
 
   // ISO date token or obvious relative date phrase → observed
   const observed_at = detectObservedAt(body);
@@ -393,15 +393,3 @@ Return ONLY the JSON object, no prose, no markdown fences.`;
     return { tags: [], ...notices.fields() };
   }
 }
-
-// R-061(c): `resolveRememberContentArg` / `wasRememberFlagValueConsumedAsContent`
-// used to live here — a heuristic guarding against citty consuming a global
-// flag's value (`--format`/`--detail`) as the `content` positional. That guard
-// predated `rememberCommand` declaring `GLOBAL_OUTPUT_ARGS` (via
-// `defineJsonCommand`): once the leaf command itself declares `format`/
-// `detail` args, citty's parser consumes their space-separated values as the
-// flag's own value and never assigns them to `content` in the first place, so
-// the heuristic no longer has anything to guard against. Verified: `akm
-// remember "yaml" --format yaml` and `akm remember "brief" --detail brief`
-// both write the literal content unchanged. Deleted rather than kept as
-// defense-in-depth per the cleanup program's dead-code policy.

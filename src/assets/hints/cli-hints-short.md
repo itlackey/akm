@@ -1,6 +1,6 @@
 # akm CLI
 
-`akm` is a searchable library of skills, scripts, commands, agents, knowledge, workflows, memories and lessons. Search it before writing something from scratch. Output is JSON by default.
+`akm` is a searchable library of skills, scripts, commands, agents, knowledge, tasks, memories and lessons. Search it before writing something from scratch. Output is JSON by default.
 
 ## Find and read
 
@@ -11,7 +11,7 @@ akm search "<query>"                 # Local sources (or the project's `from`); 
 akm search "<query>" --from all      # Also search registries
 akm show <ref>                       # Read an asset
 akm rules                            # The rules that apply here, in full
-akm run <ref>                        # Run an agent, command, task or workflow asset
+akm run <ref>                        # Run an agent, command, script or task asset
 akm doctor                           # Health checks; `doctor metrics|info|log` report
 akm help <command>                   # A command's options
 akm exec --env <ref> -- <cmd>        # Inject an env asset's values (secrets: --secret <ref>:<VAR>; same flags on akm run). Needs experimental.exec

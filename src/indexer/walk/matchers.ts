@@ -58,7 +58,7 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
     test: (ext) => ext === ".md",
   },
   {
-    // R-045 / Q-18 second half (owner ruling 11) — stash-resident `instruction`
+    // Stash-resident `instruction`
     // assets live under `instructions/`, mirroring the `knowledge` rule. This
     // is a walker discovery rule for FILES ON DISK under a stash's
     // `instructions/` dir; it is unrelated to the adapter-emitted root
@@ -306,7 +306,7 @@ function toMatchResult(ctx: FileContext, classify: (ctx: FileContext) => MatchFa
 
 function matchResultForFact(fact: MatchFact): MatchResult | null {
   // Renderer name resolved via TYPE_PRESENTATION (core leaf), so matchers.ts
-  // carries no edge into the taxonomy SCC (chunk-3 cutover enabler).
+  // carries no edge into the taxonomy SCC.
   // TYPE_PRESENTATION.renderer is the single source of truth for renderer names.
   const renderer = presentationFor(fact.type).renderer;
   if (!renderer) return null;
@@ -340,6 +340,6 @@ export function smartMdMatcher(ctx: FileContext): MatchResult | null {
 
 // The four matcher functions above are consumed directly by the akm adapter's
 // synchronous `recognizeMatch()` (`core/adapter/adapters/akm-adapter.ts`, which
-// holds the same registration-order array for tie-breaking). The chunk-3 cutover
-// removed the file-context matcher registry, so there is no `registerBuiltinMatchers`
-// glue any more — recognition is adapter-driven, not registry-driven.
+// holds the same registration-order array for tie-breaking). There is no
+// file-context matcher registry or `registerBuiltinMatchers` glue —
+// recognition is adapter-driven, not registry-driven.

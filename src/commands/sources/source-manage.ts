@@ -6,7 +6,7 @@ import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { validateExplicitBundleName } from "../../core/bundle-id";
 import { isRemoteUrl } from "../../core/common";
-import type { BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
+import type { AkmConfig, BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
 import { bundleEntryToSourceEntry, bundlesToSourceEntries, getSources, mutateConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { revokeSchedulerActivationsForBundle } from "../../tasks/activation-config";
@@ -69,7 +69,7 @@ export function addStash(
   if (targetIsUrl && !providerType) {
     throw new UsageError("--provider is required for URL sources (e.g. --provider git --provider website)");
   }
-  // R-013: `--provider npm` names an npm package SPEC (e.g. "lodash",
+  // `--provider npm` names an npm package SPEC (e.g. "lodash",
   // "@scope/pkg@^2"), never a URL — a tarball URL is not installable as a
   // package spec and would only fail much later, at first sync, with a
   // confusing "Invalid npm package name" error. Reject it loudly here instead.
@@ -84,7 +84,7 @@ export function addStash(
   // URL sources below. Without this, a non-URL target fell through to the
   // filesystem branch below and `--provider npm` was silently ignored,
   // creating a bogus filesystem bundle for the current working directory
-  // (R-013).
+  //.
   const useDescriptorPath = targetIsUrl || providerType === "npm";
   mutateConfig((config) => {
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
@@ -137,7 +137,7 @@ export function addStash(
 }
 
 /**
- * Build the 0.9.0 bundle descriptor for a declarative (non-filesystem) source.
+ * Build the bundle descriptor for a declarative (non-filesystem) source.
  * `locator` is a URL for git/website; for npm it is a bare
  * package spec (e.g. "lodash", "@scope/pkg@^2") — never a URL (rejected
  * earlier in {@link addStash}).
@@ -168,19 +168,23 @@ function urlBundleDescriptor(
 }
 
 /**
- * Remove a stash source by URL, path, or name.
- * Match priority: URL > path > name (most specific first).
+ * The configured bundle a remove target names, or undefined.
+ * Match priority: URL > path > bundle key (name), most specific first.
  */
-export function removeStash(target: string): SourceRemoveResult {
+export function resolveBundleKey(config: AkmConfig, target: string): string | undefined {
   const isUrlTarget = isRemoteUrl(target);
-  const resolvedPath = !isUrlTarget ? path.resolve(target) : undefined;
+  let key = isUrlTarget ? bundleKeyForUrl(config, target) : undefined;
+  if (!key && !isUrlTarget) key = bundleKeyForPath(config, path.resolve(target));
+  if (!key && target in (config.bundles ?? {})) key = target;
+  return key;
+}
+
+/** Remove a stash source by URL, path, or name ({@link resolveBundleKey}). */
+export function removeStash(target: string): SourceRemoveResult {
   let result: SourceRemoveResult | undefined;
   mutateConfig((config) => {
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
-    // Match priority: URL > path > bundle key (name).
-    let key = isUrlTarget ? bundleKeyForUrl(config, target) : undefined;
-    if (!key && resolvedPath) key = bundleKeyForPath(config, resolvedPath);
-    if (!key && target in bundles) key = target;
+    const key = resolveBundleKey(config, target);
     if (!key) {
       result = { sources: getSources(config), removed: false, message: "No matching source found" };
       return config;

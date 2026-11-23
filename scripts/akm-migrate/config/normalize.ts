@@ -13,8 +13,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { withPrimaryBundle } from "../../../src/commands/sources/bundle-config-ops";
-import { getConfigPath, getDefaultStashDir, resolveConfiguredBundlePath, sameDirectory } from "../../../src/core/paths";
-import { isRefToken } from "../../../src/core/ref-token";
 import { isRecord } from "../../../src/core/common";
 import {
   type AkmConfig,
@@ -36,7 +34,10 @@ import {
 } from "../../../src/core/config/config-io";
 import { fileFlatCredentials, writeCredential } from "../../../src/core/config/credentials";
 import { isPlainObject } from "../../../src/core/config/deep-merge";
+import { REMOVED_IMPROVE_STRATEGY_NAMES } from "../../../src/core/config/engine-semantics";
 import { findUnusableEntries } from "../../../src/core/config/unusable-entries";
+import { getConfigPath, getDefaultStashDir, resolveConfiguredBundlePath, sameDirectory } from "../../../src/core/paths";
+import { isRefToken } from "../../../src/core/ref-token";
 import { carriedBundleDir } from "../retired-locations";
 import { convertEngineConfig, type EngineTarget } from "./convert-engines";
 import { inlineExtends } from "./inline-extends";
@@ -60,10 +61,13 @@ export function retiredEngineTargets(): EngineTargets {
   const configPath = getConfigPath();
   const text = readConfigText(configPath);
   if (text === undefined) return {};
-  const live = convertEngineConfig(inlineExtends(readConfigDocument(text, configPath), configPath, readConfigDocument).document, {
-    modelsOverlay: readModelsFile(),
-    env: process.env,
-  }).targets;
+  const live = convertEngineConfig(
+    inlineExtends(readConfigDocument(text, configPath), configPath, readConfigDocument).document,
+    {
+      modelsOverlay: readModelsFile(),
+      env: process.env,
+    },
+  ).targets;
   return Object.keys(live).length > 0 ? live : rememberedEngineTargets();
 }
 
@@ -88,7 +92,8 @@ function liftRetiredSecretRef(value: string): string | undefined {
 function liftRetiredSecretRefs(node: unknown): unknown {
   if (typeof node === "string") return liftRetiredSecretRef(node) ?? node;
   if (Array.isArray(node)) return node.map(liftRetiredSecretRefs);
-  if (isRecord(node)) return Object.fromEntries(Object.entries(node).map(([key, child]) => [key, liftRetiredSecretRefs(child)]));
+  if (isRecord(node))
+    return Object.fromEntries(Object.entries(node).map(([key, child]) => [key, liftRetiredSecretRefs(child)]));
   return node;
 }
 
@@ -122,8 +127,6 @@ function pruneUnchangedInheritedFields(before: unknown, after: unknown, localRaw
   }
   return result;
 }
-
-
 
 /**
  * What `akm migrate apply` persists: the file read as the current shape
@@ -165,7 +168,6 @@ function configWriteBody(
   return ordered as AkmConfig;
 }
 
-
 function deleteConfigPath(node: Record<string, unknown>, keyPath: readonly string[]): void {
   let cursor: unknown = node;
   for (const segment of keyPath.slice(0, -1)) {
@@ -174,7 +176,6 @@ function deleteConfigPath(node: Record<string, unknown>, keyPath: readonly strin
   }
   if (isRecord(cursor)) delete cursor[keyPath[keyPath.length - 1] as string];
 }
-
 
 export interface ConfigFileNormalization {
   /** Top-level keys whose stored shape differs from the current one. */
@@ -244,10 +245,15 @@ function registerWorkingBundle(
   const current = defaultBundlePath(body, configPath);
   if (current !== undefined && sameDirectory(current, carried)) return { body };
   if (!fs.existsSync(carried) || !fs.statSync(carried).isDirectory()) {
-    notes.push(`defaultBundle: AKM_BUNDLE_DIR named ${carried}, which is not a directory, so no bundle was registered for it.`);
+    notes.push(
+      `defaultBundle: AKM_BUNDLE_DIR named ${carried}, which is not a directory, so no bundle was registered for it.`,
+    );
     return { body };
   }
-  const registered = withPrimaryBundle({ ...body, defaultBundle: undefined } as unknown as AkmConfig, carried) as unknown as Record<string, unknown>;
+  const registered = withPrimaryBundle(
+    { ...body, defaultBundle: undefined } as unknown as AkmConfig,
+    carried,
+  ) as unknown as Record<string, unknown>;
   const key = registered.defaultBundle as string;
   const entries = { defaultBundle: key, bundles: { [key]: (registered.bundles as Record<string, unknown>)[key] } };
   if (!configWritable(configPath)) {
@@ -322,7 +328,13 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       const registered = withHome;
       const pathsReported = { ...(homeBundle ? { bundle: homeBundle } : {}) };
       if (Object.keys(registered).length === 0) {
-        return { keys: [], changed: false, applied: false, ...pathsReported, ...(homeNotes.length > 0 ? { notes: homeNotes } : {}) };
+        return {
+          keys: [],
+          changed: false,
+          applied: false,
+          ...pathsReported,
+          ...(homeNotes.length > 0 ? { notes: homeNotes } : {}),
+        };
       }
       const homeKeys = Object.keys(registered).sort();
       if (!options.apply) return { keys: homeKeys, changed: true, applied: false, ...pathsReported, notes: homeNotes };
@@ -359,7 +371,7 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     // `improve.strategies["graph-refresh"]` is schema-valid (any name is a
     // legal custom-strategy key), so it never reaches the unknown-key sweep
     // above. It can only be a leftover override of the deleted graph-refresh
-    // built-in (0.9.17-alpha.9) — resolveImproveStrategy now refuses that
+    // built-in — resolveImproveStrategy now refuses that
     // name unconditionally, so the override can never apply again. Drop it
     // the same way any other retired key is dropped: only by `akm migrate
     // apply`, never by an ordinary write.
@@ -367,6 +379,16 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       | Record<string, unknown>
       | undefined;
     if (strategies && Object.hasOwn(strategies, "graph-refresh")) delete strategies["graph-refresh"];
+    // A built-in strategy 0.10 removed cannot be selected, and nothing the person set makes it one again; the
+    // default strategy applies in its place. A name the file defines under `improve.strategies` is theirs.
+    const improveBody = body.improve as Record<string, unknown> | undefined;
+    const removedStrategy = improveBody?.strategy;
+    const dropsStrategy =
+      typeof removedStrategy === "string" &&
+      (removedStrategy === "graph-refresh" ||
+        ((REMOVED_IMPROVE_STRATEGY_NAMES as readonly string[]).includes(removedStrategy) &&
+          !(strategies && Object.hasOwn(strategies, removedStrategy))));
+    if (dropsStrategy && improveBody) delete improveBody.strategy;
     // A key in the older flat form is filed only under an endpoint this file itself gives the block.
     const flat = fileFlatCredentials((slot) => documentEndpoint(plan.config, slot), false, plan.moves);
     const notes = [...inlined.notes, ...converted.notes, ...plan.notes, ...flat.notes];
@@ -376,6 +398,10 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
         `defaultWriteTarget "${retiredTarget}" is dropped. It named a different bundle from defaultBundle ${JSON.stringify(localRaw.defaultBundle ?? null)}; writes now go to defaultBundle.`,
       );
     }
+    if (dropsStrategy)
+      notes.push(
+        `improve.strategy: "${removedStrategy}" was removed in 0.10, so it is dropped and the default strategy applies; name "default" or "consolidate", or define "${removedStrategy}" under improve.strategies.`,
+      );
     keepUnusableEntries(body, localRaw, current, notes);
     const working = registerWorkingBundle(body, configPath, notes);
     body = working.body;
@@ -425,4 +451,3 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     };
   });
 }
-

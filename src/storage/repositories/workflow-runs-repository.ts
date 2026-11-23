@@ -18,7 +18,7 @@ import { insertEventOnce, insertEventStrict } from "./events-repository";
  *
  * These mirror the on-disk columns exactly and were lifted verbatim from
  * {@link ../../workflows/runs} when the raw SQL was consolidated behind this
- * repository (WS5). The repository owns ALL SQL that touches these two tables.
+ * repository. The repository owns ALL SQL that touches these two tables.
  */
 export type WorkflowRunRow = {
   id: string;
@@ -283,7 +283,7 @@ export interface ListRunsFilter {
  * {@link withWorkflowRunsRepo} binds it to {@link StorageLocations.stateDb}, so
  * a future storage move changes only `locations.ts`.
  *
- * ## Connection-lifetime contract (WS5)
+ * ## Connection-lifetime contract
  *
  * Every read method fully materialises its result set (`.all()` / `.get()` into
  * plain values/arrays) before returning. The repository NEVER hands a live
@@ -545,7 +545,7 @@ export class WorkflowRunsRepository {
 
   // ── child workflow run publication (migration 023, P3a §5.2-§5.3) ─────────
   //
-  // No production caller exists in P3a (§5.5) — dispatch is P3b's. These
+  // No production caller exists in P3a — dispatch is P3b's. These
   // three methods are reachable only from tests until then.
 
   /**
@@ -979,7 +979,7 @@ export function renameWorkflowRunRefs(db: Database, oldBundleId: string, newBund
  *     `fn`, close it in a `finally`.
  *
  * Repository read methods fully materialise their results, so closing an owned
- * handle here never truncates lazy iteration (WS5 connection-lifetime rule).
+ * handle here never truncates lazy iteration (the connection-lifetime rule).
  * The signature and semantics are identical in both modes — reuse is purely an
  * internal optimisation and no caller needs to know which mode it is in.
  */

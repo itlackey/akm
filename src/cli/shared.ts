@@ -6,13 +6,14 @@
  * Shared CLI utilities extracted from `src/cli.ts` so that individual
  * command modules can import them without a circular dependency.
  *
- * Exported: output, runWithJsonErrors, parseAllFlagValues, emitJsonError
+ * Exported: output, runWithJsonErrors, parseAllFlagValues, emitJsonError, reportChildExit
  */
 
 import { type ArgsDef, type CommandContext, type CommandDef, defineCommand } from "citty";
 import { stringify as yamlStringify } from "yaml";
 import { assertNever } from "../core/assert";
 import { AkmError, UsageError } from "../core/errors";
+import { isTerminal } from "../core/stdio";
 import { getOutputMode, type OutputFormat, type OutputMode } from "../output/context";
 import { renderGenericMarkdown, renderGenericText } from "../output/generic-render";
 import { getMdRendererHandler } from "../output/render-registry";
@@ -94,17 +95,13 @@ function extractHint(error: unknown): string | undefined {
  * Serialize an error to the standard JSON envelope and record the mapped
  * exit code. Used in both the startup try/catch and `runWithJsonErrors`.
  *
- * R-067: this used to call `process.exit(exitCode)` directly, which
- * terminates the process synchronously and skips every pending `finally`
- * block up the call stack — including `src/cli.ts`'s own
- * `disposeLlmUsageSink()` cleanup and citty's per-command `cleanup`
- * hooks. `process.exitCode = exitCode; return;` is equivalent for every
- * caller here: Node/Bun exits with that code once the event loop drains
- * naturally, but cleanup on the way there still runs.
- * `src/commands/improve/extract-cli.ts` already uses this exact pattern for
- * its own non-throw failure signal.
+ * This sets `process.exitCode = exitCode` and returns rather than calling
+ * `process.exit(exitCode)`: Node/Bun exits with that code once the event loop
+ * drains, so every pending `finally` block (`src/cli.ts`'s
+ * `disposeLlmUsageSink()` cleanup, citty's per-command `cleanup` hooks) still
+ * runs. `src/commands/improve/extract-cli.ts` uses the same pattern.
  *
- * Because this no longer throws or exits, it no longer terminates control
+ * Because this neither throws nor exits, it does not terminate control
  * flow on its own — every call site MUST treat it like a normal return and
  * stop doing further work itself (an explicit `return;` right after the
  * call, same as any other caller of a fallible function). `runWithJsonErrors`
@@ -121,6 +118,14 @@ export function emitJsonError(error: unknown): void {
   const code = error instanceof AkmError ? error.code : undefined;
   console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
   process.exitCode = exitCode;
+}
+
+/**
+ * Make a child's status akm's exit code. A failure already recorded (a signal owner's handler, an earlier error)
+ * is kept: a later result never turns a failure into success. 0 counts as no failure, as an unset code does.
+ */
+export function reportChildExit(code: number): void {
+  if (!process.exitCode) process.exitCode = code;
 }
 
 /**
@@ -183,7 +188,7 @@ export const GLOBAL_OUTPUT_ARGS = {
     description:
       "Use this config file instead of the default; credentials.json stays in the default config directory (also AKM_CONFIG_FILE)",
   },
-  // S11: declared at every leaf so a command's flags parse wherever they sit;
+  // These flags are declared at every leaf so a command's flags parse wherever they sit;
   // leaf `--help` prints them once as a pointer (see `withoutGlobalArgs`), root
   // `--help` lists them in full. They are parsed from raw argv by
   // `applyEarlyStderrFlags` in src/cli.ts before citty ever sees them. A
@@ -330,7 +335,7 @@ export function output(command: string, result: unknown): void {
     return;
   }
   // Compact JSON when stdout is piped (agents, scripts); `--output <path>` files and a TTY stay pretty.
-  const compact = !process.stdout.isTTY && mode.outputPath === undefined;
+  const compact = !isTerminal(1) && mode.outputPath === undefined;
   deliverRendered(renderOutput(command, result, { ...mode, format, compact }), mode.outputPath);
 }
 
@@ -356,9 +361,8 @@ export function renderOutput(command: string, result: unknown, mode: DocumentOut
       return yamlStringify(shaped);
     case "text":
       // D7 — registry first, generic rendering of the shaped envelope second.
-      // A command with no registered text formatter used to fall through to
-      // `JSON.stringify(shaped, null, 2)`, i.e. silently hand back JSON while
-      // claiming `--format text`. `renderGenericText` renders flat
+      // A command with no registered text formatter gets generic text, never JSON
+      // under `--format text`. `renderGenericText` renders flat
       // `key=value` text matching the house style of registered formatters
       // like `config list`; it is a DISTINCT function from
       // `renderGenericMarkdown` (see src/output/generic-render.ts).
@@ -370,6 +374,5 @@ export function renderOutput(command: string, result: unknown, mode: DocumentOut
   }
 }
 
-// parseAllFlagValues moved to ./invocation (chunk-9 WI-9.9 argv-normalization
-// fold); re-exported above so every existing importer of this module is
+// parseAllFlagValues moved to ./invocation (argv normalization); re-exported above so every existing importer of this module is
 // unaffected.

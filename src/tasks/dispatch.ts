@@ -26,8 +26,9 @@ import { parseBundleRef } from "../core/asset/asset-ref";
 import { isProcessAlive } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import type { AkmConfig } from "../core/config/config-types";
-import { getStateDir, getTaskLogDir } from "../core/paths";
+import { getStateDir, getTaskLogDir, withoutLauncherVars } from "../core/paths";
 import { withStateDb } from "../core/state-db";
+import { canonicalInputJson, type InputFlag } from "../execution/input-contract";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { listActiveTaskRuns } from "../storage/repositories/task-history-repository";
 import { schedulerEnabledRefs } from "./activation-config";
@@ -35,7 +36,9 @@ import { resolveAkmInvocation } from "./resolve-akm-bin";
 import { activeTaskSources } from "./run/load-task";
 import { DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } from "./run/run-workflow-task";
 import { parseSchedule, scheduleMatchesMinute } from "./schedule";
-import { parseTaskSource } from "./source/parse-task-source";
+import { type ParsedTaskSource, parseTaskSource } from "./source/parse-task-source";
+import { checkTaskV5, type TaskV5StartFlags } from "./v5/check";
+import type { TaskSourceV5ScheduleBinding } from "./v5/source";
 
 /** The most minutes one dispatch looks back over: a skew or short sleep, not a catch-up of downtime. */
 export const DISPATCH_WINDOW_MINUTES = 5;
@@ -46,7 +49,10 @@ export interface DispatchedTask {
   ref: string;
   id: string;
   bundle: string;
-  /** `schedule[i].inputs` of the entry that matched, as `task run` flags. */
+  /**
+   * The `task run` flags of the entry that matched: its `inputs`, then, for a version 5 entry, `--env`, `--secret`
+   * and `--timeout`.
+   */
   inputFlags: string[];
 }
 
@@ -109,16 +115,75 @@ function localMinuteLabel(minute: number): string {
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
 }
 
+/** The text a schedule entry's input value takes on the command line. */
+function inputFlagValueText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return canonicalInputJson(value);
+}
+
+/** One schedule entry's `inputs` as flags, in name order, each value as the text its `task run` flag carries. */
+function scheduleInputFlags(inputs: Readonly<Record<string, unknown>> | undefined): InputFlag[] {
+  return Object.keys(inputs ?? {})
+    .sort()
+    .map((name) => ({ name, value: inputFlagValueText((inputs as Record<string, unknown>)[name]) }));
+}
+
 /** `--<name> <value>` flags for one schedule entry's inputs; a value starting with `-` uses `--name=value`. */
 function inputFlagTail(inputs: Readonly<Record<string, unknown>> | undefined): string[] {
   const tail: string[] = [];
-  for (const name of Object.keys(inputs ?? {}).sort()) {
-    const value = (inputs as Record<string, unknown>)[name];
-    const text = typeof value === "string" ? value : typeof value === "object" ? JSON.stringify(value) : String(value);
+  for (const { name, value } of scheduleInputFlags(inputs)) {
+    const text = value as string;
     if (text.startsWith("-")) tail.push(`--${name}=${text}`);
     else tail.push(`--${name}`, text);
   }
   return tail;
+}
+
+/**
+ * What `--env`, `--secret` and `--timeout` carry for a version 5 schedule entry: values only an env asset's ref, a
+ * secret spec or a duration, nothing secret. The reader takes only env asset refs in its `env:`.
+ */
+function scheduleStartFlags(entry: TaskSourceV5ScheduleBinding): TaskV5StartFlags {
+  const env = (entry.env ?? []) as readonly string[];
+  return {
+    ...(env.length > 0 ? { env } : {}),
+    ...(entry.secret !== undefined && entry.secret.length > 0 ? { secret: entry.secret } : {}),
+    ...(entry.timeout !== undefined ? { timeout: entry.timeout } : {}),
+  };
+}
+
+/** `--env`, `--secret` and `--timeout`, in the order the entry wrote them: a later env ref wins over an earlier one. */
+function startFlagTail(entry: TaskSourceV5ScheduleBinding): string[] {
+  const start = scheduleStartFlags(entry);
+  return [
+    ...(start.env ?? []).flatMap((ref) => ["--env", ref]),
+    ...(start.secret ?? []).flatMap((spec) => ["--secret", spec]),
+    ...(start.timeout !== undefined ? ["--timeout", String(start.timeout)] : []),
+  ];
+}
+
+/** The flags a dispatched start of this schedule entry is given, whichever version the task is. */
+function entryFlagTail(parsed: ParsedTaskSource, entry: ParsedTaskSource["schedule"][number]): string[] {
+  const inputs = inputFlagTail(entry.inputs);
+  return parsed.version === 4 ? inputs : [...inputs, ...startFlagTail(entry as TaskSourceV5ScheduleBinding)];
+}
+
+/**
+ * The check a start makes (`checkTaskV5`), with the inputs and the `--env`, `--secret` and `--timeout` a version 5
+ * schedule entry gives. `unrunnableV5ScheduleEntries` and `doctor explain` both call it.
+ */
+export async function checkScheduleEntryV5(
+  entry: TaskSourceV5ScheduleBinding,
+  conceptId: string,
+  bundle: { name: string; dir: string },
+): Promise<void> {
+  await checkTaskV5({
+    ref: conceptId,
+    bundle,
+    inputs: scheduleInputFlags(entry.inputs),
+    flags: scheduleStartFlags(entry),
+  });
 }
 
 /** One enabled ref read as dispatch reads it: where it lives, and the schedule entries it carries. */
@@ -131,7 +196,14 @@ function readEnabledTask(ref: string, sources: ReturnType<typeof activeTaskSourc
   const file = path.join(source.path, `${parsedRef.conceptId}.yml`);
   const parsed = parseTaskSource({ yaml: fs.readFileSync(file, "utf8"), filePath: file });
   const id = adapterId === "akm" ? parsedRef.conceptId.replace(/^tasks\//, "") : parsedRef.conceptId;
-  return { id, bundle, schedule: parsed.v4.schedule.map((entry) => ({ ...entry, spec: parseSchedule(entry.cron) })) };
+  return {
+    id,
+    bundle,
+    bundleDir: source.path,
+    conceptId: parsedRef.conceptId,
+    parsed,
+    schedule: parsed.schedule.map((entry) => ({ ...entry, spec: parseSchedule(entry.cron) })),
+  };
 }
 
 /**
@@ -146,6 +218,38 @@ export function unrunnableTasks(config: AkmConfig = loadConfig()): { ref: string
       readEnabledTask(ref, activeTaskSources(config));
     } catch (cause) {
       failures.push({ ref, reason: cause instanceof Error ? cause.message : String(cause) });
+    }
+  }
+  return failures;
+}
+
+/**
+ * The enabled version 5 tasks with a schedule entry that fails the check a start makes (a missing env asset or
+ * secret, a required input the entry does not give), each named with the entry's position. `unrunnableTasks` reads
+ * and parses; this runs the rest of the check, which needs the assets, so it is async.
+ */
+export async function unrunnableV5ScheduleEntries(
+  config: AkmConfig = loadConfig(),
+): Promise<{ ref: string; reason: string }[]> {
+  const failures: { ref: string; reason: string }[] = [];
+  for (const ref of schedulerEnabledRefs(config) ?? []) {
+    let task: ReturnType<typeof readEnabledTask>;
+    try {
+      task = readEnabledTask(ref, activeTaskSources(config));
+    } catch {
+      continue; // a task dispatch cannot read at all is `unrunnableTasks`'s to report
+    }
+    if (task.parsed.version === 4) continue;
+    for (const entry of task.parsed.schedule) {
+      try {
+        await checkScheduleEntryV5(entry, task.conceptId, { name: task.bundle, dir: task.bundleDir });
+      } catch (cause) {
+        failures.push({
+          ref,
+          reason: `schedule[${entry.ordinal}]: ${cause instanceof Error ? cause.message : String(cause)}`,
+        });
+        break;
+      }
     }
   }
   return failures;
@@ -167,7 +271,7 @@ function dueTasks(
         minutes.some((minute) => scheduleMatchesMinute(candidate.spec.fields, new Date(minute * MINUTE_MS))),
       );
       if (!entry) continue;
-      due.push({ ref, id: task.id, bundle: task.bundle, inputFlags: inputFlagTail(entry.inputs) });
+      due.push({ ref, id: task.id, bundle: task.bundle, inputFlags: entryFlagTail(task.parsed, entry) });
     } catch (cause) {
       failures.push({ ref, reason: cause instanceof Error ? cause.message : String(cause) });
     }
@@ -196,9 +300,8 @@ async function startDetached(argv: readonly string[], logPath: string): Promise<
   const [command, ...args] = argv;
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
   const fd = fs.openSync(logPath, "w");
-  // The launcher's watchdog (AKM_LAUNCHER_PID) would stop a child whose launcher exits; each child has its own.
-  const env = { ...process.env };
-  delete env.AKM_LAUNCHER_PID;
+  // A started `akm` gets its `AKM_LAUNCHER_*` variables from its own launcher.
+  const env = withoutLauncherVars(process.env);
   try {
     const child = spawn(command as string, args, {
       detached: true,

@@ -64,8 +64,10 @@ import {
   applyEarlyStderrFlags,
   insertBareListSubcommand,
   main,
+  mintInvocation,
   normalizeCittyCliError,
   readsConfigBestEffort,
+  requestsHelp,
   shouldBypassConfigStartup,
 } from "../../src/cli";
 import { _resetParsedInvocationForTests } from "../../src/cli/invocation";
@@ -162,20 +164,16 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
   // Resolve everything that requires an `await` BEFORE patching the output
   // sinks, so the patched console.log isn't relied on across an await boundary
   // (see module docstring). For the normal command path nothing is awaited
-  // before runCommand, so this only matters for --help / --version.
+  // before runCommand, so this only matters for --version.
   const argv = insertBareListSubcommand(["bun", "cli.ts", ...args]);
-  const rawArgs = argv.slice(2);
   const cmd = main as Parameters<typeof runCommand>[0];
 
-  const isHelp = rawArgs.includes("--help") || rawArgs.includes("-h");
-  const isVersion = rawArgs.length === 1 && (rawArgs[0] === "--version" || rawArgs[0] === "-v");
+  const isVersion = argv.length === 3 && (argv[2] === "--version" || argv[2] === "-v");
 
-  let preRendered: string | undefined;
-  if (isHelp) {
-    preRendered = `${await renderUsage(cmd, cmd)}\n`;
-  } else if (isVersion) {
+  let versionText: string | undefined;
+  if (isVersion) {
     const meta = typeof cmd.meta === "function" ? await cmd.meta() : await cmd.meta;
-    preRendered = `${meta?.version ?? ""}\n`;
+    versionText = `${meta?.version ?? ""}\n`;
   }
 
   let stdout = "";
@@ -239,10 +237,16 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
     throw new ExitSignal(code);
   }) as never;
 
+  let rawArgs: readonly string[] = argv.slice(2);
   try {
-    if (preRendered !== undefined) {
-      // Builtin --help / --version: emit the pre-rendered text directly.
-      stdout += preRendered;
+    // The same startup the CLI runs: mint the invocation (resolving a `run` ref once), then decide help from it.
+    let invocation = await mintInvocation(argv);
+    rawArgs = invocation.cittyArgs;
+    applyEarlyStderrFlags(invocation);
+    if (versionText !== undefined) {
+      stdout += versionText;
+    } else if (requestsHelp(invocation)) {
+      stdout += `${await renderUsage(cmd, cmd)}\n`;
     } else {
       // Replicate the startup contract from src/cli.ts (the guarded entry
       // block): citty + our command handlers read process.argv directly, and
@@ -273,11 +277,12 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
         // has (throws on invalid config.json) EXCEPT `info` and `upgrade`, whose read is
         // best-effort — see that file's matching comment for why the
         // scoping matters.
-        applyEarlyConfigFlag(argv);
-        applyEarlyStderrFlags(argv);
+        applyEarlyConfigFlag(argv, invocation);
+        invocation = await mintInvocation(argv);
+        rawArgs = invocation.cittyArgs;
         let outputDefaults = DEFAULT_CONFIG.output ?? {};
-        if (!shouldBypassConfigStartup(argv)) {
-          if (readsConfigBestEffort(argv)) {
+        if (!shouldBypassConfigStartup(invocation)) {
+          if (readsConfigBestEffort(invocation)) {
             try {
               outputDefaults = loadConfig().output ?? {};
             } catch {
@@ -287,7 +292,7 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
             outputDefaults = loadConfig().output ?? {};
           }
         }
-        initOutputMode(argv, outputDefaults);
+        initOutputMode(invocation.ownArgs, outputDefaults);
       } catch (initError) {
         emitJsonError(initError);
         initFailed = true;
@@ -298,9 +303,9 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
         // — citty/mri would otherwise ignore them silently. Part of the startup
         // contract this harness replicates, like the --help / --version
         // handling above.
-        assertKnownFlags(cmd as unknown as FlagScanCommand, rawArgs);
+        assertKnownFlags(cmd as unknown as FlagScanCommand, invocation.ownArgs, { untilTarget: true });
         assertNoStrayPositionals(cmd as unknown as FlagScanCommand, rawArgs);
-        await runCommand(cmd, { rawArgs });
+        await runCommand(cmd, { rawArgs: [...rawArgs] });
       }
     }
   } catch (error) {
@@ -349,13 +354,14 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
     process.argv = realArgv;
     if (realConfigFile === undefined) delete process.env.AKM_CONFIG_FILE;
     else process.env.AKM_CONFIG_FILE = realConfigFile;
+    _resetParsedInvocationForTests();
   }
 
   return { code, stdout, stderr };
 }
 
 /**
- * Shared harness for tests/commands/cli-envelopes.test.ts (DUP-12): identical `runCli`
+ * Shared harness for tests/integration/commands/cli-envelopes.test.ts (DUP-12): identical `runCli`
  * wrapper — call {@link runCliCapture} and rename `code` to `status` — was
  * copy-pasted across 7 envelope-snapshot suites. Import this instead of
  * redefining it locally.

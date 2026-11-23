@@ -145,16 +145,18 @@ already there, however old. For a git, GitHub or npm install whose files are
 missing, `akm index` warns and names `akm bundle update` instead of fetching. An
 npm bundle in config with no lock entry (for example a config copied to a new
 machine) is skipped with the same warning; `akm bundle update` installs it.
-To refresh on a schedule, schedule `akm bundle update --all --skip-if-locked`,
-where `--skip-if-locked` turns database contention with a concurrent index or
-improve run into a successful skip instead of exit 75.
+To refresh on a schedule, schedule `akm bundle update --all --skip-if-locked`.
+A running index build never blocks an update: the update keeps its own change,
+skips the reindex, and reports `index.skipped`. `--skip-if-locked` covers the
+other contention, another akm operation holding the asset mutation lease or
+writing `state.db`, and turns it into a successful skip instead of exit 75.
 
 ```sh
 # Update
 akm bundle update @scope/bundle          # One managed bundle
 akm bundle update --all                 # All managed bundles
 akm bundle update --all --force         # Force fresh download even if version unchanged
-akm bundle update --all --skip-if-locked # Scheduled refresh: exit 0 on DB contention
+akm bundle update --all --skip-if-locked # Scheduled refresh: exit 0 on lease or state.db contention
 
 # Remove
 akm bundle remove @scope/bundle          # By npm id

@@ -42,8 +42,8 @@ class NpmSourceProvider implements SourceProvider {
     this.name = config.name ?? config.url ?? "npm";
   }
 
+  /** A recorded npm package has no directory of its own: its extracted content is the lock's `localRoot`. */
   path(): string {
-    if (this.#config.path) return this.#config.path;
     throw new ConfigError(
       `npm source "${this.name}" has no resolved content path — run \`akm bundle update\` to sync it before indexing.`,
     );

@@ -3,15 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Ref RESOLUTION layer — akm 0.9.0 Chunk-5 flip, stage F1 (ref-grammar decision
- * D-R1 / D-R4).
+ * Ref RESOLUTION layer.
  *
- * The 0.9.0 ref abstraction is `parse → resolve → serialize`:
+ * The ref abstraction is `parse → resolve → serialize`:
  *   - parse     — `parseBundleRef` (`asset-ref.ts`), pure syntax, no I/O.
  *   - resolve   — {@link resolveRef} (this module): turn a maybe-short
  *                 {@link BundleRef} into a fully-qualified {@link ResolvedRef}
  *                 against an injected {@link RefContext}. This is the "the short
- *                 form is input sugar" rule (§11.1) made structural: only a
+ *                 form is input sugar" rule made structural: only a
  *                 `ResolvedRef` ever crosses a storage boundary.
  *                 It answers "which bundle" against an injected index snapshot;
  *                 it does not find files. "Where is the file for this ref right
@@ -138,7 +137,7 @@ function notFound(conceptId: string, triedForms: string[], ctx: RefContext): Not
   return new NotFoundError(`No bundle contains concept "${conceptId}"${scope} (tried ${forms}).`, "ASSET_NOT_FOUND");
 }
 
-// ── Display-ref emission (Chunk-5 flip F4b — the output-spelling rule) ────────
+// ── Display-ref emission (the output-spelling rule) ────────
 
 /**
  * The fields {@link displayRef} needs from an indexed item to build its
@@ -180,8 +179,7 @@ export function conceptIdForStashFile(type: string, stashRoot: string, filePath:
 
 /**
  * Build the USER-FACING / envelope ref string for an indexed item, applying the
- * Chunk-5 flip F4b output-spelling rule (orchestrator decision; ref-grammar
- * decision D-R2 / D-R3). This is the ONE place the rule lives — every emission
+ * output-spelling rule. This is the ONE place the rule lives — every emission
  * site calls it instead of hand-building a ref from an entry.
  *
  *   - An item in the **default/primary bundle** (`bundleId` undefined, or equal
@@ -194,7 +192,7 @@ export function displayRef(item: DisplayRefItem, defaultBundleId?: string): stri
 }
 
 /**
- * The F4b output-spelling flip itself, for a caller that already holds the
+ * The output-spelling rule itself, for a caller that already holds the
  * conceptId (no `type`/`name` derivation needed — e.g. lint findings built
  * from {@link conceptIdForStashFile}). {@link displayRef} delegates here, so
  * the short-default / qualified-secondary rule still has exactly one home.

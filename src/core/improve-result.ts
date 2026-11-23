@@ -56,7 +56,7 @@ function validateLoweringNotices(value: unknown): void {
 function validateConsolidationPlan(value: unknown): void {
   if (!isRecord(value)) fail("plan.consolidation must be an object");
   if (!isRecord(value.configured)) fail("plan.consolidation.configured must be an object");
-  // `minPoolSize` is no longer written (the minimum-pool guard was removed in 0.10, #1131); runs an
+  // `minPoolSize` is no longer written (the minimum-pool guard was removed); runs an
   // older release persisted still carry it, ignored.
   if (value.configured.enabled !== undefined && typeof value.configured.enabled !== "boolean") {
     fail("plan.consolidation.configured.enabled must be a boolean");
@@ -94,7 +94,7 @@ function validateConsolidationPlan(value: unknown): void {
 function validateProactivePlan(value: unknown): void {
   if (!isRecord(value)) fail("plan.proactive must be an object");
   if (!isRecord(value.configured)) fail("plan.proactive.configured must be an object");
-  // `limit` is no longer written (the `proactiveMaintenance.limit` alias of `maxPerRun` was removed in 0.10, #1091);
+  // `limit` is no longer written (the `proactiveMaintenance.limit` alias of `maxPerRun` was removed);
   // runs an older release stored may carry it.
   for (const field of ["dueDays", "maxPerRun", "limit"] as const) {
     if (value.configured[field] !== undefined && typeof value.configured[field] !== "number") {
@@ -127,11 +127,11 @@ function validateProcessRoutingRows(value: unknown): void {
       !(
         canonicalNames.includes(row.process) ||
         row.process === "triage.judgment" ||
-        // 0.9.17-alpha.9: "graphExtraction" is no longer a process a fresh
-        // plan can route (the LLM entity-graph extraction it named was
-        // retired), but every pre-alpha.9 run recorded one here — kept
-        // readable, same as `stageNames`' "graph-extraction" above, so a
-        // historical run still decodes for `akm health`.
+        // "graphExtraction" is no longer a process a fresh plan can route
+        // (the LLM entity-graph extraction it named was retired), but older
+        // runs recorded one here — kept
+        // readable, same as `stageNames`' "graph-extraction" above, so a historical run still
+        // decodes for `akm health` instead of failing this row outright.
         row.process === "graphExtraction"
       )
     ) {
@@ -211,7 +211,7 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   }
 
   const gateNames = new Set(["profile", "cleanup", "validation", "signal", "disk", "limit"]);
-  // Plans stored before 0.9.17-alpha.7 (#986) have no retrieval gate.
+  // Plans stored by older releases have no retrieval gate.
   const optionalGateNames = new Set(["retrieval"]);
   if (!Array.isArray(value.gates)) fail("plan.gates must be an array");
   const gateRemovedByName = new Map<string, number>();
@@ -293,8 +293,8 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   if (value.proactive !== undefined) validateProactivePlan(value.proactive);
   validateConsolidationPlan(value.consolidation);
 
-  // "graph-extraction" is no longer a stage a fresh plan can name — retired
-  // 0.9.17-alpha.9 — but stays here so a historical envelope that captured a
+  // "graph-extraction" is no longer a stage a fresh plan can name — retired —
+  // but stays here so a historical envelope that captured a
   // dry-run plan before the retirement still decodes.
   const stageNames = new Set(["consolidation", "extract", "graph-extraction", "memory-inference"]);
   if (!Array.isArray(value.stages)) fail("plan.stages must be an array");
@@ -306,7 +306,7 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
     }
   }
   if (!isRecord(value.triage)) fail("plan.triage must be an object");
-  // `maxDiffLines` is no longer written (the triage config key was dropped before 0.10, #1091); runs an older
+  // `maxDiffLines` is no longer written (the triage config key was dropped); runs an older
   // release stored may carry it.
   if (typeof value.triage.enabled !== "boolean") fail("plan.triage.enabled must be a boolean");
   for (const field of ["configuredMode", "mode"] as const) {

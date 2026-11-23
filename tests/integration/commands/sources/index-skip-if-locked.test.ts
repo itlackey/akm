@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm index --skip-if-locked` (#956) and the wait a plain `akm index` does instead — mirrors
- * `tests/integration/commands/improve/improve-skip-if-locked.test.ts`.
+ * `akm index` while another build holds the rebuild lock: it skips (exit 0, nothing built) with or without the
+ * deprecated `--skip-if-locked`, which is ignored with a warning.
  * Integration-scoped (ORG-03/06): drives the real CLI via `runCliCapture`,
  * which opens a real index.db.
  */
@@ -15,7 +15,6 @@ import path from "node:path";
 import { saveConfig } from "../../../../src/core/config/config";
 import { processIdentity } from "../../../../src/core/file-lock";
 import { getIndexRebuildLockPath } from "../../../../src/core/paths";
-import { _setIndexBuildWaitTimingForTests } from "../../../../src/indexer/index-build";
 import { runCliCapture } from "../../../_helpers/cli";
 import { type LiveHolder, spawnLiveHolder, stopLiveHolders } from "../../../_helpers/live-holder";
 import { type Cleanup, withDefaultBundle, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
@@ -44,7 +43,7 @@ afterEach(() => {
   cleanup = () => {};
 });
 
-describe("akm index — skip-if-locked", () => {
+describe("akm index — held rebuild lock", () => {
   test("skips gracefully (exit 0) without indexing when the rebuild lock is held", async () => {
     const lockPath = plantHeldRebuildLock();
 
@@ -64,34 +63,26 @@ describe("akm index — skip-if-locked", () => {
     expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(holder.pid);
   });
 
-  test("without the flag, a held lock makes the run wait, with a notice, then build once it is released", async () => {
+  test("without the flag, a held lock skips the run the same way: exit 0, nothing built, warning shown", async () => {
     const lockPath = plantHeldRebuildLock();
-    const run = runCliCapture(["index", "--full", "--format=json"]);
-    // The run is waiting, not building beside the holder.
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    expect(fs.existsSync(getIndexRebuildLockPath())).toBe(true);
-    expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(holder.pid);
-    fs.rmSync(lockPath);
 
-    const result = await run;
+    const result = await runCliCapture(["index", "--full", "--format=json"]);
+
     expect(result.code).toBe(0);
+    expect(result.stderr).toMatch(/another index run holds the lock/);
+    expect(result.stderr).not.toMatch(/deprecated/);
     const parsed = JSON.parse(result.stdout);
-    expect(parsed.skipped).toBeUndefined();
-    expect(typeof parsed.totalEntries).toBe("number");
-    // The waiter took the lock to build and released it on exit.
-    expect(fs.existsSync(getIndexRebuildLockPath())).toBe(false);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.skipped).toMatchObject({ reason: "lock-held", pid: holder.pid });
+    expect(parsed.totalEntries).toBeUndefined();
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(holder.pid);
   });
 
-  test("without the flag, a lock that stays held past the wait bound fails with exit 75 INDEX_DB_CONTENDED", async () => {
-    plantHeldRebuildLock();
-    _setIndexBuildWaitTimingForTests({ maxWaitMs: 300, noticeIntervalMs: 100 });
-    try {
-      const result = await runCliCapture(["index", "--full", "--format=json"]);
-      expect(result.code).toBe(75);
-      expect(JSON.parse(result.stderr.slice(result.stderr.indexOf("{"))).code).toBe("INDEX_DB_CONTENDED");
-    } finally {
-      _setIndexBuildWaitTimingForTests(undefined);
-    }
+  test("--skip-if-locked is warned about once as deprecated", async () => {
+    const result = await runCliCapture(["index", "--full", "--skip-if-locked", "--format=json"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stderr.match(/--skip-if-locked is deprecated/g)).toHaveLength(1);
   });
 
   test("a lock left by a dead pid is reclaimed silently and the run acquires it", async () => {

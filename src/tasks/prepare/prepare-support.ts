@@ -7,10 +7,10 @@
  * function body calls is exported here.
  */
 
+import { timeoutMilliseconds } from "../../cli/parse-args";
 import type { PreparedCommandInvocation } from "../../commands/command/command-execution";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { COMPOSITION_INVALID_MULTI_JOB_HINT, ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warn } from "../../core/warn";
 import { isPortableExecutionAgentSelector, type UnresolvedExecutionDefaults } from "../../execution/source";
 import { buildExecution } from "../../integrations/agent/execution";
@@ -33,7 +33,7 @@ export function environmentSnapshot(environment: TaskEnvironment | undefined): R
     const value = String(raw);
     if (isInferredSecretName(key) || detectSecretShapedParams({ [key]: value }).length > 0) {
       warn(
-        `Task env.${key} looks like a credential. Task source is durable and readable; keep the value in a secret or env file and inject it at run time with \`akm exec --secret\` or \`akm exec --env\` in the task's \`run:\`. (Heuristic warning; the value is used as written.)`,
+        `Task env.${key} looks like a credential. Task source is durable and readable; keep the value in a secret or env file and inject it at run time: have the task's \`run:\` run a script with \`akm run --secret <ref>:<VAR> scripts/<file>\` or \`akm run --env <ref> scripts/<file>\`. (Heuristic warning; the value is used as written.)`,
       );
     }
     Object.defineProperty(out, key, { value, enumerable: true, configurable: false, writable: false });
@@ -43,7 +43,7 @@ export function environmentSnapshot(environment: TaskEnvironment | undefined): R
 
 function normalizeTimeout(value: string | number | null | undefined): number | null | undefined {
   if (value === undefined || value === null || typeof value === "number") return value;
-  const parsed = parseDuration(value, DURATION_UNITS);
+  const parsed = timeoutMilliseconds(value);
   if (parsed === null) throw new UsageError(`Invalid task timeout ${JSON.stringify(value)}.`, "TASK_SOURCE_INVALID");
   return parsed;
 }

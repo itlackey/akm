@@ -84,7 +84,10 @@ function stubFor(platform: string, opencodeMajor: 1 | 2 = 2): Stub {
             "esac",
           ]
         : []),
-      "echo done",
+      // OpenCode 1 runs with `--format json`: its stub answers with a recorded finished run.
+      platform === "opencode" && opencodeMajor === 1
+        ? `cat '${path.join(import.meta.dir, "..", "fixtures", "opencode1-run", "oc1-ok.out")}'`
+        : "echo done",
       "",
     ].join("\n"),
     { mode: 0o755 },

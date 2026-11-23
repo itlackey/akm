@@ -574,11 +574,91 @@ afterEach(() => cleanup());
     expect(dependency.calls).toHaveLength(0);
     expect(read("claude/settings.json")).toBe(originalClaude);
     expect(read("codex/config.toml")).toBe(originalCodex);
-    const checked = await withEnv(env, () =>
-      runUpgrade({ ...opts, check: true, channel: "next" }, "0.10.1", dependency),
-    );
-    expect(checked.result.plugins.some((plugin) => plugin.outcome === "failed" && plugin.channel === "unknown")).toBe(
-      true,
-    );
+    // The check runs the same preflight, so it refuses with the same error and writes nothing.
+    await expect(
+      withEnv(env, () => runUpgrade({ ...opts, check: true, channel: "next" }, "0.10.1", dependency)),
+    ).rejects.toThrow("Could not inventory");
+    expect(read("claude/settings.json")).toBe(originalClaude);
+    expect(read("codex/config.toml")).toBe(originalCodex);
   });
 });
+
+(process.platform === "win32" ? describe.skip : describe)("a channel edit that cannot be made", () => {
+  test("check and run refuse with the same message and change nothing", async () => {
+    write("codex/config.toml", '[marketplaces."akm-plugins"]\nsource = "https://example.test/plugins.git"\n');
+    const broken = read("codex/config.toml");
+    const dependency = deps();
+    const refused = async (check: boolean) =>
+      withEnv(env, () => runUpgrade({ ...opts, check, channel: "next" }, "0.10.1", dependency)).then(
+        () => undefined,
+        (error: Error) => error.message,
+      );
+    const checkMessage = await refused(true);
+    const runMessage = await refused(false);
+    expect(checkMessage).toContain("no Git source whose channel can be switched");
+    expect(checkMessage).toBe(runMessage);
+    expect(dependency.calls).toHaveLength(0);
+    expect(read("codex/config.toml")).toBe(broken);
+  });
+});
+
+(process.platform === "win32" ? describe.skip : describe)(
+  "a plain upgrade follows the channel the installed akm is on",
+  () => {
+    const tags = { latest: "0.10.261129", next: "0.10.261130-beta.7" };
+    function registry(current: string, published: { latest: string; next?: string } = tags) {
+      const asked: { channel: string; exact?: boolean }[] = [];
+      const calls: unknown[] = [];
+      return {
+        asked,
+        calls,
+        checkForUpdate: async (_version, channel, exact) => {
+          asked.push({ channel, exact });
+          const latestVersion = channel === "next" && published.next ? published.next : published.latest;
+          const updateAvailable = Bun.semver.order(current, latestVersion) < 0;
+          return { currentVersion: current, latestVersion, updateAvailable, installMethod: "bun" as const };
+        },
+        performUpgrade: async (check, options) => {
+          calls.push(options);
+          const installs = check.updateAvailable || options?.force === true;
+          const newVersion = installs ? (options?.targetVersion ?? check.latestVersion) : current;
+          return {
+            currentVersion: current,
+            newVersion,
+            upgraded: installs && newVersion !== current,
+            installMethod: "bun",
+            message: installs ? "installed" : `akm v${current} is already the latest version`,
+            migration: { status: "current" },
+          };
+        },
+      } satisfies UpgradeRunDependencies & { asked: unknown[]; calls: unknown[] };
+    }
+
+    test("a host on next checks next and installs the newer prerelease, not latest", async () => {
+      const dependency = registry("0.10.261130-beta.6");
+      const run = await withEnv(env, () => runUpgrade(opts, "0.10.261130-beta.6", dependency));
+      expect(dependency.asked).toEqual([{ channel: "next", exact: false }]);
+      expect(dependency.calls).toEqual([{ force: false, skipPostUpgrade: true, targetVersion: "0.10.261130-beta.7" }]);
+      expect(run.result.channel).toBe("next");
+      expect((run.result as { newVersion?: string }).newVersion).toBe("0.10.261130-beta.7");
+    });
+
+    test("an offered version older than the installed one is never installed or reported as the latest", async () => {
+      for (const force of [false, true]) {
+        const dependency = registry("0.10.261130-beta.7", { latest: tags.latest });
+        const run = await withEnv(env, () => runUpgrade({ ...opts, force }, "0.10.261130-beta.7", dependency));
+        expect(dependency.calls).toEqual([{ force, skipPostUpgrade: true, targetVersion: "0.10.261130-beta.7" }]);
+        expect((run.result as { newVersion?: string }).newVersion).toBe("0.10.261130-beta.7");
+        expect((run.result as { message?: string }).message).toBe(
+          "akm stays at 0.10.261130-beta.7; next has nothing newer",
+        );
+      }
+    });
+
+    test("a host on latest still checks latest", async () => {
+      const dependency = registry("0.10.261128");
+      await withEnv(env, () => runUpgrade({ ...opts, check: true }, "0.10.261128", dependency));
+      expect(dependency.asked).toEqual([{ channel: "latest", exact: false }]);
+    });
+  },
+);

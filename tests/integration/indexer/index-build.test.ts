@@ -4,23 +4,17 @@
 
 /**
  * `buildIndex` (`src/indexer/index-build.ts`): the one way to build the live
- * index. Every build takes the rebuild lock; `"wait"` waits for a running build
- * (notice, then build, bounded by `INDEX_DB_CONTENDED`), `"try"` steps aside.
- * New behaviour: before it, only `akm index` took the lock and a held lock meant
- * "warn and build unlocked".
- *
- * The lock is held by this test process's own pid, released by the test, so
- * nothing here depends on timing beyond short polls.
+ * index. Every build takes the rebuild lock; while a live process holds it the
+ * build is skipped with a warning, never waited for.
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../../../src/core/config/config";
-import { TransientError } from "../../../src/core/errors";
 import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
-import { _setIndexBuildWaitTimingForTests, buildIndex, isSkippedIndexBuild } from "../../../src/indexer/index-build";
+import { buildIndex, isSkippedIndexBuild, withIndexBuildLock } from "../../../src/indexer/index-build";
 import { heldRebuildLock } from "../../../src/indexer/index-rebuild-lock";
 import * as indexerModule from "../../../src/indexer/indexer";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
@@ -46,7 +40,6 @@ beforeEach(() => {
 
 afterEach(() => {
   stopLiveHolders();
-  _setIndexBuildWaitTimingForTests(undefined);
   _setWarnSinkForTests(undefined);
   storage.cleanup();
 });
@@ -60,7 +53,7 @@ describe("buildIndex", () => {
       return indexerModule.akmIndex(options);
     });
     try {
-      await buildIndex({ stashDir: storage.stashDir }, "wait");
+      await buildIndex({ stashDir: storage.stashDir });
     } finally {
       spy.mockRestore();
     }
@@ -68,12 +61,17 @@ describe("buildIndex", () => {
     expect(fs.existsSync(lockPath())).toBe(false);
   });
 
-  test('"try" does not build when a live process holds the lock, and leaves the holder\'s lock alone', async () => {
+  test("does not build when a live process holds the lock, warns, and leaves the holder's lock alone", async () => {
     holdLock();
+    const notices: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") notices.push(args.map(String).join(" "));
+    });
     const spy = spyOn(indexerModule, "akmIndex");
     try {
-      const result = await buildIndex({ stashDir: storage.stashDir }, "try");
+      const result = await buildIndex({ stashDir: storage.stashDir });
       expect(isSkippedIndexBuild(result)).toBe(true);
+      expect(notices.filter((n) => /another index run holds the lock/.test(n))).toHaveLength(1);
       expect(result).toMatchObject({ skipped: { pid: holder.pid } });
       expect(spy).not.toHaveBeenCalled();
     } finally {
@@ -82,71 +80,36 @@ describe("buildIndex", () => {
     expect(JSON.parse(fs.readFileSync(lockPath(), "utf8")).pid).toBe(holder.pid);
   });
 
-  test('"try" builds when the lock is free, and reclaims a dead holder\'s lock', async () => {
+  test("builds when the lock is free, and reclaims a dead holder's lock", async () => {
     fs.mkdirSync(path.dirname(lockPath()), { recursive: true });
     fs.writeFileSync(lockPath(), JSON.stringify({ pid: 999_999, startedAt: new Date(0).toISOString() }), "utf8");
-    const result = await buildIndex({ stashDir: storage.stashDir }, "try");
+    const result = await buildIndex({ stashDir: storage.stashDir });
     expect(isSkippedIndexBuild(result)).toBe(false);
     expect(fs.existsSync(lockPath())).toBe(false);
   });
 
-  test('"wait" prints a notice while a live process holds the lock, then builds once it is released', async () => {
+  test("withIndexBuildLock runs the caller's work and skips its build when a live process holds the lock", async () => {
     holdLock();
-    const notices: string[] = [];
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") notices.push(args.map(String).join(" "));
-    });
-    const build = buildIndex({ stashDir: storage.stashDir }, "wait");
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    // Still waiting: nothing has built beside the holder.
-    expect(JSON.parse(fs.readFileSync(lockPath(), "utf8")).pid).toBe(holder.pid);
-    fs.rmSync(lockPath());
-    const result = await build;
-    expect(isSkippedIndexBuild(result)).toBe(false);
-    expect(notices.filter((n) => /waiting for another index run/.test(n))).toHaveLength(1);
-    expect(fs.existsSync(lockPath())).toBe(false);
-  });
-
-  test('"wait" repeats the notice at its cadence', async () => {
-    holdLock();
-    _setIndexBuildWaitTimingForTests({ noticeIntervalMs: 100 });
-    const notices: string[] = [];
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") notices.push(args.map(String).join(" "));
-    });
-    const build = buildIndex({ stashDir: storage.stashDir }, "wait");
-    await new Promise((resolve) => setTimeout(resolve, 450));
-    fs.rmSync(lockPath());
-    await build;
-    expect(notices.filter((n) => /waiting for another index run/.test(n)).length).toBeGreaterThanOrEqual(3);
-  });
-
-  test('"wait" gives up past its bound with INDEX_DB_CONTENDED, without building', async () => {
-    holdLock();
-    _setIndexBuildWaitTimingForTests({ maxWaitMs: 250 });
     const spy = spyOn(indexerModule, "akmIndex");
+    let published = false;
     try {
-      const error = await buildIndex({ stashDir: storage.stashDir }, "wait").catch((e) => e);
-      expect(error).toBeInstanceOf(TransientError);
-      expect((error as TransientError).code).toBe("INDEX_DB_CONTENDED");
+      const result = await withIndexBuildLock(async (build) => {
+        published = true;
+        return build({ stashDir: storage.stashDir });
+      });
+      expect(published).toBe(true);
+      expect(isSkippedIndexBuild(result)).toBe(true);
       expect(spy).not.toHaveBeenCalled();
     } finally {
       spy.mockRestore();
     }
-  });
-
-  test('"wait" stops waiting when its signal aborts', async () => {
-    holdLock();
-    const controller = new AbortController();
-    const build = buildIndex({ stashDir: storage.stashDir, signal: controller.signal }, "wait");
-    setTimeout(() => controller.abort(new Error("index interrupted")), 150);
-    await expect(build).rejects.toThrow("index interrupted");
+    expect(JSON.parse(fs.readFileSync(lockPath(), "utf8")).pid).toBe(holder.pid);
   });
 
   test("a failed build releases the lock", async () => {
     const spy = spyOn(indexerModule, "akmIndex").mockRejectedValueOnce(new Error("boom"));
     try {
-      await expect(buildIndex({ stashDir: storage.stashDir }, "wait")).rejects.toThrow("boom");
+      await expect(buildIndex({ stashDir: storage.stashDir })).rejects.toThrow("boom");
     } finally {
       spy.mockRestore();
     }
@@ -164,7 +127,7 @@ describe("buildIndex", () => {
       defaultBundle: "stash",
       registries: [],
     });
-    await buildIndex({ stashDir: storage.stashDir }, "wait");
+    await buildIndex({ stashDir: storage.stashDir });
     const hash = () => {
       const db = openExistingDatabase(getDbPath());
       try {
@@ -177,13 +140,13 @@ describe("buildIndex", () => {
     };
     const before = hash();
     fs.writeFileSync(file, "---\ndescription: elsewhere edited\n---\n\n# elsewhere\n\nEdited body.\n");
-    await buildIndex({ stashDir: storage.stashDir }, "wait");
+    await buildIndex({ stashDir: storage.stashDir });
     expect(hash()).not.toBe(before);
   });
 
   test("consecutive builds in one process each take and release the lock (no build calls another)", async () => {
-    await buildIndex({ stashDir: storage.stashDir }, "wait");
-    await buildIndex({ stashDir: storage.stashDir }, "wait");
+    await buildIndex({ stashDir: storage.stashDir });
+    await buildIndex({ stashDir: storage.stashDir });
     expect(fs.existsSync(lockPath())).toBe(false);
   });
 });

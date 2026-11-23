@@ -15,6 +15,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { stderr } from "./stdio";
 
 let quiet = false;
 /** Calls inside {@link withQuiet}; counted so overlapping calls cannot leave the flag flipped. */
@@ -26,7 +27,7 @@ let logFilePath: string | undefined;
 // Swap-and-restore output-sink override. Inert in production; only tests call
 // the setter (via tests/_helpers/seams.ts). When installed, the sink captures
 // every info/warn/error/warnVerbose call BEFORE the quiet/verbose gates —
-// matching the full-replacement semantics the old mock.module fakes had.
+// fully replacing the real output.
 export type WarnSinkForTests = (level: "info" | "warn" | "error" | "warnVerbose", args: unknown[]) => void;
 
 let sinkOverride: WarnSinkForTests | undefined;
@@ -107,8 +108,8 @@ function appendToLogFile(level: "INFO" | "WARN" | "ERROR", args: unknown[]): voi
     fs.appendFileSync(logFilePath, `[${ts}] [${level}] ${msg}\n`);
   } catch (e) {
     // Log file write failed — emit directly to stderr so the message is not lost.
-    process.stderr.write(`[akm:warn] log-file write failed (${logFilePath}): ${e}\n`);
-    process.stderr.write(`[${ts}] [${level}] ${msg}\n`);
+    stderr().write(`[akm:warn] log-file write failed (${logFilePath}): ${e}\n`);
+    stderr().write(`[${ts}] [${level}] ${msg}\n`);
   }
 }
 
@@ -134,6 +135,7 @@ export function info(...args: unknown[]): void {
  * Drop-in replacement for console.warn() across the codebase.
  */
 export function warn(...args: unknown[]): void {
+  if (suppressedScopes > 0) return;
   if (sinkOverride) {
     sinkOverride("warn", args);
     return;
@@ -146,12 +148,27 @@ export function warn(...args: unknown[]): void {
 
 const warnedOnceKeys = new Set<string>();
 
+let suppressedScopes = 0;
+
+/**
+ * Run `fn` with `warn` and `warnOnce` emitting nothing anywhere (stderr, log file, sink) and `warnOnce` keeping its
+ * keys, so a later call in the same process still warns. For a read nobody asked for.
+ */
+export function withWarningsSuppressed<T>(fn: () => T): T {
+  suppressedScopes++;
+  try {
+    return fn();
+  } finally {
+    suppressedScopes--;
+  }
+}
+
 /**
  * `warn()` at most once per process for a given `key`. For diagnostics that
  * would otherwise repeat on every read of the same bad row or value.
  */
 export function warnOnce(key: string, ...args: unknown[]): void {
-  if (warnedOnceKeys.has(key)) return;
+  if (suppressedScopes > 0 || warnedOnceKeys.has(key)) return;
   warnedOnceKeys.add(key);
   warn(...args);
 }

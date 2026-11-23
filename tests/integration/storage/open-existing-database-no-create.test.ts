@@ -15,7 +15,7 @@
  * failed `getEntryCount` ("no such table: entries"), and
  * `indexWrittenAssets` returned false — turning proposal finalization into a
  * file-order-dependent hard failure. The two-file shard repro was
- * `tests/curate-logic.test.ts` before
+ * `tests/integration/curate-logic.test.ts` before
  * a proposal adapter test; this suite pins
  * the same sequence in-process, order-independently.
  */

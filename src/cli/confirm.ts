@@ -38,6 +38,7 @@
  */
 
 import { UsageError } from "../core/errors";
+import { isTerminal } from "../core/stdio";
 import * as p from "./clack";
 
 export interface ConfirmDestructiveOptions {
@@ -66,7 +67,7 @@ export async function confirmDestructive(message: string, opts: ConfirmDestructi
   if (opts.yes) return true;
 
   // Non-TTY: fail loudly — require explicit --yes in scripts
-  const isInteractive = process.stdin.isTTY === true;
+  const isInteractive = isTerminal(0);
   if (!isInteractive) {
     throw new UsageError(
       `This command requires confirmation in non-interactive mode. Pass --yes / -y to proceed without prompting.\n\nAction: ${message}`,
@@ -75,6 +76,7 @@ export async function confirmDestructive(message: string, opts: ConfirmDestructi
   }
 
   // Interactive: prompt with default = NO (false)
+  await p.loadPrompts();
   const confirmed = await p.confirm({
     message,
     initialValue: false,

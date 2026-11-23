@@ -161,7 +161,7 @@
         id: "usage-report-settings",
         title: "Usage reports",
         description:
-          "Whether AKM sends its daily usage report: command counts and library size, never content or names.",
+          "Whether AKM sends its daily usage report: counts of what is used and set up, under a random install id, never content or names.",
         fields: [
           {
             key: "usage.report",

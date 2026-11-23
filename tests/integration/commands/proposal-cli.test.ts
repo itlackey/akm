@@ -1,0 +1,1083 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
+
+import { contentHash } from "../../../src/commands/improve/content-hash";
+import { stageJudgedProposal } from "../../../src/commands/improve/stage";
+import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
+import type { RetirementMetadata } from "../../../src/commands/proposal/proposal-types";
+import { createProposal, createRetireProposal, getProposal } from "../../../src/commands/proposal/repository";
+import type { AkmConfig } from "../../../src/core/config/config";
+import { slugForPath } from "../../../src/indexer/installations";
+import { runCliCapture } from "../../_helpers/cli";
+import { durableItemRef } from "../../_helpers/durable-ref";
+import { makeSandboxDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
+
+// Migrated from per-test spawnSync("bun", [cliPath, ...]) to the in-process
+// harness (tests/_helpers/cli.ts). Proposals are seeded in-process via
+// createProposal() against an isolated stash dir; the CLI then reads that stash
+// back through AKM_BUNDLE_DIR. The preload (tests/_preload.ts) sandboxes
+// HOME / XDG dirs per test, so runCli only needs to point AKM_BUNDLE_DIR at the
+// seeded stash for the duration of the call (via the allowlisted withEnv
+// wrapper). The spawn version set cwd: repoRoot, which is already the in-process
+// cwd — no chdir needed — so every test migrates cleanly.
+
+const disposers: SandboxedDir[] = [];
+
+function makeTempDir(prefix = "akm-proposal-cli-"): string {
+  const d = makeSandboxDir(prefix);
+  disposers.push(d);
+  return d.dir;
+}
+
+function makeStashDir(): string {
+  const stash = makeTempDir("akm-proposal-cli-stash-");
+  for (const sub of ["lessons", "skills", "memories", "knowledge"]) {
+    fs.mkdirSync(path.join(stash, sub), { recursive: true });
+  }
+  const bundleId = slugForPath(stash);
+  writeSandboxConfig({
+    bundles: { [bundleId]: { path: stash, writable: true } },
+    defaultBundle: bundleId,
+  });
+  return stash;
+}
+
+afterEach(() => {
+  for (const d of disposers.splice(0)) d.cleanup();
+});
+
+async function runCli(
+  args: string[],
+  options: { stashDir: string; env?: Record<string, string | undefined> } = { stashDir: "" },
+): Promise<{ stdout: string; stderr: string; status: number }> {
+  const { code, stdout, stderr } = await withEnv({ ...options.env }, () => runCliCapture(args));
+  return { stdout, stderr, status: code };
+}
+
+const VALID_LESSON = `---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos\n---\n\nPrefer rg.\n`;
+
+describe("akm proposal drain strategy selector", () => {
+  test("accepts --strategy and rejects the retired --profile flag", async () => {
+    const stashDir = makeStashDir();
+    const selected = await runCli(["proposal", "drain", "--strategy", "default", "--dry-run", "--format=json"], {
+      stashDir,
+    });
+    expect(selected.status).toBe(0);
+    expect(JSON.parse(selected.stdout).strategy).toBe("default");
+
+    const retired = await runCli(["proposal", "drain", "--profile", "default", "--dry-run", "--format=json"], {
+      stashDir,
+    });
+    expect(retired.status).toBe(2);
+  });
+
+  test("uses defaults.improveStrategy and reports the effective strategy/output buckets", async () => {
+    const stashDir = makeStashDir();
+    writeSandboxConfig({
+      bundles: { stash: { path: stashDir, writable: true } },
+      defaultBundle: "stash",
+      improve: {
+        strategy: "queue-only",
+        strategies: {
+          "queue-only": {
+            processes: {
+              reflect: { enabled: false },
+              distill: { enabled: false },
+              consolidate: { enabled: false },
+              memoryInference: { enabled: false },
+              extract: { enabled: false },
+              validation: { enabled: false },
+              triage: { enabled: true, applyMode: "queue" },
+            },
+          },
+        },
+      },
+    });
+    const result = await runCli(["proposal", "drain", "--dry-run", "--format=json"], { stashDir });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      strategy: "queue-only",
+      applyMode: "queue",
+      judgmentEngine: null,
+      judgmentKind: null,
+      staged: [],
+    });
+  });
+
+  test("an explicitly selected strategy enables its judgment tier, while the implicit default does not", async () => {
+    const stashDir = makeStashDir();
+    writeSandboxConfig({
+      bundles: { stash: { path: stashDir, writable: true } },
+      defaultBundle: "stash",
+      harnesses: { reviewer: { platform: "claude" } },
+      improve: {
+        strategy: "enabled-judgment",
+        strategies: {
+          "enabled-judgment": {
+            processes: { triage: { enabled: true, judgment: { enabled: true, harness: "reviewer" } } },
+          },
+        },
+      },
+    });
+
+    const implicit = await runCli(["proposal", "drain", "--dry-run", "--format=json"], { stashDir });
+    expect(implicit.status).toBe(0);
+    expect(JSON.parse(implicit.stdout)).toMatchObject({ judgmentEngine: null, judgmentKind: null });
+
+    const selected = await runCli(
+      ["proposal", "drain", "--strategy", "enabled-judgment", "--dry-run", "--format=json"],
+      {
+        stashDir,
+      },
+    );
+    expect(selected.status).toBe(0);
+    expect(JSON.parse(selected.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "harness" });
+  });
+
+  test("--judgment overrides a disabled selected strategy", async () => {
+    const stashDir = makeStashDir();
+    writeSandboxConfig({
+      bundles: { stash: { path: stashDir, writable: true } },
+      defaultBundle: "stash",
+      harnesses: { reviewer: { platform: "claude" } },
+      improve: {
+        strategies: {
+          "disabled-judgment": {
+            processes: { triage: { enabled: true, judgment: { enabled: false, harness: "reviewer" } } },
+          },
+        },
+      },
+    });
+
+    const disabled = await runCli(
+      ["proposal", "drain", "--strategy", "disabled-judgment", "--dry-run", "--format=json"],
+      {
+        stashDir,
+      },
+    );
+    expect(disabled.status).toBe(0);
+    expect(JSON.parse(disabled.stdout)).toMatchObject({ judgmentEngine: null, judgmentKind: null });
+
+    const forced = await runCli(
+      ["proposal", "drain", "--strategy", "disabled-judgment", "--judgment", "--dry-run", "--format=json"],
+      { stashDir },
+    );
+    expect(forced.status).toBe(0);
+    expect(JSON.parse(forced.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "harness" });
+  });
+
+  test("--judgment with nothing to judge with is an error, not a drain without judgment", async () => {
+    const stashDir = makeStashDir();
+
+    const forced = await runCli(["proposal", "drain", "--judgment", "--dry-run", "--format=json"], { stashDir });
+
+    expect(forced.status).not.toBe(0);
+    expect(forced.stderr).toContain("LLM_NOT_CONFIGURED");
+    expect(forced.stdout).toBe("");
+  });
+
+  function seedJudgedLesson(stashDir: string, name: string) {
+    const created = createProposal(stashDir, {
+      ref: `lessons/${name}`,
+      source: "extract",
+      sourceRun: "run-x",
+      target: { source: slugForPath(stashDir), root: stashDir },
+      payload: { content: VALID_LESSON, frontmatter: { description: `${name} fixture` } },
+    });
+    stageJudgedProposal(stashDir, created);
+    return created;
+  }
+
+  test("a bare drain queues against the default strategy, and --promote accepts (#1274)", async () => {
+    const stashDir = makeStashDir();
+    // The stock `default` strategy sets triage.applyMode to promote; a bare drain does not inherit it.
+    const created = seedJudgedLesson(stashDir, "bare-drain");
+
+    const bare = await runCli(["proposal", "drain", "--format=json"], { stashDir });
+    expect(bare.status).toBe(0);
+    expect(JSON.parse(bare.stdout)).toMatchObject({ strategy: "default", applyMode: "queue", promoted: [] });
+    expect(getProposal(stashDir, created.id).status).toBe("pending");
+
+    const promoted = await runCli(["proposal", "drain", "--promote", "-y", "--format=json"], { stashDir });
+    expect(promoted.status).toBe(0);
+    expect(JSON.parse(promoted.stdout)).toMatchObject({ applyMode: "promote", promoted: [created.id] });
+    expect(getProposal(stashDir, created.id).status).toBe("accepted");
+  });
+
+  test("an explicit --strategy supplies its apply mode: queue stages, promote promotes (#1274)", async () => {
+    const stashDir = makeStashDir();
+    const bundleId = slugForPath(stashDir);
+    writeSandboxConfig({
+      bundles: { [bundleId]: { path: stashDir, writable: true } },
+      defaultBundle: bundleId,
+      improve: {
+        strategies: {
+          "queue-mode": { processes: { triage: { enabled: true, applyMode: "queue" } } },
+          "promote-mode": { processes: { triage: { enabled: true, applyMode: "promote" } } },
+        },
+      },
+    });
+    const created = seedJudgedLesson(stashDir, "explicit-strategy");
+
+    const queued = await runCli(["proposal", "drain", "--strategy", "queue-mode", "--format=json"], { stashDir });
+    expect(queued.status).toBe(0);
+    expect(JSON.parse(queued.stdout)).toMatchObject({ strategy: "queue-mode", applyMode: "queue", promoted: [] });
+    expect(getProposal(stashDir, created.id).status).toBe("pending");
+
+    const promoted = await runCli(["proposal", "drain", "--strategy", "promote-mode", "-y", "--format=json"], {
+      stashDir,
+    });
+    expect(promoted.status).toBe(0);
+    expect(JSON.parse(promoted.stdout)).toMatchObject({
+      strategy: "promote-mode",
+      applyMode: "promote",
+      promoted: [created.id],
+    });
+    expect(getProposal(stashDir, created.id).status).toBe("accepted");
+  });
+
+  test("a stale-target refusal is auto-rejected, not left as a generic failure (STALE, R20)", async () => {
+    const stashDir = makeStashDir();
+    const assetPath = path.join(stashDir, "lessons", "cli-stale.md");
+    fs.writeFileSync(
+      assetPath,
+      "---\ndescription: Original on-disk content.\nwhen_to_use: Testing.\n---\n\nOriginal.\n",
+      "utf8",
+    );
+    const created = createProposal(stashDir, {
+      ref: "lessons/cli-stale",
+      source: "extract",
+      sourceRun: "run-x",
+      target: { source: slugForPath(stashDir), root: stashDir },
+      payload: { content: VALID_LESSON, frontmatter: { description: "cli-stale fixture" } },
+    });
+    // A quality judge passed it, so the drain tries to promote it.
+    stageJudgedProposal(stashDir, created);
+    fs.writeFileSync(
+      assetPath,
+      "---\ndescription: Someone else edited this.\nwhen_to_use: Testing.\n---\n\nNewer.\n",
+      "utf8",
+    );
+
+    const result = await runCli(["proposal", "drain", "--promote", "-y", "--format=json"], { stashDir });
+    expect(result.status).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    // The stale-target category is not a merit rejection, so the drain
+    // resolves it with a structured auto-reject instead of retrying forever
+    // — it lands in `rejected`, not `failed` (STALE, R20).
+    expect(envelope.promoted).toEqual([]);
+    expect(envelope.failed).toEqual([]);
+    expect(envelope.rejected).toEqual([created.id]);
+    expect(getProposal(stashDir, created.id)).toMatchObject({
+      status: "rejected",
+      gateDecision: { outcome: "auto-rejected", reason: "stale-target" },
+    });
+  });
+});
+
+function seedProposal(stash: string, ref = "lessons/rg-over-grep") {
+  const result = createProposal(stash, {
+    ref,
+    source: "reflect",
+    payload: { content: VALID_LESSON },
+  });
+  return result;
+}
+
+describe("akm proposal list (CLI)", () => {
+  test("supports --ref filtering", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash, "lessons/rg-over-grep");
+    seedProposal(stash, "lessons/docker-cleanup");
+    const result = await runCli(["proposal", "list", "--ref", "lessons/docker-cleanup", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.totalCount).toBe(1);
+    expect(parsed.proposals[0].ref).toBe(durableItemRef(stash, "lesson", "docker-cleanup"));
+  });
+
+  test("supports --type filtering (asset type derived from ref)", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash, "lessons/rg-over-grep");
+    seedProposal(stash, "knowledge/docker-cleanup");
+    const onlyLessons = await runCli(["proposal", "list", "--type", "lesson", "--format=json"], { stashDir: stash });
+    expect(onlyLessons.status).toBe(0);
+    const parsed = JSON.parse(onlyLessons.stdout);
+    expect(parsed.totalCount).toBe(1);
+    expect(parsed.proposals[0].ref).toBe(durableItemRef(stash, "lesson", "rg-over-grep"));
+    // No-match type yields an empty list, not the full set.
+    const none = await runCli(["proposal", "list", "--type", "agent", "--format=json"], { stashDir: stash });
+    expect(JSON.parse(none.stdout).totalCount).toBe(0);
+  });
+
+  test("error path: invalid --status value → UsageError exit 2 with code", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposal", "list", "--status=bogus", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(2);
+    const envelope = JSON.parse(result.stderr);
+    expect(envelope.code).toBe("INVALID_FLAG_VALUE");
+  });
+
+  test("error path: an unknown --queue names --queue, not the retired --target", async () => {
+    const stash = makeStashDir();
+    const result = await runCli(["proposal", "list", "--queue", "ghost", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(2);
+    const envelope = JSON.parse(result.stderr);
+    expect(envelope.code).toBe("INVALID_FLAG_VALUE");
+    expect(envelope.error).toContain('--queue must reference a source name from your config. No source named "ghost"');
+    expect(envelope.error).not.toContain("--bundle");
+  });
+
+  test("accepts --status=reverted (parser allows reverted status)", async () => {
+    // Regression: parseProposalStatus must accept "reverted" so that
+    // `akm proposal list --status reverted` works for archived/reverted proposals.
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposal", "list", "--status=reverted", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    // No proposals have been reverted in this fixture, so the list is empty.
+    expect(parsed.totalCount).toBe(0);
+    expect(Array.isArray(parsed.proposals)).toBe(true);
+  });
+});
+
+describe("akm proposal accept/reject/diff (CLI)", () => {
+  test("reject requires --reason", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposal", "reject", created.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(2);
+    const envelope = JSON.parse(result.stderr);
+    expect(envelope.code).toBe("MISSING_REQUIRED_ARGUMENT");
+  });
+
+  test("single-id accept is NOT guarded (revertable) — proceeds without --yes", async () => {
+    // WS0: the bulk-accept guard must not leak onto the single-id path.
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposal", "accept", created.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.ok).toBe(true);
+  });
+
+  test("several ids: one batch envelope; a failing id is reported, exits 1 and the others are still accepted", async () => {
+    const stash = makeStashDir();
+    const first = seedProposal(stash, "lessons/rg-over-grep");
+    const second = seedProposal(stash, "lessons/docker-cleanup");
+    const missing = "00000000-0000-4000-8000-000000000000";
+
+    const result = await runCli(["proposal", "accept", first.id, missing, second.id, "--format=json"], {
+      stashDir: stash,
+    });
+
+    expect(result.status).toBe(1);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toMatchObject({ accepted: 2, failed: 1, shape: "proposal-accept-batch" });
+    expect(parsed.results.map((r: { id: string; ok: boolean }) => [r.id, r.ok])).toEqual([
+      [first.id, true],
+      [missing, false],
+      [second.id, true],
+    ]);
+    expect(getProposal(stash, first.id).status).toBe("accepted");
+    expect(getProposal(stash, second.id).status).toBe("accepted");
+  });
+});
+
+/** A `consolidate-pair` retire proposal over two real memories in `stash` (real body hashes: accept refuses a stale pair). */
+function seedRetireProposal(stash: string, flags: Pick<RetirementMetadata, "continuityRisk"> = {}) {
+  const write = (name: string, description: string, body: string): string => {
+    const filePath = path.join(stash, "memories", `${name}.md`);
+    fs.writeFileSync(filePath, `---\ndescription: ${description}\n---\n${body}`, "utf8");
+    return filePath;
+  };
+  const oldPath = write("old-note", "an old note", "The durable fact.\n");
+  const newPath = write("new-note", "a new note", "The durable fact, restated.\n");
+  return createRetireProposal(stash, {
+    ref: "memories/old-note",
+    source: "consolidate-pair",
+    retirement: {
+      retiredRef: "memories/old-note",
+      successorRef: "memories/new-note",
+      cosine: 0.986,
+      judgeLabel: "duplicate",
+      judgeReason: "Same durable facts, B adds nothing new.",
+      judgedScope: {},
+      retiredContentHash: contentHash(fs.readFileSync(oldPath, "utf8"), "body"),
+      successorContentHash: contentHash(fs.readFileSync(newPath, "utf8"), "body"),
+      reason: "duplicate",
+      ...flags,
+    },
+  });
+}
+
+describe("akm proposal diff — a retire proposal (#997)", () => {
+  test("--format=json: op, the retirement block and the archive/revert note ride along; no blank `+` line", async () => {
+    const stash = makeStashDir();
+    const proposal = seedRetireProposal(stash);
+    const result = await runCli(["proposal", "diff", proposal.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toMatchObject({
+      id: proposal.id,
+      ref: proposal.ref,
+      isNew: false,
+      op: "delete",
+      retirement: {
+        retiredRef: "memories/old-note",
+        successorRef: "memories/new-note",
+        judgeLabel: "duplicate",
+        judgeReason: "Same durable facts, B adds nothing new.",
+        cosine: 0.986,
+      },
+    });
+    expect(parsed.retirement).not.toHaveProperty("continuityRisk"); // unflagged: nothing to report
+    expect(parsed.note).toContain(".akm/memory-cleanup/archive/");
+    expect(parsed.note).toContain("akm proposal revert");
+    expect(parsed.unified).toContain("-The durable fact.");
+    expect(parsed.unified).toContain("+++ /dev/null (retired: archived; successor memories/new-note)");
+    expect(parsed.unified.split("\n").filter((l: string) => l.startsWith("+") && !l.startsWith("+++"))).toEqual([]);
+  });
+
+  test("--format=text: the header says `retire`, not `update`, and carries the verdict and the note", async () => {
+    const stash = makeStashDir();
+    const proposal = seedRetireProposal(stash);
+    const result = await runCli(["proposal", "diff", proposal.id, "--format=text"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const lines = result.stdout.trimEnd().split("\n");
+    expect(lines[0]).toBe(`# proposal ${proposal.id} (retire: memories/old-note -> memories/new-note)`);
+    expect(result.stdout).not.toContain("(update:");
+    expect(result.stdout).toContain("retire.label: duplicate (cosine=0.986)");
+    expect(result.stdout).toContain("retire.reason: Same durable facts, B adds nothing new.");
+    expect(result.stdout).toContain("note: Accepting archives the retired file under .akm/memory-cleanup/archive/");
+    expect(result.stdout).toContain("-The durable fact.");
+    expect(lines).not.toContain("+"); // the synthetic blank line the old rendering padded in
+  });
+
+  test("`proposal show --detail full` does not print the retire proposal's empty payload as a bare heading", async () => {
+    const stash = makeStashDir();
+    const proposal = seedRetireProposal(stash);
+    const shown = await runCli(["proposal", "show", proposal.id, "--detail=full", "--format=text"], {
+      stashDir: stash,
+    });
+    expect(shown.status).toBe(0);
+    expect(shown.stdout).toContain("retire: memories/old-note -> memories/new-note");
+    expect(shown.stdout).not.toContain("payload:");
+    // An ordinary proposal still shows its payload at full detail.
+    const ordinary = seedProposal(stash);
+    const full = await runCli(["proposal", "show", ordinary.id, "--detail=full", "--format=text"], { stashDir: stash });
+    expect(full.stdout).toContain("payload:");
+  });
+
+  test("a continuityRisk flag shows in the diff — JSON block and text lines — the way `show` prints it", async () => {
+    const stash = makeStashDir();
+    const continuityRisk = {
+      failingQueries: 1,
+      unverifiedQueries: 2,
+      ranks: [{ query: "how do I do X", retiredRank: 1, successorRank: null }],
+    };
+    const proposal = seedRetireProposal(stash, { continuityRisk });
+
+    const json = await runCli(["proposal", "diff", proposal.id, "--format=json"], { stashDir: stash });
+    expect(JSON.parse(json.stdout).retirement.continuityRisk).toEqual(continuityRisk);
+
+    const flaggedLines = [
+      "retire.continuityRisk: 1 of the retired asset's own query would not have found the successor top 10; " +
+        "2 queries unverified (search failed or used the keyword-only fallback) — excluded from bulk accept",
+      '  - "how do I do X": retired #1, successor absent from top 10',
+    ];
+    const diff = await runCli(["proposal", "diff", proposal.id, "--format=text"], { stashDir: stash });
+    const shown = await runCli(["proposal", "show", proposal.id, "--format=text"], { stashDir: stash });
+    for (const line of flaggedLines) {
+      expect(diff.stdout).toContain(line);
+      expect(shown.stdout).toContain(line);
+    }
+    // The flag belongs to the verdict lines, ahead of the diff proper.
+    const diffLines = diff.stdout.trimEnd().split("\n");
+    expect(diffLines.indexOf(flaggedLines[0] as string)).toBeLessThan(diffLines.findIndex((l) => l.startsWith("--- ")));
+  });
+
+  test("the md rendering carries the retirement fields", async () => {
+    const stash = makeStashDir();
+    const proposal = seedRetireProposal(stash);
+    const result = await runCli(["proposal", "diff", proposal.id, "--format=md"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    // The judge's text and label live only in the `retirement` block, never in the unified diff.
+    expect(result.stdout).toContain("judgeReason");
+    expect(result.stdout).toContain("Same durable facts, B adds nothing new.");
+    expect(result.stdout).toContain("judgeLabel");
+  });
+
+  test("an ordinary proposal still renders `update` / `new asset`", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const text = await runCli(["proposal", "diff", created.id, "--format=text"], { stashDir: stash });
+    expect(text.status).toBe(0);
+    expect(text.stdout.split("\n")[0]).toContain("(new asset:");
+    const json = JSON.parse(
+      (await runCli(["proposal", "diff", created.id, "--format=json"], { stashDir: stash })).stdout,
+    );
+    expect(json).not.toHaveProperty("op");
+  });
+});
+
+/** A second retire proposal over its own pair of memories (a batch needs more than one). */
+function seedSecondRetireProposal(stash: string) {
+  const write = (name: string, body: string): string => {
+    const filePath = path.join(stash, "memories", `${name}.md`);
+    fs.writeFileSync(filePath, `---\ndescription: ${name}\n---\n${body}`, "utf8");
+    return filePath;
+  };
+  const oldPath = write("older-note", "Older.\n");
+  const newPath = write("newer-note", "Newer.\n");
+  return createRetireProposal(stash, {
+    ref: "memories/older-note",
+    source: "consolidate-pair",
+    retirement: {
+      retiredRef: "memories/older-note",
+      successorRef: "memories/newer-note",
+      cosine: 0.97,
+      judgeLabel: "subsumed",
+      judgeReason: "Newer covers it.",
+      judgedScope: {},
+      retiredContentHash: contentHash(fs.readFileSync(oldPath, "utf8"), "body"),
+      successorContentHash: contentHash(fs.readFileSync(newPath, "utf8"), "body"),
+      reason: "subsumed",
+    },
+  });
+}
+
+async function rejectViaCli(stash: string, id: string, reason = "would destroy content (generator bug)") {
+  const result = await runCli(["proposal", "reject", id, "--reason", reason, "--format=json"], {
+    stashDir: stash,
+  });
+  expect(result.status).toBe(0);
+}
+
+describe("akm proposal reopen (CLI, #997)", () => {
+  test("one id: the same envelope reject returns, the proposal pending again with its rejection in the history", async () => {
+    const stash = makeStashDir();
+    const proposal = seedRetireProposal(stash);
+    await rejectViaCli(stash, proposal.id);
+
+    const result = await runCli(
+      ["proposal", "reopen", proposal.id, "--reason", "diff rendering bug #997", "--format=json"],
+      { stashDir: stash },
+    );
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toMatchObject({
+      ok: true,
+      id: proposal.id,
+      ref: proposal.ref,
+      reason: "diff rendering bug #997",
+      proposal: { id: proposal.id, status: "pending", source: "consolidate-pair" },
+    });
+    expect(parsed.proposal.reviewHistory).toHaveLength(1);
+    expect(parsed.proposal.reviewHistory[0]).toMatchObject({
+      review: { outcome: "rejected", reason: "would destroy content (generator bug)" },
+      reopenReason: "diff rendering bug #997",
+    });
+    expect(getProposal(stash, proposal.id).status).toBe("pending");
+  });
+
+  test("one id, text: names the proposal and says it is pending; `show` remembers the rejection", async () => {
+    const stash = makeStashDir();
+    const proposal = seedRetireProposal(stash);
+    await rejectViaCli(stash, proposal.id);
+
+    const reopened = await runCli(["proposal", "reopen", proposal.id, "--reason", "misrendered", "--format=text"], {
+      stashDir: stash,
+    });
+    expect(reopened.status).toBe(0);
+    expect(reopened.stdout.trim()).toBe(`Reopened proposal ${proposal.id} (${proposal.ref}) [pending] (misrendered)`);
+
+    const shown = await runCli(["proposal", "show", proposal.id, "--format=text"], { stashDir: stash });
+    expect(shown.stdout).toContain("status: pending");
+    expect(shown.stdout).toContain("reopened: ");
+    expect(shown.stdout).toContain("(misrendered), undoing rejected: would destroy content (generator bug)");
+    expect(shown.stdout).not.toContain("review.outcome:"); // the rejection is history, not the current review
+  });
+
+  test("several ids: one batch envelope, every proposal pending again", async () => {
+    const stash = makeStashDir();
+    const first = seedRetireProposal(stash);
+    const second = seedSecondRetireProposal(stash);
+    await rejectViaCli(stash, first.id);
+    await rejectViaCli(stash, second.id);
+
+    const result = await runCli(["proposal", "reopen", first.id, second.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toMatchObject({ ok: true, reopened: 2, shape: "proposal-reopen-batch" });
+    expect(parsed.results.map((r: { id: string }) => r.id)).toEqual([first.id, second.id]);
+    expect(getProposal(stash, first.id).status).toBe("pending");
+    expect(getProposal(stash, second.id).status).toBe("pending");
+  });
+
+  test("several ids, text: a count and one line per proposal", async () => {
+    const stash = makeStashDir();
+    const first = seedRetireProposal(stash);
+    const second = seedSecondRetireProposal(stash);
+    await rejectViaCli(stash, first.id);
+    await rejectViaCli(stash, second.id);
+
+    const result = await runCli(["proposal", "reopen", first.id, second.id, "--format=text"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    expect(result.stdout.split("\n")[0]).toBe("Reopened 2 proposal(s) [pending]");
+    expect(result.stdout).toContain(`  ${first.id}  ${first.ref}`);
+    expect(result.stdout).toContain(`  ${second.id}  ${second.ref}`);
+  });
+
+  test("one refusal reopens none of a batch (exit 2)", async () => {
+    const stash = makeStashDir();
+    const rejected = seedRetireProposal(stash);
+    const pending = seedSecondRetireProposal(stash);
+    await rejectViaCli(stash, rejected.id);
+
+    const result = await runCli(["proposal", "reopen", rejected.id, pending.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stderr).error).toContain("Cannot reopen 1 of 2 proposals; none were reopened");
+    expect(getProposal(stash, rejected.id).status).toBe("rejected");
+  });
+
+  test("`drain --older-than` counts a reopened proposal from its reopen, not from its creation", async () => {
+    const stash = makeStashDir();
+    const longAgo = { now: () => Date.now() - 30 * 86_400_000 };
+    const seed = (ref: string) =>
+      createProposal(
+        stash,
+        { ref, source: "reflect", sourceRun: "run-1", payload: { content: VALID_LESSON } },
+        longAgo,
+      );
+    const reopened = seed("lessons/reopened");
+    const untouched = seed("lessons/untouched");
+    await rejectViaCli(stash, reopened.id);
+    const reopen = await runCli(["proposal", "reopen", reopened.id, "--format=json"], { stashDir: stash });
+    expect(reopen.status).toBe(0);
+
+    // Old by creation, but just put back in the queue: too fresh to consider. The untouched one is considered.
+    const older = await runCli(["proposal", "drain", "--older-than", "7", "--dry-run", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(older.status).toBe(0);
+    expect(JSON.parse(older.stdout).deferred.map((d: { id: string }) => d.id)).toEqual([untouched.id]);
+
+    // Without the age filter the drain considers both, so it is the reopen that keeps the first one out.
+    const all = await runCli(["proposal", "drain", "--dry-run", "--format=json"], { stashDir: stash });
+    expect(
+      JSON.parse(all.stdout)
+        .deferred.map((d: { id: string }) => d.id)
+        .sort(),
+    ).toEqual([reopened.id, untouched.id].sort());
+  });
+
+  test("a proposal that is not rejected: exit 2 with the reason, and a hint", async () => {
+    const stash = makeStashDir();
+    const proposal = seedRetireProposal(stash);
+    const result = await runCli(["proposal", "reopen", proposal.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(2);
+    const envelope = JSON.parse(result.stderr);
+    expect(envelope.code).toBe("INVALID_FLAG_VALUE");
+    expect(envelope.error).toContain("is not rejected (current status: pending)");
+    expect(envelope.hint).toContain("akm proposal list --status rejected");
+    expect(getProposal(stash, proposal.id).status).toBe("pending");
+  });
+
+  test("an id is required", async () => {
+    const stash = makeStashDir();
+    const result = await runCli(["proposal", "reopen", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stderr).code).toBe("MISSING_REQUIRED_ARGUMENT");
+  });
+});
+
+describe("akm proposal accept --generator bulk safety guard (WS0)", () => {
+  test("bulk accept without --yes aborts in non-interactive mode (exit 2)", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposal", "accept", "--generator", "reflect", "--format=json"], { stashDir: stash });
+    // confirmDestructive throws NON_INTERACTIVE_REQUIRES_YES (UsageError → exit 2)
+    expect(result.status).toBe(2);
+    const envelope = JSON.parse(result.stderr);
+    expect(envelope.code).toBe("NON_INTERACTIVE_REQUIRES_YES");
+    // Proposal must NOT have been promoted.
+    const list = await runCli(["proposal", "list", "--format=json"], { stashDir: stash });
+    expect(JSON.parse(list.stdout).totalCount).toBe(1);
+  });
+
+  test("bulk accept with --yes proceeds and promotes matching proposals", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposal", "accept", "--generator", "reflect", "--yes", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.accepted).toBe(1);
+    expect(parsed.dryRun).toBe(false);
+    const list = await runCli(["proposal", "list", "--format=json"], { stashDir: stash });
+    expect(JSON.parse(list.stdout).totalCount).toBe(0);
+  });
+
+  test("bulk accept --dry-run auto-passes the guard (no --yes needed)", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposal", "accept", "--generator", "reflect", "--dry-run", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.dryRun).toBe(true);
+    // Nothing promoted — proposal still pending.
+    const list = await runCli(["proposal", "list", "--format=json"], { stashDir: stash });
+    expect(JSON.parse(list.stdout).totalCount).toBe(1);
+  });
+});
+
+describe("accept/reject --generator flag (WS3)", () => {
+  test("bulk accept --generator proceeds with --yes and promotes matching proposals", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposal", "accept", "--generator", "reflect", "--yes", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.accepted).toBe(1);
+    // Canonical spelling emits no deprecation warning.
+    expect(result.stderr).not.toContain("deprecated");
+  });
+
+  test("bulk reject --generator needs no confirmation", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposal", "reject", "--generator", "reflect", "--reason", "dup", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).rejected).toBe(1);
+    expect(result.stderr).not.toContain("deprecated");
+  });
+
+  test("reject --yes and -y are unknown flags", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    for (const flag of ["--yes", "-y"]) {
+      const result = await runCli(["proposal", "reject", created.id, "--reason", "dup", flag, "--format=json"], {
+        stashDir: stash,
+      });
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain(`Unknown flag "${flag}"`);
+    }
+  });
+
+  test("proposal accept rejects the retired --source flag as unknown", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposal", "accept", "--source", "reflect", "--yes", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('Unknown flag "--source"');
+  });
+
+  test("proposal reject rejects the retired --source flag as unknown", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(
+      ["proposal", "reject", "--source", "reflect", "--reason", "dup", "--yes", "--format=json"],
+      { stashDir: stash },
+    );
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('Unknown flag "--source"');
+  });
+});
+
+describe("akm proposal noun group (canonical)", () => {
+  test("proposal list: lists pending proposal as JSON with totalCount", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposal", "list", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.totalCount).toBe(1);
+    expect(parsed.proposals[0].id).toBe(created.id);
+    // No deprecation warning on the canonical spelling.
+    expect(result.stderr).not.toContain("deprecated");
+  });
+
+  test("bare `akm proposal` lists like `akm proposal list`, flags included", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const bare = await runCli(["proposal", "--format=json"], { stashDir: stash });
+    expect(bare.status).toBe(0);
+    expect(JSON.parse(bare.stdout).totalCount).toBeGreaterThan(0);
+    for (const argv of [["--status=reverted"], ["--status", "reverted"]]) {
+      const filtered = await runCli(["proposal", ...argv, "--format=json"], { stashDir: stash });
+      expect({ argv, status: filtered.status }).toEqual({ argv, status: 0 });
+      expect(JSON.parse(filtered.stdout).totalCount).toBe(0);
+    }
+    for (const argv of [
+      ["proposal", "--stauts=x"],
+      ["config", "--bogus"],
+    ]) {
+      const typo = await runCli([...argv, "--format=json"], { stashDir: stash });
+      expect({ argv, status: typo.status }).toEqual({ argv, status: 2 });
+      expect(typo.stderr).toContain("Unknown flag");
+    }
+  });
+
+  test("`akm proposal list --status` still filters ", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+
+    const all = await runCli(["proposal", "list", "--format=json"], { stashDir: stash });
+    expect(all.status).toBe(0);
+    const parsed = JSON.parse(all.stdout);
+    expect(parsed.totalCount).toBe(1);
+    expect(parsed.proposals[0].id).toBe(created.id);
+
+    const filtered = await runCli(["proposal", "list", "--status=reverted", "--format=json"], { stashDir: stash });
+    expect(filtered.status).toBe(0);
+    expect(JSON.parse(filtered.stdout).totalCount).toBe(0);
+  });
+
+  test("proposal show: returns proposal + validation report", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposal", "show", created.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.proposal.id).toBe(created.id);
+    expect(parsed.validation.ok).toBe(true);
+    expect(result.stderr).not.toContain("deprecated");
+  });
+
+  test("proposal show: requires an id (citty rejects the missing positional)", async () => {
+    // Like `proposal diff`/`proposal revert`, the required positional is enforced
+    // by citty, which renders usage and exits 2, not 1 (R-032, commit 96ff2fe;
+    // pinned at tests/integration/cli-errors.test.ts:383-389) — not the JSON
+    // envelope path.
+    const stash = makeStashDir();
+    const result = await runCli(["proposal", "show", "--format=json"], { stashDir: stash });
+    // Ground-truthed by probing the actual CLI output before pinning.
+    expect(result.status).toBe(2);
+    const json = JSON.parse(result.stderr) as { code?: string };
+    expect(json.code).toBe("MISSING_REQUIRED_ARGUMENT");
+  });
+
+  test("proposal diff: shows a unified diff", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposal", "diff", created.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).unified).toContain("/dev/null");
+  });
+
+  test("proposal accept: materialises asset on disk", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposal", "accept", created.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.ok).toBe(true);
+    expect(fs.existsSync(parsed.assetPath as string)).toBe(true);
+  });
+
+  test("proposal reject: archives proposal with reason", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposal", "reject", created.id, "--reason", "dup", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).reason).toBe("dup");
+  });
+
+  test("proposal accept --generator bulk guard still applies under the noun group", async () => {
+    const stash = makeStashDir();
+    seedProposal(stash);
+    const result = await runCli(["proposal", "accept", "--generator", "reflect", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stderr).code).toBe("NON_INTERACTIVE_REQUIRES_YES");
+  });
+});
+
+describe("akm proposal multi-bundle queues", () => {
+  function multiBundleConfig(primary: string, secondary: string): AkmConfig {
+    return {
+      bundles: {
+        primary: { path: primary, writable: true },
+        secondary: { path: secondary, writable: true },
+      },
+      defaultBundle: "primary",
+      semanticSearchMode: "off",
+    };
+  }
+
+  test("lists, shows, diffs, accepts, rejects, and reverts a secondary queue through --queue", async () => {
+    const primary = makeStashDir();
+    const secondary = makeStashDir();
+    const config = multiBundleConfig(primary, secondary);
+    writeSandboxConfig(config);
+
+    const original = `---\ndescription: Original secondary lesson\nwhen_to_use: Testing proposal targets\n---\n\nORIGINAL.\n`;
+    const assetPath = path.join(secondary, "lessons", "shared.md");
+    fs.writeFileSync(assetPath, original, "utf8");
+    const primaryProposal = seedProposal(primary, "primary//lessons/primary-only");
+    const secondaryProposal = seedProposal(secondary, "secondary//lessons/shared");
+
+    const primaryList = await runCli(["proposal", "list", "--format=json"], { stashDir: primary });
+    expect(JSON.parse(primaryList.stdout).proposals.map((proposal: { id: string }) => proposal.id)).toEqual([
+      primaryProposal.id,
+    ]);
+
+    const secondaryList = await runCli(["proposal", "list", "--queue", "secondary", "--format=json"], {
+      stashDir: primary,
+    });
+    expect(secondaryList.status).toBe(0);
+    expect(JSON.parse(secondaryList.stdout).proposals.map((proposal: { id: string }) => proposal.id)).toEqual([
+      secondaryProposal.id,
+    ]);
+
+    const shown = await runCli(["proposal", "show", secondaryProposal.id, "--queue", "secondary", "--format=json"], {
+      stashDir: primary,
+    });
+    expect(shown.status).toBe(0);
+    expect(JSON.parse(shown.stdout).proposal.ref).toBe("secondary//lessons/shared");
+
+    const diff = await runCli(["proposal", "diff", secondaryProposal.id, "--queue", "secondary", "--format=json"], {
+      stashDir: primary,
+    });
+    expect(diff.status).toBe(0);
+    expect(JSON.parse(diff.stdout)).toMatchObject({ isNew: false, targetPath: assetPath });
+
+    const accepted = await runCli(
+      ["proposal", "accept", secondaryProposal.id, "--queue", "secondary", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(accepted.status).toBe(0);
+    expect(fs.readFileSync(assetPath, "utf8")).toContain("Prefer rg.");
+    expect(fs.existsSync(path.join(primary, "lessons", "shared.md"))).toBe(false);
+
+    const reverted = await runCli(
+      ["proposal", "revert", secondaryProposal.id, "--queue", "secondary", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(reverted.status).toBe(0);
+    expect(fs.readFileSync(assetPath, "utf8")).toBe(original);
+
+    const rejectedProposal = seedProposal(secondary, "secondary//lessons/reject-me");
+    const rejected = await runCli(
+      ["proposal", "reject", rejectedProposal.id, "--queue", "secondary", "--reason", "not needed", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(rejected.status).toBe(0);
+    expect(JSON.parse(rejected.stdout).proposal.status).toBe("rejected");
+  });
+
+  test("reopens a rejected proposal of a secondary queue through --queue; the primary queue cannot", async () => {
+    const primary = makeStashDir();
+    const secondary = makeStashDir();
+    writeSandboxConfig(multiBundleConfig(primary, secondary));
+    const proposal = seedProposal(secondary, "secondary//lessons/reopen-me");
+    const rejected = await runCli(
+      ["proposal", "reject", proposal.id, "--queue", "secondary", "--reason", "no", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(rejected.status).toBe(0);
+
+    // The id belongs to the secondary queue: the primary one does not know it.
+    const wrongQueue = await runCli(["proposal", "reopen", proposal.id, "--format=json"], { stashDir: primary });
+    expect(wrongQueue.status).not.toBe(0);
+    expect(getProposal(secondary, proposal.id).status).toBe("rejected");
+
+    const reopened = await runCli(["proposal", "reopen", proposal.id, "--queue", "secondary", "--format=json"], {
+      stashDir: primary,
+    });
+    expect(reopened.status).toBe(0);
+    expect(JSON.parse(reopened.stdout).proposal).toMatchObject({ id: proposal.id, status: "pending" });
+    expect(getProposal(secondary, proposal.id).status).toBe("pending");
+  });
+
+  test("qualified proposal refs preserve bundle identity", async () => {
+    const primary = makeStashDir();
+    const secondary = makeStashDir();
+    writeSandboxConfig(multiBundleConfig(primary, secondary));
+    const primaryProposal = seedProposal(primary, "primary//lessons/duplicate");
+    const secondaryProposal = seedProposal(primary, "secondary//lessons/duplicate");
+
+    const listed = await runCli(
+      ["proposal", "list", "--queue", "primary", "--ref", "secondary//lessons/duplicate", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(listed.status).toBe(0);
+    expect(JSON.parse(listed.stdout).proposals.map((proposal: { id: string }) => proposal.id)).toEqual([
+      secondaryProposal.id,
+    ]);
+
+    const shown = await runCli(
+      ["proposal", "show", "primary//lessons/duplicate", "--queue", "primary", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(shown.status).toBe(0);
+    expect(JSON.parse(shown.stdout).proposal.id).toBe(primaryProposal.id);
+  });
+
+  test("accept defaults to the recorded destination and rejects a conflicting explicit target", async () => {
+    const primary = makeStashDir();
+    const secondary = makeStashDir();
+    const config = multiBundleConfig(primary, secondary);
+    writeSandboxConfig(config);
+    const acceptedByBinding = seedProposal(secondary, "secondary//lessons/recorded-target");
+
+    await akmProposalAccept({ stashDir: secondary, id: acceptedByBinding.id, config });
+    expect(fs.existsSync(path.join(secondary, "lessons", "recorded-target.md"))).toBe(true);
+    expect(fs.existsSync(path.join(primary, "lessons", "recorded-target.md"))).toBe(false);
+
+    const acceptedByQueueRoot = seedProposal(secondary, "lessons/recorded-queue-root");
+    const queueRootDiff = await runCli(
+      ["proposal", "diff", acceptedByQueueRoot.id, "--queue", "secondary", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(queueRootDiff.status).toBe(0);
+    expect(JSON.parse(queueRootDiff.stdout).targetPath).toBe(path.join(secondary, "lessons", "recorded-queue-root.md"));
+    await akmProposalAccept({ stashDir: secondary, id: acceptedByQueueRoot.id, config });
+    expect(fs.existsSync(path.join(secondary, "lessons", "recorded-queue-root.md"))).toBe(true);
+    expect(fs.existsSync(path.join(primary, "lessons", "recorded-queue-root.md"))).toBe(false);
+
+    const conflicting = seedProposal(secondary, "secondary//lessons/conflicting-target");
+    await expect(
+      akmProposalAccept({ stashDir: secondary, id: conflicting.id, target: "primary", config }),
+    ).rejects.toThrow(/bound.*target.*primary/i);
+    const cliConflict = await runCli(
+      ["proposal", "accept", conflicting.id, "--queue", "secondary", "--bundle", "primary", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(cliConflict.status).toBe(2);
+    expect(JSON.parse(cliConflict.stderr)).toMatchObject({ code: "INVALID_FLAG_VALUE" });
+    expect(cliConflict.stderr).toMatch(/bound.*target.*primary/i);
+    expect(fs.existsSync(path.join(primary, "lessons", "conflicting-target.md"))).toBe(false);
+  });
+});
+
+describe("akm proposal new (CLI)", () => {
+  test("--task and --file are mutually exclusive", async () => {
+    const stash = makeStashDir();
+    const promptFile = path.join(makeTempDir("akm-proposal-prompt-"), "prompt.md");
+    fs.writeFileSync(promptFile, "author a lesson", "utf8");
+    const result = await runCli(
+      ["proposal", "new", "lesson", "rg-over-grep", "--task", "inline", "--file", promptFile, "--format=json"],
+      { stashDir: stash },
+    );
+    expect(result.status).toBe(2);
+    const envelope = JSON.parse(result.stderr);
+    expect(envelope.code).toBe("INVALID_FLAG_VALUE");
+  });
+});

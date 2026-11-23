@@ -96,7 +96,7 @@ only the file and its lock).
 | `backups/asset-content-refs/` | Copies of the markdown and YAML files `akm migrate apply` rewrote to the current ref spelling. `akm backups prune` removes the old ones. |
 | `backups/asset-engine-keys/` | Copies of commands, agents, workflows and task sources made by `akm migrate apply` before it rewrites their `engine:` key. |
 | `migrate/engine-targets.json` | The connection or harness each old engine name became, kept by `akm migrate apply` until every `engine:` key is rewritten. |
-| `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --type opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces). Recreated on next use; deleting it loses the runtime's session history. |
+| `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --sessions opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces). Recreated on next use; deleting it loses the runtime's session history. |
 
 If akm cannot read this directory, commands fail with `DATA_DIR_UNREADABLE`
 (exit 78) naming the path; `akm doctor` still runs and reports it.
@@ -182,7 +182,7 @@ Event types, for `akm doctor log --type <type>`:
 
 - Bundles and assets: `add`, `remove`, `update`, `remember`, `import`
 - Retrieval and sync: `search`, `curate`, `show`, `select`, `feedback`, `sync`,
-  `stash_synced`, `index_completed`, `index_db_vacuumed`, `env_access`,
+  `stash_synced`, `moved`, `index_completed`, `index_db_vacuumed`, `env_access`,
   `secret_access`
 - Proposals: `promoted`, `rejected`, `proposal_reopened`, `proposal_reverted`,
   `proposal_expired`, `proposal_expiration_pass`, `proposal_orphan_purge`,
@@ -191,7 +191,7 @@ Event types, for `akm doctor log --type <type>`:
   `improve_skipped`, `improve_lock_recovered`, `improve_review_needed`,
   `reflect_invoked`, `reflect_completed`, `improve_reflect_outcome`,
   `propose_invoked`, `distill_invoked`, `extract_invoked`, `extract_triaged`,
-  `schema_repair_invoked`, `proactive_selected`, `events_purged`,
+  `schema_repair_invoked`, `proactive_selected`, `improve_salience_rank_change` (no longer emitted; old rows only), `events_purged`,
   `improve_runs_purged`, `asset_state_gc`, `state_db_vacuumed`,
   `task_logs_purged`, `task_log_files_purged`, `run_log_files_purged`
 - Workflows: `workflow_started`, `workflow_step_completed`,
@@ -224,15 +224,19 @@ event type except its daily count, and negative-feedback reasons.
 
 akm records how its own commands are used, on your machine. The counts are
 outside learning, feedback and ranking; the only thing sent from them is the
-[daily usage report](#daily-usage-report), as totals.
+[daily usage report](#daily-usage-report), as counts.
 
 - **Where:** the `cli_usage_*` tables of `metrics.db` in the data directory.
 - **What is recorded** for every command, including `--help`, `--version` and
   failed attempts: the command path, the flags that were used (their names and,
   for a few enumerated flags such as `--format` or `--detail`, a safe value),
   whether each flag was typed or a default, the akm version, the event source
-  (`user`, `agent`, `task`, `improve`, `audit` or `unknown`), the outcome, exit
-  code and duration, a UTC day, and a random instance UUID created on first use.
+  (`agent` inside a detected agent harness, `user` at a terminal with none,
+  `task`, `improve` or `audit` for akm's own runs, else `unknown`), the agent
+  harness when one is detected, the type of the asset `akm show` or `akm run`
+  resolved (when it is one of akm's own types), the outcome, exit code and
+  duration, a UTC day, and a random instance UUID created on first use, which
+  no command prints.
 - **What is not recorded:** queries, notes, URLs, refs, paths, filter values,
   secret values, and the arguments passed to a child program. Boolean flags are
   stored as true or false; every other flag value is stored as `[redacted]`.
@@ -248,32 +252,71 @@ outside learning, feedback and ranking; the only thing sent from them is the
 
 ## Daily usage report
 
-On by default. akm sends one event a day per surface, the CLI and AKM Desktop,
-to a self-hosted [Aptabase](https://aptabase.com) at `https://reporting.fwdslsh.dev`.
-It is sent after a command finishes (at most one command a day pays a request, with a
-1.5 second limit) or, for Desktop, in the background when its server starts. A failed send
-is not retried that day, and nothing is ever printed or changed in a command's result.
-A fresh data directory sends nothing until its next UTC day.
+On by default. Once a day each, the CLI and AKM Desktop send a report to a
+privately hosted service run by the akm maintainers. It holds no personal
+information. It shows which parts of akm are used, so the unused ones can be
+dropped.
 
-- **CLI event (`cli_daily`):** `period_days` (complete UTC days since the last
-  report, up to yesterday; `0` for the first report), `commands`, `failures`,
-  `src_user`, `src_agent`, `src_task`, `src_improve` (commands by who ran them),
-  and `cmd_<command>` (the number of runs of each top-level command, only those
-  run). It is built from the counts above, so it has no argument values.
-- **Desktop event (`desktop_daily`):** the library sizes below.
-- **Library sizes, in both:** `bundles` (enabled bundles in the config), `assets`
-  (indexed assets), `assets_<type>` for each of akm's own asset types (skill,
-  command, and so on) and `assets_other` for every other type, which a bundle or
-  you named, so its name is never sent. They are left out when there is no
-  readable index; the report never builds or changes the index.
-- **System fields, in both:** `osName` (Linux, macOS or Windows), `osVersion`,
-  `locale`, `engineName` and `engineVersion` (`bun` or `node`), `appVersion`
-  (the akm version), `sdkVersion` (`akm@<version>`), `isDebug: false`, a random
-  per-event session id and the time.
+**What can be in it.** Apart from the system fields below, every value in a
+report is a number. Every name in it (an event's name, a count's name) is built
+from akm's own definitions: its commands, the flags it declares and their fixed
+lists of choices, the agent harnesses it knows, its asset types. Anything you
+or a bundle named is counted as `other` or `[unknown]`, or left out: a custom
+asset type, a task's own input flag, a harness akm does not know, a command that
+does not exist. Nothing is read from an argument's value, a ref, a path, a
+bundle's name or a file.
+
+- **When:** after a command finishes (one command a day pays for it, within a
+  1.5 second limit) or, for Desktop, in the background when its server starts.
+  Nothing is ever printed or changed in a command's result. A fresh data
+  directory sends nothing until its next UTC day. A failed send is not retried
+  that day; the next day's CLI report counts the days a failed one missed.
+- **Install id:** the random instance UUID of `metrics.db` (see
+  [CLI usage counts](#cli-usage-counts)), sent as the session id of every event,
+  so that the reports of one install count as one install. It is derived from
+  nothing on the machine, and the CLI and Desktop of one data directory share
+  it. It goes to the report and nowhere else: no command prints it, including
+  `akm doctor metrics usage --export`. Deleting `metrics.db` makes a new one.
+- **Daily event (`cli_daily`, `desktop_daily`):**
+  - What is set up, from the config, as counts and 0-or-1 switches: `bundles`
+    (enabled bundles), `bundles_git`, `bundles_website`, `bundles_npm`,
+    `registries` (akm's own defaults included), `connections`, `harnesses`,
+    `projects`, `tasks_enabled`, `semantic_search`, `improve` and `exec`.
+  - Library sizes: `assets` (indexed assets), `assets_<type>` for each of akm's
+    own asset types (skill, command, and so on) and `assets_other` for every
+    other type. They are left out when there is no readable index; the report
+    never builds or changes the index.
+  - From the CLI only, totals for the period: `period_days` (the complete UTC
+    days after the last one the server accepted, up to yesterday; `0` for the
+    first report), `commands`, `failures`, `src_<source>` for each event source
+    and `h_<harness>` for each agent harness that ran akm.
+- **Command events (CLI only):** one for each command that ran in the period,
+  named as it was typed: `akm search`, `akm task run`, `akm health`. A command
+  that does not exist is `akm [unknown]`. Each carries `period_days`, `count`,
+  `failures`, `duration_ms` (the total), `src_<source>` and `h_<harness>` as
+  above (`h_other` for a harness akm does not know), and:
+  - `flag_<name>`: the runs in which a flag akm declares was typed. For
+    `--format`, `--detail`, `--type` (akm's own types only) and flags with a
+    fixed list of choices, also `flag_<name>_<choice>`. No other value is sent.
+  - `out_<category>`: the runs that did not succeed, by akm's outcome category
+    (`usage`, `config`, `general`, `internal`, `transient`, `health-warning`,
+    `failure`, `cancelled`).
+  - `type_<asset type>`: the runs of `akm show` and `akm run` by the type of
+    asset they resolved (`type_other` for a type that is not akm's own).
+- **System fields, on every event:** `osName` (Linux, macOS or Windows),
+  `osVersion` (the numbers of the release only), `locale` (language, script and
+  region only), `engineName` and `engineVersion` (`bun` or `node`), `appVersion`
+  (the akm version), `sdkVersion` (`akm@<version>`), `isDebug: false`, the
+  install id as the session id, and the time the report was sent.
 - **Never sent:** queries, refs, paths, bundle names, argument values, secrets,
-  the random instance id, or any asset content.
-- **What the server keeps:** Aptabase keeps the event and derives country, region
-  and city from the request's IP address; it does not store the IP address.
+  the host or user name, or any asset content.
+- **What the service keeps:** the events, and the country, region and city it
+  derives from the request's IP address. It does not store the IP address; it
+  stores a one-day id hashed from it with a salt it changes daily.
+- **Seeing what happened:** `akm doctor metrics usage` shows, under `report`,
+  each surface's last try (`last_day`), the last day whose counts the server
+  accepted (`through`), and what the last try came to (`last_outcome`: `sent`,
+  `rejected` or `failed`, with `last_detail`).
 - **Turning it off:** `akm config set usage.report false` (the config key
   `usage.report`), or the **Usage reports** switch in AKM Desktop's settings. A config
   that cannot be loaded sends nothing. `--read-only` and `usage.capture: false` also send nothing from
