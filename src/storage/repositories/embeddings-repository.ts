@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Repository for the state.db `body_embeddings` table (WS-3a) — the cache of
+ * Repository for the state.db `body_embeddings` table — the cache of
  * per-content-hash body embedding vectors, with the Float32-BLOB codec helpers.
  * Extracted verbatim from core/state-db.ts — queries and the pure blob codec
  * unchanged, only relocated behind the repository boundary. Re-exported by

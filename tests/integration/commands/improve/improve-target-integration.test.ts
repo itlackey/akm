@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmConsolidate } from "../../../../src/commands/improve/consolidate";
 import { akmImprove } from "../../../../src/commands/improve/improve";
-import type { AkmConfig, ImproveProfileConfig } from "../../../../src/core/config/config";
+import { type AkmConfig, type ImproveProfileConfig, saveConfig } from "../../../../src/core/config/config";
 import { ConfigError, UsageError } from "../../../../src/core/errors";
 import { resolveWriteTarget } from "../../../../src/core/write-source";
 import { getCachePaths, parseGitRepoUrl } from "../../../../src/sources/providers/git";
@@ -190,6 +190,7 @@ describe("improve named target integration", () => {
     const team = stash();
     const vendor = stash();
     const config = targetConfig(primary, team, vendor);
+    saveConfig(config); // the facade reads the bundles from the saved config
     const duplicateName = "shared/duplicate";
     for (const [root, marker] of [
       [team, "team"],
@@ -288,6 +289,7 @@ describe("improve named target integration", () => {
       fs.writeFileSync(file, "---\ndescription: duplicate\n---\n\nSame body.\n", "utf8");
     }
     const config = targetConfig(primary, team, vendor);
+    saveConfig(config); // the facade reads the bundles from the saved config
     const profile = {
       processes: { consolidate: { enabled: true } },
     } as ImproveProfileConfig;

@@ -24,7 +24,7 @@ import { proposalContent } from "../proposal-types";
 import { defaultProposalQualityValidators } from "./proposal-quality-validators";
 
 // ProposalValidationContext / ProposalValidator moved to ../proposal-types.ts
-// (WI-9.8 KILL 1 — proposal-quality-validators.ts needed ProposalValidator
+// (proposal-quality-validators.ts needs ProposalValidator
 // back, and this module needs defaultProposalQualityValidators from
 // proposal-quality-validators.ts as a value; hoisting the shared interface to
 // the dependency-free leaf breaks that back-edge). Re-exported here so
@@ -205,8 +205,8 @@ export const defaultProposalValidators: ProposalValidator[] = [
  * canonical-structure gate (repository.ts, `hasCanonicalProposalValidator`).
  * That gate exists to reject a lesson/task/workflow proposal whose body is
  * not parseable as its type — it predates {@link defaultProposalQualityValidators}
- * and was previously safe to run in full there because every quality
- * validator was advisory (`advisory()` downgrades findings to `severity:
+ * and is safe to run in full there because every quality
+ * validator is advisory (`advisory()` downgrades findings to `severity:
  * "warn"`, which {@link runProposalValidators}'s `ok` never treats as
  * failing). Blocking durable-content validators (the #952 truncation marker
  * and #962 redaction marker) deliberately

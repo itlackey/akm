@@ -430,7 +430,7 @@ async function addRegistryStash(
 }
 
 /**
- * Persist or replace a registry-installed source as a 0.9.0 `bundles` entry
+ * Persist or replace a registry-installed source as a `bundles` entry
  * (the desired/resolved split). The bundle carries ONLY the
  * desired descriptor (git/npm locator + preserved `registryId` + `writable`);
  * the resolved cache root belongs exclusively in the lock (written by callers

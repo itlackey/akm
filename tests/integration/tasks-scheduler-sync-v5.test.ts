@@ -97,9 +97,7 @@ describe("a version 5 task's schedule entries compile to bindings", () => {
       [
         "task",
         "run",
-        "nightly",
-        "--bundle",
-        "stash",
+        "stash//tasks/nightly",
         "--scheduled",
         "--scope",
         "a",
@@ -110,7 +108,7 @@ describe("a version 5 task's schedule entries compile to bindings", () => {
         "--timeout",
         "5m",
       ],
-      ["task", "run", "nightly", "--bundle", "stash", "--scheduled", "--scope", "b"],
+      ["task", "run", "stash//tasks/nightly", "--scheduled", "--scope", "b"],
     ]);
   });
 });
@@ -167,9 +165,7 @@ describe("task enable for a version 5 task", () => {
     expect(installed.get("nightly")?.invocation).toEqual([
       "task",
       "run",
-      "nightly",
-      "--bundle",
-      "stash",
+      "stash//tasks/nightly",
       "--scheduled",
       "--scope",
       "a",

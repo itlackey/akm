@@ -36,7 +36,7 @@ export const PROPOSAL_SOURCES = [
   "reflect",
   "distill",
   "consolidate",
-  /** The consolidate pair pass's own retire proposals (alpha.9, S6) — kept apart from `consolidate`'s promotions so a bulk `accept --generator consolidate` never sweeps a retirement, and the reverse. */
+  /** The consolidate pair pass's own retire proposals — kept apart from `consolidate`'s promotions so a bulk `accept --generator consolidate` never sweeps a retirement, and the reverse. */
   "consolidate-pair",
   "extract",
   "improve",
@@ -191,8 +191,7 @@ export interface ProposalGateDecision {
 }
 
 /**
- * A consolidate pair-pass retire proposal's metadata (plan §5.2, alpha.9
- * brief §A "Proposal"). `ref` is the retired asset (same as `Proposal.ref`);
+ * A consolidate pair-pass retire proposal's metadata `ref` is the retired asset (same as `Proposal.ref`);
  * `reason` is the tombstone vocabulary `archiveCleanupCandidate` writes,
  * derived from `judgeLabel` (`supersedes` → `superseded`, the other two
  * labels unchanged).
@@ -227,8 +226,7 @@ export interface RetirementMetadata {
   /** Tombstone-vocabulary reason (`judgeLabel` translated: supersedes -> superseded). */
   reason: Exclude<RetireReason, "promoted">;
   /**
-   * Set at mint by the retirement continuity check (alpha.9 plan §5.4, rule
-   * R3) when the retired asset ranked top 10 for one of its own past queries
+   * Set at mint by the retirement continuity check when the retired asset ranked top 10 for one of its own past queries
    * but the successor did not. The proposal still mints — a person can still
    * accept it by id — but it is excluded from every bulk accept path.
    */
@@ -249,7 +247,7 @@ export interface RetirementContinuityRisk {
   failingQueries: number;
   ranks: ContinuityRiskRank[];
   /**
-   * Of the replayed queries, how many could not be verified (S2): the
+   * Of the replayed queries, how many could not be verified: the
    * search call threw, or fell back to keyword-only ranking instead of the
    * real one. Omitted when every query was verified. A proposal carrying
    * this is excluded from bulk accept the same as a `failingQueries` one —
@@ -328,21 +326,21 @@ export interface Proposal {
   /** Exactly where the accepted content went (the bundle and the asset's ref), and its hash; prevents cross-target revert. */
   acceptedTarget?: { bundle: string; ref: string; contentHash: string };
   eligibilitySource?: EligibilitySource;
-  /** Consolidate pair-pass retire proposals only (alpha.9): set at mint. */
+  /** Consolidate pair-pass retire proposals only: set at mint. */
   retirement?: RetirementMetadata;
   /** Set at accept time for a retire proposal; read back by `akm proposal revert`. */
   retiredArchive?: RetiredArchiveRecord;
   /**
-   * A consolidate PROMOTION proposal's source memory ref (alpha.9, O1): set
+   * A consolidate PROMOTION proposal's source memory ref: set
    * at mint by `emitPromotionProposal`. On accept, `promoteProposal` retires
    * this memory (and its `.derived` twin) through the same archive path, so
-   * an accepted promotion no longer leaves a memory/knowledge duplicate
+   * an accepted promotion leaves no memory/knowledge duplicate
    * behind — whether a person accepts it or triage auto-promotion does.
    */
   promotionSource?: string;
   /**
    * Body content hash (`contentHash(_, "body")`) of `promotionSource` at
-   * mint time (alpha.9, B3). Accept re-reads the source and only archives it
+   * mint time. Accept re-reads the source and only archives it
    * when the hash still matches — an edit made after the promotion was
    * queued survives, not silently discarded into the archive. Absent on a
    * proposal minted before this field existed; those never archive their
@@ -371,7 +369,7 @@ export function proposalWaitingSince(proposal: Pick<Proposal, "createdAt" | "rev
   return proposal.reviewHistory?.at(-1)?.reopenedAt ?? proposal.createdAt;
 }
 
-/** A pending or accepted proposal whose primary change deletes its target (a consolidate retire proposal, alpha.9). */
+/** A pending or accepted proposal whose primary change deletes its target (a consolidate retire proposal). */
 export function isRetireProposal(proposal: Pick<Proposal, "changes">): boolean {
   return proposal.changes[0]?.op === "delete";
 }

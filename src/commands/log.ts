@@ -10,11 +10,6 @@
  * `src/output/shapes.ts` so the output flows through the same shape and
  * text-renderer pipeline as the rest of the CLI (no silent
  * `JSON.stringify` fallback).
- *
- * 0.9.0 CLI overhaul (S3): `akmEventsTail` (and the `log tail` command it
- * backed) was dropped — a foreground polling daemon in a one-shot CLI. The
- * lower-level `tailEvents` poller it wrapped (src/core/events.ts) had no
- * other caller and was removed with it.
  */
 
 import { qualifyRef } from "../core/assets/read";
@@ -32,9 +27,7 @@ export interface EventsListOptions {
   /** D-38: cap the result to the most recent `limit` matching events. Undefined is unlimited. */
   limit?: number;
   /**
-   * Filter to events whose `metadata.runId` matches — the replacement for
-   * the dropped `akm workflow watch <run-id>`'s run-scoped filter (0.9.0
-   * CLI overhaul, S5).
+   * Filter to events whose `metadata.runId` matches: one run's events.
    */
   run?: string;
   /** Test seam — overrides the state database / clock. */

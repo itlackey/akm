@@ -61,7 +61,7 @@ Registries are stored in the `registries` array of `config.json`:
 | `name` | string | none | Label |
 | `enabled` | boolean | `true` | Set `false` to keep the entry but skip it when searching |
 | `provider` | string | `static-index` | `static-index` or `skills-sh` |
-| `options` | object | none | Provider-specific options |
+| `options` | object | none | Deprecated, removed in 0.11: stored from `registry add --options`, but nothing reads it |
 
 A registry URL with a username or password is dropped with a warning, and the
 built-in providers send no credentials; host the index at a credential-free
@@ -164,7 +164,7 @@ akm import "npm:@scope/my-bundle//scripts/deploy.sh" --asset-ref --dest ./projec
 
 `--dest` copies into a directory instead of a bundle; the type directory is
 appended, so the last example writes `./project/.claude/scripts/deploy.sh`. If
-the origin in the ref is not installed, `clone` fetches it to the cache and
+the origin in the ref is not installed, `import --asset-ref` fetches it to the cache and
 extracts the one asset without adding the package as a bundle.
 
 A short ref such as `scripts/deploy.sh` resolves against the default bundle

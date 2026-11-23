@@ -213,7 +213,7 @@ the invariants in [Architecture](../architecture/architecture.md#invariants).
 ## 7. Tell your agent about akm
 
 ```sh
-akm hints --detail brief >> AGENTS.md
+akm hints >> AGENTS.md
 ```
 
 **Success check:** `AGENTS.md` now has a block of agent-facing usage

@@ -6,7 +6,7 @@
  * What improve may rework (#986): an asset that retrieval returned inside the
  * usage window, or newly captured material no improve stage has processed.
  *
- * Fresh feedback and an explicit `--scope <ref>` are usage evidence of their
+ * Fresh feedback and an explicit scope ref are usage evidence of their
  * own, so the signal-delta and scope lanes need no check. The fallback lanes
  * (proactive maintenance, high salience) and consolidation pick assets
  * without such evidence, so they pick only inside this scope.

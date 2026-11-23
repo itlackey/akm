@@ -26,13 +26,13 @@ export type MemoryBeliefState = "active" | "asserted" | "deprecated" | "supersed
 
 export interface MemoryPruneCandidate {
   ref: string;
-  /** Absent for a retire-proposal-caused archive (alpha.9): it has no `.derived` family to key by. */
+  /** Absent for a retire-proposal-caused archive: it has no `.derived` family to key by. */
   parentRef?: string;
   reason: MemoryPruneReason | RetireArchiveReason;
   survivorRef?: string;
-  /** Retire-proposal path only (alpha.9): the proposal that caused this archive. */
+  /** Retire-proposal path only: the proposal that caused this archive. */
   proposalId?: string;
-  /** Retire-proposal path only (alpha.9): refs that supersede/replace the retired asset. */
+  /** Retire-proposal path only: refs that supersede/replace the retired asset. */
   successorRefs?: string[];
 }
 
@@ -110,12 +110,12 @@ export interface ArchivedMemoryCleanupRecord {
   previousBeliefState: Exclude<MemoryBeliefState, "archived">;
   survivorRef?: string;
   archivedAt: string;
-  /** Retire-proposal path only (alpha.9): the proposal that caused this archive. */
+  /** Retire-proposal path only: the proposal that caused this archive. */
   proposalId?: string;
-  /** Retire-proposal path only (alpha.9): refs that supersede/replace the retired asset. */
+  /** Retire-proposal path only: refs that supersede/replace the retired asset. */
   successorRefs?: string[];
   /**
-   * Retire-proposal path only (alpha.9): same instant as `archivedAt`, named
+   * Retire-proposal path only same instant as `archivedAt`, named
    * per the plan so the (later) purge sweep can key its 30-day grace off one
    * stable field name without caring whether an archive came from memory
    * cleanup or a retire proposal.
@@ -155,7 +155,7 @@ export interface ImproveEligibleRef {
 export type ImprovePlanLane = EligibilitySource | "distill-only";
 
 export interface ImprovePlanGate {
-  /** `retrieval` is absent from plans stored before 0.9.17-alpha.7 (#986). */
+  /** `retrieval` is absent from plans stored by older releases. */
   name: "profile" | "cleanup" | "validation" | "retrieval" | "signal" | "disk" | "limit";
   removed: number;
   reason: string;
@@ -314,17 +314,15 @@ export function classifyImproveAction(mode: ImproveActionMode): ImproveActionCla
   }
 }
 
-// ── Verb result types (moved DOWN from commands/improve/*, WI-9.8 KILL 2) ───
+// ── Verb result types (defined here, below commands/improve/*) ───
 //
 // ConsolidateResult / AkmDistillResult / AkmExtractResult / AkmReflectResult
-// used to live in their respective verb modules (consolidate.ts / distill.ts
-// / extract.ts / reflect.ts), which this file imported UP from — the §10.7
-// layering inversion: core/ is supposed to sit BELOW commands/, but this file
-// depended on the very command modules that depend on it, and each verb
-// module's own (heavy) transitive imports could route back here, gluing the
-// whole improve command family into one import-cycle SCC. Moving the result
-// shapes down here fixes the dependency direction; verb modules import their
-// result types directly from this leaf.
+// are defined here rather than in their verb modules (consolidate.ts /
+// distill.ts / extract.ts / reflect.ts): core/ sits BELOW commands/, and
+// importing the shapes up from the verb modules would route their heavy
+// transitive imports back here and glue the whole improve command family into
+// one import-cycle SCC. Verb modules import their result types directly from
+// this leaf.
 
 /** Op-kind discriminator used in {@link ConsolidateResult.skipReasons}. */
 export type ConsolidateOpKind = "merge" | "delete" | "promote" | "contradict";
@@ -424,13 +422,13 @@ export interface ConsolidateResult {
   /** Stable, secret-free execution-lowering diagnostics. */
   notices?: readonly Readonly<LoweringNotice>[];
   /**
-   * WS-5 perf telemetry (Part V). Always emitted when consolidation runs —
+   * Perf telemetry. Always emitted when consolidation runs —
    * these are health VIEWS of the pipeline, not truth sources. Omitted on the
    * early-exit paths (no memories, all judged-unchanged) to keep the envelope
    * tidy.
    */
   perfTelemetry?: ConsolidatePerfTelemetry;
-  /** The pair pass's own report (alpha.9); absent when consolidate is disabled. */
+  /** The pair pass's own report; absent when consolidate is disabled. */
   pairPass?: ConsolidatePairPassResult;
 }
 
@@ -444,7 +442,7 @@ export type ConsolidatePairJudgeLabel =
   | "unrelated";
 
 /**
- * The pair pass's per-run report (alpha.9): initiators found, pairs judged,
+ * The pair pass's per-run report: initiators found, pairs judged,
  * label counts and the retire proposals minted — the fields the brief's
  * MEASURE step reports (refs and counts only, never asset text).
  */
@@ -494,7 +492,7 @@ export interface PairFailure {
 }
 
 /**
- * WS-5 per-run consolidation performance telemetry (Part V §5 of the plan).
+ * Per-run consolidation performance telemetry.
  * All fields are optional so existing callers that spread ConsolidateResult
  * can adopt the shape incrementally.
  */
@@ -804,8 +802,8 @@ export interface ImproveActionResult {
 }
 
 /**
- * C1 (13-bus-factor) — bounded replacement for the per-ref `distill-skipped`
- * action rows that used to be persisted verbatim in
+ * Bounded replacement for per-ref `distill-skipped`
+ * action rows, which would otherwise be persisted verbatim in
  * `improve_runs.result_json`. On a whole-stash run the loop emits one
  * `distill-skipped` action per gated ref (~13k rows/run, ~91% of result_json
  * bytes on the live stash — the 90-day TTL cannot bound this per-run growth),
@@ -939,8 +937,8 @@ export interface AkmImproveResult {
   skippedProcesses?: readonly Readonly<EngineUnavailableProcess>[];
   actions?: ImproveActionResult[];
   /**
-   * C1 (13-bus-factor) — bounded aggregate of the per-ref `distill-skipped`
-   * actions that used to bloat {@link actions} (and thus `result_json`). Built
+   * Bounded aggregate of the per-ref `distill-skipped`
+   * actions, which would otherwise bloat {@link actions} (and thus `result_json`). Built
    * by {@link foldDistillSkipped} at assembly time; the per-ref rows are NOT
    * persisted. Omitted when zero refs were distill-skipped. Consumers read
    * `distill.skipped` / `skippedByReason` from here (see
@@ -1009,7 +1007,7 @@ export interface AkmImproveResult {
    */
   reflectGuardRejectedActions?: number;
   /**
-   * Total proposals that hit the (deleted, 0.9.0) confidence gate but failed
+   * Total proposals that hit the removed confidence gate but failed
    * validation. Always 0/omitted for new runs; kept for historical rows.
    */
   gateAutoAcceptFailedCount?: number;

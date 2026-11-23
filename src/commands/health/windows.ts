@@ -181,8 +181,8 @@ export interface TaskWindowRates {
 /**
  * Task-history-derived rates, shared by the main health path
  * (`health.ts`'s `gatherTaskHistoryPhase`) and {@link buildWindowMetrics}
- * below — previously computed twice with the only difference being whether
- * the caller had already bounded `taskRows` by an `until`. Pure projection of
+ * below — the only difference is whether the caller has already bounded
+ * `taskRows` by an `until`. Pure projection of
  * already-queried rows; callers own the `since`/`until` query. The main health
  * check supplies all still-active rows independently of its history window. Whether an active row's run is still
  * there is `classifyAttempt`'s answer, never its age.

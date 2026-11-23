@@ -34,8 +34,8 @@ that authoring format.
 
 ## Child workflows
 
-> **Experimental.** Child workflows are part of the Experimental `akm workflow`
-> surface (see `STABILITY.md`) and may change or be removed before 0.11.
+> **Experimental.** Child workflows are part of the Deprecated `akm workflow`
+> surface (see `STABILITY.md`) and are removed with it in 0.11.
 
 A step can run another workflow as a **child run**. It declares the child in
 its `unit:` bag:

@@ -120,6 +120,9 @@ export interface PrepareTaskV3ExecutionContext {
     readonly name: string;
     readonly ref: string;
   }) => Promise<string | Readonly<{ file: string; bundleRoot: string }>>;
+  /** Reads a script target's bytes by its qualified ref. Default: the asset the ref names, in its bundle. */
+  readonly readAsset?: (ref: string) => Uint8Array;
+  /** Reads a workflow target's file (workflows are deprecated: not read through the adapters). */
   readonly readFile?: (file: string, bundleRoot?: string) => Uint8Array;
   /** Platform policy injection used by cross-platform projection tests. */
   readonly platform?: NodeJS.Platform;

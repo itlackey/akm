@@ -23,9 +23,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { prepareCommandInvocation } from "../../commands/command/command-execution";
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import type { TaskV3SourceDocument } from "../source-v3";
+import { requireAssetIn } from "../task-ref";
 import { prepareSteps } from "./prepare-steps";
 import {
   base,
@@ -128,6 +130,7 @@ export async function prepareTaskV3Execution(
     validateWorkflowRuntimeSource(
       resolved.file,
       resolved.bundleRoot,
+      // asset-io: deprecated workflow targets are read as files
       context.readFile ?? ((targetPath: string) => fs.readFileSync(targetPath)),
     );
     return Object.freeze({
@@ -152,7 +155,12 @@ export async function prepareTaskV3Execution(
     qualified,
     resolved.file,
     resolved.bundleRoot,
-    context.readFile ?? ((targetPath: string) => fs.readFileSync(targetPath)),
+    context.readAsset ??
+      ((ref: string) =>
+        requireAssetIn(
+          { name: parseBundleRef(ref).bundle ?? context.bundleName, path: resolved.bundleRoot },
+          ref,
+        ).entry.bytes()),
   );
   return Object.freeze({
     ...common,

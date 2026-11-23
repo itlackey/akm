@@ -20,7 +20,7 @@ the bundle directory layout, and the metadata every asset carries.
   knowledge).
 - `type` is not part of an asset's ref — the placement subdirectory carries
   that signal. See [Refs](refs.md).
-- Ten additional *bundle formats* beyond akm's own (Claude Code and OpenCode
+- Eleven additional *bundle formats* beyond akm's own (Claude Code and OpenCode
   tool directories, OKF, LLM wikis, and more) are recognized, indexed, and
   validated in place by their own adapters — see
   [Bundle Types](bundle-types.md) for the full type-by-type table (purpose,

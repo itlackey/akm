@@ -76,29 +76,6 @@ function secretEntry(name: string, read: () => string): AssetEntry {
   };
 }
 
-let promptsAllowed = false;
-
-/** Whether an adapter may ask the user something (unlock a keyring). */
-export function mayPrompt(): boolean {
-  return promptsAllowed;
-}
-
-/** Let adapters ask the user something. Off by default: only the CLI, on a terminal, turns it on. */
-export function allowPrompts(allowed: boolean): void {
-  promptsAllowed = allowed;
-}
-
-/** Run `run` with every prompt off: a store that would need one is unreachable. For lint, which runs in hooks and CI. */
-export async function withoutPrompts<T>(run: () => Promise<T>): Promise<T> {
-  const before = promptsAllowed;
-  promptsAllowed = false;
-  try {
-    return await run();
-  } finally {
-    promptsAllowed = before;
-  }
-}
-
 /** One item of a store: what its manager holds under a name. Several items can share a name. */
 export interface SecretItem {
   /** The name the manager gives it (a keyring entry's label, a vault secret's name). */
@@ -376,7 +353,8 @@ export interface ClientResult {
  * argument, where other processes could read it.
  */
 export function runClient(client: Client, args: readonly string[], input?: Buffer): ClientResult {
-  const result = spawnSync(client.command, [...args], { encoding: "utf8", input });
+  // The environment as it is now: Bun 1.3 finds the program on the PATH the process started with unless it is given.
+  const result = spawnSync(client.command, [...args], { encoding: "utf8", input, env: process.env });
   if (result.error) {
     const missing = (result.error as NodeJS.ErrnoException).code === "ENOENT";
     throw new ConfigError(

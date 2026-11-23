@@ -89,7 +89,7 @@ function seedRuns(fixture) {
       }),
     );
     db.prepare(
-      "INSERT INTO improve_runs (id, started_at, completed_at, stash_dir, scope_mode, ok, strategy, result_json) VALUES (?, ?, ?, ?, 'all', 1, 'default', ?)",
+      "INSERT INTO improve_runs (id, started_at, completed_at, bundle_id, scope_mode, ok, strategy, result_json) VALUES (?, ?, ?, ?, 'all', 1, 'default', ?)",
     ).run(
       "synthetic-improve",
       at(30),
@@ -146,7 +146,7 @@ function seedRunViews(fixture) {
   const improve = (id, minutesAgo, ok, report, extra = {}) =>
     db
       .prepare(
-        "INSERT INTO improve_runs (id, started_at, completed_at, stash_dir, scope_mode, ok, strategy, result_json) VALUES (?, ?, ?, ?, 'all', ?, 'default', ?)",
+        "INSERT INTO improve_runs (id, started_at, completed_at, bundle_id, scope_mode, ok, strategy, result_json) VALUES (?, ?, ?, ?, 'all', ?, 'default', ?)",
       )
       .run(
         id,

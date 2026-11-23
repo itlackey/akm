@@ -25,8 +25,7 @@ import { positiveInt } from "./primitives";
  *   - UNSET  → `DEFAULT_MAP_CONCURRENCY` (4) from
  *     `src/workflows/concurrency-policy.ts`.
  *   - SET    → the explicit positive integer, CLAMPED to `[1, 64]`. Setting it
- *     to `1` restores the pre-0.9.1 serial-by-default fan-out for every
- *     workflow on this install. It is a floor for authoring only: it never
+ *     to `1` makes every `map` step on this install serial by default. It is a floor for authoring only: it never
  *     raises a step above `maxConcurrency`, the engine's concurrency, or the
  *     host CPU cap, and it never overrides an authored `map.concurrency`.
  */

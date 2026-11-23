@@ -27,7 +27,6 @@ import { clearAdapterCaches } from "../../src/core/adapter/registry";
 import { clientFailure } from "../../src/core/adapter/secret-manager-adapter";
 import { parseBundleRef } from "../../src/core/asset/asset-ref";
 import { assetBundleOf } from "../../src/core/assets/bundle";
-import { allowAdapterPrompts } from "../../src/core/assets/gate";
 import { ConfigError } from "../../src/core/errors";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { akmIndex } from "../../src/indexer/indexer";
@@ -68,7 +67,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  allowAdapterPrompts(false);
   storage.cleanup();
 });
 
@@ -591,7 +589,6 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
   const b = { id: "keyring", root: "/x", location: "akm" };
 
   test("a locked keyring asks to be unlocked, then is listed and read", async () => {
-    allowAdapterPrompts(true);
     await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
       const listed = secretToolAdapter.list(b).assets.map((asset) => asset.conceptId);
       expect(listed).toEqual(["secrets/gh_token", "secrets/wifi"]);
@@ -604,7 +601,6 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
   });
 
   test("a keyring whose unlock prompt is dismissed is unreachable, and says so", async () => {
-    allowAdapterPrompts(true);
     await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"], unlockDenied: ["akm"] } as never, async () => {
       let failure: unknown;
       try {
@@ -894,13 +890,13 @@ describe("keyring and vault bundles in config and commands (P3, N3, N5, N6)", ()
   });
 });
 
-describe("lint never asks to unlock (N3)", () => {
-  test("a locked wallet is skipped by akm lint, with no Unlock call", async () => {
+describe("lint asks to unlock like any command (A10)", () => {
+  test("a locked wallet is unlocked by akm lint", async () => {
     await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
       const linted = await akm("lint");
       expect(linted.code).toBe(0);
-      expect(stores.state().calls.some((call) => call.includes("Unlock"))).toBe(false);
-      expect(stores.state().locked).toEqual(["akm"]);
+      expect(stores.state().calls.some((call) => call.includes("Unlock"))).toBe(true);
+      expect(stores.state().locked).toEqual([]);
     });
   });
 });
@@ -918,6 +914,33 @@ describe("review fixes (K gate)", () => {
         expect(secretToolAdapter.read(b, "secrets/wifi")?.entry.content()).toBe("w");
       },
     );
+  });
+
+  test("a store that fails to list with an unrecognised error keeps its indexed rows, and akm index completes", async () => {
+    await withFakeSecretStores({ keyrings: KEYRING, vaults: VAULT }, async () => {
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+    });
+    const warnings: string[] = [];
+    _setWarnSinkForTests((_level, args) => warnings.push(args.join(" ")));
+    try {
+      await withFakeSecretStores({ keyrings: KEYRING, vaults: VAULT, listFails: ["team-vault"] } as never, async () => {
+        const result = await akmIndex({ stashDir: storage.stashDir });
+        expect(result.incompleteSources?.map((source) => source.bundle)).toEqual(["vault"]);
+        const search = await akm("search", "token", "--type", "secret");
+        expect((search.json.hits as Array<{ ref: string }>).map((hit) => hit.ref)).toContain(
+          "vault//secrets/deploy-token",
+        );
+      });
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    expect(
+      warnings.some(
+        (w) =>
+          w.includes('source "vault" was not scanned completely; preserving its last-known-good rows') &&
+          w.includes("InternalServerError"),
+      ),
+    ).toBe(true);
   });
 
   test("akm lint skips a store that fails in an ordinary way, silently", async () => {
@@ -979,24 +1002,11 @@ describe("review fixes (K gate)", () => {
   });
 });
 
-describe("unlock prompts only for a person at a terminal (F3)", () => {
+describe("a locked keyring is unlocked wherever a command reads it (A10)", () => {
   const asked = (stores: { state(): { calls: string[][] } }) =>
     stores.state().calls.some((call) => call.includes("Unlock"));
 
-  test("a CLI run that is not on a terminal never asks, and says the keyring is locked (exit 78)", async () => {
-    await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
-      const listed = await akm("show", "keyring//secrets/wifi");
-      expect(listed.code).toBe(78);
-      expect(String(listed.json.error)).toContain(
-        'Keyring "akm" is locked, and this command does not ask to unlock it.',
-      );
-      expect(asked(stores)).toBe(false);
-    });
-  });
-
-  test("a run the dispatcher allowed to prompt (stderr is a terminal) asks, and lists after the unlock", async () => {
-    // The dispatcher (`runCliInvocation`) calls `allowAdapterPrompts(isTerminal(2))`; the in-process runner skips it.
-    allowAdapterPrompts(true);
+  test("a CLI run asks, and shows the keyring after the unlock", async () => {
     await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
       const shown = await akm("show", "keyring//secrets/wifi");
       expect(shown.code).toBe(0);
@@ -1004,11 +1014,11 @@ describe("unlock prompts only for a person at a terminal (F3)", () => {
     });
   });
 
-  test("a workspace host never asks", async () => {
+  test("a workspace host asks too", async () => {
     await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
-      const failure = await code(Promise.resolve().then(() => sensitive.describe({ ref: "keyring//secrets/wifi" })));
-      expect(failure).toBe("BUNDLE_UNREACHABLE");
-      expect(asked(stores)).toBe(false);
+      const described = await Promise.resolve().then(() => sensitive.describe({ ref: "keyring//secrets/wifi" }));
+      expect(described).toBeDefined();
+      expect(asked(stores)).toBe(true);
     });
   });
 });

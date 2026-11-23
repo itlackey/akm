@@ -14,7 +14,7 @@
  * run in order in one sandbox: read-only ones first, then the few that write.
  *
  * NORMALISED (and nothing else) before a result is recorded or compared:
- *   1. the sandbox root, the tree's root and the Bun binary's path become `<SANDBOX>`, `<TREE>` and `<BUN>`;
+ *   1. the sandbox root, the tree's root and the Bun binary's path and its directory become `<SANDBOX>`, `<TREE>`, `<BUN>` and `<BUNDIR>`;
  *   2. a timestamp (ISO `...T...Z`, or SQLite `YYYY-MM-DD HH:MM:SS`) dated 2026-02-01 or later, i.e. one written by
  *      the run, becomes `<TIME>`, and a bare date (`YYYY-MM-DD`) of 2026-02-01 or later becomes `<DATE>`; the
  *      fixture's own dates are all earlier and are kept;
@@ -520,6 +520,8 @@ function normaliser(sandbox: Sandbox, port?: number) {
     [sandbox.root, "<SANDBOX>"],
     [sandbox.tree, "<TREE>"],
     [process.execPath, "<BUN>"],
+    // The directory the tree's PATH puts first after the sandbox's bin: where Bun is installed differs by machine.
+    [path.dirname(process.execPath), "<BUNDIR>"],
     ...(port === undefined ? [] : ([[`127.0.0.1:${port}`, "127.0.0.1:<PORT>"]] as Array<[string, string]>)),
   ];
   const run = new Date(`${RUN_EPOCH}T00:00:00Z`).getTime();
@@ -563,6 +565,30 @@ function normaliser(sandbox: Sandbox, port?: number) {
     return input;
   };
   return { text, value };
+}
+
+const SCAN_LINE = /^\[index:scan\] \[\d+\/\d+\] (?:Rescanning|Skipping) /;
+
+/**
+ * `index --verbose` names a bundle's directories in the order the filesystem lists them, in the recorded release as
+ * now (ext4 and tmpfs differ): each run of those lines is sorted, so their order is no part of the contract.
+ */
+export function sortScanRuns(lines: string[]): string[] {
+  const out: string[] = [];
+  let run: string[] = [];
+  const flush = () => {
+    out.push(...run.sort());
+    run = [];
+  };
+  for (const line of lines) {
+    if (SCAN_LINE.test(line)) run.push(line);
+    else {
+      flush();
+      out.push(line);
+    }
+  }
+  flush();
+  return out;
 }
 
 /** stderr is warning lines, and, for a failed command, one pretty-printed JSON error object after them. */
@@ -691,7 +717,7 @@ function runCase(sandbox: Sandbox, norm: ReturnType<typeof normaliser>, c: Corpu
   }
   const err = splitStderr(res.stderr);
   const lines = quietA2 ? err.lines.filter((l) => !RETIRED_COMPONENTS_WARNING.test(l)) : err.lines;
-  if (lines.length > 0) result.stderr = lines.map((l) => norm.text(l));
+  if (lines.length > 0) result.stderr = sortScanRuns(lines.map((l) => norm.text(l)));
   if (err.json !== undefined) result.errorJson = norm.value(err.json);
   if (c.readFiles) {
     result.files = {};

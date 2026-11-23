@@ -38,9 +38,19 @@ export class AssetBundle {
     this.#bundle = bundleOf(source);
   }
 
+  /** The id of the adapter that holds this bundle. */
+  get adapterId(): string {
+    return this.#adapter.id;
+  }
+
   /** The prefix of the freshness variant the index records for this adapter's rows: id and version. */
   get variantPrefix(): string {
     return `${this.#adapter.id}@${this.#adapter.version}+`;
+  }
+
+  /** Whether this bundle's adapter declares assets of `type`: it writes them, or recognizes them without writing. */
+  declares(type: string): boolean {
+    return this.#adapter.writes.includes(type) || (this.#adapter.reads?.includes(type) ?? false);
   }
 
   /** Whether this bundle's adapter writes assets of `type`: it holds them as its own, not as files it reads. */
@@ -103,7 +113,7 @@ export class AssetBundle {
   identifyKey(key: string): string | null {
     return this.#adapter.identifyKey?.(this.#bundle, key) ?? null;
   }
-  create(asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean }): AssetChange {
+  create(asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean }): AssetChange {
     return this.#adapter.create(this.#bundle, asset, options);
   }
   update(conceptId: string, content: string | Buffer): AssetChange {

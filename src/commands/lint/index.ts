@@ -26,7 +26,7 @@ import {
 } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
-import { bundleAdapterId, withoutAdapterPrompts } from "../../core/assets/gate";
+import { bundleAdapterId } from "../../core/assets/gate";
 import { validateBundleAssets } from "../../core/assets/validate";
 import { deriveBundleIds } from "../../core/bundle-id";
 import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpath, samePath } from "../../core/common";
@@ -116,7 +116,7 @@ export interface AkmLintOptions {
  * `.yaml` near-miss. A `.yaml` file is not a runnable task — it is invisible to
  * the indexer's `tasks` matcher — but collecting it here is what lets the sweep
  * SAY so (`invalid-task-yaml`, see {@link taskExtensionDetail}) instead of
- * walking past it and reporting a clean scan (issue #760).
+ * walking past it and reporting a clean scan.
  */
 function collectTaskFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
@@ -218,8 +218,8 @@ const KNOWN_ADAPTER_ISSUE_TYPES: ReadonlySet<string> = new Set<LintIssueType>([
   "missing-type",
   "missing-name-or-type",
   "missing-skill-md",
-  // The `akm-task` adapter's own code. Now reachable from `akm lint` for a
-  // malformed or misnamed task file (issue #760); without it here, a genuine
+  // The `akm-task` adapter's own code, reported by `akm lint` for a
+  // malformed or misnamed task file; without it here, a genuine
   // task finding would arrive folded onto `adapter-diagnostic`.
   "invalid-task-yaml",
   "dangerous-env-key",
@@ -286,12 +286,9 @@ async function addStoreFindings(
     if (source.location === undefined || source.adapterId === undefined || source.unresolved) continue;
     const bundle = ids[index] as string;
     try {
-      // Lint runs in hooks and CI: a locked keyring is skipped like an unreachable one, never asked to unlock.
-      const diagnostics = await withoutAdapterPrompts(() =>
-        validateBundleAssets(
-          { name: bundle, path: source.path, location: source.location, adapterId: source.adapterId },
-          { ctx: { sources, config: cfg, readMoves: options.readMoves ?? readRecordedMoves } },
-        ),
+      const diagnostics = await validateBundleAssets(
+        { name: bundle, path: source.path, location: source.location, adapterId: source.adapterId },
+        { ctx: { sources, config: cfg, readMoves: options.readMoves ?? readRecordedMoves } },
       );
       for (const diagnostic of diagnostics) {
         const issue = { ...diagnosticToLintIssue(diagnostic), ref: diagnostic.ref };
@@ -329,7 +326,7 @@ async function lintViaAdapter(
   // vocabulary and `validate()` sees the whole bundle regardless. That is not a
   // correctness problem (full-bundle validation is a superset of the requested
   // scope), but a user narrowing a run deserves to hear the flag did nothing
-  // rather than infer it from identical output (issue #762). Warn, don't throw:
+  // rather than infer it from identical output. Warn, don't throw:
   // a hard error would break scripts passing one `--type` across mixed-adapter
   // bundle sets.
   if (options.typeFilter) {
@@ -391,12 +388,9 @@ function collectEnvFiles(dir: string): string[] {
  * for keys that are known to enable process-execution hijacking. This is a
  * cross-bundle SECURITY sweep, not per-adapter validation — it has always run
  * regardless of which format family a given root's OWN files are (verbatim
- * extraction of the pass `lintAkmSweep` still runs inline; kept byte-identical
- * there per the CRITICAL akm-path constraint, and reused here for the
- * non-akm dispatch path so a non-akm PRIMARY bundle keeps the exact
- * cross-bundle coverage it already had — the pass previously reached every
- * non-akm adapter's bundle via the accidental akm-sweep fallthrough this
- * change replaces with real dispatch).
+ * extraction of the pass `lintAkmSweep` still runs inline; shared with
+ * the non-akm dispatch path so a non-akm PRIMARY bundle gets the same
+ * cross-bundle coverage).
  */
 function runEnvDangerousKeyPass(
   stashRoot: string,
@@ -412,7 +406,7 @@ function runEnvDangerousKeyPass(
     // `env` assets live under `env/`, whole-file `secret` assets under
     // `secrets/`. `displayRefForConceptId` owns the short-default /
     // qualified-secondary `Ref:` spelling `akm show` emits — the old
-    // hand-built `env:<base>` colon grammar is rejected by the 0.9.0 ref
+    // hand-built `env:<base>` colon grammar is rejected by the ref
     // parser, which dead-ended a user copying the ref off a security finding.
     for (const assetType of ["env", "secret"] as const) {
       const dir = path.join(root, stashDirFor(assetType) as string);
@@ -432,11 +426,11 @@ function runEnvDangerousKeyPass(
 
 /**
  * Refuse `--fix` against a bundle the config marks `writable: false`, BEFORE
- * the sweep touches a single file (issue #761).
+ * the sweep touches a single file.
  *
  * Every other mutating command routes through `core/write-source.ts`'s
  * `ensureWritable`/`resolveWritable` pair; `akm lint --fix` writes and deletes
- * directly and never consulted the flag, so it happily rewrote frontmatter in a
+ * directly, so without this check it would rewrite frontmatter in a
  * bundle explicitly configured read-only. `SearchSource.writable` is already the
  * EFFECTIVE policy (`resolveWritable` applied — see `resolveSourceEntries`), so
  * this reads the same answer the write path would, without a second resolver.
@@ -461,16 +455,14 @@ function isFileDeletion(issue: LintIssue): boolean {
   return issue.fixed === true && (issue.issue === "orphaned-stub" || issue.issue === "placeholder-stub");
 }
 
-// ── Per-file lint dispatch (was registry.ts + the 9 per-type linter classes) ──
+// ── Per-file lint dispatch ──
 //
-// akm 0.9.0 chunk-3 (plan §12): the 9 `BaseLinter` subclasses + `LINTER_MAP`/
-// `getLinterForType` are gone. The format-generic checks are the shared
-// `runBaseChecks` (`./base-linter`); the per-`type` RULES are the `akm`
-// adapter's `validate` surface (`core/adapter/adapters/akm-lint.ts`), imported
-// here so both the read-only adapter and this fix-capable CLI sweep share ONE
-// definition of each finding. The adapter never writes; the delete-fix for the
-// two stub types is applied HERE (a core/CLI concern), reproducing the old
-// MemoryLinter/WorkflowLinter `--fix` behavior byte-for-byte.
+// The format-generic checks are the shared `runBaseChecks` (`./base-linter`);
+// the per-`type` RULES are the `akm` adapter's `validate` surface
+// (`core/adapter/adapters/akm-lint.ts`), imported here so both the read-only
+// adapter and this fix-capable CLI sweep share ONE definition of each finding.
+// The adapter never writes; the delete-fix for the two stub types is applied
+// HERE (a core/CLI concern).
 
 /**
  * Reproduce `SkillLinter.lintDirectory`: a skill subdirectory with no
@@ -633,7 +625,7 @@ function lintDocument(
   // One file's checks — including its `--fix` mutations — must never abort
   // the sweep: an uncaught throw here left the caller with an exception and
   // no record of which earlier files had ALREADY been rewritten on disk
-  // (issue #761). A failure is reported per-file, in-band, and the sweep
+  //. A failure is reported per-file, in-band, and the sweep
   // continues so the rest of the bundle is still linted.
   let issues: LintIssue[];
   try {
@@ -746,11 +738,16 @@ async function addAdapterFindings(
     return dir !== undefined && dirs.has(dir);
   };
   const seen = new Set([...found.fixed, ...found.flagged, ...found.warnings].map(lintIssueDedupeKey));
+  // A finding the sweep tried to fix is that finding, whether or not the fix landed: a fix that could not be written
+  // leaves the file as it was, and the adapter would report it again with its unfixed wording.
+  const fixTried = new Set(
+    [...found.fixed, ...found.flagged].filter((issue) => issue.fixed !== false).map((i) => `${i.file} ${i.issue}`),
+  );
   for (const issue of await adapterFindings(adapter.id, stashRoot, inSweep, sources, cfg, options)) {
     // A skill directory's check belongs to the skills sweep: `--type knowledge` does not report it.
     if (issue.issue === "missing-skill-md" && !dirs.has("skills")) continue;
     const key = lintIssueDedupeKey(issue);
-    if (seen.has(key)) continue;
+    if (seen.has(key) || fixTried.has(`${issue.file} ${issue.issue}`)) continue;
     seen.add(key);
     (isAdvisoryLintIssue(issue) ? found.warnings : found.flagged).push(issue);
   }
@@ -1097,9 +1094,9 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
       "INVALID_FLAG_VALUE",
     );
   }
-  // Fail closed on a mistyped invocation (§24.2 "Lint" release gate): a
-  // nonexistent --dir used to walk nothing and report a clean
-  // `ok:true, flagged:0`, silently passing scripted --fail-on-flagged gates.
+  // Fail closed on a mistyped invocation: a nonexistent --dir would walk
+  // nothing and report a clean `ok:true, flagged:0`, silently passing scripted
+  // --fail-on-flagged gates.
   // asset-io: user-input --dir
   if (options.dir !== undefined && !fs.statSync(options.dir, { throwIfNoEntry: false })?.isDirectory()) {
     throw new UsageError(`lint: --dir "${options.dir}" is not a directory.`, "INVALID_FLAG_VALUE");

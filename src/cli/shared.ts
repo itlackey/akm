@@ -94,17 +94,13 @@ function extractHint(error: unknown): string | undefined {
  * Serialize an error to the standard JSON envelope and record the mapped
  * exit code. Used in both the startup try/catch and `runWithJsonErrors`.
  *
- * R-067: this used to call `process.exit(exitCode)` directly, which
- * terminates the process synchronously and skips every pending `finally`
- * block up the call stack — including `src/cli.ts`'s own
- * `disposeLlmUsageSink()` cleanup and citty's per-command `cleanup`
- * hooks. `process.exitCode = exitCode; return;` is equivalent for every
- * caller here: Node/Bun exits with that code once the event loop drains
- * naturally, but cleanup on the way there still runs.
- * `src/commands/improve/extract-cli.ts` already uses this exact pattern for
- * its own non-throw failure signal.
+ * This sets `process.exitCode = exitCode` and returns rather than calling
+ * `process.exit(exitCode)`: Node/Bun exits with that code once the event loop
+ * drains, so every pending `finally` block (`src/cli.ts`'s
+ * `disposeLlmUsageSink()` cleanup, citty's per-command `cleanup` hooks) still
+ * runs. `src/commands/improve/extract-cli.ts` uses the same pattern.
  *
- * Because this no longer throws or exits, it no longer terminates control
+ * Because this neither throws nor exits, it does not terminate control
  * flow on its own — every call site MUST treat it like a normal return and
  * stop doing further work itself (an explicit `return;` right after the
  * call, same as any other caller of a fallible function). `runWithJsonErrors`
@@ -187,7 +183,7 @@ export const GLOBAL_OUTPUT_ARGS = {
     description: "Detail level: brief|normal|full, or agent (trims search, curate and show to essential fields)",
   },
   output: { type: "string", description: "Write output to a file instead of stdout (not jsonl)" },
-  // S11: declared at every leaf so a command's flags parse wherever they sit;
+  // These flags are declared at every leaf so a command's flags parse wherever they sit;
   // leaf `--help` prints them once as a pointer (see `withoutGlobalArgs`), root
   // `--help` lists them in full. They are parsed from raw argv by
   // `applyEarlyStderrFlags` in src/cli.ts before citty ever sees them. A
@@ -357,9 +353,8 @@ export function renderOutput(command: string, result: unknown, mode: DocumentOut
       return yamlStringify(shaped);
     case "text":
       // D7 — registry first, generic rendering of the shaped envelope second.
-      // A command with no registered text formatter used to fall through to
-      // `JSON.stringify(shaped, null, 2)`, i.e. silently hand back JSON while
-      // claiming `--format text`. `renderGenericText` renders flat
+      // A command with no registered text formatter gets generic text, never JSON
+      // under `--format text`. `renderGenericText` renders flat
       // `key=value` text matching the house style of registered formatters
       // like `config list`; it is a DISTINCT function from
       // `renderGenericMarkdown` (see src/output/generic-render.ts).
@@ -371,6 +366,5 @@ export function renderOutput(command: string, result: unknown, mode: DocumentOut
   }
 }
 
-// parseAllFlagValues moved to ./invocation (chunk-9 WI-9.9 argv-normalization
-// fold); re-exported above so every existing importer of this module is
+// parseAllFlagValues moved to ./invocation (argv normalization); re-exported above so every existing importer of this module is
 // unaffected.

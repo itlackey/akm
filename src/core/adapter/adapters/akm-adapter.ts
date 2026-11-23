@@ -87,7 +87,7 @@ import { applyFoldedMetadata, foldRecognizedMetadata } from "./akm-metadata";
 import { createBaseChecker, hashContent, type ParsedForValidate, parseForValidate, RESERVED_FILES } from "./shared";
 
 // `recognizeMatch` + the builtin matcher list moved to the cycle-free leaf
-// `../recognize-match` (Chunk 5 M-b) so both this adapter AND the indexer
+// `../recognize-match` so both this adapter AND the indexer
 // metadata pass import it without closing a metadata ↔ adapter cycle. Re-exported
 // here so existing `akm-adapter` importers (tests, sibling modules) are
 // unaffected.
@@ -108,7 +108,7 @@ function isReservedFileName(name: string): boolean {
 
 /**
  * AKM-stash indexing policy, moved here from the indexer's `shouldIndexStashFile`
- * pre-filter (owner ruling 2026-07-21 — adapter-owned filtering). Each adapter
+ * pre-filter. Each adapter
  * abstains on its own bundle's files; the core walk keeps only universal hygiene.
  *
  * Path-based ONLY: a file's bytes are never read. Returns `true` when the `akm`
@@ -239,8 +239,8 @@ function classify(
   // every depth — never items. Excluded BEFORE classification so a directory
   // listing or update log never becomes a `knowledge` (or other) concept.
   if (isReservedFileName(file.fileName)) return null;
-  // Adapter-owned filtering (owner ruling 2026-07-21): AKM-stash policy that used
-  // to live in the indexer's `shouldIndexStashFile` pre-filter.
+  // Adapter-owned filtering: AKM-stash policy (formerly the indexer's
+  // `shouldIndexStashFile` pre-filter).
   if (akmStashAbstains(relPath)) return null;
   const match = recognize(file);
   if (match === null) return null;
@@ -443,7 +443,7 @@ export class AkmAdapter extends AkmFormatAdapterBase {
   // when the search text is unchanged.
   readonly version = "0.10.1";
   override readonly writes = placementTypes();
-  // Recognized-extension HINT, derived from what the matchers accept (§6):
+  // Recognized-extension HINT, derived from what the matchers accept:
   // `.md` (Markdown types + workflow peer), `.yml` (task and workflow YAML),
   // `.yaml` (task near-miss diagnostics), `.env` (env files), and the 16
   // SCRIPT_EXTENSIONS. This is a
@@ -516,13 +516,13 @@ export class AkmAdapter extends AkmFormatAdapterBase {
     return file.fileName === "SKILL.md" ? file.parentDirAbs : undefined;
   }
 
-  /** The AKM workspace's owned stash subdirs (§7): the placement stash-subdir names, feeding git exact-path staging. */
+  /** The AKM workspace's owned stash subdirs: the placement stash-subdir names, feeding git exact-path staging. */
   override directoryList(_c: Bundle): string[] {
     return [...new Set(stashDirNames())];
   }
 
   /**
-   * Install-time probe (§1.2), reproducing today's stash-root detection
+   * Install-time probe, reproducing today's stash-root detection
    * (`provider-utils.ts#detectStashRoot`/`hasStashDirs`): a root is an AKM
    * workspace root when it carries a `.stash` marker, multiple native placement
    * directories, or one native directory whose Markdown is absent or

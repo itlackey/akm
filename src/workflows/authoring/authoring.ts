@@ -74,6 +74,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   const resolvedTarget = resolveWriteTarget(config);
   const target = prepareWriteTargetForMutation(resolvedTarget, { assetType: "workflow" });
   const bundleDir = target.source.path;
+  // asset-io: deprecated workflows are not read through the adapters
   const standaloneWorkflowBundle = target.source.adapterId === "akm-workflow";
   const typeRoot = standaloneWorkflowBundle ? bundleDir : path.join(bundleDir, "workflows");
 

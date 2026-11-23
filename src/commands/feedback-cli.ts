@@ -11,7 +11,7 @@ import { type BundleRef, makeBundleRef, parseBundleRef } from "../core/asset/ass
 import { assembleAsset, serializeFrontmatter } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "../core/asset/frontmatter";
 import { type AssetRef, displayDefaultBundle, displayRef } from "../core/asset/resolve-ref";
-import { qualifyRef } from "../core/assets/read";
+import { findAsset, qualifyRef, requireAsset } from "../core/assets/read";
 import { addressOf } from "../core/assets/write";
 import { bundleSourceAt } from "../core/bundle-at-dir";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
@@ -79,7 +79,7 @@ function validateFeedbackTags(raw: string[]): string[] {
 // ── Lesson strength helper ────────────────────────────────────────────────────
 
 /**
- * Phase 7A: append a feedback ref to a lesson's `lessonStrength[]`
+ * Append a feedback ref to a lesson's `lessonStrength[]`
  * frontmatter array. Returns `{ strength }` (post-update count) on success,
  * or `null` when the lesson cannot be located. Idempotent: if the ref is
  * already credited, no write occurs.
@@ -213,8 +213,8 @@ interface RecordFeedbackUsageResult {
  * Persist the feedback usage-event (state.db) and, for a user-attributed event,
  * recompute the entry's utility score (index.db) with the same function the
  * `akm index` finalize pass uses, scoped to this one entry, so there is one
- * formula and the stored value is what the next index would compute. Chunk-8
- * WI-8.3: usage_events lives in state.db; entries + utility_scores stay in `indexDb`.
+ * formula and the stored value is what the next index would compute. The
+ * usage_events table lives in state.db; entries + utility_scores live in `indexDb`.
  * Search ranking does not read the utility score: it counts the recorded
  * `source='user'` feedback events itself, so a user-attributed event affects
  * ranking at once and an `improve`/`task`/`audit`/`unknown` one never does — an
@@ -278,10 +278,11 @@ function recordFeedbackUsage(
  * Reflect compares it with the asset's current body to tell feedback given on
  * an earlier version of the text. An env or secret file is never read.
  */
-function judgedTextHash(type: string | undefined, filePath: string | undefined): string | undefined {
+function judgedTextHash(type: string | undefined, filePath: string | undefined, itemRef: string): string | undefined {
   try {
     if (!filePath || type === "env" || type === "secret") return undefined;
-    return contentHash(fs.readFileSync(filePath, "utf8"), "body");
+    const held = findAsset(itemRef, { quiet: true });
+    return held ? contentHash(held.entry.content(), "body") : undefined;
   } catch {
     return undefined;
   }
@@ -732,7 +733,7 @@ export const feedbackCommand = defineJsonCommand({
       // also recomputes the entry's utility at once (see recordFeedbackUsage).
       // Search ranking reads the recorded events directly, so no `akm index`
       // run is needed.
-      // WI-8.5b: the `feedback` / `improve_review_needed` events key on the
+      // The `feedback` / `improve_review_needed` events key on the
       // resolved entry's fully-qualified item_ref — the SAME durable key the
       // usage_events row carries and the SAME spelling the signal-delta
       // correlation reads (buildLatestFeedbackTsMap, collapsed to [item_ref]).
@@ -746,7 +747,7 @@ export const feedbackCommand = defineJsonCommand({
         displayDefaultBundle(config.defaultBundle, filePath ? findSourceForPath(filePath, sources) : undefined, bundle),
       );
       const entryType = getEntryById(db, entryId)?.entry.type;
-      const textHash = judgedTextHash(entryType, filePath);
+      const textHash = judgedTextHash(entryType, filePath, itemRef);
       if (textHash) metadataObj.contentHash = textHash;
       if (fixPairs.length > 0 || hasMark) {
         // Checked before anything is recorded, so a fix that does not apply leaves no trace.
@@ -775,7 +776,7 @@ export const feedbackCommand = defineJsonCommand({
               ? { supersededBy: resolveSuccessorRef(db, supersededBy.trim(), itemRef) }
               : { outdated: true };
         }
-        const before = fs.readFileSync(filePath, "utf8");
+        const before = requireAsset(itemRef, { quiet: true }).entry.content();
         let after = applyExactReplacements(before, fixPairs, filePath);
         if (mark) after = applyHistoryMark(after, mark, filePath);
         if (after === before) throw new UsageError("The fix changes nothing.", "INVALID_FLAG_VALUE");
@@ -874,11 +875,11 @@ export const feedbackCommand = defineJsonCommand({
       }
     }
 
-    // Phase 7A / Advantage D4b: --applied-to credits a lesson. When the
+    // --applied-to credits a lesson. When the
     // target is a `lessons/<name>` ref and the signal is positive, append
-    // the feedback ref to the target lesson's `lessonStrength[]`
+    // Credit the feedback ref to the target lesson's `lessonStrength[]`
     // frontmatter array (dedup, idempotent). Non-lesson targets are REJECTED
-    // with a loud warning (R-033b) rather than silently doing nothing.
+    // with a loud warning rather than silently doing nothing.
     // Failures here are warnings — feedback recording is the primary
     // contract and must not regress on lesson-write errors.
     const appliedToRaw = (args["applied-to"] as string | undefined)?.trim();

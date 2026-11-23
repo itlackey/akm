@@ -303,7 +303,7 @@ export function withConfigLock<T>(fn: () => T): T {
 }
 
 /**
- * Re-exported from core/common.ts, where it now lives so `resolveStashDir`
+ * Re-exported from core/common.ts, where it lives so `resolveStashDir`
  * can strip comments too without importing this module (common cannot depend
  * on config-io — config-io already depends on common).
  */

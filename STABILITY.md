@@ -83,7 +83,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm task add` | Deprecated | Removed in 0.11: use `akm import <file> --type task`, then `task enable` when activation is wanted. `--rebind` is Deprecated too: use `akm doctor scheduler sync --rebind`. |
 | `akm task enable` | Evolving | In 0.11 the schedule that runs lives in host config, and a task file's `schedule:` may stay as the default that enabling applies ([#1096](https://github.com/itlackey/akm/issues/1096)); this command's 0.11 form is not final. |
 | `akm task disable` | Evolving | As `task enable`. |
-| `akm task run` | Deprecated | Removed in 0.11: use `akm run <qualified-task-ref>` with the same inputs. |
+| `akm task run` | Deprecated | Removed in 0.11: use `akm run <qualified-task-ref>` with the same inputs. Scheduler rows run `task run <bundle//concept-id> --scheduled`; the form `task run <id> --bundle <bundle> --scheduled` of rows written before is read until 0.11, and the next sync rewrites it. |
 | `akm task history` | Deprecated | Removed in 0.11: `akm task history <id>` becomes `akm doctor log --task <id>` (`--bundle`, `--limit`), first in 0.10.261120. The no-id cross-task form has no replacement; `akm doctor metrics` gives per-task totals. Both print each run's `trigger`. |
 | `akm task sync` | Deprecated | Removed in 0.11: use `akm doctor scheduler sync`, first in 0.10.261120, retaining reconciliation and rebind behavior. |
 | `akm task prune` | Deprecated | Removed in 0.11: use `akm doctor scheduler sync --prune`, first in 0.10.261120 (a preview unless `--yes`; `--id` narrows it). |
@@ -378,11 +378,12 @@ outside the built-in set, so there is no closed list to validate against —
 
 ### Renames and learned state (Stable)
 
-Moving or renaming an item gives it a new
-identity; learned state (feedback, usage, salience) does not follow it.
-Cross-bundle movement is copy/import plus delete. Move the file, then run
-`akm index`, then `akm lint` to catch inbound refs the move left dangling.
-There is no `akm mv`; `scripts/rekey-asset-ref.ts` re-keys earned signal from
+Moving or renaming a file gives the item a new ref. When `akm index` next runs it
+pairs a vanished file with a new file of the same content, in the same or another
+indexed bundle, and carries the learned state (feedback, usage, salience) to the
+new ref; an ambiguous or edited file is a new asset whose history stays with the old
+ref. Move the file, then run `akm index`, then `akm lint` to catch inbound refs the
+move left dangling. There is no `akm mv`; `scripts/rekey-asset-ref.ts` re-keys earned signal from
 an old ref to a new one and is repository maintenance tooling, not a public CLI command.
 
 ## Output, errors, and reporting

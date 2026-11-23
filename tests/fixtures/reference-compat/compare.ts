@@ -7,7 +7,7 @@
  *
  * A difference is a node: the deepest place where the two results stop agreeing. Objects are walked key by key and
  * arrays of objects that each carry a unique `ref` (or `id`, or `file`+`issue`+`detail`) element by element, matched by that name, so a moved hit is
- * one node (`hits[order]`) and an added or removed one is a node of its own; other equal-length arrays are walked by
+ * one node (`hits[order]`; lint findings, whose order is the filesystem's, have none) and an added or removed one is a node of its own; other equal-length arrays are walked by
  * index. Anything else (a value, a type, an array that grew or shrank) is a node holding both sides. Two runs that
  * agree give no nodes. Each node is one entry of `differences.json`: its case, its path, the recorded value (`base`),
  * the working tree's value (`current`) and the `row` of the design's approved-changes register (§0.2) that approves
@@ -74,6 +74,9 @@ export const APPROVED_ROWS: ReadonlySet<string> = new Set([
   "P6",
   // P7 (a retire's receipts carry refs and handles, not paths): owner "Approve"; shipped by 4d.3 with N11.
   "P7",
+  // P11 (an installed scheduler row in the id form is rewritten to the ref form by the next sync): owner "Rewrite on
+  // next sync"; shipped by 4e.3 with A11.
+  "P11",
   // P8 (state rows follow a bundle by its name, not its directory): owner "Approve"; shipped by 4d.4 with N10's state-unknown-bundle.
   "P8",
   // F1 is provisional: set by the coordinator while the owner is unattended (design §0.2), pending the owner's answer.
@@ -82,8 +85,6 @@ export const APPROVED_ROWS: ReadonlySet<string> = new Set([
   "F5",
   // F8 is provisional (Fable, design §0.2): a broken symbolic link where an import writes is refused, the link left.
   "F8",
-  // F9 is provisional (design §0.2): a write over a symbolic link that stays inside its folder is refused, the link left.
-  "F9",
   // F10 is provisional (design §0.2): removing an env or secret over a directory is "not found" (`1f2e58c9` crashed).
   "F10",
 ]);
@@ -140,7 +141,10 @@ function walk(base: unknown, current: unknown, at: string, out: Found) {
       const common = (ids: string[], other: Map<string, unknown>) => ids.filter((id) => other.has(id));
       const was = common([...before.keys()], after);
       const now = common([...after.keys()], before);
-      if (JSON.stringify(was) !== JSON.stringify(now)) out.push({ path: `${at}[order]`, base: was, current: now });
+      // Lint findings (`file`+`issue`+`detail`) come in the order the filesystem lists the bundle, in the recorded release
+      // as now (ext4 and tmpfs differ), so their order is no part of the contract; a hit's order is.
+      if (!keys.includes("file") && JSON.stringify(was) !== JSON.stringify(now))
+        out.push({ path: `${at}[order]`, base: was, current: now });
       return;
     }
     if (base.length === current.length) {

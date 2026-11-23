@@ -16,7 +16,7 @@
  * Accounting invariant (the promote pass only): `processed == promoted +
  * judgedNoAction + Σ(skipReasons) + failedChunkMemories`.
  *
- * A second pass, the pair pass (`consolidate/pair-pass.ts`, alpha.9), runs
+ * A second pass, the pair pass (`consolidate/pair-pass.ts`), runs
  * alongside this one and keeps its own separate counters (`pairPass` on the
  * result) — it judges near-duplicate and superseding pairs across the wider
  * memory tier and mints `retire` proposals; see that module's own doc
@@ -27,9 +27,11 @@ import fs from "node:fs";
 import path from "node:path";
 import consolidateSystemPrompt from "../../assets/prompts/consolidate-system.md" with { type: "text" };
 import { refForFile } from "../../core/asset/asset-placement";
+import { makeBundleRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { listAssets, requireAsset } from "../../core/assets/read";
 import { bundleSourceAt } from "../../core/bundle-at-dir";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -61,6 +63,7 @@ import { runConsolidatePairPass } from "./consolidate/pair-pass";
 import { sanitizeMergedContent } from "./consolidate/sanitize";
 import { contentHash } from "./content-hash";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
+import { indexedAsset, indexedContent } from "./indexed-asset";
 import { isContentDrivenRow, isLedgerBlocked, ledgerKey, loadLedgerSnapshot, recordLedgerAttempt } from "./ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "./retrieval-scope";
 import { callStage, mintProposal, stageRunner } from "./stage";
@@ -69,6 +72,8 @@ export interface MemoryEntry {
   name: string;
   /** Its ref: the index's conceptId, the path inside the bundle. */
   ref: string;
+  /** The id of the bundle that holds it; absent: the first bundle that holds the ref. */
+  bundleId?: string;
   filePath: string;
   description: string;
   tags: string[];
@@ -146,9 +151,9 @@ export interface AkmConsolidateOptions {
 }
 
 /**
- * Structured-output schema for a plan. Promote-only: merge/delete/contradict
- * were removed in 0.9.17-alpha.1 (`e82eec811`) after running in production —
- * they cost thousands of completion tokens. Every property is required, as a
+ * Structured-output schema for a plan. Promote-only: merge, delete and contradict
+ * operations are not planned, as they cost thousands of completion tokens.
+ * Every property is required, as a
  * strict structured-output provider needs: an empty `description` keeps the
  * memory's own, a null `confidence` is none.
  */
@@ -324,31 +329,22 @@ function loadRejectedPromotionBodyHashes(stashDir: string, proposalsCtx?: Propos
 }
 
 /**
- * Body hashes of the live knowledge assets, read from disk (the index may lag
- * a just-written asset), so an accepted promotion is not proposed again.
+ * Body hashes of the live knowledge assets, read from the bundle (the index may lag
+ * a just-written asset), so an accepted promotion is not proposed again. The knowledge assets are the ones
+ * under `knowledge/`: the type is the folder's, so listing does not open the index (a dry run leaves it alone).
  */
 export function loadExistingKnowledgeBodyHashes(targetRoot: string): Set<string> {
   const hashes = new Set<string>();
-  const visit = (dir: string): void => {
-    let entries: fs.Dirent[];
+  const bundle = resolveConsolidationSourceOwner({}, targetRoot)?.bundleId;
+  if (bundle === undefined) return hashes;
+  for (const asset of listAssets({ sources: resolveSourceEntries(targetRoot), bundle })) {
+    if (!asset.conceptId.startsWith("knowledge/")) continue;
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
+      hashes.add(contentHash(asset.entry.content(), "body"));
     } catch {
-      return;
+      // An unreadable asset is no duplicate evidence.
     }
-    for (const entry of entries) {
-      const entryPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) visit(entryPath);
-      else if (entry.isFile() && entry.name.endsWith(".md")) {
-        try {
-          hashes.add(contentHash(fs.readFileSync(entryPath, "utf8"), "body"));
-        } catch {
-          // An unreadable asset is no duplicate evidence.
-        }
-      }
-    }
-  };
-  visit(path.join(targetRoot, "knowledge"));
+  }
   return hashes;
 }
 
@@ -525,6 +521,11 @@ function resolveConsolidationSourceOwner(
   }
 }
 
+/** The memory's text, read through its bundle; throws when no bundle holds it any more. */
+function requireMemoryContent(memory: MemoryEntry): string {
+  return requireAsset(makeBundleRef(memory.bundleId, memory.ref), { quiet: true }).entry.content();
+}
+
 const mtimeMsOf = (memory: MemoryEntry): number => {
   try {
     return fs.statSync(memory.filePath).mtimeMs;
@@ -548,13 +549,13 @@ export function inspectConsolidationPool(
 ): ConsolidationPoolSnapshot {
   const readOnly = access?.readOnly === true;
   let memories = loadMemoriesForSource(resolveConsolidationSourceOwner(opts, stashDir), warnings, readOnly);
-  const staleCount = memories.filter((memory) => !fs.existsSync(memory.filePath)).length;
+  const staleCount = memories.filter((memory) => !indexedAsset(memory.bundleId, memory.ref)).length;
   if (staleCount > 0) {
     warnings.push(
       `Pre-flight: filtered ${staleCount} stale DB entr${staleCount === 1 ? "y" : "ies"} (file absent on disk) from memory pool before chunking.`,
     );
   }
-  memories = memories.filter((memory) => fs.existsSync(memory.filePath));
+  memories = memories.filter((memory) => indexedAsset(memory.bundleId, memory.ref));
   const poolSize = memories.length;
   // A memory judged within its revisit window comes back once it is edited. A
   // promotion that was accepted or rejected holds its memory until the body
@@ -568,7 +569,7 @@ export function inspectConsolidationPool(
       if (isContentDrivenRow(row)) {
         let bodyHash: string | undefined;
         try {
-          bodyHash = contentHash(fs.readFileSync(memory.filePath, "utf8"), "body");
+          bodyHash = contentHash(requireMemoryContent(memory), "body");
         } catch {
           bodyHash = undefined;
         }
@@ -588,7 +589,7 @@ export function inspectConsolidationPool(
   if (rejectedBodies.size > 0) {
     memories = memories.filter((memory) => {
       try {
-        return !rejectedBodies.has(contentHash(fs.readFileSync(memory.filePath, "utf8"), "body"));
+        return !rejectedBodies.has(contentHash(requireMemoryContent(memory), "body"));
       } catch {
         return true;
       }
@@ -610,12 +611,8 @@ export function inspectConsolidationPool(
   let prefilteredAlreadyPromoted = 0;
   if (existingKnowledgeBodyHashes.size > 0) {
     memories = memories.filter((memory) => {
-      let raw: string;
-      try {
-        raw = fs.readFileSync(memory.filePath, "utf8");
-      } catch {
-        return true;
-      }
+      const raw = indexedContent(memory.bundleId, memory.ref);
+      if (raw === undefined) return true;
       const duplicate = existingKnowledgeBodyHashes.has(contentHash(raw, "body"));
       if (duplicate) prefilteredAlreadyPromoted++;
       return !duplicate;
@@ -849,7 +846,7 @@ async function consolidate(
     );
   }
   const target = opts.target ?? stashDir;
-  // The pair pass (alpha.9) has its own initiator/candidate selection (it
+  // The pair pass has its own initiator/candidate selection (it
   // sees .derived memories, flat knowledge and lessons, not just the
   // promote pool above), so it runs regardless of whether the promote pool
   // is empty — every return path below carries its result.
@@ -972,7 +969,7 @@ export interface PromoteContext {
 function bodyHashOf(memory: MemoryEntry | undefined): { contentHash?: string } {
   if (!memory) return {};
   try {
-    return { contentHash: contentHash(fs.readFileSync(memory.filePath, "utf8"), "body") };
+    return { contentHash: contentHash(requireMemoryContent(memory), "body") };
   } catch {
     return {};
   }
@@ -1035,7 +1032,6 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
     .replace(/^-|-$/g, "")
     .toLowerCase();
   const knowledgeRef = conceptIdFromTypeName("knowledge", slug);
-  const parsedKnowledgeRef = parsePlacementRef(knowledgeRef);
   if (knowledgeRef !== op.knowledgeRef)
     warnings.push(`Normalized generated ref "${op.knowledgeRef}" → "${knowledgeRef}"`);
   const pending = listProposals(stashDir, { status: "pending" });
@@ -1046,12 +1042,12 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
       `Skipping promote: pending proposal already exists for ${knowledgeRef}`,
     );
   }
-  if (fs.existsSync(path.join(target.source.path, "knowledge", `${parsedKnowledgeRef.name}.md`))) {
+  if (indexedAsset(entry.bundleId, knowledgeRef)) {
     return skip("promote_already_exists", `Skipping promote: ${knowledgeRef} already exists in source`);
   }
   let memoryContent: string;
   try {
-    memoryContent = fs.readFileSync(entry.filePath, "utf8");
+    memoryContent = requireMemoryContent(entry);
   } catch (e) {
     return skip("promote_read_failed", `Promote: could not read ${op.ref}: ${String(e)}`);
   }
@@ -1146,8 +1142,8 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
       ...(typeof op.confidence === "number" ? { confidence: op.confidence } : {}),
       // The ledger keys the attempt by the source memory.
       attemptedRefs: [op.ref],
-      // O1 (alpha.9): on accept, promoteProposal retires this source memory
-      // (and its .derived twin) so promotion no longer leaves a duplicate.
+      // O1: on accept, promoteProposal retires this source memory
+      // (and its .derived twin) so promotion leaves no duplicate.
       promotionSource: op.ref,
       // B3: recorded so accept can refuse to archive a source that was
       // edited after this promotion was queued — the RAW body hash (see
@@ -1176,10 +1172,11 @@ function loadMemoriesForSource(
     if (!db) throw new Error("index unavailable");
     memories = getAllEntries(db, "memory")
       .filter((e) => source !== undefined && e.bundleId === source.bundleId)
-      .filter((e) => isConsolidationEligibleMemoryName(e.entry.name) && fs.existsSync(e.filePath))
+      .filter((e) => isConsolidationEligibleMemoryName(e.entry.name) && indexedAsset(e.bundleId, e.conceptId))
       .map((e) => ({
         name: e.entry.name,
         ref: e.conceptId,
+        bundleId: e.bundleId,
         filePath: e.filePath,
         description: e.entry.description ?? "",
         tags: e.entry.tags ?? [],
@@ -1206,7 +1203,15 @@ function loadMemoriesForSource(
         const name = path.relative(memoriesDir, filePath).replace(/\.md$/, "").split(path.sep).join("/");
         if (isConsolidationEligibleMemoryName(name)) {
           const ref = refForFile("memory", source.sourceRoot, filePath) ?? name;
-          memories.push({ name, ref, filePath, description: "", tags: [], stashDir: source.sourceRoot });
+          memories.push({
+            name,
+            ref,
+            bundleId: source.bundleId,
+            filePath,
+            description: "",
+            tags: [],
+            stashDir: source.sourceRoot,
+          });
         }
       }
     }

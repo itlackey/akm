@@ -15,17 +15,33 @@ import type { AssetChange, NewAsset, Retirement, RetireNote } from "../adapter/b
 import { stashDirFor } from "../asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { parsePlacementRef } from "../asset/resolve-ref";
-import { assetNotFound, UsageError } from "../errors";
+import { assetNotFound, ConfigError, UsageError } from "../errors";
 import { recordWrittenPath } from "../write-provenance";
 import {
   commitWriteTargetBoundary,
   ensureWritable,
+  isWriteCapableSourceKind,
   type ResolvedWriteTarget,
   recordWriteTargetPath,
 } from "../write-source";
 import { type AssetBundle, assetBundleOf } from "./bundle";
 import { type Asset, assetRevision, readFrom } from "./read";
 import { assetType, forgetIndexedAsset, refreshIndexedAsset } from "./type";
+
+/**
+ * The gates every write passes: the bundle takes writes, and it is a kind akm writes (a directory, a git checkout, or a
+ * store its adapter keeps). A source built by hand of another kind is refused, as the loader would refuse it.
+ */
+function gate(source: ResolvedWriteTarget["source"], config: ResolvedWriteTarget["config"]): void {
+  ensureWritable(source, config);
+  if (source.kind === "location" || isWriteCapableSourceKind(source.kind)) return;
+  throw new ConfigError(
+    `write-source: unsupported kind "${source.kind}" for source "${source.name}". ` +
+      "Writes are only defined for `filesystem` and `git` sources.",
+    "INVALID_CONFIG_FILE",
+    'Set `kind: "filesystem"` (or `kind: "git"`) on the source, or add a parallel filesystem entry.',
+  );
+}
 
 /** Where a write to a ref goes. */
 export interface AssetAddress {
@@ -61,8 +77,11 @@ export interface AssetWriter {
   read(conceptId: string): Asset | undefined;
   /** An existing asset by ref, else where a new one of the ref's type goes. */
   address(ref: string): AssetAddress;
-  /** `exclusive`: refuse an existing asset. `verbatim`: keep `content` exactly, not in the adapter's form for the type. */
-  create(asset: NewAsset, options?: { exclusive?: boolean; verbatim?: boolean }): WriteResult;
+  /**
+   * `exclusive`: refuse an existing asset. `verbatim`: keep `content` exactly, not in the adapter's form for the type.
+   * `replaceLink`: an asset file that is a symbolic link to a file inside the bundle is replaced by a regular file.
+   */
+  create(asset: NewAsset, options?: { exclusive?: boolean; verbatim?: boolean; replaceLink?: boolean }): WriteResult;
   update(conceptId: string, content: string | Buffer, options?: { revision?: string }): WriteResult;
   delete(conceptId: string, options?: { revision?: string }): WriteResult;
   retire(conceptId: string, note: RetireNote, options?: { revision?: string }): WriteResult & { handle: string };
@@ -158,6 +177,14 @@ export function addressOf(source: WriteSource, ref: string): AssetAddress {
 }
 
 /**
+ * The file `ref` is kept in (the existing asset's, else the one a create would write) in a bundle that keeps assets as
+ * files; undefined for a store, which keeps none and is not asked. For checks on where a name lands, never to find it.
+ */
+export function fileOfRef(source: WriteSource, ref: string): string | undefined {
+  return assetBundleOf(source).isStore ? undefined : addressOf(source, ref).file;
+}
+
+/**
  * The ref of the asset an old stored record named by a bundle-relative path (`changes[].path`), for converters only
  * (§8.4). Valid when no file holds the asset any more; undefined when the path is no asset's.
  */
@@ -198,7 +225,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
   };
   /** The asset a change applies to, after the gates every change to an existing asset passes. */
   const existing = (conceptId: string, options?: { revision?: string; retire?: boolean }): Asset => {
-    ensureWritable(source, config);
+    gate(source, config);
     const asset = readAsset(source, conceptId);
     if (!asset) throw assetNotFound(`${source.name}//${conceptId}`);
     const type = assetType(asset);
@@ -216,7 +243,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     read: (conceptId) => readAsset(source, conceptId),
     address: (ref) => addressIn(held, source, ref, true),
     create(asset, options) {
-      ensureWritable(source, config);
+      gate(source, config);
       held.assertWrites(asset.type);
       if (options?.exclusive) {
         const conceptId = held.place(asset);
@@ -225,7 +252,13 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
         }
       }
       // Without `exclusive` a create replaces the asset, with the bytes a create writes.
-      return result(held.create(asset, { replace: !options?.exclusive, verbatim: options?.verbatim }));
+      return result(
+        held.create(asset, {
+          replace: !options?.exclusive,
+          verbatim: options?.verbatim,
+          replaceLink: options?.replaceLink,
+        }),
+      );
     },
     update(conceptId, content, options) {
       existing(conceptId, options);
@@ -242,17 +275,17 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     },
     retired: () => held.retired(),
     restore(handle, fallback) {
-      ensureWritable(source, config);
+      gate(source, config);
       held.assertRetiring();
       return result(held.restore(handle, fallback));
     },
     forget(handle) {
-      ensureWritable(source, config);
+      gate(source, config);
       held.assertRetiring();
       record(held.forget(handle));
     },
     expireRetired(before) {
-      ensureWritable(source, config);
+      gate(source, config);
       held.assertRetiring();
       record(held.expireRetired(before));
     },

@@ -15,10 +15,9 @@
  * one of those bundles are never touched.
  */
 
-import fs from "node:fs";
 import path from "node:path";
-import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
-import { readFrom } from "../core/assets/read";
+import { parseBundleRef } from "../core/asset/asset-ref";
+import { listAssets } from "../core/assets/read";
 import { compareCodePoints, toPosix } from "../core/common";
 import type { AkmConfig } from "../core/config/config-types";
 import { UsageError } from "../core/errors";
@@ -41,6 +40,16 @@ import { parseTaskSource } from "./source/parse-task-source";
 import { projectTaskSourceV4 } from "./source/project-v4";
 import type { TaskSourceV4Document } from "./source/task-source-v4";
 import { taskSourceErrorDetail } from "./source-v3";
+import {
+  isShadowedByYml,
+  type TaskBundleSource,
+  taskAssetsAmong,
+  taskFileOf,
+  taskIdOf,
+  taskRefIn,
+  taskScopeOf,
+  ymlHeldIds,
+} from "./task-ref";
 import { checkTaskV5 } from "./v5/check";
 import type { TaskSourceV5Document, TaskSourceV5ScheduleBinding } from "./v5/source";
 
@@ -55,7 +64,8 @@ export interface SchedulerSourceFailure {
 
 export interface CompileSchedulerSourcesInput {
   readonly sourceRoot: string;
-  readonly adapterId: string;
+  /** The bundle's adapter, when config names it: the facade finds it otherwise. */
+  readonly adapterId?: string;
   readonly bundleName: string;
   readonly backend: ScheduleBackend;
   /** Frozen config used while projecting command targets. */
@@ -92,29 +102,27 @@ async function compileTaskSources(
   desired: SchedulerBinding[],
   failures: SchedulerSourceFailure[],
 ): Promise<void> {
-  const candidates = taskSourceFiles(input.sourceRoot, input.adapterId);
-  const idOf = (candidate: string): string => taskIdOfFile(input.sourceRoot, input.adapterId, candidate);
-  // A `.yml` file claims its scheduler id (compared case-insensitively, as the scheduler compares them).
-  const claimed = new Set(
-    candidates.filter((candidate) => candidate.endsWith(".yml")).map((c) => idOf(c).toLowerCase()),
-  );
-  const seen = new Set<string>();
-  for (const candidate of candidates) {
-    const conceptId = toPosix(path.relative(input.sourceRoot, candidate)).replace(/\.yml$/i, "");
-    const id = idOf(candidate);
-    const ref = sourceRef(input.bundleName, conceptId);
-    if (ref === undefined || seen.has(ref) || (input.enabledRefs && !input.enabledRefs.has(ref))) continue;
-    const offCase = !candidate.endsWith(".yml");
-    // A file whose extension is in another case (`tt.YML`) is a task source only when it is the file its enabled asset
-    // is held in (a task add over it rewrites that file) and no `.yml` file claims the id; every other is not found.
-    if (offCase && claimed.has(id.toLowerCase())) continue;
-    seen.add(ref);
-    const file = candidate;
+  // The bundle's task assets, one per ref as its adapter lists them, in the order of the files that hold them. Only
+  // an enabled ref is read.
+  const source: TaskBundleSource = {
+    name: input.bundleName,
+    path: input.sourceRoot,
+    ...(input.adapterId !== undefined ? { adapterId: input.adapterId } : {}),
+  };
+  // A tasks folder that cannot be listed is the bundle's failure: its rows are left as they are.
+  const everything = listAssets({ ...taskScopeOf(source), type: "task", requireComplete: true });
+  const listed = everything.filter((asset) => !input.enabledRefs || input.enabledRefs.has(asset.ref));
+  // A task held in a `.yml` file claims its id (compared case-insensitively, as the scheduler compares them).
+  const claimed = ymlHeldIds(everything, source);
+  const tasks = [...listed].sort((left, right) => compareCodePoints(taskFileOf(left), taskFileOf(right)));
+  for (const asset of tasks) {
+    const { ref, conceptId } = asset;
+    const id = taskIdOf(asset, source);
+    // A task held in a file whose extension is in another case is a task source only when no `.yml` claims its id.
+    if (isShadowedByYml(asset, id, claimed)) continue;
+    const file = taskFileOf(asset);
     try {
-      // The file the task is read from is the one its asset is held in, which must be the candidate.
-      const held = readFrom({ path: input.sourceRoot, adapterId: input.adapterId }, input.bundleName, conceptId);
-      if (held === undefined || path.join(input.sourceRoot, held.entry.relPath) !== candidate) continue;
-      const yaml = held.entry.content();
+      const yaml = asset.entry.content();
       const relative = toPosix(path.relative(input.sourceRoot, file));
       const parsed = parseTaskSource({ yaml, filePath: file });
       // A task with no `schedule:` is run by hand or by a workflow step; it
@@ -216,80 +224,6 @@ function scheduleStartFlags(entry: TaskSourceV5ScheduleBinding): SchedulerStartF
   };
 }
 
-function taskIdOfFile(sourceRoot: string, adapterId: string, file: string): string {
-  return adapterId === "akm-task"
-    ? toPosix(path.relative(sourceRoot, file)).replace(/\.yml$/i, "")
-    : path.basename(file).replace(/\.yml$/i, "");
-}
-
-/** Whether a `.yml` file claims `id` (compared case-insensitively), so a task held in an off-case file is not found. */
-export function taskIdClaimedByYml(sourceRoot: string, adapterId: string, id: string): boolean {
-  return taskSourceFiles(sourceRoot, adapterId).some(
-    (file) => file.endsWith(".yml") && taskIdOfFile(sourceRoot, adapterId, file).toLowerCase() === id.toLowerCase(),
-  );
-}
-
-/**
- * Task candidates: `tasks/*.yml` for the akm adapter, every `.yml` in the tree for `akm-task`, in any letter case of the
- * extension. A candidate is only a name: the asset it names is found through the facade (phase 4e.3 finds them all so).
- */
-function taskSourceFiles(sourceRoot: string, adapterId: string): string[] {
-  if (adapterId === "akm") {
-    const dir = path.join(sourceRoot, "tasks");
-    const names = listDirectory(dir);
-    return names
-      .filter((name) => name.toLowerCase().endsWith(".yml"))
-      .map((name) => path.join(dir, name))
-      .filter((file) => statOrUndefined(file)?.isFile() === true)
-      .sort(compareCodePoints);
-  }
-  if (adapterId === "akm-task") return walkFiles(sourceRoot).filter((file) => file.toLowerCase().endsWith(".yml"));
-  return [];
-}
-
-/** A file whose name cannot form a ref (a `#` in it) cannot be enabled, so it is not this sync's. */
-function sourceRef(bundleName: string, conceptId: string): string | undefined {
-  try {
-    return makeBundleRef(bundleName, conceptId);
-  } catch {
-    return undefined;
-  }
-}
-
-/** Directory entries, or none when the directory does not exist. Any other read error is the bundle's own failure. */
-function listDirectory(dir: string): string[] {
-  try {
-    return fs.readdirSync(dir);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
-}
-
-/** Every regular file under `dir` (symlinks followed), sorted. */
-function walkFiles(dir: string): string[] {
-  const files: string[] = [];
-  const visit = (directory: string): void => {
-    for (const name of listDirectory(directory)) {
-      const candidate = path.join(directory, name);
-      const stat = statOrUndefined(candidate);
-      if (stat?.isDirectory()) visit(candidate);
-      else if (stat?.isFile()) files.push(candidate);
-    }
-  };
-  visit(dir);
-  return files.sort(compareCodePoints);
-}
-
-/** A dangling or looping symlink is not a source file; it is skipped, never fatal. */
-function statOrUndefined(file: string): fs.Stats | undefined {
-  try {
-    return fs.statSync(file);
-  } catch {
-    return undefined;
-  }
-}
-
 // ── Planning ────────────────────────────────────────────────────────────────
 
 /** One bundle whose installed rows this sync owns. */
@@ -304,8 +238,8 @@ export interface SchedulerBundleScope {
    * config name only.
    */
   readonly bundlePath?: string;
-  /** The bundle's adapter; `akm-task` names a task row's ref by its bare concept id. */
-  readonly adapterId?: string;
+  /** The bundle, to name the task a row written before 0.11 holds by its id. */
+  readonly source?: TaskBundleSource;
 }
 
 export interface SchedulerSyncPlanInput {
@@ -358,12 +292,12 @@ export function installedRowNativeId(row: InstalledSchedulerBinding): string {
   return row.nativeId ?? schedulerNativeBindingId(row.id);
 }
 
-/** The bundle an installed row's own invocation names: `--bundle <x>`, or a workflow ref's bundle. */
+/** The bundle an installed row's own invocation names: its task's or workflow's ref, else a legacy row's `--bundle <x>`. */
 export function scheduledInvocationBundle(invocation: readonly string[] | undefined): string | undefined {
   if (!invocation) return undefined;
   const bundleIndex = invocation.indexOf("--bundle");
   if (bundleIndex >= 0) return invocation[bundleIndex + 1];
-  if (invocation[0] === "workflow" && invocation[1] === "run" && invocation[2]) {
+  if ((invocation[0] === "workflow" || invocation[0] === "task") && invocation[1] === "run" && invocation[2]) {
     try {
       return parseBundleRef(invocation[2]).bundle;
     } catch {
@@ -535,7 +469,9 @@ export function installedRowRef(row: InstalledSchedulerBinding, scope: Scheduler
   if (action !== "run" || !subject) return undefined;
   if (verb === "workflow") return subject;
   if (verb !== "task") return undefined;
-  return `${scope.bundleName}//${scope.adapterId === "akm-task" ? subject : `tasks/${subject}`}`;
+  // A row names its task by ref; one written before 0.11 by its id, in the bundle it names.
+  if (subject.includes("//")) return subject;
+  return scope.source ? taskRefIn(scope.source, subject, { refuse: false }) : undefined;
 }
 
 /** Where an installed row was scheduled from, for messages. */

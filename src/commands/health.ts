@@ -75,7 +75,7 @@ import { collectWorkflowFilesAdvisory } from "./health/workflow-files";
 
 export interface AkmHealthOptions {
   since?: string;
-  /** Row grouping. `run` emits one row per improve_runs entry (was `--detail per-run`). */
+  /** Row grouping. `run` emits one row per improve_runs entry. */
   groupBy?: "run";
   windowCompare?: string;
   windows?: WindowSpec[];
@@ -512,6 +512,7 @@ function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult 
       }
     });
     const entries = getAllEntries(indexDb).map((entry) => ({
+      ref: entry.itemRef,
       filePath: entry.filePath,
       type: entry.type,
       adapterId: entry.adapterId,

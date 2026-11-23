@@ -25,6 +25,11 @@ export function assertAdapterWrites(source: GateSource, type?: string): void {
   assetBundleOf(source).assertWrites(type);
 }
 
+/** Whether the bundle's adapter declares assets of `type`, written or only recognized. */
+export function adapterDeclares(source: GateSource, type: string): boolean {
+  return assetBundleOf(source).declares(type);
+}
+
 /** Whether the bundle's adapter writes assets of `type`: it holds them as its own, not as files it reads. */
 export function adapterWrites(source: GateSource, type: string): boolean {
   return assetBundleOf(source).writes(type);
@@ -82,7 +87,3 @@ export function clearAdapterCaches(): void {
 }
 
 export { bundleAdapterId } from "../adapter/detect-adapter";
-export {
-  allowPrompts as allowAdapterPrompts,
-  withoutPrompts as withoutAdapterPrompts,
-} from "../adapter/secret-manager-adapter";

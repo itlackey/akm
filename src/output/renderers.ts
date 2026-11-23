@@ -16,6 +16,7 @@ import path from "node:path";
 import { refForFile } from "../core/asset/asset-placement";
 import { parseFrontmatter, readFrontmatterDate } from "../core/asset/frontmatter";
 import { displayRef } from "../core/asset/resolve-ref";
+import { findAsset } from "../core/assets/read";
 import { asNonEmptyString, hasErrnoCode, scanEnvKeyNames } from "../core/common";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import type { IndexDocument } from "../indexer/passes/metadata";
@@ -396,7 +397,8 @@ const envFileRenderer: AssetRenderer = {
 
   enrichSearchHit(hit: SourceSearchHit, _stashDir: string): void {
     if (hit.path === undefined) return;
-    const keys = fs.existsSync(hit.path) ? scanEnvKeyNames(fs.readFileSync(hit.path, "utf8")) : [];
+    const asset = findAsset(hit.itemRef ?? hit.ref);
+    const keys = asset ? scanEnvKeyNames(asset.entry.content()) : [];
     if (keys.length > 0) hit.keys = keys;
   },
 };

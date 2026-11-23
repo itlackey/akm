@@ -14,6 +14,9 @@ import type { AssetEntry } from "../adapter/bundle-adapter";
 import type { AssetEdit, Diagnostic, ValidateContext } from "../adapter/types";
 import { assetBundleOf } from "./bundle";
 
+/** The categories the akm adapter accepts for a fact's `category`: its validators' vocabulary, which the frontmatter forms offer. */
+export { KNOWN_CATEGORIES } from "../adapter/adapters/akm-lint";
+
 /**
  * What the bundle's adapter reports for the assets it lists, each checked as an `update` in the adapter's listing
  * order; `keep` narrows them by their entries. This is `akm lint`'s scan of a bundle as it stands.

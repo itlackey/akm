@@ -6,8 +6,7 @@
  * Dotted-path getter/setter/unsetter for AKM config objects, driven by the
  * Zod schema in `./config-schema.ts`.
  *
- * Replaces the per-key switch statement that used to live in
- * `src/commands/config-cli.ts`. Adding a new config field is now zero lines
+ * Adding a new config field is zero lines
  * of CLI code — the schema describes how to get/set/unset, and this walker
  * does the rest.
  *

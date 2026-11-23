@@ -18,7 +18,7 @@ import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
 import { type Asset, findAsset, listAssets } from "./assets/read";
 import { assetType } from "./assets/type";
-import { addressOf, readAsset, type WriteResult, writeAssets } from "./assets/write";
+import { fileOfRef, readAsset, type WriteResult, writeAssets } from "./assets/write";
 import { deriveBundleIds } from "./bundle-id";
 import { isWithin, scanEnvKeyNames } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
@@ -27,33 +27,46 @@ import { resolveMutationTarget } from "./mutation-target";
 import { assertWritePathsInsideSource, formatRefForMessage, type ResolvedWriteTarget } from "./write-source";
 
 /**
- * The assets of `type` in the type's folder (`env/`, `secrets/`): the refs the env and secret commands accept. A file
- * elsewhere that is typed the same (`team/env/app`, which may be another bundle's `env/app`) is not listed.
+ * The secrets in the type's folder (`secrets/`): the refs the secret commands accept. A file elsewhere that is typed
+ * the same (`team/secrets/token`, which may be another bundle's `secrets/token`) is not listed.
  */
-function listInTypeFolder(type: "env" | "secret", config: AkmConfig): Asset[] {
-  const prefix = `${stashDirFor(type)}/`;
-  return listAssets({ sources: resolveSourceEntries(undefined, config), type }).filter(({ conceptId }) =>
+function listSecretsInFolder(config: AkmConfig): Asset[] {
+  const prefix = `${stashDirFor("secret")}/`;
+  return listAssets({ sources: resolveSourceEntries(undefined, config), type: "secret" }).filter(({ conceptId }) =>
     conceptId.startsWith(prefix),
   );
 }
 
 /**
  * Every listed env asset with its key names (never values or comments), for `commands/health` as well as
- * `env list`. `config` defaults to the real `loadConfig()`.
+ * `env list`. An env file is an env asset wherever it sits (`x/env/app.env`), as it is for `env path`, `env run`
+ * and `${ref}` tokens. A file inside a bundle nested in another is listed once, as the nested bundle's.
+ * `config` defaults to the real `loadConfig()`.
  */
 export function listEnvsRecursive(
   config: AkmConfig = loadConfig(),
 ): Array<{ ref: string; path?: string; keys: string[] }> {
-  return listInTypeFolder("env", config).map(({ conceptId, bundle, entry }) => ({
-    ref: makeEnvRef(conceptId, bundle, config),
-    ...(entry.file !== undefined ? { path: entry.file } : {}),
-    keys: scanEnvKeyNames(entry.content()),
-  }));
+  const sources = resolveSourceEntries(undefined, config);
+  const ids = deriveBundleIds(sources);
+  // The folders of a bundle that another bundle is at: what is under them is that bundle's.
+  const nested = sources.map((outer) =>
+    sources
+      .map((inner) => path.relative(outer.path, inner.path))
+      .filter((relative) => relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative))
+      .map((relative) => `${relative.split(path.sep).join("/")}/`),
+  );
+  return listAssets({ sources, type: "env" })
+    .filter(({ bundle, conceptId }) => !nested[ids.indexOf(bundle)]?.some((folder) => conceptId.startsWith(folder)))
+    .map(({ conceptId, bundle, entry }) => ({
+      ref: makeEnvRef(conceptId, bundle, config),
+      ...(entry.file !== undefined ? { path: entry.file } : {}),
+      keys: scanEnvKeyNames(entry.content()),
+    }));
 }
 
 /** Every listed secret, by ref. Its value is not read. */
 export function listSecrets(config: AkmConfig = loadConfig()): Array<{ ref: string; path?: string }> {
-  return listInTypeFolder("secret", config).map(({ conceptId, bundle, entry }) => ({
+  return listSecretsInFolder(config).map(({ conceptId, bundle, entry }) => ({
     ref: makeSecretRef(conceptId, bundle),
     ...(entry.file !== undefined ? { path: entry.file } : {}),
   }));
@@ -214,8 +227,7 @@ function resolveEnvSecretWriteTarget(
   // The file the name is kept in (a link included) must stay in the type's folder; a store keeps no file to look up.
   const { source } = resolved.target;
   const folder = stashDirFor(type);
-  const file =
-    source.location === undefined ? addressOf(source, conceptIdFromTypeName(type, parsed.name)).file : undefined;
+  const file = fileOfRef(source, conceptIdFromTypeName(type, parsed.name));
   if (file !== undefined && folder !== undefined && !isWithin(file, path.join(source.path, folder))) {
     throw new UsageError(
       `${type === "env" ? "Env" : "Secret"} name "${parsed.name}" escapes the ${folder === "env" ? "env" : "secrets"} directory.`,

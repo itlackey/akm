@@ -29,17 +29,16 @@ export const DEFAULT_REMOTE_BATCH_SIZE = 100;
 
 /**
  * Conservative default token budget per HTTP request when the config gives
- * no better number (`maxTokens` — see #956 for why `contextLength`
- * no longer feeds this). #874's measurements:
+ * no better number (`maxTokens`; `contextLength` does not feed
+ * it). Measurements:
  * a batch of 100 small docs (~400 KB, ~100K tokens) took 14.8s against a
  * healthy local endpoint — half the 30s request timeout — and a single
  * 128 KB (~24K token) document alone was rejected by the endpoint as
  * exceeding its context size.
  *
- * Lowered from 8000 to 6000 (#954, field report on beta.1): the 4-chars-
- * per-token estimator undercounts dense technical text by 7-55%, so 8000
- * against an 8192-token llama.cpp embedder regularly landed real requests
- * over the endpoint's context window. 6000 is the value the field confirmed
+ * 6000 rather than 8000: the 4-chars-per-token estimator undercounts dense
+ * technical text by 7-55%, so 8000 against an 8192-token llama.cpp embedder
+ * regularly landed real requests over the endpoint's context window. 6000
  * stops that steady trickle of rejections; `embedBatch`'s run-scoped
  * adaptive budget below still shrinks further, for an endpoint where even
  * this is not enough.
@@ -52,10 +51,10 @@ export function estimateTokenCount(text: string): number {
 }
 
 /**
- * Default per-document embedding cap (`embedding.maxInputTokens`, #956)
+ * Default per-document embedding cap (`embedding.maxInputTokens`)
  * — the materializer truncates a document's embedded text to
  * this cap (head only) instead of skipping it outright, so one oversized
- * entry can no longer fail a whole batch. Fragments are not embedded at all
+ * entry cannot fail a whole batch. Fragments are not embedded at all
  * (only the entry's own search text is), so this is the only lever on how
  * much of a large document contributes to its vector.
  */
@@ -234,9 +233,9 @@ export interface EmbeddingBatchOutcome {
    * "failed": the request/document is being given up on (skipped) —
    * `embeddings` are all `undefined`.
    * "retrying": a request timeout is about to back off and retry the SAME
-   * request once (#954) — nothing has failed or succeeded yet;
+   * request once — nothing has failed or succeeded yet;
    * `embeddings` are all `undefined` and there is nothing to commit.
-   * "budget-lowered" (#954, field report on beta.1): a one-time notice,
+   * "budget-lowered": a one-time notice,
    * fired at most once per `embedBatch` call, that the FIRST context-size
    * rejection of the run has shrunk the effective request budget for every
    * batch not yet dispatched — see {@link RemoteEmbedder.embedBatch}.
@@ -291,10 +290,10 @@ export class ContextExceededError extends Error {
 /**
  * Patterns providers use to report a request too large for the model's
  * context window. `input is too large to process`/`physical batch size`/
- * `ubatch` (#954) cover llama.cpp's own physical-batch
+ * `ubatch` cover llama.cpp's own physical-batch
  * rejection (HTTP 500, e.g. "input is too large to process. increase the
- * physical batch size"), which was previously an unrecognized generic
- * failure — the whole batch was dropped instead of split and retried.
+ * physical batch size"), so the batch is split and retried rather than
+ * dropped.
  */
 const CONTEXT_EXCEEDED_PATTERN =
   /exceed_context_size_error|context size|context length|too many tokens|input is too large to process|physical batch size|ubatch/i;
@@ -322,7 +321,7 @@ export function isContextExceededResponse(status: number, body: string): boolean
  * genuinely serves parallel requests and was left idle by the fixed default.
  * Request SIZE remains the first throughput lever regardless:
  * `embedding.batchSize` (document cap) and `embedding.maxTokens` (request
- * token budget — see #956; `contextLength` no longer feeds it)
+ * token budget; `contextLength` does not feed it)
  * reach a larger batch per request, which is where most of the win is for a
  * single-slot server — a 32-input batch takes about the same wall time as
  * one input against a healthy endpoint.
@@ -380,8 +379,7 @@ export function buildTokenBoundedBatches(texts: readonly string[], tokenBudget: 
 
 /**
  * Shrink factor applied to the effective request budget on the first
- * context-size rejection of an `embedBatch` run (#954, field report on
- * beta.1): one 25% cut absorbs the estimator's measured undercount without
+ * context-size rejection of an `embedBatch` run: one 25% cut absorbs the estimator's measured undercount without
  * repeatedly re-shrinking mid-run — see the "shrink at most once" rule on
  * {@link RemoteEmbedder.embedBatch}.
  */
@@ -389,8 +387,8 @@ const ADAPTIVE_BUDGET_SHRINK_FACTOR = 0.75;
 
 /**
  * Floor on the adaptive-budget shrink above, as a multiple of
- * `maxInputTokens` (#954): a request budget below twice the per-document cap
- * could no longer batch more than one document per request, defeating the
+ * `maxInputTokens`: a request budget below twice the per-document cap
+ * could not batch more than one document per request, defeating the
  * point of batching at all.
  */
 const ADAPTIVE_BUDGET_FLOOR_MULTIPLIER = 2;
@@ -516,7 +514,7 @@ export class RemoteEmbedder implements Embedder {
    * on a small batch rather than always waiting out the full configured
    * `embedding.timeoutMs`.
    *
-   * Run-scoped adaptive budget (#954, field report on beta.1): the FIRST
+   * Run-scoped adaptive budget: the FIRST
    * context-size rejection of the run shrinks the effective request budget
    * by {@link ADAPTIVE_BUDGET_SHRINK_FACTOR} (floored at
    * {@link ADAPTIVE_BUDGET_FLOOR_MULTIPLIER} times `maxInputTokens`) for
@@ -539,13 +537,11 @@ export class RemoteEmbedder implements Embedder {
     const headers = this.buildHeaders();
     const ollamaOpts = resolveOllamaOptions(this.config);
 
-    // #956: `contextLength` is Ollama's `num_ctx` ONLY (see
-    // resolveOllamaOptions below) — it used to double as this client-side
-    // request budget too, so a config author setting it for one purpose
-    // silently changed the other. `maxTokens` is the sole knob for the
-    // request budget now; unset falls back to DEFAULT_TOKEN_BUDGET.
+    // `contextLength` is Ollama's `num_ctx` ONLY (see
+    // resolveOllamaOptions below), not this client-side request budget.
+    // `maxTokens` is the sole knob for the request budget; unset falls back to DEFAULT_TOKEN_BUDGET.
     //
-    // `effectiveTokenBudget` (#954) starts at the configured/default value
+    // `effectiveTokenBudget` starts at the configured/default value
     // and MAY shrink once, on the run's first context-size rejection — see
     // `maybeShrinkBudget` below. `textBatches` is mutated in place (spliced)
     // by that shrink rather than reassigned, so the in-flight

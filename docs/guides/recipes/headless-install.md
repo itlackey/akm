@@ -32,7 +32,7 @@ akm doctor info
 akm search "test"
 
 # 7. Install agent guidance
-akm hints --detail brief >> AGENTS.md
+akm hints >> AGENTS.md
 
 echo "akm setup complete"
 ```
@@ -86,7 +86,7 @@ indexing.
 `indexStats.entryCount` and `semanticSearch.status`; `akm search "<query>"`
 confirms retrieval actually returns results.
 
-**Install agent guidance.** `akm hints --detail brief >> AGENTS.md` appends the
+**Install agent guidance.** `akm hints >> AGENTS.md` appends the
 canonical usage block agents need to discover and use the library. Run this
 after indexing so the guidance matches the installed version.
 

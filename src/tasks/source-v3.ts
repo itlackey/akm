@@ -5,10 +5,9 @@
 /**
  * The prepare seam's document vocabulary.
  *
- * `src` no longer accepts task v3 source — the v3 grammar (`parseTaskV3Yaml`,
+ * `src` does not accept task v3 source — the v3 grammar (`parseTaskV3Yaml`,
  * `parseTaskV3Document`, `classifyTaskV3Uses`, and the GitHub Action locator
- * grammar deleted from classification ahead of this file's own shrink)
- * survives only vendored, frozen, in
+ * grammar) survives only vendored, frozen, in
  * `scripts/akm-migrate/migrate/task-source-v3-frozen.ts` — the ONE place
  * left that reads a v3 document, reachable only through `akm migrate apply`
  * / `akm-migrate`.
@@ -21,10 +20,7 @@
  * family keeps its `TaskV3*` name; only task source v4 reaches this shape
  * now — `src/tasks/source/project-v4.ts`'s `projectTaskSourceV4()` is the only
  * producer.
- *
- * The workflow-side trigger classifier that used to live here
- * (`classifyTaskV3Triggers`) went with the GitHub-shaped workflow format.
- */
+ * */
 
 import type { ParsedBuiltinCommandAction } from "../commands/command/builtin-action";
 import type { ExecutionJsonObject } from "../execution/json";

@@ -5,8 +5,7 @@
 /**
  * Plain-text renderers for `akm workflow *` commands.
  *
- * Split out of `helpers.ts` (formerly 1418 lines / 59 fns) as its own
- * sibling module: the workflow list/status/run/create/resume renderers form a
+ * A sibling module of `helpers.ts`: the workflow list/status/run/create/resume renderers form a
  * cohesive, self-contained cluster (they call only each other, never
  * formatters from other domains).
  */

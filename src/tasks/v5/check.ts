@@ -13,11 +13,11 @@
  * and tasks that run each other in a loop.
  */
 
-import fs from "node:fs";
 import path from "node:path";
 import { resolveEnvBinding } from "../../commands/env/env-binding";
 import { assertWorkingFolderCanBeMade } from "../../commands/env/injection";
-import { parseBundleRef } from "../../core/asset/asset-ref";
+import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import type { Asset } from "../../core/assets/read";
 import { loadConfig } from "../../core/config/config";
 import { resolveSecretPath } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
@@ -34,6 +34,7 @@ import { scriptProgram } from "../frozen-script";
 import { resolveBundleAsset } from "../run/load-task";
 import { parseTaskSource } from "../source/parse-task-source";
 import { TASK_V5_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
+import { requireAssetIn } from "../task-ref";
 import { readTaskV5Options, type TaskSourceV5Document, type TaskV5Options, type TaskV5RefKind } from "./source";
 
 /** The flags of a start that are checked as the same options are in a task file. */
@@ -50,6 +51,8 @@ export interface TaskV5StartFlags {
 export interface TaskV5Bundle {
   readonly name: string;
   readonly dir: string;
+  /** The adapter that reads the folder, for one no config names (a scratch copy of a bundle). Absent: its own. */
+  readonly adapterId?: string;
 }
 
 export interface TaskV5CheckInput {
@@ -117,7 +120,7 @@ async function checkTask(
       "TASK_SOURCE_INVALID",
     );
   }
-  const parsed = parseTaskSource({ yaml: fs.readFileSync(found.file, "utf8"), filePath: found.file });
+  const parsed = parseTaskSource({ yaml: found.asset.entry.content(), filePath: found.file });
   if (parsed.version === 4) {
     throw new UsageError(
       `Invalid task source v5 at ${where}: ${ref} is a version 4 task, and a version 5 task does not run one. Run \`akm migrate apply\` to convert it.`,
@@ -147,27 +150,41 @@ async function checkTask(
     }
     const asset = await locateTaskV5Asset(found.bundle, target, step.kind, at);
     if (step.kind === "scripts") {
-      scriptProgram(target, asset.file, []);
+      scriptProgram(target, asset.asset, []);
     }
   }
   return document;
 }
 
-/** The file a ref names, in the bundle it is read from, and that bundle. A ref that names nothing is refused. */
+/** The asset (and its file, for messages) a ref names, in the bundle it is read from, and that bundle. A ref that names nothing is refused. */
 export async function locateTaskV5Asset(
   bundle: TaskV5Bundle,
   ref: string,
   kind: TaskV5RefKind,
   where: string,
-): Promise<{ file: string; bundle: TaskV5Bundle }> {
+): Promise<{ file: string; asset: Asset; bundle: TaskV5Bundle }> {
   const parsed = parseBundleRef(ref);
   const name = parsed.conceptId.slice(parsed.conceptId.indexOf("/") + 1);
   const type = ASSET_TYPE[kind];
   const owner = parsed.bundle ?? bundle.name;
   try {
-    if (owner === bundle.name) return { file: await resolveAssetPath(bundle.dir, type, name), bundle };
-    const found = resolveBundleAsset(loadConfig(), { bundle: owner, type, name });
-    return { file: found.file, bundle: { name: owner, dir: found.bundleRoot } };
+    const placed: { file: string; bundle: TaskV5Bundle } =
+      owner === bundle.name
+        ? { file: await resolveAssetPath(bundle.dir, type, name), bundle }
+        : (() => {
+            const found = resolveBundleAsset(loadConfig(), { bundle: owner, type, name });
+            return { file: found.file, bundle: { name: owner, dir: found.bundleRoot } };
+          })();
+    // What the asset holds is read through its bundle's adapter, by its ref.
+    const asset = requireAssetIn(
+      {
+        name: owner,
+        path: placed.bundle.dir,
+        ...(placed.bundle.adapterId !== undefined ? { adapterId: placed.bundle.adapterId } : {}),
+      },
+      makeBundleRef(owner, parsed.conceptId),
+    );
+    return { ...placed, asset };
   } catch (cause) {
     throw inContext(where, cause);
   }

@@ -333,14 +333,17 @@ function rootOfTaskFile(roots: readonly TaskFileRoot[], filePath: string): TaskF
 
 /**
  * A folder shaped like the root, for a check: its other folders are the root's own, and its tasks folder holds each
- * task by a link to the file, except the ones in `replaced`, which hold the bytes they are to be given.
+ * task as a copy of the file, except the ones in `replaced`, which hold the bytes they are to be given.
  */
 /** Build the overlay; returns the real tasks directory its `tasks/` stands for. */
 function overlayOf(root: TaskFileRoot, overlay: string, replaced: ReadonlyMap<string, Buffer>): string {
   const tasksDir = root.layout === "akm-task" ? root.root : path.join(root.root, "tasks");
   for (const entry of fs.readdirSync(root.root)) {
-    if (root.layout !== "akm-task" && entry !== "tasks")
-      fs.symlinkSync(path.join(root.root, entry), path.join(overlay, entry));
+    // Copied (links as links, so a dangling or looping one is copied as it is): the check reads the overlay through its
+    // bundle's adapter, which does not follow a link out of it.
+    if (root.layout !== "akm-task" && entry !== "tasks" && !entry.startsWith(".") && entry !== "node_modules") {
+      fs.cpSync(path.join(root.root, entry), path.join(overlay, entry), { recursive: true, verbatimSymlinks: true });
+    }
   }
   const copy = (from: string, to: string): void => {
     fs.mkdirSync(to, { recursive: true });
@@ -349,7 +352,14 @@ function overlayOf(root: TaskFileRoot, overlay: string, replaced: ReadonlyMap<st
       const source = path.join(from, entry.name);
       if (entry.isDirectory()) copy(source, path.join(to, entry.name));
       else if (replaced.has(source)) fs.writeFileSync(path.join(to, entry.name), replaced.get(source) as Buffer);
-      else fs.symlinkSync(source, path.join(to, entry.name));
+      else {
+        try {
+          fs.copyFileSync(source, path.join(to, entry.name));
+        } catch (error) {
+          // A link that leads nowhere holds no task.
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
     }
   };
   copy(tasksDir, path.join(overlay, "tasks"));
@@ -389,7 +399,8 @@ export async function checkConvertedTaskFiles(
           try {
             await checkTaskV5({
               ref: taskRefOf(root, file.filePath),
-              bundle: { name: root.bundleId, dir: overlay },
+              // The overlay is shaped as an `akm` bundle whatever the root is: its `tasks/` folder holds the tasks.
+              bundle: { name: root.bundleId, dir: overlay, adapterId: "akm" },
             });
           } catch (cause) {
             failed.set(file.filePath, real(cause instanceof Error ? cause.message : String(cause)));

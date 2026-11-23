@@ -4,11 +4,10 @@
 
 /** The refs an improve run may consider, read from the index, and the small predicates over them. */
 
-import fs from "node:fs";
 import path from "node:path";
 import { parseBundleRef } from "../../core/asset/asset-ref";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef, resolveRef } from "../../core/asset/resolve-ref";
+import { findAsset } from "../../core/assets/read";
 import { closestMatch } from "../../core/closest-match";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -33,6 +32,7 @@ import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-
 import { SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
 import { isDistillRefusedInputType } from "./distill";
 import { isStrategyFilteredForAllPasses } from "./improve-strategies";
+import { indexedAsset, plannedAsset } from "./indexed-asset";
 import { parseMemoryRef } from "./memory/derived-ref";
 
 type Scope = { mode: "all" | "type" | "ref"; value?: string };
@@ -103,7 +103,7 @@ export function resolveImproveScope(scope: string | undefined, isIndexedRef?: (r
     parsePlacementRef(trimmed);
     return { mode: "ref", value: trimmed };
   } catch (err) {
-    // A bare word is a `--scope <type>` filter (an unknown type matches
+    // A bare word is a type scope (an unknown type matches
     // nothing), unless it is no type and an indexed asset has it as its ref (a
     // file at the bundle root): then it names that asset, the way a missed ref
     // is retried. A ref-shaped value that fails to parse is a real error.
@@ -112,11 +112,11 @@ export function resolveImproveScope(scope: string | undefined, isIndexedRef?: (r
       return { mode: asRef ? "ref" : "type", value: trimmed };
     }
     const message = err instanceof Error ? err.message : String(err);
-    throw new UsageError(`Invalid --scope "${trimmed}": ${message}`, "INVALID_FLAG_VALUE");
+    throw new UsageError(`Invalid scope "${trimmed}": ${message}`, "INVALID_FLAG_VALUE");
   }
 }
 
-/** Whether `word` is an indexed asset's ref and no indexed asset's type: a `--scope` naming a file at the bundle root. */
+/** Whether `word` is an indexed asset's ref and no indexed asset's type: a scope naming a file at the bundle root. */
 export function namesIndexedRootAsset(word: string): boolean {
   let db: Database | undefined;
   try {
@@ -261,7 +261,7 @@ async function collectEligibleRefsFromIndex(
         );
       }
       const indexed = entriesByItemRef.get(`${resolved.bundle}//${resolved.conceptId}`);
-      if (!indexed?.bundleId || !indexed.conceptId || !fs.existsSync(indexed.filePath)) {
+      if (!indexed?.bundleId || !indexed.conceptId || !indexedAsset(indexed.bundleId, indexed.conceptId)) {
         if (await findAssetFilePath(scope.value, stashDir)) return empty(ready);
         throw new NotFoundError(`Asset not found in the selected writable source: ${scope.value}`, "ASSET_NOT_FOUND");
       }
@@ -342,16 +342,16 @@ function warnUnmatchedTypeScope(value: string, indexed: ReturnType<typeof getAll
   warn(`Scope "${value}" matches no asset in the stash.${suggestion ? ` Did you mean \`${suggestion}\`?` : ""}`);
 }
 
-/** The parent memory a `--scope <memory ref>` cleanup is restricted to. */
+/** The parent memory a memory-ref scope cleanup is restricted to. */
 export function memoryCleanupParentRef(scope: Scope, stashDir?: string): string | undefined {
   if (scope.mode !== "ref" || !scope.value) return undefined;
   const parsed = scopePlacement(scope.value);
   if (parsed?.type !== "memory") return undefined;
   if (!parsed.name.endsWith(".derived")) return conceptIdFromTypeName(parsed.type, parsed.name);
   for (const source of resolveSourceEntries(stashDir)) {
-    const candidate = path.join(source.path, "memories", `${parsed.name}.md`);
-    if (!fs.existsSync(candidate)) continue;
-    const fm = parseFrontmatter(fs.readFileSync(candidate, "utf8")).data;
+    const held = findAsset(conceptIdFromTypeName("memory", parsed.name), { sources: [source], quiet: true });
+    if (!held) continue;
+    const fm = held.entry.frontmatter() ?? {};
     const parent = parseMemoryRef(typeof fm.source === "string" ? fm.source : undefined);
     if (parent) return parent;
   }
@@ -359,17 +359,21 @@ export function memoryCleanupParentRef(scope: Scope, stashDir?: string): string 
 }
 
 /** Should this ref enter the distill queue? Types distill refuses never do. */
-export function isDistillCandidateRef(planned: Pick<ImproveEligibleRef, "ref" | "type" | "filePath">): boolean {
+export function isDistillCandidateRef(
+  planned: Pick<ImproveEligibleRef, "ref" | "type" | "filePath" | "itemRef">,
+  stashDir?: string,
+): boolean {
   if (isDistillRefusedInputType(planned.type)) return false;
-  return shouldDistillMemoryRef(planned);
+  return shouldDistillMemoryRef(planned, stashDir);
 }
 
 /** A non-derived memory that is not marked `quality: proposed`. */
-export function shouldDistillMemoryRef(planned: Pick<ImproveEligibleRef, "ref" | "type" | "filePath">): boolean {
+export function shouldDistillMemoryRef(
+  planned: Pick<ImproveEligibleRef, "ref" | "type" | "filePath" | "itemRef">,
+  stashDir?: string,
+): boolean {
   if (planned.type !== "memory") return false;
-  if (planned.filePath && fs.existsSync(planned.filePath)) {
-    if (parseFrontmatter(fs.readFileSync(planned.filePath, "utf8")).data.quality === "proposed") return false;
-  }
+  if (planned.filePath && plannedAsset(planned, stashDir)?.entry.frontmatter()?.quality === "proposed") return false;
   return !planned.ref.endsWith(".derived");
 }
 
@@ -384,7 +388,7 @@ export function shouldAnalyzeMemoryCleanup(
   return scope.value ? scopePlacement(scope.value)?.type === "memory" : false;
 }
 
-/** The placement a `--scope` ref spells; undefined for a bundle-root ref, which no type folder heads. */
+/** The placement a scope ref spells; undefined for a bundle-root ref, which no type folder heads. */
 function scopePlacement(value: string): AssetRef | undefined {
   try {
     return parsePlacementRef(value);

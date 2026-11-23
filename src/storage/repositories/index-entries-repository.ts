@@ -98,6 +98,8 @@ export function upsertEntry(
     const result = stmts.upsert.get(
       provenance.itemRef,
       provenance.bundleId,
+      // component_id (dropped in 0.11) holds the bundle id.
+      provenance.bundleId,
       provenance.conceptId,
       provenance.adapterId,
       entry.type,
@@ -189,7 +191,7 @@ function getUpsertStmts(db: Database): UpsertStmts {
         item_ref, bundle_id, component_id, concept_id, adapter_id, type,
         file_path, content_hash, document_json, derived_from, embed_hash
       )
-      VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(item_ref) DO UPDATE ${UPSERT_SET_CLAUSE}
       RETURNING id
     `),
@@ -380,8 +382,8 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
     } else deleteFtsEntries(db, [row.id]);
   })();
 
-  // Re-point usage history at the new ref. Chunk-8 WI-8.3: usage_events lives in
-  // state.db now, so this is a SEPARATE cross-DB transaction (best-effort — the
+  // Re-point usage history at the new ref. usage_events lives in
+  // state.db, so this is a SEPARATE cross-DB transaction (best-effort — the
   // rename itself already committed above; on failure the next full index's
   // relinkUsageEvents re-attaches by ref). See the docstring for the spellings
   // and the live-asset-wins collision policy.
@@ -535,17 +537,20 @@ export function deleteEntriesOutsideLibrary(
   })();
 }
 
-/**
- * The `file_path` of every entry indexed under one bundle — used by
- * `akm bundle rename` (D6) to find bundle CONTENT that still spells the old
- * `<bundle>//` prefix (xrefs, `supersededBy`, task `uses:`), which the rename
- * reports rather than rewrites.
- */
-export function getFilePathsByBundle(db: Database, bundleId: string): string[] {
-  const rows = db.prepare("SELECT DISTINCT file_path FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{
+/** The ref and file of each indexed file of a bundle, one entry per file, in the order of the rows. */
+export function getRefsAndFilesByBundle(db: Database, bundleId: string): Array<{ ref: string; filePath: string }> {
+  const rows = db.prepare("SELECT file_path, item_ref FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{
     file_path: string;
+    item_ref: string;
   }>;
-  return rows.map((row) => row.file_path);
+  const seen = new Set<string>();
+  const found: Array<{ ref: string; filePath: string }> = [];
+  for (const row of rows) {
+    if (seen.has(row.file_path)) continue;
+    seen.add(row.file_path);
+    found.push({ ref: row.item_ref, filePath: row.file_path });
+  }
+  return found;
 }
 
 /**
@@ -570,7 +575,7 @@ export function renameEntriesBundleId(db: Database, oldBundleId: string, newBund
  * Diff-persist orphan delete: remove every entry under `dirPath` whose durable
  * `item_ref` is not in `keepRefs`.
  *
- * Replaces the old per-dir `deleteEntriesByDir` + full re-insert: the caller
+ * Unlike a per-dir delete + full re-insert, the caller
  * upserts the current file set first (ON CONFLICT preserving `entries.id`, so
  * embeddings / utility / usage stay attached to unchanged rows), then calls this
  * to prune only the departed rows. The net row-state for the directory is identical
@@ -742,7 +747,7 @@ export function getEntryCount(db: Database): number {
 /**
  * Per-asset-type entry counts (keyed by `type`, e.g. "skill",
  * "knowledge", "memory"). Used by `akm info` to break down the aggregate
- * `indexStats.entryCount` (R-057).
+ * `indexStats.entryCount`.
  */
 export function getEntryCountByType(db: Database): Record<string, number> {
   const rows = db.prepare("SELECT type, COUNT(*) AS cnt FROM entries GROUP BY type").all() as Array<{
@@ -882,7 +887,7 @@ export function getIndexedBundleIdsByDir(db: Database, dirPath: string): string[
  * Resolve a single `entries.id` by exact `file_path` (the canonical on-disk
  * path), or `undefined` if no row matches.
  *
- * Lifted verbatim (WS5) from the inline `SELECT id FROM entries WHERE
+ * Lifted verbatim from the inline `SELECT id FROM entries WHERE
  * file_path = ? LIMIT 1` in commands/search.ts so all `entries` SQL lives in
  * this module. The result is a plain number materialised before return —
  * nothing lazy crosses a connection boundary.
@@ -914,7 +919,7 @@ export function getIndexedFilePaths(db: Database): Set<string> {
  * Resolve a single `entries.file_path` by primary key, or `undefined` if no
  * row matches.
  *
- * Lifted verbatim (WS5) from the inline `SELECT file_path FROM entries WHERE
+ * Lifted verbatim from the inline `SELECT file_path FROM entries WHERE
  * id = ?` in commands/feedback-cli.ts. Unlike {@link getEntryById}, this does
  * NOT parse `document_json`, so a row with corrupt JSON still yields its path —
  * preserving feedback-cli's pre-extraction behaviour byte-for-byte.
@@ -939,7 +944,7 @@ export function getEntryByRef(db: Database, ref: string): { id: number } | null 
  * A snapshot of every `item_ref` currently in `entries`, for batched liveness
  * checks against many candidate refs — one query instead of one
  * `getEntryByRef` round trip per candidate (the orphan-state GC pass,
- * `loop-stages.ts` `runOrphanStateGcPass`/`isStateRefLive`, used to probe each
+ * `loop-stages.ts` `runOrphanStateGcPass`/`isStateRefLive`, would otherwise probe each
  * pending row individually). `conceptIds` holds the part of each `item_ref`
  * after its bundle prefix, for the bare-conceptId suffix match
  * `findEntryIdByBundleRef` does when a ref carries no bundle — bundle slugs
@@ -1005,8 +1010,8 @@ function resolveUsageEventEntryId(db: Database, ref: string): number | undefined
  * After a full rebuild, entry IDs change. This restores each event's link
  * using the stable `entry_ref` column so usage history survives a reindex.
  *
- * Cross-DB (Chunk-8 WI-8.3): `usage_events` lives in `stateDb` while `entries`
- * lives in `indexDb`. The stale-id null-out (formerly a single-DB
+ * Cross-DB: `usage_events` lives in `stateDb` while `entries`
+ * lives in `indexDb`. The stale-id null-out (not a single-DB
  * `NOT IN (SELECT id FROM entries)`) is done in two bounded passes — the set of
  * distinct linked entry_ids in usage_events is small — and the re-resolution
  * reads `entries` from `indexDb`.

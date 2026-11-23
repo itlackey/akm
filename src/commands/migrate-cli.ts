@@ -82,7 +82,7 @@ export const migrateCommand = defineGroupCommand({
         "dry-run": {
           type: "boolean",
           default: false,
-          description: "Run the same eligibility checks without mutation.",
+          description: "Deprecated: use `akm migrate status`. Run the same eligibility checks without mutation.",
         },
       },
       run({ args }) {

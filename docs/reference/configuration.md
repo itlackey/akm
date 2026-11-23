@@ -530,6 +530,8 @@ calls use: for each kind of work, the connection or harness and the model.
 
 ## Workflows
 
+Workflows are Deprecated and removed in 0.11 (see [STABILITY.md](../../STABILITY.md)); their settings are read through 0.10.
+
 `workflow.maxConcurrency` is the ceiling on units a workflow run executes at
 once. An explicit value is clamped to `1..64`. When absent, akm derives it once
 from the CPU count (`min(16, max(1, cores - 2))`) and freezes it into the run
@@ -929,18 +931,44 @@ and `defaultBundle` are the 0.9 source configuration shape — see
 [Concepts](../guides/concepts.md) and the [CLI reference](cli.md) for the
 full bundle model (`path`, `git`, `website`, `npm`, `location`, `writable`,
 `registryId`, `adapter`, `root`, `lint`). A bundle carries exactly one of `path`,
-`git`, `website`, `npm` and `location`. `location` is where the bundle's `adapter`
-finds a bundle that is not a directory (it needs `adapter`): a keyring
-(`secret-tool`) or an Azure Key Vault (`azure-key-vault`), see
-[Environment & Secrets](env-and-secrets.md#secrets-kept-by-a-secret-manager).
-An adapter that reads a store needs a `location` and a directory adapter cannot have
-one; a bundle that breaks this is a config error, which `akm config set` refuses.
-`defaultBundle` must name a key in `bundles` when set. A
-bundle's `adapter` key pins it to a specific format adapter
-instead of relying on auto-detection. `root` (a `path` or `git` bundle) is the content
-root inside the bundle. The retired `components` map is read as these keys, with a
-warning, and `akm migrate apply` rewrites the file — see [Bundle Types](bundle-types.md)
-for the full adapter list and what each one reads/writes.
+`git`, `website`, `npm` and `location`.
+
+```json
+"bundles": {
+  "main":    { "path": "~/akm", "adapter": "akm", "writable": true },
+  "skills":  { "git": "https://example.com/skills.git", "root": "skills", "adapter": "agent-skills" },
+  "keyring": { "adapter": "secret-tool", "location": "akm" },
+  "vault":   { "adapter": "azure-key-vault", "location": "team-vault" }
+}
+```
+
+| Key | Purpose |
+| --- | --- |
+| `adapter` | The id of the [adapter](../architecture/adapters.md) that reads the bundle (`akm`, `okf`, `secret-tool`, ...). Without it, akm detects one from the bundle's content. An unknown id is a config error that names the valid ones. |
+| `root` | The content root inside the bundle. Only with `path` or `git`. |
+| `writable` | The one writability key. Default: `true` for a local `path` and for `location`, `false` for the rest. |
+| `location` | Where the adapter finds a bundle that is not a directory: a keyring's or a Key Vault's name. It needs `adapter`. |
+
+`location` names a keyring (`secret-tool`) or an Azure Key Vault
+(`azure-key-vault`); see
+[Environment & Secrets](env-and-secrets.md#secrets-kept-by-a-secret-manager) for
+how each is found, unlocked and used. An adapter that reads a store needs a
+`location` and a directory adapter cannot have one; a bundle that breaks this is
+a config error, which `akm config set` refuses and `akm doctor` reports.
+`akm bundle add <location> --adapter <id>` writes the `location`.
+`akm bundle list` shows each bundle's `adapter` and whether it was `detected`,
+and `status.exists` comes from the adapter: whether the directory, keyring or
+vault is there.
+
+`defaultBundle` must name a key in `bundles` when set. A bundle's `adapter` key
+pins it to a specific format adapter instead of relying on auto-detection.
+`root` (a `path` or `git` bundle) is the content root inside the bundle. The
+retired `components` map is read as these keys, with a warning, and
+`akm migrate apply` rewrites the file; `akm config set
+bundles.<name>.components.*` is refused, naming `bundles.<name>.adapter`, `root`
+and `writable`. See [Bundle Types](bundle-types.md) for the full adapter list
+and what each one reads and writes.
+<!-- 4e.1: a config entry without `adapter` is resolved once at config load and never probed at call time; the implicit stash and AKM_BUNDLE_DIR become in-memory bundles -->
 
 A bundle entry also carries the lint policy for its own files:
 
@@ -1059,7 +1087,7 @@ it. Scheduling lives in the tasks subsystem (`akm task`).
 
 ## Experimental opt-ins
 
-`experimental` holds explicit opt-ins for behavior outside the 0.9
+`experimental` holds explicit opt-ins for behavior outside the
 stability contract (see [STABILITY.md](../../STABILITY.md) for full
 classification). Every key defaults to **off**; an absent `experimental`
 section, an absent key, and an explicit `false` all read identically as off.
@@ -1121,7 +1149,7 @@ the file, so the strategy engine sees the one shape it always read. The old
 - The key adds no behavior by itself. An absent `experimental.learning` leaves
   every default as it was, and it does not gate `experimental.improveAutonomy`.
 
-Owner decisions on the classification of each learning control (2026-11-12):
+Classification of each learning control:
 
 | Control | Decision |
 | --- | --- |
@@ -1299,15 +1327,18 @@ akm config diff fleet//config/shared.json
 | --- | --- |
 | `AKM_CONFIG_FILE` | Select a config file; `--config` wins. Children inherit its absolute path, including native rows written by `task sync`. Credentials and `models.json` stay in the default config directory. An empty value is warned about once and ignored. Does not change data, state, cache, or bundle locations. |
 | `AKM_CONFIG_DIR` | Override the user config directory (or set `XDG_CONFIG_HOME`); used when no file selector is set |
-| `AKM_BUNDLE_DIR` | Override the bundle directory |
+| `AKM_BUNDLE_DIR` | Deprecated, stays retired in 0.11: register the bundle and select `defaultBundle`. Overrides the bundle directory |
 | `AKM_DATA_DIR` | Override the data directory — `index.db`, durable `state.db`, and `akm.lock` (or set `XDG_DATA_HOME`) |
 | `AKM_CACHE_DIR` | Override the cache directory — regenerable caches (or set `XDG_CACHE_HOME`) |
 | `AKM_STATE_DIR` | Override the state directory — the scheduler lock and, per bundle, `akm improve`'s whole-run lock (or set `XDG_STATE_HOME`) |
 | `AKM_SQLITE_JOURNAL_MODE` | Deprecated, no replacement; removed in 0.11. SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE` |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror; replaces `registry.npmjs.org` for npm bundle resolution |
-| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm doctor info` and the `egress-endpoints` health advisory still show the configured list (prefix an entry with `<provider>::` to choose a provider) |
-| `AKM_VERBOSE` | Truthy value enables the same diagnostics as `--verbose` |
-| `AKM_DEBUG` | `1` prints a stack trace on unexpected internal errors |
+| `AKM_REGISTRY_URL` | Deprecated; migrate the selection to config. Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm doctor info` and the `egress-endpoints` health advisory still show the configured list (prefix an entry with `<provider>::` to choose a provider) |
+| `AKM_VERBOSE` | Deprecated: use `--verbose`. A truthy value enables the same diagnostics |
+| `AKM_DEBUG` | Deprecated: use `--verbose`. `1` prints a stack trace on unexpected internal errors |
+| `AKM_UPGRADE_SKIP_CHECKSUM` | Deprecated, removed in 0.11: use `akm upgrade --skip-checksum` |
+| `AKM_EVENT_SOURCE` | `user`, `agent`, `task`, `improve` or `audit` marks the provenance of the commands a process runs (usage events and CLI usage counts); akm sets it for the programs it runs for a task. Anything else means `unknown` |
+| `AKM_TASK_STATE` | Experimental. Path of the JSON state file of a version 5 task run; akm sets it for a step it runs as a process and does not read it |
 
 `AKM_SQLITE_JOURNAL_MODE` is Deprecated, has no replacement and is removed in
 0.11. AKM uses WAL and, on its own, falls back to `DELETE` when the data

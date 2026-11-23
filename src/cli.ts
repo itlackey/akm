@@ -130,7 +130,7 @@ import { feedbackCommand } from "./commands/feedback-cli";
 import { akmHealth } from "./commands/health";
 import { doctorMetricsCommand } from "./commands/metrics/usage-cli";
 import { akmTasksDoctor } from "./commands/tasks/tasks";
-import { allowAdapterPrompts, clearAdapterCaches } from "./core/assets/gate";
+import { clearAdapterCaches } from "./core/assets/gate";
 import { closestMatch } from "./core/closest-match";
 import { explainedByReaderGone, isTerminal, stdout } from "./core/stdio";
 import "./commands/health/renderers";
@@ -627,7 +627,7 @@ const hintsCommand = defineCommand({
     detail: {
       type: "string",
       description:
-        "Hints detail level (brief|normal|full). `brief` (default) prints the short guide; `normal`/`full` print the complete guide.",
+        "Hints detail level (brief|normal|full). `brief` (default) prints the short guide; `normal`/`full` print the complete guide (Deprecated, removed in 0.11).",
       default: "brief",
     },
   },
@@ -744,7 +744,7 @@ function commandHelpTopic(name: string, command: AnyCittyCommand): AnyCittyComma
 // `migrate` is excluded here even though it's a normal, now-visible SYSTEM
 // command (see HELP_SECTIONS below): `help`'s own `migrate` subcommand
 // (registered below) intentionally shadows this generic command-usage
-// renderer with release-notes lookup instead — `akm help migrate 0.9.0`
+// renderer with release-notes lookup instead — `akm help migrate <version>`
 // prints migration guidance, not `migrate`'s own `--help` usage block. That
 // usage block is still reachable directly via `akm migrate --help`.
 const commandHelpTopics = Object.fromEntries(
@@ -876,7 +876,7 @@ export function shouldBypassConfigStartup(invocation: ParsedInvocation): boolean
   // `help` and `hints` are pure-text surfaces (bundled release notes, static
   // agent-guide text, command usage rendered from `meta` alone) — none of
   // their run bodies read config. The documented recovery path
-  // (`akm help migrate 0.9.0`) is only ever run against a config that
+  // (`akm help migrate <version>`) is only ever run against a config that
   // startup's own load would reject, so both must bypass it the same way
   // `setup`/`migrate` do, or the recovery instructions are themselves
   // unreachable.
@@ -1363,8 +1363,6 @@ export function requestsHelp(invocation: ParsedInvocation): boolean {
 async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
   // What an adapter read of a keyring or vault lives for one command: a run in this process after another reads afresh.
   clearAdapterCaches();
-  // Only a person at a terminal is asked to unlock a keyring; a hook, CI, Desktop or any other host is never asked.
-  allowAdapterPrompts(isTerminal(2));
   // Resolve output mode once at startup from the invocation's own tokens and persisted
   // config. All subsequent output() calls read from this in-memory singleton.
   // `initOutputMode` can throw a UsageError when --format/--detail values are

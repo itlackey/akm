@@ -45,21 +45,21 @@ export interface ManagedDbSpec {
  * apply standard pragmas, then run the schema initializer. The single home for
  * the open→pragmas→migrate recipe.
  *
- * ── On file permissions (reverted, issue #791) ──
+ * ── On file permissions ──
  *
- * This function briefly chmodded the database, its `-wal`/`-shm` sidecars, and
- * THE CONTAINING DIRECTORY to owner-only on every open (#756). That was a
- * mistake and is deliberately not coming back:
+ * This function does not chmod the database, its `-wal`/`-shm` sidecars, or
+ * THE CONTAINING DIRECTORY, deliberately:
  *
- *   - It mutated state akm did not create. The data directory belongs to the
- *     operator; a read of the index is not consent to re-permission their disk.
- *   - It ran on the most-traveled path in the CLI, including `create: false`
- *     (read-only) opens, so any command at all silently converted a legacy
- *     `0755` directory to `0700` with no prompt, warning, or migration note.
- *   - It therefore broke installs that share `$XDG_DATA_HOME` across uids —
- *     agent sandboxes, containers, service accounts — which worked in 0.9.0.
- *     Worse, the read path answers an unreadable index with a false
- *     "No search index available" at exit 0 rather than an error (#791).
+ *   - Changing modes would mutate state akm did not create. The data directory
+ *     belongs to the operator; a read of the index is not consent to
+ *     re-permission their disk.
+ *   - This is the most-traveled path in the CLI, including `create: false`
+ *     (read-only) opens, so a chmod would silently convert a `0755` directory
+ *     to `0700` with no prompt, warning, or migration note.
+ *   - It would break installs that share `$XDG_DATA_HOME` across uids —
+ *     agent sandboxes, containers, service accounts. Worse, the read path
+ *     answers an unreadable index with a false "No search index available" at
+ *     exit 0 rather than an error.
  *
  * Files akm creates here get the process umask, which is the operator's lever
  * for this and always was. akm neither sets these modes nor reports on them.
@@ -80,11 +80,10 @@ export function openManagedDatabase(spec: ManagedDbSpec): Database {
     // fails; closing rolls it back and releases its writer lock.
     //
     // `db.inTransaction` is INSIDE the try: reading it on an already-closed
-    // handle throws "Database has closed", and it used to sit outside, so that
-    // throw escaped and replaced `error` — masking the real initializer failure
-    // this whole block exists to preserve. Every other step here was already
-    // guarded for exactly that reason; this one was not, and a concurrent
-    // close (WAL contention between two writers) reached it.
+    // handle throws "Database has closed", so it must not sit outside: that
+    // throw would escape and replace `error`, masking the real initializer
+    // failure this whole block exists to preserve. A concurrent close (WAL
+    // contention between two writers) can reach it.
     try {
       if (db.inTransaction) db.exec("ROLLBACK");
     } catch {

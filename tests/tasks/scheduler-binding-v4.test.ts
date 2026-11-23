@@ -38,7 +38,7 @@ describe("compileTaskSchedulerBindings — activation is external to task source
       source: "akm.schedule",
       ordinal: 0,
       enabled: true,
-      invocation: ["task", "run", "nightly", "--bundle", "team", "--scheduled"],
+      invocation: ["task", "run", "team//tasks/nightly", "--scheduled"],
     });
   });
 });

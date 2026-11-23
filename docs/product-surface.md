@@ -20,7 +20,7 @@ command, are in [STABILITY.md](../STABILITY.md).
 
 ## Capture
 
-- [Remember, import, clone](guides/capture-knowledge.md). *Stable*
+- [Remember, import, clone](guides/capture-knowledge.md). *Stable*; `clone` is Deprecated (use `akm import <ref> --asset-ref`) and removed in 0.11
 - Feedback: rate an asset or attach a fix. *Stable*
 - Lessons. *Experimental*
 
@@ -31,17 +31,19 @@ command, are in [STABILITY.md](../STABILITY.md).
 - Automatic acceptance by the triage judgment tier (opt-in): `experimental.improveAutonomy` with `processes.triage.judgment` on. The `default` strategy's triage accepts proposals a quality judge passed without it. *Experimental*
 - `akm proposal drain --promote`: accept the proposals a quality judge passed. *Evolving*
 - Session extraction. *Evolving*
+- `akm rules`: the rules that apply in a project. *Experimental*
 
 ## Monitor
 
-- Health. *Evolving*
-- Metrics. *Experimental*
-- Log, lint. *Evolving*
+- `akm doctor` (health, info, log, prompt, judge, scheduler, explain). *Evolving*
+- `akm doctor metrics`: report content is *Experimental*; `doctor metrics usage --export` is stable. `akm health`, `metrics`, `info` and `log` are Deprecated, removed in 0.11
+- Lint. *Evolving*
 
 ## Run work
 
 - [Tasks and scheduling](guides/scheduling.md). *Evolving*
-- [Workflows](guides/run-workflows.md). *Experimental*
+- Task source v5 (`version: 5-beta.1`) and `akm exec` (off until `experimental.exec`). *Experimental*
+- [Workflows](guides/run-workflows.md). *Deprecated*, removed in 0.11 (tasks with ordered steps replace them)
 - Agent dispatch (`akm run` on agent and command refs) and harnesses (Claude Code, Codex, OpenCode and others). *Evolving*
 - Model aliases (`akm models`). *Evolving*
 
@@ -53,4 +55,4 @@ command, are in [STABILITY.md](../STABILITY.md).
 ## Setup and maintenance
 
 - Install, setup, info, config, help, completions. *Stable*
-- Upgrade, including agent plugins and `--next`. *Stable*
+- Upgrade, including agent plugins and `--channel`. *Stable*; `--next` is Deprecated

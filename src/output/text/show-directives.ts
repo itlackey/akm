@@ -5,12 +5,9 @@
 /**
  * `akm show` agent-directive emission.
  *
- * Extracted from `formatShowPlain` (formerly the largest function in
- * `helpers.ts`): once the base show content is assembled, this module
+ * Called from `formatShowPlain`: once the base show content is assembled, this module
  * appends the REC-01/REC-09 APPLY / show-loop / workflow-active directive
  * blocks that tell the calling agent how to act on the rendered asset.
- * Directive strings are byte-identical to the pre-extraction version —
- * only the seam moved.
  */
 
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
@@ -25,7 +22,7 @@ export function appendShowDirectives(lines: string[], r: Record<string, unknown>
   // REC-01 / REC-09: Append a type-specific directive so agents apply the
   // content rather than substituting training-data approximations.
   const assetType = typeof r.type === "string" ? r.type : null;
-  // 0.9.0 (Q-02 / R-002): the retired `type:name` colon grammar is gone —
+  // the retired `type:name` colon grammar is gone —
   // build the slash conceptId the same way the workflow branch below does
   // (`workflows/${name}`), via the entry's own already-computed `ref` when
   // present (it carries correct bundle-qualification), falling back to a

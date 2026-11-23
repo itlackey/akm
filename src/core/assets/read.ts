@@ -10,16 +10,19 @@
  */
 
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import type { BundleListing } from "../adapter/bundle-adapter";
-import { withoutTypeHead } from "../asset/asset-placement";
+import type { AssetEntry, BundleListing } from "../adapter/bundle-adapter";
+import type { IndexDocument } from "../adapter/types";
+import { stashDirFor, withoutTypeHead } from "../asset/asset-placement";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { deriveBundleIds } from "../bundle-id";
 import { compareCodePoints, toErrorMessage } from "../common";
 import { loadConfig } from "../config/config";
 import { assetNotFound, ConfigError } from "../errors";
-import { warn, warnOnce } from "../warn";
+import { warnOnce } from "../warn";
 import { type Asset, assetOf } from "./asset";
 import { type AssetBundle, assetBundleOf } from "./bundle";
 import { assetTypes } from "./type";
@@ -155,11 +158,21 @@ export function requireAsset(ref: string | BundleRef, options: FindOptions = {})
 /**
  * Every asset across the sources, one per concept as each bundle's adapter lists it, in the order of the bundles and
  * then by concept id within each. With `type`, the ones the index says are of that type. A bundle that cannot be listed
- * completely is reported with a warning naming it; one that cannot be reached at all fails the listing with
- * `BUNDLE_UNREACHABLE` when it holds what is asked for.
+ * completely lists what it could (only `akm index` reports it, §0.2 P4); one that cannot be reached at all fails the
+ * listing with `BUNDLE_UNREACHABLE` when it holds what is asked for.
  */
 export function listAssets(
-  options: { sources?: readonly SearchSource[]; bundle?: string; type?: string } = {},
+  options: {
+    sources?: readonly SearchSource[];
+    bundle?: string;
+    type?: string;
+    /**
+     * For a caller that acts on what is not there (a scheduler removes the rows of a task that is gone): with `type`,
+     * a bundle whose folder for that type exists and is not a directory fails with `BUNDLE_UNREACHABLE`, and one whose
+     * storage is not there lists nothing, with no warning.
+     */
+    requireComplete?: boolean;
+  } = {},
 ): Asset[] {
   const sources = defaultSources(options);
   const ids = deriveBundleIds([...sources]);
@@ -168,6 +181,14 @@ export function listAssets(
     const bundle = ids[index] as string;
     if (source.unresolved || (options.bundle !== undefined && bundle !== options.bundle)) continue;
     const held = bundleOfSource(source, bundle);
+    if (options.requireComplete) {
+      if (!held.exists()) continue;
+      const folder = options.type === undefined ? undefined : stashDirFor(options.type);
+      const dir = folder === undefined ? undefined : path.join(source.path, folder);
+      if (dir !== undefined && fs.existsSync(dir) && !fs.statSync(dir).isDirectory()) {
+        throw new ConfigError(`ENOTDIR: not a directory, scandir '${dir}'`, "BUNDLE_UNREACHABLE");
+      }
+    }
     let listing: BundleListing;
     try {
       listing = held.list();
@@ -178,11 +199,8 @@ export function listAssets(
       if (unreachable && (options.type === undefined || held.writes(options.type))) {
         throw new ConfigError(`Bundle "${bundle}" cannot be reached: ${toErrorMessage(error)}`, "BUNDLE_UNREACHABLE");
       }
-      warn(`Bundle "${source.registryId ?? source.path}" was not listed completely: ${toErrorMessage(error)}`);
+      // Any other store that will not list is skipped without a word, as the listing commands always have.
       continue;
-    }
-    if (!listing.complete && listing.incompleteReason) {
-      warn(`Bundle "${source.registryId ?? source.path}" was not listed completely: ${listing.incompleteReason}`);
     }
     found.push(
       ...listing.assets
@@ -192,6 +210,32 @@ export function listAssets(
   }
   const types = options.type === undefined ? undefined : assetTypes(found);
   return found.filter((asset) => types === undefined || types.get(asset) === options.type);
+}
+
+/** What the index scan asks of one bundle: its adapter's id, one listing, and the description of one entry. */
+export interface BundleScan {
+  /** The id of the adapter that holds the bundle. */
+  readonly adapterId: string;
+  /** `<adapter id>@<adapter version>+`: the prefix of the freshness variant the index records for the bundle's rows. */
+  readonly variantPrefix: string;
+  /** Whether the bundle is a store (a keyring, a vault) rather than a directory. */
+  readonly isStore: boolean;
+  /** Every asset the adapter holds, one per concept, with whether the listing is complete. Throws `BUNDLE_UNREACHABLE` for a store it cannot reach. */
+  list(): BundleListing;
+  /** What the adapter says about one of its entries for the index; null: the adapter abstains on it. */
+  recognize(entry: AssetEntry): IndexDocument | null;
+}
+
+/** The bundle `source` is, as `akm index` scans it: refused when its adapter is not one akm has (`requireAdapter`). */
+export function scanBundle(source: SearchSource, bundle: string): BundleScan {
+  const held = bundleOfSource(source, bundle);
+  return {
+    adapterId: held.adapterId,
+    variantPrefix: held.variantPrefix,
+    isStore: held.isStore,
+    list: () => held.list(),
+    recognize: (entry) => held.recognize(entry),
+  };
 }
 
 /**

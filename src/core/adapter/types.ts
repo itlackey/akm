@@ -59,8 +59,7 @@ export interface Bundle {
 
 // ── Durable entry sub-shapes ────────────────────────────────────────────────
 //
-// akm 0.9.0 Chunk 5 F4a M-core-1 (type-merge): these IndexDocument sub-shapes move
-// HERE from `indexer/passes/metadata.ts` so the merged {@link IndexDocument}
+// These IndexDocument sub-shapes live HERE, not in `indexer/passes/metadata.ts`, so the merged {@link IndexDocument}
 // (below) can reference them WITHOUT closing a `metadata.ts ↔ types.ts` import
 // cycle (the cycle ratchet counts type-only edges). They are the durable field
 // shapes per the M1 decision — the durable truth. `metadata.ts` re-exports them
@@ -108,18 +107,13 @@ export type ScopeKey = keyof StashEntryScope;
  */
 export type ScopeFilters = Partial<Record<string, string | string[]>>;
 
-// ── §3 — IndexDocument (Chunk 5 F4a M-core-1: IS IndexDocument + provenance) ─────
+// ── IndexDocument (IS IndexDocument + provenance) ─────
 //
-// The spec's §3 `IndexDocument` IS `IndexDocument` + provenance (M1 decision). The
-// scan engine drains `IndexDocument`s; the durable `document_json` column is a
-// faithful `IndexDocument`, so `IndexDocument` is now a deprecated alias OF this type
-// (`metadata.ts`; Chunk-8 cleanup). To let a metadata-pipeline entry literal
-// (`{ name, type, … }`, no provenance) satisfy the alias, the seven provenance
+// The scan engine drains `IndexDocument`s; the durable `document_json` column is a
+// faithful `IndexDocument`. To let a metadata-pipeline entry literal
+// (`{ name, type, … }`, no provenance) satisfy the type, the seven provenance
 // fields are OPTIONAL here; `recognize` and the scan writer fill them in, and
 // they are never serialized onto `document_json`.
-// Where the pre-merge `IndexDocument` and `IndexDocument` field shapes conflicted
-// (`supersededBy`, `scope`, `captureMode`, `quality`, `beliefState`), the
-// IndexDocument shape wins — the durable truth.
 
 export interface IndexDocument {
   // ── Provenance — OPTIONAL for the IndexDocument alias; see header ──
@@ -180,7 +174,7 @@ export interface IndexDocument {
    * Asset quality marker. Four values are well-known:
    * `"generated"` and `"curated"` are included in default search;
    * `"enriched"` marks entries the now-retired LLM metadata-enhancement pass
-   * (0.9.17-alpha.9) rewrote (also included in default search; nothing sets
+   * rewrote (also included in default search; nothing sets
    * it anymore); `"proposed"` is excluded from default search and surfaced
    * only with `--include-proposed`. Unknown string values parse with a
    * one-time `console.warn` and remain searchable (treated as
@@ -285,7 +279,7 @@ export interface IndexDocument {
   created?: string;
   observed?: string;
   expires?: string;
-  /** Resolved native links = relationships (§9); navigation/lint, NOT graph boost. */
+  /** Resolved native links = relationships; navigation/lint, NOT graph boost. */
   links?: string[];
   /** The assets a workflow's steps or a task target (`uses:` refs, stored `akm/command` refs), in authored order. */
   uses?: string[];
@@ -308,7 +302,7 @@ export interface IndexDocument {
   provenance?: OkfProvenance;
   /** OKF v0.2 lifecycle ← frontmatter `status`. Upstream defaults absence to "stable"; left `undefined` here (not defaulted) so callers can distinguish "undeclared" from "explicitly stable." */
   lifecycleStatus?: "draft" | "stable" | "deprecated";
-  /** OKF v0.2 lifecycle ← frontmatter `stale_after` (nominally `YYYY-MM-DD`, read verbatim/untyped). Read-only in 0.9.0 — no re-verification or trust-tier ranking is driven off it (0.9.x improve-tuning track). */
+  /** OKF v0.2 lifecycle ← frontmatter `stale_after` (nominally `YYYY-MM-DD`, read verbatim/untyped). Read-only — no re-verification or trust-tier ranking is driven off it. */
   staleAfter?: string;
   /** ← frontmatter `okf_version`. Upstream declares this only on the bundle-root reserved structural listing file (itself never indexed as a concept, §5); read defensively from ANY concept's frontmatter, best-effort (conformance Rule 9 — an unknown/foreign value is never rejected). */
   okfVersion?: string;

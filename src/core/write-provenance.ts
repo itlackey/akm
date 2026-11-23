@@ -3,14 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Run-scoped write provenance (#652).
+ * Run-scoped write provenance.
  *
  * # Why this exists
  *
- * `akm improve`'s end-of-run auto-sync used to infer "what did this run write?"
- * by diffing two Git dirty-path snapshots: everything dirty at end-of-run minus
- * everything dirty when the run acquired its lock. That inference is wrong in
- * both directions:
+ * `akm improve`'s end-of-run auto-sync must know "what did this run write?".
+ * It does not infer it by diffing two Git dirty-path snapshots (everything dirty at
+ * end-of-run minus everything dirty when the run acquired its lock), which is
+ * wrong in both directions:
  *
  *   - an unrelated managed-dir edit made by a human DURING a long run appears in
  *     the end-of-run diff and gets swept into akm's commit;

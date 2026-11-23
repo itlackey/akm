@@ -28,7 +28,7 @@ let logFilePath: string | undefined;
 // Swap-and-restore output-sink override. Inert in production; only tests call
 // the setter (via tests/_helpers/seams.ts). When installed, the sink captures
 // every info/warn/error/warnVerbose call BEFORE the quiet/verbose gates —
-// matching the full-replacement semantics the old mock.module fakes had.
+// fully replacing the real output.
 export type WarnSinkForTests = (level: "info" | "warn" | "error" | "warnVerbose", args: unknown[]) => void;
 
 let sinkOverride: WarnSinkForTests | undefined;

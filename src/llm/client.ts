@@ -30,7 +30,7 @@ const ERROR_BODY_MAX_LEN = 200;
 const JSON_SCHEMA_RESPONSE_NAME = "akm_response";
 
 /**
- * Re-exported from src/core/redaction.ts, where it now lives so every HTTP
+ * Re-exported from src/core/redaction.ts, where it lives so every HTTP
  * transport can apply the same hardening — the embeddings client needs it too.
  */
 export { redactErrorBody } from "../core/redaction";
@@ -227,8 +227,7 @@ export function isContextSizeError(message: string): boolean {
  * provider transport itself, as opposed to a malformed-but-received response
  * (`parse_error`) or a request-shape rejection (`rate_limited`). Used by
  * {@link isRetryable}, which additionally requires evidence the failure is
- * transient. Not exported — its one external caller (batched LLM
- * entity-graph extraction) was retired in 0.9.17-alpha.9.
+ * transient. Not exported.
  */
 function isTransportFailure(err: LlmCallError): boolean {
   return err.code === "provider_error" || err.code === "network_error" || err.code === "provider_html_error";

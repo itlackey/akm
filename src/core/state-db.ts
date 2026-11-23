@@ -282,7 +282,14 @@ export function withReadonlyStateDb<T>(fn: (db: Database) => T, fallback: T): T 
     try {
       applyReadonlyPragmas(db);
       // Rows still filed under a directory are read re-filed under their bundle, in a private copy; the file is not changed.
-      if (hasPathValuedRows(db)) {
+      // A table that cannot be read is left to the reader that asks it, which degrades on its own.
+      let pathValued = false;
+      try {
+        pathValued = hasPathValuedRows(db);
+      } catch (error) {
+        rethrowIfTestIsolationError(error);
+      }
+      if (pathValued) {
         db.close();
         db = openStateReadSnapshot(dbPath) ?? db;
       }
@@ -361,7 +368,7 @@ export function withStateDbTelemetry(fn: (db: Database) => void, busyTimeoutMs =
  * The `IN (...)` predicate is built from parameter placeholders so table names
  * are bound, never interpolated.
  *
- * Connection-lifetime rule (WS5): `.all()` materializes a plain array before
+ * Connection-lifetime rule: `.all()` materializes a plain array before
  * returning.
  */
 export function listExistingTableNames(db: Database, names: readonly string[]): Array<{ name: string }> {

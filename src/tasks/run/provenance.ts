@@ -32,9 +32,7 @@ export function createExecutionProvenanceContext(scheduled: boolean): ExecutionP
 /**
  * Resolve the effective provenance for one `runTask()` call: an explicit
  * `RunTaskOptions.provenance` always wins; absent, this is the default
- * context (§5.2 "Threading") — what keeps every pre-P1b caller (and any
- * future in-repo caller that never sets `provenance`) byte-equivalent to
- * today's behavior.
+ * context, so a caller that never sets `provenance` behaves as before.
  */
 export function resolveProvenanceContext(
   explicit: ExecutionProvenanceContext | undefined,

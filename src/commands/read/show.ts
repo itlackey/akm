@@ -19,7 +19,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { recognizeMatch } from "../../core/adapter/recognize-match";
 import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../../core/asset/asset-placement";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
@@ -32,6 +31,8 @@ import {
 import { displayDefaultBundle, displayRef, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
 import { bundleAdapterId } from "../../core/assets/gate";
+import { findAsset } from "../../core/assets/read";
+import { presentationOf } from "../../core/assets/type";
 import { asNonEmptyString, isContainedResolvedPath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import {
@@ -43,7 +44,6 @@ import {
 } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
-import { presentationFor } from "../../core/type-presentation";
 import { warn, warnOnce } from "../../core/warn";
 import {
   lookupBundleRef,
@@ -393,16 +393,25 @@ export async function showLocal(input: {
       ? readIndexedFragment(indexedEntry.itemRef, parsed.fragment, input.readOnly === true)
       : undefined;
   const indexedFragmentContent = opaqueFragmentSelector ? indexedFragment?.content : undefined;
-  const indexedRenderer = rendererForIndexedEntry(indexedEntry, fileCtx);
+  const presentation = presentationOf(owned, {
+    type: indexedEntry.type,
+    adapterId: indexedEntry.adapterId,
+    ownsPresentation: indexedEntry.document?.ownsPresentation === true,
+  });
   let response: ShowResponse;
   let markdown = false;
   try {
-    if (indexedRenderer === null) {
+    if (presentation === "projection") {
       markdown = path.extname(assetPath).toLowerCase() === ".md";
-      response = buildIndexedProjectionResponse(indexedEntry, assetPath, parsed.fragment, indexedFragmentContent);
+      response = buildIndexedProjectionResponse(
+        indexedEntry,
+        assetPath,
+        owned.entry.content(),
+        parsed.fragment,
+        indexedFragmentContent,
+      );
     } else {
-      const match =
-        typeof indexedRenderer === "string" ? indexedMatch(indexedEntry, indexedRenderer) : recognizeMatch(fileCtx);
+      const match = presentation;
       if (!match) {
         throw new UsageError(
           `Could not display asset "${makeBundleRef(parsed.bundle, parsed.conceptId)}" — unsupported file type or unrecognized layout`,
@@ -444,7 +453,8 @@ export async function showLocal(input: {
   response.type = indexedEntry.type;
   response.name = indexedEntry.name;
   // An asset no file holds is keyed under a path that leads nowhere; none is printed.
-  if (indexedEntry.document?.fileless) {
+  // asset-io: display no file holds the asset
+  if (owned.entry.file === undefined) {
     delete response.path;
     // Nor is its value "the file contents".
     if (response.action)
@@ -660,7 +670,9 @@ export async function showByRef(ref: string): Promise<{ filePath: string; body: 
   }
   let body: string;
   try {
-    body = await fs.promises.readFile(entry.filePath, "utf8");
+    const asset = findAsset(entry.itemRef);
+    if (!asset) throw Object.assign(new Error("no entry"), { code: "ENOENT" });
+    body = asset.entry.content();
   } catch (error) {
     throwIndexedPathNotFound(error, ref);
   }
@@ -681,28 +693,10 @@ function throwIndexedPathNotFound(error: unknown, ref: string): never {
 
 type IndexedEntry = NonNullable<Awaited<ReturnType<typeof lookupBundleRef>>>;
 
-/** `null` selects adapter-owned projection; a string selects a core renderer. */
-function rendererForIndexedEntry(entry: IndexedEntry, _file: FileContext): string | null | undefined {
-  if (entry.document?.ownsPresentation === true) return null;
-  switch (entry.adapterId) {
-    case null:
-    case undefined:
-    case "akm":
-      return undefined;
-    case "akm-workflow":
-      return "workflow-md";
-    default:
-      return presentationFor(entry.type).renderer;
-  }
-}
-
-function indexedMatch(entry: IndexedEntry, renderer: string): MatchResult {
-  return { type: entry.type, specificity: Number.MAX_SAFE_INTEGER, renderer, meta: { name: entry.name } };
-}
-
 function buildIndexedProjectionResponse(
   entry: IndexedEntry,
   assetPath: string,
+  raw: string,
   fragment: string | undefined,
   indexedFragmentContent?: string,
 ): ShowResponse {
@@ -712,7 +706,6 @@ function buildIndexedProjectionResponse(
       `Fragment "#${fragment}" was ignored: ${entry.conceptId} is not a Markdown document, so heading fragments do not apply. Showing the whole asset.`,
     );
   }
-  const raw = fs.readFileSync(assetPath, "utf8");
   const parsed = parseFrontmatter(raw);
   const content =
     fragment !== undefined && isMarkdown

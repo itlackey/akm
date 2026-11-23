@@ -4,8 +4,7 @@
 
 /**
  * Built-in `BundleAdapter` barrel + the static, frozen `BUILTIN_ADAPTERS` list
- * (normative §12.6) — akm 0.9.0 chunk-2 (WI-A) + the format-family work item
- * (#46).
+ * (normative §12.6).
  *
  * `BUILTIN_ADAPTERS` is the ordered built-in adapter set the registry
  * (`../registry`) exposes via `getAdapters()` / `adapterForId()`. It is a

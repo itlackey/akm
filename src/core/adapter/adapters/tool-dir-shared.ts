@@ -4,8 +4,7 @@
 
 /**
  * Shared recognition / placement / validation for the two AGENT TOOL-DIRECTORY
- * adapters — `claude` (`.claude`) and `opencode` (`.opencode`) — akm 0.9.0
- * format-family work item (#46). Both translate a foreign tool layout into the
+ * adapters — `claude` (`.claude`) and `opencode` (`.opencode`) Both translate a foreign tool layout into the
  * open AKM `type` vocabulary: a root instruction file
  * (CLAUDE.md / AGENTS.md) → `instruction`, `commands/*.md` → `command`,
  * `agents/*.md` → `agent`, `skills/<name>/SKILL.md` → `skill` (item = the dir).

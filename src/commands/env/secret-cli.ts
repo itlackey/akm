@@ -3,9 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm secret` command family. Extracted verbatim from src/cli.ts (WS6) so the
- * God Module shrinks; the `main.subCommands.secret` key and every subcommand's
- * args/output shape are byte-identical. The ref-resolution helpers
+ * `akm secret` command family. The ref-resolution helpers
  * (parseSecretRef / makeSecretRef / resolveSecretPath) live in src/core/env-secret-ref.ts so env + secret share one
  * copy.
  *
@@ -167,12 +165,10 @@ const secretRunCommand = defineJsonCommand({
     });
 
     const result = await runProgram({ argv: command, env: mergedEnv, capture: false });
-    // R-067: was `process.exit(result.status ?? 0)`, unconditional even on
-    // the success path — it skipped the `finally { disposeLlmUsageSink(); }`
-    // cleanup in src/cli.ts's `runCommand`.
-    // Setting `process.exitCode` and returning still exits with the child's
-    // exact status once the event loop drains, but lets cleanup run first —
-    // same pattern `emitJsonError` (src/cli/shared.ts) already established.
+    // Set `process.exitCode` and return rather than calling `process.exit`, which
+    // would skip the `finally { disposeLlmUsageSink(); }` cleanup in src/cli.ts's
+    // `runCommand`. The process still exits with the child's exact status once the
+    // event loop drains, the pattern `emitJsonError` (src/cli/shared.ts) uses.
     reportChildExit(result.exitCode ?? 0);
     return;
   },

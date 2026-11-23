@@ -29,8 +29,9 @@
 // itself is launched with bun (`bun scripts/node-smoke.ts`) but every assertion
 // shells out to `node`.
 
+import { Database } from "bun:sqlite";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { BOUNDARY_MARKERS, NATIVE_CRASH_MARKER } from "./node-runtime-markers";
@@ -233,6 +234,45 @@ try {
   step("remember-stdin", ["remember", "-"], { stdin: "piped stdin memory beta\n", expect: '"ok": true' });
   // FTS index build over SQLite.
   step("index", ["index"], { expect: '"shape": "index"', timeoutMs: 180_000 });
+  // An index that stored the library under another spelling of its directory (a symlink) is rewritten in place
+  // by the next build: the statements that do it take their parameters by position, which better-sqlite3 is strict about.
+  {
+    const real = realpathSync(stash);
+    const link = path.join(root, "stash-link");
+    symlinkSync(real, link);
+    const indexDb = path.join(env.XDG_DATA_HOME as string, "akm", "index.db");
+    const respell = (to: string) => {
+      const db = new Database(indexDb);
+      try {
+        db.prepare("UPDATE entries SET file_path = ?1 || substr(file_path, ?2) WHERE file_path LIKE ?3 || '%'").run(
+          to,
+          real.length + 1,
+          real,
+        );
+        db.prepare(
+          "UPDATE index_dir_state SET dir_path = ?1 || substr(dir_path, ?2) WHERE dir_path LIKE ?3 || '%'",
+        ).run(to, real.length + 1, real);
+        db.prepare("INSERT OR REPLACE INTO index_meta (key, value) VALUES ('stashDir', ?1)").run(to);
+        db.prepare("INSERT OR REPLACE INTO index_meta (key, value) VALUES ('stashDirs', ?1)").run(JSON.stringify([to]));
+      } finally {
+        db.close();
+      }
+    };
+    respell(link);
+    step("index over an index that holds the symlinked spelling", ["index"], { expect: '"shape": "index"' });
+    const db = new Database(indexDb, { readonly: true });
+    try {
+      const row = db.prepare("SELECT file_path FROM entries LIMIT 1").get() as { file_path: string } | null;
+      if (!row?.file_path.startsWith(`${real}${path.sep}`)) {
+        failures++;
+        console.error(`  FAIL index rewrote its paths to the real spelling: ${row?.file_path ?? "no entry"}`);
+      } else {
+        console.log("  PASS index rewrote its paths to the real spelling");
+      }
+    } finally {
+      db.close();
+    }
+  }
   // Search reads the index back and returns the remembered hit.
   const searchOut = step("search", ["search", "widget"], { expect: "node-smoke", allowNonZero: true });
   if (!searchOut.includes("node-smoke")) {

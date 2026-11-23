@@ -4,11 +4,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { BundleAdapter, BundleListing } from "../core/adapter/bundle-adapter";
-import { requireAdapter } from "../core/adapter/registry";
+import type { BundleListing } from "../core/adapter/bundle-adapter";
 import type { Bundle } from "../core/adapter/types";
-import { bundleAdapterId } from "../core/assets/gate";
-import { type Asset, findAsset } from "../core/assets/read";
+import { type Asset, type BundleScan, findAsset, scanBundle } from "../core/assets/read";
 import { indexedPathOf } from "../core/assets/type";
 import { isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
@@ -92,6 +90,7 @@ import {
   workflowNameForSourcePath,
 } from "../workflows/source-files";
 import { reclassifyIndexDbContention } from "./index-db-contention";
+import { clearIndexOnMissRefs, readIndexOnMissRefs } from "./index-on-miss";
 import { deriveEntryProvenance, deriveInstallations, sourceOfBundle } from "./installations";
 import { legacyRefMove, rekeyLegacyEntry } from "./legacy-refs";
 import { entryOnMiss, indexedPathMatchesOwner } from "./lookup/indexed-owner";
@@ -190,8 +189,8 @@ export interface IndexResponse {
   /**
    * Present when this run auto-detected a bundle's adapter and persisted it
    * to config.json (`bundles.<id>.adapter`) — a
-   * maintenance-command config write that would otherwise be invisible
-   * (R-056). Keyed by bundle id, valued by the detected adapter id.
+   * maintenance-command config write that would otherwise be invisible.
+   * Keyed by bundle id, valued by the detected adapter id.
    */
   configUpdated?: { detectedAdapters: Record<string, string> };
 }
@@ -212,7 +211,7 @@ export interface IndexProgressEvent {
 export interface IndexOptions {
   /**
    * The stash directory to index. Resolved once at each command boundary
-   * (WI-9.10 CLI-wide sweep) and threaded in — the indexer no longer reads the
+   * and threaded in — the indexer does not read the
    * ambient stash-dir resolver. Every caller (source add, wiki, workflow,
    * setup, improve, tests) already passes it.
    */
@@ -257,7 +256,7 @@ export interface IndexOptions {
    * pre-run index) rather than by an explicit `akm index`.
    *
    * Only affects DISCLOSURE, never behavior. The adapter-detection config
-   * write (R-056) is always reported in the result envelope, but its stderr
+   * write is always reported in the result envelope, but its stderr
    * notice is suppressed for implicit runs: a read command's stderr carries
    * its JSON error envelope, so an extra human-readable line there makes the
    * envelope unparseable for callers doing `JSON.parse(stderr)` — and would
@@ -610,6 +609,7 @@ function isReadableDirectory(root: string): boolean {
   try {
     // asset-io: bundle-root root probe
     if (!fs.statSync(root).isDirectory()) return false;
+    // asset-io: bundle-root root probe
     fs.readdirSync(root); // probe readability, not just existence
     return true;
   } catch {
@@ -621,8 +621,7 @@ function isReadableDirectory(root: string): boolean {
  * Detect an adapter for every resolvable source that does not declare one, and
  * persist each detection into `config.json`.
  *
- * R-056: this config write previously had zero disclosure — it appeared in no
- * result, on no stream, and in no doc. The returned `persistedAdapters` records
+ * This config write is disclosed: the returned `persistedAdapters` records
  * exactly which bundle→adapter pairs the mutate callback actually applied, so
  * the caller can surface them in the result envelope; a stderr notice is
  * emitted here. The map is cleared at the top of every callback invocation
@@ -680,14 +679,14 @@ function detectAndPersistBundleAdapters(
 }
 
 async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
-  // R-022: `dryRun` only ever gated the `--clean` stale-entry removal pass
+  // `dryRun` only gates the `--clean` stale-entry removal pass
   // (see `runCleanPass` below) — every other phase (walk, embeddings, FTS,
-  // the adapter-detection config write) ran for real regardless, so
-  // `akm index --dry-run` alone silently performed a full,
+  // the adapter-detection config write) runs for real regardless, so
+  // `akm index --dry-run` alone would silently perform a full,
   // real index. The flag's own docs (`IndexOptions.dryRun` above, and the
-  // CLI help in stash-cli.ts) already scope it to `--clean`; reject the
-  // combination that was never implemented instead of quietly doing
-  // something other than what "dry run" promised. Checked before the writer
+  // CLI help in stash-cli.ts) scope it to `--clean`; reject the
+  // unsupported combination instead of quietly doing
+  // something other than what "dry run" promises. Checked before the writer
   // lease is even requested so a bad invocation fails instantly.
   if (options?.dryRun === true && options?.clean !== true) {
     const { UsageError } = await import("../core/errors.js");
@@ -813,9 +812,8 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     }
     const tWalkEnd = Date.now();
 
-    // Metadata enhancement (the LLM pass that used to run here) is retired
-    // (RS-D, 0.9.17-alpha.9) — see CHANGELOG. `timing.llmMs` stays (always
-    // ~0 now) so the JSON shape is unchanged.
+    // There is no LLM metadata-enhancement pass. `timing.llmMs` stays (always
+    // ~0) so the JSON shape is unchanged.
     const tLlmEnd = Date.now();
 
     if (complete) applyRemovedSources(db, sources, removedSources, isIncremental);
@@ -936,7 +934,7 @@ type DirRecord = {
   /** Walked-set fingerprint taken at scan time (#900); persisted as-is for scanned and unchanged dirs. */
   fingerprint?: DirFingerprint;
   /**
-   * F4a M-core-2: `doc.hash` keyed by recognized-file absolute path, produced by
+   * `doc.hash` keyed by recognized-file absolute path, produced by
    * the per-dir document drain. Read by the persist layer to populate
    * `content_hash`. Absent on skipped dirs (nothing drained).
    */
@@ -960,7 +958,10 @@ function buildIndexedSourceOwners(sources: readonly SearchSource[]): Map<string,
   return new Map(
     sources.map((source, index) => [
       path.resolve(source.path),
-      { bundleId: (bundles[index] as Bundle).id, adapterId: bundleAdapterId(source) },
+      {
+        bundleId: (bundles[index] as Bundle).id,
+        adapterId: scanBundle(source, (bundles[index] as Bundle).id).adapterId,
+      },
     ]),
   );
 }
@@ -968,7 +969,7 @@ function buildIndexedSourceOwners(sources: readonly SearchSource[]): Map<string,
 type SourceScanPlan = {
   currentStashDir: string;
   bundle: Bundle;
-  adapter?: BundleAdapter;
+  scan?: BundleScan;
   dirGroups: Map<string, FileContext[]>;
   removals: Array<DirRecord & { reason: DirScanReason }>;
   walkComplete: boolean;
@@ -1029,13 +1030,13 @@ function sourceSnapshotRemovals(
 }
 
 /** The bundle's listing; a store that cannot be listed (unreachable or failing) is an incomplete one: one bundle never stops the index, which keeps the rows it had. */
-function listOrKeep(adapter: BundleAdapter, bundle: Bundle): BundleListing {
+function listOrKeep(scan: BundleScan): BundleListing {
   try {
-    return adapter.list(bundle);
+    return scan.list();
   } catch (error) {
-    if (adapter.addressedBy !== "location") throw error;
-    // Any failure, not only BUNDLE_UNREACHABLE: a store that errors (a bad `az` reply) must not stop the whole index,
-    // and a failed listing is the same "keep last-known-good rows" case as an unreachable one.
+    // C2 for the indexer (BUNDLE_UNREACHABLE alone, no kind test) waits on one store-failure signal (4e.2).
+    if (!scan.isStore) throw error;
+    // Any failure, not only BUNDLE_UNREACHABLE: a store that errors (a bad `az` reply) must not stop the whole index.
     return { assets: [], complete: false, incompleteReason: toErrorMessage(error) };
   }
 }
@@ -1067,7 +1068,7 @@ function buildSourceScanPlans(
       return {
         currentStashDir,
         bundle,
-        adapter: undefined,
+        scan: undefined,
         dirGroups: new Map(),
         removals: [],
         walkComplete: false,
@@ -1076,15 +1077,13 @@ function buildSourceScanPlans(
       };
     }
     // A bundle that names an adapter akm does not have stops the index before it changes anything.
-    const adapter = requireAdapter(bundle.id, bundleAdapterId(sourceAdded), {
-      location: bundle.location !== undefined,
-    });
-    const walked = walkResultOf(listOrKeep(adapter, bundle), currentStashDir);
+    const scan = scanBundle(sourceAdded, bundle.id);
+    const walked = walkResultOf(listOrKeep(scan), currentStashDir);
     const dirGroups = groupFileContextsByDir(walked.files);
     return {
       currentStashDir,
       bundle,
-      adapter,
+      scan,
       dirGroups,
       removals: [],
       walkComplete: walked.complete,
@@ -1110,7 +1109,7 @@ function buildSourceScanPlans(
     handoffDirs.add(resolvedDir);
   };
 
-  const allComplete = plans.every((plan) => plan.walkComplete && plan.adapter !== undefined);
+  const allComplete = plans.every((plan) => plan.walkComplete && plan.scan !== undefined);
 
   // Reconcile departed directories for every source that produced a
   // trustworthy snapshot; a source that was not walked completely keeps its
@@ -1125,7 +1124,7 @@ function buildSourceScanPlans(
       }
     }
     for (const plan of plans) {
-      if (!plan.walkComplete || !plan.adapter) continue;
+      if (!plan.walkComplete || !plan.scan) continue;
       const currentDirs = new Set([...plan.dirGroups.keys()].map((dirPath) => path.resolve(dirPath)));
       for (const removal of sourceSnapshotRemovals(
         db,
@@ -1169,7 +1168,7 @@ function buildSourceScanPlans(
  * {@link persistDirRecords} later writes.
  *
  * The per-dir document drain (`drainDirDocuments` × the bundle's dispatched
- * `adapter.recognize`, F4a M-core-2) is synchronous, but the walk still runs
+ * `adapter.recognize`) is synchronous, but the walk still runs
  * outside `db.transaction()` so the persist pass can be a single synchronous
  * transaction.
  */
@@ -1226,13 +1225,13 @@ async function scanSourceDirs(
   };
 
   for (const plan of plans) {
-    const { currentStashDir, bundle, adapter, dirGroups, removals, walkComplete } = plan;
+    const { currentStashDir, bundle, scan, dirGroups, removals, walkComplete } = plan;
     processedDirs++;
     reportScanProgress(
       `Processed ${processedDirs}/${allSourceEntries.length} source${allSourceEntries.length === 1 ? "" : "s"}.`,
     );
 
-    if (!walkComplete || adapter === undefined) {
+    if (!walkComplete || scan === undefined) {
       for (const dirPath of dirGroups.keys()) seenPaths.add(path.resolve(dirPath));
       const reason = plan.incompleteReason ?? "the scan did not complete";
       incompleteSources.push({
@@ -1244,10 +1243,10 @@ async function scanSourceDirs(
       continue;
     }
 
-    // Owner ruling 2026-07-21: dispatch each bundle's DETECTED adapter (§4).
+    // Dispatch each bundle's DETECTED adapter.
     // The content projection's version is part of the variant: a change to what Markdown bodies index re-projects
     // every directory once instead of keeping the old text for unchanged files.
-    const indexVariant = `${adapter.id}@${adapter.version}+content${CONTENT_PROJECTION_VERSION}`;
+    const indexVariant = `${scan.variantPrefix}content${CONTENT_PROJECTION_VERSION}`;
 
     for (const removal of removals) {
       dirRecords.push(removal);
@@ -1256,8 +1255,7 @@ async function scanSourceDirs(
     }
 
     for (const [dirPath, ctxs] of dirGroups) {
-      // Adapter-owned filtering (owner ruling 2026-07-21): the drain no longer
-      // pre-filters with AKM-stash policy — each adapter's `recognize` claims or
+      // Adapter-owned filtering: the drain does not pre-filter with AKM-stash policy — each adapter's `recognize` claims or
       // abstains on its own bundle's walked files. The core walk keeps only the
       // universal hygiene `walkStashFlat` already applies (.git/dot-dirs/etc.).
       const indexableFiles = ctxs.map((ctx) => ctx.absPath);
@@ -1295,11 +1293,15 @@ async function scanSourceDirs(
         continue;
       }
 
-      // F4a M-core-2 (the flip): drain the dir's `IndexDocument` stream via the
+      // Drain the dir's `IndexDocument` stream via the
       // bundle's dispatched `adapter.recognize` (broken workflows dropped-with-
       // warning at the drain layer) and reconstruct the durable `IndexDocument`s.
       drainObserverForTests?.(dirPath, ctxs.length);
-      const drained = drainDirDocuments(adapter, bundle, ctxs);
+      const drained = drainDirDocuments(
+        { id: scan.adapterId, recognize: (_bundle, entry) => scan.recognize(entry) },
+        bundle,
+        ctxs,
+      );
       if (drained.warnings.length) warnings.push(...drained.warnings);
       generatedCount += drained.entries.length;
       const stash = drained.entries.length > 0 ? { entries: drained.entries } : null;
@@ -1356,7 +1358,7 @@ async function scanSourceDirs(
     skippedDirs,
     generatedCount,
     warnings,
-    complete: plans.every((plan) => plan.walkComplete && plan.adapter !== undefined),
+    complete: plans.every((plan) => plan.walkComplete && plan.scan !== undefined),
     incompleteSources,
   };
 }
@@ -1364,6 +1366,7 @@ async function scanSourceDirs(
 function requiresWorkflowSourcePreflight(ctxs: readonly FileContext[]): boolean {
   return ctxs.some((ctx) => {
     try {
+      // asset-io: deprecated a symlinked workflow source is warned about by the workflow code
       return fs.lstatSync(ctx.absPath).isSymbolicLink();
     } catch {
       return true;
@@ -1392,8 +1395,8 @@ function canonicalizeStoredPaths(db: Database): void {
   if (moves.length === 0) return;
   const rewrite = (table: string, column: string, exact: boolean) =>
     db.prepare(
-      `UPDATE OR IGNORE ${table} SET ${column} = ?1 || substr(${column}, ?2) WHERE substr(${column}, 1, ?3) = ?4${
-        exact ? ` OR ${column} = ?5` : ""
+      `UPDATE OR IGNORE ${table} SET ${column} = ? || substr(${column}, ?) WHERE substr(${column}, 1, ?) = ?${
+        exact ? ` OR ${column} = ?` : ""
       }`,
     );
   db.transaction(() => {
@@ -1439,6 +1442,8 @@ function persistDirRecords(
   let pairing: MovePairing = { pairs: [], unpaired: [] };
   const movedRefs = new Set<string>();
 
+  const onMissRefs = readIndexOnMissRefs(db);
+  const scannedRefs = new Set<string>();
   const pairMoves = (): MovePairing => {
     const stored: StoredEntry[] = [];
     const fresh: NewEntry[] = [];
@@ -1451,7 +1456,11 @@ function persistDirRecords(
         if ("problem" in found) continue;
         kept.add(found.provenance.itemRef);
         const contentHash = record.hashByFile?.get(found.entryPath);
-        if (contentHash !== undefined && !findPersisted.get(found.provenance.itemRef))
+        // A row index-on-miss wrote since the last scan is a new file too: it may be a vanished entry's move.
+        if (
+          contentHash !== undefined &&
+          (!findPersisted.get(found.provenance.itemRef) || onMissRefs.has(found.provenance.itemRef))
+        )
           fresh.push({ filePath: found.entryPath, provenance: found.provenance, contentHash });
       }
       stored.push(
@@ -1475,6 +1484,11 @@ function persistDirRecords(
     setMeta(db, "stashDirs", JSON.stringify(library.sourceDirs));
     pairing = pairMoves();
     for (const pair of pairing.pairs) {
+      // The row index-on-miss wrote for the moved file gives way to the vanished entry's, which keeps its history.
+      const onMiss = onMissRefs.has(pair.entry.provenance.itemRef)
+        ? (findPersisted.get(pair.entry.provenance.itemRef) as { id: number } | null)
+        : null;
+      if (onMiss) deleteEntriesByIds(db, [onMiss.id]);
       repointEntry(db, pair.id, pair.entry);
       rekeyLlmCache(db, pair.oldFilePath, pair.entry.filePath);
       movedRefs.add(pair.entry.provenance.itemRef);
@@ -1555,6 +1569,7 @@ function persistDirRecords(
           // The adapter lists one entry per ref (the spelling it reads wins), so the ref has one holder.
           const holder = (findPersisted.get(provenance.itemRef) as PersistedEntryRow | null) ?? undefined;
           keptItemRefs.add(provenance.itemRef);
+          scannedRefs.add(provenance.itemRef);
           persistedRows++;
 
           const previous = sameVariant ? holder : undefined;
@@ -1605,6 +1620,7 @@ function persistDirRecords(
       });
       if (persistedRows === 0) warnVerbose(`[index] zero-row ${dirPath}: ${persistedReason}`);
     }
+    clearIndexOnMissRefs(db, scannedRefs);
     // Atomicity observation point: the new generation is fully written but
     // uncommitted, so it must still be invisible to other connections.
     indexTransactionHookForTests?.("records-persisted");
@@ -1819,7 +1835,7 @@ async function lookupBundleRefWithResolutionUsing(
     if (!asset) return resolved(null);
     const bundleId = asset.bundle;
     const source = sourceOfBundle(sources, bundleId);
-    const adapterId = bundleAdapterId(source);
+    const adapterId = scanBundle(source, bundleId).adapterId;
     const ownerPath = indexedPathOf(asset, source);
     // A workflow source that is a symlink to a file of another extension is warned about once, as before.
     if (workflowNameForSourcePath(source.path, adapterId, ownerPath) !== undefined) {
@@ -2003,8 +2019,8 @@ export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntr
   const EMA_DECAY = 0.7;
   const scoped = onlyEntryId !== undefined;
 
-  // Purge stale usage events (90-day retention). usage_events lives in state.db
-  // (Chunk-8 WI-8.3); its table is created by state migration 020.
+  // Purge stale usage events (90-day retention). usage_events lives in state.db;
+  // its table is created by state migration 020.
   if (!scoped) purgeOldUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS);
 
   // Aggregate explicit user demand per `entry_ref` from state.db's usage_events
