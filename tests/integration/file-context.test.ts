@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { recognizeMatch } from "../../src/core/adapter/adapters/akm-adapter";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "../../src/core/adapter/adapters/akm-metadata";
+import { recognizeMatchByPath } from "../../src/core/adapter/recognize-match";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import {
   buildFileContext,
@@ -11,7 +12,12 @@ import {
   getAllRenderers,
   getRenderer,
 } from "../../src/indexer/walk/file-context";
-import { directoryMatcher, looseMarkdownMatcher, parentDirHintMatcher } from "../../src/indexer/walk/matchers";
+import {
+  directoryMatcher,
+  looseMarkdownMatcher,
+  parentDirHintMatcher,
+  smartMdMatcher,
+} from "../../src/indexer/walk/matchers";
 import { walkStashFlat } from "../../src/indexer/walk/walker";
 
 // ── Temp directory helpers ──────────────────────────────────────────────────
@@ -267,29 +273,78 @@ describe("recognizeMatch", () => {
     expect(result?.renderer).toBe("task-yaml");
   });
 
-  test("looseMarkdownMatcher types any .md knowledge at specificity 5: a model key is no signal", () => {
+  test("smartMdMatcher matches .md with 'model' frontmatter as 'agent' at specificity 8 (weak signal)", () => {
     const root = tmpDir();
     const filePath = path.join(root, "misc", "assistant.md");
     writeFile(filePath, ["---", "model: gpt-4", "---", "You are an assistant."].join("\n"));
 
-    const result = looseMarkdownMatcher(buildFileContext(root, filePath));
+    const ctx = buildFileContext(root, filePath);
+    const result = smartMdMatcher(ctx);
 
-    expect(result?.type).toBe("knowledge");
-    expect(result?.specificity).toBe(5);
+    // model alone is a weak agent signal -- commands also use model
+    expect(result).not.toBeNull();
+    expect(result?.type).toBe("agent");
+    expect(result?.specificity).toBe(8);
   });
 
-  test("looseMarkdownMatcher types .md without agent/command signals as knowledge", () => {
+  test("smartMdMatcher classifies .md without agent/command signals as knowledge", () => {
     const root = tmpDir();
     const filePath = path.join(root, "misc", "deploy.md");
     writeFile(filePath, ["---", "description: Deploy to prod", "---", "Run deploy."].join("\n"));
 
-    const result = looseMarkdownMatcher(buildFileContext(root, filePath));
+    const ctx = buildFileContext(root, filePath);
+    const result = smartMdMatcher(ctx);
 
+    // No agent or command signals; falls back to knowledge
+    expect(result).not.toBeNull();
     expect(result?.type).toBe("knowledge");
     expect(result?.specificity).toBe(5);
   });
 
-  test("looseMarkdownMatcher never reads the file: 'agent' frontmatter and $ARGUMENTS give no command", () => {
+  test("smartMdMatcher detects 'agent' frontmatter as command signal at specificity 18", () => {
+    const root = tmpDir();
+    const filePath = path.join(root, "misc", "build.md");
+    writeFile(
+      filePath,
+      ["---", "agent: build", "description: Build the project", "---", "Build $ARGUMENTS."].join("\n"),
+    );
+
+    const ctx = buildFileContext(root, filePath);
+    const result = smartMdMatcher(ctx);
+
+    expect(result).not.toBeNull();
+    expect(result?.type).toBe("command");
+    expect(result?.specificity).toBe(18);
+    expect(result?.renderer).toBe("command-md");
+  });
+
+  test("smartMdMatcher detects $ARGUMENTS placeholder as command signal at specificity 18", () => {
+    const root = tmpDir();
+    const filePath = path.join(root, "misc", "deploy.md");
+    writeFile(filePath, "Deploy $ARGUMENTS to production.");
+
+    const ctx = buildFileContext(root, filePath);
+    const result = smartMdMatcher(ctx);
+
+    expect(result).not.toBeNull();
+    expect(result?.type).toBe("command");
+    expect(result?.specificity).toBe(18);
+  });
+
+  test("smartMdMatcher: agent frontmatter (18) beats model-only (8)", () => {
+    const root = tmpDir();
+    const filePath = path.join(root, "misc", "deploy.md");
+    writeFile(filePath, ["---", "model: gpt-4", "agent: build", "---", "Deploy things."].join("\n"));
+
+    const ctx = buildFileContext(root, filePath);
+    const result = smartMdMatcher(ctx);
+
+    // agent frontmatter is a command signal at 18
+    expect(result?.type).toBe("command");
+    expect(result?.specificity).toBe(18);
+  });
+
+  test("the path-only matchers never read the file: 'agent' frontmatter and $ARGUMENTS give no command", () => {
     const root = tmpDir();
     const filePath = path.join(root, "misc", "build.md");
     writeFile(
@@ -304,21 +359,22 @@ describe("recognizeMatch", () => {
       ...pathFields
     } = buildFileContext(root, filePath);
 
-    // A path context has no content to read, so a type cannot come from it.
+    // A path context has no content to read, so a type cannot come from it; the content form reads it.
     expect(looseMarkdownMatcher(pathFields)?.type).toBe("knowledge");
-    expect(recognizeMatch(pathFields)?.type).toBe("knowledge");
+    expect(recognizeMatchByPath(pathFields)?.type).toBe("knowledge");
+    expect(recognizeMatch(buildFileContext(root, filePath))?.type).toBe("command");
   });
 
-  test("looseMarkdownMatcher returns null for non-.md files", () => {
+  test("smartMdMatcher returns null for non-.md files", () => {
     const root = tmpDir();
     const filePath = path.join(root, "scripts", "deploy.sh");
     writeFile(filePath, "#!/bin/bash\necho deploy\n");
 
     const ctx = buildFileContext(root, filePath);
-    expect(looseMarkdownMatcher(ctx)).toBeNull();
+    expect(smartMdMatcher(ctx)).toBeNull();
   });
 
-  test("specificity ordering: directoryMatcher(10) beats looseMarkdownMatcher(5) for plain .md", async () => {
+  test("specificity ordering: directoryMatcher(10) beats smartMdMatcher(5) for plain .md", async () => {
     const root = tmpDir();
     const filePath = path.join(root, "knowledge", "reference.md");
     writeFile(filePath, "# Reference\nPlain knowledge document.");
@@ -327,8 +383,8 @@ describe("recognizeMatch", () => {
 
     // directoryMatcher says "knowledge" at specificity 10
     expect(directoryMatcher(ctx)?.specificity).toBe(10);
-    // looseMarkdownMatcher says "knowledge" at specificity 5
-    expect(looseMarkdownMatcher(ctx)?.specificity).toBe(5);
+    // smartMdMatcher says "knowledge" at specificity 5
+    expect(smartMdMatcher(ctx)?.specificity).toBe(5);
 
     // recognizeMatch should pick specificity 10
     const best = recognizeMatch(ctx);

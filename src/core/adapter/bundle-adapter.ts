@@ -59,10 +59,20 @@ export interface BundleAsset {
 /** Every asset of a bundle, one per concept. Listing reads no content. */
 export interface BundleListing {
   assets: BundleAsset[];
+  /**
+   * Files the listing reached that are no asset. No command lists them; the index scans their directories as it always
+   * has, so a directory that holds only such files is still counted, fingerprinted and reported.
+   */
+  unclaimed?: AssetEntry[];
   /** False when part of the bundle could not be read: the index keeps the rows it had. */
   complete: boolean;
   /** When `complete` is false: why. */
   incompleteReason?: string;
+  /**
+   * The store could not be reached at all, so nothing of the bundle is known (a keyring that is locked or a vault that
+   * refuses the account). The index keeps its rows; a command that needs the bundle fails with `BUNDLE_UNREACHABLE`.
+   */
+  unreachable?: true;
 }
 
 /** An asset to create: its type and its name within the type (`env/prod` is type `env`, name `prod`). */
@@ -139,8 +149,12 @@ export interface BundleAdapter {
 
   /** The concept id a `create` of `asset` would give, without writing. Refused by a read-only adapter. */
   place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string;
-  /** Create the asset, in the adapter's own form for its type; one of the same type and name is replaced. */
-  create(b: Bundle, asset: NewAsset): AssetChange;
+  /**
+   * Create the asset, in the adapter's own form for its type, or with `verbatim` as exactly `asset.content` (a promoted
+   * proposal's bytes are the ones it was reviewed with). Over an existing asset of the same concept it writes the same
+   * bytes only with `replace`; without it the create is refused.
+   */
+  create(b: Bundle, asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean }): AssetChange;
   /** Replace the content of the asset `conceptId` holds with exactly `content`. */
   update(b: Bundle, conceptId: string, content: string | Buffer): AssetChange;
   /** Take the asset out of the bundle. */

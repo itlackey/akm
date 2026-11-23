@@ -51,7 +51,8 @@ export interface AssetWriter {
   read(conceptId: string): Asset | undefined;
   /** An existing asset by ref, else where a new one of the ref's type goes. */
   address(ref: string): AssetAddress;
-  create(asset: NewAsset, options?: { exclusive?: boolean }): WriteResult;
+  /** `exclusive`: refuse an existing asset. `verbatim`: keep `content` exactly, not in the adapter's form for the type. */
+  create(asset: NewAsset, options?: { exclusive?: boolean; verbatim?: boolean }): WriteResult;
   update(conceptId: string, content: string | Buffer, options?: { revision?: string }): WriteResult;
   delete(conceptId: string, options?: { revision?: string }): WriteResult;
   retire(conceptId: string, note: RetireNote, options?: { revision?: string }): WriteResult & { handle: string };
@@ -165,16 +166,8 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
           throw new UsageError(`Asset "${source.name}//${conceptId}" already exists.`, "RESOURCE_ALREADY_EXISTS");
         }
       }
-      // Without `exclusive` a create replaces the asset, and the adapter refuses to create over one: its content is
-      // updated (the store keeps what else it holds of it), or a package is taken out whole first.
-      if (!options?.exclusive) {
-        const conceptId = held.place(asset);
-        if (held.read(conceptId)) {
-          if (!asset.resources?.length) return result(held.update(conceptId, asset.content));
-          record(held.delete(conceptId));
-        }
-      }
-      return result(held.create(asset));
+      // Without `exclusive` a create replaces the asset, with the bytes a create writes.
+      return result(held.create(asset, { replace: !options?.exclusive, verbatim: options?.verbatim }));
     },
     update(conceptId, content, options) {
       existing(conceptId, options);

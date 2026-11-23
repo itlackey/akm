@@ -248,27 +248,37 @@ function proposalRefIdentity(ref: string): ProposalRefIdentity | undefined {
 }
 
 /**
- * A `--ref` filter: a short ref matches its concept in the queue, a qualified one also its bundle.
- * An old spelling matches the proposals re-keyed to the asset's ref.
+ * A `--ref` filter: a short ref matches its concept in the queue, a qualified one also its bundle. Both the filter and
+ * a stored ref are read as the asset they name now, so a proposal stored under a file spelling
+ * (`main//knowledge/guide.md`) is found by `knowledge/guide` and the other way round.
  */
-function filterRefIdentity(stashDir: string, ref: string): ProposalRefIdentity {
-  const identity = proposalRefIdentity(ref);
-  if (!identity) {
+function refFilter(stashDir: string, ref: string): (proposalRef: string) => boolean {
+  const filter = proposalRefIdentity(ref);
+  if (!filter) {
     throw new UsageError(
       `Invalid asset-ref filter "${ref}". Use the 0.9.0 grammar [bundle//]conceptId, e.g. knowledge/guide.md or lessons/deploy.`,
       "INVALID_FLAG_VALUE",
     );
   }
-  return { ...identity, conceptId: currentConceptId(identity, resolveSourceEntries(stashDir, loadConfig())) };
-}
-
-function proposalMatchesRef(proposalRef: string, filter: ProposalRefIdentity): boolean {
-  const proposal = proposalRefIdentity(proposalRef);
-  return (
-    proposal !== undefined &&
-    proposal.conceptId === filter.conceptId &&
-    (filter.bundle === undefined || proposal.bundle === filter.bundle)
-  );
+  const sources = resolveSourceEntries(stashDir, loadConfig());
+  const asked = new Map<string, string>();
+  const current = (identity: ProposalRefIdentity): string => {
+    const key = `${identity.bundle ?? ""}//${identity.conceptId}`;
+    const known = asked.get(key);
+    if (known !== undefined) return known;
+    const conceptId = currentConceptId(identity, sources);
+    asked.set(key, conceptId);
+    return conceptId;
+  };
+  const wanted = current(filter);
+  return (proposalRef) => {
+    const proposal = proposalRefIdentity(proposalRef);
+    return (
+      proposal !== undefined &&
+      (filter.bundle === undefined || proposal.bundle === filter.bundle) &&
+      current(proposal) === wanted
+    );
+  };
 }
 
 /**
@@ -648,9 +658,9 @@ function queryProposals(db: Database, stashDir: string, options: ListProposalsOp
   // non-pending status matches nothing.
   if (!options.includeArchive && options.status !== undefined && options.status !== "pending") return [];
   const status = options.includeArchive ? options.status : "pending";
-  const wantRef = options.ref !== undefined ? filterRefIdentity(stashDir, options.ref) : undefined;
+  const matchesRef = options.ref !== undefined ? refFilter(stashDir, options.ref) : undefined;
   return listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) }).filter((p) => {
-    if (wantRef !== undefined && !proposalMatchesRef(p.ref, wantRef)) return false;
+    if (matchesRef !== undefined && !matchesRef(p.ref)) return false;
     if (!options.type) return true;
     try {
       return (
@@ -723,7 +733,7 @@ export function resolveProposalIdIn(db: Database, stashDir: string, idOrRef: str
   const exact = getStateProposal(db, idOrRef, stashDir);
   if (exact) return exact;
   if (idOrRef.includes(":") || idOrRef.includes("/")) {
-    const wantRef = filterRefIdentity(stashDir, idOrRef);
+    const matchesRef = refFilter(stashDir, idOrRef);
     // By-ref resolution never picks a retire proposal — the
     // newest pending proposal for a ref could be a `consolidate-pair`
     // retirement rather than the reflect/distill edit a person typed the
@@ -732,7 +742,7 @@ export function resolveProposalIdIn(db: Database, stashDir: string, idOrRef: str
     // `consolidate-pair` (bulk accept/reject).
     const newest = (status?: string): Proposal | undefined =>
       listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) })
-        .filter((p) => proposalMatchesRef(p.ref, wantRef) && !isRetireProposal(p))
+        .filter((p) => matchesRef(p.ref) && !isRetireProposal(p))
         .sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
     const found = newest("pending") ?? newest();
     if (found) return found;
@@ -1758,7 +1768,7 @@ async function promoteProposalWithLease(
   const written = writeAssets(mutationTarget, { purpose: "proposal-accept" }, (w) =>
     backup !== undefined
       ? w.update(address.conceptId, stamped)
-      : w.create({ type: address.type, name: address.name, content: stamped }),
+      : w.create({ type: address.type, name: address.name, content: stamped }, { verbatim: true }),
   );
   const assetPath = plannedPath;
   const content = String(written.content ?? stamped);

@@ -20,7 +20,7 @@ import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
-import { getSources, loadConfig, resolveSecret } from "../../core/config/config";
+import { getSources, loadConfig, resolveSecret, retiredBundleComponents } from "../../core/config/config";
 import { AkmError, ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath, getRegistryCacheDir } from "../../core/paths";
@@ -169,17 +169,23 @@ function describeAdapter(
   return { adapter: contentRoot !== undefined ? detectAdapterId(contentRoot) : "akm", detected: true };
 }
 
-/** Deprecated, removed in 0.11: the one-entry `components` list `akm bundle list` showed before a bundle named its adapter itself. */
+/**
+ * Deprecated, removed in 0.11: the one-entry `components` list `akm bundle list` showed before a bundle named its
+ * adapter itself. It holds what the config's component held (its name, and its root and writable when it had them), or
+ * for a bundle with none the implicit `main` one.
+ */
 function describeComponents(
   entry: BundleConfigEntry,
   described: { adapter: string; detected: boolean },
+  written: { name: string; root?: string; writable?: boolean } | undefined,
 ): SourceEntry["components"] {
+  const root = written === undefined ? entry.root : written.root;
   return [
     {
-      name: "main",
-      root: entry.root ?? ".",
+      name: written?.name ?? "main",
+      ...(root !== undefined ? { root } : {}),
       ...described,
-      ...(entry.writable !== undefined ? { writable: entry.writable } : {}),
+      ...(written?.writable !== undefined ? { writable: written.writable } : {}),
     },
   ];
 }
@@ -244,6 +250,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
   const kindFilter = input?.kind;
   const locks = new Map(readLockfile().map((entry) => [entry.id, entry]));
   const counts = readBundleCounts();
+  const retired = retiredBundleComponents();
 
   const sources: SourceEntry[] = [];
 
@@ -269,7 +276,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
       writable: resolveWritable(bundle),
       ...(configured.registryId !== undefined ? { registryId: configured.registryId } : {}),
       ...described,
-      components: describeComponents(configured, described),
+      components: describeComponents(configured, described, retired.get(key)),
       lock: describeLock(lock),
       itemCount: bundleCounts.itemCount,
       byType: bundleCounts.byType,

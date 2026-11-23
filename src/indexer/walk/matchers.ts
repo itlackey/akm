@@ -131,8 +131,25 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
   },
 ];
 
-/** Any other Markdown file is knowledge: a type is the path's, never the frontmatter's or the body's. */
-const KNOWLEDGE_FACT = { type: "knowledge", specificity: 5 } as const satisfies MatchFact;
+/** Body placeholders can discover loose commands, but also occur in documentation. */
+const ARGUMENTS_PLACEHOLDER_RE = /\$ARGUMENTS/;
+
+/**
+ * `$1` / `$2` / `$3` — AMBIGUOUS, because ordinary prose writes money the same
+ * way. The old combined pattern used `\$[123]\b`, and `\b` sits between the
+ * `2` and the comma in `$2,000`, so every note quoting a price read as a
+ * command (#824). Excluding a following digit, or a `.`/`,` that is itself
+ * followed by a digit, rules out `$1,200` / `$2,000` / `$2.50` / `$12` while
+ * still matching `$1.` at the end of a sentence — a period with no digit after
+ * it is not part of a number.
+ */
+const NUMERIC_PLACEHOLDER_RE = /\$[123](?!\d|[.,]\d)/;
+const SMART_MD_FACTS = {
+  workflow: { type: "workflow", specificity: 19 },
+  command: { type: "command", specificity: 18 },
+  modelAgent: { type: "agent", specificity: 8 },
+  knowledge: { type: "knowledge", specificity: 5 },
+} as const satisfies Record<string, MatchFact>;
 
 // Files that should never be treated as the typed asset for the surrounding
 // directory (e.g. `workflows/README.md` is documentation, not a workflow).
@@ -222,18 +239,57 @@ export function declaredTypeForPath(ctx: PathFileContext): string | undefined {
   return (classifyByParentDirHint(ctx) ?? classifyByDirectory(ctx))?.type;
 }
 
+/**
+ * True when some ancestor directory already DECLARES this file's type via
+ * `DIR_TYPE_MAP` — the same walk `classifyByDirectory` performs. Derived from
+ * path fields alone, so the content rules below can apply it without reading
+ * bytes. A skill's folder is a declared context too: a file in it is a skill
+ * resource, so a shell `$1` in one of its snippets must not retype it (#1063).
+ */
+function hasDeclaredDirType(ctx: PathFileContext): boolean {
+  if (isNestedSkillResource(ctx)) return true;
+  return ctx.ancestorDirs.some((dir) => matchDirectoryHint(dir, ctx, 0) !== null);
+}
+
+/** What a Markdown file is when nothing but its path is known: knowledge. */
 function classifyByLooseMarkdown(ctx: PathFileContext): MatchFact | null {
   if (ctx.ext !== ".md") return null;
   // A file under secrets/ is a secret value, whatever its extension: the directory matcher types it.
   if (ctx.ancestorDirs.includes("secrets")) return null;
-  return KNOWLEDGE_FACT;
+  return SMART_MD_FACTS.knowledge;
+}
+
+/** A loose Markdown file's type by its content; the path's answer ({@link classifyByLooseMarkdown}) when nothing in it says more. */
+function classifyBySmartMd(ctx: FileContext): MatchFact | null {
+  const byPath = classifyByLooseMarkdown(ctx);
+  // README.md is documentation, never a workflow/agent/command even when the body shape would otherwise classify.
+  if (byPath === null || isTypedDirDocFile(ctx.fileName)) return byPath;
+
+  const body = ctx.content();
+  const fm = ctx.frontmatter();
+
+  // A workflow living OUTSIDE `workflows/` that still declares its type explicitly. Residence under `workflows/` is
+  // the directory rule's.
+  if (fm && fm.type === "workflow") return SMART_MD_FACTS.workflow;
+
+  if (fm && "agent" in fm) return SMART_MD_FACTS.command;
+
+  // Mentioning a placeholder is not explicit command intent. Directory
+  // declarations and skill-resource context win over body-text guesses.
+  if (!hasDeclaredDirType(ctx) && (ARGUMENTS_PLACEHOLDER_RE.test(body) || NUMERIC_PLACEHOLDER_RE.test(body))) {
+    return SMART_MD_FACTS.command;
+  }
+
+  if (fm && "model" in fm) return SMART_MD_FACTS.modelAgent;
+
+  return byPath;
 }
 
 // ---------------------------------------------------------------------------
 // Adapter: MatchFact → MatchResult
 // ---------------------------------------------------------------------------
 
-function toMatchResult(ctx: PathFileContext, classify: (ctx: PathFileContext) => MatchFact | null): MatchResult | null {
+function toMatchResult<F extends PathFileContext>(ctx: F, classify: (ctx: F) => MatchFact | null): MatchResult | null {
   const fact = classify(ctx);
   return fact ? matchResultForFact(fact) : null;
 }
@@ -268,12 +324,17 @@ export function parentDirHintMatcher(ctx: PathFileContext): MatchResult | null {
   return toMatchResult(ctx, classifyByParentDirHint);
 }
 
+/** Markdown by its path alone: knowledge. This is what identity and the write gates see. */
 export function looseMarkdownMatcher(ctx: PathFileContext): MatchResult | null {
   return toMatchResult(ctx, classifyByLooseMarkdown);
 }
 
-// The four matcher functions above are consumed directly by the akm adapter's
-// synchronous `recognizeMatch()` (`core/adapter/adapters/akm-adapter.ts`, which
-// holds the same registration-order array for tie-breaking). The chunk-3 cutover
+/** Markdown by its content (`type: workflow`, `agent:`, `$ARGUMENTS`, `model:`), else as {@link looseMarkdownMatcher}. */
+export function smartMdMatcher(ctx: FileContext): MatchResult | null {
+  return toMatchResult(ctx, classifyBySmartMd);
+}
+
+// The matcher functions above are consumed directly by `recognizeMatch()` and `recognizeMatchByPath()`
+// (`core/adapter/recognize-match.ts`, which hold the same registration-order arrays for tie-breaking). The chunk-3 cutover
 // removed the file-context matcher registry, so there is no `registerBuiltinMatchers`
 // glue any more — recognition is adapter-driven, not registry-driven.

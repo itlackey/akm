@@ -28,6 +28,7 @@ import path from "node:path";
 import { makeSandboxDir } from "../_helpers/sandbox";
 import {
   approvedBy,
+  caseCovers,
   type DifferenceNode,
   differences,
   type RegisteredDifference,
@@ -84,7 +85,7 @@ describe(`references written before the adapter refactor resolve to the same ass
 
   test("every registered difference still occurs", () => {
     const stale = registry.filter(
-      (e) => !nodes.some((n) => n.case === e.case && n.path === e.path && approvedBy(n, [e])),
+      (e) => !nodes.some((n) => caseCovers(e.case, n.case) && n.path === e.path && approvedBy(n, [e])),
     );
     expect(stale.map((e) => `${e.case} :: ${e.path} (${e.row})`)).toEqual([]);
   });
@@ -100,5 +101,8 @@ describe(`references written before the adapter refactor resolve to the same ass
   test("the register has one entry per difference", () => {
     const keys = registry.map((e) => `${e.case}\0${e.path}`);
     expect(keys.filter((k, i) => keys.indexOf(k) !== i).map((k) => k.replace("\0", " :: "))).toEqual([]);
+    // A glob entry and a named one must not both cover the same difference.
+    const covered = nodes.filter((n) => registry.filter((e) => approvedBy(n, [e]) !== undefined).length > 1);
+    expect(covered.map((n) => `${n.case} :: ${n.path}`)).toEqual([]);
   });
 });

@@ -171,7 +171,6 @@ describe("a concept spelled twice: the first spelling wins for list, read and th
 
   test.each([
     ["akm", akmAdapter, "tasks/same", ["tasks/same.md", "tasks/same.yml"], "tasks/same.yml"],
-    ["akm", akmAdapter, "skills/x", ["skills/x.md", "skills/x/SKILL.md"], "skills/x/SKILL.md"],
     ["generic-files", genericFilesAdapter, "docs/f", ["docs/f.txt", "docs/f.md", "docs/f.text"], "docs/f.md"],
     ["okf", okfAdapter, "notes/a", ["notes/a.MD", "notes/a.md"], "notes/a.md"],
   ] as const)("%s: %s", async (_id, adapter, conceptId, files, winner) => {
@@ -189,6 +188,29 @@ describe("a concept spelled twice: the first spelling wins for list, read and th
     } finally {
       allowReads();
     }
+  });
+});
+
+describe("a file name asks for its concept's winner", () => {
+  let sandbox: ReturnType<typeof sandboxStashDir>;
+  beforeEach(() => {
+    sandbox = sandboxStashDir();
+  });
+  afterEach(() => sandbox.cleanup());
+
+  test.each([
+    ["tasks/dup.md", "tasks/dup", ["tasks/dup.md", "tasks/dup.yml"], "tasks/dup.yml"],
+    ["env/default.env", "env/default", ["env/default.env", "env/.env"], "env/.env"],
+  ] as const)("%s reads what %s reads", (fileName, conceptId, files, winner) => {
+    const b: Bundle = { id: "b", root: sandbox.dir };
+    for (const rel of files) {
+      fs.mkdirSync(path.dirname(path.join(sandbox.dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(sandbox.dir, rel), "x\n");
+    }
+    const byName = akmAdapter.read(b, fileName);
+    expect(byName?.conceptId).toBe(conceptId);
+    expect(byName?.entry.relPath).toBe(winner);
+    expect(akmAdapter.read(b, conceptId)?.entry.relPath).toBe(winner);
   });
 });
 

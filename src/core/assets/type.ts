@@ -6,20 +6,21 @@
  * The type of an asset. Finding and listing an asset says where it is, never what it is: a type is index metadata the
  * adapter gives (`recognize`) and the index records, so every read of a type comes from the index. An asset with no
  * index row yet (a file added outside akm) is indexed on that first ask: one `recognize`, one upsert. A row is
- * refreshed by `akm index` and by akm's own writes; a gate never re-reads the file to check it.
+ * refreshed by `akm index` and by akm's own writes; only a gate that runs or renders the asset ({@link assetTypeFresh})
+ * checks it against the file's bytes, which it reads anyway.
  */
 
 import path from "node:path";
 import { openUsableIndex, readUsableIndex } from "../../indexer/index-readiness";
 import { withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
-import { WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../../indexer/index-written-assets";
-import { deriveEntryProvenance } from "../../indexer/installations";
+import { upsertIndexRows, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../../indexer/index-written-assets";
 import { embeddingInputCap } from "../../indexer/materialize-embeddings";
-import { withFileSize } from "../../indexer/passes/metadata";
-import { indexDocumentToStashEntry } from "../../indexer/scan/doc-to-entry";
+import { brokenWorkflowWarning, indexRowEntry } from "../../indexer/scan/drain-dir";
 import type { SearchSource } from "../../indexer/search/search-source";
+import { fileContextOfEntry } from "../../indexer/walk/file-context";
 import { closeDatabase } from "../../storage/repositories/index-connection";
-import { deleteEntriesByIds, upsertEntry } from "../../storage/repositories/index-entries-repository";
+import { deleteEntriesByIds } from "../../storage/repositories/index-entries-repository";
+import { hashContent } from "../adapter/adapters/shared";
 import { adapterIdOf } from "../adapter/detect-adapter";
 import type { IndexDocument } from "../adapter/types";
 import { loadConfig } from "../config/config";
@@ -85,33 +86,21 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>): void {
       db.transaction(() => {
         for (const [asset, document] of documents) {
           const source = sourceOf(asset);
-          // The path the index keys the asset under: its file, else (no file holds it) a path inside the bundle.
-          const filePath = asset.entry.file ?? path.join(source.path, asset.entry.relPath);
-          const stashEntry = indexDocumentToStashEntry(document);
-          if (document.path === undefined) {
-            stashEntry.filename = path.basename(asset.entry.relPath);
-            stashEntry.fileless = true;
-          }
-          const provenance = deriveEntryProvenance(
+          // The scan drops a workflow that does not compile, so no ask of it records a row either.
+          if (brokenWorkflowWarning(document, fileContextOfEntry(source.path, asset.entry)) !== null) continue;
+          upsertIndexRows(
+            db,
             { bundleId: asset.bundle, adapterId: adapterIdOf(source) },
-            document.type,
-            document.name,
-            document.conceptId as string,
-          );
-          // A file has one current row: one under another ref is superseded.
-          const superseded = db
-            .prepare("SELECT id FROM entries WHERE file_path = ? AND item_ref <> ?")
-            .all(filePath, provenance.itemRef) as Array<{ id: number }>;
-          deleteEntriesByIds(
-            db,
-            superseded.map((row) => row.id),
-          );
-          upsertEntry(
-            db,
-            filePath,
-            asset.entry.file ? withFileSize(stashEntry, filePath) : stashEntry,
-            provenance,
-            document.hash,
+            [
+              {
+                // The path the index keys the asset under: its file, else (no file holds it) a path inside the bundle.
+                file: asset.entry.file ?? path.join(source.path, asset.entry.relPath),
+                entry: indexRowEntry(document, path.basename(asset.entry.relPath)),
+                conceptId: document.conceptId as string,
+                contentHash: document.hash,
+                hasFile: asset.entry.file !== undefined,
+              },
+            ],
             cap,
           );
         }
@@ -206,4 +195,23 @@ export function assetTypes(assets: readonly Asset[]): Map<Asset, string> {
  */
 export function assetType(asset: Asset): string {
   return assetTypes([asset]).get(asset) as string;
+}
+
+/**
+ * The type of `asset` for a gate that runs or renders it: those read its bytes anyway, so the type is checked against
+ * them. A row whose content hash is not the asset's current one (an edit made outside akm, such as `agent:` added to a
+ * loose `.md`) is described again first, as {@link assetType} does for a missing row, so the run sees the type the
+ * next index would give. An asset no file holds is typed by its row alone: there are no bytes to check.
+ */
+export function assetTypeFresh(asset: Asset): string {
+  if (asset.entry.file === undefined) return assetType(asset);
+  const recorded = readUsableIndex(
+    (db) =>
+      db.prepare("SELECT content_hash FROM entries WHERE item_ref = ?").get(asset.ref) as
+        | { content_hash: string | null }
+        | undefined,
+    undefined,
+  );
+  if (recorded?.content_hash === hashContent(asset.entry.content())) return assetType(asset);
+  return indexAsset(asset).type;
 }

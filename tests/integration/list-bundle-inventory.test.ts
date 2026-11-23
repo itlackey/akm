@@ -105,7 +105,7 @@ describe("akm list bundle inventory", () => {
       source: { kind: "path", locator: storage.stashDir },
       adapter: "akm",
       detected: false,
-      components: [{ name: "main", root: ".", adapter: "akm", detected: false, writable: true }],
+      components: [{ name: "main", adapter: "akm", detected: false }],
       lock: null,
       itemCount: 1,
       byType: { skill: 1 },
@@ -179,13 +179,9 @@ describe("akm list bundle inventory", () => {
 
     expect(byName.get("primary")).toMatchObject({ adapter: "akm", detected: false });
     expect(byName.get("auto")).toMatchObject({ adapter: "agent-skills", detected: true });
-    // Deprecated (removed in 0.11): the one-entry list keeps its 0.10 content.
-    expect(byName.get("primary")?.components).toEqual([
-      { name: "main", root: ".", adapter: "akm", detected: false, writable: true },
-    ]);
-    expect(byName.get("auto")?.components).toEqual([
-      { name: "main", root: ".", adapter: "agent-skills", detected: true },
-    ]);
+    // Deprecated (removed in 0.11): the one-entry list keeps its 0.10 content, which is what the config's component held.
+    expect(byName.get("primary")?.components).toEqual([{ name: "main", adapter: "akm", detected: false }]);
+    expect(byName.get("auto")?.components).toEqual([{ name: "main", adapter: "agent-skills", detected: true }]);
   });
   test("bundle list shows a location bundle as a location source, writable by the one default", async () => {
     writeSandboxConfig({

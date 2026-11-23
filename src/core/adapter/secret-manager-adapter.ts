@@ -118,7 +118,12 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
         complete: true,
       };
     } catch (error) {
-      return { assets: [], complete: false, incompleteReason: toErrorMessage(error) };
+      return {
+        assets: [],
+        complete: false,
+        incompleteReason: toErrorMessage(error),
+        ...(error instanceof ConfigError && error.code === "BUNDLE_UNREACHABLE" ? { unreachable: true as const } : {}),
+      };
     }
   }
 

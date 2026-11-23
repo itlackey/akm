@@ -274,6 +274,36 @@ export function resolveWorkflowSourceDomains(
   return resolutions;
 }
 
+/**
+ * Whether the workflow source `file` of the bundle at `sourceRoot` may run: a symlink may not change the source's
+ * format or lead to no file. A source that may not is warned about once, as the index and lint do.
+ */
+export function isUsableWorkflowSource(sourceRoot: string, file: string): boolean {
+  const authoredRoot = path.resolve(sourceRoot);
+  let realRoot: string;
+  try {
+    realRoot = fs.realpathSync(authoredRoot);
+  } catch {
+    return false;
+  }
+  const authored = path.resolve(file);
+  const extension = path.extname(authored);
+  const inspection = inspectWorkflowSourceCandidate(
+    {
+      path: authored,
+      relativePath: toPosix(path.relative(authoredRoot, authored)),
+      lowerExtension: extension.toLowerCase(),
+      extensionlessStem: path.basename(authored).slice(0, -extension.length),
+    },
+    "",
+    realRoot,
+  );
+  for (const issue of inspection.issues) {
+    warnOnce(`workflow-source-invalid:${issue.sourcePaths.join(",")}`, issue.message);
+  }
+  return inspection.source !== undefined;
+}
+
 function inspectWorkflowSourceDomain(
   candidates: readonly WorkflowSourceCandidate[],
   canonicalName: string,

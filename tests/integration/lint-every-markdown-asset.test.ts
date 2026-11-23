@@ -55,12 +55,11 @@ describe("lint reaches every Markdown asset of an akm bundle", () => {
   });
 
   test("the per-type checks follow the type the indexer gives the file, wherever it sits", async () => {
-    // A command by its folder, below a loose one: the command check (a name or a type) applies. A body that runs
-    // `$ARGUMENTS` does not make a command: the type is the path's.
-    put("recipes/commands/deploy.md", "---\ndescription: Deploy\nupdated: 2026-11-01\n---\n\nRun now.\n");
-    put("recipes/plain.md", "---\ndescription: Plain\nupdated: 2026-11-01\n---\n\nRun $ARGUMENTS now.\n");
+    // A command by its body, outside commands/: the command check (a name or a type) applies.
+    put("recipes/deploy.md", "---\ndescription: Deploy\nupdated: 2026-11-01\n---\n\nRun $ARGUMENTS now.\n");
+    put("recipes/plain.md", "---\ndescription: Plain\nupdated: 2026-11-01\n---\n\nNothing to run.\n");
 
-    expect(await flaggedFiles(undefined, "missing-name-or-type")).toEqual(["recipes/commands/deploy.md"]);
+    expect(await flaggedFiles(undefined, "missing-name-or-type")).toEqual(["recipes/deploy.md"]);
   });
 
   test("a file the indexer's walk skips is not linted", async () => {
@@ -132,7 +131,7 @@ describe("a wiki folder of an akm bundle is ordinary akm files: a wiki is a bund
     put("loose.md");
   }
 
-  test("a page and a raw snapshot without updated are flagged like any akm file, and none is a command by its body", async () => {
+  test("a page and a raw snapshot without updated are flagged like any akm file, and a page whose body runs $ARGUMENTS is a command", async () => {
     wiki();
 
     expect(await flaggedFiles()).toEqual([
@@ -141,7 +140,7 @@ describe("a wiki folder of an akm bundle is ordinary akm files: a wiki is a bund
       "wikis/notes/pages/runs.md",
       "wikis/notes/raw/snap.md",
     ]);
-    expect(await flaggedFiles(undefined, "missing-name-or-type")).toEqual([]);
+    expect(await flaggedFiles(undefined, "missing-name-or-type")).toEqual(["wikis/notes/pages/runs.md"]);
   });
 
   test("every other check runs on wiki files too", async () => {

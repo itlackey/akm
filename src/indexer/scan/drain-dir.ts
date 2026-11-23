@@ -37,6 +37,20 @@ import { indexDocumentToStashEntry } from "./doc-to-entry";
 /** The markdown-workflow renderer name the `akm` adapter carries on `documentJson.renderer`. */
 const WORKFLOW_MD_RENDERER = "workflow-md";
 
+/**
+ * The durable entry of a recognized document, as the scan, a write-path refresh and the facade's refresh all record
+ * it. An entry no file holds (a secret manager's) is keyed under the path the indexer gave it (`fileName` is its
+ * name), and marked: no output prints a path for it.
+ */
+export function indexRowEntry(doc: IndexDocument, fileName: string): IndexDocument {
+  const entry = indexDocumentToStashEntry(doc);
+  if (doc.path === undefined) {
+    entry.filename = fileName;
+    entry.fileless = true;
+  }
+  return entry;
+}
+
 export interface DrainedDir {
   /** The reconstructed durable entries, broken workflows already dropped. */
   entries: IndexDocument[];
@@ -80,16 +94,10 @@ export function drainDirDocuments(
       continue;
     }
 
-    const entry = indexDocumentToStashEntry(doc);
-    // An entry no file holds (a secret manager's) is keyed under the path the indexer gave it, and marked: no output
-    // prints a path for it.
-    if (doc.path === undefined) {
-      entry.filename = file.fileName;
-      entry.fileless = true;
-    }
+    const entry = indexRowEntry(doc, file.fileName);
     // Workflow docs: drop-with-warning if broken; otherwise cache a lossless
     // runtime projection when the current executor can represent the source.
-    const dropWarning = handleWorkflowDoc(doc, file);
+    const dropWarning = brokenWorkflowWarning(doc, file);
     if (dropWarning !== null) {
       warnings.push(dropWarning);
       continue;
@@ -128,9 +136,13 @@ export function recognizeStashEntries(stashRoot: string, files: string[]): Stash
 /**
  * If `doc` is a workflow, compile it through source IR: return a
  * `Skipped workflow …` drop warning when it is broken, or return `null` when
- * it compiles. Non-workflow docs return `null` immediately.
+ * it compiles. Non-workflow docs return `null` immediately. A broken workflow is no row of the index, whoever
+ * records the row: the scan, a write, or the first ask of an asset that has none.
  */
-function handleWorkflowDoc(doc: IndexDocument, file: FileContext): string | null {
+export function brokenWorkflowWarning(
+  doc: IndexDocument,
+  file: Pick<FileContext, "content" | "relPath" | "absPath">,
+): string | null {
   if (
     doc.type !== "workflow" ||
     (doc.adapterId !== "akm" && doc.adapterId !== "akm-workflow") ||
@@ -161,7 +173,10 @@ function docRenderer(doc: IndexDocument): string | undefined {
  * threw), then {@link buildMetadataSkipWarning}'s workflow branch. `startsWith
  * "Skipped workflow "` so `isWorkflowSkipWarning` counts it for the summary.
  */
-function workflowDropWarning(file: FileContext, errors: ReadonlyArray<{ line: number; message: string }>): string {
+function workflowDropWarning(
+  file: Pick<FileContext, "relPath" | "absPath">,
+  errors: ReadonlyArray<{ line: number; message: string }>,
+): string {
   const summary = errors.map((e) => `${file.relPath}:${e.line} — ${e.message}`).join("\n");
   return buildMetadataSkipWarning(file.absPath, "workflow", `Workflow has errors:\n${summary}`);
 }

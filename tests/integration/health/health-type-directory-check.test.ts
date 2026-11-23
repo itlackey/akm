@@ -64,7 +64,7 @@ describe("type-directory-disagreement advisory (#831, end-to-end)", () => {
     }
   });
 
-  test("no frontmatter or body overrides a document's directory: the type is the path's, so nothing disagrees", async () => {
+  test("only explicit frontmatter overrides a document's directory, without hard-failing", async () => {
     setUpStash();
     try {
       writeFile(
@@ -78,8 +78,29 @@ describe("type-directory-disagreement advisory (#831, end-to-end)", () => {
       await akmIndex({ stashDir: storage.stashDir, full: true });
 
       const result = await akmHealth({ since: "7d" });
-      expect(findAdvisory(result.advisories, "type-directory-disagreement")).toBeUndefined();
+      const advisory = findAdvisory(result.advisories, "type-directory-disagreement");
+      expect(advisory).toBeDefined();
+      expect(advisory?.status).toBe("warn");
+      expect(advisory?.status).not.toBe("fail");
       expect(result.status).not.toBe("fail");
+
+      const disagreements = (advisory?.evidence?.disagreements ?? []) as Array<{
+        path: string;
+        resolved: string;
+        expected: string;
+        winner: string;
+        knownGoodOverride: boolean;
+      }>;
+      const deployCmd = disagreements.find((d) => d.path.includes("deploy-cmd.md"));
+      expect(deployCmd).toBeUndefined();
+      expect(disagreements).toHaveLength(1);
+      const buildCmd = disagreements.find((d) => d.path.includes("build-cmd.md"));
+      expect(buildCmd).toMatchObject({
+        resolved: "command",
+        expected: "agent",
+        winner: "smart-md:agent-frontmatter",
+        knownGoodOverride: true,
+      });
     } finally {
       storage.cleanup();
     }

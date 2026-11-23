@@ -10,6 +10,7 @@ import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import { openDatabase } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
+import { SERVED_AS_IS_INDEX_LAYOUT } from "../../../src/storage/repositories/index-entry-schema";
 import { searchFts } from "../../../src/storage/repositories/index-fts-repository";
 import { DB_VERSION, ensureSchema } from "../../../src/storage/repositories/index-schema";
 
@@ -82,7 +83,7 @@ describe("canonical derived-index entry schema", () => {
       const legacy = openDatabase(dbPath);
       legacy.exec(`
         CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        INSERT INTO index_meta (key, value) VALUES ('version', '${DB_VERSION - 1}');
+        INSERT INTO index_meta (key, value) VALUES ('version', '${SERVED_AS_IS_INDEX_LAYOUT - 1}');
         CREATE TABLE entries (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           entry_key TEXT NOT NULL UNIQUE,

@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { classifyAkmPath } from "../../core/adapter/adapters/akm-adapter";
+import { classifyAkmFile } from "../../core/adapter/adapters/akm-adapter";
 import {
   derivedSiblingPath,
   MAX_SKILL_GROUP_DEPTH,
@@ -38,6 +38,7 @@ import { UsageError } from "../../core/errors";
 import type { FileChange } from "../../core/file-change";
 import { warn } from "../../core/warn";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import { type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
 import { walkStashFlat } from "../../indexer/walk/walker";
 import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../tasks/source-v3";
 import { resolveWorkflowSourceDomains } from "../../workflows/source-files";
@@ -144,7 +145,7 @@ function markdownAssetsByType(root: string): Map<string, string[]> {
   const byDir = new Map<string, string[]>();
   for (const file of walkStashFlat(root)) {
     if (file.ext !== ".md" || file.ancestorDirs.some((dir) => dir === "env" || dir === "secrets")) continue;
-    const type = classifyAkmPath(file.relPath)?.match.type;
+    const type = classifyAkmFile(file.relPath, file)?.match.type;
     const dir = type === undefined ? undefined : documentStashDirFor(type);
     if (dir === undefined || documentFormatForStashDir(dir) !== "markdown") continue;
     byDir.set(dir, [...(byDir.get(dir) ?? []), file.absPath]);
@@ -244,7 +245,7 @@ export function diagnosticToLintIssue(diag: Diagnostic): LintIssue {
 async function adapterFindings(
   adapter: BundleAdapter,
   stashRoot: string,
-  keep: ((relPath: string) => boolean) | undefined,
+  keep: ((file: FileContext) => boolean) | undefined,
   sources: SearchSource[],
   cfg: AkmConfig,
   options: AkmLintOptions,
@@ -259,7 +260,7 @@ async function adapterFindings(
     .list(bundle)
     .assets // akm's own resolved registry-cache copies are not the bundle's content.
     .filter(({ entry }) => entry.file === undefined || !isAkmRegistryCachePath(entry.file))
-    .filter(({ entry }) => keep === undefined || keep(entry.relPath))
+    .filter(({ entry }) => keep === undefined || keep(fileContextOfEntry(stashRoot, entry)))
     .map(({ entry }) => ({ path: entry.relPath, op: "update" }));
 
   const ctx = createValidateContext({
@@ -705,16 +706,10 @@ async function addAdapterFindings(
   const adapter = adapterForId("akm");
   if (!adapter) return;
   const dirs = new Set(sweepDirs(cfg, options));
-  const inSweep = (relPath: string): boolean => {
+  const inSweep = (file: FileContext): boolean => {
     // Nothing under `env/` or `secrets/` is read, as in the sweep.
-    if (
-      relPath
-        .split("/")
-        .slice(0, -1)
-        .some((dir) => dir === "env" || dir === "secrets")
-    )
-      return false;
-    const type = classifyAkmPath(relPath)?.match.type;
+    if (file.ancestorDirs.some((dir) => dir === "env" || dir === "secrets")) return false;
+    const type = classifyAkmFile(file.relPath, file)?.match.type;
     const dir = type === undefined ? undefined : documentStashDirFor(type);
     return dir !== undefined && dirs.has(dir);
   };

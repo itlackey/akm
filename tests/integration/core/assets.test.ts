@@ -31,7 +31,7 @@ import {
   listAssets,
   requireAsset,
 } from "../../../src/core/assets/read";
-import { assetType } from "../../../src/core/assets/type";
+import { assetType, assetTypeFresh } from "../../../src/core/assets/type";
 import { addressOf, writeAssets } from "../../../src/core/assets/write";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { NotFoundError, UsageError } from "../../../src/core/errors";
@@ -439,16 +439,22 @@ describe("findAsset", () => {
 });
 
 describe("listAssets, currentConceptId, assetRevision", () => {
-  test("lists the assets of a type across bundles, sorted by where it is held", () => {
+  test("lists the assets of a type across bundles, in the bundles' order and then by name", () => {
     const first = bundleOf("first", {
       "secrets/b": "1",
+      "secrets/a": "2",
       "knowledge/k.md": "# k\n",
     });
     const second = bundleOf("second", { "secrets/a": "3" });
 
     const secrets = listAssets({ sources: [first, second], type: "secret" });
 
-    expect(secrets.map((asset) => asset.ref)).toEqual(["first//secrets/b", "second//secrets/a"]);
+    expect(secrets.map((asset) => asset.ref)).toEqual(["first//secrets/a", "first//secrets/b", "second//secrets/a"]);
+    expect(listAssets({ sources: [second, first], type: "secret" }).map((asset) => asset.ref)).toEqual([
+      "second//secrets/a",
+      "first//secrets/a",
+      "first//secrets/b",
+    ]);
     expect(listAssets({ sources: [first, second], bundle: "second" }).map((asset) => asset.ref)).toEqual([
       "second//secrets/a",
     ]);
@@ -525,6 +531,36 @@ describe("writeAssets", () => {
     const deleted = writeAssets(target, { purpose: "test" }, (w) => w.delete("knowledge/note"));
     expect(deleted).toEqual({ ref: "stash//knowledge/note" });
     expect(fs.existsSync(path.join(stash.path, "knowledge", "note.md"))).toBe(false);
+  });
+
+  test("a create over an existing asset writes what a create writes, not the bare content", () => {
+    const stash = bundleOf("stash", {});
+    const target = targetOf(stash);
+    const create = (name: string, content: string) =>
+      writeAssets(target, { purpose: "test" }, (w) => w.create({ type: "knowledge", name, content }));
+
+    create("again", "first\n");
+    create("again", "Second body");
+    create("fresh", "Second body");
+
+    const bytes = (name: string) => fs.readFileSync(path.join(stash.path, "knowledge", `${name}.md`), "utf8");
+    expect(bytes("again")).toBe(bytes("fresh"));
+    expect(bytes("again")).toContain("Second body");
+    expect(bytes("again")).not.toContain("first");
+  });
+
+  test("a verbatim create keeps the content exactly, and an exclusive one still refuses an existing asset", () => {
+    const stash = bundleOf("stash", {});
+    const target = targetOf(stash);
+    writeAssets(target, { purpose: "test" }, (w) =>
+      w.create({ type: "knowledge", name: "exact", content: "no frontmatter\n" }, { verbatim: true }),
+    );
+    expect(fs.readFileSync(path.join(stash.path, "knowledge", "exact.md"), "utf8")).toBe("no frontmatter\n");
+    expect(() =>
+      writeAssets(target, { purpose: "test" }, (w) =>
+        w.create({ type: "knowledge", name: "exact", content: "x\n" }, { exclusive: true, verbatim: true }),
+      ),
+    ).toThrow(UsageError);
   });
 
   test("a source that is not writable is refused first", () => {
@@ -748,6 +784,35 @@ describe("assetType", () => {
     expect(assetType(findAsset("knowledge/a", { sources: [stash] }) as Asset)).toBe("knowledge");
     expect(assetType(findAsset("env/prod", { sources: [stash] }) as Asset)).toBe("env");
     expect(fs.existsSync(getDbPath())).toBe(false);
+  });
+});
+
+describe("assetTypeFresh", () => {
+  test("a file edited outside akm is typed by its content now, and the row follows", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({
+        semanticSearchMode: "off",
+        defaultBundle: "main",
+        bundles: { main: { path: storage.stashDir, writable: true } },
+      });
+      resetConfigCache();
+      const note = path.join(storage.stashDir, "knowledge", "note.md");
+      fs.mkdirSync(path.dirname(note), { recursive: true });
+      fs.writeFileSync(note, "# note\n");
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+      const asset = findAsset("main//knowledge/note") as Asset;
+      expect(assetTypeFresh(asset)).toBe("knowledge");
+
+      // Edited by hand: the index still says what it said, and the gate that runs the asset does not.
+      fs.writeFileSync(note, "---\nagent: build\n---\nBuild $ARGUMENTS.\n");
+      const edited = findAsset("main//knowledge/note") as Asset;
+      expect(assetType(edited)).toBe("knowledge");
+      expect(assetTypeFresh(edited)).toBe("command");
+      expect(assetType(edited)).toBe("command");
+    } finally {
+      storage.cleanup();
+    }
   });
 });
 

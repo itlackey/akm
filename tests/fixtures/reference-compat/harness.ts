@@ -167,6 +167,9 @@ export const SHOW_REFS: string[] = [
   "skills/twinned",
   "skills/twinned/SKILL.md",
   "skills/twinned.md",
+  "team//tasks/twin",
+  "team//tasks/twin.md",
+  "team//tasks/twin.yml",
   // tombstoned and missing
   "memories/pruned-note",
   "memories/successor",
@@ -175,7 +178,20 @@ export const SHOW_REFS: string[] = [
   "knowledge/ghost",
   "nosuch//knowledge/guide",
   "../etc/passwd",
+  // bundles of one format each: okf, an llm wiki, a website snapshot, workflows
+  "okf//concepts/ada",
+  "okf//concepts/plain",
+  "wiki//pages/attention",
+  "wiki//pages/note",
+  "wiki//raw/source",
+  "snapshot//example-com/plain",
+  "snapshot//example-com/tagged",
+  "flows//deploy",
+  "flows//doc",
 ];
+
+/** Every bundle of the fixture, with its directory under `tests/fixtures/reference-compat/`. */
+const BUNDLES = ["main", "team", "files", "okf", "wiki", "snapshot", "flows"];
 
 const TASKS: Array<{ ref: string; id: string; bundle: string }> = [
   { ref: "tasks/nightly", id: "nightly", bundle: "main" },
@@ -207,7 +223,9 @@ const LINT_RULES = ["missing-ref", "stale-path", "invalid-task-yaml", "tracked-s
 
 export function corpusCases(): CorpusCase[] {
   const cases: CorpusCase[] = [];
-  const add = (id: string, args: string[], extra: Partial<CorpusCase> = {}) => cases.push({ id, args, ...extra });
+  // A search lists its hits up to --limit: a high one, so a change that adds or drops a hit is a difference, not a cut-off.
+  const add = (id: string, args: string[], extra: Partial<CorpusCase> = {}) =>
+    cases.push({ id, args: args[0] === "search" ? [...args, "--limit", "1000"] : args, ...extra });
 
   // Before the first index: what answers with no index.db at all.
   for (const ref of [
@@ -248,6 +266,8 @@ export function corpusCases(): CorpusCase[] {
   add("search from team", ["search", "dup", "--from", "team"]);
   add("search from main", ["search", "dup", "--from", "main"]);
   add("search from files", ["search", "", "--from", "files"]);
+  for (const bundle of ["okf", "wiki", "snapshot", "flows"])
+    add(`search from ${bundle}`, ["search", "", "--from", bundle]);
   add("search type command", ["search", "", "--type", "command"]);
   add("search type wiki-page", ["search", "", "--type", "wiki-page"]);
   add("search wikis prefix", ["search", "wikis/"]);
@@ -405,7 +425,7 @@ export function buildSandbox(root: string, tree: string, stateSql: string): Sand
   for (const dir of [home, fixture, out, bin, work, path.join(xdg.config, "akm"), path.join(xdg.data, "akm")]) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  for (const bundle of ["main", "team", "files"]) copyDir(path.join(FIXTURE_DIR, bundle), path.join(fixture, bundle));
+  for (const bundle of BUNDLES) copyDir(path.join(FIXTURE_DIR, bundle), path.join(fixture, bundle));
 
   const values: Record<string, string> = {
     FIXTURE: fixture,
@@ -655,7 +675,7 @@ export function runCorpus(sandbox: Sandbox, onCase?: (id: string) => void): Reco
     results[`state ${probe.id}`] = { value: norm.value(db.prepare(probe.sql).all()) };
   }
   db.close();
-  for (const bundle of ["main", "team", "files"]) {
+  for (const bundle of BUNDLES) {
     results[`changes to bundle ${bundle}`] = {
       value: bundleChanges(path.join(sandbox.fixture, bundle), path.join(FIXTURE_DIR, bundle), norm.text),
     };

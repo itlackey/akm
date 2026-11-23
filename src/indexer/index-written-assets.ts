@@ -24,6 +24,7 @@ import { isDataDirUnreadableError, TransientError } from "../core/errors";
 import { isPathAbsent } from "../core/path-access";
 import { getDbPath } from "../core/paths";
 import { warn, warnVerbose } from "../core/warn";
+import type { Database } from "../storage/database";
 import { closeDatabase } from "../storage/repositories/index-connection";
 import { deleteEntriesByIds, upsertEntry } from "../storage/repositories/index-entries-repository";
 import { isSqliteContentionError } from "../storage/sqlite-transaction";
@@ -43,6 +44,46 @@ import { walkedFiles } from "./walk/walker";
  * skipped and the asset becomes searchable after the next build instead.
  */
 export const WRITE_PATH_INDEX_BUSY_TIMEOUT_MS = 5_000;
+
+/** One recognized file to record in the index. */
+export interface IndexRow {
+  /** The path the index keys the row under. */
+  file: string;
+  entry: IndexDocument;
+  conceptId: string;
+  contentHash?: string;
+  /** False for an entry no file holds: there is no size to record. Default true. */
+  hasFile?: boolean;
+}
+
+/**
+ * Record `rows` in the index: the one place a row is written outside a full scan (the write path and the facade's
+ * refresh). The provenance is the full-index writer's, so a row is never a NULL-item_ref straggler. A file has one
+ * current row: one under another ref is superseded, which is how an explicitly named bundle takes a file over from an
+ * earlier path-derived identity. Returns the ids of the rows written. The caller holds the transaction.
+ */
+export function upsertIndexRows(
+  db: Database,
+  owner: { bundleId: string; adapterId: string },
+  rows: readonly IndexRow[],
+  maxInputTokens: number,
+): number[] {
+  const ids: number[] = [];
+  for (const { file, entry, conceptId, contentHash, hasFile = true } of rows) {
+    const provenance = deriveEntryProvenance(owner, entry.type, entry.name, conceptId);
+    const superseded = db
+      .prepare("SELECT id FROM entries WHERE file_path = ? AND item_ref <> ?")
+      .all(file, provenance.itemRef) as Array<{ id: number }>;
+    deleteEntriesByIds(
+      db,
+      superseded.map((row) => row.id),
+    );
+    ids.push(
+      upsertEntry(db, file, hasFile ? withFileSize(entry, file) : entry, provenance, contentHash, maxInputTokens),
+    );
+  }
+  return ids;
+}
 
 /**
  * Index the given just-written asset files into the existing local index.
@@ -150,31 +191,9 @@ export async function indexWrittenAssets(
         }
         deleteEntriesByIds(db, [...unindexableEntryIds]);
         mutated ||= unindexableEntryIds.size > 0;
-        for (const { file, entry, conceptId, contentHash } of pairs) {
-          const entryWithSize = withFileSize(entry, file);
-          // Real provenance (F4a M-core-2 item 5): populate item_ref/content_hash
-          // via the SAME derivation the full-index writer uses, so a write-path
-          // row is never a NULL-item_ref straggler.
-          const provenance = deriveEntryProvenance(
-            { bundleId: bundle.id, adapterId },
-            entry.type,
-            entry.name,
-            conceptId,
-          );
-          // A materialized file has one current owner. If a targeted write is
-          // the ownership handoff (for example an explicitly named bundle
-          // replacing an earlier path-derived bootstrap identity), remove the
-          // superseded physical-path row before publishing the canonical ref.
-          const supersededIds = db
-            .prepare("SELECT id FROM entries WHERE file_path = ? AND item_ref <> ?")
-            .all(file, provenance.itemRef) as Array<{ id: number }>;
-          deleteEntriesByIds(
-            db,
-            supersededIds.map((row) => row.id),
-          );
-          targetEntryIds.add(upsertEntry(db, file, entryWithSize, provenance, contentHash, embeddingInputCap(config)));
-          mutated = true;
-        }
+        const ids = upsertIndexRows(db, { bundleId: bundle.id, adapterId }, pairs, embeddingInputCap(config));
+        for (const id of ids) targetEntryIds.add(id);
+        mutated ||= ids.length > 0;
       })();
       if (mutated) {
         await generateEmbeddingsForDb(db, config, () => {}, undefined, [...targetEntryIds]);

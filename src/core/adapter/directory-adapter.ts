@@ -142,6 +142,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
         const conceptId = winners.get(file);
         return conceptId === undefined ? [] : [{ conceptId, entry: this.entryOf(file) }];
       }),
+      unclaimed: walked.files.filter((file) => !conceptOf.has(file)),
       complete: walked.complete,
       ...(walked.incompleteReason !== undefined ? { incompleteReason: walked.incompleteReason } : {}),
     };
@@ -202,8 +203,12 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   }
 
   /**
-   * The files that hold the asset `conceptId` names, the winner first, and the concept id they hold. Existence checks
+   * The files that hold the asset `asked` names, the winner first, and the concept id they hold. Existence checks
    * and directory listings only. Undefined: the root is gone or no spelling of it exists.
+   *
+   * `asked` may be a file's name (`tasks/dup.md`) rather than a concept id. The first existing spelling's file then
+   * holds some concept, and that concept's winner is the answer, so a file name never reaches a file the concept's
+   * own spelling order ranks below another (`tasks/dup.md` and `tasks/dup` are the same asset).
    */
   private holders(b: Bundle, asked: string): { conceptId: string; files: FileContext[] } | undefined {
     const normalized = normalizedConceptId(asked);
@@ -215,8 +220,19 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
       if (hasErrnoCode(error, "ENOENT")) return undefined;
       throw new ConfigError(`Unable to read bundle directory at "${b.root}".`, "STASH_DIR_UNREADABLE");
     }
+    const spelled = this.existingSpellings(b, normalized);
+    const first = spelled[0];
+    if (!first) return undefined;
+    const conceptId = this.identify(first.relPath) as string;
+    const held = conceptId === normalized ? spelled : this.existingSpellings(b, conceptId);
+    const files = held.filter((file) => this.identify(file.relPath) === conceptId);
+    return { conceptId, files: files.length > 0 ? files : [first] };
+  }
+
+  /** The files that exist at a spelling of `conceptId` (case variants included) and that a listing reaches and `identify` maps to a concept, in spelling order. */
+  private existingSpellings(b: Bundle, conceptId: string): FileContext[] {
     const found = new Map<string, FileContext>();
-    for (const spelling of this.spellings(normalized)) {
+    for (const spelling of this.spellings(conceptId)) {
       for (const relPath of caseVariants(b.root, spelling)) {
         const file = candidateFile(b, path.join(b.root, relPath));
         if (!file || found.has(file.absPath) || this.identify(file.relPath) === null) continue;
@@ -224,10 +240,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
         found.set(file.absPath, file);
       }
     }
-    const first = [...found.values()][0];
-    if (!first) return undefined;
-    const conceptId = this.identify(first.relPath) as string;
-    return { conceptId, files: [...found.values()].filter((file) => this.identify(file.relPath) === conceptId) };
+    return [...found.values()];
   }
 
   /** Which of two files that hold `conceptId` wins: the earlier spelling, the exact one before its case variants. */
@@ -253,7 +266,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return this.identify(relPath) ?? relPath;
   }
 
-  create(b: Bundle, asset: NewAsset): AssetChange {
+  create(b: Bundle, asset: NewAsset, options: { replace?: boolean; verbatim?: boolean } = {}): AssetChange {
     if (!this.writes.includes(asset.type)) {
       throw new Error(
         `Adapter "${this.id}" does not write ${asset.type} assets in bundle "${b.id}"; the asset facade checks \`writes\` first.`,
@@ -262,10 +275,10 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const file = this.placeFile(b, asset);
     const entry = buildFileContext(b.root, file);
     const conceptId = this.place(b, asset);
-    if (this.read(b, conceptId)) {
+    if (!options.replace && this.read(b, conceptId)) {
       throw new UsageError(`Asset "${b.id}//${conceptId}" already exists.`, "RESOURCE_ALREADY_EXISTS");
     }
-    const content = this.serialize(asset.type, file, asset.content);
+    const content = options.verbatim ? asset.content : this.serialize(asset.type, file, asset.content);
     const changed = asset.resources?.length
       ? this.writePackage(b, asset, entry, content, asset.resources)
       : this.writeFile(b, asset.type, file, content);

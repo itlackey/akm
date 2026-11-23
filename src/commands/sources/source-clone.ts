@@ -12,7 +12,7 @@ import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, replaceFrontmatterBlocks } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parseQualifiedPlacementRef } from "../../core/asset/resolve-ref";
 import { findAsset } from "../../core/assets/read";
-import { assetType } from "../../core/assets/type";
+import { assetTypeFresh } from "../../core/assets/type";
 import { isWithin, safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -333,7 +333,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
 function resolveOpaqueAsset(source: SearchSource, conceptId: string): { path: string; type?: string } | undefined {
   const asset = findAsset({ conceptId }, { sources: [source] });
   if (!asset?.entry.file) return undefined;
-  return { path: safeRealpath(asset.entry.file), type: assetType(asset) };
+  return { path: safeRealpath(asset.entry.file), type: assetTypeFresh(asset) };
 }
 
 /**

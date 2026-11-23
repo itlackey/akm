@@ -22,7 +22,7 @@ import { openDatabase } from "../database";
 import { openManagedDatabase } from "../managed-db";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../sqlite-pragmas";
 import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../sqlite-read-snapshot";
-import { CANONICAL_INDEX_DB_VERSION } from "./index-entry-schema";
+import { CANONICAL_INDEX_DB_VERSION, SERVED_AS_IS_INDEX_LAYOUT } from "./index-entry-schema";
 import { ensureSchema, newerIndexLayoutError } from "./index-schema";
 
 /**
@@ -129,7 +129,7 @@ function checkIndexLayout(db: Database, resolvedPath: string): void {
   } catch {
     return;
   }
-  if (!Number.isFinite(stored) || stored === CANONICAL_INDEX_DB_VERSION) return;
+  if (!Number.isFinite(stored) || stored === CANONICAL_INDEX_DB_VERSION || stored === SERVED_AS_IS_INDEX_LAYOUT) return;
   if (stored > CANONICAL_INDEX_DB_VERSION) throw newerIndexLayoutError(stored, resolvedPath);
   warnOnce(
     `index-db-layout:${resolvedPath}`,

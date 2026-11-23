@@ -23,54 +23,45 @@
  * index — winning). Returns null when no matcher claims the file.
  */
 
-import type { MatchResult } from "../../indexer/walk/file-context";
+import type { FileContext, MatchResult } from "../../indexer/walk/file-context";
 import {
   directoryMatcher,
   extensionMatcher,
   looseMarkdownMatcher,
   type PathFileContext,
   parentDirHintMatcher,
+  smartMdMatcher,
 } from "../../indexer/walk/matchers";
 
 /**
- * The four builtin matchers, in registration order. The array index IS the
- * registration index `runMatchers` uses for tie-breaking. (The `wiki` matcher
- * was removed in chunk 4 — the wiki asset-type is retired; LLM Wiki content is
- * served by the first-class `llm-wiki` adapter, not the akm adapter. The old
- * YAML workflow-program matcher is also gone: Markdown workflow sources are
- * path-owned by residence under `workflows/`, with Markdown frontmatter as an
- * additional signal.)
+ * Every matcher in registration order (the order breaks ties: of equal specificity the later one wins), the Markdown
+ * matcher last. It has a path-only form ({@link looseMarkdownMatcher}) and a content form ({@link smartMdMatcher}).
+ * (The `wiki` matcher was removed in chunk 4 — the wiki asset-type is retired; LLM Wiki content is served by the
+ * first-class `llm-wiki` adapter, not the akm adapter. The old YAML workflow-program matcher is also gone: Markdown
+ * workflow sources are path-owned by residence under `workflows/`, with Markdown frontmatter as an additional signal.)
  */
-const AKM_MATCHERS: readonly ((file: PathFileContext) => MatchResult | null)[] = [
-  extensionMatcher,
-  directoryMatcher,
-  parentDirHintMatcher,
-  looseMarkdownMatcher,
-];
-
-function winningMatch(hits: Array<{ result: MatchResult; index: number }>): MatchResult | null {
-  if (hits.length === 0) return null;
-  hits.sort((a, b) => {
-    const specDiff = b.result.specificity - a.result.specificity;
-    if (specDiff !== 0) return specDiff;
-    return b.index - a.index;
-  });
-  return hits[0]!.result;
+function arbitrate<F extends PathFileContext>(file: F, markdown: (file: F) => MatchResult | null): MatchResult | null {
+  let winner: MatchResult | null = null;
+  for (const result of [extensionMatcher(file), directoryMatcher(file), parentDirHintMatcher(file), markdown(file)]) {
+    if (result !== null && (winner === null || result.specificity >= winner.specificity)) winner = result;
+  }
+  return winner;
 }
 
 /**
- * Synchronous reproduction of `file-context.ts#runMatchers`'s arbitration
- * (`:242-265`), minus its `ensureBuiltinsRegistered()` dynamic import. Runs
- * every builtin matcher in registration order, collects the non-null
- * `MatchResult`s, and returns the highest-specificity one (ties broken by the
- * later-registered matcher — higher index — winning). Returns null when no
- * matcher claims the file.
+ * The type a file's path gives it: the folder rules, `SKILL.md`, a script extension; any other `.md` is knowledge. No
+ * content is read, so this is what identity and the write gates use.
  */
-export function recognizeMatch(file: PathFileContext): MatchResult | null {
-  const hits: Array<{ result: MatchResult; index: number }> = [];
-  for (let i = 0; i < AKM_MATCHERS.length; i++) {
-    const result = AKM_MATCHERS[i]!(file);
-    if (result !== null) hits.push({ result, index: i });
-  }
-  return winningMatch(hits);
+export function recognizeMatchByPath(file: PathFileContext): MatchResult | null {
+  return arbitrate(file, looseMarkdownMatcher);
+}
+
+/**
+ * The type the index records for a file: {@link recognizeMatchByPath}, except that a loose Markdown file is typed by
+ * its content (`type: workflow`, `agent:`, `$ARGUMENTS`, `model:`) as the matchers did before the adapter refactor.
+ * Synchronous reproduction of `file-context.ts#runMatchers`'s arbitration, minus its `ensureBuiltinsRegistered()`
+ * dynamic import. Returns null when no matcher claims the file.
+ */
+export function recognizeMatch(file: FileContext): MatchResult | null {
+  return arbitrate(file, smartMdMatcher);
 }

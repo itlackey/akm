@@ -21,7 +21,7 @@ import type {
 import { adapterIdOf } from "../adapter/detect-adapter";
 import { bundleOf, requireAdapter } from "../adapter/registry";
 import type { Bundle, IndexDocument } from "../adapter/types";
-import { UsageError } from "../errors";
+import { UsageError, type UsageErrorCode } from "../errors";
 
 type BundleSource = { name: string; path: string; location?: string; adapterId?: string };
 
@@ -60,6 +60,11 @@ export class AssetBundle {
     );
   }
 
+  /** Refuse with a message that names this bundle and its adapter: `Bundle "x" uses adapter "y", which <what>.` */
+  refuse(what: string, code: UsageErrorCode): never {
+    throw new UsageError(`Bundle "${this.name}" uses adapter "${this.#adapter.id}", which ${what}.`, code);
+  }
+
   /** Refuse a retirement of `type`: this bundle's adapter deletes assets of it. */
   assertRetires(type: string): void {
     if (this.#adapter.retires.includes(type)) return;
@@ -81,8 +86,8 @@ export class AssetBundle {
   place(asset: Pick<NewAsset, "type" | "name">): string {
     return this.#adapter.place(this.#bundle, asset);
   }
-  create(asset: NewAsset): AssetChange {
-    return this.#adapter.create(this.#bundle, asset);
+  create(asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean }): AssetChange {
+    return this.#adapter.create(this.#bundle, asset, options);
   }
   update(conceptId: string, content: string | Buffer): AssetChange {
     return this.#adapter.update(this.#bundle, conceptId, content);

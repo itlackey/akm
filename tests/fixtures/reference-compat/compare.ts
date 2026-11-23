@@ -26,6 +26,20 @@ export interface DifferenceNode {
   current?: unknown;
 }
 
+/**
+ * Whether a registered entry's `case` covers a node's. An entry names one case, or a glob of them (`*` matches any
+ * characters) for a difference every such case shows the same way; its path, recorded value and new value must still
+ * be exactly the node's.
+ */
+export function caseCovers(entryCase: string, nodeCase: string): boolean {
+  if (!entryCase.includes("*")) return entryCase === nodeCase;
+  const pattern = entryCase
+    .split("*")
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${pattern}$`).test(nodeCase);
+}
+
 export interface RegisteredDifference extends DifferenceNode {
   /** The §0.2 row that approves this difference, e.g. `A3`; `A3+A5` when two approved rows together account for it. */
   row: string;
@@ -34,21 +48,13 @@ export interface RegisteredDifference extends DifferenceNode {
 }
 
 /**
- * The rows of the design's §0.2 register the owner has approved, so the only rows a difference may name. The rows
- * marked "NEEDS OWNER APPROVAL" (A4, A7, A8, N1-N11) are not here: a difference they alone cover stays failing.
+ * The rows of the design's §0.2 register the owner has approved, so the only rows a difference may name (N9 was
+ * withdrawn, never approved). A row that is still marked as needing the owner's approval is not here: a difference only
+ * it covers stays failing.
  */
 export const APPROVED_ROWS: ReadonlySet<string> = new Set([
-  "A1",
-  "A2",
-  "A3",
-  "A5",
-  "A6",
-  "A9",
-  "A10",
-  "A11",
-  "A12",
-  "A13",
-  "A14",
+  ...Array.from({ length: 16 }, (_, i) => `A${i + 1}`),
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13].map((n) => `N${n}`),
 ]);
 
 /** True when `row` names only approved §0.2 rows (`A3`, or `A3+A5`). */
@@ -133,7 +139,7 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 export function approvedBy(node: DifferenceNode, registry: RegisteredDifference[]): RegisteredDifference | undefined {
   return registry.find(
     (e) =>
-      e.case === node.case &&
+      caseCovers(e.case, node.case) &&
       e.path === node.path &&
       same(e.base, node.base) &&
       same(e.current, node.current) &&

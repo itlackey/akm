@@ -31,7 +31,7 @@ import { validateProposal } from "../../../src/commands/proposal/validators/prop
 import { serializeFrontmatter } from "../../../src/core/asset/asset-serialize";
 import { parseFrontmatter, replaceFrontmatterBlocks } from "../../../src/core/asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../../src/core/asset/frontmatter-lint";
-import type { AkmConfig } from "../../../src/core/config/config";
+import { type AkmConfig, resetConfigCache } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
 import { getDbPath, getIndexRebuildLockPath, getIndexWriterLockPath } from "../../../src/core/paths";
@@ -44,7 +44,7 @@ import { closeDatabase, openExistingDatabase } from "../../../src/storage/reposi
 import { pkgVersion } from "../../../src/version";
 import { makeConfig } from "../../_helpers/factories";
 import { spawnLiveHolder } from "../../_helpers/live-holder";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 // ── Test setup ──────────────────────────────────────────────────────────────
 
@@ -381,6 +381,44 @@ describe("ref-filter parse failures are LOUD (D-R3)", () => {
       _setWarnSinkForTests(undefined);
     }
     expect(warnings.filter((w) => w.includes('"knowledge/WORK/plan" is outdated'))).toHaveLength(1);
+  });
+
+  test("a proposal stored under a file spelling is found by the asset's ref, and the file spelling finds a canonical one", () => {
+    const isolated = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({
+        semanticSearchMode: "off",
+        defaultBundle: "main",
+        bundles: { main: { path: isolated.stashDir, writable: true } },
+      });
+      resetConfigCache();
+      fs.mkdirSync(path.join(isolated.stashDir, "lessons"), { recursive: true });
+      fs.writeFileSync(path.join(isolated.stashDir, "lessons", "x.md"), VALID_LESSON, "utf8");
+      const created = createProposal(isolated.stashDir, {
+        ref: "lessons/x",
+        source: "distill",
+        payload: { content: VALID_LESSON },
+        target: { source: "main", root: isolated.stashDir },
+      });
+      expect(created.ref).toBe("main//lessons/x");
+      const state = openStateDatabase();
+      try {
+        state.prepare("UPDATE proposals SET ref = ? WHERE id = ?").run("main//lessons/x.md", created.id);
+      } finally {
+        state.close();
+      }
+
+      for (const ref of ["lessons/x", "lessons/x.md", "main//lessons/x"]) {
+        expect(
+          listProposals(isolated.stashDir, { ref }).map((p) => p.id),
+          ref,
+        ).toEqual([created.id]);
+        expect(resolveProposalId(isolated.stashDir, ref).id, ref).toBe(created.id);
+      }
+      expect(listProposals(isolated.stashDir, { ref: "lessons/y" })).toEqual([]);
+    } finally {
+      isolated.cleanup();
+    }
   });
 
   test("resolveProposalId with a legacy ref throws UsageError instead of silently falling through", () => {

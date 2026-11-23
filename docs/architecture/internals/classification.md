@@ -77,18 +77,24 @@ The walker itself skips VCS internals. It indexes a symlink to a file like any o
 
 ## How the akm adapter picks a type
 
-The `akm` adapter types a file from its path alone, with four matchers from
-`src/indexer/walk/matchers.ts` (`extensionMatcher`, `directoryMatcher`,
-`parentDirHintMatcher`, `looseMarkdownMatcher`) that never see the file's
-content. `recognizeMatch` (`src/core/adapter/recognize-match.ts`) collects their
-results and picks the highest specificity. On a tie the matcher registered later
-wins, in the order listed.
+The `akm` adapter runs four matchers from `src/indexer/walk/matchers.ts`
+(`extensionMatcher`, `directoryMatcher`, `parentDirHintMatcher`,
+`smartMdMatcher`). `recognizeMatch` (`src/core/adapter/recognize-match.ts`)
+collects their results and picks the highest specificity. On a tie the matcher
+registered later wins, in the order listed. Only the type reads the file:
+identity (`identify`, so listing and finding) uses `recognizeMatchByPath`, which
+runs the same matchers with `looseMarkdownMatcher` (any `.md` is knowledge) in
+place of `smartMdMatcher`, so the id of a file never depends on its content.
 
 | Specificity | Signal | Type |
 | --- | --- | --- |
 | 25 | file named `SKILL.md` | `skill` |
+| 19 | `type: workflow` in frontmatter | `workflow` |
+| 18 | `agent` in frontmatter | `command` |
+| 18 | `$ARGUMENTS`, `$1`, `$2`, or `$3` in the body, only when no ancestor directory declares a type and the file is not a nested skill resource | `command` |
 | 15 | immediate parent directory declares a type | that type |
 | 10 | an ancestor directory declares a type | that type |
+| 8 | `model` in frontmatter, nothing stronger | `agent` |
 | 5 | any other `.md` | `knowledge` |
 | 3 | known script extension | `script` |
 
@@ -105,13 +111,12 @@ Directories that declare a type (`DIR_TYPE_MAP`) and the files they accept:
 | `secrets/` | `secret` | any file except `.lock` and `.sensitive` |
 
 A `README.md` in a typed directory is not the directory's type; it is indexed
-as `knowledge`. A `.md` file directly in `skills/` names no skill; it is `knowledge`.
-Frontmatter and body never change a type: a command belongs under `commands/`,
-an agent under `agents/`, a workflow under `workflows/`. Earlier releases read
-`type: workflow`, `agent`, `model` and `$ARGUMENTS`/`$1`..`$3` placeholders as
-type signals; `akm lint` now reports `type-from-content` for a file whose
-content suggests another type than its path gives, and names the folder to move
-it to.
+as `knowledge`. Body placeholders do not override directory declarations:
+`knowledge/` and `memories/` documents keep their types even when prose, inline
+code, or fenced examples contain `$ARGUMENTS`. A command belongs under
+`commands/`, or can declare explicit dispatch intent with `agent` frontmatter,
+which still beats a directory hint. Files under `secrets/` are not read for
+frontmatter. A `.md` file directly in `skills/` names no skill and is no asset.
 
 When one concept is spelled by more than one file (`skills/x.md` and
 `skills/x/SKILL.md`, or `tasks/x.yml` and `tasks/x.md`), the first spelling in

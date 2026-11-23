@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { adapterWrites } from "../../core/assets/gate";
+import { adapterWrites, refuseByAdapter } from "../../core/assets/gate";
 import { findAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import { loadConfig } from "../../core/config/config";
@@ -16,6 +16,7 @@ import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { compileWorkflowSource } from "../compile";
 import type { WorkflowPlan } from "../plan";
+import { isUsableWorkflowSource } from "../source-files";
 
 /** A resolved workflow asset, compiled from either authored format into its plan. */
 export type WorkflowAsset = {
@@ -76,20 +77,15 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   }
   const bundleId = asset.bundle;
   const source = sourceOfBundle(sources, bundleId);
+  const bundle = {
+    name: bundleId,
+    path: source.path,
+    ...(source.location !== undefined ? { location: source.location } : {}),
+    ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
+  };
   // A workflow runs when its bundle's adapter holds workflows as its own: a read-only adapter's workflow is a document.
   const type = assetType(asset);
-  if (
-    type !== "workflow" ||
-    !adapterWrites(
-      {
-        name: bundleId,
-        path: source.path,
-        ...(source.location !== undefined ? { location: source.location } : {}),
-        ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
-      },
-      "workflow",
-    )
-  ) {
+  if (type !== "workflow" || !adapterWrites(bundle, "workflow")) {
     throw new UsageError(
       `${asset.ref} is not a native workflow: bundle "${bundleId}" holds it as a ${type} it does not run.`,
       "WORKFLOW_SOURCE_INVALID",
@@ -97,6 +93,10 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   }
   const assetPath = asset.entry.file;
   if (assetPath === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
+  // A symlink to a file of another extension is no workflow source (a warning says which): it is not run.
+  if (!isUsableWorkflowSource(source.path, assetPath)) {
+    refuseByAdapter(bundle, "does not support native workflow execution", "WORKFLOW_SOURCE_INVALID");
+  }
 
   // Canonicalize the stored ref: `workflows/foo.md` and `workflows/foo` resolve
   // to the same file, so they MUST share one run identity.

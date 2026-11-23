@@ -13,12 +13,13 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import { withoutTypeHead } from "../asset/asset-placement";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { deriveBundleIds } from "../bundle-id";
 import { compareCodePoints } from "../common";
 import { loadConfig } from "../config/config";
-import { NotFoundError } from "../errors";
-import { warn } from "../warn";
+import { ConfigError, NotFoundError } from "../errors";
+import { warn, warnOnce } from "../warn";
 import { type Asset, assetOf } from "./asset";
 import { type AssetBundle, assetBundleOf } from "./bundle";
 import { assetTypes } from "./type";
@@ -44,21 +45,50 @@ function bundleOfSource(source: SearchSource, id: string): AssetBundle {
   });
 }
 
-/** The asset `conceptId` names in one source, as its adapter reads it. */
-export function readFrom(source: SearchSource, bundle: string, conceptId: string): Asset | undefined {
+/** The asset `conceptId` names in one source, as its adapter reads it, with no other spelling tried. */
+function readExact(source: SearchSource, bundle: string, conceptId: string): Asset | undefined {
   const found = bundleOfSource(source, bundle).read(conceptId);
   return found ? assetOf(bundle, source, found) : undefined;
 }
 
+/**
+ * Releases before path refs prefixed a loose file's ref with its type folder (`knowledge/reports/x` for
+ * `reports/x.md`), and that spelling is still in links, memories, scripts and stored proposals. A ref nothing holds is
+ * read once more without that head, with a warning, and the asset comes back under its current ref. Whatever
+ * adapter holds the bundle: the spelling is akm's, not the format's.
+ */
+function readOutdated(conceptId: string, read: (conceptId: string) => Asset | undefined): Asset | undefined {
+  const current = withoutTypeHead(conceptId);
+  const found = current === undefined ? undefined : read(current);
+  if (found) {
+    warnOnce(
+      `outdated-ref:${conceptId}`,
+      `Ref "${conceptId}" is outdated: refs are the path inside the bundle, so it is now "${found.conceptId}". Resolved it to that asset.`,
+    );
+  }
+  return found;
+}
+
+/** The asset `conceptId` names in one source, as its adapter reads it; an outdated spelling of it too. */
+export function readFrom(source: SearchSource, bundle: string, conceptId: string): Asset | undefined {
+  return (
+    readExact(source, bundle, conceptId) ?? readOutdated(conceptId, (current) => readExact(source, bundle, current))
+  );
+}
+
 function findAmong(ref: BundleRef, sources: readonly SearchSource[]): Asset | undefined {
   const installations = deriveInstallations([...sources]);
-  for (const [index, source] of sources.entries()) {
-    const bundle = installations[index]?.id;
-    if (!bundle || (ref.bundle !== undefined && bundle !== ref.bundle)) continue;
-    const found = readFrom(source, bundle, ref.conceptId);
-    if (found) return found;
-  }
-  return undefined;
+  const find = (conceptId: string): Asset | undefined => {
+    for (const [index, source] of sources.entries()) {
+      const bundle = installations[index]?.id;
+      if (!bundle || (ref.bundle !== undefined && bundle !== ref.bundle)) continue;
+      const found = readExact(source, bundle, conceptId);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  // The ref as written, in every source, before the outdated spelling is tried in any.
+  return find(ref.conceptId) ?? readOutdated(ref.conceptId, find);
 }
 
 /**
@@ -94,9 +124,10 @@ export function assetOfEntry(
 }
 
 /**
- * Every asset across the sources, one per concept as each bundle's adapter lists it, sorted by the file it is held
- * in. With `type`, the ones the index says are of that type. A bundle that cannot be listed completely is reported
- * with a warning naming it.
+ * Every asset across the sources, one per concept as each bundle's adapter lists it, in the order of the bundles and
+ * then by concept id within each. With `type`, the ones the index says are of that type. A bundle that cannot be listed
+ * completely is reported with a warning naming it; one that cannot be reached at all fails the listing with
+ * `BUNDLE_UNREACHABLE` when it holds what is asked for.
  */
 export function listAssets(
   options: { sources?: readonly SearchSource[]; bundle?: string; type?: string } = {},
@@ -107,21 +138,26 @@ export function listAssets(
   for (const [index, source] of sources.entries()) {
     const bundle = ids[index] as string;
     if (source.unresolved || (options.bundle !== undefined && bundle !== options.bundle)) continue;
-    const listing = bundleOfSource(source, bundle).list();
+    const held = bundleOfSource(source, bundle);
+    const listing = held.list();
+    // A bundle that cannot be reached is not a shorter list: when it holds what is asked for, the command fails.
+    if (listing.unreachable && (options.type === undefined || held.writes(options.type))) {
+      throw new ConfigError(
+        `Bundle "${bundle}" cannot be reached: ${listing.incompleteReason ?? "unreachable"}`,
+        "BUNDLE_UNREACHABLE",
+      );
+    }
     if (!listing.complete && listing.incompleteReason) {
       warn(`Bundle "${source.registryId ?? source.path}" was not listed completely: ${listing.incompleteReason}`);
     }
-    for (const asset of listing.assets) found.push(assetOf(bundle, source, asset));
+    found.push(
+      ...listing.assets
+        .map((asset) => assetOf(bundle, source, asset))
+        .sort((left, right) => compareCodePoints(left.conceptId, right.conceptId)),
+    );
   }
   const types = options.type === undefined ? undefined : assetTypes(found);
-  return found
-    .filter((asset) => types === undefined || types.get(asset) === options.type)
-    .sort((left, right) => compareCodePoints(sortKey(left), sortKey(right)));
-}
-
-/** Where an asset sorts: its file, else its path inside its bundle. */
-function sortKey({ entry }: Asset): string {
-  return entry.file ?? entry.relPath;
+  return found.filter((asset) => types === undefined || types.get(asset) === options.type);
 }
 
 /**

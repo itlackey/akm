@@ -316,6 +316,30 @@ function readRetiredBundleComponents(raw: Record<string, unknown>, sourcePath?: 
   return config;
 }
 
+/**
+ * The retired `components` entry of each bundle of the config file, as written (the component's name and what it held).
+ * The reader lifts them onto the bundle and forgets which keys were the component's, so `akm bundle list`, whose
+ * deprecated `components` field shows exactly what the component held, reads them here. Removed in 0.11 with the field.
+ */
+export function retiredBundleComponents(): Map<string, { name: string; root?: string; writable?: boolean }> {
+  const found = new Map<string, { name: string; root?: string; writable?: boolean }>();
+  const configPath = getConfigPath();
+  const text = readConfigText(configPath);
+  const bundles = text === undefined ? undefined : parseConfigText(text, configPath).bundles;
+  if (!isPlainObject(bundles)) return found;
+  for (const [bundle, entry] of Object.entries(bundles)) {
+    const [name, component] =
+      isPlainObject(entry) && isPlainObject(entry.components) ? (Object.entries(entry.components)[0] ?? []) : [];
+    if (name === undefined || !isPlainObject(component)) continue;
+    found.set(bundle, {
+      name,
+      ...(typeof component.root === "string" ? { root: component.root } : {}),
+      ...(typeof component.writable === "boolean" ? { writable: component.writable } : {}),
+    });
+  }
+  return found;
+}
+
 /** Every retired form of the file the reader still takes, read as the current one. */
 function readRetiredForms(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
   return readRetiredBundleComponents(readRetiredEngines(raw, sourcePath), sourcePath);

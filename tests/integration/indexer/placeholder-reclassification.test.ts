@@ -22,7 +22,7 @@ test("ordinary incremental indexing repairs unchanged $ARGUMENTS knowledge and m
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "fixture",
-      bundles: { fixture: { path: storage.stashDir, adapter: "akm" } },
+      bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
     });
     const files = (
       [

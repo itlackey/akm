@@ -275,7 +275,7 @@ describe("secret manager bundles", () => {
 
   test("a keyring entry without attributes is listed, and reading it says why it cannot be read", async () => {
     const bare = { akm: [keyringItem(1, "bare", "value", {})] };
-    await withFakeSecretStores({ keyrings: bare }, async () => {
+    await withFakeSecretStores({ keyrings: bare, vaults: VAULT }, async () => {
       const listed = await akm("secret", "list");
       expect((listed.json.secrets as Array<{ ref: string }>).map((secret) => secret.ref)).toContain(
         "keyring//secrets/bare",
@@ -317,12 +317,15 @@ describe("secret manager bundles", () => {
           hint: "Install the Azure CLI.",
         });
 
-        // Listing goes on without the stores it cannot reach, and says which.
+        // A listing that needs a store it cannot reach fails naming it: it is not a shorter list.
         const listed = await runCliCapture(["secret", "list", "--format", "json"]);
-        expect(listed.code).toBe(0);
-        expect(JSON.parse(listed.stdout).secrets).toEqual([{ ref: "secrets/local" }]);
-        expect(listed.stderr).toContain('Bundle "keyring" was not listed completely: "busctl" is not installed.');
-        expect(listed.stderr).toContain('Bundle "vault" was not listed completely: "az" is not installed.');
+        expect(listed.code).not.toBe(0);
+        expect(JSON.parse(listed.stderr.slice(listed.stderr.indexOf("{")))).toMatchObject({
+          error: 'Bundle "keyring" cannot be reached: "busctl" is not installed.',
+          code: "BUNDLE_UNREACHABLE",
+        });
+        // `env list` holds no secret, so a store that takes secrets only is none of its business.
+        expect((await runCliCapture(["env", "list", "--format", "json"])).code).toBe(0);
       });
     });
   });

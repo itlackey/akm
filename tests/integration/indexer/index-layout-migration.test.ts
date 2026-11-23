@@ -487,7 +487,7 @@ describe("index.db layout 24 → 25", () => {
   });
 });
 
-describe("index.db layout 26 → 27", () => {
+describe("index.db layout 26 is served as it is until `akm migrate apply` moves it", () => {
   let storage: IsolatedAkmStorage;
   let dbPath = "";
 
@@ -516,36 +516,51 @@ describe("index.db layout 26 → 27", () => {
     storage.cleanup();
   });
 
-  test("an older index opens read-only as-is and answers keyword queries", () => {
-    const db = openReadonlyExistingDatabase(dbPath);
-    if (!db) throw new Error("expected a handle");
+  test("it opens read-only without a word and answers keyword queries", () => {
+    const warnings: string[] = [];
+    _setWarnSinkForTests((_level, args) => warnings.push(args.map(String).join(" ")));
     try {
-      expect(searchFts(db, "backup", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/bravo-backup"]);
+      const db = openReadonlyExistingDatabase(dbPath);
+      if (!db) throw new Error("expected a handle");
+      try {
+        expect(searchFts(db, "backup", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/bravo-backup"]);
+        expect(getMeta(db, "version")).toBe("26");
+      } finally {
+        closeDatabase(db);
+      }
+    } finally {
+      _setWarnSinkForTests();
+    }
+    expect(warnings).toEqual([]);
+  });
+
+  test("the writable open leaves its version and columns alone, and a write fills component_id as it always did", () => {
+    const db = openIndexDatabase(dbPath);
+    try {
       expect(getMeta(db, "version")).toBe("26");
+      expect(entryColumns(db)).toContain("component_id");
+      expect(getMeta(db, VACUUM_PENDING_META)).toBeFalsy();
+      expect(count(db, "entries")).toBe(ENTRIES.length);
+      const added = { ...ENTRIES[0]!, name: "added-note" };
+      upsertEntry(
+        db,
+        path.join(storage.stashDir, "knowledge", `${added.name}.md`),
+        fixtureDocument(added),
+        deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "knowledge", added.name),
+      );
+      expect(count(db, "entries")).toBe(ENTRIES.length + 1);
+      expect(
+        db.prepare("SELECT component_id FROM entries WHERE item_ref = 'stash//knowledge/added-note'").get(),
+      ).toEqual({ component_id: "stash" });
     } finally {
       closeDatabase(db);
     }
-  });
-
-  test("the writable open drops the column in place and keeps every row", () => {
-    const db = openIndexDatabase(dbPath);
+    // Opened again, it is still as the release before the adapter refactor wrote it.
+    const again = openIndexDatabase(dbPath);
     try {
-      expect(getMeta(db, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
-      expect(CANONICAL_INDEX_DB_VERSION).toBe(27);
-      expect(entryColumns(db)).not.toContain("component_id");
-      expect(count(db, "entries")).toBe(ENTRIES.length);
-      expect(searchFts(db, "backup", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/bravo-backup"]);
-      // An insert of this release no longer fails on the retired NOT NULL column.
-      const alpha = ENTRIES[0]!;
-      upsertEntry(
-        db,
-        path.join(storage.stashDir, "knowledge", `${alpha.name}.md`),
-        fixtureDocument(alpha),
-        deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "knowledge", alpha.name),
-      );
-      expect(count(db, "entries")).toBe(ENTRIES.length);
+      expect(getMeta(again, "version")).toBe("26");
     } finally {
-      closeDatabase(db);
+      closeDatabase(again);
     }
   });
 });

@@ -36,6 +36,7 @@ import {
   missingEntryColumns,
   readTableSql,
   retiredEntryColumns,
+  SERVED_AS_IS_INDEX_LAYOUT,
   supportsContentlessDelete,
   tableExists,
 } from "./index-entry-schema";
@@ -276,7 +277,9 @@ function applySchema(db: Database): void {
   if (storedVersion > DB_VERSION) throw newerIndexLayoutError(storedVersion);
 
   ensureEntriesLayout(db);
-  dropComponentColumn(db);
+  // A layout-26 index is served as it is: its `component_id` goes, and its version moves, with `akm migrate apply`.
+  const servedAsIs = storedVersion === SERVED_AS_IS_INDEX_LAYOUT;
+  if (!servedAsIs) dropComponentColumn(db);
 
   const hadFragmentSource = tableExists(db, "entry_fragments");
   db.exec(CANONICAL_ENTRY_SCHEMA_SQL);
@@ -448,6 +451,7 @@ function applySchema(db: Database): void {
   // Migrating an existing layout drops tables and columns; the next `akm index`
   // VACUUMs the pages they leave free (`vacuumIndexDb`, indexer.ts), since a
   // writable open may run inside a caller's transaction, where VACUUM cannot.
+  if (servedAsIs) return;
   if (storedVersion > 0 && storedVersion < DB_VERSION) setMeta(db, VACUUM_PENDING_META, "1");
   setMeta(db, "version", String(DB_VERSION));
 }

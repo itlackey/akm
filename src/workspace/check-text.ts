@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseDocument } from "yaml";
 import { lintDocumentText } from "../commands/lint";
-import { classifyAkmPath } from "../core/adapter/adapters/akm-adapter";
+import { classifyAkmText } from "../core/adapter/adapters/akm-adapter";
 import { adapterIdOf } from "../core/adapter/detect-adapter";
 import { adapterForId } from "../core/adapter/registry";
 import type { Bundle } from "../core/adapter/types";
@@ -106,7 +106,7 @@ export function typeOfText(relative: string, content: string): string | null {
   return withScratchFile(
     relative,
     content,
-    (root, file) => classifyAkmPath(toPosix(path.relative(root, file)))?.match.type ?? null,
+    (root, file) => classifyAkmText(toPosix(path.relative(root, file)), content)?.match.type ?? null,
   );
 }
 
@@ -114,7 +114,7 @@ export function typeOfText(relative: string, content: string): string | null {
 export async function check(input: { bundle: string; path: string; content: string }) {
   const { bundle, relative, source, config } = akmBundleFile(input);
   return withScratchFile(relative, input.content, (scratch, scratchFile) => {
-    const type = classifyAkmPath(toPosix(path.relative(scratch, scratchFile)))?.match.type ?? null;
+    const type = classifyAkmText(toPosix(path.relative(scratch, scratchFile)), input.content)?.match.type ?? null;
     const subdir = type === null ? undefined : documentStashDirFor(type);
     const found = subdir
       ? lintDocumentText({ root: source.path, relPath: relative, subdir, content: input.content, config })

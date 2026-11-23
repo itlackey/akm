@@ -14,13 +14,13 @@
  *
  * ── identify / spellings / describe ──
  *
- * What an akm bundle holds is decided by the file's PATH alone: the folder rules, `SKILL.md`, a script extension; any
- * other `.md` is knowledge, and a typed folder beats frontmatter (`recognizeMatch` runs the builtin matchers over the
- * path, in registration order, the most specific winning). `identify` is that rule's ref: the file's path inside the
- * bundle minus the type's own suffix (`refForFile`: skill = its dir, script keeps its extension, Markdown strips
- * `.md`, env/task strip their ext, secret/session keep the natural path). `spellings` inverts it over every placement
- * spec, the folder's own type first. `describe` carries the full index-time metadata surface and may read the file;
- * `validate` says when the content suggests another type than the path gave (`type-from-content`).
+ * What an akm bundle holds, and under which id, is decided by the file's PATH alone: `identify` is the file's path
+ * inside the bundle minus the type's own suffix (`refForFile`: skill = its dir, script keeps its extension, Markdown
+ * strips `.md`, env/task strip their ext, secret/session keep the natural path). `spellings` inverts it over every
+ * placement spec, the folder's own type first. The TYPE of a loose `.md` (one no folder types) is the content's, as
+ * before the adapter refactor (`recognizeMatch`: `type: workflow`, `agent:`, `$ARGUMENTS`, `model:`, else knowledge),
+ * and only `describe` (index time) reads it; a typed folder beats frontmatter. `describe` carries the full index-time
+ * metadata surface and may read the file.
  *
  * The winning `MatchResult.renderer` is carried on `documentJson.renderer` so
  * presentation can be wired via `TYPE_PRESENTATION` without a new
@@ -64,23 +64,20 @@ import {
   fileContextOfEntry,
   type MatchResult,
 } from "../../../indexer/walk/file-context";
-import { declaredTypeForPath, looseMarkdownMatcher, type PathFileContext } from "../../../indexer/walk/matchers";
+import type { PathFileContext } from "../../../indexer/walk/matchers";
 import {
   assetPathCandidatesForName,
   deriveCanonicalAssetNameFromStashRoot,
   placementTypes,
   refForFile,
-  stashDirFor,
   stashDirNames,
   typeForStashDir,
-  withoutTypeHead,
 } from "../../asset/asset-placement";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import type { FileChange } from "../../file-change";
-import { warnOnce } from "../../warn";
-import type { AssetEntry, BundleAsset } from "../bundle-adapter";
+import type { AssetEntry } from "../bundle-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
-import { recognizeMatch } from "../recognize-match";
+import { recognizeMatch, recognizeMatchByPath } from "../recognize-match";
 import type { Bundle, Diagnostic, IndexDocument, IndexMetadata, ValidateContext } from "../types";
 import { AkmFormatAdapterBase } from "./akm-format";
 import { derivedSiblingPath, perTypeDiagnostics, skillDirectoryDiagnostics, type TypeCheckInput } from "./akm-lint";
@@ -227,13 +224,13 @@ function pathContext(relPath: string) {
 }
 
 /**
- * What the akm adapter makes of the file at `relPath`, from the path alone, with its ref and canonical name; `null`
- * when the path is no asset (a reserved structural file, one the adapter abstains on, one no matcher claims, or one
- * whose placement gives no ref). The one place that decides what an akm bundle holds, for the index (`recognize`) and
- * for `akm lint`.
+ * What the akm adapter makes of the file at `relPath`, with its ref and canonical name; `null` when the path is no
+ * asset (a reserved structural file, one the adapter abstains on, one no matcher claims, or one whose placement gives
+ * no ref). `recognize` says how the type is found: by the path alone, or by the file's content as well.
  */
-export function classifyAkmPath(
+function classify(
   relPath: string,
+  recognize: (file: PathFileContext) => MatchResult | null,
 ): { match: MatchResult; conceptId: string; canonicalName: string } | null {
   const file = pathContext(relPath);
   // `index.md` / `log.md` are OKF reserved structural files at
@@ -243,26 +240,30 @@ export function classifyAkmPath(
   // Adapter-owned filtering (owner ruling 2026-07-21): AKM-stash policy that used
   // to live in the indexer's `shouldIndexStashFile` pre-filter.
   if (akmStashAbstains(relPath)) return null;
-  let match = recognizeMatch(file);
+  const match = recognize(file);
   if (match === null) return null;
   // The ref is the file's bundle-relative path minus the type's own suffix;
   // `entry.name` below keeps the canonical name relative to the type folder
   // (identity != search text). Invalid placements are not projected onto a
   // different identity.
-  let conceptId = refForFile(match.type, "/", file.absPath);
-  if (conceptId === undefined && match.type === "skill" && file.ext === ".md" && file.fileName !== "SKILL.md") {
-    // A Markdown file directly in a `skills/` folder names no skill: it is a loose document.
-    match = looseMarkdownMatcher(file);
-    if (match === null) return null;
-    conceptId = refForFile(match.type, "/", file.absPath);
-  }
+  const conceptId = refForFile(match.type, "/", file.absPath);
   const canonicalName = deriveCanonicalAssetNameFromStashRoot(match.type, "/", file.absPath);
   if (conceptId === undefined || canonicalName === undefined) return null;
   return { match, conceptId, canonicalName };
 }
 
+/** {@link classify} by the path alone: reads nothing. The id of an asset, and the type the write gates use. */
+export function classifyAkmPath(relPath: string) {
+  return classify(relPath, recognizeMatchByPath);
+}
+
+/** {@link classify} with the file's content: the type the index records (`akm lint` and `describe`). */
+export function classifyAkmFile(relPath: string, file: FileContext) {
+  return classify(relPath, () => recognizeMatch(file));
+}
+
 function describe(file: FileContext, relPath: string): IndexMetadata {
-  const classified = classifyAkmPath(relPath);
+  const classified = classifyAkmFile(relPath, file);
   if (classified === null) throw new Error(`"${relPath}" is no akm asset.`);
   const { match, canonicalName } = classified;
   const dirPath = path.dirname(file.absPath);
@@ -298,6 +299,11 @@ function describe(file: FileContext, relPath: string): IndexMetadata {
     },
     match.renderer,
   );
+}
+
+/** {@link classifyAkmFile} for text that is not on disk (what `akm check` is given). */
+export function classifyAkmText(relPath: string, raw: string) {
+  return classifyAkmFile(relPath, buildOverlayContext("/", relPath, raw));
 }
 
 /** Render AKM-native command/agent Markdown into the shared execution source. */
@@ -372,50 +378,6 @@ function buildOverlayContext(root: string, relPathInput: string, raw: string): F
   };
 }
 
-/** Body placeholders can discover loose commands, but also occur in documentation. */
-const ARGUMENTS_PLACEHOLDER_RE = /\$ARGUMENTS/;
-/**
- * `$1` / `$2` / `$3` — AMBIGUOUS, because ordinary prose writes money the same way (#824): a following digit, or a
- * `.`/`,` that is itself followed by a digit, rules out `$1,200` / `$2,000` / `$2.50` / `$12`.
- */
-const NUMERIC_PLACEHOLDER_RE = /\$[123](?!\d|[.,]\d)/;
-
-/**
- * The type a Markdown file's content suggests, which the index does not follow: a type is the path's alone. Earlier
- * releases read these signals; a file that still carries one is told where to go to be that type.
- */
-function typeSuggestedByContent(file: PathFileContext, parsed: ParsedForValidate): string | undefined {
-  const folderTyped = declaredTypeForPath(file) !== undefined;
-  if (parsed.data.type === "workflow") return "workflow";
-  if ("agent" in parsed.data) return "command";
-  if (!folderTyped && (ARGUMENTS_PLACEHOLDER_RE.test(parsed.content) || NUMERIC_PLACEHOLDER_RE.test(parsed.content))) {
-    return "command";
-  }
-  if (!folderTyped && "model" in parsed.data) return "agent";
-  return undefined;
-}
-
-/** `type-from-content`: the content of a Markdown file suggests another type than its path gives, and names the folder to move it to. */
-function typeFromContentDiagnostics(
-  relPath: string,
-  file: PathFileContext,
-  type: string | undefined,
-  parsed: ParsedForValidate,
-): Diagnostic[] {
-  if (file.ext !== ".md" || type === undefined || type === "secret") return [];
-  const suggested = typeSuggestedByContent(file, parsed);
-  const folder = suggested === undefined ? undefined : stashDirFor(suggested);
-  if (suggested === undefined || suggested === type || folder === undefined) return [];
-  return [
-    {
-      file: relPath,
-      issue: "type-from-content",
-      detail: `The path makes this a ${type} asset, but its content looks like a ${suggested}; akm goes by the path. Move it to ${folder}/ to make it one.`,
-      fixed: false,
-    },
-  ];
-}
-
 /**
  * `validate` = shared base checks + the winning `type`'s per-type
  * extra checks, reproducing today's `akmLint`/`getLinterForType` dispatch
@@ -449,7 +411,6 @@ async function validate(c: Bundle, changes: FileChange[], ctx: ValidateContext):
       type === "task" ? { raw, data: {}, content: raw, frontmatter: null, bodyStartLine: 1 } : parseForValidate(raw);
 
     diagnostics.push(...check(change.path, parsed));
-    diagnostics.push(...typeFromContentDiagnostics(change.path, overlay, type, parsed));
     const input: TypeCheckInput = {
       type,
       relPath: change.path,
@@ -472,13 +433,13 @@ export class AkmAdapter extends AkmFormatAdapterBase {
   readonly id = "akm";
   // Bump when a change to the matchers (or `describe`) can retype or re-ref a
   // file that has not changed, or when the document records new fields from it
-  // (0.9.4: frontmatter dates, #1228; 0.9.5: path refs, #1432; 0.9.7: selection frontmatter, #1453; 0.10.0: a type is
-  // the path's alone, a wiki's raw/ is no longer wiki-source): the version is
+  // (0.9.4: frontmatter dates, #1228; 0.9.5: path refs, #1432; 0.9.7: selection frontmatter, #1453; 0.10.0: a wiki's
+  // raw/ is no longer wiki-source; 0.10.1: a loose .md is typed by its content again): the version is
   // folded into each directory's freshness, so the next incremental `akm index`
   // re-drains it and re-files those rows, including old command refs inferred
   // from body placeholders and loose files' type-folder refs. Vectors are kept
   // when the search text is unchanged.
-  readonly version = "0.10.0";
+  readonly version = "0.10.1";
   override readonly writes = placementTypes();
   // Recognized-extension HINT, derived from what the matchers accept (§6):
   // `.md` (Markdown types + workflow peer), `.yml` (task and workflow YAML),
@@ -538,25 +499,6 @@ export class AkmAdapter extends AkmFormatAdapterBase {
     return [...new Set(types.flatMap((type) => assetPathCandidatesForName(type, ".", posix)))].map((candidate) =>
       path.posix.normalize(candidate.replace(/\\/g, "/")),
     );
-  }
-
-  /**
-   * Releases before path refs prefixed a loose file's ref with its type folder (`knowledge/reports/x` for
-   * `reports/x.md`), and that spelling is still in links, memories, scripts and stored proposals: a ref that misses is
-   * read once more without that head, with a warning, and the asset comes back under its current ref.
-   */
-  override read(b: Bundle, conceptId: string): BundleAsset | undefined {
-    const found = super.read(b, conceptId);
-    if (found) return found;
-    const current = withoutTypeHead(conceptId);
-    const legacy = current === undefined ? undefined : super.read(b, current);
-    if (legacy) {
-      warnOnce(
-        `outdated-ref:${conceptId}`,
-        `Ref "${conceptId}" is outdated: refs are the path inside the bundle, so it is now "${legacy.conceptId}". Resolved it to that asset.`,
-      );
-    }
-    return legacy;
   }
 
   override renderExecutionSource(b: Bundle, entry: AssetEntry): AdapterRenderedExecutionSource | null {

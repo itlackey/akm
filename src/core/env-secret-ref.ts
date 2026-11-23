@@ -86,8 +86,9 @@ function parseTypedRef(ref: string, type: "env" | "secret", form: string): Asset
  * The asset a read ref of the given type names. The ref is the asset's path inside its bundle, so it may sit
  * anywhere: what makes it an env or a secret is the asset, not the ref's first folder.
  */
-function ownerOfType(ref: string, type: "env" | "secret", form: string): Asset {
-  const asset = parseBundleRef(ref).fragment === undefined ? resolveRefOwner(ref) : undefined;
+function ownerOfType(ref: string, type: "env" | "secret", form: string): { conceptId: string; asset: Asset } {
+  const parsed = parseBundleRef(ref);
+  const asset = parsed.fragment === undefined ? resolveRefOwner(ref) : undefined;
   if (!asset) {
     // Not found: a typed placement address reads as "not found", anything else as the wrong kind of ref.
     parseTypedRef(ref, type, form);
@@ -99,7 +100,8 @@ function ownerOfType(ref: string, type: "env" | "secret", form: string): Asset {
       "INVALID_FLAG_VALUE",
     );
   }
-  return asset;
+  // The concept id as the ref wrote it (`env/app.env`): commands echo a ref as it was written, not as akm keeps it.
+  return { conceptId: parsed.conceptId, asset };
 }
 
 /** The asset any ref names right now (a sensitive env file or secret included), or undefined when no bundle holds it. The lookup behind `${ref}` tokens. */
@@ -150,14 +152,12 @@ function displayDefaultBundle(bundleId?: string, config: AkmConfig = loadConfig(
 
 /** The env asset a ref names right now; `NotFoundError` when no bundle holds it (creating one goes through {@link resolveEnvWriteTarget}). */
 export function resolveEnvPath(ref: string): { conceptId: string; asset: Asset } {
-  const asset = ownerOfType(ref, "env", "env/<name>");
-  return { conceptId: asset.conceptId, asset };
+  return ownerOfType(ref, "env", "env/<name>");
 }
 
 /** The secret asset a ref names right now. Its content is the value: never print or log it. */
 export function resolveSecretPath(ref: string): { conceptId: string; asset: Asset } {
-  const asset = ownerOfType(ref, "secret", "secrets/<name>");
-  return { conceptId: asset.conceptId, asset };
+  return ownerOfType(ref, "secret", "secrets/<name>");
 }
 
 /**
@@ -165,8 +165,8 @@ export function resolveSecretPath(ref: string): { conceptId: string; asset: Asse
  * Callers MUST NOT write the value to stdout or any log.
  */
 export function readSecret(ref: string): { conceptId: string; bundle: string; value: string } {
-  const asset = ownerOfType(ref, "secret", "secrets/<name>");
-  return { conceptId: asset.conceptId, bundle: asset.bundle, value: secretValueOf(asset) };
+  const { conceptId, asset } = ownerOfType(ref, "secret", "secrets/<name>");
+  return { conceptId, bundle: asset.bundle, value: secretValueOf(asset) };
 }
 
 // ── Write-target resolution (env/secret mutations) ───────────────────────────

@@ -217,10 +217,10 @@ describe("workflow source canonical-ref collisions", () => {
       path: authoredPath,
     });
 
-    // The authored path says what the file is; a link to another format is refused when its content is loaded.
+    // The authored path says what the file is; a link to another format is no workflow source.
     fs.unlinkSync(authoredPath);
     fs.symlinkSync(path.basename(yamlTarget), authoredPath);
-    await expect(loadWorkflowAsset(fixture.canonicalRef)).rejects.toBeInstanceOf(Error);
+    await expect(loadWorkflowAsset(fixture.canonicalRef)).rejects.toMatchObject({ code: "WORKFLOW_SOURCE_INVALID" });
     expect(fs.existsSync(getDbPath())).toBe(false);
     expect(indexSnapshot()).toBe(0);
     expect((await listWorkflowRuns()).runs).toHaveLength(0);

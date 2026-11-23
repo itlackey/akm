@@ -141,14 +141,17 @@
       "stdout": {
         "ok": true,
         "stashDir": "<SANDBOX>/fixture/main",
-        "totalEntries": 46,
-        "generatedMetadata": 46,
+        "totalEntries": 54,
+        "generatedMetadata": 55,
         "indexPath": "<SANDBOX>/data/akm/index.db",
         "mode": "full",
-        "directoriesScanned": 30,
+        "directoriesScanned": 38,
         "directoriesSkipped": 0,
         "scanComplete": true,
         "incompleteSources": [],
+        "warnings": [
+          "Two files claim team//tasks/twin: indexed <SANDBOX>/fixture/team/tasks/twin.md, skipped <SANDBOX>/fixture/team/tasks/twin.yml."
+        ],
         "configUpdated": {
           "detectedAdapters": {
             "main": "akm",
@@ -162,7 +165,7 @@
           "semanticSearchMode": "off",
           "semanticStatus": "disabled",
           "embeddingProvider": "local",
-          "entryCount": 46,
+          "entryCount": 54,
           "embeddingCount": 0
         },
         "timing": {
@@ -244,10 +247,10 @@
               }
             ],
             "lock": null,
-            "itemCount": 10,
+            "itemCount": 11,
             "byType": {
               "memory": 1,
-              "knowledge": 2,
+              "knowledge": 3,
               "secret": 2,
               "script": 1,
               "env": 1,
@@ -287,9 +290,116 @@
             "status": {
               "exists": true
             }
+          },
+          {
+            "name": "okf",
+            "kind": "filesystem",
+            "default": false,
+            "source": {
+              "kind": "path",
+              "locator": "<SANDBOX>/fixture/okf"
+            },
+            "path": "<SANDBOX>/fixture/okf",
+            "writable": true,
+            "components": [
+              {
+                "name": "main",
+                "adapter": "okf",
+                "detected": false
+              }
+            ],
+            "lock": null,
+            "itemCount": 2,
+            "byType": {
+              "person": 1,
+              "knowledge": 1
+            },
+            "status": {
+              "exists": true
+            }
+          },
+          {
+            "name": "wiki",
+            "kind": "filesystem",
+            "default": false,
+            "source": {
+              "kind": "path",
+              "locator": "<SANDBOX>/fixture/wiki"
+            },
+            "path": "<SANDBOX>/fixture/wiki",
+            "writable": true,
+            "components": [
+              {
+                "name": "main",
+                "adapter": "llm-wiki",
+                "detected": false
+              }
+            ],
+            "lock": null,
+            "itemCount": 3,
+            "byType": {
+              "concept": 1,
+              "note": 1,
+              "wiki-source": 1
+            },
+            "status": {
+              "exists": true
+            }
+          },
+          {
+            "name": "snapshot",
+            "kind": "filesystem",
+            "default": false,
+            "source": {
+              "kind": "path",
+              "locator": "<SANDBOX>/fixture/snapshot"
+            },
+            "path": "<SANDBOX>/fixture/snapshot",
+            "writable": true,
+            "components": [
+              {
+                "name": "main",
+                "adapter": "website-snapshot",
+                "detected": false
+              }
+            ],
+            "lock": null,
+            "itemCount": 1,
+            "byType": {
+              "website": 1
+            },
+            "status": {
+              "exists": true
+            }
+          },
+          {
+            "name": "flows",
+            "kind": "filesystem",
+            "default": false,
+            "source": {
+              "kind": "path",
+              "locator": "<SANDBOX>/fixture/flows"
+            },
+            "path": "<SANDBOX>/fixture/flows",
+            "writable": true,
+            "components": [
+              {
+                "name": "main",
+                "adapter": "akm-workflow",
+                "detected": false
+              }
+            ],
+            "lock": null,
+            "itemCount": 1,
+            "byType": {
+              "workflow": 1
+            },
+            "status": {
+              "exists": true
+            }
           }
         ],
-        "totalSources": 3,
+        "totalSources": 7,
         "shape": "list"
       }
     },
@@ -1074,13 +1184,44 @@
       }
     },
     "show skills/deploy.md": {
-      "exit": 1,
-      "errorJson": {
-        "ok": false,
-        "error": "Stash asset not found for ref: skills/deploy.md. Check the name with `akm search` or verify the asset exists in your stash.",
-        "code": "ASSET_NOT_FOUND",
-        "hint": "Run `akm search <query>` or `akm index` to refresh the index."
-      }
+      "exit": 0,
+      "stdout": {
+        "type": "workflow",
+        "name": "deploy",
+        "ref": "flows//deploy",
+        "origin": "flows",
+        "action": "Start or resume execution with `akm run 'flows//deploy'`.",
+        "description": "A workflow in its own bundle",
+        "toc": [
+          {
+            "level": 1,
+            "text": "Deploy",
+            "slug": "deploy",
+            "startLine": 9
+          },
+          {
+            "level": 2,
+            "text": "only",
+            "slug": "only",
+            "startLine": 11
+          }
+        ],
+        "content": "8 chars sha256:6bb135eeeff94e0e72479e59796ec87ede1be5f425946c882691498957c21568",
+        "workflowTitle": "deploy",
+        "steps": [
+          {
+            "id": "only",
+            "title": "only",
+            "instructions": "Do the one thing.",
+            "sequenceIndex": 0
+          }
+        ],
+        "path": "<SANDBOX>/fixture/flows/deploy.md",
+        "editable": true
+      },
+      "stderr": [
+        "Ref \"skills/deploy.md\" is outdated: refs are the path inside the bundle, so it is now \"deploy.md\". Resolved it to that asset."
+      ]
     },
     "show commands/release": {
       "exit": 0,
@@ -2316,6 +2457,44 @@
         "hint": "Run `akm search <query>` or `akm index` to refresh the index."
       }
     },
+    "show team//tasks/twin": {
+      "exit": 2,
+      "errorJson": {
+        "ok": false,
+        "error": "Adapter \"akm\" has multiple physical owners for \"tasks/twin\": tasks/twin.md, tasks/twin.yml.",
+        "code": "RESOURCE_ALREADY_EXISTS"
+      }
+    },
+    "show team//tasks/twin.md": {
+      "exit": 0,
+      "stdout": {
+        "type": "knowledge",
+        "name": "tasks/twin",
+        "ref": "team//tasks/twin",
+        "origin": "team",
+        "action": "Reference material - read the content below. For a large document, run `akm show <ref> --outline` for its outline (`toc`, no body), then `akm show <ref>#<slug>` for only the sections you need.",
+        "toc": [
+          {
+            "level": 1,
+            "text": "Twin note",
+            "slug": "twin-note",
+            "startLine": 6
+          }
+        ],
+        "content": "117 chars sha256:1d3f8447288891867c08de9c9ba161575add052f61a27f05d3d6fb9366a88314",
+        "path": "<SANDBOX>/fixture/team/tasks/twin.md",
+        "editable": true
+      }
+    },
+    "show team//tasks/twin.yml": {
+      "exit": 1,
+      "errorJson": {
+        "ok": false,
+        "error": "Stash asset not found for ref: team//tasks/twin.yml. Check the name with `akm search` or verify the asset exists in your stash.",
+        "code": "ASSET_NOT_FOUND",
+        "hint": "Run `akm search <query>` or `akm index` to refresh the index."
+      }
+    },
     "show memories/pruned-note": {
       "exit": 1,
       "errorJson": {
@@ -2408,6 +2587,227 @@
         "error": "Path traversal in asset name.",
         "code": "PATH_ESCAPE_VIOLATION",
         "hint": "Refs use the form [bundle//]conceptId, e.g. `akm show knowledge/guide.md` or `akm show skills/deploy`."
+      }
+    },
+    "show okf//concepts/ada": {
+      "exit": 0,
+      "stdout": {
+        "type": "person",
+        "name": "ada",
+        "ref": "okf//concepts/ada",
+        "origin": "okf",
+        "action": "Read the content below.",
+        "description": "Ada, a person concept",
+        "toc": [
+          {
+            "level": 1,
+            "text": "Ada",
+            "slug": "ada",
+            "startLine": 7
+          }
+        ],
+        "content": "31 chars sha256:eb610a2544b51bb840af3cf0d90db72e500a2f46de5850695ef74fa4f8e09570",
+        "links": {
+          "outgoing": {
+            "links_to": {
+              "total": 1,
+              "refs": [
+                "okf//concepts/plain"
+              ]
+            }
+          }
+        },
+        "path": "<SANDBOX>/fixture/okf/concepts/ada.md",
+        "editable": true
+      }
+    },
+    "show okf//concepts/plain": {
+      "exit": 0,
+      "stdout": {
+        "type": "knowledge",
+        "name": "plain",
+        "ref": "okf//concepts/plain",
+        "origin": "okf",
+        "action": "Read the content below.",
+        "description": "A concept with no type",
+        "toc": [
+          {
+            "level": 1,
+            "text": "Plain",
+            "slug": "plain",
+            "startLine": 6
+          }
+        ],
+        "content": "24 chars sha256:2c310edb5c1f8ee887671ae6f290f398a377cbe277b7d8ecbd4dc8f2fe1b52a6",
+        "links": {
+          "incoming": {
+            "links_to": {
+              "total": 1,
+              "refs": [
+                "okf//concepts/ada"
+              ]
+            }
+          }
+        },
+        "path": "<SANDBOX>/fixture/okf/concepts/plain.md",
+        "editable": true
+      }
+    },
+    "show wiki//pages/attention": {
+      "exit": 0,
+      "stdout": {
+        "type": "concept",
+        "name": "attention",
+        "ref": "wiki//pages/attention",
+        "origin": "wiki",
+        "action": "Read the content below.",
+        "description": "A concept page",
+        "toc": [
+          {
+            "level": 1,
+            "text": "Attention",
+            "slug": "attention",
+            "startLine": 7
+          }
+        ],
+        "content": "48 chars sha256:01c168733af112e46c1207d8093bbbffc0281e108608278ec7b8d3da237346e8",
+        "links": {
+          "outgoing": {
+            "links_to": {
+              "total": 1,
+              "refs": [
+                "wiki//raw/source"
+              ]
+            }
+          }
+        },
+        "path": "<SANDBOX>/fixture/wiki/pages/attention.md",
+        "editable": true
+      }
+    },
+    "show wiki//pages/note": {
+      "exit": 0,
+      "stdout": {
+        "type": "note",
+        "name": "note",
+        "ref": "wiki//pages/note",
+        "origin": "wiki",
+        "action": "Read the content below.",
+        "description": "A page with no pageKind",
+        "toc": [
+          {
+            "level": 1,
+            "text": "Note",
+            "slug": "note",
+            "startLine": 6
+          }
+        ],
+        "content": "17 chars sha256:3f501a59486502cde66e231c0f060abc538d47766c4caf38b277983a64465676",
+        "path": "<SANDBOX>/fixture/wiki/pages/note.md",
+        "editable": true
+      }
+    },
+    "show wiki//raw/source": {
+      "exit": 0,
+      "stdout": {
+        "type": "wiki-source",
+        "name": "source",
+        "ref": "wiki//raw/source",
+        "origin": "wiki",
+        "action": "Read the content below.",
+        "description": "An ingested source",
+        "toc": [
+          {
+            "level": 1,
+            "text": "Source",
+            "slug": "source",
+            "startLine": 6
+          }
+        ],
+        "content": "21 chars sha256:33dcadc33d46acebdb595bd45dfa8d10fb34d1e62a0de59817158af7eee58fb6",
+        "links": {
+          "incoming": {
+            "links_to": {
+              "total": 1,
+              "refs": [
+                "wiki//pages/attention"
+              ]
+            }
+          }
+        },
+        "path": "<SANDBOX>/fixture/wiki/raw/source.md",
+        "editable": true
+      }
+    },
+    "show snapshot//example-com/plain": {
+      "exit": 1,
+      "errorJson": {
+        "ok": false,
+        "error": "Stash asset not found for ref: snapshot//example-com/plain. Check the name with `akm search` or verify the asset exists in your stash.",
+        "code": "ASSET_NOT_FOUND",
+        "hint": "Run `akm search <query>` or `akm index` to refresh the index."
+      }
+    },
+    "show snapshot//example-com/tagged": {
+      "exit": 0,
+      "stdout": {
+        "type": "website",
+        "name": "Tagged page",
+        "ref": "snapshot//example-com/tagged",
+        "origin": "snapshot",
+        "action": "Read the content below.",
+        "tags": [
+          "website"
+        ],
+        "content": "17 chars sha256:51d4728a122a3d03c4d34ca1135b03953a72a873e4512d5ab42c462dda759585",
+        "path": "<SANDBOX>/fixture/snapshot/stash/knowledge/example-com/tagged.md",
+        "editable": true
+      }
+    },
+    "show flows//deploy": {
+      "exit": 0,
+      "stdout": {
+        "type": "workflow",
+        "name": "deploy",
+        "ref": "flows//deploy",
+        "origin": "flows",
+        "action": "Start or resume execution with `akm run 'flows//deploy'`.",
+        "description": "A workflow in its own bundle",
+        "toc": [
+          {
+            "level": 1,
+            "text": "Deploy",
+            "slug": "deploy",
+            "startLine": 9
+          },
+          {
+            "level": 2,
+            "text": "only",
+            "slug": "only",
+            "startLine": 11
+          }
+        ],
+        "content": "8 chars sha256:6bb135eeeff94e0e72479e59796ec87ede1be5f425946c882691498957c21568",
+        "workflowTitle": "deploy",
+        "steps": [
+          {
+            "id": "only",
+            "title": "only",
+            "instructions": "Do the one thing.",
+            "sequenceIndex": 0
+          }
+        ],
+        "path": "<SANDBOX>/fixture/flows/deploy.md",
+        "editable": true
+      }
+    },
+    "show flows//doc": {
+      "exit": 1,
+      "errorJson": {
+        "ok": false,
+        "error": "Stash asset not found for ref: flows//doc. Check the name with `akm search` or verify the asset exists in your stash.",
+        "code": "ASSET_NOT_FOUND",
+        "hint": "Run `akm search <query>` or `akm index` to refresh the index."
       }
     },
     "show outline guide": {
@@ -2612,6 +3012,13 @@
             "estimatedTokens": 36
           },
           {
+            "type": "workflow",
+            "name": "deploy",
+            "ref": "flows//deploy",
+            "action": "Start or resume execution with `akm run 'flows//deploy'`.",
+            "estimatedTokens": 36
+          },
+          {
             "type": "knowledge",
             "name": "guide",
             "ref": "knowledge/guide",
@@ -2794,6 +3201,13 @@
             "estimatedTokens": 32
           },
           {
+            "type": "concept",
+            "name": "attention",
+            "ref": "wiki//pages/attention",
+            "action": "akm show wiki//pages/attention",
+            "estimatedTokens": 31
+          },
+          {
             "type": "document",
             "name": "n",
             "ref": "files//notes/n",
@@ -2893,6 +3307,13 @@
           },
           {
             "type": "knowledge",
+            "name": "plain",
+            "ref": "okf//concepts/plain",
+            "action": "akm show okf//concepts/plain -> read reference material",
+            "estimatedTokens": 22
+          },
+          {
+            "type": "knowledge",
             "name": "reports/quarterly",
             "ref": "reports/quarterly",
             "action": "akm show reports/quarterly -> read reference material",
@@ -2904,6 +3325,13 @@
             "ref": "team//knowledge/shared",
             "action": "akm show team//knowledge/shared -> read reference material",
             "estimatedTokens": 50
+          },
+          {
+            "type": "knowledge",
+            "name": "tasks/twin",
+            "ref": "team//tasks/twin",
+            "action": "akm show team//tasks/twin -> read reference material",
+            "estimatedTokens": 29
           },
           {
             "type": "knowledge",
@@ -2925,11 +3353,230 @@
             "ref": "memories/deploy-note",
             "action": "akm show memories/deploy-note -> recall context",
             "estimatedTokens": 36
+          },
+          {
+            "type": "memory",
+            "name": "deploy-note.derived",
+            "ref": "memories/deploy-note.derived",
+            "action": "akm show memories/deploy-note.derived -> recall context",
+            "estimatedTokens": 41
+          },
+          {
+            "type": "memory",
+            "name": "successor",
+            "ref": "memories/successor",
+            "action": "akm show memories/successor -> recall context",
+            "estimatedTokens": 61
+          },
+          {
+            "type": "memory",
+            "name": "team-note",
+            "ref": "team//memories/team-note",
+            "action": "akm show team//memories/team-note -> recall context",
+            "estimatedTokens": 24
+          },
+          {
+            "type": "note",
+            "name": "note",
+            "ref": "wiki//pages/note",
+            "action": "akm show wiki//pages/note",
+            "estimatedTokens": 21
+          },
+          {
+            "type": "person",
+            "name": "ada",
+            "ref": "okf//concepts/ada",
+            "action": "akm show okf//concepts/ada",
+            "estimatedTokens": 27
+          },
+          {
+            "type": "script",
+            "name": "deploy.sh",
+            "ref": "scripts/deploy.sh",
+            "action": "akm show scripts/deploy.sh -> execute the run command",
+            "estimatedTokens": 12
+          },
+          {
+            "type": "script",
+            "name": "greet.sh",
+            "ref": "scripts/greet.sh",
+            "action": "akm show scripts/greet.sh -> execute the run command",
+            "estimatedTokens": 9
+          },
+          {
+            "type": "script",
+            "name": "greet.sh",
+            "ref": "team//scripts/greet.sh",
+            "action": "akm show team//scripts/greet.sh -> execute the run command",
+            "estimatedTokens": 9
+          },
+          {
+            "type": "script",
+            "name": "hello.sh",
+            "ref": "scripts/hello.sh",
+            "action": "akm show scripts/hello.sh -> execute the run command",
+            "estimatedTokens": 8
+          },
+          {
+            "type": "script",
+            "name": "printenv.sh",
+            "ref": "scripts/printenv.sh",
+            "action": "akm show scripts/printenv.sh -> execute the run command",
+            "estimatedTokens": 59
+          },
+          {
+            "type": "script",
+            "name": "tool.py",
+            "ref": "files//scripts/tool.py",
+            "action": "akm show files//scripts/tool.py -> execute the run command",
+            "estimatedTokens": 4
+          },
+          {
+            "type": "secret",
+            "name": "api-token",
+            "ref": "secrets/api-token",
+            "action": "akm show secrets/api-token -> name only (value never shown); akm run --secret secrets/api-token:<VAR> scripts/<file> -> run a script with the value injected into $VAR",
+            "estimatedTokens": 4
+          },
+          {
+            "type": "secret",
+            "name": "shared-secret",
+            "ref": "secrets/shared-secret",
+            "action": "akm show secrets/shared-secret -> name only (value never shown); akm run --secret secrets/shared-secret:<VAR> scripts/<file> -> run a script with the value injected into $VAR",
+            "estimatedTokens": 5
+          },
+          {
+            "type": "secret",
+            "name": "shared-secret",
+            "ref": "team//secrets/shared-secret",
+            "action": "akm show team//secrets/shared-secret -> name only (value never shown); akm run --secret team//secrets/shared-secret:<VAR> scripts/<file> -> run a script with the value injected into $VAR",
+            "estimatedTokens": 5
+          },
+          {
+            "type": "secret",
+            "name": "team-key",
+            "ref": "team//secrets/team-key",
+            "action": "akm show team//secrets/team-key -> name only (value never shown); akm run --secret team//secrets/team-key:<VAR> scripts/<file> -> run a script with the value injected into $VAR",
+            "estimatedTokens": 4
+          },
+          {
+            "type": "skill",
+            "name": "deploy",
+            "ref": "skills/deploy",
+            "action": "akm show skills/deploy -> follow the instructions",
+            "estimatedTokens": 37
+          },
+          {
+            "type": "skill",
+            "name": "review",
+            "ref": "team//skills/review",
+            "action": "akm show team//skills/review -> follow the instructions",
+            "estimatedTokens": 35
+          },
+          {
+            "type": "skill",
+            "name": "twinned",
+            "ref": "skills/twinned",
+            "action": "akm show skills/twinned -> follow the instructions",
+            "estimatedTokens": 37
+          },
+          {
+            "type": "task",
+            "name": "greet",
+            "ref": "tasks/greet",
+            "action": "akm show tasks/greet -> inspect; akm run tasks/greet -> run now; akm task enable|disable tasks/greet -> change local scheduling",
+            "estimatedTokens": 31
+          },
+          {
+            "type": "task",
+            "name": "inline",
+            "ref": "tasks/inline",
+            "action": "akm show tasks/inline -> inspect; akm run tasks/inline -> run now; akm task enable|disable tasks/inline -> change local scheduling",
+            "estimatedTokens": 43
+          },
+          {
+            "type": "task",
+            "name": "nightly",
+            "ref": "tasks/nightly",
+            "action": "akm show tasks/nightly -> inspect; akm run tasks/nightly -> run now; akm task enable|disable tasks/nightly -> change local scheduling",
+            "estimatedTokens": 29
+          },
+          {
+            "type": "task",
+            "name": "report",
+            "ref": "tasks/report",
+            "action": "akm show tasks/report -> inspect; akm run tasks/report -> run now; akm task enable|disable tasks/report -> change local scheduling",
+            "estimatedTokens": 30
+          },
+          {
+            "type": "task",
+            "name": "shell",
+            "ref": "tasks/shell",
+            "action": "akm show tasks/shell -> inspect; akm run tasks/shell -> run now; akm task enable|disable tasks/shell -> change local scheduling",
+            "estimatedTokens": 20
+          },
+          {
+            "type": "task",
+            "name": "team-task",
+            "ref": "team//tasks/team-task",
+            "action": "akm show team//tasks/team-task -> inspect; akm run team//tasks/team-task -> run now; akm task enable|disable team//tasks/team-task -> change local scheduling",
+            "estimatedTokens": 30
+          },
+          {
+            "type": "website",
+            "name": "Tagged page",
+            "ref": "snapshot//example-com/tagged",
+            "action": "akm show snapshot//example-com/tagged",
+            "estimatedTokens": 25
+          },
+          {
+            "type": "wiki-source",
+            "name": "source",
+            "ref": "wiki//raw/source",
+            "action": "akm show wiki//raw/source",
+            "estimatedTokens": 20
+          },
+          {
+            "type": "wiki-source",
+            "name": "wikis/lab/raw/snapshot",
+            "ref": "wikis/lab/raw/snapshot",
+            "action": "akm show wikis/lab/raw/snapshot",
+            "estimatedTokens": 10
+          },
+          {
+            "type": "workflow",
+            "name": "deploy",
+            "ref": "flows//deploy",
+            "action": "Start or resume execution with `akm run 'flows//deploy'`.",
+            "estimatedTokens": 36
+          },
+          {
+            "type": "workflow",
+            "name": "inner",
+            "ref": "workflows/inner",
+            "action": "Start or resume execution with `akm run 'workflows/inner'`.",
+            "estimatedTokens": 43
+          },
+          {
+            "type": "workflow",
+            "name": "release",
+            "ref": "team//workflows/release",
+            "action": "Start or resume execution with `akm run 'team//workflows/release'`.",
+            "estimatedTokens": 39
+          },
+          {
+            "type": "workflow",
+            "name": "ship",
+            "ref": "workflows/ship",
+            "action": "Start or resume execution with `akm run 'workflows/ship'`.",
+            "estimatedTokens": 122
           }
         ],
         "searchMode": "keyword",
         "warnings": [
-          "Multiple bundles provide \"knowledge/dup\": main, team. Unqualified refs resolve by configured bundle priority; use a bundle-qualified ref to select explicitly."
+          "Multiple bundles provide \"knowledge/dup\": main, team. Unqualified refs resolve by configured bundle priority; use a bundle-qualified ref to select explicitly.",
+          "Multiple bundles provide \"scripts/greet.sh\": main, team. Unqualified refs resolve by configured bundle priority; use a bundle-qualified ref to select explicitly.",
+          "Multiple bundles provide \"secrets/shared-secret\": main, team. Unqualified refs resolve by configured bundle priority; use a bundle-qualified ref to select explicitly."
         ]
       }
     },
@@ -3003,6 +3650,13 @@
           },
           {
             "type": "knowledge",
+            "name": "plain",
+            "ref": "okf//concepts/plain",
+            "action": "akm show okf//concepts/plain -> read reference material",
+            "estimatedTokens": 22
+          },
+          {
+            "type": "knowledge",
             "name": "reports/quarterly",
             "ref": "reports/quarterly",
             "action": "akm show reports/quarterly -> read reference material",
@@ -3014,6 +3668,13 @@
             "ref": "team//knowledge/shared",
             "action": "akm show team//knowledge/shared -> read reference material",
             "estimatedTokens": 50
+          },
+          {
+            "type": "knowledge",
+            "name": "tasks/twin",
+            "ref": "team//tasks/twin",
+            "action": "akm show team//tasks/twin -> read reference material",
+            "estimatedTokens": 29
           },
           {
             "type": "knowledge",
@@ -3033,6 +3694,13 @@
       "exit": 0,
       "stdout": {
         "hits": [
+          {
+            "type": "workflow",
+            "name": "deploy",
+            "ref": "flows//deploy",
+            "action": "Start or resume execution with `akm run 'flows//deploy'`.",
+            "estimatedTokens": 36
+          },
           {
             "type": "workflow",
             "name": "inner",
@@ -3188,6 +3856,13 @@
             "ref": "team//knowledge/shared",
             "action": "akm show team//knowledge/shared -> read reference material",
             "estimatedTokens": 50
+          },
+          {
+            "type": "knowledge",
+            "name": "tasks/twin",
+            "ref": "team//tasks/twin",
+            "action": "akm show team//tasks/twin -> read reference material",
+            "estimatedTokens": 29
           },
           {
             "type": "memory",
@@ -3416,6 +4091,90 @@
             "ref": "scripts/printenv.sh",
             "action": "akm show scripts/printenv.sh -> execute the run command",
             "estimatedTokens": 59
+          },
+          {
+            "type": "secret",
+            "name": "api-token",
+            "ref": "secrets/api-token",
+            "action": "akm show secrets/api-token -> name only (value never shown); akm run --secret secrets/api-token:<VAR> scripts/<file> -> run a script with the value injected into $VAR",
+            "estimatedTokens": 4
+          },
+          {
+            "type": "secret",
+            "name": "shared-secret",
+            "ref": "secrets/shared-secret",
+            "action": "akm show secrets/shared-secret -> name only (value never shown); akm run --secret secrets/shared-secret:<VAR> scripts/<file> -> run a script with the value injected into $VAR",
+            "estimatedTokens": 5
+          },
+          {
+            "type": "skill",
+            "name": "deploy",
+            "ref": "skills/deploy",
+            "action": "akm show skills/deploy -> follow the instructions",
+            "estimatedTokens": 37
+          },
+          {
+            "type": "skill",
+            "name": "twinned",
+            "ref": "skills/twinned",
+            "action": "akm show skills/twinned -> follow the instructions",
+            "estimatedTokens": 37
+          },
+          {
+            "type": "task",
+            "name": "greet",
+            "ref": "tasks/greet",
+            "action": "akm show tasks/greet -> inspect; akm run tasks/greet -> run now; akm task enable|disable tasks/greet -> change local scheduling",
+            "estimatedTokens": 31
+          },
+          {
+            "type": "task",
+            "name": "inline",
+            "ref": "tasks/inline",
+            "action": "akm show tasks/inline -> inspect; akm run tasks/inline -> run now; akm task enable|disable tasks/inline -> change local scheduling",
+            "estimatedTokens": 43
+          },
+          {
+            "type": "task",
+            "name": "nightly",
+            "ref": "tasks/nightly",
+            "action": "akm show tasks/nightly -> inspect; akm run tasks/nightly -> run now; akm task enable|disable tasks/nightly -> change local scheduling",
+            "estimatedTokens": 29
+          },
+          {
+            "type": "task",
+            "name": "report",
+            "ref": "tasks/report",
+            "action": "akm show tasks/report -> inspect; akm run tasks/report -> run now; akm task enable|disable tasks/report -> change local scheduling",
+            "estimatedTokens": 30
+          },
+          {
+            "type": "task",
+            "name": "shell",
+            "ref": "tasks/shell",
+            "action": "akm show tasks/shell -> inspect; akm run tasks/shell -> run now; akm task enable|disable tasks/shell -> change local scheduling",
+            "estimatedTokens": 20
+          },
+          {
+            "type": "wiki-source",
+            "name": "wikis/lab/raw/snapshot",
+            "ref": "wikis/lab/raw/snapshot",
+            "action": "akm show wikis/lab/raw/snapshot",
+            "estimatedTokens": 10
+          },
+          {
+            "type": "workflow",
+            "name": "inner",
+            "ref": "workflows/inner",
+            "action": "Start or resume execution with `akm run 'workflows/inner'`.",
+            "estimatedTokens": 43
+          },
+          {
+            "type": "workflow",
+            "name": "ship",
+            "ref": "workflows/ship",
+            "action": "Start or resume execution with `akm run 'workflows/ship'`.",
+            "estimatedTokens": 122
           }
         ],
         "searchMode": "keyword"
@@ -3546,6 +4305,87 @@
         "searchMode": "keyword"
       }
     },
+    "search from okf": {
+      "exit": 0,
+      "stdout": {
+        "hits": [
+          {
+            "type": "knowledge",
+            "name": "plain",
+            "ref": "okf//concepts/plain",
+            "action": "akm show okf//concepts/plain -> read reference material",
+            "estimatedTokens": 22
+          },
+          {
+            "type": "person",
+            "name": "ada",
+            "ref": "okf//concepts/ada",
+            "action": "akm show okf//concepts/ada",
+            "estimatedTokens": 27
+          }
+        ],
+        "searchMode": "keyword"
+      }
+    },
+    "search from wiki": {
+      "exit": 0,
+      "stdout": {
+        "hits": [
+          {
+            "type": "concept",
+            "name": "attention",
+            "ref": "wiki//pages/attention",
+            "action": "akm show wiki//pages/attention",
+            "estimatedTokens": 31
+          },
+          {
+            "type": "note",
+            "name": "note",
+            "ref": "wiki//pages/note",
+            "action": "akm show wiki//pages/note",
+            "estimatedTokens": 21
+          },
+          {
+            "type": "wiki-source",
+            "name": "source",
+            "ref": "wiki//raw/source",
+            "action": "akm show wiki//raw/source",
+            "estimatedTokens": 20
+          }
+        ],
+        "searchMode": "keyword"
+      }
+    },
+    "search from snapshot": {
+      "exit": 0,
+      "stdout": {
+        "hits": [
+          {
+            "type": "website",
+            "name": "Tagged page",
+            "ref": "snapshot//example-com/tagged",
+            "action": "akm show snapshot//example-com/tagged",
+            "estimatedTokens": 25
+          }
+        ],
+        "searchMode": "keyword"
+      }
+    },
+    "search from flows": {
+      "exit": 0,
+      "stdout": {
+        "hits": [
+          {
+            "type": "workflow",
+            "name": "deploy",
+            "ref": "flows//deploy",
+            "action": "Start or resume execution with `akm run 'flows//deploy'`.",
+            "estimatedTokens": 36
+          }
+        ],
+        "searchMode": "keyword"
+      }
+    },
     "search type command": {
       "exit": 0,
       "stdout": {
@@ -3603,6 +4443,13 @@
       "stdout": {
         "hits": [
           {
+            "type": "knowledge",
+            "name": "tasks/twin",
+            "ref": "team//tasks/twin",
+            "action": "akm show team//tasks/twin -> read reference material",
+            "estimatedTokens": 29
+          },
+          {
             "type": "skill",
             "name": "twinned",
             "ref": "skills/twinned",
@@ -3617,6 +4464,13 @@
       "exit": 0,
       "stdout": {
         "hits": [
+          {
+            "type": "knowledge",
+            "name": "plain",
+            "ref": "okf//concepts/plain",
+            "action": "akm show okf//concepts/plain -> read reference material",
+            "estimatedTokens": 22
+          },
           {
             "type": "knowledge",
             "name": "declares-lesson",
@@ -6756,14 +7610,17 @@
       "stdout": {
         "ok": true,
         "stashDir": "<SANDBOX>/fixture/main",
-        "totalEntries": 48,
-        "generatedMetadata": 11,
+        "totalEntries": 56,
+        "generatedMetadata": 14,
         "indexPath": "<SANDBOX>/data/akm/index.db",
         "mode": "incremental",
-        "directoriesScanned": 2,
-        "directoriesSkipped": 28,
+        "directoriesScanned": 3,
+        "directoriesSkipped": 35,
         "scanComplete": true,
         "incompleteSources": [],
+        "warnings": [
+          "Two files claim team//tasks/twin: indexed <SANDBOX>/fixture/team/tasks/twin.md, skipped <SANDBOX>/fixture/team/tasks/twin.yml."
+        ],
         "verification": {
           "ok": true,
           "message": "Keyword index ready. Semantic search is disabled.",
@@ -6771,7 +7628,7 @@
           "semanticSearchMode": "off",
           "semanticStatus": "disabled",
           "embeddingProvider": "local",
-          "entryCount": 48,
+          "entryCount": 56,
           "embeddingCount": 0
         },
         "timing": {
@@ -6949,6 +7806,38 @@
               "main": {
                 "root": ".",
                 "adapter": "generic-files"
+              }
+            }
+          },
+          "okf": {
+            "path": "<SANDBOX>/fixture/okf",
+            "components": {
+              "main": {
+                "adapter": "okf"
+              }
+            }
+          },
+          "wiki": {
+            "path": "<SANDBOX>/fixture/wiki",
+            "components": {
+              "main": {
+                "adapter": "llm-wiki"
+              }
+            }
+          },
+          "snapshot": {
+            "path": "<SANDBOX>/fixture/snapshot",
+            "components": {
+              "main": {
+                "adapter": "website-snapshot"
+              }
+            }
+          },
+          "flows": {
+            "path": "<SANDBOX>/fixture/flows",
+            "components": {
+              "main": {
+                "adapter": "akm-workflow"
               }
             }
           }
@@ -7212,6 +8101,30 @@
       }
     },
     "changes to bundle files": {
+      "value": {
+        "written": {},
+        "removed": []
+      }
+    },
+    "changes to bundle okf": {
+      "value": {
+        "written": {},
+        "removed": []
+      }
+    },
+    "changes to bundle wiki": {
+      "value": {
+        "written": {},
+        "removed": []
+      }
+    },
+    "changes to bundle snapshot": {
+      "value": {
+        "written": {},
+        "removed": []
+      }
+    },
+    "changes to bundle flows": {
       "value": {
         "written": {},
         "removed": []

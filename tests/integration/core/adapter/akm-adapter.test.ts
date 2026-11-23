@@ -137,17 +137,17 @@ describe("akm adapter — recognize reproduces runMatchers classification (§5.1
 
 // ── 2. recognizeMatch — content/extension winners (§5.1) ─────────────────────
 
-describe("akm adapter — recognizeMatch classifies by the path alone (§5.1)", () => {
-  test("classifies files outside any type dir by extension and a Markdown default, never by content", () => {
+describe("akm adapter — recognizeMatch classifies content/extension winners (§5.1)", () => {
+  test("classifies hand-built contexts where smartMd/extension is the winner", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-adapter-sync-"));
     tmpDirs.push(tmp);
-    // Files placed OUTSIDE any type dir so the winner comes from the extension or the loose-Markdown default, not a
-    // directory hint — exercising branches the all-types fixture's parentDir-hint winners mask (§1 covers the dir-hint
-    // winners against the golden). A body placeholder or a frontmatter key is no signal.
+    // Files placed OUTSIDE any type dir so the winner comes from a content/ext
+    // probe, not a directory hint — exercising branches the all-types fixture's
+    // parentDir-hint winners mask (§1 covers the dir-hint winners against the golden).
     const cases: Array<[rel: string, content: string, type: string]> = [
-      ["note.md", "# Just knowledge\n\nplain body\n", "knowledge"], // loose Markdown @5
-      ["cmd.md", "# Command\n\nUse $ARGUMENTS to pass input\n", "knowledge"], // a body placeholder is no signal
-      ["agent.md", "---\nmodel: local\nagent: x\n---\n\n# Agent\n", "knowledge"], // nor is frontmatter
+      ["note.md", "# Just knowledge\n\nplain body\n", "knowledge"], // smartMd knowledge @5
+      ["cmd.md", "# Command\n\nUse $ARGUMENTS to pass input\n", "command"], // smartMd command @18 (body probe)
+      ["agent.md", "---\nmodel: local\n---\n\n# Agent\n", "agent"], // smartMd agent @8 (frontmatter probe)
       ["run.sh", "#!/bin/sh\necho hi\n", "script"], // extension script @3
     ];
     for (const [rel, content, type] of cases) {

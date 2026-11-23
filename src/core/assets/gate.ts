@@ -4,6 +4,7 @@
 
 /** What a bundle's adapter writes, for callers that decide before they write. `bundle.ts` itself stays inside the facade. */
 
+import type { UsageErrorCode } from "../errors";
 import { assetBundleOf } from "./bundle";
 
 type GateSource = { name: string; path: string; location?: string; adapterId?: string };
@@ -19,4 +20,9 @@ export function assertAdapterWrites(source: GateSource, type?: string): void {
 /** Whether the bundle's adapter writes assets of `type`: it holds them as its own, not as files it reads. */
 export function adapterWrites(source: GateSource, type: string): boolean {
   return assetBundleOf(source).writes(type);
+}
+
+/** Refuse with a message naming the bundle and its adapter: `Bundle "x" uses adapter "y", which <what>.` */
+export function refuseByAdapter(source: GateSource, what: string, code: UsageErrorCode): never {
+  return assetBundleOf(source).refuse(what, code);
 }
