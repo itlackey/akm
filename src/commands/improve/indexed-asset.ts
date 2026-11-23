@@ -32,7 +32,7 @@ export function indexedContent(bundleId: string | undefined, conceptId: string):
 
 /**
  * The asset a planned ref names: its qualified spelling when the planner recorded one, else the ref as written (a
- * qualified spelling no bundle holds any more falls back to it), in the bundles of `stashDir` when given.
+ * qualified spelling no bundle holds any more is gone, not another bundle's copy), in the bundles of `stashDir` when given.
  */
 export function plannedAsset(planned: { ref: string; itemRef?: string }, stashDir?: string): Asset | undefined {
   try {
@@ -40,10 +40,7 @@ export function plannedAsset(planned: { ref: string; itemRef?: string }, stashDi
       quiet: true,
       ...(stashDir !== undefined ? { sources: resolveSourceEntries(stashDir) } : {}),
     };
-    return (
-      (planned.itemRef !== undefined ? findAsset(planned.itemRef, options) : undefined) ??
-      findAsset(planned.ref, options)
-    );
+    return findAsset(planned.itemRef ?? planned.ref, options);
   } catch {
     return undefined;
   }
