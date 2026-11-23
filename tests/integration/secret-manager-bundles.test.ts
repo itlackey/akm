@@ -194,14 +194,23 @@ describe("secret manager bundles", () => {
     });
   });
 
-  test("akm index fails on a locked keyring that lists nothing, and keeps the indexed rows", async () => {
+  test("akm index warns of a locked keyring that lists nothing, goes on and keeps the indexed rows", async () => {
     await withFakeSecretStores({ keyrings: KEYRING, vaults: VAULT }, async () => {
       await akmIndex({ stashDir: storage.stashDir, full: true });
     });
     await withFakeSecretStores(
       { keyrings: KEYRING, vaults: VAULT, locked: ["akm"], hidesLocked: ["akm"] } as never,
       async () => {
-        await expect(akmIndex({ stashDir: storage.stashDir, full: true })).rejects.toThrow(
+        const warnings: string[] = [];
+        _setWarnSinkForTests((level, args) => {
+          if (level === "warn") warnings.push(args.map(String).join(" "));
+        });
+        try {
+          await akmIndex({ stashDir: storage.stashDir, full: true });
+        } finally {
+          _setWarnSinkForTests(undefined);
+        }
+        expect(warnings.join("\n")).toContain(
           'Keyring "akm" is locked and lists no entries until it is unlocked: unlock it in your keyring manager (KWalletManager, Seahorse), then run akm index again.',
         );
         const listed = await akm("secret", "list");

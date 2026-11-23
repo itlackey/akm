@@ -25,7 +25,7 @@
 
 import { readUsableIndex } from "../../../indexer/index-readiness";
 import { compareCodePoints } from "../../common";
-import { ConfigError, StoreLockedError, UsageError } from "../../errors";
+import { ConfigError, UsageError } from "../../errors";
 import { warn } from "../../warn";
 import {
   type Client,
@@ -281,7 +281,7 @@ export class SecretToolAdapter extends SecretManagerAdapterBase {
     const paths = bus<string[]>(reading, ["get-property", SERVICE, collection, COLLECTION, "Items"]);
     // A closed KWallet lists no entries while it is locked, which is not an empty wallet.
     if (paths.length === 0 && bus<boolean>(reading, ["get-property", SERVICE, collection, COLLECTION, "Locked"])) {
-      throw new StoreLockedError(
+      throw new ConfigError(
         `Keyring "${keyring}" is locked and lists no entries until it is unlocked: unlock it in your keyring manager (KWalletManager, Seahorse), then run akm index again.`,
         "BUNDLE_UNREACHABLE",
       );

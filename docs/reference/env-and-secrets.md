@@ -318,8 +318,8 @@ such a bundle after the bundles before it in priority.
   `Keyring "<x>" is locked: unlock it in the prompt your keyring manager shows.`
   to stderr first. Listing needs no unlock (it reads the index). Where a locked
   keyring lists no entries until it is unlocked (a closed KWallet), `akm index`
-  fails, telling you to unlock it and run `akm index` again; the entries the
-  index had stay. KWallet may replace an entry's attributes when it is reopened;
+  warns, telling you to unlock it and run `akm index` again, and goes on; the
+  entries the index had stay. KWallet may replace an entry's attributes when it is reopened;
   a read then says to run `akm index`, which records them again. On KWallet
   (`ksecretd`), a removal can be undone when the wallet is next loaded: the
   Secret Service stops listing the entry, but the wallet file may keep it, so
