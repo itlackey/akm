@@ -882,7 +882,7 @@ describe("keyring and vault bundles in config and commands (P3, N3, N5, N6)", ()
         issue.file?.startsWith("keyring//"),
       );
       expect(issues.map((issue) => `${issue.file} ${issue.issue}`).sort()).toEqual([
-        "keyring//secrets/has#hash invalid-name",
+        "keyring//secrets/has#hash adapter-diagnostic",
         "keyring//secrets/twice shadowed-spelling",
       ]);
     });
@@ -943,7 +943,10 @@ describe("review fixes (K gate)", () => {
         );
       expect(stored((await akm("lint", "--type", "knowledge")).json)).toEqual([]);
       const secrets = stored((await akm("lint", "--type", "secrets")).json);
-      expect(secrets.map((i) => i.issue).sort()).toEqual(["invalid-name", "shadowed-spelling"]);
+      expect(secrets.map((i) => i.issue).sort()).toEqual(["adapter-diagnostic", "shadowed-spelling"]);
+      expect(secrets.find((i) => i.issue === "adapter-diagnostic")).toMatchObject({
+        detail: expect.stringContaining("[invalid-name]"),
+      });
       expect(secrets.every((i) => i.ref === i.file)).toBe(true);
     });
   });

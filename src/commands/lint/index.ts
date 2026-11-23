@@ -236,7 +236,6 @@ const KNOWN_ADAPTER_ISSUE_TYPES: ReadonlySet<string> = new Set<LintIssueType>([
   "broken-xref",
   "broken-source",
   "shadowed-spelling",
-  "invalid-name",
   "type-from-content",
   "invalid-workflow-structure",
   "workflow-warning",
