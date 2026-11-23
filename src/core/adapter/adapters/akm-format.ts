@@ -95,6 +95,11 @@ export abstract class AkmFormatAdapterBase extends DirectoryAdapterBase {
     return this.writes.filter((type) => type !== "env" && type !== "secret");
   }
 
+  /** A type's own folder (`tasks/`). */
+  protected override typeFolder(type: string): string | undefined {
+    return stashDirFor(type);
+  }
+
   protected override placeFile(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {
     return placeInTypeFolder(b, asset);
   }

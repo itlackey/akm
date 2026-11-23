@@ -139,9 +139,10 @@ export interface BundleAdapter {
   exists(b: Bundle): boolean;
   /**
    * Every asset of the bundle, one per concept. Identity comes from each entry's storage key alone: no content is read.
-   * The indexer describes each with `recognize`. Throws `BUNDLE_UNREACHABLE` when the storage cannot be reached.
+   * The indexer describes each with `recognize`. Throws `BUNDLE_UNREACHABLE` when the storage cannot be reached. With
+   * `type`, `complete` speaks for the part of the bundle that holds assets of that type only.
    */
-  list(b: Bundle): BundleListing;
+  list(b: Bundle, type?: string): BundleListing;
   /**
    * The asset `conceptId` names, or undefined when the bundle has none (an asset a full listing would not reach is
    * none). When storage holds the concept under more than one spelling the adapter picks the first by its spelling

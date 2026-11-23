@@ -32,6 +32,7 @@ import {
   hasErrnoCode,
   isWithin,
   relativeToRoot,
+  toErrorMessage,
   writeFileAtomic,
 } from "../common";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
@@ -48,7 +49,7 @@ import type {
   RetireNote,
 } from "./bundle-adapter";
 import { buildFileContext, type FileContext, fileContextOfEntry } from "./directory/file-context";
-import { isWalkedFile, walkStashFlatWithStatus } from "./directory/walker";
+import { isWalkedFile, type WalkStashFlatResult, walkStashFlatWithStatus } from "./directory/walker";
 import {
   archiveFile,
   expireArchive,
@@ -143,6 +144,10 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   protected packageDir(_file: FileContext): string | undefined {
     return undefined;
   }
+  /** The folder, inside the root, that holds the adapter's assets of `type`; undefined: they may be anywhere. */
+  protected typeFolder(_type: string): string | undefined {
+    return undefined;
+  }
   /** The folders the adapter owns: feeds git exact-path staging and detection. */
   directoryList(_b: Bundle): string[] {
     return [];
@@ -156,7 +161,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return fs.statSync(rootOf(b), { throwIfNoEntry: false })?.isDirectory() === true;
   }
 
-  list(b: Bundle): BundleListing {
+  list(b: Bundle, type?: string): BundleListing {
     const walked = walkStashFlatWithStatus(rootOf(b), this.walkOptions());
     // One asset per concept: the winner among the files that spell it. The path says which concept a file holds.
     const byConcept = new Map<string, FileContext[]>();
@@ -175,9 +180,37 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
         const conceptId = winners.get(file);
         return conceptId === undefined ? [] : [{ conceptId, entry: this.entryOf(file) }];
       }),
-      complete: walked.complete,
-      ...(walked.incompleteReason !== undefined ? { incompleteReason: walked.incompleteReason } : {}),
+      ...this.completeness(b, walked, type),
     };
+  }
+
+  /**
+   * Whether the walk read the whole bundle, or with `type` the part of it {@link typeFolder} names: a failure elsewhere,
+   * or a file named like another type's folder, leaves that type's listing complete. A type folder that is a file is
+   * that type's failure.
+   */
+  private completeness(
+    b: Bundle,
+    walked: WalkStashFlatResult,
+    type?: string,
+  ): Pick<BundleListing, "complete" | "incompleteReason"> {
+    const folder = type === undefined ? undefined : this.typeFolder(type);
+    if (folder === undefined) {
+      return {
+        complete: walked.complete,
+        ...(walked.incompleteReason !== undefined ? { incompleteReason: walked.incompleteReason } : {}),
+      };
+    }
+    const failure = walked.failures?.find(({ path: at }) => at === "" || at === folder || at.startsWith(`${folder}/`));
+    if (failure) return { complete: false, incompleteReason: failure.reason };
+    if (walked.files.some((file) => file.relPath === folder)) {
+      try {
+        fs.readdirSync(path.join(rootOf(b), folder));
+      } catch (error) {
+        return { complete: false, incompleteReason: toErrorMessage(error) };
+      }
+    }
+    return { complete: true };
   }
 
   /** The entry's metadata, then the identity its storage key names, which `describe` cannot change. */

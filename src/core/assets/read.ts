@@ -10,13 +10,10 @@
  */
 
 import { createHash } from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import { readUsableIndex } from "../../indexer/index-readiness";
 import type { SearchSource } from "../../indexer/search/search-source";
 import type { AssetEntry, BundleListing } from "../adapter/bundle-adapter";
 import type { IndexDocument } from "../adapter/types";
-import { stashDirFor } from "../asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { compareCodePoints } from "../common";
 import { assetNotFound, ConfigError } from "../errors";
@@ -125,9 +122,9 @@ export function listAssets(
     bundle?: string;
     type?: string;
     /**
-     * For a caller that acts on what is not there (a scheduler removes the rows of a task that is gone): with `type`,
-     * a bundle whose folder for that type exists and is not a directory fails with `BUNDLE_UNREACHABLE`, and one whose
-     * storage is not there lists nothing, with no warning.
+     * For a caller that acts on what is not there (a scheduler removes the rows of a task that is gone): a bundle whose
+     * listing is incomplete (with `type`, the part that holds that type) fails with `BUNDLE_UNREACHABLE` and the
+     * listing's reason, and one whose storage is not there lists nothing, with no warning.
      */
     requireComplete?: boolean;
   } = {},
@@ -137,19 +134,18 @@ export function listAssets(
   for (const held of orderedBundles({ adHoc: options.bundle !== undefined })) {
     const bundle = held.name;
     if (options.bundle !== undefined && bundle !== options.bundle) continue;
-    if (options.requireComplete) {
-      if (!held.exists()) continue;
-      const folder = options.type === undefined ? undefined : stashDirFor(options.type);
-      const dir = folder === undefined ? undefined : path.join(held.root, folder);
-      if (dir !== undefined && fs.existsSync(dir) && !fs.statSync(dir).isDirectory()) {
-        throw new ConfigError(`ENOTDIR: not a directory, scandir '${dir}'`, "BUNDLE_UNREACHABLE");
-      }
-    }
     if (held.isStore) {
       found.push(...indexedAssets(held));
       continue;
     }
-    const listing = held.list();
+    if (options.requireComplete && !held.exists()) continue;
+    const listing = held.list(options.type);
+    if (options.requireComplete && !listing.complete) {
+      throw new ConfigError(
+        listing.incompleteReason ?? `Bundle "${bundle}" could not be listed completely.`,
+        "BUNDLE_UNREACHABLE",
+      );
+    }
     found.push(
       ...listing.assets
         .map((asset) => assetOf(held, asset))

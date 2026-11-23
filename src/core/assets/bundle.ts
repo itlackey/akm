@@ -161,8 +161,8 @@ export class AssetBundle {
   exists(): boolean {
     return this.#adapter.exists(this.#bundle);
   }
-  list(): BundleListing {
-    return this.#adapter.list(this.#bundle);
+  list(type?: string): BundleListing {
+    return this.#adapter.list(this.#bundle, type);
   }
   read(conceptId: string): BundleAsset | undefined {
     return this.#adapter.read(this.#bundle, conceptId);

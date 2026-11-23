@@ -444,6 +444,44 @@ describe("akmTasksSync — schedule drift", () => {
     expect(result.installed).toEqual(["alpha"]);
   });
 
+  // A directory that cannot be read: root reads every directory, so these run only for another user.
+  const asRoot = process.getuid?.() === 0;
+
+  test.skipIf(asRoot)("a task folder that is partly unreadable keeps the bundle's rows", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("alpha", "*/15 * * * *", true);
+    await akmTasksSync({ backend });
+    fs.rmSync(path.join(tasksDir, "alpha.yml"));
+    const locked = path.join(tasksDir, "locked");
+    fs.mkdirSync(locked);
+    fs.chmodSync(locked, 0o000);
+    try {
+      const result = await akmTasksSync({ backend });
+      expect(result.removed).toEqual([]);
+      expect(exec.current()).toContain("//tasks/alpha --scheduled");
+      expect(result.failures.length).toBe(1);
+    } finally {
+      fs.chmodSync(locked, 0o755);
+    }
+  });
+
+  test.skipIf(asRoot)("an unreadable folder of another type leaves sync as it was", async () => {
+    const exec = memoryExec();
+    const backend = backendFor(exec);
+    writeTask("alpha", "*/15 * * * *", true);
+    const locked = path.join(stashDir, "knowledge", "locked");
+    fs.mkdirSync(locked, { recursive: true });
+    fs.chmodSync(locked, 0o000);
+    try {
+      const result = await akmTasksSync({ backend });
+      expect(result.failures).toEqual([]);
+      expect(result.installed).toEqual(["alpha"]);
+    } finally {
+      fs.chmodSync(locked, 0o755);
+    }
+  });
+
   test("a failed crontab write is reported, and the prior crontab stays active", async () => {
     let store = "";
     let failNextWrite = false;

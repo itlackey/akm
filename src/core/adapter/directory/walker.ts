@@ -16,7 +16,7 @@ import path from "node:path";
 import { spawnSync } from "../../../runtime";
 import { isRelevantAssetFile } from "../../asset/asset-placement";
 import { isScratchPath } from "../../asset/scratch";
-import { toErrorMessage } from "../../common";
+import { toErrorMessage, toPosix } from "../../common";
 import { WORKFLOW_EXTENSIONS } from "../../recognition-util";
 import { buildFileContext, type FileContext } from "./file-context";
 
@@ -113,6 +113,19 @@ export interface WalkStashFlatResult {
   complete: boolean;
   /** When `complete` is false: the first filesystem error that stopped the walk. */
   incompleteReason?: string;
+  /** When `complete` is false: every failure, by the POSIX path inside the root it was met at (`""`: the root). */
+  failures?: WalkFailure[];
+}
+
+export interface WalkFailure {
+  path: string;
+  reason: string;
+}
+
+/** The result of a walk that met `failures`. */
+function walkResult(files: FileContext[], failures: WalkFailure[]): WalkStashFlatResult {
+  if (failures.length === 0) return { files, complete: true };
+  return { files, complete: false, incompleteReason: (failures[0] as WalkFailure).reason, failures };
 }
 
 export interface DirectoryGroup {
@@ -178,7 +191,7 @@ export function walkStashFlatWithStatus(stashRoot: string, options: WalkStashFla
   try {
     fs.statSync(stashRoot);
   } catch (error) {
-    return { files: [], complete: false, incompleteReason: toErrorMessage(error) };
+    return walkResult([], [{ path: "", reason: toErrorMessage(error) }]);
   }
 
   // Try git-based walk first (respects .gitignore)
@@ -239,8 +252,7 @@ function walkStashGit(stashRoot: string, options: WalkStashFlatOptions): WalkSta
     .filter((f) => !isExcludedPath(f, options));
 
   const results: FileContext[] = [];
-  let complete = true;
-  let incompleteReason: string | undefined;
+  const failures: WalkFailure[] = [];
   for (const relFile of files) {
     const absPath = path.join(stashRoot, relFile);
     try {
@@ -253,12 +265,11 @@ function walkStashGit(stashRoot: string, options: WalkStashFlatOptions): WalkSta
       }
     } catch (error) {
       // File may have been deleted since git ls-files ran
-      complete = false;
-      incompleteReason ??= toErrorMessage(error);
+      failures.push({ path: relFile, reason: toErrorMessage(error) });
     }
   }
 
-  return { files: results, complete, ...(incompleteReason ? { incompleteReason } : {}) };
+  return walkResult(results, failures);
 }
 
 /**
@@ -332,8 +343,7 @@ export function walkMarkdownFiles(root: string): WalkMarkdownFilesResult {
 /** Manual walk for non-git directories. */
 function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): WalkStashFlatResult {
   const results: FileContext[] = [];
-  let complete = true;
-  let incompleteReason: string | undefined;
+  const failures: WalkFailure[] = [];
 
   const stack = [stashRoot];
   while (stack.length > 0) {
@@ -343,8 +353,7 @@ function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): Walk
     try {
       entries = fs.readdirSync(current, { withFileTypes: true });
     } catch (error) {
-      complete = false;
-      incompleteReason ??= toErrorMessage(error);
+      failures.push({ path: toPosix(path.relative(stashRoot, current)), reason: toErrorMessage(error) });
       continue;
     }
     for (const entry of entries) {
@@ -365,7 +374,7 @@ function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): Walk
     }
   }
 
-  return { files: results, complete, ...(incompleteReason ? { incompleteReason } : {}) };
+  return walkResult(results, failures);
 }
 
 /** True for a regular file, or a symlink whose target is a regular file. */
