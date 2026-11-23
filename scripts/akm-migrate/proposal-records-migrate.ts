@@ -102,6 +102,11 @@ export function applyProposalRecordsMigration(): ProposalRecordsMigrationStatus 
       const update = db.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?");
       for (const record of records) update.run(record.metadata, record.id);
     });
-    return statusOf({ ...summarize(records.length, "rewritten"), applied: records.length, backupPath });
+    // Rewritten: nothing is left to do, so the step is current (as bundle policy's is after its apply).
+    return {
+      schemaVersion: 1,
+      status: "current",
+      proposalRecords: { ...summarize(records.length, "rewritten"), applied: records.length, backupPath },
+    };
   });
 }

@@ -168,6 +168,44 @@ describe("a proposal recorded with files is read as the current record", () => {
   });
 });
 
+describe("a proposal's findings and display paths name the bundle's file", () => {
+  test("a task proposal's invalid source is reported at its bundle-relative file", async () => {
+    const { validateProposal } = await import("../../../src/commands/proposal/validators/proposals");
+    const proposal = {
+      ...getProposal(stash, NEW_ID),
+      ref: "work//tasks/newt",
+      changes: [{ ref: "work//tasks/newt", op: "create" as const, content: "not: [valid" }],
+      payload: { content: "not: [valid" },
+    };
+    const report = validateProposal(proposal);
+    expect(report.findings.map((f) => f.message).join("\n")).toContain("tasks/newt.yml");
+  });
+
+  test("a proposal for a type its bundle's adapter does not write keeps its display path", async () => {
+    const { diffLoadedProposal } = await import("../../../src/commands/proposal/repository");
+    const { loadConfig } = await import("../../../src/core/config/config");
+    writeSandboxConfig({
+      bundles: {
+        work: { path: stash, writable: true },
+        dv: { path: path.join(storage.root, "dv"), adapter: "dotenv", writable: true },
+      },
+    });
+    resetConfigCache();
+    fs.mkdirSync(path.join(storage.root, "dv"), { recursive: true });
+    const proposal = { ...getProposal(stash, NEW_ID), ref: "dv//knowledge/x", proposedTarget: { source: "dv" } };
+    const diff = diffLoadedProposal(loadConfig(), proposal);
+    const { createProposal } = await import("../../../src/commands/proposal/repository");
+    const minted = createProposal(stash, {
+      ref: "knowledge/x",
+      source: "propose",
+      target: { source: "dv", root: path.join(storage.root, "dv") },
+      payload: { content: NOTE },
+    });
+    expect(minted.payload.content).toContain("type: knowledge");
+    expect(diff.targetPath).toBe(path.join(storage.root, "dv", "knowledge", "x.md"));
+  });
+});
+
 describe("akm migrate apply rewrites them (proposalRecords)", () => {
   test("a dry run counts the records and changes nothing", async () => {
     const before = rawMetadata(NEW_ID);
@@ -181,6 +219,7 @@ describe("akm migrate apply rewrites them (proposalRecords)", () => {
 
   test("apply rewrites every record in one go, after a copy of state.db; then no command warns", async () => {
     const result = applyProposalRecordsMigration();
+    expect(result.status).toBe("current");
     expect(result.proposalRecords).toMatchObject({ changed: 3, applied: 3, message: "proposal records: 3 rewritten" });
     expect(fs.existsSync(`${getStateDbPath()}.pre-proposal-records.bak`)).toBe(true);
     expect(rawMetadata(NEW_ID).changes).toEqual([{ ref: "work//knowledge/new-note", op: "create" }]);

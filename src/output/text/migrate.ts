@@ -24,6 +24,7 @@ interface MigrationPlanResult {
     reconcile?: string[];
   };
   bundlePolicy?: { changed: number; notes?: string[] };
+  proposalRecords?: { changed: number; message: string };
   taskFilesV5?: { filePath: string; notes?: readonly string[]; guidance?: string }[];
   workflowFiles?: { message: string };
   backupPath?: string;
@@ -69,6 +70,7 @@ export function formatMigratePlain(result: unknown): string | null {
     );
   }
   if (plan.bundlePolicy) lines.push(`    bundle policy: ${plan.bundlePolicy.changed} change(s)`);
+  if (plan.proposalRecords && plan.proposalRecords.changed > 0) lines.push(`    ${plan.proposalRecords.message}`);
 
   if (plan.blockers?.length) {
     lines.push("", "blockers:", ...plan.blockers.map((blocker) => `  - ${blocker}`));

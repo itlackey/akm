@@ -48,12 +48,21 @@ interface ConfiguredBundle {
   source: SearchSource;
 }
 
-/** The configured bundles, in order, as the proposal queue sees them; none when the config cannot be read. */
+let cached: { config: unknown; bundles: ConfiguredBundle[] } | undefined;
+
+/**
+ * The configured bundles, in order, as the proposal queue sees them; none when the config cannot be read. Computed
+ * once for a loaded config (a command's reads share it), and only a record of the old shape asks.
+ */
 function configuredBundles(): ConfiguredBundle[] {
   try {
-    const sources = resolveSourceEntries(undefined, loadConfig());
+    const config = loadConfig();
+    if (cached?.config === config) return cached.bundles;
+    const sources = resolveSourceEntries(undefined, config);
     const ids = deriveBundleIds(sources);
-    return sources.map((source, index) => ({ id: ids[index] as string, source }));
+    const bundles = sources.map((source, index) => ({ id: ids[index] as string, source }));
+    cached = { config, bundles };
+    return bundles;
   } catch (error) {
     rethrowIfTestIsolationError(error);
     return [];
@@ -95,9 +104,10 @@ function refOfPath(bundle: ConfiguredBundle | undefined, root: unknown, file: st
 export function convertLegacyProposalMetadata(
   meta: Meta,
   proposalRef: string,
-  bundles: ConfiguredBundle[] = configuredBundles(),
+  given?: ConfiguredBundle[],
 ): { meta: Meta; legacy: boolean } {
   if (!isLegacyProposalMetadata(meta)) return { meta, legacy: false };
+  const bundles = given ?? configuredBundles();
   const out: Meta = { ...meta };
   const proposed = isRecord(meta.proposedTarget) ? meta.proposedTarget : undefined;
   const accepted = isRecord(meta.acceptedTarget) ? meta.acceptedTarget : undefined;

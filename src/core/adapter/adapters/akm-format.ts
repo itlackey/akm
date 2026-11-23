@@ -99,6 +99,11 @@ export abstract class AkmFormatAdapterBase extends DirectoryAdapterBase {
     return placeInTypeFolder(b, asset);
   }
 
+  /** Display only: the type's folder holds the file even for a type this adapter does not write (a write refuses it). */
+  override placedFile(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string | undefined {
+    return placeInTypeFolder(b, asset);
+  }
+
   /** A name some tooling treats specially is warned about only when its asset is placed, never before a refusal. */
   override place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {
     const conceptId = super.place(b, asset);

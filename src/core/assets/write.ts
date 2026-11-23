@@ -100,8 +100,14 @@ function addressIn(held: AssetBundle, source: WriteSource, ref: string, gate: bo
   const named = { type: placed.type, name: placed.name, ...(origin !== undefined ? { origin } : {}), exists: false };
   if (!held.writes(placed.type)) {
     if (gate) held.assertWrites(placed.type);
-    // Not a write: the asset is named as written and no file is placed for a type the bundle does not keep.
-    return { conceptId: written, ...named };
+    // Not a write: the asset is named as written; the file is only the display path the adapter would give it.
+    let shown: string | undefined;
+    try {
+      shown = held.placedFile(placed);
+    } catch {
+      shown = undefined;
+    }
+    return { conceptId: written, ...named, ...(shown !== undefined ? { file: shown } : {}) };
   }
   // Placement can refuse (a name that would be kept where no asset is). A write refuses where it is made, so only a
   // gated address does here; one that only says where an asset goes names it as written.

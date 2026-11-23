@@ -48,6 +48,19 @@ function refOfProposal(proposal: Proposal): AssetRef {
   return parsePlacementRef(proposal.ref);
 }
 
+/** The file a proposal's asset is (or would be) kept at, relative to its bundle, when its bundle is configured. */
+function bundleRelativeFile(proposal: Proposal): string | undefined {
+  const bound = proposal.acceptedTarget?.bundle ?? proposal.proposedTarget?.source;
+  if (bound === undefined) return undefined;
+  try {
+    const { source } = resolveBundleWriteTarget(loadConfig(), bound);
+    const { file } = addressOf(source, proposal.ref);
+    return file === undefined ? undefined : path.relative(source.path, file).split(path.sep).join("/");
+  } catch {
+    return undefined;
+  }
+}
+
 const genericProposalValidator: ProposalValidator = {
   name: "generic-proposal-validator",
   appliesTo: () => true,
@@ -120,7 +133,7 @@ const canonicalProposalValidators: Readonly<Record<string, CanonicalProposalVali
     // `invalid-task-structure` finding by the try/catch this call sits in.
     parseTaskSource({
       yaml: proposalContent(proposal),
-      filePath: proposal.ref,
+      filePath: bundleRelativeFile(proposal) ?? proposal.ref,
     });
     return [];
   },
