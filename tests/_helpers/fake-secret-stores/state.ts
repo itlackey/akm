@@ -30,6 +30,8 @@ export interface FakeStoreState {
   labels?: Record<string, string>;
   /** Keyrings with no alias of their own name (default: every keyring is the alias of its name). */
   unaliased?: string[];
+  /** Whether `SetAlias` takes any alias, as KWallet does; GNOME Keyring takes only `default`. */
+  anyAlias?: boolean;
   /** Aliases set at run time (`SetAlias`), by alias, to a keyring name. */
   aliases?: Record<string, string>;
   /** Keyrings whose unlock prompt is open. */
@@ -82,9 +84,16 @@ export function keyringOfAlias(state: FakeStoreState, alias: string): string | u
   return state.keyrings[alias] && !(state.unaliased ?? []).includes(alias) ? alias : undefined;
 }
 
-/** The keyring a collection argument names: an alias, or an object path. */
+/** The keyring a collection argument names, as libsecret reads it: a path starting with `/` is an object path, any other is an alias. */
 export function keyringOfCollection(state: FakeStoreState, collection: string): string | undefined {
-  if (collection.startsWith(COLLECTION_PREFIX)) {
+  // A path element is [A-Za-z0-9_] only; libsecret asserts on anything else and secret-tool then hangs on a real service.
+  const elements = collection.startsWith("/") ? collection.split("/").slice(1) : [collection];
+  if (elements.some((element) => !/^\w+$/.test(element))) {
+    fail(
+      "(secret-tool:1): libsecret-CRITICAL **: secret_service_create_item_dbus_path: assertion 'collection_path != NULL && collection_path[0] != '\\0'' failed",
+    );
+  }
+  if (collection.startsWith("/")) {
     const name = collection.slice(COLLECTION_PREFIX.length);
     return state.keyrings[name] ? name : undefined;
   }

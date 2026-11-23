@@ -16,10 +16,8 @@
  * read from the service with `busctl`; a value is read and replaced through the
  * attributes its entry already has; an entry akm creates gets the one pair
  * `secret-tool` requires; and an entry is deleted by its own object path,
- * because `secret-tool clear` deletes every match in every keyring. `secret-tool
- * store` names its collection by alias, so a collection that only a label names
- * gets that alias the first time akm stores into it. A locked collection is
- * unlocked through the Secret Service's own prompt.
+ * because `secret-tool clear` deletes every match in every keyring. A locked
+ * collection is unlocked through the Secret Service's own prompt.
  */
 
 import { ConfigError, UsageError } from "../../errors";
@@ -67,17 +65,11 @@ const NO_OBJECT = "/";
 const UNLOCK_WAIT_MS = 120_000;
 const UNLOCK_POLL_MS = 500;
 
-interface Collection {
-  path: string;
-  /** Whether the alias `location` already names it: `secret-tool store --collection` takes only an alias. */
-  aliased: boolean;
-}
+/** The collections' object paths resolved this command, by location. */
+const collections = new Map<string, string>();
 
-/** The collections resolved this command, by location. */
-const collections = new Map<string, Collection>();
-
-/** The collection `location` names: the alias of that name, else the collection labelled so; undefined when neither. */
-function resolveCollection(location: string): Collection | undefined {
+/** The object path of the collection `location` names: the alias of that name, else the collection labelled so; undefined when neither. */
+function resolveCollection(location: string): string | undefined {
   const known = collections.get(location);
   if (known) return known;
   const reading = `find keyring "${location}"`;
@@ -90,11 +82,11 @@ function resolveCollection(location: string): Collection | undefined {
     "s",
     location,
   ]);
-  let found: Collection | undefined = alias !== NO_OBJECT ? { path: alias, aliased: true } : undefined;
+  let found: string | undefined = alias !== NO_OBJECT ? alias : undefined;
   if (!found) {
     for (const path of collectionPaths(reading)) {
       if (bus<string>(reading, ["get-property", SERVICE, path, COLLECTION, "Label"]) === location) {
-        found = { path, aliased: false };
+        found = path;
         break;
       }
     }
@@ -102,7 +94,7 @@ function resolveCollection(location: string): Collection | undefined {
   // Before the alias and the label, a collection was named by its own object path: `/collection/<location>` still is.
   if (!found) {
     const own = `/org/freedesktop/secrets/collection/${location}`;
-    if (collectionPaths(reading).includes(own)) found = { path: own, aliased: false };
+    if (collectionPaths(reading).includes(own)) found = own;
   }
   if (found) collections.set(location, found);
   return found;
@@ -115,7 +107,7 @@ function collectionPaths(action: string): string[] {
 }
 
 /** The collection `location` names, or a refusal naming the ones the service has. */
-function requireCollection(location: string): Collection {
+function requireCollection(location: string): string {
   const found = resolveCollection(location);
   if (found) return found;
   const available = collectionPaths("list keyrings").map((path) =>
@@ -133,8 +125,8 @@ function isLocked(path: string): boolean {
 }
 
 /** Unlock the collection when it is locked: the Secret Service prompts, and akm waits for the answer. */
-function ensureUnlocked(keyring: string, collection: Collection): void {
-  if (!isLocked(collection.path)) return;
+function ensureUnlocked(keyring: string, collection: string): void {
+  if (!isLocked(collection)) return;
   const refusal = (why: string) =>
     new ConfigError(
       `Keyring "${keyring}" is locked${why}.`,
@@ -149,9 +141,9 @@ function ensureUnlocked(keyring: string, collection: Collection): void {
     "Unlock",
     "ao",
     "1",
-    collection.path,
+    collection,
   ]);
-  if (unlocked.includes(collection.path) || !isLocked(collection.path)) return;
+  if (unlocked.includes(collection) || !isLocked(collection)) return;
   if (prompt === NO_OBJECT) throw refusal("");
   warn(`Keyring "${keyring}" is locked: unlock it in the prompt your keyring manager shows.`);
   try {
@@ -168,12 +160,12 @@ function ensureUnlocked(keyring: string, collection: Collection): void {
     throw refusal(", and its prompt could not be shown");
   }
   for (let waited = 0; waited < UNLOCK_WAIT_MS; waited += UNLOCK_POLL_MS) {
-    if (!isLocked(collection.path)) return;
+    if (!isLocked(collection)) return;
     // The prompt goes away when it is answered: still locked then means it was dismissed.
     if (runClient(BUSCTL, ["--user", "introspect", SERVICE, prompt]).status !== 0) break;
     sleepSync(UNLOCK_POLL_MS);
   }
-  if (isLocked(collection.path)) throw refusal(", and it was not unlocked");
+  if (isLocked(collection)) throw refusal(", and it was not unlocked");
 }
 
 function itemAt(path: string, reading: string): KeyringItem {
@@ -262,7 +254,7 @@ export class SecretToolAdapter extends SecretManagerAdapterBase {
     const collection = requireCollection(keyring);
     ensureUnlocked(keyring, collection);
     const reading = `read keyring "${keyring}"`;
-    const paths = bus<string[]>(reading, ["get-property", SERVICE, collection.path, COLLECTION, "Items"]);
+    const paths = bus<string[]>(reading, ["get-property", SERVICE, collection, COLLECTION, "Items"]);
     return paths.map((path) => itemAt(path, reading));
   }
 
@@ -276,24 +268,10 @@ export class SecretToolAdapter extends SecretManagerAdapterBase {
       attributes: { [CREATED_ATTRIBUTE]: `${keyring}/${name}` },
     };
     const pairs = attributePairs(item);
-    // `secret-tool store --collection` takes an alias, so a collection only its label names gets one, once.
-    if (!collection.aliased) {
-      bus(`name keyring "${keyring}"`, [
-        "call",
-        SERVICE,
-        SERVICE_PATH,
-        SERVICE_INTERFACE,
-        "SetAlias",
-        "so",
-        keyring,
-        collection.path,
-      ]);
-      collection.aliased = true;
-    }
     requireClient(
       SECRET_TOOL,
       `store "${name}"`,
-      ["store", `--collection=${keyring}`, `--label=${name}`, ...pairs],
+      ["store", `--collection=${collection}`, `--label=${name}`, ...pairs],
       value,
     );
   }
