@@ -347,6 +347,9 @@ export interface ClientResult {
   stderr: string;
 }
 
+/** How long one client call is given: a client that hangs fails the command, not akm. */
+const CLIENT_TIMEOUT_MS = 60_000;
+
 /**
  * Run a client and return what it printed and how it exited. `input` is
  * written to its stdin, which is how a value reaches a client: never as an
@@ -354,9 +357,21 @@ export interface ClientResult {
  */
 export function runClient(client: Client, args: readonly string[], input?: Buffer): ClientResult {
   // The environment as it is now: Bun 1.3 finds the program on the PATH the process started with unless it is given.
-  const result = spawnSync(client.command, [...args], { encoding: "utf8", input, env: process.env });
+  const result = spawnSync(client.command, [...args], {
+    encoding: "utf8",
+    input,
+    env: process.env,
+    timeout: CLIENT_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+  });
   if (result.error) {
     const missing = (result.error as NodeJS.ErrnoException).code === "ENOENT";
+    if ((result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+      throw new ConfigError(
+        `"${client.command}" did not answer within ${CLIENT_TIMEOUT_MS / 1000} s.`,
+        "BUNDLE_UNREACHABLE",
+      );
+    }
     throw new ConfigError(
       missing
         ? `"${client.command}" is not installed.`

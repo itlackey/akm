@@ -625,7 +625,7 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
     });
   });
 
-  test("a collection only its label names is found, read untouched, and given its alias the first time akm stores in it", async () => {
+  test("a collection only its label names, with a hyphen in the name, is found and stored into by its object path, with no alias set", async () => {
     const wallet = {
       wallet: [
         {
@@ -634,24 +634,26 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
         },
       ],
     };
+    const hyphen = { ...b, location: "akm-test" };
     await withFakeSecretStores(
-      { keyrings: wallet, labels: { wallet: "akm" }, unaliased: ["wallet"] } as never,
+      { keyrings: wallet, labels: { wallet: "akm-test" }, unaliased: ["wallet"] } as never,
       async (stores) => {
-        expect(secretToolAdapter.read(b, "secrets/wifi")?.entry.content()).toBe("hunter2");
-        expect(stores.state().aliases).toBeUndefined();
-        secretToolAdapter.create(b, { type: "secret", name: "fresh", content: "v1" });
-        expect(stores.state().aliases).toEqual({ akm: "wallet" });
+        expect(secretToolAdapter.read(hyphen, "secrets/wifi")?.entry.content()).toBe("hunter2");
+        secretToolAdapter.create(hyphen, { type: "secret", name: "fresh", content: "v1" });
         expect(
           stores
             .state()
             .keyrings.wallet?.map((item) => item.label)
             .sort(),
         ).toEqual(["fresh", "wifi"]);
-        secretToolAdapter.create(b, { type: "secret", name: "again", content: "v2" }, { replace: true });
-        const setAliases = stores.state().calls.filter((call) => call.includes("SetAlias"));
-        expect(setAliases).toHaveLength(1);
+        secretToolAdapter.create(hyphen, { type: "secret", name: "again", content: "v2" }, { replace: true });
+        expect(stores.state().aliases).toBeUndefined();
+        expect(stores.state().calls.some((call) => call.includes("SetAlias"))).toBe(false);
         const stored = stores.state().calls.filter((call) => call[0] === "secret-tool" && call[1] === "store");
-        expect(stored.every((call) => call.includes("--collection=akm"))).toBe(true);
+        expect(stored).toHaveLength(2);
+        expect(stored.every((call) => call.includes("--collection=/org/freedesktop/secrets/collection/wallet"))).toBe(
+          true,
+        );
       },
     );
   });

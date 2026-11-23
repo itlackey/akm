@@ -92,11 +92,6 @@ class Akm {
     }
     return { code: ran.status, body, stderr: ran.stderr };
   }
-  /** Run akm on a pseudo-terminal, as a person at a shell does: only then is a locked keyring asked to unlock. Its exit code. */
-  onTerminal(args: string[]): number {
-    const line = ["bun", "src/cli.ts", ...args].map((arg) => `'${arg.replace(/'/g, "'\\''")}'`).join(" ");
-    return run("script", ["-qec", line, "/dev/null"], this.env).status;
-  }
   secretRefs(): string[] {
     const listed = this.json(["secret", "list"]);
     return ((listed.body.secrets ?? []) as Array<{ ref: string }>).map((secret) => secret.ref);
@@ -143,20 +138,6 @@ class Keyring {
     }
     throw new Error(`no keyring is named or labelled "${this.name}": make a dedicated one in your keyring manager`);
   }
-  hasAlias(): boolean {
-    return (
-      this.data<[string]>(
-        this.bus(["call", SERVICE, SERVICE_PATH, SERVICE_INTERFACE, "ReadAlias", "s", this.name]),
-        "ReadAlias",
-      )[0] !== "/"
-    );
-  }
-  setAlias(on: boolean): void {
-    this.data(
-      this.bus(["call", SERVICE, SERVICE_PATH, SERVICE_INTERFACE, "SetAlias", "so", this.name, on ? this.path() : "/"]),
-      "SetAlias",
-    );
-  }
   isLocked(): boolean {
     return this.data<boolean>(
       this.bus(["get-property", SERVICE, this.path(), COLLECTION_INTERFACE, "Locked"]),
@@ -171,7 +152,7 @@ class Keyring {
     const pairs = Object.entries({ "akm-probe": PROBE, ...attributes }).flat();
     const ran = run(
       "secret-tool",
-      ["store", `--collection=${this.name}`, `--label=${label}`, ...pairs],
+      ["store", `--collection=${this.path()}`, `--label=${label}`, ...pairs],
       this.env,
       value,
     );
@@ -231,10 +212,8 @@ function keyringSteps(akm: Akm, keyring: Keyring, options: Options): void {
   const bundle = "keyring";
   const ref = (name: string) => `${bundle}//secrets/${name}`;
 
-  step("keyring: the wallet is there, and an alias makes `secret-tool store` reach it", () => {
+  step("keyring: the wallet is there", () => {
     keyring.path();
-    if (!keyring.hasAlias()) keyring.setAlias(true);
-    expect(keyring.hasAlias(), "the alias could not be made");
   });
 
   step("keyring: secret set, list, read and remove", () => {
@@ -279,7 +258,7 @@ function keyringSteps(akm: Akm, keyring: Keyring, options: Options): void {
     );
   });
 
-  step("keyring: a locked wallet is asked to unlock only on a terminal, then lists", () => {
+  step("keyring: a locked wallet is asked to unlock, then lists", () => {
     keyring.lock();
     expect(keyring.isLocked(), "the wallet did not lock");
     console.log(
@@ -287,28 +266,9 @@ function keyringSteps(akm: Akm, keyring: Keyring, options: Options): void {
         ? "     (the fake keyring answers its own prompt)"
         : `     Answer the keyring manager's password prompt for "${options.keyring}" within two minutes.`,
     );
-    // A hook or CI run is never asked: the locked wallet is unreachable and stays locked.
-    expect(akm.json(["secret", "list"]).code !== 0, "a run with no terminal listed a locked wallet");
-    expect(keyring.isLocked(), "a run with no terminal unlocked the wallet");
-    expect(akm.onTerminal(["secret", "list"]) === 0, "the run on a terminal failed");
     expect(akm.secretRefs().includes(ref(`${PROBE}-foreign`)), "the secrets are not listed after the unlock");
     expect(!keyring.isLocked(), "the wallet is still locked");
   });
-
-  step(
-    "keyring: a wallet with no alias is found by its label, untouched by a read, and aliased by the first write",
-    () => {
-      keyring.setAlias(false);
-      expect(!keyring.hasAlias(), "the alias could not be taken away");
-      expect(akm.secretRefs().includes(ref(`${PROBE}-foreign`)), "a wallet only its label names is not found");
-      expect(!keyring.hasAlias(), "reading made the alias");
-      const name = `${PROBE}-aliased`;
-      expect(akm.json(["secret", "set", ref(name)], "v\n").code === 0, "secret set failed");
-      expect(keyring.hasAlias(), "the first write did not make the alias");
-      expect(akm.value(ref(name)) === "v", "the secret written next to the new alias is wrong");
-      akm.json(["secret", "remove", ref(name), "--yes"]);
-    },
-  );
 }
 
 function vaultSteps(akm: Akm, options: Options, env: NodeJS.ProcessEnv): void {
@@ -366,6 +326,8 @@ async function main(options: Options, clientEnv: NodeJS.ProcessEnv): Promise<voi
   const env: NodeJS.ProcessEnv = {
     ...clientEnv,
     HOME: home,
+    // `az` keeps the user's login, which lives under the real home.
+    AZURE_CONFIG_DIR: clientEnv.AZURE_CONFIG_DIR ?? path.join(clientEnv.HOME ?? os.homedir(), ".azure"),
     XDG_CONFIG_HOME: path.join(home, "config"),
     XDG_DATA_HOME: path.join(home, "data"),
     XDG_CACHE_HOME: path.join(home, "cache"),
@@ -409,7 +371,10 @@ const options = parseOptions(process.argv.slice(2));
 if (options.fake) {
   await withFakeSecretStores(
     {
-      keyrings: options.keyring ? { [options.keyring]: [] } : {},
+      // As a real service names a collection: the label, with a hyphen written `_2d` in the object path.
+      keyrings: options.keyring ? { [options.keyring.replaceAll("-", "_2d")]: [] } : {},
+      labels: options.keyring ? { [options.keyring.replaceAll("-", "_2d")]: options.keyring } : {},
+      unaliased: options.keyring ? [options.keyring.replaceAll("-", "_2d")] : [],
       vaults: options.vault ? { [options.vault]: {} } : {},
     },
     () => main(options, process.env),

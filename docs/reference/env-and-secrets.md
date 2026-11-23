@@ -302,9 +302,9 @@ such a bundle after the bundles before it in priority.
   or replaces an entry it asks the Secret Service which entries those
   attributes find, and refuses, naming the other entry, unless the entry is the
   only one. An entry `akm secret set` creates carries the attribute `akm` with
-  the value `<keyring>/<name>`. `secret-tool store` names its collection by
-  alias, so when the collection has no alias of that name, akm gives it one the
-  first time it stores into it (listing and reading change nothing).
+  the value `<keyring>/<name>`. `secret-tool store` is given the collection's
+  object path, so akm makes no alias. A client that does not answer within
+  60 seconds fails the command with `BUNDLE_UNREACHABLE`.
   A locked keyring is unlocked on request: the Secret Service shows its own
   prompt (KWallet, GNOME Keyring), akm says so on stderr and waits up to two
   minutes, and a dismissed prompt leaves the keyring locked and the bundle

@@ -28,7 +28,7 @@ export interface FakeSecretStores {
  * `initial`. `only` limits which clients exist, to stand for a machine without one.
  */
 export async function withFakeSecretStores<T>(
-  initial: Partial<Pick<FakeStoreState, "keyrings" | "vaults">>,
+  initial: Partial<Pick<FakeStoreState, "keyrings" | "vaults" | "labels" | "unaliased">>,
   run: (stores: FakeSecretStores) => Promise<T>,
   only: readonly (typeof CLIENTS)[number][] = CLIENTS,
 ): Promise<T> {

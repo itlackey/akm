@@ -29,6 +29,7 @@ if (verb === "get-property" && rest.join(" ") === "org.freedesktop.Secret.Servic
 } else if (verb === "call" && rest[0] === "org.freedesktop.Secret.Service" && rest[1] === "SetAlias") {
   // `so`, then the alias and the collection's path.
   const [alias, path] = [rest[3] as string, rest[4] as string];
+  if (alias !== "default" && !state.anyAlias) fail("Call failed: Only the 'default' alias is supported");
   if (path === "/") {
     // "/" takes the alias away.
     const { [alias]: _gone, ...aliases } = state.aliases ?? {};
