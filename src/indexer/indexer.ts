@@ -10,7 +10,6 @@ import type { Bundle } from "../core/adapter/types";
 import { type Asset, type BundleScan, findAsset, scanBundle } from "../core/assets/read";
 import { isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
-import { ConfigError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
@@ -1031,12 +1030,14 @@ function sourceSnapshotRemovals(
     }));
 }
 
-/** The bundle's listing; a store that cannot be reached is an incomplete one: one bundle never stops the index, which keeps the rows it had. */
+/** The bundle's listing; a store that cannot be listed (unreachable or failing) is an incomplete one: one bundle never stops the index, which keeps the rows it had. */
 function listOrKeep(scan: BundleScan): BundleListing {
   try {
     return scan.list();
   } catch (error) {
-    if (!(error instanceof ConfigError && error.code === "BUNDLE_UNREACHABLE")) throw error;
+    // C2 for the indexer (BUNDLE_UNREACHABLE alone, no kind test) waits on one store-failure signal (4e.2).
+    if (!scan.isStore) throw error;
+    // Any failure, not only BUNDLE_UNREACHABLE: a store that errors (a bad `az` reply) must not stop the whole index.
     return { assets: [], complete: false, incompleteReason: toErrorMessage(error) };
   }
 }

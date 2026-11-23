@@ -161,6 +161,8 @@ export interface BundleScan {
   readonly adapterId: string;
   /** `<adapter id>@<adapter version>+`: the prefix of the freshness variant the index records for the bundle's rows. */
   readonly variantPrefix: string;
+  /** Whether the bundle is a store (a keyring, a vault) rather than a directory. */
+  readonly isStore: boolean;
   /** Every asset the adapter holds, one per concept, with whether the listing is complete. Throws `BUNDLE_UNREACHABLE` for a store it cannot reach. */
   list(): BundleListing;
   /** What the adapter says about one of its entries for the index; null: the adapter abstains on it. */
@@ -173,6 +175,7 @@ export function scanBundle(source: SearchSource, bundle: string): BundleScan {
   return {
     adapterId: held.adapterId,
     variantPrefix: held.variantPrefix,
+    isStore: held.isStore,
     list: () => held.list(),
     recognize: (entry) => held.recognize(entry),
   };
