@@ -73,8 +73,17 @@ function recordBundles(): RecordBundles {
   }
   const found = (id: string): ConfiguredBundle => {
     if (!config) return { id, source: undefined };
-    const sources = sourcesOf.get(config) ?? resolveSourceEntries(undefined, config);
-    sourcesOf.set(config, sources);
+    let sources = sourcesOf.get(config);
+    if (!sources) {
+      try {
+        sources = resolveSourceEntries(undefined, config);
+      } catch (error) {
+        // A config whose sources cannot be resolved (a disabled working bundle) converts no record; nothing is cached.
+        rethrowIfTestIsolationError(error);
+        return { id, source: undefined };
+      }
+      sourcesOf.set(config, sources);
+    }
     return { id, source: sources.find((source) => source.registryId === id) };
   };
   return {
