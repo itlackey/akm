@@ -42,47 +42,121 @@ describe("lint-asset-io", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("finds file I/O, an adapter import and an adapter-id comparison outside the adapter layer", () => {
+  test("finds each rule's violation outside the adapter layer", () => {
     expect(
       violationsIn({
         "src/feature/read.ts": 'import fs from "node:fs";\nexport const a = fs.readFileSync("x", "utf8");\n',
+        "src/feature/stat.ts":
+          'import fs from "node:fs";\nexport const a = [fs.existsSync(p), fs.statSync(p), fs.lstatSync(p), fs.openSync(p, "r"), readTextFile(p)];\n',
         "src/feature/walk.ts": "export const b = walkStashFlat(root);\n",
         "src/feature/adapter.ts":
           'import { akmAdapter } from "../core/adapter/adapters/akm-adapter";\nexport { akmAdapter };\n',
+        "src/feature/internal.ts":
+          'import { AssetBundle } from "../core/assets/bundle";\nexport type T = AssetBundle;\n',
         "src/feature/compare.ts": 'export const c = source.adapterId === "okf";\n',
+        "src/feature/subject.ts": 'export const d = platform === "akm";\n',
         "src/feature/switch.ts": 'switch (adapterId) {\n  case "akm":\n    break;\n}\n',
+        "src/feature/location.ts": 'export const e = entry.kind === "location";\n',
+        "src/feature/fileless.ts": "export const f = doc.fileless;\n",
+        "src/feature/entry-file.ts": "export const g = [entry.file, hit.entry.file];\n",
       }).sort(),
     ).toEqual([
       "src/feature/adapter.ts adapter-import",
       "src/feature/compare.ts adapter-id",
+      "src/feature/entry-file.ts entry-file",
+      "src/feature/entry-file.ts entry-file",
+      "src/feature/fileless.ts adapter-id",
+      "src/feature/internal.ts facade-internal",
+      "src/feature/location.ts adapter-id",
       "src/feature/read.ts asset-io",
+      "src/feature/stat.ts asset-io",
+      "src/feature/stat.ts asset-io",
+      "src/feature/stat.ts asset-io",
+      "src/feature/stat.ts asset-io",
+      "src/feature/stat.ts asset-io",
+      "src/feature/subject.ts adapter-id",
       "src/feature/switch.ts adapter-id",
       "src/feature/walk.ts asset-io",
     ]);
   });
 
-  test("lets through the adapter layer, allowed paths, exempt lines, the contract imports, and ids compared with nothing about an adapter", () => {
+  test("lets through the adapter layer, allowed paths, the contract imports and unrelated comparisons", () => {
     expect(
       violationsIn({
         "src/core/adapter/adapters/x.ts": 'import fs from "node:fs";\nexport const a = fs.readFileSync("x");\n',
         "src/core/assets/read.ts":
-          'import { akmAdapter } from "../adapter/adapters/akm-adapter";\nexport const a = akmAdapter;\n',
+          'import { akmAdapter } from "../adapter/adapters/akm-adapter";\nimport { AssetBundle } from "./bundle";\nexport const a = [akmAdapter, AssetBundle, entry.file, a === "akm"];\n',
         "src/storage/db.ts": 'import fs from "node:fs";\nexport const a = fs.readFileSync("x");\n',
-        "src/feature/exempt.ts":
-          'import fs from "node:fs";\nexport const a = fs.readFileSync(p); // asset-io: user-supplied input\n// asset-io: run state\nexport const b = fs.writeFileSync(q, "");\n',
         "src/feature/contract.ts":
           'import type { BundleAdapter } from "../core/adapter/bundle-adapter";\nimport type { Bundle } from "../core/adapter/types";\nexport type T = [BundleAdapter, Bundle];\n',
-        "src/feature/platform.ts": 'export const p = runner.platform === "okf";\n',
+        "src/feature/other.ts": 'export const p = [runner.platform === "claude", kind === "file", entry.fileName];\n',
       }),
     ).toEqual([]);
   });
 
-  test("an exemption needs its reason", () => {
+  test("an exemption with a reason from the vocabulary passes and is counted; entry-file takes display and exec only", () => {
+    const exemptions: string[] = [];
+    const sandbox = makeSandboxDir("akm-asset-io");
+    try {
+      const file = path.join(sandbox.dir, "src/feature/exempt.ts");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(
+        file,
+        [
+          'import fs from "node:fs";',
+          "export const a = fs.readFileSync(p); // asset-io: config",
+          "// asset-io: state run record",
+          "export const b = fs.existsSync(q);",
+          "export const c = fs.statSync(r); // asset-io: user-input a named file",
+          "export const d = entry.file; // asset-io: display",
+          "// asset-io: exec",
+          "export const e = hit.entry.file;",
+          "export const f = entry.file; // asset-io: state",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      const violations = scan(sandbox.dir, IDS, exemptions).map(([, rule, line]) => `${rule}:${line}`);
+      // Only line 9 fails: `state` is no reason for an entry.file.
+      expect(violations).toEqual(["entry-file:9"]);
+      expect(exemptions.sort()).toEqual(["config", "display", "exec", "state", "user-input"]);
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  test("an exemption without a reason, or with one outside the vocabulary, is no exemption", () => {
     expect(
       violationsIn({
         "src/feature/bare.ts": 'import fs from "node:fs";\nexport const a = fs.readFileSync(p); // asset-io:\n',
-      }),
-    ).toEqual(["src/feature/bare.ts asset-io"]);
+        "src/feature/unknown.ts":
+          'import fs from "node:fs";\nexport const a = fs.readFileSync(p); // asset-io: because\nexport const b = fs.statSync(p); // asset-io: user-supplied input\n',
+        "src/feature/wrong-rule.ts": "export const a = entry.file; // asset-io: config\n",
+      }).sort(),
+    ).toEqual([
+      "src/feature/bare.ts asset-io",
+      "src/feature/unknown.ts asset-io",
+      "src/feature/unknown.ts asset-io",
+      "src/feature/wrong-rule.ts entry-file",
+    ]);
+  });
+
+  test("the allowances of the readers the migration removes are gone", () => {
+    expect(
+      violationsIn(
+        Object.fromEntries(
+          [
+            "src/indexer/walk/walker.ts",
+            "src/indexer/passes/metadata.ts",
+            "src/workflows/source-files.ts",
+            "src/indexer/indexer.ts",
+            "src/indexer/scan/scan.ts",
+            "src/commands/lint/index.ts",
+            "src/commands/sources/source-add.ts",
+          ].map((file) => [file, 'import fs from "node:fs";\nexport const a = fs.readFileSync("x");\n']),
+        ),
+      ),
+    ).toHaveLength(7);
   });
 
   test("a baseline that matches passes; a new violation and a stale entry each fail", () => {
@@ -90,23 +164,22 @@ describe("lint-asset-io", () => {
       ["src/a.ts", "asset-io", 3],
       ["src/a.ts", "asset-io", 9],
       ["src/b.ts", "adapter-import", 1],
+      ["src/b.ts", "entry-file", 4],
     ]);
-    expect(found).toEqual({ "src/a.ts": { "asset-io": 2 }, "src/b.ts": { "adapter-import": 1 } });
+    expect(found).toEqual({ "src/a.ts": { "asset-io": 2 }, "src/b.ts": { "adapter-import": 1, "entry-file": 1 } });
 
     expect(compare(found, found)).toEqual({ added: [], stale: [] });
 
     // A violation the baseline lacks: a new file, a new rule in a known file, one more in a known file.
-    expect(compare(found, { "src/a.ts": { "asset-io": 2 } }).added).toEqual(["src/b.ts: adapter-import 0 -> 1"]);
-    expect(compare(found, { "src/a.ts": { "asset-io": 1 }, "src/b.ts": { "adapter-import": 1 } }).added).toEqual([
-      "src/a.ts: asset-io 1 -> 2",
+    expect(compare(found, { "src/a.ts": { "asset-io": 2 }, "src/b.ts": { "adapter-import": 1 } }).added).toEqual([
+      "src/b.ts: entry-file 0 -> 1",
     ]);
+    expect(compare(found, { ...found, "src/a.ts": { "asset-io": 1 } }).added).toEqual(["src/a.ts: asset-io 1 -> 2"]);
 
     // A baseline entry that no longer occurs: a gone file, or a count that shrank.
     expect(compare(found, { ...found, "src/gone.ts": { "adapter-id": 1 } }).stale).toEqual([
       "src/gone.ts: adapter-id 1 -> 0",
     ]);
-    expect(compare(found, { "src/a.ts": { "asset-io": 5 }, "src/b.ts": { "adapter-import": 1 } }).stale).toEqual([
-      "src/a.ts: asset-io 5 -> 2",
-    ]);
+    expect(compare(found, { ...found, "src/a.ts": { "asset-io": 5 } }).stale).toEqual(["src/a.ts: asset-io 5 -> 2"]);
   });
 });

@@ -6,18 +6,20 @@
  * lint-asset-io.ts
  *
  * Bundle adapters are the one layer that reads and writes assets. Code outside it works with assets through the
- * facade in `src/core/assets/` and never learns which adapter holds one. This script counts what still breaks that,
- * in three rules:
+ * facade in `src/core/assets/` and never learns which adapter holds one, where, or under what file name. This script
+ * counts what still breaks that, in five rules (outside `src/core/adapter/` and `src/core/assets/`):
  *
- *   asset-io        a call that reads or writes files, walks a bundle, or asks the registry for an adapter
- *                   (`readFileSync`, `writeFileSync`, `walkStash*`, `adapterForId`, ...) outside the allowed paths
- *                   below. A line may carry `// asset-io: <reason>` (same or previous line) for I/O that is not an
- *                   asset: a user-supplied input, run state, a scratch file.
- *   adapter-import  an import from `src/core/adapter/**` other than `bundle-adapter` and `types`, outside the
- *                   adapter layer (`src/core/adapter/`, `src/core/assets/`).
- *   adapter-id      a comparison of an adapter's id with a string literal (`adapterId === "akm"`, `case "okf"` in a
- *                   switch on an adapter) outside the adapter layer: callers ask the asset, never which adapter it is.
- *                   The subject must name an adapter, so `platform === "claude"` is not one.
+ *   asset-io         a call that reads, writes, stats or walks files, or asks the registry for an adapter
+ *                    (`readFileSync`, `existsSync`, `walkStash*`, `adapterForId`, ...), outside the allowed paths below.
+ *   adapter-import   an import from `src/core/adapter/**` other than `bundle-adapter` and `types`.
+ *   facade-internal  an import of `src/core/assets/bundle` or `asset`: the facade's internals.
+ *   adapter-id       a registry id literal compared with anything (`x === "akm"`, `case "okf"`), `kind === "location"`,
+ *                    or `.fileless`: callers ask the asset, never which adapter or storage it has.
+ *   entry-file       `entry.file` / `.entry.file`: a path is for display or for a program, never for finding an asset.
+ *
+ * A line may carry `// asset-io: <reason>` (same line, or a comment line before it) for access that is not an
+ * asset: the reason is one word from REASONS, optionally followed by text. `entry-file` accepts only `display` and
+ * `exec`. A missing or unknown reason is no exemption. The exemptions in use are counted per reason and printed.
  *
  * The violations of today are recorded in `lint-asset-io.baseline.json` (count per file and rule). The check fails
  * on a violation the baseline lacks and on a baseline entry that no longer occurs, so the baseline only shrinks and
@@ -33,7 +35,8 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 
-export type Rule = "asset-io" | "adapter-import" | "adapter-id";
+const RULES = ["asset-io", "adapter-import", "facade-internal", "adapter-id", "entry-file"] as const;
+export type Rule = (typeof RULES)[number];
 /** `file -> rule -> count`. */
 export type Counts = Record<string, Partial<Record<Rule, number>>>;
 
@@ -43,6 +46,25 @@ const baselinePath = path.join(import.meta.dir, "lint-asset-io.baseline.json");
 const ADAPTER_LAYER = ["src/core/adapter/", "src/core/assets/"];
 /** The adapter modules the rest of the code may import: the contract and the shared value types. */
 const IMPORTABLE_ADAPTER_MODULES = ["src/core/adapter/bundle-adapter", "src/core/adapter/types"];
+const FACADE_INTERNAL_MODULES = ["src/core/assets/bundle", "src/core/assets/asset"];
+
+/** The reasons an exemption may give, each with what it covers. Allowed path prefixes below use the same words. */
+export const REASONS = {
+  "user-input": "a file or directory the user named (--from-file, import source, export output, stdin, --dir)",
+  config: "config files and credentials",
+  state: "akm's data directory: databases, run records, logs, locks, caches, backups",
+  install: "bundle checkouts, packages, self-update, plugins, lockfile, crawl staging",
+  scratch: "temporary files akm creates and removes",
+  shipped: "templates and documents akm ships",
+  host: "runtime, version, stdout, completions, host probes",
+  "disk-usage": "sizes only, no content",
+  display: "entry.file shown to a person",
+  exec: "entry.file handed to a program",
+  "files-view": "the Desktop Files view on a directory bundle",
+  "bundle-meta": ".meta/ documents of a directory bundle (not assets)",
+} as const;
+type Reason = keyof typeof REASONS;
+const ENTRY_FILE_REASONS: readonly string[] = ["display", "exec"];
 
 const IO_CALLS = new Set([
   "readFileSync",
@@ -56,6 +78,11 @@ const IO_CALLS = new Set([
   "copyFileSync",
   "cpSync",
   "readdirSync",
+  "existsSync",
+  "statSync",
+  "lstatSync",
+  "openSync",
+  "readTextFile",
   "createReadStream",
   "buildFileContext",
   "mutateFrontmatter",
@@ -63,57 +90,44 @@ const IO_CALLS = new Set([
   "getAdapters",
 ]);
 
-/** Paths whose own business is files: each is allowed for `asset-io`, for the reason beside it. */
-const IO_ALLOWED: ReadonlyArray<readonly [prefix: string, reason: string, except?: readonly string[]]> = [
-  ["src/core/adapter/", "the adapters"],
-  ["src/core/assets/", "the asset facade"],
-  ["src/indexer/walk/", "the directory adapters' walk"],
-  ["src/indexer/passes/metadata.ts", "recognition helpers the akm adapter calls"],
-  ["src/workflows/source-files.ts", "directory workflow arbitration"],
-  ["src/indexer/indexer.ts", "the index scan"],
-  ["src/indexer/scan/", "the index scan"],
-  ["src/commands/lint/index.ts", "validate dispatch"],
-  ["src/core/config/", "config files"],
-  ["src/storage/", "databases"],
-  ["src/core/state-db.ts", "state database"],
-  ["src/core/file-lock.ts", "lock files"],
-  ["src/core/common.ts", "file primitives"],
-  ["src/core/warn.ts", "primitives"],
-  ["src/core/trash.ts", "primitives"],
-  ["src/core/npm-package.ts", "package files"],
-  ["src/core/tar.ts", "archives"],
-  ["src/runtime.ts", "runtime"],
-  ["src/version.ts", "runtime"],
-  ["src/llm/", "model-call logs"],
-  ["src/integrations/", "harness logs, lockfile, runtime"],
-  ["src/sources/providers/", "source checkouts"],
-  ["src/sources/snapshot-fetchers/", "crawl staging"],
-  ["src/tasks/backends/", "scheduler backends"],
-  ["src/tasks/run/task-log.ts", "run logs"],
-  ["src/tasks/embedded.ts", "shipped task templates"],
-  [
-    "src/commands/sources/",
-    "installs, self-update, plugins, skeleton, migration help",
-    ["source-clone.ts", "schema-repair.ts", "import-task.ts"],
-  ],
-  ["src/commands/health/data-dir-usage.ts", "disk usage"],
-  ["src/commands/health/archive-usage.ts", "disk usage"],
-  ["src/commands/health/plugin-staleness.ts", "plugin files"],
-  ["src/commands/backups-cli.ts", "backups"],
-  ["src/commands/completions.ts", "shell completions"],
-  ["src/output/stdout.ts", "output"],
-  ["src/core/asset/stash-meta.ts", ".meta/ documents are not assets"],
-  ["src/workspace/file-actions.ts", "the Desktop Files view"],
-  ["src/workspace/copy-entry.ts", "the Desktop Files view"],
-  ["src/workspace/bundle-files.ts", "the Desktop Files view"],
-  ["src/workspace/git-read.ts", "the Desktop Files view"],
-  ["src/core/standards/", "standards documents"],
+/** Paths allowed for `asset-io`, each with its reason: REASONS, or the adapter layer itself. */
+const IO_ALLOWED: ReadonlyArray<readonly [prefix: string, reason: Reason | "adapter layer"]> = [
+  ["src/core/adapter/", "adapter layer"],
+  ["src/core/assets/", "adapter layer"],
+  ["src/core/config/", "config"],
+  ["src/storage/", "state"],
+  ["src/core/state-db.ts", "state"],
+  ["src/core/file-lock.ts", "state"],
+  ["src/core/common.ts", "host"],
+  ["src/core/warn.ts", "host"],
+  ["src/core/trash.ts", "files-view"],
+  ["src/core/npm-package.ts", "install"],
+  ["src/core/tar.ts", "install"],
+  ["src/runtime.ts", "host"],
+  ["src/version.ts", "host"],
+  ["src/llm/", "state"],
+  ["src/integrations/", "state"],
+  ["src/sources/providers/", "install"],
+  ["src/sources/snapshot-fetchers/", "install"],
+  ["src/tasks/backends/", "host"],
+  ["src/tasks/run/task-log.ts", "state"],
+  ["src/tasks/embedded.ts", "shipped"],
+  ["src/commands/health/data-dir-usage.ts", "disk-usage"],
+  ["src/commands/health/archive-usage.ts", "disk-usage"],
+  ["src/commands/health/plugin-staleness.ts", "install"],
+  ["src/commands/backups-cli.ts", "state"],
+  ["src/commands/completions.ts", "host"],
+  ["src/output/stdout.ts", "host"],
+  ["src/core/asset/stash-meta.ts", "bundle-meta"],
+  ["src/workspace/file-actions.ts", "files-view"],
+  ["src/workspace/copy-entry.ts", "files-view"],
+  ["src/workspace/bundle-files.ts", "files-view"],
+  ["src/workspace/git-read.ts", "files-view"],
+  ["src/core/standards/", "shipped"],
 ];
 
 function ioAllowed(file: string): boolean {
-  return IO_ALLOWED.some(
-    ([prefix, , except]) => file.startsWith(prefix) && !except?.some((name) => file === `${prefix}${name}`),
-  );
+  return IO_ALLOWED.some(([prefix]) => file.startsWith(prefix));
 }
 
 function collectTs(dir: string): string[] {
@@ -159,8 +173,15 @@ const COMPARISONS = new Set([
   ts.SyntaxKind.ExclamationEqualsEqualsToken,
 ]);
 
-/** Every violation under `<root>/src`, as `[file, rule, line]`. `adapterIds` are the registry's ids. */
-export function scan(root: string, adapterIds: readonly string[]): Array<[file: string, rule: Rule, line: number]> {
+/**
+ * Every violation under `<root>/src`, as `[file, rule, line]`. `adapterIds` are the registry's ids. The reason of each
+ * exemption that covered a violation is pushed onto `exemptions`.
+ */
+export function scan(
+  root: string,
+  adapterIds: readonly string[],
+  exemptions: string[] = [],
+): Array<[file: string, rule: Rule, line: number]> {
   const ids = new Set(adapterIds);
   const found: Array<[string, Rule, number]> = [];
   for (const full of collectTs(path.join(root, "src"))) {
@@ -171,13 +192,20 @@ export function scan(root: string, adapterIds: readonly string[]): Array<[file: 
     const inAdapterLayer = ADAPTER_LAYER.some((prefix) => file.startsWith(prefix));
     const ioOk = ioAllowed(file);
     const lineOf = (node: ts.Node) => source.getLineAndCharacterOfPosition(node.getStart(source)).line;
-    /** `// asset-io: <reason>` on the line or the one before it. */
-    const exempt = (line: number) =>
-      /\/\/ asset-io: \S/.test(lines[line] ?? "") || /^\s*\/\/ asset-io: \S/.test(lines[line - 1] ?? "");
+    /** Records a violation unless `// asset-io: <reason>` with an accepted reason is on its line or a comment line before. */
+    const report = (node: ts.Node, rule: Rule) => {
+      const line = lineOf(node);
+      const reason =
+        /\/\/ asset-io: ([\w-]+)/.exec(lines[line] ?? "")?.[1] ??
+        /^\s*\/\/ asset-io: ([\w-]+)/.exec(lines[line - 1] ?? "")?.[1];
+      const accepted = rule === "entry-file" ? ENTRY_FILE_REASONS : Object.keys(REASONS);
+      if (reason && accepted.includes(reason)) exemptions.push(reason);
+      else found.push([file, rule, line + 1]);
+    };
     const visit = (node: ts.Node): void => {
       if (ts.isCallExpression(node) && !ioOk) {
         const name = calleeName(node);
-        if (name && isIoCall(name) && !exempt(lineOf(node))) found.push([file, "asset-io", lineOf(node) + 1]);
+        if (name && isIoCall(name)) report(node, "asset-io");
       }
       const specifier = moduleSpecifier(node);
       if (specifier?.startsWith(".") && !inAdapterLayer) {
@@ -187,8 +215,9 @@ export function scan(root: string, adapterIds: readonly string[]): Array<[file: 
           .join("/")
           .replace(/\.(js|ts)$/, "");
         if (target.startsWith("src/core/adapter/") && !IMPORTABLE_ADAPTER_MODULES.includes(target)) {
-          found.push([file, "adapter-import", lineOf(node) + 1]);
+          report(node, "adapter-import");
         }
+        if (FACADE_INTERNAL_MODULES.includes(target)) report(node, "facade-internal");
       }
       if (!inAdapterLayer) {
         // The string and what it is compared with: a switch case compares with the switch's subject.
@@ -198,14 +227,22 @@ export function scan(root: string, adapterIds: readonly string[]): Array<[file: 
         } else if (ts.isCaseClause(node) && ts.isSwitchStatement(node.parent.parent)) {
           pair = [node.expression, node.parent.parent.expression];
         }
-        // An id is a plain word (`akm`, `claude`), so only a subject that names an adapter counts.
-        if (
-          pair &&
-          ts.isStringLiteralLike(pair[0]) &&
-          ids.has(pair[0].text) &&
-          /adapter/i.test(pair[1].getText(source))
-        ) {
-          found.push([file, "adapter-id", lineOf(node) + 1]);
+        if (pair && ts.isStringLiteralLike(pair[0])) {
+          const [literal, subject] = pair;
+          if (ids.has(literal.text) || (literal.text === "location" && /\bkind$/.test(subject.getText(source)))) {
+            report(node, "adapter-id");
+          }
+        }
+        if (ts.isPropertyAccessExpression(node)) {
+          const target = node.expression;
+          if (node.name.text === "fileless") report(node, "adapter-id");
+          if (
+            node.name.text === "file" &&
+            ((ts.isIdentifier(target) && target.text === "entry") ||
+              (ts.isPropertyAccessExpression(target) && target.name.text === "entry"))
+          ) {
+            report(node, "entry-file");
+          }
         }
       }
       ts.forEachChild(node, visit);
@@ -230,7 +267,7 @@ export function compare(found: Counts, baseline: Counts): { added: string[]; sta
   const added: string[] = [];
   const stale: string[] = [];
   for (const file of new Set([...Object.keys(found), ...Object.keys(baseline)])) {
-    for (const rule of ["asset-io", "adapter-import", "adapter-id"] as const) {
+    for (const rule of RULES) {
       const now = found[file]?.[rule] ?? 0;
       const recorded = baseline[file]?.[rule] ?? 0;
       if (now > recorded) added.push(`${file}: ${rule} ${recorded} -> ${now}`);
@@ -242,7 +279,8 @@ export function compare(found: Counts, baseline: Counts): { added: string[]; sta
 
 if (import.meta.main) {
   const { adapterIds } = await import("../src/core/adapter/registry");
-  const violations = scan(repoRoot, adapterIds());
+  const exemptions: string[] = [];
+  const violations = scan(repoRoot, adapterIds(), exemptions);
   const found = countsOf(violations);
   const baseline: Counts = JSON.parse(fs.readFileSync(baselinePath, "utf8"));
   const { added, stale } = compare(found, baseline);
@@ -275,4 +313,11 @@ if (import.meta.main) {
   if (added.length > 0 || stale.length > 0) process.exit(1);
   const total = Object.values(found).reduce((sum, rules) => sum + Object.values(rules).reduce((a, b) => a + b, 0), 0);
   console.log(`lint-asset-io: OK - ${total} baseline violation(s), none new.`);
+  for (const rule of RULES) {
+    const count = Object.values(found).reduce((sum, rules) => sum + (rules[rule] ?? 0), 0);
+    console.log(`  ${rule}: ${count}`);
+  }
+  const perReason = Object.keys(REASONS).map((reason) => [reason, exemptions.filter((r) => r === reason).length]);
+  console.log(`lint-asset-io: ${exemptions.length} exemption(s)`);
+  for (const [reason, count] of perReason) console.log(`  ${reason}: ${count}`);
 }

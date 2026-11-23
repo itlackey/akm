@@ -1,35 +1,58 @@
 {
+  "src/cli.ts": {
+    "asset-io": 1
+  },
+  "src/cli/usage.ts": {
+    "asset-io": 2
+  },
   "src/commands/agent/contribute-cli.ts": {
     "asset-io": 1
   },
   "src/commands/command/execution-source-loader.ts": {
-    "adapter-import": 2
+    "adapter-import": 2,
+    "asset-io": 2
   },
   "src/commands/config-cli.ts": {
     "adapter-import": 1
   },
+  "src/commands/env/env-binding.ts": {
+    "entry-file": 2
+  },
   "src/commands/env/env-cli.ts": {
-    "asset-io": 2
+    "asset-io": 3,
+    "entry-file": 1
+  },
+  "src/commands/env/injection.ts": {
+    "asset-io": 4
   },
   "src/commands/env/secret-cli.ts": {
-    "asset-io": 1
+    "asset-io": 2
   },
   "src/commands/feedback-cli.ts": {
-    "asset-io": 5
+    "asset-io": 9
+  },
+  "src/commands/health.ts": {
+    "asset-io": 1
   },
   "src/commands/health/bundle-adapters-check.ts": {
     "adapter-import": 1
+  },
+  "src/commands/health/config-skew.ts": {
+    "asset-io": 1
+  },
+  "src/commands/health/opencode-major.ts": {
+    "adapter-id": 1
   },
   "src/commands/health/type-directory-check.ts": {
     "adapter-id": 1,
     "asset-io": 3
   },
   "src/commands/health/workflow-files.ts": {
-    "asset-io": 1
+    "asset-io": 2
   },
   "src/commands/improve/consolidate.ts": {
     "adapter-import": 1,
-    "asset-io": 8
+    "asset-io": 15
   },
   "src/commands/improve/consolidate/chunking.ts": {
     "asset-io": 1
@@ -38,16 +61,20 @@
     "asset-io": 1
   },
   "src/commands/improve/consolidate/pair-pass.ts": {
-    "asset-io": 2
+    "asset-io": 9
   },
   "src/commands/improve/distill.ts": {
-    "asset-io": 6
+    "asset-io": 10
   },
   "src/commands/improve/eligibility.ts": {
-    "asset-io": 2
+    "asset-io": 5
   },
   "src/commands/improve/improve.ts": {
-    "adapter-import": 1
+    "adapter-import": 1,
+    "asset-io": 1
+  },
+  "src/commands/improve/ledger.ts": {
+    "asset-io": 1
   },
   "src/commands/improve/loop-stages.ts": {
     "asset-io": 1
@@ -57,40 +84,64 @@
   },
   "src/commands/improve/memory/memory-improve.ts": {
     "adapter-import": 1,
-    "asset-io": 6
+    "asset-io": 10
   },
   "src/commands/improve/preparation.ts": {
-    "asset-io": 4
+    "asset-io": 10
   },
   "src/commands/improve/reflect.ts": {
+    "asset-io": 3
+  },
+  "src/commands/improve/retrieval-scope.ts": {
     "asset-io": 1
   },
   "src/commands/improve/session-asset.ts": {
+    "adapter-id": 2,
     "asset-io": 1
   },
+  "src/commands/improve/stage.ts": {
+    "adapter-id": 1
+  },
   "src/commands/lint/base-linter.ts": {
-    "asset-io": 1
+    "asset-io": 6
   },
   "src/commands/lint/index.ts": {
     "adapter-import": 5,
+    "asset-io": 22,
+    "entry-file": 2,
     "adapter-id": 3
   },
+  "src/commands/lint/scope.ts": {
+    "asset-io": 1
+  },
+  "src/commands/lint/tracked-secrets.ts": {
+    "asset-io": 1
+  },
+  "src/commands/metrics/metrics-cli.ts": {
+    "asset-io": 1
+  },
+  "src/commands/migration-tool.ts": {
+    "asset-io": 1
+  },
   "src/commands/proposal/drain.ts": {
-    "asset-io": 2
+    "asset-io": 3
   },
   "src/commands/proposal/propose-cli.ts": {
     "asset-io": 1
   },
   "src/commands/proposal/repository.ts": {
-    "asset-io": 30
+    "asset-io": 54
   },
   "src/commands/read/curate.ts": {
     "asset-io": 1
   },
   "src/commands/read/knowledge.ts": {
     "adapter-import": 1,
-    "asset-io": 3,
+    "asset-io": 9,
     "adapter-id": 2
+  },
+  "src/commands/read/related.ts": {
+    "asset-io": 1
   },
   "src/commands/read/rules.ts": {
     "adapter-import": 2,
@@ -99,57 +150,105 @@
   },
   "src/commands/read/show.ts": {
     "adapter-import": 2,
-    "asset-io": 4,
-    "adapter-id": 3
+    "asset-io": 6,
+    "adapter-id": 4
   },
   "src/commands/run-cli.ts": {
+    "entry-file": 1,
     "asset-io": 1
   },
   "src/commands/sources/add-cli.ts": {
     "adapter-import": 1
   },
   "src/commands/sources/import-task.ts": {
-    "asset-io": 1
+    "asset-io": 3
+  },
+  "src/commands/sources/init.ts": {
+    "asset-io": 3
   },
   "src/commands/sources/installed-stashes.ts": {
-    "adapter-import": 1
+    "adapter-import": 1,
+    "asset-io": 6
+  },
+  "src/commands/sources/migration-help.ts": {
+    "asset-io": 7
+  },
+  "src/commands/sources/plugin-channels.ts": {
+    "asset-io": 9
+  },
+  "src/commands/sources/plugin-upgrade.ts": {
+    "asset-io": 13,
+    "adapter-id": 2
   },
   "src/commands/sources/schema-repair.ts": {
     "asset-io": 1
   },
+  "src/commands/sources/self-update.ts": {
+    "asset-io": 12
+  },
   "src/commands/sources/source-add.ts": {
-    "adapter-import": 2
+    "adapter-import": 2,
+    "asset-io": 1
   },
   "src/commands/sources/source-clone.ts": {
-    "asset-io": 15
+    "asset-io": 17,
+    "entry-file": 2
   },
   "src/commands/sources/source-manage.ts": {
     "adapter-import": 1
   },
+  "src/commands/sources/stash-skeleton.ts": {
+    "asset-io": 13
+  },
   "src/commands/tasks/explain.ts": {
     "adapter-import": 1,
     "adapter-id": 2,
+    "entry-file": 1,
     "asset-io": 1
   },
   "src/commands/tasks/tasks.ts": {
     "adapter-import": 1,
-    "adapter-id": 4,
-    "asset-io": 1
+    "asset-io": 5,
+    "adapter-id": 5
   },
   "src/core/asset/frontmatter.ts": {
+    "asset-io": 2
+  },
+  "src/core/asset/llm-wiki-root.ts": {
     "asset-io": 2
   },
   "src/core/asset/memory-archive.ts": {
     "adapter-import": 1
   },
+  "src/core/asset/stale-path.ts": {
+    "asset-io": 2
+  },
   "src/core/asset/type-keys.ts": {
     "adapter-import": 1
   },
   "src/core/bundle-rename.ts": {
+    "asset-io": 3
+  },
+  "src/core/env-secret-ref.ts": {
+    "entry-file": 4
+  },
+  "src/core/events.ts": {
+    "asset-io": 2
+  },
+  "src/core/git-path-safety.ts": {
+    "asset-io": 1
+  },
+  "src/core/path-access.ts": {
+    "asset-io": 3
+  },
+  "src/core/subprocess.ts": {
     "asset-io": 1
   },
   "src/core/write-source.ts": {
     "adapter-import": 3,
+    "asset-io": 3
+  },
+  "src/indexer/bundle-identity-guard.ts": {
     "asset-io": 1
   },
   "src/indexer/export-vectors.ts": {
@@ -157,38 +256,72 @@
   },
   "src/indexer/index-written-assets.ts": {
     "adapter-import": 2,
-    "asset-io": 2
+    "asset-io": 4
   },
   "src/indexer/indexer.ts": {
     "adapter-import": 2,
+    "asset-io": 4,
     "adapter-id": 1
   },
   "src/indexer/lookup/indexed-owner.ts": {
-    "adapter-import": 1
+    "adapter-import": 1,
+    "facade-internal": 1,
+    "entry-file": 1
+  },
+  "src/indexer/passes/dir-staleness.ts": {
+    "asset-io": 2
   },
   "src/indexer/passes/memory-inference.ts": {
     "adapter-import": 1,
-    "adapter-id": 1,
-    "asset-io": 5
+    "asset-io": 9,
+    "adapter-id": 1
+  },
+  "src/indexer/passes/metadata.ts": {
+    "asset-io": 6
+  },
+  "src/indexer/ref-moves.ts": {
+    "asset-io": 1
   },
   "src/indexer/scan/doc-to-entry.ts": {
     "adapter-id": 1
   },
   "src/indexer/scan/drain-dir.ts": {
     "adapter-import": 1,
-    "adapter-id": 3
+    "adapter-id": 4,
+    "asset-io": 1
+  },
+  "src/indexer/search/db-search.ts": {
+    "adapter-id": 1
   },
   "src/indexer/search/search-source.ts": {
+    "asset-io": 2
+  },
+  "src/indexer/walk/file-context.ts": {
+    "asset-io": 4
+  },
+  "src/indexer/walk/place-rules.ts": {
     "asset-io": 1
+  },
+  "src/indexer/walk/walker.ts": {
+    "asset-io": 15
   },
   "src/output/renderers.ts": {
-    "asset-io": 1
+    "asset-io": 3
+  },
+  "src/registry/resolve.ts": {
+    "asset-io": 2
+  },
+  "src/setup/detect.ts": {
+    "asset-io": 4
   },
   "src/setup/setup.ts": {
-    "asset-io": 1
+    "asset-io": 3
   },
   "src/setup/steps/tasks.ts": {
-    "asset-io": 5
+    "asset-io": 7
+  },
+  "src/sources/freshness.ts": {
+    "asset-io": 1
   },
   "src/sources/providers/git-provider.ts": {
     "adapter-import": 1
@@ -198,10 +331,11 @@
   },
   "src/sources/resolve.ts": {
     "adapter-import": 1,
-    "asset-io": 1
+    "asset-io": 4
   },
   "src/tasks/activation-config.ts": {
-    "adapter-id": 1
+    "adapter-id": 1,
+    "asset-io": 2
   },
   "src/tasks/frozen-script.ts": {
     "asset-io": 3
@@ -215,8 +349,13 @@
   "src/tasks/prepare/script-capture.ts": {
     "asset-io": 1
   },
+  "src/tasks/resolve-akm-bin.ts": {
+    "asset-io": 8,
+    "adapter-id": 1
+  },
   "src/tasks/run/load-task.ts": {
     "adapter-import": 1,
+    "entry-file": 3,
     "adapter-id": 2,
     "asset-io": 1
   },
@@ -228,7 +367,7 @@
   },
   "src/tasks/scheduler-sync.ts": {
     "adapter-id": 4,
-    "asset-io": 2
+    "asset-io": 3
   },
   "src/tasks/v5/check.ts": {
     "asset-io": 1
@@ -238,23 +377,34 @@
   },
   "src/workflows/authoring/authoring.ts": {
     "adapter-id": 1,
-    "asset-io": 2
+    "asset-io": 4
   },
   "src/workflows/exec/run-workflow.ts": {
     "asset-io": 1
   },
   "src/workflows/runtime/workflow-asset-loader.ts": {
+    "entry-file": 1,
     "asset-io": 1
   },
   "src/workflows/source-files.ts": {
-    "adapter-id": 8
+    "adapter-id": 8,
+    "asset-io": 4
+  },
+  "src/workspace/activity.ts": {
+    "asset-io": 1
   },
   "src/workspace/check-text.ts": {
     "adapter-import": 3,
     "asset-io": 4,
     "adapter-id": 2
   },
+  "src/workspace/config.ts": {
+    "asset-io": 1
+  },
   "src/workspace/documents.ts": {
+    "asset-io": 1
+  },
+  "src/workspace/graph.ts": {
     "asset-io": 1
   },
   "src/workspace/moved-links.ts": {
@@ -262,9 +412,15 @@
     "adapter-id": 1
   },
   "src/workspace/new-file.ts": {
-    "asset-io": 1
+    "asset-io": 2
   },
   "src/workspace/proposals.ts": {
     "asset-io": 1
+  },
+  "src/workspace/readers.ts": {
+    "asset-io": 1
+  },
+  "src/workspace/sensitive.ts": {
+    "entry-file": 1
   }
 }
