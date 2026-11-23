@@ -1,426 +1,1010 @@
 {
+  "desktop/src/lib/server/features/host-tools.ts": {
+    "adapter-id": {
+      "claude": 4
+    },
+    "asset-io": {
+      "access": 2,
+      "lstat": 2,
+      "readFile": 1,
+      "readdir": 1,
+      "rm": 1,
+      "writeFile": 1
+    }
+  },
   "src/cli.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/cli/usage.ts": {
-    "asset-io": 2
+    "asset-io": {
+      "existsSync": 2
+    }
   },
   "src/commands/agent/contribute-cli.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1
+    }
   },
   "src/commands/command/execution-source-loader.ts": {
-    "adapter-import": 2,
-    "asset-io": 2
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1,
+      "src/core/adapter/registry": 1
+    },
+    "adapter-probe": {
+      "adapterIdOf": 1
+    },
+    "asset-io": {
+      "statSync": 2
+    }
   },
   "src/commands/config-cli.ts": {
-    "adapter-import": 1
+    "adapter-import": {
+      "src/core/adapter/registry": 1
+    }
   },
   "src/commands/env/env-binding.ts": {
-    "entry-file": 2
+    "entry-file": {
+      "entry.file": 2
+    }
   },
   "src/commands/env/env-cli.ts": {
-    "asset-io": 3,
-    "entry-file": 1
+    "asset-io": {
+      "existsSync": 1,
+      "readFileSync": 1,
+      "writeFileAtomic": 1
+    },
+    "entry-file": {
+      "entry.file": 1
+    }
   },
   "src/commands/env/injection.ts": {
-    "asset-io": 4
+    "asset-io": {
+      "existsSync": 2,
+      "statSync": 2
+    }
   },
   "src/commands/env/secret-cli.ts": {
-    "asset-io": 2
+    "asset-io": {
+      "existsSync": 1,
+      "readFileSync": 1
+    }
   },
   "src/commands/feedback-cli.ts": {
-    "asset-io": 9
+    "asset-io": {
+      "existsSync": 2,
+      "lstatSync": 2,
+      "readFileSync": 4,
+      "writeFileAtomic": 1
+    }
   },
   "src/commands/health.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/commands/health/bundle-adapters-check.ts": {
-    "adapter-import": 1
+    "adapter-import": {
+      "src/core/adapter/registry": 1
+    }
   },
   "src/commands/health/config-skew.ts": {
-    "asset-io": 1
-  },
-  "src/commands/health/opencode-major.ts": {
-    "adapter-id": 1
+    "asset-io": {
+      "readTextFile": 1
+    }
   },
   "src/commands/health/type-directory-check.ts": {
-    "adapter-id": 1,
-    "asset-io": 3
+    "adapter-id": {
+      "akm": 1
+    },
+    "asset-io": {
+      "buildFileContext": 1,
+      "readFileSync": 1
+    }
   },
   "src/commands/health/workflow-files.ts": {
-    "asset-io": 2
+    "asset-io": {
+      "existsSync": 1,
+      "readdirSync": 1
+    }
   },
   "src/commands/improve/consolidate.ts": {
-    "adapter-import": 1,
-    "asset-io": 15
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1
+    },
+    "adapter-probe": {
+      "detectAdapterId": 2
+    },
+    "asset-io": {
+      "existsSync": 5,
+      "readFileSync": 6,
+      "readdirSync": 2,
+      "statSync": 2
+    }
   },
   "src/commands/improve/consolidate/chunking.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1
+    }
   },
   "src/commands/improve/consolidate/coverage.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1
+    }
   },
   "src/commands/improve/consolidate/pair-pass.ts": {
-    "asset-io": 9
+    "asset-io": {
+      "existsSync": 6,
+      "readFileSync": 2,
+      "statSync": 1
+    }
   },
   "src/commands/improve/distill.ts": {
-    "asset-io": 10
+    "asset-io": {
+      "existsSync": 3,
+      "readFileSync": 5,
+      "statSync": 1,
+      "writeFileSync": 1
+    }
   },
   "src/commands/improve/eligibility.ts": {
-    "asset-io": 5
+    "asset-io": {
+      "existsSync": 3,
+      "readFileSync": 2
+    }
   },
   "src/commands/improve/improve.ts": {
-    "adapter-import": 1,
-    "asset-io": 1
+    "adapter-import": {
+      "src/core/adapter/adapters/akm-adapter": 1
+    },
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/commands/improve/ledger.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/commands/improve/loop-stages.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1
+    }
   },
   "src/commands/improve/memory/memory-belief.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "mutateFrontmatter": 1
+    }
   },
   "src/commands/improve/memory/memory-improve.ts": {
-    "adapter-import": 1,
-    "asset-io": 10
+    "adapter-import": {
+      "src/core/adapter/directory-archive": 1
+    },
+    "asset-io": {
+      "appendFileSync": 1,
+      "existsSync": 2,
+      "mutateFrontmatter": 1,
+      "readFileSync": 3,
+      "statSync": 2,
+      "writeFileSync": 1
+    }
   },
   "src/commands/improve/preparation.ts": {
-    "asset-io": 10
+    "asset-io": {
+      "existsSync": 4,
+      "readFileSync": 4,
+      "statSync": 2
+    }
   },
   "src/commands/improve/reflect.ts": {
-    "asset-io": 3
+    "asset-io": {
+      "existsSync": 2,
+      "readFileSync": 1
+    }
   },
   "src/commands/improve/retrieval-scope.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "statSync": 1
+    }
   },
   "src/commands/improve/session-asset.ts": {
-    "adapter-id": 2,
-    "asset-io": 1
-  },
-  "src/commands/improve/stage.ts": {
-    "adapter-id": 1
+    "asset-io": {
+      "writeFileSync": 1
+    }
   },
   "src/commands/lint/base-linter.ts": {
-    "asset-io": 6
+    "asset-io": {
+      "existsSync": 4,
+      "statSync": 1,
+      "writeFileSync": 1
+    }
   },
   "src/commands/lint/index.ts": {
-    "adapter-import": 5,
-    "asset-io": 22,
-    "entry-file": 2,
-    "adapter-id": 3
+    "adapter-id": {
+      "akm": 2,
+      "okf": 1
+    },
+    "adapter-import": {
+      "src/core/adapter/adapters/akm-adapter": 1,
+      "src/core/adapter/adapters/akm-lint": 1,
+      "src/core/adapter/detect-adapter": 1,
+      "src/core/adapter/registry": 1,
+      "src/core/adapter/validate-context": 1
+    },
+    "adapter-probe": {
+      "detectAdapterId": 2
+    },
+    "asset-io": {
+      "adapterForId": 2,
+      "existsSync": 9,
+      "readFileSync": 2,
+      "readdirSync": 5,
+      "statSync": 2,
+      "unlinkSync": 1,
+      "walkStashFlat": 1
+    },
+    "entry-file": {
+      "entry.file": 2
+    }
   },
   "src/commands/lint/scope.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/commands/lint/tracked-secrets.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/commands/metrics/metrics-cli.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/commands/migration-tool.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/commands/proposal/drain.ts": {
-    "asset-io": 3
+    "asset-io": {
+      "existsSync": 1,
+      "readFileSync": 2
+    }
   },
   "src/commands/proposal/propose-cli.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1
+    }
   },
   "src/commands/proposal/repository.ts": {
-    "asset-io": 54
+    "asset-io": {
+      "existsSync": 23,
+      "readFileSync": 22,
+      "readdirSync": 1,
+      "renameSync": 3,
+      "rmSync": 3,
+      "statSync": 1,
+      "writeFileSync": 1
+    }
   },
   "src/commands/read/curate.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1
+    }
   },
   "src/commands/read/knowledge.ts": {
-    "adapter-import": 1,
-    "asset-io": 9,
-    "adapter-id": 2
+    "adapter-id": {
+      "akm": 2
+    },
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1
+    },
+    "adapter-probe": {
+      "detectAdapterId": 1
+    },
+    "asset-io": {
+      "existsSync": 5,
+      "readFileSync": 3,
+      "statSync": 1
+    }
   },
   "src/commands/read/related.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/commands/read/rules.ts": {
-    "adapter-import": 2,
-    "adapter-id": 1,
-    "asset-io": 2
+    "adapter-id": {
+      "akm": 1
+    },
+    "adapter-import": {
+      "src/core/adapter/adapters/akm-adapter": 1,
+      "src/core/adapter/detect-adapter": 1
+    },
+    "adapter-probe": {
+      "adapterIdOf": 1
+    },
+    "asset-io": {
+      "buildFileContext": 1,
+      "walkStash": 1
+    }
   },
   "src/commands/read/show.ts": {
-    "adapter-import": 2,
-    "asset-io": 6,
-    "adapter-id": 4
+    "adapter-id": {
+      ".fileless": 1,
+      "akm": 2,
+      "akm-workflow": 1
+    },
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1,
+      "src/core/adapter/recognize-match": 1
+    },
+    "adapter-probe": {
+      "adapterIdOf": 1
+    },
+    "asset-io": {
+      "buildFileContext": 2,
+      "lstatSync": 1,
+      "readFile": 1,
+      "readFileSync": 1,
+      "statSync": 1
+    }
   },
   "src/commands/run-cli.ts": {
-    "entry-file": 1,
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1
+    },
+    "entry-file": {
+      "entry.file": 1
+    }
   },
   "src/commands/sources/add-cli.ts": {
-    "adapter-import": 1
+    "adapter-import": {
+      "src/core/adapter/registry": 1
+    }
   },
   "src/commands/sources/import-task.ts": {
-    "asset-io": 3
+    "asset-io": {
+      "existsSync": 1,
+      "readFileSync": 1,
+      "statSync": 1
+    }
   },
   "src/commands/sources/init.ts": {
-    "asset-io": 3
+    "asset-io": {
+      "existsSync": 3
+    }
   },
   "src/commands/sources/installed-stashes.ts": {
-    "adapter-import": 1,
-    "asset-io": 6
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1
+    },
+    "adapter-probe": {
+      "detectAdapterId": 1
+    },
+    "asset-io": {
+      "cpSync": 2,
+      "existsSync": 1,
+      "readdirSync": 1,
+      "rmSync": 1,
+      "statSync": 1
+    }
   },
   "src/commands/sources/migration-help.ts": {
-    "asset-io": 7
+    "asset-io": {
+      "existsSync": 3,
+      "readFileSync": 2,
+      "readdirSync": 1,
+      "statSync": 1
+    }
   },
   "src/commands/sources/plugin-channels.ts": {
-    "asset-io": 9
+    "asset-io": {
+      "copyFileSync": 1,
+      "existsSync": 1,
+      "readFileSync": 6,
+      "writeFileAtomic": 1
+    }
   },
   "src/commands/sources/plugin-upgrade.ts": {
-    "asset-io": 13,
-    "adapter-id": 2
+    "adapter-id": {
+      "akm": 1
+    },
+    "asset-io": {
+      "existsSync": 5,
+      "readFileSync": 4,
+      "readdirSync": 2,
+      "rmSync": 2
+    }
   },
   "src/commands/sources/schema-repair.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1
+    }
   },
   "src/commands/sources/self-update.ts": {
-    "asset-io": 12
+    "asset-io": {
+      "copyFileSync": 1,
+      "existsSync": 5,
+      "openSync": 1,
+      "readFileSync": 1,
+      "renameSync": 3,
+      "unlinkSync": 1
+    }
   },
   "src/commands/sources/source-add.ts": {
-    "adapter-import": 2,
-    "asset-io": 1
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1,
+      "src/core/adapter/registry": 1
+    },
+    "adapter-probe": {
+      "detectAdapterId": 2
+    },
+    "asset-io": {
+      "rmSync": 1
+    }
   },
   "src/commands/sources/source-clone.ts": {
-    "asset-io": 17,
-    "entry-file": 2
+    "asset-io": {
+      "copyFileSync": 1,
+      "cpSync": 1,
+      "lstatSync": 1,
+      "readFileSync": 2,
+      "readdirSync": 2,
+      "renameSync": 2,
+      "rmSync": 5,
+      "statSync": 1,
+      "writeFileSync": 2
+    },
+    "entry-file": {
+      "entry.file": 2
+    }
   },
   "src/commands/sources/source-manage.ts": {
-    "adapter-import": 1
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1
+    },
+    "adapter-probe": {
+      "detectAdapterId": 1
+    }
   },
   "src/commands/sources/stash-skeleton.ts": {
-    "asset-io": 13
+    "asset-io": {
+      "copyFileSync": 2,
+      "existsSync": 5,
+      "readFileSync": 2,
+      "readdirSync": 1,
+      "writeFileSync": 3
+    }
   },
   "src/commands/tasks/explain.ts": {
-    "adapter-import": 1,
-    "adapter-id": 2,
-    "entry-file": 1,
-    "asset-io": 1
+    "adapter-id": {
+      "akm": 1,
+      "akm-task": 1
+    },
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1
+    },
+    "adapter-probe": {
+      "adapterIdOf": 1
+    },
+    "asset-io": {
+      "readFileSync": 1
+    },
+    "entry-file": {
+      "entry.file": 1
+    }
   },
   "src/commands/tasks/tasks.ts": {
-    "adapter-import": 1,
-    "asset-io": 5,
-    "adapter-id": 5
+    "adapter-id": {
+      "akm": 4,
+      "akm-task": 1
+    },
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1
+    },
+    "adapter-probe": {
+      "adapterIdOf": 5,
+      "detectAdapterId": 1
+    },
+    "asset-io": {
+      "existsSync": 4,
+      "readFileSync": 1
+    }
   },
   "src/core/asset/frontmatter.ts": {
-    "asset-io": 2
+    "asset-io": {
+      "readFileSync": 1,
+      "writeFileAtomic": 1
+    }
   },
   "src/core/asset/llm-wiki-root.ts": {
-    "asset-io": 2
+    "asset-io": {
+      "existsSync": 1,
+      "statSync": 1
+    }
   },
   "src/core/asset/memory-archive.ts": {
-    "adapter-import": 1
+    "adapter-import": {
+      "src/core/adapter/directory-archive": 1
+    }
   },
   "src/core/asset/stale-path.ts": {
-    "asset-io": 2
+    "asset-io": {
+      "existsSync": 1,
+      "statSync": 1
+    }
   },
   "src/core/asset/type-keys.ts": {
-    "adapter-import": 1
+    "adapter-import": {
+      "src/core/adapter/adapters/akm-lint": 1
+    }
+  },
+  "src/core/assets/read.ts": {
+    "facade-export": {
+      "FindOptions": 1,
+      "assetOfEntry": 1,
+      "isRetired": 1,
+      "readFrom": 1,
+      "requireAsset": 1
+    }
+  },
+  "src/core/assets/type.ts": {
+    "facade-export": {
+      "assetTypes": 1,
+      "forgetIndexedAsset": 1,
+      "indexAssets": 1,
+      "refreshIndexedAsset": 1
+    }
+  },
+  "src/core/assets/write.ts": {
+    "facade-export": {
+      "AssetAddress": 1,
+      "AssetWriter": 1
+    }
   },
   "src/core/bundle-rename.ts": {
-    "asset-io": 3
+    "asset-io": {
+      "existsSync": 2,
+      "readFileSync": 1
+    }
   },
   "src/core/env-secret-ref.ts": {
-    "entry-file": 4
+    "entry-file": {
+      "entry.file": 4
+    }
   },
   "src/core/events.ts": {
-    "asset-io": 2
+    "asset-io": {
+      "existsSync": 1,
+      "statSync": 1
+    }
   },
   "src/core/git-path-safety.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/core/path-access.ts": {
-    "asset-io": 3
+    "asset-io": {
+      "statSync": 3
+    }
   },
   "src/core/subprocess.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "openSync": 1
+    }
   },
   "src/core/write-source.ts": {
-    "adapter-import": 3,
-    "asset-io": 3
+    "adapter-import": {
+      "src/core/adapter/adapters/akm-format": 1,
+      "src/core/adapter/detect-adapter": 1,
+      "src/core/adapter/directory-adapter": 1
+    },
+    "adapter-probe": {
+      "detectAdapterId": 2
+    },
+    "asset-io": {
+      "existsSync": 1,
+      "statSync": 1,
+      "writeFileAtomic": 1
+    }
   },
   "src/indexer/bundle-identity-guard.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/indexer/export-vectors.ts": {
-    "asset-io": 3
+    "asset-io": {
+      "renameSync": 1,
+      "rmSync": 2
+    }
   },
   "src/indexer/index-written-assets.ts": {
-    "adapter-import": 2,
-    "asset-io": 4
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1,
+      "src/core/adapter/registry": 1
+    },
+    "adapter-probe": {
+      "adapterIdOf": 1
+    },
+    "asset-io": {
+      "adapterForId": 1,
+      "buildFileContext": 1,
+      "existsSync": 1,
+      "lstatSync": 1
+    }
   },
   "src/indexer/indexer.ts": {
-    "adapter-import": 2,
-    "asset-io": 4,
-    "adapter-id": 1
+    "adapter-id": {
+      "akm": 1
+    },
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1,
+      "src/core/adapter/registry": 1
+    },
+    "adapter-probe": {
+      "adapterIdOf": 3,
+      "detectAdapterId": 1
+    },
+    "asset-io": {
+      "adapterForId": 1,
+      "lstatSync": 1,
+      "readdirSync": 1,
+      "statSync": 1
+    }
   },
   "src/indexer/lookup/indexed-owner.ts": {
-    "adapter-import": 1,
-    "facade-internal": 1,
-    "entry-file": 1
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1
+    },
+    "adapter-probe": {
+      "adapterIdOf": 1
+    },
+    "entry-file": {
+      "entry.file": 1
+    },
+    "facade-internal": {
+      "src/core/assets/asset": 1
+    }
   },
   "src/indexer/passes/dir-staleness.ts": {
-    "asset-io": 2
+    "asset-io": {
+      "statSync": 2
+    }
   },
   "src/indexer/passes/memory-inference.ts": {
-    "adapter-import": 1,
-    "asset-io": 9,
-    "adapter-id": 1
+    "adapter-id": {
+      "akm": 1
+    },
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1
+    },
+    "adapter-probe": {
+      "adapterIdOf": 1
+    },
+    "asset-io": {
+      "existsSync": 4,
+      "readFileSync": 3,
+      "writeFileAtomic": 1,
+      "writeFileSync": 1
+    }
   },
   "src/indexer/passes/metadata.ts": {
-    "asset-io": 6
+    "asset-io": {
+      "existsSync": 1,
+      "readFileSync": 4,
+      "statSync": 1
+    }
   },
   "src/indexer/ref-moves.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/indexer/scan/doc-to-entry.ts": {
-    "adapter-id": 1
+    "adapter-id": {
+      "okf": 1
+    }
   },
   "src/indexer/scan/drain-dir.ts": {
-    "adapter-import": 1,
-    "adapter-id": 4,
-    "asset-io": 1
+    "adapter-id": {
+      ".fileless": 1,
+      "akm": 1,
+      "akm-workflow": 2
+    },
+    "adapter-import": {
+      "src/core/adapter/adapters/akm-adapter": 1
+    },
+    "asset-io": {
+      "buildFileContext": 1
+    }
   },
   "src/indexer/search/db-search.ts": {
-    "adapter-id": 1
+    "adapter-id": {
+      ".fileless": 1
+    }
   },
   "src/indexer/search/search-source.ts": {
-    "asset-io": 2
+    "asset-io": {
+      "readdirSync": 1,
+      "statSync": 1
+    }
   },
   "src/indexer/walk/file-context.ts": {
-    "asset-io": 4
+    "asset-io": {
+      "buildFileContext": 1,
+      "readFileSync": 2,
+      "statSync": 1
+    }
   },
   "src/indexer/walk/place-rules.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "buildFileContext": 1
+    }
   },
   "src/indexer/walk/walker.ts": {
-    "asset-io": 15
+    "asset-io": {
+      "buildFileContext": 3,
+      "existsSync": 1,
+      "lstatSync": 2,
+      "readdirSync": 3,
+      "statSync": 3,
+      "walkStashFlatWithStatus": 1,
+      "walkStashGit": 1,
+      "walkStashManual": 1
+    }
   },
   "src/output/renderers.ts": {
-    "asset-io": 3
+    "asset-io": {
+      "existsSync": 2,
+      "readFileSync": 1
+    }
   },
   "src/registry/resolve.ts": {
-    "asset-io": 2
+    "asset-io": {
+      "existsSync": 1,
+      "statSync": 1
+    }
   },
   "src/setup/detect.ts": {
-    "asset-io": 4
+    "asset-io": {
+      "existsSync": 1,
+      "statSync": 3
+    }
   },
   "src/setup/setup.ts": {
-    "asset-io": 3
+    "asset-io": {
+      "existsSync": 2,
+      "readFileSync": 1
+    }
   },
   "src/setup/steps/tasks.ts": {
-    "asset-io": 7
+    "asset-io": {
+      "existsSync": 2,
+      "readFileSync": 2,
+      "readdirSync": 2,
+      "writeFileSync": 1
+    }
   },
   "src/sources/freshness.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "statSync": 1
+    }
   },
   "src/sources/providers/git-provider.ts": {
-    "adapter-import": 1
+    "adapter-import": {
+      "src/core/adapter/adapters/akm-adapter": 1
+    }
   },
   "src/sources/providers/provider-utils.ts": {
-    "adapter-import": 1
+    "adapter-import": {
+      "src/core/adapter/registry": 1
+    }
   },
   "src/sources/resolve.ts": {
-    "adapter-import": 1,
-    "asset-io": 4
+    "adapter-import": {
+      "src/core/adapter/recognize-match": 1
+    },
+    "asset-io": {
+      "existsSync": 1,
+      "statSync": 2,
+      "walkStashFlat": 1
+    }
   },
   "src/tasks/activation-config.ts": {
-    "adapter-id": 1,
-    "asset-io": 2
+    "adapter-id": {
+      "akm-task": 1
+    },
+    "asset-io": {
+      "existsSync": 1,
+      "statSync": 1
+    }
   },
   "src/tasks/frozen-script.ts": {
-    "asset-io": 3
-  },
-  "src/tasks/prepare/prepare-support.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1,
+      "rmSync": 1,
+      "writeFileSync": 1
+    }
   },
   "src/tasks/prepare/prepare.ts": {
-    "asset-io": 2
-  },
-  "src/tasks/prepare/script-capture.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 2
+    }
   },
   "src/tasks/resolve-akm-bin.ts": {
-    "asset-io": 8,
-    "adapter-id": 1
+    "asset-io": {
+      "existsSync": 7,
+      "statSync": 1
+    }
   },
   "src/tasks/run/load-task.ts": {
-    "adapter-import": 1,
-    "entry-file": 3,
-    "adapter-id": 2,
-    "asset-io": 1
+    "adapter-id": {
+      "akm": 1,
+      "akm-task": 1
+    },
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1
+    },
+    "adapter-probe": {
+      "detectAdapterId": 1
+    },
+    "asset-io": {
+      "readFileSync": 1
+    },
+    "entry-file": {
+      "entry.file": 3
+    }
   },
   "src/tasks/run/reconcile-abandoned.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1
+    }
   },
   "src/tasks/scheduler-invocation.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1
+    }
   },
   "src/tasks/scheduler-sync.ts": {
-    "adapter-id": 4,
-    "asset-io": 3
+    "adapter-id": {
+      "akm": 1,
+      "akm-task": 3
+    },
+    "asset-io": {
+      "readFileSync": 1,
+      "readdirSync": 1,
+      "statSync": 1
+    }
   },
   "src/tasks/v5/check.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1
+    }
   },
   "src/tasks/v5/run.ts": {
-    "asset-io": 8
+    "asset-io": {
+      "readFileSync": 2,
+      "renameSync": 1,
+      "rmSync": 3,
+      "writeFileSync": 2
+    }
   },
   "src/workflows/authoring/authoring.ts": {
-    "adapter-id": 1,
-    "asset-io": 4
+    "adapter-id": {
+      "akm-workflow": 1
+    },
+    "asset-io": {
+      "existsSync": 1,
+      "readFileSync": 1,
+      "readdirSync": 1,
+      "statSync": 1
+    }
+  },
+  "src/workflows/exec/exec-unit.ts": {
+    "asset-io": {
+      "stat": 1
+    }
   },
   "src/workflows/exec/run-workflow.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1
+    }
   },
   "src/workflows/runtime/workflow-asset-loader.ts": {
-    "entry-file": 1,
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1
+    },
+    "entry-file": {
+      "entry.file": 1
+    }
   },
   "src/workflows/source-files.ts": {
-    "adapter-id": 8,
-    "asset-io": 4
+    "adapter-id": {
+      "akm": 4,
+      "akm-workflow": 4
+    },
+    "asset-io": {
+      "buildFileContext": 1,
+      "lstatSync": 1,
+      "readdirSync": 1,
+      "statSync": 1
+    }
   },
   "src/workspace/activity.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/workspace/check-text.ts": {
-    "adapter-import": 3,
-    "asset-io": 4,
-    "adapter-id": 2
+    "adapter-id": {
+      "akm": 2
+    },
+    "adapter-import": {
+      "src/core/adapter/adapters/akm-adapter": 1,
+      "src/core/adapter/detect-adapter": 1,
+      "src/core/adapter/registry": 1
+    },
+    "adapter-probe": {
+      "adapterIdOf": 1
+    },
+    "asset-io": {
+      "adapterForId": 1,
+      "buildFileContext": 1,
+      "rmSync": 1,
+      "writeFileSync": 1
+    }
   },
   "src/workspace/config.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/workspace/documents.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "readFileSync": 1
+    }
   },
   "src/workspace/graph.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "statSync": 1
+    }
   },
   "src/workspace/moved-links.ts": {
-    "adapter-import": 1,
-    "adapter-id": 1
+    "adapter-id": {
+      "akm": 1
+    },
+    "adapter-import": {
+      "src/core/adapter/detect-adapter": 1
+    },
+    "adapter-probe": {
+      "adapterIdOf": 1
+    }
   },
   "src/workspace/new-file.ts": {
-    "asset-io": 2
+    "asset-io": {
+      "buildFileContext": 1,
+      "existsSync": 1
+    }
   },
   "src/workspace/proposals.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "buildFileContext": 1
+    }
   },
   "src/workspace/readers.ts": {
-    "asset-io": 1
+    "asset-io": {
+      "existsSync": 1
+    }
   },
   "src/workspace/sensitive.ts": {
-    "entry-file": 1
+    "entry-file": {
+      "entry.file": 1
+    }
   }
 }

@@ -11,7 +11,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { compare, countsOf, scan } from "../../../scripts/lint-asset-io";
+import { compare, countsOf, REASONS, scan } from "../../../scripts/lint-asset-io";
 import { makeSandboxDir } from "../../_helpers/sandbox";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "../../..");
@@ -54,7 +54,7 @@ describe("lint-asset-io", () => {
         "src/feature/internal.ts":
           'import { AssetBundle } from "../core/assets/bundle";\nexport type T = AssetBundle;\n',
         "src/feature/compare.ts": 'export const c = source.adapterId === "okf";\n',
-        "src/feature/subject.ts": 'export const d = platform === "akm";\n',
+        "src/feature/subject.ts": 'export const d = provider === "akm";\n',
         "src/feature/switch.ts": 'switch (adapterId) {\n  case "akm":\n    break;\n}\n',
         "src/feature/location.ts": 'export const e = entry.kind === "location";\n',
         "src/feature/fileless.ts": "export const f = doc.fileless;\n",
@@ -90,6 +90,7 @@ describe("lint-asset-io", () => {
         "src/feature/contract.ts":
           'import type { BundleAdapter } from "../core/adapter/bundle-adapter";\nimport type { Bundle } from "../core/adapter/types";\nexport type T = [BundleAdapter, Bundle];\n',
         "src/feature/other.ts": 'export const p = [runner.platform === "claude", kind === "file", entry.fileName];\n',
+        "src/feature/uses.ts": 'import { a } from "../core/assets/read";\nexport const b = a;\n',
       }),
     ).toEqual([]);
   });
@@ -159,27 +160,157 @@ describe("lint-asset-io", () => {
     ).toHaveLength(7);
   });
 
-  test("a baseline that matches passes; a new violation and a stale entry each fail", () => {
-    const found = countsOf([
-      ["src/a.ts", "asset-io", 3],
-      ["src/a.ts", "asset-io", 9],
-      ["src/b.ts", "adapter-import", 1],
-      ["src/b.ts", "entry-file", 4],
+  test("flags async file access by where it comes from, in src and in the Desktop server", () => {
+    expect(
+      violationsIn({
+        "src/feature/promises.ts":
+          'import fs from "node:fs";\nexport const a = [fs.promises.stat(p), fs.promises.readdir(p), fs.promises.rm(p)];\nexport const b = Bun.write(p, "x");\n',
+        "src/feature/named.ts":
+          'import { rename, writeFile as put } from "node:fs/promises";\nexport const a = [rename(a, b), put(p, "x")];\n',
+        "src/feature/alias.ts": 'import { readFileSync as read } from "node:fs";\nexport const a = read(p);\n',
+        "src/feature/ns.ts": 'import { promises as fsp } from "node:fs";\nexport const a = fsp.readFile(p);\n',
+        "src/feature/unrelated.ts":
+          "export const a = [db.rename(a, b), service.stat(p), cache.rm(k), readFile(p, root), writeFile(p)];\n",
+        "desktop/src/lib/server/features/other.ts": 'import fs from "node:fs";\nexport const a = fs.statSync(p);\n',
+        "desktop/src/lib/server/features/files.ts": 'import fs from "node:fs";\nexport const a = fs.statSync(p);\n',
+      }).sort(),
+    ).toEqual([
+      "desktop/src/lib/server/features/other.ts asset-io",
+      "src/feature/alias.ts asset-io",
+      "src/feature/named.ts asset-io",
+      "src/feature/named.ts asset-io",
+      "src/feature/ns.ts asset-io",
+      "src/feature/promises.ts asset-io",
+      "src/feature/promises.ts asset-io",
+      "src/feature/promises.ts asset-io",
+      "src/feature/promises.ts asset-io",
     ]);
-    expect(found).toEqual({ "src/a.ts": { "asset-io": 2 }, "src/b.ts": { "adapter-import": 1, "entry-file": 1 } });
+  });
+
+  test("adapter-id skips the listed non-adapter names and nothing else", () => {
+    expect(
+      violationsIn({
+        "src/feature/names.ts":
+          'export const a = [harness === "akm", p.platform === "okf", path.basename(f) === "akm", cfg.binary !== "akm", bin === "okf", command.toLowerCase() === "akm"];\n',
+        "src/feature/flagged.ts":
+          'export const a = [id === "akm", x.adapter === "okf", constructor === "akm", fn() === "akm"];\n',
+      }).sort(),
+    ).toEqual([
+      "src/feature/flagged.ts adapter-id",
+      "src/feature/flagged.ts adapter-id",
+      "src/feature/flagged.ts adapter-id",
+      "src/feature/flagged.ts adapter-id",
+    ]);
+  });
+
+  test("adapter-probe flags a call of detectAdapterId or adapterIdOf, even in an allowed path", () => {
+    expect(
+      violationsIn({
+        "src/feature/probe.ts": "export const a = [detectAdapterId(dir), installations.adapterIdOf(entry)];\n",
+        "src/storage/probe.ts": "export const a = detectAdapterId(dir);\n",
+        "src/core/adapter/detect.ts": "export const a = detectAdapterId(dir);\n",
+      }).sort(),
+    ).toEqual([
+      "src/feature/probe.ts adapter-probe",
+      "src/feature/probe.ts adapter-probe",
+      "src/storage/probe.ts adapter-probe",
+    ]);
+  });
+
+  test("the walk and the metadata helpers may import adapter modules; other readers may not", () => {
+    const code = 'import { x } from "../../core/adapter/registry";\nexport const a = x;\n';
+    expect(
+      violationsIn({
+        "src/indexer/walk/file-context.ts": code,
+        "src/indexer/passes/metadata.ts": code,
+        "src/indexer/passes/other.ts": code,
+      }),
+    ).toEqual(["src/indexer/passes/other.ts adapter-import"]);
+  });
+
+  test("facade-export flags a public facade export nothing outside the facade imports", () => {
+    expect(
+      violationsIn({
+        "src/core/assets/read.ts":
+          "export function used() {}\nexport function viaNamespace() {}\nexport type Aliased = string;\nexport const unused = 1;\nexport { helper as renamed };\nconst helper = 1;\nexport function onlyInside() {}\n",
+        "src/core/assets/write.ts": 'import { onlyInside } from "./read";\nexport const w = onlyInside;\n',
+        "src/core/assets/bundle.ts": "export const internal = 1;\n",
+        "src/feature/caller.ts":
+          'import { used, type Aliased as Mine } from "../core/assets/read";\nimport * as read from "../core/assets/read";\nexport const a = [used, read.viaNamespace, {} as Mine];\n',
+      }).sort(),
+    ).toEqual([
+      "src/core/assets/read.ts facade-export",
+      "src/core/assets/read.ts facade-export",
+      "src/core/assets/read.ts facade-export",
+      "src/core/assets/write.ts facade-export",
+    ]);
+  });
+
+  test("an exemption's first word must be in the vocabulary, and a rule accepts only its reasons", () => {
+    const reasons = Object.keys(REASONS);
+    expect(reasons).toContain("deprecated");
+    const nearMisses = ["Config", "config_x", "state-run", "states", "user_input", "files view", "deprecated_old", ""];
+    expect(
+      violationsIn(
+        Object.fromEntries(
+          nearMisses.map((reason, i) => [
+            `src/feature/near${i}.ts`,
+            `import fs from "node:fs";\nexport const a = fs.readFileSync(p); // asset-io: ${reason}\n`,
+          ]),
+        ),
+      ),
+    ).toHaveLength(nearMisses.length);
+    // Every vocabulary word exempts file access, and `deprecated` the other rules; the storage reasons do not.
+    expect(
+      violationsIn({
+        "src/feature/all.ts": `import fs from "node:fs";\n${reasons
+          .map((reason) => `export const ${reason.replace("-", "_")} = fs.readFileSync(p); // asset-io: ${reason}`)
+          .join("\n")}\n`,
+        "src/feature/deprecated.ts":
+          'import { x } from "../core/adapter/registry"; // asset-io: deprecated\nexport const a = [x === "akm", detectAdapterId(d), entry.file]; // asset-io: deprecated\n',
+        "src/feature/storage-reason.ts":
+          'import { x } from "../core/adapter/registry"; // asset-io: state\nexport const a = [x === "akm", detectAdapterId(d)]; // asset-io: config\n',
+      }).sort(),
+    ).toEqual([
+      "src/feature/storage-reason.ts adapter-id",
+      "src/feature/storage-reason.ts adapter-import",
+      "src/feature/storage-reason.ts adapter-probe",
+    ]);
+  });
+
+  test("a baseline that matches passes; a new violation, a traded callee and a stale entry each fail", () => {
+    const found = countsOf([
+      ["src/a.ts", "asset-io", 3, "readFileSync"],
+      ["src/a.ts", "asset-io", 9, "readFileSync"],
+      ["src/b.ts", "adapter-import", 1, "src/core/adapter/registry"],
+      ["src/b.ts", "entry-file", 4, "entry.file"],
+    ]);
+    expect(found).toEqual({
+      "src/a.ts": { "asset-io": { readFileSync: 2 } },
+      "src/b.ts": { "adapter-import": { "src/core/adapter/registry": 1 }, "entry-file": { "entry.file": 1 } },
+    });
 
     expect(compare(found, found)).toEqual({ added: [], stale: [] });
 
-    // A violation the baseline lacks: a new file, a new rule in a known file, one more in a known file.
-    expect(compare(found, { "src/a.ts": { "asset-io": 2 }, "src/b.ts": { "adapter-import": 1 } }).added).toEqual([
-      "src/b.ts: entry-file 0 -> 1",
+    // A violation the baseline lacks: a new rule in a known file, one more in a known file.
+    expect(
+      compare(found, { ...found, "src/b.ts": { "adapter-import": found["src/b.ts"]?.["adapter-import"] } }).added,
+    ).toEqual(["src/b.ts: entry-file entry.file 0 -> 1"]);
+    expect(compare(found, { ...found, "src/a.ts": { "asset-io": { readFileSync: 1 } } }).added).toEqual([
+      "src/a.ts: asset-io readFileSync 1 -> 2",
     ]);
-    expect(compare(found, { ...found, "src/a.ts": { "asset-io": 1 } }).added).toEqual(["src/a.ts: asset-io 1 -> 2"]);
+
+    // Trading one violation for another keeps the file's count and still fails, both ways.
+    const traded = compare(found, { ...found, "src/a.ts": { "asset-io": { readFileSync: 1, existsSync: 1 } } });
+    expect(traded.added).toEqual(["src/a.ts: asset-io readFileSync 1 -> 2"]);
+    expect(traded.stale).toEqual(["src/a.ts: asset-io existsSync 1 -> 0"]);
 
     // A baseline entry that no longer occurs: a gone file, or a count that shrank.
-    expect(compare(found, { ...found, "src/gone.ts": { "adapter-id": 1 } }).stale).toEqual([
-      "src/gone.ts: adapter-id 1 -> 0",
+    expect(compare(found, { ...found, "src/gone.ts": { "adapter-id": { akm: 1 } } }).stale).toEqual([
+      "src/gone.ts: adapter-id akm 1 -> 0",
     ]);
-    expect(compare(found, { ...found, "src/a.ts": { "asset-io": 5 } }).stale).toEqual(["src/a.ts: asset-io 5 -> 2"]);
+    expect(compare(found, { ...found, "src/a.ts": { "asset-io": { readFileSync: 5 } } }).stale).toEqual([
+      "src/a.ts: asset-io readFileSync 5 -> 2",
+    ]);
   });
 });
