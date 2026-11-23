@@ -8,6 +8,7 @@
  * checks it with the content it then replaces. A host decides who may call `readValue`.
  */
 
+import fs from "node:fs";
 import path from "node:path";
 import { deriveCanonicalAssetName } from "../core/asset/asset-placement";
 import { assetRevision as digest } from "../core/assets/read";
@@ -32,6 +33,18 @@ export interface SensitiveSelector {
 
 type Kind = "env" | "secret";
 const REF = /^(?:([^/]+)\/\/)?(env|secrets)\//;
+
+/** A host shows a value only from the real file: a file reached through a symbolic link inside its bundle is refused. */
+function refuseLinked(file: string, relPath: string): void {
+  const root = file.slice(0, file.length - relPath.length);
+  let current = root;
+  for (const part of relPath.split("/")) {
+    current = path.join(current, part);
+    // asset-io: host Desktop shows a value only from the real file
+    if (fs.lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink())
+      throw new UsageError("Use the real file, not a symbolic link.");
+  }
+}
 
 /** The ref akm's env/secret functions take, from a ref or a bundle-relative file in a named bundle. */
 function selection(input: SensitiveSelector): { type: Kind; ref: string } {
@@ -67,9 +80,12 @@ function locate(input: SensitiveSelector) {
   const { type, ref } = selection(input);
   const { asset } = type === "env" ? resolveEnvPath(ref) : resolveSecretPath(ref);
   const bundle = asset.bundle;
+  const file = asset.entry.file;
+  // A secret a manager keeps has no file, and no link to refuse.
+  if (file) refuseLinked(file, asset.entry.relPath);
   return {
     bundle,
-    file: asset.entry.file,
+    file,
     type,
     relative: asset.entry.relPath,
     ref: ref.includes("//") ? ref : `${bundle}//${ref}`,
