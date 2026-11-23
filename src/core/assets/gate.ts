@@ -25,11 +25,6 @@ export function assertAdapterWrites(bundle: string, type?: string): void {
   bundleFor(bundle).assertWrites(type);
 }
 
-/** Whether the bundle's adapter declares assets of `type`, written or only recognized. */
-export function adapterDeclares(bundle: string, type: string): boolean {
-  return bundleFor(bundle).declares(type);
-}
-
 /** Whether the bundle's adapter writes assets of `type`: it holds them as its own, not as files it reads. */
 export function adapterWrites(bundle: string, type: string): boolean {
   return bundleFor(bundle).writes(type);

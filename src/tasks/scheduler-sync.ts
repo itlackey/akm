@@ -470,7 +470,7 @@ export function installedRowRef(row: InstalledSchedulerBinding, scope: Scheduler
   if (verb !== "task") return undefined;
   // A row names its task by ref; one written before 0.11 by its id, in the bundle it names.
   if (subject.includes("//")) return subject;
-  return scope.source ? taskRefIn(scope.source, subject, { refuse: false }) : undefined;
+  return scope.source ? taskRefIn(scope.source, subject) : undefined;
 }
 
 /** Where an installed row was scheduled from, for messages. */

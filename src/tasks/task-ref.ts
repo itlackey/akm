@@ -11,7 +11,7 @@
 import { stashDirFor, withoutTypeHead } from "../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
-import { adapterDeclares, adapterWrites, bundleAdapterId, registerAdHocBundle } from "../core/assets/gate";
+import { adapterWrites, bundleAdapterId, registerAdHocBundle } from "../core/assets/gate";
 import { type Asset, listAssets, readAsset, requireAsset } from "../core/assets/read";
 import { assetTypes } from "../core/assets/type";
 import { addressOf } from "../core/assets/write";
@@ -143,18 +143,8 @@ export function taskNameOf(source: TaskBundleSource, input: string): string {
   return name;
 }
 
-/** Refuse a bundle whose adapter declares no task type: it defines no task identity. */
-function refuseWithoutTasks(source: TaskBundleSource): void {
-  if (adapterDeclares(taskBundleId(source), "task")) return;
-  throw new UsageError(
-    `Bundle adapter ${JSON.stringify(bundleAdapterId(source))} does not define task runtime identity.`,
-    "INVALID_FLAG_VALUE",
-  );
-}
-
-/** The task `input` names in a source's bundle, with its id; undefined when it holds none. Refuses what base refused. */
+/** The task `input` names in a source's bundle, with its id; undefined when it holds none. */
 export function resolveTask(source: TaskBundleSource, input: string): { asset: Asset; id: string } | undefined {
-  refuseWithoutTasks(source);
   const asset = findTask(taskScopeOf(source), taskNameOf(source, input));
   if (asset === undefined) return undefined;
   return { asset, id: taskIdOf(asset, source) };
@@ -183,8 +173,7 @@ export function isShadowedByYml(asset: Asset, id: string, claimed: ReadonlySet<s
  * The ref of the task `input` names in `source`'s bundle: the task's own, else the one a task of that id would have
  * (where its adapter would place it), so a task whose file is gone still has the ref its activation was stored under.
  */
-export function taskRefIn(source: TaskBundleSource, input: string, options: { refuse?: boolean } = {}): string {
-  if (options.refuse !== false) refuseWithoutTasks(source);
+export function taskRefIn(source: TaskBundleSource, input: string): string {
   const name = taskNameOf(source, input);
   const found = findTask(taskScopeOf(source), name);
   if (found) return found.ref;

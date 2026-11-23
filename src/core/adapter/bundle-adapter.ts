@@ -130,8 +130,6 @@ export interface BundleAdapter {
   readonly addressedBy: "root" | "location";
   /** Types it creates, updates and deletes. Empty: read-only. */
   readonly writes: readonly string[];
-  /** Types it recognizes that it does not write (a read-only adapter's own), besides those in `writes`. */
-  readonly reads?: readonly string[];
   /** Types it retires recoverably; a subset of `writes`. Empty: it deletes only. */
   readonly retires: readonly string[];
 
