@@ -30,13 +30,7 @@ import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/
 import { withoutAdapterPrompts } from "../../core/assets/gate";
 import { validateBundleAssets } from "../../core/assets/validate";
 import { deriveBundleIds } from "../../core/bundle-id";
-import {
-  compareCodePoints,
-  isAkmRegistryCachePath,
-  resolveStashDir,
-  safeRealpath,
-  samePath,
-} from "../../core/common";
+import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpath, samePath } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig, primaryBundlePath } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
