@@ -14,7 +14,7 @@ import path from "node:path";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import { getDbPath } from "../../../src/core/paths";
-import { openStateDatabase } from "../../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { insertUsageEvent } from "../../../src/indexer/usage/usage-events";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
@@ -91,11 +91,11 @@ function seedHistory(ref: string, entryId: number): void {
       source: "user",
     });
     db.prepare(
-      "INSERT INTO proposals (id, stash_dir, ref, status, source, created_at, updated_at) VALUES (?, ?, ?, 'accepted', 'reflect', 't', 't')",
-    ).run(`p-${ref}`, storage.stashDir, ref);
+      "INSERT INTO proposals (id, bundle_id, ref, status, source, created_at, updated_at) VALUES (?, ?, ?, 'accepted', 'reflect', 't', 't')",
+    ).run(`p-${ref}`, stateBundleId(storage.stashDir), ref);
     db.prepare(
-      "INSERT INTO improve_ledger (stash_dir, ref, source, last_attempt_at, outcome) VALUES (?, ?, 'reflect', 't', 'accepted')",
-    ).run(storage.stashDir, ref);
+      "INSERT INTO improve_ledger (bundle_id, ref, source, last_attempt_at, outcome) VALUES (?, ?, 'reflect', 't', 'accepted')",
+    ).run(stateBundleId(storage.stashDir), ref);
     db.prepare("INSERT INTO asset_salience (asset_ref) VALUES (?)").run(ref);
     db.prepare("INSERT INTO asset_outcome (asset_ref) VALUES (?)").run(ref);
   } finally {

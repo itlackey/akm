@@ -18,7 +18,7 @@ import { recordImproveRunResult } from "../../../src/commands/improve/improve-re
 import { createProposal } from "../../../src/commands/proposal/repository";
 import type { ImproveResultEnvelope } from "../../../src/core/improve-result";
 import type { AkmImproveResult } from "../../../src/core/improve-types";
-import { openStateDatabase } from "../../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
 import { _setOpencodeVersionProbeForTests } from "../../../src/integrations/harnesses/opencode/version";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
@@ -221,7 +221,7 @@ describe("a corrupt improve run (B10-36)", () => {
         id: "bad-run",
         startedAt,
         completedAt: startedAt,
-        stashDir: storage.stashDir,
+        bundleId: stateBundleId(storage.stashDir),
         dryRun: false,
         strategy: "default",
         scopeMode: "all",

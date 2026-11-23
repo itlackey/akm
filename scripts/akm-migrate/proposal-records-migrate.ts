@@ -12,10 +12,11 @@
 import fs from "node:fs";
 import { convertLegacyProposalMetadata, isLegacyProposalMetadata } from "../../src/commands/proposal/legacy-records";
 import {
+  classifyStateDbError,
   getStateDbPath,
   listPendingStateMigrations,
+  openStateReadSnapshot,
   withImmediateTransaction,
-  withReadonlyStateDb,
   withStateDb,
 } from "../../src/core/state-db";
 import type { Database } from "../../src/storage/database";
@@ -77,14 +78,23 @@ function readable(): boolean {
   return fs.existsSync(getStateDbPath()) && listPendingStateMigrations().length === 0;
 }
 
-/** Read-only: how many records `apply` would rewrite. */
+/**
+ * Read-only: how many records `apply` would rewrite. Read from a snapshot brought to the current schema, so a state.db
+ * with a state migration still pending (the state step runs first in `apply`) reports the records it holds.
+ */
 export function inspectProposalRecordsMigration(): ProposalRecordsMigrationStatus {
-  return statusOf(
-    summarize(
-      withReadonlyStateDb((db) => oldRecords(db).length, 0),
-      "to rewrite",
-    ),
-  );
+  const dbPath = getStateDbPath();
+  if (!fs.existsSync(dbPath)) return statusOf(summarize(0, "to rewrite"));
+  try {
+    const db = openStateReadSnapshot(dbPath);
+    try {
+      return statusOf(summarize(db ? oldRecords(db).length : 0, "to rewrite"));
+    } finally {
+      db?.close();
+    }
+  } catch (error) {
+    throw classifyStateDbError(error, dbPath);
+  }
 }
 
 /** Rewrite every old record as the current one, in one transaction, after a copy of state.db. */

@@ -40,7 +40,7 @@ import { type ResolvedProject, resolveProject } from "../../core/projects";
 import { collectSensitiveValues, redactErrorBody } from "../../core/redaction";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { resolveTypeConventions, typeConventionRef } from "../../core/standards/resolve-type-conventions";
-import { getStateDbPath, openStateDatabase } from "../../core/state-db";
+import { getStateDbPath, openStateDatabase, stateBundleId } from "../../core/state-db";
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warn, warnVerbose } from "../../core/warn";
@@ -752,12 +752,12 @@ async function processSession(
     ];
     try {
       readLedgerDb(access, (db) => {
-        for (const row of listImproveLedgerRows(db, stashDir, ["extract"]))
+        for (const row of listImproveLedgerRows(db, stateBundleId(stashDir), ["extract"]))
           ledger.set(ledgerKey(row.source, row.ref), row);
         for (const candidate of payload.candidates) {
           const row = ledger.get(ledgerKey("extract", deriveExtractCandidateRef(candidate, data.ref, projectName)));
           if (row?.outcome !== "accepted" || !row.proposalId) continue;
-          const fm = getStateProposal(db, row.proposalId, stashDir)?.payload.frontmatter ?? {};
+          const fm = getStateProposal(db, row.proposalId, stateBundleId(stashDir))?.payload.frontmatter ?? {};
           const sources = (fm.provenance as { sources?: Array<{ resource?: unknown }> } | undefined)?.sources;
           const cited = [fm.xrefs, fm.evidenceSources, Array.isArray(sources) ? sources.map((s) => s?.resource) : []];
           if (cited.some((list) => Array.isArray(list) && list.some((mark) => marks.includes(mark)))) {

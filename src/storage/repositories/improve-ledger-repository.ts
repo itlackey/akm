@@ -7,7 +7,7 @@
  * durable record of "what did improve last do with this (ref, source), and
  * when may it try again".
  *
- * One row per `(stash_dir, ref, source)`. Every stage writes it when it
+ * One row per `(bundle_id, ref, source)`. Every stage writes it when it
  * proposes, judges, rejects, accepts, expires or skips a ref; every stage's
  * candidate selection reads it before any LLM call. It replaces the
  * projections the stages used to re-derive the same invariant from — rejected
@@ -42,7 +42,7 @@ export const IMPROVE_LEDGER_OUTCOMES = [
 export type ImproveLedgerOutcome = (typeof IMPROVE_LEDGER_OUTCOMES)[number];
 
 export interface ImproveLedgerRow {
-  stashDir: string;
+  bundleId: string;
   /** The asset the stage attempted (input ref for distill/consolidate; the proposal ref otherwise). */
   ref: string;
   source: string;
@@ -196,7 +196,7 @@ export function isLedgerBlocked(row: ImproveLedgerRow | undefined, nowIso: strin
 }
 
 interface LedgerSqlRow {
-  stash_dir: string;
+  bundle_id: string;
   ref: string;
   source: string;
   last_attempt_at: string;
@@ -209,7 +209,7 @@ interface LedgerSqlRow {
 
 function toRow(row: LedgerSqlRow): ImproveLedgerRow {
   return {
-    stashDir: row.stash_dir,
+    bundleId: row.bundle_id,
     ref: row.ref,
     source: row.source,
     lastAttemptAt: row.last_attempt_at,
@@ -230,7 +230,7 @@ function trimDetail(detail: string | undefined): string | null {
 }
 
 export interface RecordImproveLedgerInput {
-  stashDir: string;
+  bundleId: string;
   ref: string;
   source: string;
   outcome: ImproveLedgerOutcome;
@@ -242,10 +242,10 @@ export interface RecordImproveLedgerInput {
   contentHash?: string;
 }
 
-/** Record an attempt on `(stashDir, ref, source)`: upsert the row and its cadence. */
+/** Record an attempt on `(bundleId, ref, source)`: upsert the row and its cadence. */
 export function recordImproveLedger(db: Database, input: RecordImproveLedgerInput): ImproveLedgerRow {
   const row: ImproveLedgerRow = {
-    stashDir: input.stashDir,
+    bundleId: input.bundleId,
     ref: input.ref,
     source: input.source,
     lastAttemptAt: input.at,
@@ -257,9 +257,9 @@ export function recordImproveLedger(db: Database, input: RecordImproveLedgerInpu
   };
   db.prepare(
     `INSERT INTO improve_ledger
-       (stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail, content_hash)
+       (bundle_id, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail, content_hash)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(stash_dir, ref, source) DO UPDATE SET
+     ON CONFLICT(bundle_id, ref, source) DO UPDATE SET
        last_attempt_at  = excluded.last_attempt_at,
        outcome          = excluded.outcome,
        next_eligible_at = excluded.next_eligible_at,
@@ -267,7 +267,7 @@ export function recordImproveLedger(db: Database, input: RecordImproveLedgerInpu
        detail           = excluded.detail,
        content_hash     = excluded.content_hash`,
   ).run(
-    row.stashDir,
+    row.bundleId,
     row.ref,
     row.source,
     row.lastAttemptAt,
@@ -282,7 +282,7 @@ export function recordImproveLedger(db: Database, input: RecordImproveLedgerInpu
 
 export interface RecordImproveLedgerDecisionInput {
   proposalId: string;
-  stashDir: string;
+  bundleId: string;
   /**
    * The fallback key when no row carries `proposalId`: the proposal's own ref,
    * or — for a promotion, whose ledger row is keyed by its source memory — that
@@ -318,19 +318,19 @@ export function recordImproveLedgerDecision(db: Database, input: RecordImproveLe
     .prepare(
       `UPDATE improve_ledger
        SET outcome = ?, next_eligible_at = ?, detail = ?, content_hash = COALESCE(?, content_hash)
-       WHERE stash_dir = ? AND proposal_id = ?`,
+       WHERE bundle_id = ? AND proposal_id = ?`,
     )
     .run(
       input.outcome,
       nextEligibleAt(input.source, input.outcome, input.at, hash),
       trimDetail(input.detail),
       hash ?? null,
-      input.stashDir,
+      input.bundleId,
       input.proposalId,
     ).changes;
   if (Number(changes) > 0) return;
   recordImproveLedger(db, {
-    stashDir: input.stashDir,
+    bundleId: input.bundleId,
     ref: input.ref,
     source: input.source,
     outcome: input.outcome,
@@ -353,13 +353,13 @@ export function recordImproveLedgerDecision(db: Database, input: RecordImproveLe
  */
 export function reopenImproveLedgerDecision(
   db: Database,
-  input: { proposalId: string; stashDir: string; source: string; at: string; detail?: string },
+  input: { proposalId: string; bundleId: string; source: string; at: string; detail?: string },
 ): void {
   db.prepare(
     `UPDATE improve_ledger
      SET outcome = 'proposed', next_eligible_at = ?, detail = ?, content_hash = NULL
-     WHERE stash_dir = ? AND proposal_id = ?`,
-  ).run(nextEligibleAt(input.source, "proposed", input.at), trimDetail(input.detail), input.stashDir, input.proposalId);
+     WHERE bundle_id = ? AND proposal_id = ?`,
+  ).run(nextEligibleAt(input.source, "proposed", input.at), trimDetail(input.detail), input.bundleId, input.proposalId);
 }
 
 /**
@@ -368,8 +368,8 @@ export function reopenImproveLedgerDecision(
  * is dropped, returning the ledger to what the mint left. Found by
  * `proposal_id`, like {@link recordImproveLedgerDecision}.
  */
-export function forgetImproveLedgerDecision(db: Database, stashDir: string, proposalId: string): void {
-  db.prepare("DELETE FROM improve_ledger WHERE stash_dir = ? AND proposal_id = ?").run(stashDir, proposalId);
+export function forgetImproveLedgerDecision(db: Database, bundleId: string, proposalId: string): void {
+  db.prepare("DELETE FROM improve_ledger WHERE bundle_id = ? AND proposal_id = ?").run(bundleId, proposalId);
 }
 
 /**
@@ -395,30 +395,30 @@ function hasContentHashColumn(db: Database): boolean {
 
 export function getImproveLedgerRow(
   db: Database,
-  stashDir: string,
+  bundleId: string,
   ref: string,
   source: string,
 ): ImproveLedgerRow | undefined {
   const withHash = hasContentHashColumn(db);
   const row = db
     .prepare(
-      `SELECT stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail${withHash ? ", content_hash" : ""}
-       FROM improve_ledger WHERE stash_dir = ? AND ref = ? AND source = ?`,
+      `SELECT bundle_id, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail${withHash ? ", content_hash" : ""}
+       FROM improve_ledger WHERE bundle_id = ? AND ref = ? AND source = ?`,
     )
-    .get(stashDir, ref, source) as LedgerSqlRow | undefined;
+    .get(bundleId, ref, source) as LedgerSqlRow | undefined;
   return row ? toRow(withHash ? row : { ...row, content_hash: null }) : undefined;
 }
 
 /** Every row for one stash, optionally narrowed to `sources`. */
-export function listImproveLedgerRows(db: Database, stashDir: string, sources?: readonly string[]): ImproveLedgerRow[] {
+export function listImproveLedgerRows(db: Database, bundleId: string, sources?: readonly string[]): ImproveLedgerRow[] {
   const withHash = hasContentHashColumn(db);
   const sourceFilter = sources && sources.length > 0 ? ` AND source IN (${sources.map(() => "?").join(", ")})` : "";
   const rows = db
     .prepare(
-      `SELECT stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail${withHash ? ", content_hash" : ""}
-       FROM improve_ledger WHERE stash_dir = ?${sourceFilter} ORDER BY ref ASC, source ASC`,
+      `SELECT bundle_id, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail${withHash ? ", content_hash" : ""}
+       FROM improve_ledger WHERE bundle_id = ?${sourceFilter} ORDER BY ref ASC, source ASC`,
     )
-    .all(stashDir, ...(sources && sources.length > 0 ? sources : [])) as LedgerSqlRow[];
+    .all(bundleId, ...(sources && sources.length > 0 ? sources : [])) as LedgerSqlRow[];
   return rows.map((row) => toRow(withHash ? row : { ...row, content_hash: null }));
 }
 

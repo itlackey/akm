@@ -16,7 +16,7 @@ import path from "node:path";
 import { createProposal } from "../../../src/commands/proposal/repository";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { AkmError, type AkmErrorKind, CONFLICT_CODES } from "../../../src/core/errors";
-import { openStateDatabase } from "../../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
 import { scrubUrlCredentials } from "../../../src/workspace";
@@ -210,7 +210,7 @@ export async function seed(): Promise<void> {
       id: "run-1",
       startedAt: new Date(Date.now() - 120_000).toISOString(),
       completedAt: new Date(Date.now() - 60_000).toISOString(),
-      stashDir: stash,
+      bundleId: stateBundleId(stash),
       dryRun: false,
       strategy: "default",
       scopeMode: "all",

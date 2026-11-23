@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readImproveRows, summarizeImproveRuns } from "../../../src/commands/health/improve-metrics";
 import type { ImproveResultEnvelope } from "../../../src/core/improve-result";
-import { openStateDatabase } from "../../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -31,7 +31,7 @@ describe("summarizeImproveRuns result-row accounting", () => {
         id,
         startedAt,
         completedAt: startedAt,
-        stashDir: "/tmp/stash",
+        bundleId: stateBundleId("/tmp/stash"),
         dryRun: false,
         strategy: "default",
         scopeMode: "all",
@@ -125,7 +125,7 @@ describe("summarizeImproveRuns result-row accounting", () => {
           id,
           startedAt: timestamp,
           completedAt: timestamp,
-          stashDir: "/tmp/stash",
+          bundleId: stateBundleId("/tmp/stash"),
           dryRun: false,
           strategy: "default",
           scopeMode: "all",
@@ -162,7 +162,7 @@ describe("summarizeImproveRuns result-row accounting", () => {
         id: "older-release",
         startedAt,
         completedAt: startedAt,
-        stashDir: "/tmp/stash",
+        bundleId: stateBundleId("/tmp/stash"),
         dryRun: false,
         strategy: "default",
         scopeMode: "all",
@@ -202,7 +202,7 @@ describe("summarizeImproveRuns result-row accounting", () => {
         id: "triaged",
         startedAt,
         completedAt: startedAt,
-        stashDir: "/tmp/stash",
+        bundleId: stateBundleId("/tmp/stash"),
         dryRun: false,
         strategy: "default",
         scopeMode: "all",

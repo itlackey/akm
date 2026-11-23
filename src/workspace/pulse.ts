@@ -13,6 +13,7 @@ import type { MetricsUsageRow } from "../commands/metrics/types";
 import { proposalWaitingSince } from "../commands/proposal/proposal-types";
 import { resolveStashDir } from "../core/common";
 import { defaultConnection, loadConfig } from "../core/config/config";
+import { stateBundleId } from "../core/state-db";
 import { learningStatus } from "../setup/learning";
 import { queryImproveRuns } from "../storage/repositories/improve-runs-repository";
 import { listStateProposals } from "../storage/repositories/proposals-repository";
@@ -36,7 +37,7 @@ export function overviewPulse() {
       llm: readLlmRows(db, window),
       runs: queryImproveRuns(db, weekAgo),
       tasks: queryTaskHistory(db, { since: weekAgo }),
-      proposals: listStateProposals(db, { stashDir: resolveStashDir(), withContent: false }),
+      proposals: listStateProposals(db, { bundleId: stateBundleId(resolveStashDir()), withContent: false }),
     }),
     null,
   );

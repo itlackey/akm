@@ -12922,6 +12922,363 @@
         "shape": "env-list",
         "schemaVersion": 1
       }
+    },
+    "bundle directory moved :: proposal list": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 0,
+        "proposals": []
+      }
+    },
+    "bundle directory moved :: proposal list pending": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 0,
+        "proposals": []
+      }
+    },
+    "bundle directory moved :: proposal list rejected": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 0,
+        "proposals": []
+      }
+    },
+    "bundle directory moved :: proposal show 1": {
+      "exit": 1,
+      "errorJson": {
+        "ok": false,
+        "error": "Proposal \"00000000-0000-4000-8000-000000000001\" not found.",
+        "code": "PROPOSAL_NOT_FOUND",
+        "hint": "Run `akm proposal list` to see pending proposals and their ids."
+      }
+    },
+    "bundle directory moved :: proposal show 2": {
+      "exit": 1,
+      "errorJson": {
+        "ok": false,
+        "error": "Proposal \"00000000-0000-4000-8000-000000000002\" not found.",
+        "code": "PROPOSAL_NOT_FOUND",
+        "hint": "Run `akm proposal list` to see pending proposals and their ids."
+      }
+    },
+    "bundle directory moved :: proposal list --queue team": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 1,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000003",
+            "ref": "team//knowledge/shared",
+            "status": "pending",
+            "source": "feedback",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "bundle directory moved :: improve report": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "mode": "run",
+        "runId": "run-0001",
+        "usageReport": {
+          "byProcessEngineModel": [],
+          "noCalls": []
+        },
+        "notes": [
+          "eligibility reasons unavailable for runs recorded before 0.9.15"
+        ],
+        "shape": "improve-report",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm improve report is deprecated and is removed in 0.11: use `akm doctor metrics improve`. See STABILITY.md."
+      ]
+    },
+    "bundle directory moved :: improve dry-run": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "schemaVersion": 2,
+        "strategy": "default",
+        "scope": {
+          "mode": "all"
+        },
+        "dryRun": true,
+        "memorySummary": {
+          "eligible": 0,
+          "derived": 0
+        },
+        "plannedRefs": [],
+        "plan": {
+          "mode": "estimate",
+          "dispatch": false,
+          "snapshot": {
+            "status": "missing",
+            "reason": "index.db is missing; dry-run uses an empty snapshot and does not create it"
+          },
+          "candidates": {
+            "rawInScope": 0,
+            "selected": 0,
+            "effective": 0
+          },
+          "limits": {
+            "configured": {
+              "reflect": 25
+            },
+            "effective": 25,
+            "additiveReplayAllowance": 0,
+            "totalCeiling": 25
+          },
+          "gates": [
+            {
+              "name": "profile",
+              "removed": 0,
+              "reason": "all enabled per-ref processes refuse the asset type"
+            },
+            {
+              "name": "cleanup",
+              "removed": 0,
+              "reason": "memory cleanup archive application is autonomy-gated"
+            },
+            {
+              "name": "validation",
+              "removed": 0,
+              "reason": "structural validation failures"
+            },
+            {
+              "name": "retrieval",
+              "removed": 0,
+              "reason": "no feedback, and neither returned by search, curate or show in the last 90 days nor new material improve never processed"
+            },
+            {
+              "name": "signal",
+              "removed": 0,
+              "reason": "no fresh negative feedback (or, for distill, any signal) since the last attempt, or a ledger window holds it"
+            },
+            {
+              "name": "disk",
+              "removed": 0,
+              "reason": "backing asset is absent on disk"
+            },
+            {
+              "name": "limit",
+              "removed": 0,
+              "reason": "deferred by the effective run limit"
+            }
+          ],
+          "effectiveRefs": [],
+          "processes": [
+            {
+              "process": "reflect",
+              "enabled": true,
+              "engine": "default",
+              "model": "m",
+              "engineKind": "connection",
+              "notices": [],
+              "eligibleRefs": 0
+            },
+            {
+              "process": "distill",
+              "enabled": true,
+              "engine": "default",
+              "model": "m",
+              "engineKind": "connection",
+              "notices": [],
+              "eligibleRefs": 0
+            },
+            {
+              "process": "consolidate",
+              "enabled": true,
+              "engine": "default",
+              "model": "m",
+              "engineKind": "connection",
+              "notices": [],
+              "eligibleRefs": 0
+            },
+            {
+              "process": "memoryInference",
+              "enabled": false,
+              "notices": []
+            },
+            {
+              "process": "extract",
+              "enabled": false,
+              "notices": []
+            },
+            {
+              "process": "validation",
+              "enabled": true,
+              "engine": "default",
+              "model": "m",
+              "engineKind": "connection",
+              "notices": []
+            },
+            {
+              "process": "triage",
+              "enabled": true,
+              "notices": []
+            },
+            {
+              "process": "proactiveMaintenance",
+              "enabled": true,
+              "notices": []
+            }
+          ],
+          "proactive": {
+            "configured": {
+              "dueDays": 30,
+              "maxPerRun": 15
+            },
+            "effective": {
+              "dueDays": 30,
+              "maxPerRun": 15
+            },
+            "candidatePool": 0,
+            "selected": 0,
+            "dueTotal": 0,
+            "neverReflected": 0,
+            "selectedRefs": []
+          },
+          "consolidation": {
+            "configured": {
+              "enabled": true
+            },
+            "effective": {
+              "enabled": true,
+              "chunkSize": 12
+            },
+            "poolSize": 2,
+            "candidatePoolSize": 2,
+            "gates": {
+              "profile": {
+                "passed": true,
+                "reason": "consolidation enabled"
+              },
+              "delta": {
+                "passed": true,
+                "reason": "no memory was judged recently"
+              }
+            },
+            "wouldRun": true,
+            "reason": "all consolidation gates pass",
+            "estimatedChunks": 1
+          },
+          "stages": [
+            {
+              "name": "consolidation",
+              "wouldRun": true,
+              "reason": "all consolidation gates pass"
+            },
+            {
+              "name": "extract",
+              "wouldRun": false,
+              "reason": "disabled"
+            },
+            {
+              "name": "memory-inference",
+              "wouldRun": false,
+              "reason": "disabled"
+            }
+          ],
+          "triage": {
+            "enabled": true,
+            "configuredMode": "promote",
+            "mode": "promote",
+            "maxAcceptsPerRun": 200
+          }
+        },
+        "proactiveMaintenance": {
+          "selected": 0,
+          "dueTotal": 0,
+          "neverReflected": 0,
+          "selectedRefs": []
+        },
+        "shape": "improve"
+      },
+      "stderr": [
+        "[improve] 0 actionable; 0 will be processed"
+      ]
+    },
+    "bundle directory moved :: doctor state-unknown-bundle": {
+      "value": "<no state-unknown-bundle finding>"
+    },
+    "bundle renamed by hand :: proposal list": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 1,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "ref": "main//knowledge/new-note",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "bundle renamed by hand :: proposal list pending": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 1,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "ref": "main//knowledge/new-note",
+            "status": "pending",
+            "source": "reflect",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "bundle renamed by hand :: proposal show 1": {
+      "exit": 70,
+      "errorJson": {
+        "ok": false,
+        "error": "Proposal primary change has no content."
+      }
+    },
+    "bundle renamed by hand :: proposal list --queue team": {
+      "exit": 0,
+      "stdout": {
+        "totalCount": 1,
+        "proposals": [
+          {
+            "id": "00000000-0000-4000-8000-000000000003",
+            "ref": "team//knowledge/shared",
+            "status": "pending",
+            "source": "feedback",
+            "createdAt": "2026-01-30T10:00:00.000Z"
+          }
+        ]
+      }
+    },
+    "bundle renamed by hand :: improve report": {
+      "exit": 0,
+      "stdout": {
+        "ok": true,
+        "mode": "run",
+        "runId": "run-0001",
+        "usageReport": {
+          "byProcessEngineModel": [],
+          "noCalls": []
+        },
+        "notes": [
+          "eligibility reasons unavailable for runs recorded before 0.9.15"
+        ],
+        "shape": "improve-report",
+        "schemaVersion": 1
+      },
+      "stderr": [
+        "[deprecated] akm improve report is deprecated and is removed in 0.11: use `akm doctor metrics improve`. See STABILITY.md."
+      ]
+    },
+    "bundle renamed by hand :: doctor state-unknown-bundle": {
+      "value": "<no state-unknown-bundle finding>"
     }
   }
 }

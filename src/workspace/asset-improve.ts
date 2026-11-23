@@ -7,6 +7,7 @@
 import { metricsWindow, readUsageRows } from "../commands/metrics/metrics-cli";
 import { resolveStashDir } from "../core/common";
 import { UsageError } from "../core/errors";
+import { stateBundleId } from "../core/state-db";
 import { listStateProposals } from "../storage/repositories/proposals-repository";
 import { classifyOutcome, decidedAt, weekOf, weekRange } from "./derive";
 import { stateDbUnavailable, withReadonlyStateDb } from "./readers";
@@ -19,7 +20,7 @@ export function assetImprove(input: { ref: string }) {
   const window = metricsWindow("90d");
   const state = withReadonlyStateDb(
     (db) => ({
-      proposals: listStateProposals(db, { stashDir: resolveStashDir(), ref, withContent: false }),
+      proposals: listStateProposals(db, { bundleId: stateBundleId(resolveStashDir()), ref, withContent: false }),
       mine: readUsageRows(db, window).filter((row) => row.ref === ref),
     }),
     null,

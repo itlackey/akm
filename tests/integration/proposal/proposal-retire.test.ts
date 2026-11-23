@@ -53,7 +53,7 @@ import { akmSearch } from "../../../src/commands/read/search";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import { saveConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
-import { openStateDatabase } from "../../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
 import { upsertProposal } from "../../../src/storage/repositories/proposals-repository";
@@ -222,7 +222,7 @@ describe("akm proposal accept on a retire proposal", () => {
     // (S6: consolidate-pair, not the promote pass's consolidate).
     const db = openStateDatabase();
     try {
-      const row = getImproveLedgerRow(db, storage.stashDir, archived.ref, "consolidate-pair");
+      const row = getImproveLedgerRow(db, stateBundleId(storage.stashDir), archived.ref, "consolidate-pair");
       expect(row?.outcome).toBe("accepted");
     } finally {
       db.close();
@@ -341,7 +341,7 @@ describe("akm proposal accept on a retire proposal", () => {
       // Simulate the crash: phase 1 (record intent) finished, phase 2 (move) never started.
       const db = openStateDatabase();
       try {
-        upsertProposal(db, { ...proposal, retireAcceptIntent: { backupContent } }, storage.stashDir);
+        upsertProposal(db, { ...proposal, retireAcceptIntent: { backupContent } }, stateBundleId(storage.stashDir));
       } finally {
         db.close();
       }
@@ -376,7 +376,7 @@ describe("akm proposal accept on a retire proposal", () => {
       const backupContent = fs.readFileSync(oldPath, "utf8");
       const db = openStateDatabase();
       try {
-        upsertProposal(db, { ...proposal, retireAcceptIntent: { backupContent } }, storage.stashDir);
+        upsertProposal(db, { ...proposal, retireAcceptIntent: { backupContent } }, stateBundleId(storage.stashDir));
       } finally {
         db.close();
       }
@@ -449,7 +449,11 @@ describe("akm proposal accept on a retire proposal", () => {
       // has no edge yet.
       const db = openStateDatabase();
       try {
-        upsertProposal(db, { ...proposal, retireAcceptIntent: { backupContent: original } }, storage.stashDir);
+        upsertProposal(
+          db,
+          { ...proposal, retireAcceptIntent: { backupContent: original } },
+          stateBundleId(storage.stashDir),
+        );
       } finally {
         db.close();
       }
@@ -483,7 +487,7 @@ describe("akm proposal accept on a retire proposal", () => {
       const aBackup = fs.readFileSync(aPath, "utf8");
       const db = openStateDatabase();
       try {
-        upsertProposal(db, { ...pAB, retireAcceptIntent: { backupContent: aBackup } }, storage.stashDir);
+        upsertProposal(db, { ...pAB, retireAcceptIntent: { backupContent: aBackup } }, stateBundleId(storage.stashDir));
       } finally {
         db.close();
       }
@@ -528,7 +532,7 @@ describe("akm proposal accept on a retire proposal", () => {
     const backupContent = fs.readFileSync(oldPath, "utf8");
     const db = openStateDatabase();
     try {
-      upsertProposal(db, { ...proposal, retireAcceptIntent: { backupContent } }, storage.stashDir);
+      upsertProposal(db, { ...proposal, retireAcceptIntent: { backupContent } }, stateBundleId(storage.stashDir));
     } finally {
       db.close();
     }

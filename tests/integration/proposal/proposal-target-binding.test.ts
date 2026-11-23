@@ -5,7 +5,7 @@ import path from "node:path";
 import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
 import { createProposal, listProposals, resolveProposalId } from "../../../src/commands/proposal/repository";
 import { type AkmConfig, resetConfigCache } from "../../../src/core/config/config";
-import { openStateDatabase } from "../../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
 import { durableItemRef } from "../../_helpers/durable-ref";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
@@ -55,9 +55,9 @@ describe("proposal queue target binding", () => {
     try {
       db.prepare(
         `INSERT INTO proposals
-         (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+         (id, bundle_id, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
          VALUES (?, ?, ?, 'pending', 'reflect', ?, ?, ?, NULL, '{}')`,
-      ).run(id, stashDir, ref, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", VALID_LESSON);
+      ).run(id, stateBundleId(stashDir), ref, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", VALID_LESSON);
     } finally {
       db.close();
     }

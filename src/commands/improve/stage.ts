@@ -16,6 +16,7 @@ import { ConfigError } from "../../core/errors";
 import type { EventsContext } from "../../core/events";
 import { effectiveRequestFields, thinkingSetting } from "../../core/llm-inference";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
+import { stateBundleId } from "../../core/state-db";
 import type { Parsed } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { NoticeSink } from "../../execution/notices";
@@ -178,7 +179,7 @@ export function rejectedProposalContext(
       const proposals = listProposalsReadOnly(stash, { ref, status: "rejected", includeArchive: true }, { ...ctx, db });
       const history: Array<{ at: string; entry: RejectedProposalContext }> = [];
       try {
-        const latest = attempt ? getImproveLedgerRow(db, stash, attempt.ref, attempt.source) : undefined;
+        const latest = attempt ? getImproveLedgerRow(db, stateBundleId(stash), attempt.ref, attempt.source) : undefined;
         if (latest?.outcome === "quality_rejected" && latest.detail) {
           history.push({ at: latest.lastAttemptAt, entry: { ref, reason: latest.detail } });
         } else if (
@@ -186,7 +187,7 @@ export function rejectedProposalContext(
           latest.proposalId &&
           !proposals.some((p) => p.id === latest.proposalId)
         ) {
-          const linked = getStateProposal(db, latest.proposalId, stash);
+          const linked = getStateProposal(db, latest.proposalId, stateBundleId(stash));
           if (linked?.status === "rejected") proposals.push(linked);
         }
       } catch (error) {

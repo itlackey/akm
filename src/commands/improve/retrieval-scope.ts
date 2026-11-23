@@ -14,6 +14,7 @@
 
 import fs from "node:fs";
 import { daysToMs } from "../../core/common";
+import { stateBundleId } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import { listUsedEntryRefs, USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
 import { listImproveLedgerRows } from "../../storage/repositories/improve-ledger-repository";
@@ -66,11 +67,11 @@ export function loadRetrievalScope(
       // (selectInitiators reads content_hash directly, never this scope).
       // Proposal rows are untouched: a MINTED retire proposal is real
       // evidence something happened to the asset.
-      for (const row of listImproveLedgerRows(db, stashDir)) {
+      for (const row of listImproveLedgerRows(db, stateBundleId(stashDir))) {
         if (row.source === PAIR_PASS_LEDGER_SOURCE) continue;
         if (!CAPTURE_SOURCES.has(row.source)) processed.add(stripBundle(row.ref));
       }
-      for (const row of listProposalRefSources(db, stashDir)) {
+      for (const row of listProposalRefSources(db, stateBundleId(stashDir))) {
         if (!CAPTURE_SOURCES.has(row.source)) processed.add(stripBundle(row.ref));
       }
     });

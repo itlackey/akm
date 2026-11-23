@@ -106,7 +106,7 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
   test("proposals repo: a stored opaque conceptId round-trips through the canonical-ref check", () => {
     const row: ProposalRow = {
       id: "prop-opaque-1",
-      stash_dir: storage.stashDir,
+      bundle_id: "stash",
       ref: "adversarial//tables/customers",
       status: "pending",
       source: "propose",

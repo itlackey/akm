@@ -157,8 +157,16 @@ export function copySqliteSnapshot(dbPath: string, snapshotPath: string): void {
  * A live rollback-journal database fails closed because a file-level copy
  * cannot distinguish its committed and uncommitted pages without attaching to
  * the source.
+ *
+ * `prepare` runs once on the private copy before it is opened read-only (a
+ * writable handle, closed again): it may bring the copy's schema forward so a
+ * reader written for the current schema can read a database that has not been
+ * migrated yet. The source is never touched.
  */
-export function openSqliteReadSnapshot(dbPath: string): Database | undefined {
+export function openSqliteReadSnapshot(
+  dbPath: string,
+  options?: { prepare?: (copy: Database) => void },
+): Database | undefined {
   if (!pathExists(dbPath)) return undefined;
 
   const snapshotDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-sqlite-read-"));
@@ -166,6 +174,14 @@ export function openSqliteReadSnapshot(dbPath: string): Database | undefined {
   let db: Database | undefined;
   try {
     copySqliteSnapshot(dbPath, snapshotPath);
+    if (options?.prepare) {
+      const copy = openDatabase(snapshotPath);
+      try {
+        options.prepare(copy);
+      } finally {
+        copy.close();
+      }
+    }
     db = openDatabase(snapshotPath, { readonly: true, create: false });
     const closeSnapshot = db.close.bind(db);
     let closed = false;

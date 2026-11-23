@@ -15,7 +15,7 @@ import { akmImprove } from "../../../../src/commands/improve/improve";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { saveConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
-import { openStateDatabase } from "../../../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import { _setChatCompletionForTests } from "../../../../src/llm/client";
 import { listImproveLedgerRows } from "../../../../src/storage/repositories/improve-ledger-repository";
@@ -65,7 +65,7 @@ async function runImprove(
 function consolidateLedgerRows() {
   const db = openStateDatabase();
   try {
-    return listImproveLedgerRows(db, stashDir, ["consolidate"]);
+    return listImproveLedgerRows(db, stateBundleId(stashDir), ["consolidate"]);
   } finally {
     db.close();
   }

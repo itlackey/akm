@@ -298,7 +298,7 @@ function validatePresentMetadata(meta: Record<string, unknown>): void {
  */
 export interface ProposalRow {
   id: string;
-  stash_dir: string;
+  bundle_id: string;
   ref: string;
   status: string;
   source: string;
@@ -392,9 +392,9 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
 
 /**
  * Convert a public `Proposal` to column values ready for an INSERT/UPDATE.
- * The `stash_dir` comes from the call site (proposals.ts has it in scope).
+ * The `bundle_id` comes from the call site (proposals.ts has it in scope).
  */
-export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<ProposalRow, "id"> & { id: string } {
+export function proposalToRowValues(proposal: Proposal, bundleId: string): Omit<ProposalRow, "id"> & { id: string } {
   // Fields that have no dedicated column live in metadata_json.
   const metaObj: Record<string, unknown> = {};
   // #859: `changes` and `proposedTarget` are only enforced as REQUIRED when
@@ -454,7 +454,7 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
 
   return {
     id: proposal.id,
-    stash_dir: stashDir,
+    bundle_id: bundleId,
     ref: currentProposalRef(proposal.ref, true),
     status: proposal.status,
     source: proposal.source,
@@ -470,14 +470,14 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
  * Upsert a proposal row. Called by the proposal write path when state.db is
  * the active backend.
  */
-export function upsertProposal(db: Database, proposal: Proposal, stashDir: string): void {
-  const v = proposalToRowValues(proposal, stashDir);
+export function upsertProposal(db: Database, proposal: Proposal, bundleId: string): void {
+  const v = proposalToRowValues(proposal, bundleId);
   db.prepare(`
     INSERT INTO proposals
-      (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+      (id, bundle_id, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
-      stash_dir        = excluded.stash_dir,
+      bundle_id        = excluded.bundle_id,
       ref              = excluded.ref,
       status           = excluded.status,
       source           = excluded.source,
@@ -487,7 +487,7 @@ export function upsertProposal(db: Database, proposal: Proposal, stashDir: strin
       metadata_json    = excluded.metadata_json
   `).run(
     v.id,
-    v.stash_dir,
+    v.bundle_id,
     v.ref,
     v.status,
     v.source,
@@ -500,7 +500,7 @@ export function upsertProposal(db: Database, proposal: Proposal, stashDir: strin
 }
 
 /**
- * List proposals, optionally filtered by stashDir, status, and/or ref.
+ * List proposals, optionally filtered by bundleId, status, and/or ref.
  *
  * Results are ordered by `created_at ASC` (matching the historical
  * `listProposals()` sort), with `rowid` as a deterministic tiebreak so two
@@ -509,7 +509,7 @@ export function upsertProposal(db: Database, proposal: Proposal, stashDir: strin
 export function listStateProposals(
   db: Database,
   options: {
-    stashDir?: string;
+    bundleId?: string;
     status?: string;
     ref?: string;
     /**
@@ -521,9 +521,9 @@ export function listStateProposals(
 ): Proposal[] {
   const conditions: string[] = [];
   const params: unknown[] = [];
-  if (options.stashDir) {
-    conditions.push("stash_dir = ?");
-    params.push(options.stashDir);
+  if (options.bundleId) {
+    conditions.push("bundle_id = ?");
+    params.push(options.bundleId);
   }
   if (options.status) {
     conditions.push("status = ?");
@@ -536,7 +536,7 @@ export function listStateProposals(
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const rows = db
     .prepare(
-      `SELECT id, stash_dir, ref, status, source, created_at, updated_at,
+      `SELECT id, bundle_id, ref, status, source, created_at, updated_at,
               ${options.withContent === false ? "'' AS content, '{}' AS frontmatter_json" : "content, frontmatter_json"}, metadata_json
        FROM proposals ${where} ORDER BY created_at ASC, rowid ASC`,
     )
@@ -568,17 +568,17 @@ export function listStateProposals(
  * Look up a single proposal by id, optionally scoped to one stash root.
  * Returns undefined when not found.
  */
-export function getStateProposal(db: Database, id: string, stashDir?: string): Proposal | undefined {
-  const sql = `SELECT id, stash_dir, ref, status, source, created_at, updated_at,
+export function getStateProposal(db: Database, id: string, bundleId?: string): Proposal | undefined {
+  const sql = `SELECT id, bundle_id, ref, status, source, created_at, updated_at,
               content, frontmatter_json, metadata_json
-       FROM proposals WHERE id = ?${stashDir ? " AND stash_dir = ?" : ""}`;
-  const row = (stashDir ? db.prepare(sql).get(id, stashDir) : db.prepare(sql).get(id)) as ProposalRow | undefined;
+       FROM proposals WHERE id = ?${bundleId ? " AND bundle_id = ?" : ""}`;
+  const row = (bundleId ? db.prepare(sql).get(id, bundleId) : db.prepare(sql).get(id)) as ProposalRow | undefined;
   return row ? proposalRowToProposal(row) : undefined;
 }
 
 /** `(ref, source)` of every proposal, any status, in one stash: no payload is read. */
-export function listProposalRefSources(db: Database, stashDir: string): Array<{ ref: string; source: string }> {
-  return db.prepare("SELECT ref, source FROM proposals WHERE stash_dir = ?").all(stashDir) as Array<{
+export function listProposalRefSources(db: Database, bundleId: string): Array<{ ref: string; source: string }> {
+  return db.prepare("SELECT ref, source FROM proposals WHERE bundle_id = ?").all(bundleId) as Array<{
     ref: string;
     source: string;
   }>;
@@ -592,15 +592,15 @@ export function listProposalRefSources(db: Database, stashDir: string): Array<{ 
  *
  * `%` / `_` / `\` in the prefix are escaped so the LIKE pattern is literal.
  */
-export function listStateProposalIdsByPrefix(db: Database, stashDir: string, idPrefix: string): string[] {
+export function listStateProposalIdsByPrefix(db: Database, bundleId: string, idPrefix: string): string[] {
   const escaped = escapeLikePattern(idPrefix);
   const rows = db
     .prepare(
       `SELECT id FROM proposals
-       WHERE stash_dir = ? AND status = 'pending' AND id LIKE ? ESCAPE '\\'
+       WHERE bundle_id = ? AND status = 'pending' AND id LIKE ? ESCAPE '\\'
        ORDER BY id ASC`,
     )
-    .all(stashDir, `${escaped}%`) as Array<{ id: string }>;
+    .all(bundleId, `${escaped}%`) as Array<{ id: string }>;
   return rows.map((r) => r.id);
 }
 

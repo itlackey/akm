@@ -19,6 +19,7 @@ import { parsePlacementRef } from "../core/asset/resolve-ref";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { AkmError, NotFoundError, UsageError } from "../core/errors";
+import { stateBundleId } from "../core/state-db";
 import { resolveWriteTarget } from "../core/write-source";
 import { listStateProposals } from "../storage/repositories/proposals-repository";
 import { classifyOutcome, decidedAt, weekOf } from "./derive";
@@ -101,7 +102,7 @@ export function list(input: ListInput = {}) {
   return (
     withReadonlyStateDb((db) => {
       // A list shows summaries, so the proposed content is not read.
-      const all = listStateProposals(db, { stashDir: resolveStashDir(), withContent: false });
+      const all = listStateProposals(db, { bundleId: stateBundleId(resolveStashDir()), withContent: false });
       const picked =
         status === "pending"
           ? all

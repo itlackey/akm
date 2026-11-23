@@ -20,7 +20,7 @@ import { createProposal } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
-import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
+import { getStateDbPath, openStateDatabase, stateBundleId } from "../../../src/core/state-db";
 import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
@@ -120,7 +120,7 @@ describe("reads", () => {
         id: "run-old",
         startedAt: "2020-01-01T00:00:00.000Z",
         completedAt: "2020-01-01T00:01:00.000Z",
-        stashDir: ctx.storage.stashDir,
+        bundleId: stateBundleId(ctx.storage.stashDir),
         dryRun: false,
         strategy: "default",
         scopeMode: "all",
@@ -235,7 +235,10 @@ describe("reads", () => {
     const acceptedAt = new Date(Date.now() - 21 * day).toISOString();
     const db = openStateDatabase();
     try {
-      const accepted = listStateProposals(db, { stashDir: ctx.storage.stashDir, status: "accepted" })[0] as Proposal;
+      const accepted = listStateProposals(db, {
+        bundleId: stateBundleId(ctx.storage.stashDir),
+        status: "accepted",
+      })[0] as Proposal;
       upsertProposal(
         db,
         {
@@ -245,7 +248,7 @@ describe("reads", () => {
           acceptedAt,
           review: { ...accepted.review, decidedAt: acceptedAt },
         } as Proposal,
-        ctx.storage.stashDir,
+        stateBundleId(ctx.storage.stashDir),
       );
     } finally {
       db.close();
@@ -289,7 +292,10 @@ describe("reads", () => {
     const acceptedAt = new Date(Date.now() - 70 * day).toISOString();
     const db = openStateDatabase();
     try {
-      const accepted = listStateProposals(db, { stashDir: ctx.storage.stashDir, status: "accepted" })[0] as Proposal;
+      const accepted = listStateProposals(db, {
+        bundleId: stateBundleId(ctx.storage.stashDir),
+        status: "accepted",
+      })[0] as Proposal;
       upsertProposal(
         db,
         {
@@ -299,7 +305,7 @@ describe("reads", () => {
           acceptedAt,
           review: { ...accepted.review, decidedAt: acceptedAt },
         } as Proposal,
-        ctx.storage.stashDir,
+        stateBundleId(ctx.storage.stashDir),
       );
     } finally {
       db.close();
@@ -447,14 +453,22 @@ describe("reads", () => {
     const db = openStateDatabase();
     try {
       for (let i = 0; i < 201; i++)
-        upsertProposal(db, { ...original, id: `old-${i}`, createdAt: old, updatedAt: old }, ctx.storage.stashDir);
+        upsertProposal(
+          db,
+          { ...original, id: `old-${i}`, createdAt: old, updatedAt: old },
+          stateBundleId(ctx.storage.stashDir),
+        );
       upsertProposal(
         db,
         { ...original, id: "reopened", createdAt: old, reviewHistory: [{ reopenedAt: now }] },
-        ctx.storage.stashDir,
+        stateBundleId(ctx.storage.stashDir),
       );
-      upsertProposal(db, { ...original, id: "week", source: "feedback", createdAt: week }, ctx.storage.stashDir);
-      upsertProposal(db, { ...original, id: "unknown", createdAt: "invalid" }, ctx.storage.stashDir);
+      upsertProposal(
+        db,
+        { ...original, id: "week", source: "feedback", createdAt: week },
+        stateBundleId(ctx.storage.stashDir),
+      );
+      upsertProposal(db, { ...original, id: "unknown", createdAt: "invalid" }, stateBundleId(ctx.storage.stashDir));
     } finally {
       db.close();
     }
@@ -486,8 +500,12 @@ describe("reads", () => {
     const db = openStateDatabase();
     try {
       for (let i = 0; i < 3; i++)
-        upsertProposal(db, { ...original, id: `old-${i}`, createdAt: old, updatedAt: old }, ctx.storage.stashDir);
-      upsertProposal(db, { ...original, id: "elsewhere", createdAt: old, updatedAt: old }, "/other/stash");
+        upsertProposal(
+          db,
+          { ...original, id: `old-${i}`, createdAt: old, updatedAt: old },
+          stateBundleId(ctx.storage.stashDir),
+        );
+      upsertProposal(db, { ...original, id: "elsewhere", createdAt: old, updatedAt: old }, "other-stash");
     } finally {
       db.close();
     }

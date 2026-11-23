@@ -19,7 +19,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
+import { getStateDbPath, openStateDatabase, stateBundleId } from "../../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import { listStateProposals } from "../../../src/storage/repositories/proposals-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -44,26 +44,26 @@ function seedFragmentRows(): void {
   try {
     const insert = db.prepare(
       `INSERT INTO proposals
-         (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+         (id, bundle_id, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
        VALUES (?, ?, ?, 'accepted', 'consolidate', ?, ?, 'legacy content', NULL, '{}')`,
     );
     insert.run(
       "fragment-row-a",
-      path.resolve(storage.stashDir),
+      stateBundleId(storage.stashDir),
       "akm//knowledge/brand-aesthetic-guidelines#standalone-frontmatter-layouts",
       "2026-05-27T10:00:00.000Z",
       "2026-05-27T10:00:00.500Z",
     );
     insert.run(
       "fragment-row-b",
-      path.resolve(storage.stashDir),
+      stateBundleId(storage.stashDir),
       "akm//knowledge/other-guide#some-section",
       "2026-06-23T10:00:00.000Z",
       "2026-06-23T10:00:00.500Z",
     );
     insert.run(
       "healthy-row",
-      path.resolve(storage.stashDir),
+      stateBundleId(storage.stashDir),
       "akm//knowledge/already-fine",
       "2026-07-01T10:00:00.000Z",
       "2026-07-01T10:00:00.500Z",
@@ -88,7 +88,7 @@ describe("listStateProposals — unparseable-row warning is deduped per row per 
         for (let i = 0; i < 3; i++) {
           const db = openStateDatabase(file);
           try {
-            const proposals = listStateProposals(db, { stashDir: path.resolve(storage.stashDir) });
+            const proposals = listStateProposals(db, { bundleId: stateBundleId(path.resolve(storage.stashDir)) });
             // The well-formed row is always returned; the two broken rows never are.
             expect(proposals.map((p) => p.id)).toEqual(["healthy-row"]);
           } finally {

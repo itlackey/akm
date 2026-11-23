@@ -3,8 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { isBundleSlug } from "./asset/asset-ref";
+import { bundleContentRoots } from "./config/config-sources";
+import type { AkmConfig } from "./config/config-types";
 import { UsageError } from "./errors";
 
 /** Deterministic, filesystem-safe bundle slug from a source path. */
@@ -94,6 +97,33 @@ export function deriveBundleIds(sources: readonly { registryId?: string; path: s
     usedIds.add(id);
     return id;
   });
+}
+
+/**
+ * The id of a directory no config entry names: today's derived id (the basename slug; `slug-<8 hex of the resolved
+ * path>` when a configured name has it). A pure function of the path and the configured names.
+ */
+export function bundleIdForDir(dir: string, configuredNames: ReadonlySet<string>): string {
+  return deriveBundleId(undefined, dir, new Set(configuredNames));
+}
+
+/**
+ * The bundle a directory is: the configured bundle whose content root resolves to it (real paths), the default bundle
+ * first and then in configured order, else the id the directory gets unconfigured ({@link bundleIdForDir}). The one
+ * place a directory becomes a bundle id; state rows, which follow a bundle by its name, are filed under it.
+ */
+export function bundleAtDir(config: AkmConfig, dir: string): string {
+  let physical = path.resolve(dir);
+  try {
+    physical = fs.realpathSync.native(physical);
+  } catch {
+    // A directory that is not there is compared as spelled.
+  }
+  const roots = bundleContentRoots(config);
+  const first = config.defaultBundle !== undefined ? roots.filter((entry) => entry.id === config.defaultBundle) : [];
+  const ordered = [...first, ...roots.filter((entry) => !first.includes(entry))];
+  const hit = ordered.find((entry) => entry.contentRoot === physical);
+  return hit?.id ?? bundleIdForDir(dir, new Set(Object.keys(config.bundles ?? {})));
 }
 
 function ensureUniqueId(preferred: string, sourcePath: string, used: Set<string>): string {

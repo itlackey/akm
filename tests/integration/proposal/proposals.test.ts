@@ -35,7 +35,7 @@ import { type AkmConfig, resetConfigCache } from "../../../src/core/config/confi
 import { UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
 import { getDbPath, getIndexRebuildLockPath, getIndexWriterLockPath } from "../../../src/core/paths";
-import { openStateDatabase } from "../../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
@@ -767,7 +767,7 @@ describe("akmProposalAccept — validation failure (#284 HIGH 6)", () => {
 function ledgerRow(stash: string, ref: string, source: string) {
   const db = openStateDatabase();
   try {
-    return getImproveLedgerRow(db, stash, ref, source);
+    return getImproveLedgerRow(db, stateBundleId(stash), ref, source);
   } finally {
     db.close();
   }

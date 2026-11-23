@@ -30,7 +30,7 @@ import { classifyImproveAction, foldDistillSkipped } from "../../core/improve-ty
 import { resolveMutationTarget } from "../../core/mutation-target";
 import { getDbPath, getStashLocksDir, getStateDbPathInDataDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
-import { openStateDatabase } from "../../core/state-db";
+import { openStateDatabase, openStateReadSnapshot } from "../../core/state-db";
 import { info, warn, warnVerbose } from "../../core/warn";
 import { beginWriteProvenance, relativeWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
 import { resolveWorkingStashTarget, resolveWritable, resolveWriteTarget } from "../../core/write-source";
@@ -54,7 +54,7 @@ import type { Database } from "../../storage/database";
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { withIndexDb } from "../../storage/repositories/index-db";
 import { getEntryCount } from "../../storage/repositories/index-entries-repository";
-import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
+import { SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
 import { summarizeLlmUsageRecordsCrossTab } from "../health/llm-usage";
 import { type DrainResult, drainProposals } from "../proposal/drain";
 import type { EligibilitySource } from "../proposal/proposal-types";
@@ -718,7 +718,7 @@ async function runDryPlanningStage(
   let stateSnapshotUnavailable = false;
   try {
     try {
-      stateDb = openSqliteReadSnapshot(run.resolvedStateDbPath);
+      stateDb = openStateReadSnapshot(run.resolvedStateDbPath);
       stateSnapshotUnavailable = !stateDb;
     } catch (error) {
       if (!(error instanceof SqliteReadSnapshotUnavailableError)) throw error;

@@ -22,7 +22,7 @@ import {
   STATE_MIGRATION_SAFETY_BY_ID,
   STATE_MIGRATIONS,
 } from "../../../src/core/state/migrations";
-import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
+import { getStateDbPath, openStateDatabase, stateBundleId } from "../../../src/core/state-db";
 import { _resetWarnOnceForTests } from "../../../src/core/warn";
 import { openDatabase } from "../../../src/storage/database";
 import { listStateProposals } from "../../../src/storage/repositories/proposals-repository";
@@ -146,7 +146,7 @@ describe("migration 026-proposals-strip-legacy-fragment-refs — legacy fragment
       try {
         const db = openStateDatabase(file);
         try {
-          const proposals = listStateProposals(db, { stashDir: "/tmp/stash" });
+          const proposals = listStateProposals(db, { bundleId: stateBundleId("/tmp/stash") });
           const byId = new Map(proposals.map((p) => [p.id, p]));
           expect(byId.get("legacy-fragment-qualified")?.ref).toBe("akm//knowledge/brand-aesthetic-guidelines");
           expect(byId.get("legacy-fragment-short")?.ref).toBe("knowledge/other-guide");

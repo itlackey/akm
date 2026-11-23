@@ -16,7 +16,10 @@
  *
  * Rewritten: the config `bundles` key, `defaultBundle`/`defaultWriteTarget`
  * when they name the old id, every `scheduler.enabled[].ref` with the old
- * `//` prefix, the lockfile entry id, and the index/state rows above.
+ * `//` prefix, the lockfile entry id, and the index/state rows above. State
+ * rows follow a bundle by its name (§0.2 P8), so the proposals, improve runs
+ * and improve ledger rows filed under the old id are re-filed under the new
+ * one (`src/storage/bundle-id-columns.ts` lists the columns).
  *
  * Reported, never rewritten: refs inside bundle CONTENT (xrefs,
  * `supersededBy`, task `uses:`) — rewriting a bundle's own files is
@@ -29,6 +32,7 @@ import fs from "node:fs";
 import type { TasksSyncResult } from "../commands/tasks/tasks";
 import { renameUsageEventRefs } from "../indexer/usage/usage-events";
 import { readLockfile, renameLockEntry } from "../integrations/lockfile";
+import { renameStateBundleId } from "../storage/bundle-id-columns";
 import { renameEventRefs } from "../storage/repositories/events-repository";
 import { renameImproveLedgerRefs } from "../storage/repositories/improve-ledger-repository";
 import {
@@ -344,7 +348,8 @@ export async function renameBundle(
     }
   }
 
-  // State: proposals.ref, a pending proposal's proposedTarget.source,
+  // State: the bundle_id of every proposal, improve run and ledger row (they follow the bundle's
+  // name), proposals.ref, a pending proposal's proposedTarget.source,
   // workflow task_history.target_ref, workflow_runs.workflow_ref, and the
   // learned history keyed by item ref: usage_events.entry_ref (search ranking
   // counts feedback by it), events.ref and improve_ledger.ref (improve reads
@@ -352,6 +357,7 @@ export async function renameBundle(
   // asset-io: state
   if (fs.existsSync(getStateDbPath())) {
     withStateDb((db) => {
+      renameStateBundleId(db, oldId, newId);
       renameProposalsBundleRef(db, oldId, newId);
       renameTaskHistoryTargetRefs(db, oldId, newId);
       renameWorkflowRunRefs(db, oldId, newId);

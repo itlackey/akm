@@ -38,7 +38,7 @@ import { contentHash } from "../../../../src/commands/improve/content-hash";
 import { akmProposalAccept, akmProposalReject, akmProposalReopen } from "../../../../src/commands/proposal/proposal";
 import { getProposal, listProposals, recordGateDecision } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
-import { openStateDatabase } from "../../../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
 import { resolveWriteTarget } from "../../../../src/core/write-source";
 import {
   getImproveLedgerRow,
@@ -182,7 +182,7 @@ const reopen = (id: string, days: number) =>
 function ledgerRow() {
   const db = openStateDatabase();
   try {
-    return getImproveLedgerRow(db, stash, REF, "consolidate");
+    return getImproveLedgerRow(db, stateBundleId(stash), REF, "consolidate");
   } finally {
     db.close();
   }
@@ -192,7 +192,7 @@ function ledgerRow() {
 function ledgerRefs(): string[] {
   const db = openStateDatabase();
   try {
-    return listImproveLedgerRows(db, stash, ["consolidate"]).map((row) => row.ref);
+    return listImproveLedgerRows(db, stateBundleId(stash), ["consolidate"]).map((row) => row.ref);
   } finally {
     db.close();
   }

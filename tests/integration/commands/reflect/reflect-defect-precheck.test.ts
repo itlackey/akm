@@ -14,7 +14,7 @@ import { findReflectDefect } from "../../../../src/commands/improve/reflect-nois
 import { listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
-import { openStateDatabase } from "../../../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
 import { listImproveLedgerRows } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { writeFakeHarness } from "../../../_helpers/engine-stubs";
 import { quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
@@ -184,7 +184,7 @@ describe("akm reflect — a deterministic defect", () => {
     expect(listProposals(storage.stashDir)).toEqual([]);
     const db = openStateDatabase();
     try {
-      expect(listImproveLedgerRows(db, storage.stashDir, ["reflect"])).toMatchObject([
+      expect(listImproveLedgerRows(db, stateBundleId(storage.stashDir), ["reflect"])).toMatchObject([
         { ref: REF, outcome: "quality_rejected", detail: "placeholder_added" },
       ]);
     } finally {

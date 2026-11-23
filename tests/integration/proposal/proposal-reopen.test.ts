@@ -40,7 +40,7 @@ import {
 } from "../../../src/commands/proposal/repository";
 import { NotFoundError, UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
-import { openStateDatabase } from "../../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../../src/core/state-db";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
 import { makeConfig } from "../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -108,7 +108,7 @@ async function rejectIt(proposal: Proposal, reason = REJECTION): Promise<Proposa
 function ledgerRow(ref: string, source: string) {
   const db = openStateDatabase();
   try {
-    return getImproveLedgerRow(db, storage.stashDir, ref, source);
+    return getImproveLedgerRow(db, stateBundleId(storage.stashDir), ref, source);
   } finally {
     db.close();
   }
@@ -453,11 +453,11 @@ describe("akm proposal reopen — refusals", () => {
     const db = openStateDatabase();
     try {
       db.prepare(
-        `INSERT INTO proposals (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+        `INSERT INTO proposals (id, bundle_id, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
          VALUES (?, ?, ?, 'rejected', 'reflect', ?, ?, ?, NULL, ?)`,
       ).run(
         "legacy-rejected",
-        stash(),
+        stateBundleId(stash()),
         "stash//lessons/legacy",
         "2026-01-01T00:00:00.000Z",
         "2026-01-01T00:00:00.000Z",

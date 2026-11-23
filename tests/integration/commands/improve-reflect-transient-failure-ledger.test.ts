@@ -15,7 +15,7 @@ import { akmImprove } from "../../../src/commands/improve/improve";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent } from "../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../src/core/improve-types";
-import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
+import { getStateDbPath, openStateDatabase, stateBundleId } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { listImproveLedgerRows } from "../../../src/storage/repositories/improve-ledger-repository";
 import { withImproveAutonomy, withTestImproveLlm } from "../../_helpers/improve-config";
@@ -98,7 +98,7 @@ async function runWithReflectFailure(reason: string): Promise<{ stash: string; m
 function reflectRows(stash: string) {
   const db = openStateDatabase(getStateDbPath());
   try {
-    return listImproveLedgerRows(db, stash, ["reflect"]);
+    return listImproveLedgerRows(db, stateBundleId(stash), ["reflect"]);
   } finally {
     db.close();
   }

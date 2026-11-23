@@ -26,7 +26,7 @@ import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
 import { TransientError, UsageError } from "../../src/core/errors";
 import { appendEvent, readEvents } from "../../src/core/events";
-import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
+import { getStateDbPath, openStateDatabase, stateBundleId } from "../../src/core/state-db";
 import { detectTruncatedDescription } from "../../src/core/text-truncation";
 import { ClaudeCodeProvider } from "../../src/integrations/harnesses/claude/session-log";
 import { CodexProvider } from "../../src/integrations/harnesses/codex/session-log";
@@ -784,7 +784,7 @@ describe("akmExtract — accounting matches persisted effects (#1212)", () => {
       const db = openStateDatabase();
       try {
         recordImproveLedger(db, {
-          stashDir: stash,
+          bundleId: stateBundleId(stash),
           ref: "memories/held",
           source: "extract",
           outcome: "rejected",
@@ -995,7 +995,7 @@ describe("akmExtract — accounting matches persisted effects (#1212)", () => {
       });
       const prior = getExtractedSession(db, "claude", "legacy");
       recordImproveLedger(db, {
-        stashDir: stash,
+        bundleId: stateBundleId(stash),
         ref: "memories/held",
         source: "extract",
         outcome: "rejected",

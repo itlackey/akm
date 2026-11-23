@@ -16,7 +16,7 @@ import { akmImprove } from "../../../../src/commands/improve/improve";
 import { loadRetrievalScope } from "../../../../src/commands/improve/retrieval-scope";
 import { type AkmConfig, saveConfig } from "../../../../src/core/config/config";
 import type { AkmDistillResult, AkmReflectResult } from "../../../../src/core/improve-types";
-import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
+import { getStateDbPath, openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import { recordImproveLedger } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { writeSkill } from "../../../_helpers/assets";
@@ -62,7 +62,13 @@ function recordAttempt(
 ): void {
   const db = openStateDatabase();
   try {
-    recordImproveLedger(db, { stashDir, ref, source, outcome, at: new Date(atMs).toISOString() });
+    recordImproveLedger(db, {
+      bundleId: stateBundleId(stashDir),
+      ref,
+      source,
+      outcome,
+      at: new Date(atMs).toISOString(),
+    });
   } finally {
     db.close();
   }
@@ -73,8 +79,8 @@ function recordProposal(stashDir: string, ref: string, source: string): void {
   try {
     const now = new Date().toISOString();
     db.prepare(
-      "INSERT INTO proposals (id, stash_dir, ref, status, source, created_at, updated_at) VALUES (?, ?, ?, 'accepted', ?, ?, ?)",
-    ).run(`p-${source}-${ref}`, stashDir, ref, source, now, now);
+      "INSERT INTO proposals (id, bundle_id, ref, status, source, created_at, updated_at) VALUES (?, ?, ?, 'accepted', ?, ?, ?)",
+    ).run(`p-${source}-${ref}`, stateBundleId(stashDir), ref, source, now, now);
   } finally {
     db.close();
   }

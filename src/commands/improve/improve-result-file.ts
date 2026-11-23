@@ -11,7 +11,7 @@
 import crypto from "node:crypto";
 import { decodeImproveResult } from "../../core/improve-result";
 import { redactSensitiveValue } from "../../core/redaction";
-import { withImmediateTransaction, withStateDb } from "../../core/state-db";
+import { stateBundleId, withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { recordImproveRun } from "../../storage/repositories/improve-runs-repository";
 import type { AkmImproveResult } from "./improve";
 
@@ -44,7 +44,7 @@ export function recordImproveRunResult(
         id: runId,
         startedAt: resolvedStartedAt,
         completedAt,
-        stashDir,
+        bundleId: stateBundleId(stashDir),
         dryRun: Boolean(result.dryRun),
         strategy: redactSensitiveValue(decoded.strategy, sensitiveValues),
         scopeMode: result.scope?.mode ?? "all",
@@ -108,7 +108,7 @@ export function recordTerminatedImproveRun(
         id: runId,
         startedAt,
         completedAt,
-        stashDir,
+        bundleId: stateBundleId(stashDir),
         dryRun: Boolean(ctx.dryRun),
         strategy: persistedStrategy,
         scopeMode: ctx.scopeMode ?? "all",

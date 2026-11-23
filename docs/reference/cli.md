@@ -1829,7 +1829,8 @@ half-publishing a failed one.
 Rename a configured bundle's key everywhere akm itself persists it — the one
 command allowed to change it (renaming by hand-editing `config.json`'s
 `bundles` key strands every durable ref the tool minted under the old id; see
-`akm doctor` / the startup warning that names this).
+`akm doctor` / the startup warning that names this, and `state-unknown-bundle`
+for the proposals, improve ledger and improve runs left under the old name).
 
 ```sh
 akm bundle rename old-name new-name
@@ -1845,8 +1846,9 @@ bundle add` enforces) or the rename fails before any write. Rewritten: the
 config `bundles` key; `defaultBundle`/`defaultWriteTarget` when they name the
 old id; every `scheduler.enabled[].ref` with the old `<old>//` prefix; the
 lockfile entry id; every indexed entry's `bundle_id`/ref; and this tool's own
-state rows that name the old bundle (`proposals.ref`, a pending proposal's
-write target, workflow `task_history.target_ref`, `workflow_runs.workflow_ref`,
+state rows that name the old bundle (the `bundle_id` of every proposal, improve
+run and improve-ledger row, which follow a bundle by its name; `proposals.ref`,
+a pending proposal's write target, workflow `task_history.target_ref`, `workflow_runs.workflow_ref`,
 the recorded feedback and usage in `usage_events.entry_ref` and `events.ref`,
 and the improve loop's `improve_ledger`, `asset_salience` and `asset_outcome`
 rows, so search and improve keep counting the bundle's feedback; the old name

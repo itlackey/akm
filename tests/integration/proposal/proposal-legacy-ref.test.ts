@@ -25,7 +25,7 @@ import {
 import { createProposal, getProposal, listProposals, type Proposal } from "../../../src/commands/proposal/repository";
 import { AkmError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
-import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
+import { getStateDbPath, openStateDatabase, stateBundleId } from "../../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import type { ProposalRow } from "../../../src/storage/repositories/proposals-repository";
 import { makeConfig } from "../../_helpers/factories";
@@ -59,9 +59,16 @@ function seedLegacyRow(): void {
   try {
     db.prepare(
       `INSERT INTO proposals
-         (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+         (id, bundle_id, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
        VALUES (?, ?, ?, 'pending', 'distill', ?, ?, ?, NULL, '{}')`,
-    ).run(LEGACY_ID, stash, LEGACY_REF, "2026-07-05T03:03:28.486Z", "2026-07-05T03:03:28.486Z", LEGACY_CONTENT);
+    ).run(
+      LEGACY_ID,
+      stateBundleId(stash),
+      LEGACY_REF,
+      "2026-07-05T03:03:28.486Z",
+      "2026-07-05T03:03:28.486Z",
+      LEGACY_CONTENT,
+    );
   } finally {
     db.close();
   }

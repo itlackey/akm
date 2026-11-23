@@ -364,9 +364,9 @@ export function getStateDir(env: NodeJS.ProcessEnv = process.env, platform = pro
 /**
  * Deterministic, filesystem-safe key for machine-local state that belongs to
  * one stash but must not live under `$STASH` itself. Namespaces `$STATE`/
- * `$CACHE` writers by the resolved absolute stash directory — the filesystem
- * counterpart of how `state.db`'s `proposals` table keys per-stash rows by
- * its `stash_dir` column — so two stashes on one machine never collide.
+ * `$CACHE` writers by the resolved absolute stash directory, so two stashes on
+ * one machine never collide. (`state.db` rows follow a bundle's name instead,
+ * §0.2 P8; files here belong to the directory.)
  *
  * Reuses {@link shortHash} (bundle-id.ts) rather than growing a second
  * sha256-truncated-hex helper. `shortHash` trims to 8 hex chars (32

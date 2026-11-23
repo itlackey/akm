@@ -5,7 +5,7 @@
 /**
  * The proposal queue (#225; storage in state.db since #578). Proposals are
  * queue state, not assets: rows in the `proposals` table partitioned by
- * `stash_dir`, where archival is a status flip that keeps the full audit trail
+ * `bundle_id` (the bundle whose queue it is), where archival is a status flip that keeps the full audit trail
  * (review, reason, backup for revert). They never go through the asset writer
  * until accepted — {@link promoteProposal} is the bridge that writes the
  * accepted payload into the bundle.
@@ -38,7 +38,13 @@ import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } f
 import { appendEvent } from "../../core/events";
 import type { MemoryPruneCandidate } from "../../core/improve-types";
 import { canonicalBundleIdForTarget, resolveBundleWriteTarget } from "../../core/mutation-target";
-import { getStateDbPath, withImmediateTransaction, withStateDb } from "../../core/state-db";
+import {
+  getStateDbPath,
+  openStateReadSnapshot,
+  stateBundleId,
+  withImmediateTransaction,
+  withStateDb,
+} from "../../core/state-db";
 import { warn } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import {
@@ -76,7 +82,6 @@ import {
   listStateProposals,
   upsertProposal,
 } from "../../storage/repositories/proposals-repository";
-import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
 import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { withSchedulerLock } from "../../tasks/scheduler-lock";
 import { pkgVersion } from "../../version";
@@ -528,10 +533,10 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
         ...(input.promotionSourceHash !== undefined ? { promotionSourceHash: input.promotionSourceHash } : {}),
         ...(input.feedback !== undefined ? { feedback: input.feedback } : {}),
       };
-      upsertProposal(db, proposal, stashDir);
+      upsertProposal(db, proposal, stateBundleId(stashDir));
       for (const ref of input.attemptedRefs ?? [normalizedRef]) {
         recordImproveLedger(db, {
-          stashDir,
+          bundleId: stateBundleId(stashDir),
           ref,
           source: input.source,
           outcome: "proposed",
@@ -650,7 +655,7 @@ export function createRetireProposal(
         ...(confidence !== undefined ? { confidence } : {}),
         ...(input.retirement ? { retirement: input.retirement } : {}),
       };
-      upsertProposal(db, proposal, stashDir);
+      upsertProposal(db, proposal, stateBundleId(stashDir));
       return proposal;
     }),
   );
@@ -688,7 +693,10 @@ function queryProposals(db: Database, stashDir: string, options: ListProposalsOp
   const status = options.includeArchive ? options.status : "pending";
   const matchesRef = options.ref !== undefined ? refFilter(stashDir, options.ref) : undefined;
   const config = options.type ? loadConfig() : undefined;
-  return listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) }).filter((p) => {
+  return listStateProposals(db, {
+    bundleId: stateBundleId(stashDir),
+    ...(status !== undefined ? { status } : {}),
+  }).filter((p) => {
     if (matchesRef !== undefined && !matchesRef(p.ref)) return false;
     if (!options.type || !config) return true;
     try {
@@ -724,7 +732,7 @@ export function listProposalsReadOnly(
   const dbPath = ctx?.dbPath ?? getStateDbPath();
   // asset-io: state proposal database
   if (!fs.existsSync(dbPath)) return [];
-  const db = openSqliteReadSnapshot(dbPath);
+  const db = openStateReadSnapshot(dbPath);
   if (!db) return [];
   try {
     return queryProposals(db, stashDir, options);
@@ -739,7 +747,7 @@ export function getProposal(stashDir: string, id: string, ctx?: ProposalsContext
 }
 
 function requireProposal(db: Database, stashDir: string, id: string): Proposal {
-  const proposal = getStateProposal(db, id, stashDir);
+  const proposal = getStateProposal(db, id, stateBundleId(stashDir));
   if (!proposal) throw new NotFoundError(`Proposal "${id}" not found.`, "PROPOSAL_NOT_FOUND");
   return proposal;
 }
@@ -754,7 +762,7 @@ export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: Propo
 
 /** {@link resolveProposalId} over a connection the caller holds (the workspace reads state.db read-only). */
 export function resolveProposalIdIn(db: Database, stashDir: string, idOrRef: string): Proposal {
-  const exact = getStateProposal(db, idOrRef, stashDir);
+  const exact = getStateProposal(db, idOrRef, stateBundleId(stashDir));
   if (exact) return exact;
   if (idOrRef.includes(":") || idOrRef.includes("/")) {
     const matchesRef = refFilter(stashDir, idOrRef);
@@ -765,14 +773,14 @@ export function resolveProposalIdIn(db: Database, stashDir: string, idOrRef: str
     // is reached by its own proposal id, or by the explicit generator
     // `consolidate-pair` (bulk accept/reject).
     const newest = (status?: string): Proposal | undefined =>
-      listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) })
+      listStateProposals(db, { bundleId: stateBundleId(stashDir), ...(status !== undefined ? { status } : {}) })
         .filter((p) => matchesRef(p.ref) && !isRetireProposal(p))
         .sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
     const found = newest("pending") ?? newest();
     if (found) return found;
     throw new NotFoundError(`No proposal found for ref "${idOrRef}".`, "PROPOSAL_NOT_FOUND");
   }
-  const prefixMatches = listStateProposalIdsByPrefix(db, stashDir, idOrRef);
+  const prefixMatches = listStateProposalIdsByPrefix(db, stateBundleId(stashDir), idOrRef);
   if (prefixMatches.length === 1) return requireProposal(db, stashDir, prefixMatches[0]!);
   if (prefixMatches.length > 1) {
     throw new UsageError(`Ambiguous prefix "${idOrRef}" — matches: ${prefixMatches.join(", ")}`, "INVALID_FLAG_VALUE");
@@ -853,10 +861,10 @@ export function archiveProposal(
         },
         ...(gateDecision ? { gateDecision: { ...gateDecision, decidedAt: gateDecision.decidedAt ?? decidedAt } } : {}),
       };
-      upsertProposal(db, updated, stashDir);
+      upsertProposal(db, updated, stateBundleId(stashDir));
       recordImproveLedgerDecision(db, {
         proposalId: updated.id,
-        stashDir,
+        bundleId: stateBundleId(stashDir),
         ...decisionLedgerSubject(updated),
         source: updated.source,
         outcome: ledgerOutcomeForDecision(status, gateDecision),
@@ -868,7 +876,13 @@ export function archiveProposal(
       // reassessment through that same ledger, rather than hold an old body forever.
       if (isRetireProposal(updated) && gateDecision?.reason === STALE_TARGET_GATE_REASON) {
         for (const ref of retireHeldRefs(updated)) {
-          recordImproveLedger(db, { stashDir, ref, source: PAIR_PASS_LEDGER_SOURCE, outcome: "failed", at: decidedAt });
+          recordImproveLedger(db, {
+            bundleId: stateBundleId(stashDir),
+            ref,
+            source: PAIR_PASS_LEDGER_SOURCE,
+            outcome: "failed",
+            at: decidedAt,
+          });
         }
       }
       return updated;
@@ -890,15 +904,15 @@ export function recordGateDecision(
 ): Proposal | undefined {
   return withProposalsDb(ctx, (db) =>
     withImmediateTransaction(db, () => {
-      const existing = getStateProposal(db, id, stashDir);
+      const existing = getStateProposal(db, id, stateBundleId(stashDir));
       if (!existing || existing.status !== "pending") return undefined;
       const decidedAt = decision.decidedAt ?? nowIso(ctx);
       const updated: Proposal = { ...existing, gateDecision: { ...decision, decidedAt } };
-      upsertProposal(db, updated, stashDir);
+      upsertProposal(db, updated, stateBundleId(stashDir));
       if (decision.outcome === "deferred") {
         recordImproveLedgerDecision(db, {
           proposalId: updated.id,
-          stashDir,
+          bundleId: stateBundleId(stashDir),
           ...decisionLedgerSubject(updated),
           source: updated.source,
           outcome: "review_needed",
@@ -1114,10 +1128,10 @@ function persistProposalDecision(
         };
       }
       const accept = decision.operation === "accept";
-      upsertProposal(db, next, stashDir);
+      upsertProposal(db, next, stateBundleId(stashDir));
       recordImproveLedgerDecision(db, {
         proposalId: next.id,
-        stashDir,
+        bundleId: stateBundleId(stashDir),
         ...decisionLedgerSubject(next),
         source: next.source,
         outcome: ledgerOutcomeForDecision(accept ? "accepted" : "reverted"),
@@ -1869,7 +1883,7 @@ function recordRetireAcceptIntent(
       const current = requireProposal(db, stashDir, proposalId);
       if (current.retireAcceptIntent) return current;
       const next: Proposal = { ...current, retireAcceptIntent: intent };
-      upsertProposal(db, next, stashDir);
+      upsertProposal(db, next, stateBundleId(stashDir));
       return next;
     }),
   );
@@ -1924,10 +1938,10 @@ function persistRetireAcceptance(
           ? { gateDecision: { ...info.gateDecision, decidedAt: info.gateDecision.decidedAt ?? decidedAt } }
           : {}),
       };
-      upsertProposal(db, next, stashDir);
+      upsertProposal(db, next, stateBundleId(stashDir));
       recordImproveLedgerDecision(db, {
         proposalId: next.id,
-        stashDir,
+        bundleId: stateBundleId(stashDir),
         ref: next.ref,
         source: next.source,
         outcome: "accepted",
@@ -2518,10 +2532,10 @@ async function unretireProposalWithLease(
           ...(current.review?.decidedBy ? { decidedBy: current.review.decidedBy } : {}),
         },
       };
-      upsertProposal(db, next, stashDir);
+      upsertProposal(db, next, stateBundleId(stashDir));
       recordImproveLedgerDecision(db, {
         proposalId: next.id,
-        stashDir,
+        bundleId: stateBundleId(stashDir),
         ref: next.ref,
         source: next.source,
         outcome: "rejected",
@@ -2718,7 +2732,7 @@ export function reopenProposals(
     withImmediateTransaction(db, () => {
       const proposals = [...new Set(ids)].map((id) => requireProposal(db, stashDir, id));
       const held = new Map<string, string>();
-      for (const pending of listStateProposals(db, { stashDir, status: "pending" })) {
+      for (const pending of listStateProposals(db, { bundleId: stateBundleId(stashDir), status: "pending" })) {
         if (isRetireProposal(pending)) for (const ref of retireHeldRefs(pending)) held.set(ref, pending.id);
       }
       const refusals = proposals.flatMap((proposal) => {
@@ -2768,14 +2782,14 @@ export function reopenProposals(
             },
           ],
         };
-        upsertProposal(db, reopened, stashDir);
+        upsertProposal(db, reopened, stateBundleId(stashDir));
         if (isRetireProposal(existing)) {
           // A retire mint writes no ledger row, so the one its rejection wrote goes.
-          forgetImproveLedgerDecision(db, stashDir, existing.id);
+          forgetImproveLedgerDecision(db, stateBundleId(stashDir), existing.id);
         } else {
           reopenImproveLedgerDecision(db, {
             proposalId: existing.id,
-            stashDir,
+            bundleId: stateBundleId(stashDir),
             source: existing.source,
             at: decidedAt,
             detail: options.reason !== undefined ? `reopened: ${options.reason}` : "reopened",

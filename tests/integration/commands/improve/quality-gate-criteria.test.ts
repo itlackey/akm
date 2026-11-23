@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { writeQualityRejection } from "../../../../src/commands/improve/distill";
 import { getProposal, listProposals } from "../../../../src/commands/proposal/repository";
 import { readEvents } from "../../../../src/core/events";
-import { openStateDatabase } from "../../../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
 import { getImproveLedgerRow } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { makeSandboxDir } from "../../../_helpers/sandbox";
 
@@ -33,7 +33,7 @@ afterEach(() => cleanup());
 function ledgerRow(ref: string) {
   const db = openStateDatabase();
   try {
-    return getImproveLedgerRow(db, stashDir, ref, "distill");
+    return getImproveLedgerRow(db, stateBundleId(stashDir), ref, "distill");
   } finally {
     db.close();
   }

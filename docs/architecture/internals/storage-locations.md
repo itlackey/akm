@@ -229,7 +229,7 @@ The proposal queue. A decided proposal stays as a row; archiving changes `status
 | Column | Type | Notes |
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | UUID |
-| `stash_dir` | TEXT NOT NULL | Absolute bundle root; partitions the queue per bundle |
+| `bundle_id` | TEXT NOT NULL | The bundle's id (its config name); partitions the queue per bundle, and follows the bundle when its directory moves |
 | `ref` | TEXT NOT NULL | `bundle//conceptId`, no fragment |
 | `status` | TEXT NOT NULL DEFAULT 'pending' | `pending`, `accepted`, `rejected`, `reverted` |
 | `source` | TEXT NOT NULL | The generator (`PROPOSAL_SOURCES`, `src/commands/proposal/proposal-types.ts`) |
@@ -306,12 +306,12 @@ index` deletes rows older than 90 days. Indexes on `entry_id`, `event_type`, `en
 
 #### `improve_ledger`
 
-One row per `(stash_dir, ref, source)`: what an improve stage last did with the
+One row per `(bundle_id, ref, source)`: what an improve stage last did with the
 asset and when it may try again.
 
 | Column | Notes |
 |---|---|
-| `stash_dir`, `ref`, `source` | Primary key |
+| `bundle_id`, `ref`, `source` | Primary key |
 | `last_attempt_at` | ISO-8601 |
 | `outcome` | `proposed`, `accepted`, `rejected`, `quality_rejected`, `review_needed`, `expired`, `unchanged`, `failed`, `judged_no_action` |
 | `next_eligible_at` | When the stage may try again; NULL for content-driven decisions |
@@ -325,7 +325,7 @@ Candidate selection in each improve stage reads it before any model call
 
 | Table | Holds |
 |---|---|
-| `improve_runs` | One row per `akm improve` run: `id`, `started_at`, `completed_at`, `stash_dir`, `dry_run`, `strategy`, `scope_mode`, `scope_value`, `guidance`, `ok`, `result_json`, `metrics_json`, `metadata_json`, and `profile` (no longer written). Purged by the retention pass. |
+| `improve_runs` | One row per `akm improve` run: `id`, `started_at`, `completed_at`, `bundle_id`, `dry_run`, `strategy`, `scope_mode`, `scope_value`, `guidance`, `ok`, `result_json`, `metrics_json`, `metadata_json`, and `profile` (no longer written). Purged by the retention pass. |
 | `extract_sessions_seen` | Primary key `(harness, session_id)`; the extractor's record of which sessions it processed and with what outcome. |
 | `asset_salience`, `asset_outcome` | Per-asset improve scoring state, keyed by `asset_ref`. |
 | `body_embeddings` | Cache of memory-body embedding vectors keyed by `content_hash`, with `model_id` (`src/storage/repositories/embeddings-repository.ts`). |

@@ -29,7 +29,7 @@ import { typeForStashDir } from "../../../../src/core/asset/asset-placement";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { appendEvent } from "../../../../src/core/events";
 import type { ImproveEligibleRef } from "../../../../src/core/improve-types";
-import { openStateDatabase } from "../../../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
 import { nextEligibleAt, recordImproveLedger } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../../../_helpers/sandbox";
 
@@ -73,7 +73,7 @@ function snapshot(overrides: {
   ] as const) {
     for (const [r, at] of attempts ?? []) {
       ledger.set(ledgerKey(source, r), {
-        stashDir: "/stash",
+        bundleId: "stash",
         ref: r,
         source,
         lastAttemptAt: at,
@@ -340,7 +340,7 @@ describe("buildSnapshotManifest", () => {
     const db = openStateDatabase();
     try {
       recordImproveLedger(db, {
-        stashDir: stash,
+        bundleId: stateBundleId(stash),
         ref: "stash//memories/a",
         source: "reflect",
         outcome: "unchanged",

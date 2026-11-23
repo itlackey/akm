@@ -24,7 +24,7 @@ import { appendEvent, readEvents } from "../../../../src/core/events";
 import { decodeImproveResult } from "../../../../src/core/improve-result";
 import type { AkmDistillResult, AkmReflectResult } from "../../../../src/core/improve-types";
 import { getDbPath, getStashLocksDir } from "../../../../src/core/paths";
-import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
+import { getStateDbPath, openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../../../src/core/warn";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import { OpenCodeProvider } from "../../../../src/integrations/harnesses/opencode/session-log";
@@ -639,7 +639,7 @@ describe("#800 effective dry-run planner", () => {
       const db = openStateDatabase();
       try {
         recordImproveLedger(db, {
-          stashDir,
+          bundleId: stateBundleId(stashDir),
           ref: `memories/${name}`,
           source: "consolidate",
           outcome: "judged_no_action",

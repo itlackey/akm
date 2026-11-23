@@ -618,18 +618,26 @@ function bundleChanges(dir: string, pristine: string, text: (s: string) => strin
   return { written, removed };
 }
 
-const STATE_PROBES: Array<{ id: string; sql: string }> = [
+/**
+ * The state tables read back after the run. `{bundle}` is the column that names a row's bundle: `stash_dir` (a directory)
+ * in the tree the corpus was recorded from, `bundle_id` (the bundle's name, §0.2 P8) since migration 031; both are
+ * read as `stash_dir`, so the recording and the working tree print the same key and the values are what differs.
+ */
+const STATE_PROBES: Array<{ id: string; table?: string; sql: string }> = [
   {
     id: "proposals",
-    sql: "SELECT id, stash_dir, ref, status, source, content, frontmatter_json, metadata_json FROM proposals ORDER BY id",
+    table: "proposals",
+    sql: "SELECT id, {bundle} AS stash_dir, ref, status, source, content, frontmatter_json, metadata_json FROM proposals ORDER BY id",
   },
   {
     id: "improve_ledger",
-    sql: "SELECT stash_dir, ref, source, outcome, next_eligible_at, proposal_id, detail FROM improve_ledger ORDER BY stash_dir, ref, source",
+    table: "improve_ledger",
+    sql: "SELECT {bundle} AS stash_dir, ref, source, outcome, next_eligible_at, proposal_id, detail FROM improve_ledger ORDER BY {bundle}, ref, source",
   },
   {
     id: "improve_runs",
-    sql: "SELECT id, stash_dir, scope_mode, scope_value, ok, result_json FROM improve_runs ORDER BY id",
+    table: "improve_runs",
+    sql: "SELECT id, {bundle} AS stash_dir, scope_mode, scope_value, ok, result_json FROM improve_runs ORDER BY id",
   },
   {
     id: "asset_salience",
@@ -645,6 +653,15 @@ const STATE_PROBES: Array<{ id: string; sql: string }> = [
   },
   { id: "task_history", sql: "SELECT task_id, status, target_kind, target_ref FROM task_history ORDER BY id" },
 ];
+
+/** A probe's SQL for `db`: the bundle column filled in for the tree that wrote it. */
+function probeSql(db: Database, probe: { table?: string; sql: string }): string {
+  if (probe.table === undefined) return probe.sql;
+  const columns = db.prepare(`SELECT name FROM pragma_table_info('${probe.table}')`).all() as Array<{ name: string }>;
+  return probe.sql
+    .split("{bundle}")
+    .join(columns.some((column) => column.name === "bundle_id") ? "bundle_id" : "stash_dir");
+}
 
 /** Run one command of the corpus on `sandbox` and return what a user of it sees, normalised. */
 function runCase(sandbox: Sandbox, norm: ReturnType<typeof normaliser>, c: CorpusCase, quietA2 = false): CorpusResult {
@@ -705,7 +722,7 @@ export function runMainCorpus(sandbox: Sandbox, onCase?: (id: string) => void): 
   results["file config.json"] = { value: norm.value(JSON.parse(fs.readFileSync(sandbox.configFile, "utf8"))) };
   const db = new Database(sandbox.stateDb, { readonly: true });
   for (const probe of STATE_PROBES) {
-    results[`state ${probe.id}`] = { value: norm.value(db.prepare(probe.sql).all()) };
+    results[`state ${probe.id}`] = { value: norm.value(db.prepare(probeSql(db, probe)).all()) };
   }
   db.close();
   for (const bundle of BUNDLES) {
@@ -767,6 +784,7 @@ export function runScenario(
     }
     scenario.setup?.(sandbox);
     for (const args of scenario.prep ?? []) spawn(sandbox, args);
+    scenario.afterPrep?.(sandbox);
     const pristine = path.join(sandbox.root, "pristine");
     // What a case changed is measured from the bundles as they stood before it ran.
     const snapshot = () => {

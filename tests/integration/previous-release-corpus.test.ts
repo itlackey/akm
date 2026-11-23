@@ -112,7 +112,7 @@ import {
   updateConfig,
 } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
-import { openStateDatabase } from "../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, resetQuiet, setQuiet } from "../../src/core/warn";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embeddings";
@@ -479,12 +479,12 @@ describe("previous-release corpus — upgrade must not break reads", () => {
         try {
           const insert = db.prepare(
             `INSERT INTO proposals
-             (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+             (id, bundle_id, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
           );
           insert.run(
             legacyIds.accepted,
-            path.resolve(stash),
+            stateBundleId(path.resolve(stash)),
             "akm//knowledge/corpus-legacy-accepted",
             "accepted",
             "consolidate",
@@ -495,7 +495,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           );
           insert.run(
             legacyIds.rejected,
-            path.resolve(stash),
+            stateBundleId(path.resolve(stash)),
             "akm//commands/corpus-legacy-rejected",
             "rejected",
             "reflect",
@@ -506,7 +506,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           );
           insert.run(
             legacyIds.acceptedGated,
-            path.resolve(stash),
+            stateBundleId(path.resolve(stash)),
             "akm//knowledge/corpus-legacy-gated",
             "accepted",
             "consolidate",
@@ -525,7 +525,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           const listDb = openStateDatabase();
           try {
             expect(() => {
-              listed = listStateProposals(listDb, { stashDir: path.resolve(stash) });
+              listed = listStateProposals(listDb, { bundleId: stateBundleId(path.resolve(stash)) });
             }).not.toThrow();
           } finally {
             listDb.close();

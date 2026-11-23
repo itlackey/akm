@@ -61,12 +61,12 @@ function seed(): void {
   try {
     const insert = db.prepare(
       `INSERT INTO proposals
-         (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+         (id, bundle_id, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
        VALUES (?, ?, ?, ?, 'reflect', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', ?, NULL, ?)`,
     );
     insert.run(
       NEW_ID,
-      stash,
+      "work",
       "work//knowledge/new-note",
       "pending",
       NOTE,
@@ -77,7 +77,7 @@ function seed(): void {
     );
     insert.run(
       DONE_ID,
-      stash,
+      "work",
       "work//knowledge/done",
       "accepted",
       NOTE,
@@ -94,7 +94,7 @@ function seed(): void {
     );
     insert.run(
       DIR_ID,
-      stash,
+      "work",
       "work//knowledge/from-dir",
       "pending",
       NOTE,
@@ -268,12 +268,12 @@ describe("a retire recorded with files and directories", () => {
     try {
       const insert = db.prepare(
         `INSERT INTO proposals
-           (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+           (id, bundle_id, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
          VALUES (?, ?, ?, ?, 'consolidate', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '', NULL, ?)`,
       );
       insert.run(
         RETIRED_ID,
-        stash,
+        "work",
         "work//memories/old-note",
         "accepted",
         JSON.stringify({
@@ -291,7 +291,7 @@ describe("a retire recorded with files and directories", () => {
       );
       insert.run(
         MID_ID,
-        stash,
+        "work",
         "work//memories/mid",
         "pending",
         JSON.stringify({

@@ -24,7 +24,7 @@ import { drainProposals } from "../../../../src/commands/proposal/drain";
 import { createProposal, listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { getDbPath } from "../../../../src/core/paths";
-import { openStateDatabase } from "../../../../src/core/state-db";
+import { openStateDatabase, stateBundleId } from "../../../../src/core/state-db";
 import { resolveWriteTarget } from "../../../../src/core/write-source";
 import type { IndexDocument } from "../../../../src/indexer/passes/metadata";
 import { getImproveLedgerRow } from "../../../../src/storage/repositories/improve-ledger-repository";
@@ -405,12 +405,14 @@ describe("akmConsolidate — a covered memory is not promoted, an uncovered one 
 
     const db = openStateDatabase();
     try {
-      const covered = getImproveLedgerRow(db, stash, "memories/covered-note", "consolidate");
+      const covered = getImproveLedgerRow(db, stateBundleId(stash), "memories/covered-note", "consolidate");
       expect(covered?.outcome).toBe("judged_no_action");
       // The judged text is recorded, so the memory is not asked about again until it changes.
       expect(covered?.contentHash).toBe(contentHash(fs.readFileSync(coveredFile, "utf8"), "body"));
       expect(covered?.nextEligibleAt).toBeNull();
-      expect(getImproveLedgerRow(db, stash, "memories/fresh-note", "consolidate")?.outcome).toBe("proposed");
+      expect(getImproveLedgerRow(db, stateBundleId(stash), "memories/fresh-note", "consolidate")?.outcome).toBe(
+        "proposed",
+      );
     } finally {
       db.close();
     }
