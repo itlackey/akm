@@ -4,11 +4,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { BundleAdapter, BundleListing } from "../core/adapter/bundle-adapter";
-import { requireAdapter } from "../core/adapter/registry";
+import type { BundleListing } from "../core/adapter/bundle-adapter";
 import type { Bundle } from "../core/adapter/types";
-import { bundleAdapterId } from "../core/assets/gate";
-import { type Asset, findAsset } from "../core/assets/read";
+import { type Asset, type BundleScan, findAsset, scanBundle } from "../core/assets/read";
 import { indexedPathOf } from "../core/assets/type";
 import { isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
@@ -92,6 +90,7 @@ import {
   workflowNameForSourcePath,
 } from "../workflows/source-files";
 import { reclassifyIndexDbContention } from "./index-db-contention";
+import { clearIndexOnMissRefs, readIndexOnMissRefs } from "./index-on-miss";
 import { deriveEntryProvenance, deriveInstallations, sourceOfBundle } from "./installations";
 import { legacyRefMove, rekeyLegacyEntry } from "./legacy-refs";
 import { entryOnMiss, indexedPathMatchesOwner } from "./lookup/indexed-owner";
@@ -610,6 +609,7 @@ function isReadableDirectory(root: string): boolean {
   try {
     // asset-io: bundle-root root probe
     if (!fs.statSync(root).isDirectory()) return false;
+    // asset-io: bundle-root root probe
     fs.readdirSync(root); // probe readability, not just existence
     return true;
   } catch {
@@ -958,7 +958,10 @@ function buildIndexedSourceOwners(sources: readonly SearchSource[]): Map<string,
   return new Map(
     sources.map((source, index) => [
       path.resolve(source.path),
-      { bundleId: (bundles[index] as Bundle).id, adapterId: bundleAdapterId(source) },
+      {
+        bundleId: (bundles[index] as Bundle).id,
+        adapterId: scanBundle(source, (bundles[index] as Bundle).id).adapterId,
+      },
     ]),
   );
 }
@@ -966,7 +969,7 @@ function buildIndexedSourceOwners(sources: readonly SearchSource[]): Map<string,
 type SourceScanPlan = {
   currentStashDir: string;
   bundle: Bundle;
-  adapter?: BundleAdapter;
+  scan?: BundleScan;
   dirGroups: Map<string, FileContext[]>;
   removals: Array<DirRecord & { reason: DirScanReason }>;
   walkComplete: boolean;
@@ -1027,13 +1030,13 @@ function sourceSnapshotRemovals(
 }
 
 /** The bundle's listing; a store that cannot be listed (unreachable or failing) is an incomplete one: one bundle never stops the index, which keeps the rows it had. */
-function listOrKeep(adapter: BundleAdapter, bundle: Bundle): BundleListing {
+function listOrKeep(scan: BundleScan): BundleListing {
   try {
-    return adapter.list(bundle);
+    return scan.list();
   } catch (error) {
-    if (adapter.addressedBy !== "location") throw error;
-    // Any failure, not only BUNDLE_UNREACHABLE: a store that errors (a bad `az` reply) must not stop the whole index,
-    // and a failed listing is the same "keep last-known-good rows" case as an unreachable one.
+    // C2 for the indexer (BUNDLE_UNREACHABLE alone, no kind test) waits on one store-failure signal (4e.2).
+    if (!scan.isStore) throw error;
+    // Any failure, not only BUNDLE_UNREACHABLE: a store that errors (a bad `az` reply) must not stop the whole index.
     return { assets: [], complete: false, incompleteReason: toErrorMessage(error) };
   }
 }
@@ -1065,7 +1068,7 @@ function buildSourceScanPlans(
       return {
         currentStashDir,
         bundle,
-        adapter: undefined,
+        scan: undefined,
         dirGroups: new Map(),
         removals: [],
         walkComplete: false,
@@ -1074,15 +1077,13 @@ function buildSourceScanPlans(
       };
     }
     // A bundle that names an adapter akm does not have stops the index before it changes anything.
-    const adapter = requireAdapter(bundle.id, bundleAdapterId(sourceAdded), {
-      location: bundle.location !== undefined,
-    });
-    const walked = walkResultOf(listOrKeep(adapter, bundle), currentStashDir);
+    const scan = scanBundle(sourceAdded, bundle.id);
+    const walked = walkResultOf(listOrKeep(scan), currentStashDir);
     const dirGroups = groupFileContextsByDir(walked.files);
     return {
       currentStashDir,
       bundle,
-      adapter,
+      scan,
       dirGroups,
       removals: [],
       walkComplete: walked.complete,
@@ -1108,7 +1109,7 @@ function buildSourceScanPlans(
     handoffDirs.add(resolvedDir);
   };
 
-  const allComplete = plans.every((plan) => plan.walkComplete && plan.adapter !== undefined);
+  const allComplete = plans.every((plan) => plan.walkComplete && plan.scan !== undefined);
 
   // Reconcile departed directories for every source that produced a
   // trustworthy snapshot; a source that was not walked completely keeps its
@@ -1123,7 +1124,7 @@ function buildSourceScanPlans(
       }
     }
     for (const plan of plans) {
-      if (!plan.walkComplete || !plan.adapter) continue;
+      if (!plan.walkComplete || !plan.scan) continue;
       const currentDirs = new Set([...plan.dirGroups.keys()].map((dirPath) => path.resolve(dirPath)));
       for (const removal of sourceSnapshotRemovals(
         db,
@@ -1224,13 +1225,13 @@ async function scanSourceDirs(
   };
 
   for (const plan of plans) {
-    const { currentStashDir, bundle, adapter, dirGroups, removals, walkComplete } = plan;
+    const { currentStashDir, bundle, scan, dirGroups, removals, walkComplete } = plan;
     processedDirs++;
     reportScanProgress(
       `Processed ${processedDirs}/${allSourceEntries.length} source${allSourceEntries.length === 1 ? "" : "s"}.`,
     );
 
-    if (!walkComplete || adapter === undefined) {
+    if (!walkComplete || scan === undefined) {
       for (const dirPath of dirGroups.keys()) seenPaths.add(path.resolve(dirPath));
       const reason = plan.incompleteReason ?? "the scan did not complete";
       incompleteSources.push({
@@ -1245,7 +1246,7 @@ async function scanSourceDirs(
     // Dispatch each bundle's DETECTED adapter.
     // The content projection's version is part of the variant: a change to what Markdown bodies index re-projects
     // every directory once instead of keeping the old text for unchanged files.
-    const indexVariant = `${adapter.id}@${adapter.version}+content${CONTENT_PROJECTION_VERSION}`;
+    const indexVariant = `${scan.variantPrefix}content${CONTENT_PROJECTION_VERSION}`;
 
     for (const removal of removals) {
       dirRecords.push(removal);
@@ -1296,7 +1297,11 @@ async function scanSourceDirs(
       // bundle's dispatched `adapter.recognize` (broken workflows dropped-with-
       // warning at the drain layer) and reconstruct the durable `IndexDocument`s.
       drainObserverForTests?.(dirPath, ctxs.length);
-      const drained = drainDirDocuments(adapter, bundle, ctxs);
+      const drained = drainDirDocuments(
+        { id: scan.adapterId, recognize: (_bundle, entry) => scan.recognize(entry) },
+        bundle,
+        ctxs,
+      );
       if (drained.warnings.length) warnings.push(...drained.warnings);
       generatedCount += drained.entries.length;
       const stash = drained.entries.length > 0 ? { entries: drained.entries } : null;
@@ -1353,7 +1358,7 @@ async function scanSourceDirs(
     skippedDirs,
     generatedCount,
     warnings,
-    complete: plans.every((plan) => plan.walkComplete && plan.adapter !== undefined),
+    complete: plans.every((plan) => plan.walkComplete && plan.scan !== undefined),
     incompleteSources,
   };
 }
@@ -1361,6 +1366,7 @@ async function scanSourceDirs(
 function requiresWorkflowSourcePreflight(ctxs: readonly FileContext[]): boolean {
   return ctxs.some((ctx) => {
     try {
+      // asset-io: deprecated a symlinked workflow source is warned about by the workflow code
       return fs.lstatSync(ctx.absPath).isSymbolicLink();
     } catch {
       return true;
@@ -1436,6 +1442,8 @@ function persistDirRecords(
   let pairing: MovePairing = { pairs: [], unpaired: [] };
   const movedRefs = new Set<string>();
 
+  const onMissRefs = readIndexOnMissRefs(db);
+  const scannedRefs = new Set<string>();
   const pairMoves = (): MovePairing => {
     const stored: StoredEntry[] = [];
     const fresh: NewEntry[] = [];
@@ -1448,7 +1456,11 @@ function persistDirRecords(
         if ("problem" in found) continue;
         kept.add(found.provenance.itemRef);
         const contentHash = record.hashByFile?.get(found.entryPath);
-        if (contentHash !== undefined && !findPersisted.get(found.provenance.itemRef))
+        // A row index-on-miss wrote since the last scan is a new file too: it may be a vanished entry's move.
+        if (
+          contentHash !== undefined &&
+          (!findPersisted.get(found.provenance.itemRef) || onMissRefs.has(found.provenance.itemRef))
+        )
           fresh.push({ filePath: found.entryPath, provenance: found.provenance, contentHash });
       }
       stored.push(
@@ -1472,6 +1484,11 @@ function persistDirRecords(
     setMeta(db, "stashDirs", JSON.stringify(library.sourceDirs));
     pairing = pairMoves();
     for (const pair of pairing.pairs) {
+      // The row index-on-miss wrote for the moved file gives way to the vanished entry's, which keeps its history.
+      const onMiss = onMissRefs.has(pair.entry.provenance.itemRef)
+        ? (findPersisted.get(pair.entry.provenance.itemRef) as { id: number } | null)
+        : null;
+      if (onMiss) deleteEntriesByIds(db, [onMiss.id]);
       repointEntry(db, pair.id, pair.entry);
       rekeyLlmCache(db, pair.oldFilePath, pair.entry.filePath);
       movedRefs.add(pair.entry.provenance.itemRef);
@@ -1552,6 +1569,7 @@ function persistDirRecords(
           // The adapter lists one entry per ref (the spelling it reads wins), so the ref has one holder.
           const holder = (findPersisted.get(provenance.itemRef) as PersistedEntryRow | null) ?? undefined;
           keptItemRefs.add(provenance.itemRef);
+          scannedRefs.add(provenance.itemRef);
           persistedRows++;
 
           const previous = sameVariant ? holder : undefined;
@@ -1602,6 +1620,7 @@ function persistDirRecords(
       });
       if (persistedRows === 0) warnVerbose(`[index] zero-row ${dirPath}: ${persistedReason}`);
     }
+    clearIndexOnMissRefs(db, scannedRefs);
     // Atomicity observation point: the new generation is fully written but
     // uncommitted, so it must still be invisible to other connections.
     indexTransactionHookForTests?.("records-persisted");
@@ -1816,7 +1835,7 @@ async function lookupBundleRefWithResolutionUsing(
     if (!asset) return resolved(null);
     const bundleId = asset.bundle;
     const source = sourceOfBundle(sources, bundleId);
-    const adapterId = bundleAdapterId(source);
+    const adapterId = scanBundle(source, bundleId).adapterId;
     const ownerPath = indexedPathOf(asset, source);
     // A workflow source that is a symlink to a file of another extension is warned about once, as before.
     if (workflowNameForSourcePath(source.path, adapterId, ownerPath) !== undefined) {

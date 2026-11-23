@@ -512,6 +512,7 @@ function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult 
       }
     });
     const entries = getAllEntries(indexDb).map((entry) => ({
+      ref: entry.itemRef,
       filePath: entry.filePath,
       type: entry.type,
       adapterId: entry.adapterId,

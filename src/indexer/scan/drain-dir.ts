@@ -77,7 +77,7 @@ export interface DrainedDir {
  * or an AKM sensitive/infra file) — silently skipped.
  */
 export function drainDirDocuments(
-  adapter: BundleAdapter,
+  adapter: Pick<BundleAdapter, "id" | "recognize">,
   bundle: Bundle,
   fileContexts: readonly FileContext[],
 ): DrainedDir {

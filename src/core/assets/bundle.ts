@@ -38,6 +38,11 @@ export class AssetBundle {
     this.#bundle = bundleOf(source);
   }
 
+  /** The id of the adapter that holds this bundle. */
+  get adapterId(): string {
+    return this.#adapter.id;
+  }
+
   /** The prefix of the freshness variant the index records for this adapter's rows: id and version. */
   get variantPrefix(): string {
     return `${this.#adapter.id}@${this.#adapter.version}+`;

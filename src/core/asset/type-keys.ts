@@ -9,7 +9,7 @@
  * workflow compiler (`steps`) and `missing-updated` (every Markdown asset). Anything else in a file is kept as written.
  */
 
-import { KNOWN_CATEGORIES } from "../adapter/adapters/akm-lint";
+import { KNOWN_CATEGORIES } from "../assets/validate";
 
 export type FrontmatterKeyKind = "text" | "list" | "flag" | "map";
 

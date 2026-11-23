@@ -40,15 +40,6 @@
       "src/core/adapter/registry": 1
     }
   },
-  "src/commands/health/type-directory-check.ts": {
-    "adapter-id": {
-      "akm": 1
-    },
-    "asset-io": {
-      "buildFileContext": 1,
-      "readFileSync": 1
-    }
-  },
   "src/commands/improve/consolidate.ts": {
     "asset-io": {
       "existsSync": 5,
@@ -187,11 +178,6 @@
       "writeFileSync": 1
     }
   },
-  "src/commands/read/curate.ts": {
-    "asset-io": {
-      "readFileSync": 1
-    }
-  },
   "src/commands/read/knowledge.ts": {
     "adapter-id": {
       "akm": 2
@@ -206,32 +192,13 @@
       "existsSync": 1
     }
   },
-  "src/commands/read/rules.ts": {
-    "adapter-id": {
-      "akm": 1
-    },
-    "adapter-import": {
-      "src/core/adapter/adapters/akm-adapter": 1
-    },
-    "asset-io": {
-      "buildFileContext": 1,
-      "walkStash": 1
-    }
-  },
   "src/commands/read/show.ts": {
     "adapter-id": {
-      ".fileless": 1,
-      "akm": 2,
-      "akm-workflow": 1
-    },
-    "adapter-import": {
-      "src/core/adapter/recognize-match": 1
+      "akm": 1
     },
     "asset-io": {
       "buildFileContext": 2,
       "lstatSync": 1,
-      "readFile": 1,
-      "readFileSync": 1,
       "statSync": 1
     }
   },
@@ -324,11 +291,6 @@
       "statSync": 1
     }
   },
-  "src/core/asset/type-keys.ts": {
-    "adapter-import": {
-      "src/core/adapter/adapters/akm-lint": 1
-    }
-  },
   "src/core/assets/read.ts": {
     "facade-export": {
       "FindOptions": 1,
@@ -376,15 +338,6 @@
       "buildFileContext": 1,
       "existsSync": 1,
       "lstatSync": 1
-    }
-  },
-  "src/indexer/indexer.ts": {
-    "adapter-import": {
-      "src/core/adapter/registry": 1
-    },
-    "asset-io": {
-      "lstatSync": 1,
-      "readdirSync": 1
     }
   },
   "src/indexer/passes/dir-staleness.ts": {
@@ -464,8 +417,7 @@
   },
   "src/output/renderers.ts": {
     "asset-io": {
-      "existsSync": 2,
-      "readFileSync": 1
+      "existsSync": 1
     }
   },
   "src/setup/steps/tasks.ts": {
