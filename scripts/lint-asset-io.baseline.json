@@ -1,0 +1,270 @@
+{
+  "src/commands/agent/contribute-cli.ts": {
+    "asset-io": 1
+  },
+  "src/commands/command/execution-source-loader.ts": {
+    "adapter-import": 2
+  },
+  "src/commands/config-cli.ts": {
+    "adapter-import": 1
+  },
+  "src/commands/env/env-cli.ts": {
+    "asset-io": 2
+  },
+  "src/commands/env/secret-cli.ts": {
+    "asset-io": 1
+  },
+  "src/commands/feedback-cli.ts": {
+    "asset-io": 5
+  },
+  "src/commands/health/bundle-adapters-check.ts": {
+    "adapter-import": 1
+  },
+  "src/commands/health/type-directory-check.ts": {
+    "adapter-id": 1,
+    "asset-io": 3
+  },
+  "src/commands/health/workflow-files.ts": {
+    "asset-io": 1
+  },
+  "src/commands/improve/consolidate.ts": {
+    "adapter-import": 1,
+    "asset-io": 8
+  },
+  "src/commands/improve/consolidate/chunking.ts": {
+    "asset-io": 1
+  },
+  "src/commands/improve/consolidate/coverage.ts": {
+    "asset-io": 1
+  },
+  "src/commands/improve/consolidate/pair-pass.ts": {
+    "asset-io": 2
+  },
+  "src/commands/improve/distill.ts": {
+    "asset-io": 6
+  },
+  "src/commands/improve/eligibility.ts": {
+    "asset-io": 2
+  },
+  "src/commands/improve/improve.ts": {
+    "adapter-import": 1
+  },
+  "src/commands/improve/loop-stages.ts": {
+    "asset-io": 1
+  },
+  "src/commands/improve/memory/memory-belief.ts": {
+    "asset-io": 1
+  },
+  "src/commands/improve/memory/memory-improve.ts": {
+    "adapter-import": 1,
+    "asset-io": 6
+  },
+  "src/commands/improve/preparation.ts": {
+    "asset-io": 4
+  },
+  "src/commands/improve/reflect.ts": {
+    "asset-io": 1
+  },
+  "src/commands/improve/session-asset.ts": {
+    "asset-io": 1
+  },
+  "src/commands/lint/base-linter.ts": {
+    "asset-io": 1
+  },
+  "src/commands/lint/index.ts": {
+    "adapter-import": 5,
+    "adapter-id": 3
+  },
+  "src/commands/proposal/drain.ts": {
+    "asset-io": 2
+  },
+  "src/commands/proposal/propose-cli.ts": {
+    "asset-io": 1
+  },
+  "src/commands/proposal/repository.ts": {
+    "asset-io": 30
+  },
+  "src/commands/read/curate.ts": {
+    "asset-io": 1
+  },
+  "src/commands/read/knowledge.ts": {
+    "adapter-import": 1,
+    "asset-io": 3,
+    "adapter-id": 2
+  },
+  "src/commands/read/rules.ts": {
+    "adapter-import": 2,
+    "adapter-id": 1,
+    "asset-io": 2
+  },
+  "src/commands/read/show.ts": {
+    "adapter-import": 2,
+    "asset-io": 4,
+    "adapter-id": 3
+  },
+  "src/commands/run-cli.ts": {
+    "asset-io": 1
+  },
+  "src/commands/sources/add-cli.ts": {
+    "adapter-import": 1
+  },
+  "src/commands/sources/import-task.ts": {
+    "asset-io": 1
+  },
+  "src/commands/sources/installed-stashes.ts": {
+    "adapter-import": 1
+  },
+  "src/commands/sources/schema-repair.ts": {
+    "asset-io": 1
+  },
+  "src/commands/sources/source-add.ts": {
+    "adapter-import": 2
+  },
+  "src/commands/sources/source-clone.ts": {
+    "asset-io": 15
+  },
+  "src/commands/sources/source-manage.ts": {
+    "adapter-import": 1
+  },
+  "src/commands/tasks/explain.ts": {
+    "adapter-import": 1,
+    "adapter-id": 2,
+    "asset-io": 1
+  },
+  "src/commands/tasks/tasks.ts": {
+    "adapter-import": 1,
+    "adapter-id": 4,
+    "asset-io": 1
+  },
+  "src/core/asset/frontmatter.ts": {
+    "asset-io": 2
+  },
+  "src/core/asset/memory-archive.ts": {
+    "adapter-import": 1
+  },
+  "src/core/asset/type-keys.ts": {
+    "adapter-import": 1
+  },
+  "src/core/bundle-rename.ts": {
+    "asset-io": 1
+  },
+  "src/core/write-source.ts": {
+    "adapter-import": 3,
+    "asset-io": 1
+  },
+  "src/indexer/export-vectors.ts": {
+    "asset-io": 3
+  },
+  "src/indexer/index-written-assets.ts": {
+    "adapter-import": 2,
+    "asset-io": 2
+  },
+  "src/indexer/indexer.ts": {
+    "adapter-import": 2,
+    "adapter-id": 1
+  },
+  "src/indexer/lookup/indexed-owner.ts": {
+    "adapter-import": 1
+  },
+  "src/indexer/passes/memory-inference.ts": {
+    "adapter-import": 1,
+    "adapter-id": 1,
+    "asset-io": 5
+  },
+  "src/indexer/scan/doc-to-entry.ts": {
+    "adapter-id": 1
+  },
+  "src/indexer/scan/drain-dir.ts": {
+    "adapter-import": 1,
+    "adapter-id": 3
+  },
+  "src/indexer/search/search-source.ts": {
+    "asset-io": 1
+  },
+  "src/output/renderers.ts": {
+    "asset-io": 1
+  },
+  "src/setup/setup.ts": {
+    "asset-io": 1
+  },
+  "src/setup/steps/tasks.ts": {
+    "asset-io": 5
+  },
+  "src/sources/providers/git-provider.ts": {
+    "adapter-import": 1
+  },
+  "src/sources/providers/provider-utils.ts": {
+    "adapter-import": 1
+  },
+  "src/sources/resolve.ts": {
+    "adapter-import": 1,
+    "asset-io": 1
+  },
+  "src/tasks/activation-config.ts": {
+    "adapter-id": 1
+  },
+  "src/tasks/frozen-script.ts": {
+    "asset-io": 3
+  },
+  "src/tasks/prepare/prepare-support.ts": {
+    "asset-io": 1
+  },
+  "src/tasks/prepare/prepare.ts": {
+    "asset-io": 2
+  },
+  "src/tasks/prepare/script-capture.ts": {
+    "asset-io": 1
+  },
+  "src/tasks/run/load-task.ts": {
+    "adapter-import": 1,
+    "adapter-id": 2,
+    "asset-io": 1
+  },
+  "src/tasks/run/reconcile-abandoned.ts": {
+    "asset-io": 1
+  },
+  "src/tasks/scheduler-invocation.ts": {
+    "asset-io": 1
+  },
+  "src/tasks/scheduler-sync.ts": {
+    "adapter-id": 4,
+    "asset-io": 2
+  },
+  "src/tasks/v5/check.ts": {
+    "asset-io": 1
+  },
+  "src/tasks/v5/run.ts": {
+    "asset-io": 8
+  },
+  "src/workflows/authoring/authoring.ts": {
+    "adapter-id": 1,
+    "asset-io": 2
+  },
+  "src/workflows/exec/run-workflow.ts": {
+    "asset-io": 1
+  },
+  "src/workflows/runtime/workflow-asset-loader.ts": {
+    "asset-io": 1
+  },
+  "src/workflows/source-files.ts": {
+    "adapter-id": 8
+  },
+  "src/workspace/check-text.ts": {
+    "adapter-import": 3,
+    "asset-io": 6,
+    "adapter-id": 2
+  },
+  "src/workspace/documents.ts": {
+    "asset-io": 1
+  },
+  "src/workspace/moved-links.ts": {
+    "adapter-import": 1,
+    "adapter-id": 1
+  },
+  "src/workspace/new-file.ts": {
+    "asset-io": 1
+  },
+  "src/workspace/proposals.ts": {
+    "asset-io": 1
+  }
+}
