@@ -4,6 +4,8 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+// asset-io: deprecated
+import { adapterIdOf } from "../../core/adapter/detect-adapter";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { adapterWrites, refuseByAdapter } from "../../core/assets/gate";
 import { findAsset } from "../../core/assets/read";
@@ -16,7 +18,7 @@ import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { compileWorkflowSource } from "../compile";
 import type { WorkflowPlan } from "../plan";
-import { isUsableWorkflowSource, workflowNameForSourcePath } from "../source-files";
+import { isUsableWorkflowSource, isWorkflowSource } from "../source-files";
 
 /** A resolved workflow asset, compiled from either authored format into its plan. */
 export type WorkflowAsset = {
@@ -97,7 +99,8 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   // is no workflow source: it is not run.
   if (
     !isUsableWorkflowSource(source.path, assetPath) ||
-    workflowNameForSourcePath(source.path, source.adapterId ?? "akm", assetPath) === undefined
+    // asset-io: deprecated
+    !isWorkflowSource(source.path, adapterIdOf(source), assetPath)
   ) {
     refuseByAdapter(bundle, "does not support native workflow execution", "WORKFLOW_SOURCE_INVALID");
   }

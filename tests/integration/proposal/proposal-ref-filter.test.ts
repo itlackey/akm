@@ -80,6 +80,12 @@ describe("proposal --ref filter (N15)", () => {
     expect(ids.sort()).toEqual([exact, same].sort());
   });
 
+  test("a stored ref whose bundle is not configured is found by the asset's other spellings", () => {
+    const stored = seed("gone//knowledge/guide.md");
+    seed("gone//knowledge/other.md");
+    expect(listProposals(stash, { status: "pending", ref: "knowledge/guide" }).map((p) => p.id)).toEqual([stored]);
+  });
+
   test("the filter without the file's extension finds a proposal stored under the file spelling", () => {
     const stored = seed("stash//knowledge/guide.md");
     seed("stash//knowledge/other.md");

@@ -24,6 +24,8 @@ test.sh
 # The prompts + README + runner (the reusable kit) ARE meant to be tracked.
 docs/reviews/akm-meta-review/findings/
 .akm/
+# reference-compat fixture: a stored archive under .akm/ that the corpus reads
+!tests/fixtures/reference-compat/main/.akm/
 docs/.pending/
 
 

@@ -79,9 +79,9 @@ export interface ResolveEnvBindingOptions {
  */
 export function resolveEnvBinding(target: string, options: ResolveEnvBindingOptions = {}): ResolvedEnvBinding {
   const warn = options.warn ?? ((message: string) => stderr().write(`warning: ${message}\n`));
-  const { conceptId, asset } = resolveEnvPath(target);
+  const { written, asset } = resolveEnvPath(target);
   const bundleId = asset.bundle;
-  const envRef = makeEnvRef(conceptId, bundleId);
+  const envRef = makeEnvRef(written, bundleId);
 
   const allValues = parseEnvText(asset.entry.content());
 
@@ -145,8 +145,9 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
   envValues = substituted;
   const keys = Object.keys(envValues);
 
-  // Audit trail: keys only, never values.
-  if (!options.locateOnly) appendEvent({ eventType: "env_access", ref: envRef, metadata: { keys } });
+  // Audit trail: keys only, never values; the ref is the asset's, not the spelling the caller wrote.
+  if (!options.locateOnly)
+    appendEvent({ eventType: "env_access", ref: makeEnvRef(asset.conceptId, bundleId), metadata: { keys } });
 
   return { ref: envRef, values: envValues, keys, secretValues };
 }

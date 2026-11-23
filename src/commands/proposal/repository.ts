@@ -56,6 +56,7 @@ import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { deriveInstallations } from "../../indexer/installations";
 import { sameScope, scopeFromFrontmatter } from "../../indexer/passes/metadata";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { sha256Hex } from "../../runtime";
 import type { Database } from "../../storage/database";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
@@ -268,7 +269,9 @@ function refFilter(stashDir: string, ref: string): (proposalRef: string) => bool
     const key = `${identity.bundle ?? ""}//${identity.conceptId}`;
     const known = asked.get(key);
     if (known !== undefined) return known;
-    const conceptId = currentConceptId(identity, sources, { quiet: true });
+    // A stored ref whose bundle is not configured names its asset by concept id alone: whichever bundle holds it now.
+    const held = identity.bundle === undefined || resolveSourcesForOrigin(identity.bundle, sources).length > 0;
+    const conceptId = currentConceptId(held ? identity : { conceptId: identity.conceptId }, sources, { quiet: true });
     asked.set(key, conceptId);
     return conceptId;
   };

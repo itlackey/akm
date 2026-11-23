@@ -25,7 +25,6 @@ import { defineGroupCommand, defineJsonCommand, output, reportChildExit } from "
 import {
   findWriteTargetAsset,
   listSecrets,
-  makeSecretRef,
   readSecret,
   resolveSecretWriteTarget,
   writeEnvSecret,
@@ -150,7 +149,7 @@ const secretRunCommand = defineJsonCommand({
       throw new UsageError("Missing command. Usage: akm secret run <ref> <VAR> -- <command>");
     }
 
-    const { conceptId, bundle, value } = readSecret(args.ref);
+    const { ref, value } = readSecret(args.ref);
 
     const mergedEnv = buildChildEnv(process.env, {
       clean: args.clean === true,
@@ -161,7 +160,7 @@ const secretRunCommand = defineJsonCommand({
     // Audit trail: record access by ref + var name only — never the value.
     appendEvent({
       eventType: "secret_access",
-      ref: makeSecretRef(conceptId, bundle),
+      ref,
       metadata: { var: varName },
     });
 

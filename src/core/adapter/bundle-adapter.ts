@@ -59,13 +59,6 @@ export interface BundleAsset {
 /** Every asset of a bundle, one per concept. Listing reads no content. */
 export interface BundleListing {
   assets: BundleAsset[];
-  /**
-   * The files the listing reached that an asset holds or that no asset is (a spelling that lost to the winner is in
-   * neither), in the order the walk found them. No command lists the files that are no asset; the index scans their
-   * directories as it always has, so a directory that holds only such files is still counted, fingerprinted and
-   * reported, in the walk's order.
-   */
-  files?: AssetEntry[];
   /** False when part of the bundle could not be read: the index keeps the rows it had. */
   complete: boolean;
   /** When `complete` is false: why. */

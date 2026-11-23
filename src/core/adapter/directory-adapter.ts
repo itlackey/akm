@@ -127,11 +127,9 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const walked = walkStashFlatWithStatus(b.root, this.walkOptions());
     // One asset per concept: the winner among the files that spell it. The path says which concept a file holds.
     const byConcept = new Map<string, FileContext[]>();
-    const conceptOf = new Map<FileContext, string>();
     for (const file of walked.files) {
       const conceptId = this.identify(file.relPath);
       if (conceptId === null) continue;
-      conceptOf.set(file, conceptId);
       byConcept.set(conceptId, [...(byConcept.get(conceptId) ?? []), file]);
     }
     const winners = new Map<FileContext, string>();
@@ -144,7 +142,6 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
         const conceptId = winners.get(file);
         return conceptId === undefined ? [] : [{ conceptId, entry: this.entryOf(file) }];
       }),
-      files: walked.files.filter((file) => winners.has(file) || !conceptOf.has(file)).map((file) => this.entryOf(file)),
       complete: walked.complete,
       ...(walked.incompleteReason !== undefined ? { incompleteReason: walked.incompleteReason } : {}),
     };
@@ -282,12 +279,14 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
       );
     }
     const conceptId = this.place(b, asset);
-    if (!options.replace && this.read(b, conceptId)) {
+    const held = this.read(b, conceptId);
+    if (!options.replace && held) {
       throw new Error(
         `Adapter "${this.id}" will not create "${b.id}//${conceptId}" over an existing asset without \`replace\`; the asset facade checks \`exclusive\` first.`,
       );
     }
-    const file = this.placeFile(b, asset);
+    // A replacing create rewrites the file the concept is read from (`guide.MD`), never a twin beside it.
+    const file = held?.entry.file ?? this.placeFile(b, asset);
     const entry = buildFileContext(b.root, file);
     const content = options.verbatim ? asset.content : this.serialize(asset.type, file, asset.content);
     const changed = asset.resources?.length

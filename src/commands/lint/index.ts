@@ -41,7 +41,7 @@ import { resolveSourceEntries, type SearchSource } from "../../indexer/search/se
 import { type FileContext, fileContextOfEntry } from "../../indexer/walk/file-context";
 import { walkStashFlat } from "../../indexer/walk/walker";
 import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../tasks/source-v3";
-import { resolveWorkflowSourceDomains, workflowNameForSourcePath } from "../../workflows/source-files";
+import { isWorkflowSource, resolveWorkflowSourceDomains } from "../../workflows/source-files";
 import { runBaseChecks } from "./base-linter";
 import { bundleLintSkip } from "./bundle-skip";
 import { checkEnvForDangerousKeys } from "./env-key-rules";
@@ -147,7 +147,7 @@ function markdownAssetsByType(root: string): Map<string, string[]> {
     if (file.ext !== ".md" || file.ancestorDirs.some((dir) => dir === "env" || dir === "secrets")) continue;
     const type = classifyAkmFile(file.relPath, file)?.match.type;
     // A loose `.md` typed workflow by its content is no workflow source, so the sweep never linted it.
-    if (type === "workflow" && workflowNameForSourcePath(root, "akm", file.absPath) === undefined) continue;
+    if (type === "workflow" && !isWorkflowSource(root, "akm", file.absPath)) continue;
     const dir = type === undefined ? undefined : documentStashDirFor(type);
     if (dir === undefined || documentFormatForStashDir(dir) !== "markdown") continue;
     byDir.set(dir, [...(byDir.get(dir) ?? []), file.absPath]);
@@ -703,7 +703,7 @@ async function addAdapterFindings(
     // Nothing under `env/` or `secrets/` is read, as in the sweep.
     if (file.ancestorDirs.some((dir) => dir === "env" || dir === "secrets")) return false;
     const type = classifyAkmFile(file.relPath, file)?.match.type;
-    if (type === "workflow" && workflowNameForSourcePath(stashRoot, "akm", file.absPath) === undefined) return false;
+    if (type === "workflow" && !isWorkflowSource(stashRoot, "akm", file.absPath)) return false;
     const dir = type === undefined ? undefined : documentStashDirFor(type);
     return dir !== undefined && dirs.has(dir);
   };

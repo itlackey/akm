@@ -1101,7 +1101,7 @@ function reportAdapterSkips(db: Database, plans: readonly SourceScanPlan[]): voi
 /** A bundle's listing as the walk's result: every entry a `FileContext` keyed under the bundle's root. */
 function walkResultOf(listing: BundleListing, root: string): WalkStashFlatResult {
   return {
-    files: (listing.files ?? listing.assets.map(({ entry }) => entry)).map((entry) => fileContextOfEntry(root, entry)),
+    files: listing.assets.map(({ entry }) => fileContextOfEntry(root, entry)),
     complete: listing.complete,
     ...(listing.incompleteReason !== undefined ? { incompleteReason: listing.incompleteReason } : {}),
   };

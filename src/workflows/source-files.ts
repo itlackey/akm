@@ -151,6 +151,11 @@ export function workflowNameForSourcePath(
   return ownsWorkflowFile(sourceRoot, adapterId, path.resolve(sourcePath)) ? relativePath : undefined;
 }
 
+/** Whether `sourcePath` is a workflow source of the bundle: a loose `.md` typed workflow by its content is none. */
+export function isWorkflowSource(sourceRoot: string, adapterId: string, sourcePath: string): boolean {
+  return workflowNameForSourcePath(sourceRoot, adapterId, sourcePath) !== undefined;
+}
+
 /**
  * Resolve a pre-enumerated set of authored workflow candidates in one batch.
  *

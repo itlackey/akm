@@ -130,6 +130,11 @@ export interface IndexDocument {
   conceptId?: string;
   /** Absolute local path (the read path). Absent when no file holds the asset (a secret manager's). */
   path?: string;
+  /**
+   * `hashContent(entry.content())` of the asset's entry: what a directory adapter's `recognize` gives and what
+   * `assetTypeFresh` compares with the file's bytes to know a row is current. A hash of anything else makes every
+   * gate that runs the asset describe it again.
+   */
   hash?: string;
   adapterId?: string;
   /**

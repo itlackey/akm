@@ -47,6 +47,7 @@ import {
   opencodeAdapter,
   secretToolAdapter,
 } from "../../../../src/core/adapter/adapters";
+import { hashContent } from "../../../../src/core/adapter/adapters/shared";
 import { DirectoryAdapterBase } from "../../../../src/core/adapter/directory-adapter";
 import { adapterForId, getAdapters } from "../../../../src/core/adapter/registry";
 import type { Bundle, IndexDocument } from "../../../../src/core/adapter/types";
@@ -607,6 +608,38 @@ describe("conformance — create, place and read agree", () => {
     }
   });
 
+  test("a replacing create rewrites the file the concept is read from, never a twin beside it", () => {
+    // An off-spelling the adapter still reads (`.MD`, `env/default.env` for the default env that places at `env/.env`).
+    const cases: Array<[DirectoryAdapterBase, string, string, string]> = [
+      [akmAdapter, "knowledge", "guide", "knowledge/guide.MD"],
+      [akmAdapter, "memory", "note", "memories/note.MD"],
+      [dotenvAdapter, "env", "default", "env/default.env"],
+    ];
+    for (const [adapter, type, name, relPath] of cases) {
+      const sandbox = sandboxStashDir();
+      try {
+        const root = path.join(sandbox.dir, "b");
+        fs.mkdirSync(path.dirname(path.join(root, relPath)), { recursive: true });
+        fs.writeFileSync(path.join(root, relPath), "old\n");
+        const b = bundle("twin", root);
+        const before = adapter.list(b).assets;
+        expect(
+          before.map((asset) => asset.entry.relPath),
+          `${adapter.id} ${relPath}`,
+        ).toContain(relPath);
+        const change = adapter.create(b, { type, name, content: "# new\n" }, { replace: true });
+        expect(change.file, `${adapter.id} ${relPath}`).toBe(path.join(root, relPath));
+        expect(fs.readFileSync(path.join(root, relPath), "utf8"), `${adapter.id} ${relPath}`).not.toBe("old\n");
+        expect(
+          adapter.list(b).assets.map((asset) => asset.entry.relPath),
+          `${adapter.id} ${relPath}`,
+        ).toEqual(before.map((asset) => asset.entry.relPath));
+      } finally {
+        sandbox.cleanup();
+      }
+    }
+  });
+
   test("a secret manager refuses a create over an existing secret without replace, and replaces with it", async () => {
     const keyring = [
       { path: "/org/freedesktop/secrets/collection/akm/1", label: "t", attributes: { akm: "akm/t" }, secret: "v1" },
@@ -629,16 +662,30 @@ describe("conformance — create, place and read agree", () => {
     });
   });
 
-  test("list reports the files an index scan needs in the order the walk found them, claimed or not", () => {
+  test("list reports assets only, one per concept, in the order the walk found them (N16)", () => {
     for (const adapter of directoryAdapters()) {
       const root = OWN_ROOT_BY_ID[adapter.id]!;
       const listing = adapter.list(bundle(adapter.id, root));
+      expect(Object.keys(listing).sort(), adapter.id).not.toContain("files");
       const walked = walkStashFlat(root, { includeAllDirectories: true }).map((file) => file.relPath);
-      const listed = (listing.files ?? []).map((entry) => entry.relPath);
-      // Every listed file is one the walk found, and in its order.
+      const listed = listing.assets.map((asset) => asset.entry.relPath);
       expect(listed, adapter.id).toEqual(walked.filter((relPath) => listed.includes(relPath)));
-      // Every asset is among them.
-      for (const asset of listing.assets) expect(listed, adapter.id).toContain(asset.entry.relPath);
+      const concepts = listing.assets.map((asset) => asset.conceptId);
+      expect(new Set(concepts).size, adapter.id).toBe(concepts.length);
+    }
+  });
+
+  test("a directory adapter's index hash is the hash of its entry's content (the assetTypeFresh contract)", () => {
+    for (const adapter of directoryAdapters()) {
+      const b = bundle(adapter.id, OWN_ROOT_BY_ID[adapter.id]!);
+      let checked = 0;
+      for (const listed of adapter.list(b).assets) {
+        const doc = adapter.recognize(b, listed.entry);
+        if (doc === null) continue;
+        expect(doc.hash, `${adapter.id}:${listed.conceptId}`).toBe(hashContent(listed.entry.content()));
+        checked++;
+      }
+      expect(checked, adapter.id).toBeGreaterThan(0);
     }
   });
 

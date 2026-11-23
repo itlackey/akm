@@ -122,9 +122,14 @@ describe("writeAssetToSource warns instead of refusing reserved basenames and Wi
     const { source, config } = sink();
     const ref: AssetRef = { type: "knowledge", name: "index" };
 
+    const seen: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") seen.push(args.map(String).join(" "));
+    });
     await expect(writeAssetToSource(source, config, ref, "body\n")).rejects.toThrow(
       'Cannot create knowledge "index" in bundle',
     );
+    expect(seen.join("\n")).not.toContain("writing it anyway");
   });
 
   test("warns and still writes a concept named after a reserved Windows device name", async () => {

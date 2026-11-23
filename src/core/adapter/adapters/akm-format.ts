@@ -45,12 +45,6 @@ export function findAbsoluteHomePaths(content: string): string[] {
 /** The file an asset of `type` and `name` is kept in: `<type folder>/<name><suffix>`, inside that folder. */
 export function placeInTypeFolder(b: Bundle, { type, name }: Pick<NewAsset, "type" | "name">): string {
   const basename = path.posix.basename(name.replaceAll("\\", "/")).replace(/\.md$/i, "").toLowerCase();
-  if (basename === "index" || basename === "log") {
-    warnOnce(
-      `write-source:reserved-basename:${basename}`,
-      `Concept name "${basename}" collides with a reserved word some tooling treats specially; writing it anyway.`,
-    );
-  }
   if (WINDOWS_RESERVED_DEVICE_NAMES.has(basename)) {
     warnOnce(
       `write-source:windows-device-name:${basename}`,
@@ -103,6 +97,19 @@ export abstract class AkmFormatAdapterBase extends DirectoryAdapterBase {
 
   protected override placeFile(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {
     return placeInTypeFolder(b, asset);
+  }
+
+  /** A name some tooling treats specially is warned about only when its asset is placed, never before a refusal. */
+  override place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {
+    const conceptId = super.place(b, asset);
+    const basename = path.posix.basename(asset.name.replaceAll("\\", "/")).replace(/\.md$/i, "").toLowerCase();
+    if (basename === "index" || basename === "log") {
+      warnOnce(
+        `write-source:reserved-basename:${basename}`,
+        `Concept name "${basename}" collides with a reserved word some tooling treats specially; writing it anyway.`,
+      );
+    }
+    return conceptId;
   }
 
   protected override serialize(type: string, file: string, content: string | Buffer): string | Buffer {
