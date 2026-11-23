@@ -68,6 +68,8 @@ export interface BundleListing {
   complete: boolean;
   /** When `complete` is false: why. */
   incompleteReason?: string;
+  /** What is wrong with a store's entries (a secret manager's): `akm index` records and reports it, `akm lint` reads it back. */
+  findings?: Diagnostic[];
 }
 
 /** An asset to create: its type and its name within the type (`env/prod` is type `env`, name `prod`). */

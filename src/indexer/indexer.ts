@@ -77,6 +77,7 @@ import {
   getIndexDirState,
   getMeta,
   setMeta,
+  setStoreFindings,
   upsertIndexDirState,
 } from "../storage/repositories/index-meta-repository";
 import { VACUUM_PENDING_META } from "../storage/repositories/index-schema";
@@ -1079,7 +1080,13 @@ function buildSourceScanPlans(
     }
     // A bundle that names an adapter akm does not have stops the index before it changes anything.
     const scan = scanBundle(sourceAdded, bundle.id);
-    const walked = walkResultOf(listOrKeep(scan), currentStashDir);
+    const listing = listOrKeep(scan);
+    // A store's findings (invalid or shadowed names) are recorded for `akm lint`, which never lists the store.
+    if (scan.isStore && listing.complete) {
+      setStoreFindings(db, bundle.id, listing.findings ?? []);
+      for (const finding of listing.findings ?? []) warn(`${finding.ref} ${finding.issue}: ${finding.detail}`);
+    }
+    const walked = walkResultOf(listing, currentStashDir);
     const dirGroups = groupFileContextsByDir(walked.files);
     return {
       currentStashDir,

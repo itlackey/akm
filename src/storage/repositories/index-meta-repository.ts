@@ -10,6 +10,7 @@
  * layer, not the indexer, so the storage layer owns these primitives.
  */
 
+import type { Diagnostic } from "../../core/adapter/types";
 import type { Database } from "../database";
 import type { IndexDirState } from "./index-entry-types";
 
@@ -34,6 +35,16 @@ export function setMeta(db: Database, key: string, value: string): void {
  */
 export function deleteMeta(db: Database, key: string): void {
   db.prepare("DELETE FROM index_meta WHERE key = ?").run(key);
+}
+
+/** What `akm index` found wrong with a keyring's or vault's entries (`akm lint` reports it from here); undefined: never indexed. */
+export function getStoreFindings(db: Database, bundleId: string): Diagnostic[] | undefined {
+  const recorded = getMeta(db, `store-findings:${bundleId}`);
+  return recorded === undefined ? undefined : (JSON.parse(recorded) as Diagnostic[]);
+}
+
+export function setStoreFindings(db: Database, bundleId: string, findings: readonly Diagnostic[]): void {
+  setMeta(db, `store-findings:${bundleId}`, JSON.stringify(findings));
 }
 
 // ── Per-directory index state ───────────────────────────────────────────────

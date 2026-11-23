@@ -14,6 +14,8 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { readUsableIndex } from "../../indexer/index-readiness";
+import { getStoreFindings } from "../../storage/repositories/index-meta-repository";
 import { parseBundleRef } from "../asset/asset-ref";
 import { compareCodePoints } from "../common";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
@@ -206,13 +208,14 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
 
   /** List the bundle's secrets. A store that cannot be reached throws `BUNDLE_UNREACHABLE`: the index keeps its rows. */
   list(b: Bundle): BundleListing {
-    const { winners } = this.store(this.locationOf(b));
+    const held = this.store(this.locationOf(b));
     return {
-      assets: [...winners.values()].map(({ name, read, store }) => ({
+      assets: [...held.winners.values()].map(({ name, read, store }) => ({
         conceptId: secretEntryPath(name),
         entry: secretEntry(name, read, store),
       })),
       complete: true,
+      findings: this.findings(b, held),
     };
   }
 
@@ -242,19 +245,8 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     };
   }
 
-  /**
-   * What is wrong with the store as it stands: a name that is not a valid concept name is not listed, and items
-   * sharing a name leave one winner. It reads the whole store whatever `edits` name; a store that cannot be reached has
-   * nothing to check.
-   */
-  async validate(b: Bundle, _edits: AssetEdit[], _ctx: ValidateContext): Promise<Diagnostic[]> {
-    let held: Store;
-    try {
-      held = this.store(this.locationOf(b));
-    } catch (error) {
-      if (error instanceof ConfigError) return [];
-      throw error;
-    }
+  /** What is wrong with the store as listed: a name that is not a valid concept name is not listed, and items sharing a name leave one winner. */
+  private findings(b: Bundle, held: Store): Diagnostic[] {
     return [
       ...held.invalid.map(({ name, id }) => ({
         ref: `${b.id}//${secretEntryPath(name)}`,
@@ -269,6 +261,11 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
         fixed: false as const,
       })),
     ];
+  }
+
+  /** What the last `akm index` found wrong with the store: lint never lists the store. Nothing when it was never indexed. */
+  async validate(b: Bundle, _edits: AssetEdit[], _ctx: ValidateContext): Promise<Diagnostic[]> {
+    return readUsableIndex((db) => getStoreFindings(db, b.id) ?? [], []);
   }
 
   place(_b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {

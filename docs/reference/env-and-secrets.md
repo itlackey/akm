@@ -283,12 +283,12 @@ such a bundle after the bundles before it in priority.
   nothing else reads.
 - A name that does not read back as the ref `secrets/<name>` (an empty label,
   one with a `#`, a backslash, a `.` or `..` path segment, a leading or trailing
-  `/`, or trailing white space) is not listed, and `akm lint` reports it by ref
-  (`invalid-name`). When more than one entry has a name, the one with the
-  lowest object path wins (a vault has one secret per name). `akm lint` reports the others as `shadowed-spelling`, and
-  reads, replaces and removes act on the winner. `akm lint` without `--dir` or a
-  file checks the keyrings and vaults among the bundles too; one it cannot reach
-  is skipped.
+  `/`, or trailing white space) is not listed, and `akm index` warns of it and
+  `akm lint` reports it by ref (`invalid-name`). When more than one entry has a name, the one with the
+  lowest object path wins (a vault has one secret per name). `akm index` warns of the others and `akm lint` reports them as
+  `shadowed-spelling`, and reads, replaces and removes act on the winner. `akm
+  lint` without `--dir` or a file reports these from the last `akm index` and
+  never reaches the store; a store that was never indexed has no findings.
 - A keyring or vault that cannot be reached at `akm index` keeps the entries
   the index had. `akm secret list` reads a keyring's or vault's entries from
   the index, so it needs no unlock and never reaches the store. A

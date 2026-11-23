@@ -1021,8 +1021,26 @@ describe("keyring and vault bundles in config and commands (P3, N3, N5, N6)", ()
         keyringItem(4, "twice", "t2", { a: "4" }),
       ],
     };
-    await withFakeSecretStores({ keyrings: entries, vaults: VAULT }, async () => {
+    await withFakeSecretStores({ keyrings: entries, vaults: VAULT }, async (stores) => {
+      // Never indexed: lint says nothing of the store.
+      const unindexed = await akm("lint");
+      expect(
+        (unindexed.json.flagged as Array<Record<string, string>>).filter((i) => i.file?.startsWith("keyring//")),
+      ).toEqual([]);
+      // `akm index` warns of them, with the lint codes and refs.
+      const warnings: string[] = [];
+      _setWarnSinkForTests((_level, args) => warnings.push(args.join(" ")));
+      try {
+        await indexStores();
+      } finally {
+        _setWarnSinkForTests(undefined);
+      }
+      expect(warnings.some((line) => line.startsWith("keyring//secrets/has#hash invalid-name:"))).toBe(true);
+      expect(warnings.some((line) => line.startsWith("keyring//secrets/twice shadowed-spelling:"))).toBe(true);
+      const before = stores.state().calls.length;
       const linted = await akm("lint");
+      // Lint reads the last index: it asks neither store.
+      expect(stores.state().calls.length).toBe(before);
       const issues = [...(linted.json.flagged as Array<Record<string, string>>)].filter((issue) =>
         issue.file?.startsWith("keyring//"),
       );
@@ -1110,6 +1128,7 @@ describe("review fixes (K gate)", () => {
       ],
     };
     await withFakeSecretStores({ keyrings: entries, vaults: VAULT }, async () => {
+      await indexStores();
       const stored = (json: Record<string, unknown>) =>
         (json.flagged as Array<{ file: string; issue: string; ref?: string }>).filter((i) =>
           i.file.startsWith("keyring//"),
