@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { createProposal } from "../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { AkmError, type AkmErrorKind, CONFLICT_CODES } from "../../../src/core/errors";
 import { openStateDatabase } from "../../../src/core/state-db";
@@ -210,7 +211,7 @@ export async function seed(): Promise<void> {
       id: "run-1",
       startedAt: new Date(Date.now() - 120_000).toISOString(),
       completedAt: new Date(Date.now() - 60_000).toISOString(),
-      stashDir: stash,
+      bundleId: stateBundleId(stash),
       dryRun: false,
       strategy: "default",
       scopeMode: "all",

@@ -18,6 +18,7 @@ import { computeSafeChunkSize } from "../../../../src/commands/improve/consolida
 import { akmImprove } from "../../../../src/commands/improve/improve";
 import type { ImproveProcessName } from "../../../../src/commands/improve/improve-strategies";
 import { upsertAssetSalience } from "../../../../src/commands/improve/salience";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { saveConfig } from "../../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../../src/core/events";
@@ -639,7 +640,7 @@ describe("#800 effective dry-run planner", () => {
       const db = openStateDatabase();
       try {
         recordImproveLedger(db, {
-          stashDir,
+          bundleId: stateBundleId(stashDir),
           ref: `memories/${name}`,
           source: "consolidate",
           outcome: "judged_no_action",

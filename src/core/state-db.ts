@@ -33,14 +33,17 @@
  * whole registry. A ledger carrying ids this akm does not know was written by
  * a newer akm: the open continues with the schema this version knows and warns
  * once ({@link warnNewerStateLedger}). Before a released migration that drops
- * schema (`018-drop-dead-lane-schema`, `028-improve-ledger`; see
+ * schema (`018-drop-dead-lane-schema`, `028-improve-ledger`, and
+ * `031-bundle-id-columns`, which an older akm cannot read past; see
  * `STATE_MIGRATION_SAFETY_BY_ID`) runs against an existing database, the
  * database is copied beside itself to `state.db.pre-<id of the first such
  * pending migration>.bak` with `VACUUM INTO` — a plain sibling copy the
  * operator can open, nothing more. A database this open created from scratch is
  * compacted once after its migrations, since the registry creates tables that
  * later migrations drop. Only a ledger that DIVERGES from this akm's registry
- * is refused (`assertMigrationLedger`).
+ * is refused (`assertMigrationLedger`). Every open then rewrites a row that
+ * still names its bundle by root (rows migration 031 carried over) to the
+ * bundle's id, once a config can be read (`convertPathBundleIds`).
  *
  * ## Schema design: indexed columns vs. metadata_json
  *
@@ -70,9 +73,11 @@ import {
   runMigrations,
 } from "../storage/sqlite-migrations";
 import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
+import { openSqliteReadSnapshot } from "../storage/sqlite-read-snapshot";
 import { pkgVersion } from "../version";
-import { ConfigError } from "./errors";
+import { ConfigError, rethrowIfTestIsolationError } from "./errors";
 import { getDataDir } from "./paths";
+import { type BundleAtDir, convertPathBundleIds } from "./state/bundle-id-conversion";
 import { getStateMigrationSafety, STATE_MIGRATIONS } from "./state/migrations";
 import { warnOnce } from "./warn";
 
@@ -92,6 +97,23 @@ export {
  */
 export function getStateDbPath(): string {
   return path.join(getDataDir(), "state.db");
+}
+
+/**
+ * How the state opener finds the bundle at a root (`bundleAtDir`, src/core/bundle-at-dir.ts). That module cannot be
+ * imported here: it reaches the adapter registry, whose adapters reach `core/events`, which reaches this module. It
+ * registers itself when it loads, and every caller that files rows by bundle (`stateBundleId`) has loaded it, so the
+ * rows it filed under a path are re-filed by the next open that follows.
+ */
+let bundleAtDirResolver: BundleAtDir | undefined;
+
+export function registerBundleAtDir(resolve: BundleAtDir): void {
+  bundleAtDirResolver = resolve;
+}
+
+/** Re-file rows still keyed by a directory a configured bundle is at, when `bundleAtDir` is known. */
+function convertPathKeys(db: Database): void {
+  if (bundleAtDirResolver) convertPathBundleIds(db, bundleAtDirResolver);
 }
 
 // ── Database open ────────────────────────────────────────────────────────────
@@ -147,12 +169,16 @@ function migrateStateDatabase(db: Database, dbPath: string): StateDatabaseMigrat
   const ledger = assertMigrationLedger(db, STATE_MIGRATIONS);
   warnNewerStateLedger(ledger);
   const pending = STATE_MIGRATIONS.slice(ledger.migrationIds.length);
-  if (pending.length === 0) return { applied: [] };
+  if (pending.length === 0) {
+    convertPathKeys(db);
+    return { applied: [] };
+  }
   // A database with no applied migration holds nothing akm wrote: a fresh
   // file, `:memory:`, or an empty file left by an interrupted first open.
   const fresh = ledger.migrationIds.length === 0;
   const backupPath = fresh ? undefined : backupBeforeDestructiveMigration(db, dbPath, pending);
   const applied = runMigrations(db, STATE_MIGRATIONS);
+  convertPathKeys(db);
   // The registry creates tables that later migrations drop (018, 028), which
   // leaves free pages behind; a database created by this open starts compact.
   if (fresh && applied.length > 0) db.exec("VACUUM");
@@ -219,6 +245,27 @@ export function openStateDatabaseWithReport(
   dbPath: string = getStateDbPath(),
 ): StateDatabaseMigrationReport & { db: Database } {
   return openAndMigrate(dbPath);
+}
+
+/**
+ * A snapshot of state.db for a read that must not touch the file (a dry run, a read-only listing), at the current
+ * schema: a database this akm has not migrated yet (a dry run is the first command after an upgrade) is brought
+ * forward in the private copy, so the repositories read the columns they are written for. The file itself is not
+ * changed. Undefined when there is no state.db.
+ */
+export function openStateReadSnapshot(dbPath: string = getStateDbPath()): Database | undefined {
+  return openSqliteReadSnapshot(dbPath, {
+    prepare: (copy) => {
+      try {
+        const ledger = assertMigrationLedger(copy, STATE_MIGRATIONS);
+        if (ledger.migrationIds.length < STATE_MIGRATIONS.length) runMigrations(copy, STATE_MIGRATIONS);
+        convertPathKeys(copy);
+      } catch (error) {
+        // Read what the copy holds: a ledger this akm refuses fails the real open with its own message.
+        rethrowIfTestIsolationError(error);
+      }
+    },
+  });
 }
 
 /**

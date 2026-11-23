@@ -24,6 +24,7 @@ import {
   isValidWhenToUse,
 } from "../../src/commands/proposal/validators/proposal-quality-validators";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+import { stateBundleId } from "../../src/core/bundle-at-dir";
 import { type AkmConfig, saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import { validateJsonSchemaSubset } from "../../src/core/json-schema";
@@ -2153,7 +2154,9 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     expect(proposal?.confidence).toBeCloseTo(4.5 / 5, 9);
     const db = openStateDatabase();
     try {
-      const row = listImproveLedgerRows(db, stash, ["distill"]).find((entry) => entry.ref === "skills/deploy");
+      const row = listImproveLedgerRows(db, stateBundleId(stash), ["distill"]).find(
+        (entry) => entry.ref === "skills/deploy",
+      );
       expect(row).toMatchObject({ outcome: "review_needed", proposalId: proposal?.id });
     } finally {
       db.close();
@@ -2252,7 +2255,9 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
 
     const db = openStateDatabase();
     try {
-      const row = listImproveLedgerRows(db, stash, ["distill"]).find((entry) => entry.ref === "skills/deploy");
+      const row = listImproveLedgerRows(db, stateBundleId(stash), ["distill"]).find(
+        (entry) => entry.ref === "skills/deploy",
+      );
       expect(row).toMatchObject({ outcome: "quality_rejected", detail: "adds nothing new" });
       expect(Date.parse(row?.nextEligibleAt ?? "") - Date.parse(row?.lastAttemptAt ?? "")).toBe(30 * 86_400_000);
     } finally {
@@ -2303,7 +2308,7 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
     expect(proposals[0]?.gateDecision?.judgeReason).toContain("no connection or harness configured");
     const db = openStateDatabase();
     try {
-      const row = listImproveLedgerRows(db, stash, ["distill"]).find(
+      const row = listImproveLedgerRows(db, stateBundleId(stash), ["distill"]).find(
         (entry) => entry.ref === "memories/no-judge-promotion",
       );
       expect(row).toMatchObject({ outcome: "review_needed" });
@@ -2403,7 +2408,9 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
     function ledgerRow(fixture: Fixture) {
       const db = openStateDatabase();
       try {
-        return listImproveLedgerRows(db, fixture.stash, ["distill"]).find((entry) => entry.ref === fixture.ref);
+        return listImproveLedgerRows(db, stateBundleId(fixture.stash), ["distill"]).find(
+          (entry) => entry.ref === fixture.ref,
+        );
       } finally {
         db.close();
       }

@@ -18,6 +18,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { listExistingTableNames, openStateDatabase } from "../../../src/core/state-db";
 import type { Database } from "../../../src/storage/database";
 import { queryImproveRuns, recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
@@ -59,7 +60,7 @@ function seedImproveRun(id: string, startedAt: string, dryRun: boolean): void {
     id,
     startedAt,
     completedAt: startedAt,
-    stashDir: "/tmp/stash",
+    bundleId: stateBundleId("/tmp/stash"),
     dryRun,
     strategy: "default",
     scopeMode: "all",

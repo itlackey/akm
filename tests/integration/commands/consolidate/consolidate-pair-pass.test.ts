@@ -37,6 +37,7 @@ import { contentHash } from "../../../../src/commands/improve/content-hash";
 import { drainProposals } from "../../../../src/commands/proposal/drain";
 import { akmProposalAccept, akmProposalRevert } from "../../../../src/commands/proposal/proposal";
 import { getProposal, listProposals } from "../../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import { getDbPath } from "../../../../src/core/paths";
 import { openStateDatabase } from "../../../../src/core/state-db";
 import type { IndexDocument } from "../../../../src/indexer/passes/metadata";
@@ -392,7 +393,7 @@ describe("pair judgment failures are retained and retried", () => {
     const stateDb = openStateDatabase();
     try {
       const row = (name: string) =>
-        getImproveLedgerRow(stateDb, storage.stashDir, `memories/${name}`, "consolidate-pair");
+        getImproveLedgerRow(stateDb, stateBundleId(storage.stashDir), `memories/${name}`, "consolidate-pair");
       for (const name of ["settled", "no-action"]) expect(row(`${name}-x`)).toBeDefined();
       for (const failure of result.failures!) expect(row(failure.initiator.replace("memories/", ""))).toBeUndefined();
     } finally {
@@ -498,7 +499,7 @@ describe("selectInitiators / selectCandidates — threshold math against a real 
     const stateDb = openStateDatabase();
     try {
       recordImproveLedger(stateDb, {
-        stashDir: storage.stashDir,
+        bundleId: stateBundleId(storage.stashDir),
         ref: "memories/old-note",
         source: "consolidate-pair",
         outcome: "judged_no_action",
@@ -554,7 +555,7 @@ describe("selectInitiators / selectCandidates — threshold math against a real 
     const stateDb = openStateDatabase();
     try {
       recordImproveLedger(stateDb, {
-        stashDir: storage.stashDir,
+        bundleId: stateBundleId(storage.stashDir),
         ref: "memories/old-note",
         source: "consolidate-pair",
         outcome: "judged_no_action",
@@ -680,7 +681,12 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     // Ledger: consolidate-pair source, distinguishable from the promote pass's own "consolidate" rows.
     const stateDb = openStateDatabase();
     try {
-      const row = getImproveLedgerRow(stateDb, storage.stashDir, "memories/old-note", "consolidate-pair");
+      const row = getImproveLedgerRow(
+        stateDb,
+        stateBundleId(storage.stashDir),
+        "memories/old-note",
+        "consolidate-pair",
+      );
       expect(row?.outcome).toBe("proposed");
       expect(row?.nextEligibleAt).toBeNull();
       expect(typeof row?.contentHash).toBe("string");
@@ -788,7 +794,9 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     // run — not a settled "no action". b-note gets no ledger row for it.
     const stateDb = openStateDatabase();
     try {
-      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/b-note", "consolidate-pair")).toBeUndefined();
+      expect(
+        getImproveLedgerRow(stateDb, stateBundleId(storage.stashDir), "memories/b-note", "consolidate-pair"),
+      ).toBeUndefined();
     } finally {
       stateDb.close();
     }
@@ -1151,8 +1159,12 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     // skipped by the pending-proposal filter), so neither gets a ledger row.
     const stateDb = openStateDatabase();
     try {
-      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/old-note", "consolidate-pair")).toBeUndefined();
-      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/new-note", "consolidate-pair")).toBeUndefined();
+      expect(
+        getImproveLedgerRow(stateDb, stateBundleId(storage.stashDir), "memories/old-note", "consolidate-pair"),
+      ).toBeUndefined();
+      expect(
+        getImproveLedgerRow(stateDb, stateBundleId(storage.stashDir), "memories/new-note", "consolidate-pair"),
+      ).toBeUndefined();
     } finally {
       stateDb.close();
     }
@@ -1186,7 +1198,9 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(listProposals(storage.stashDir)).toHaveLength(0);
     const stateDb = openStateDatabase();
     try {
-      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/old-note", "consolidate-pair")).toBeUndefined();
+      expect(
+        getImproveLedgerRow(stateDb, stateBundleId(storage.stashDir), "memories/old-note", "consolidate-pair"),
+      ).toBeUndefined();
     } finally {
       stateDb.close();
     }
@@ -1219,12 +1233,17 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(result.initiators).toBe(2);
     const stateDb = openStateDatabase();
     try {
-      const lonelyRow = getImproveLedgerRow(stateDb, storage.stashDir, "memories/lonely", "consolidate-pair");
+      const lonelyRow = getImproveLedgerRow(
+        stateDb,
+        stateBundleId(storage.stashDir),
+        "memories/lonely",
+        "consolidate-pair",
+      );
       expect(lonelyRow?.outcome).toBe("judged_no_action");
       expect(typeof lonelyRow?.contentHash).toBe("string");
-      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/far", "consolidate-pair")?.outcome).toBe(
-        "judged_no_action",
-      );
+      expect(
+        getImproveLedgerRow(stateDb, stateBundleId(storage.stashDir), "memories/far", "consolidate-pair")?.outcome,
+      ).toBe("judged_no_action");
     } finally {
       stateDb.close();
     }
@@ -1284,8 +1303,12 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(warnings.filter((w) => w.includes("stored embedding"))).toHaveLength(1);
     const stateDb = openStateDatabase();
     try {
-      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/no-vec-a", "consolidate-pair")).toBeUndefined();
-      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/no-vec-b", "consolidate-pair")).toBeUndefined();
+      expect(
+        getImproveLedgerRow(stateDb, stateBundleId(storage.stashDir), "memories/no-vec-a", "consolidate-pair"),
+      ).toBeUndefined();
+      expect(
+        getImproveLedgerRow(stateDb, stateBundleId(storage.stashDir), "memories/no-vec-b", "consolidate-pair"),
+      ).toBeUndefined();
     } finally {
       stateDb.close();
     }
@@ -1436,7 +1459,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
       // I had a genuine "duplicate" verdict on Y AND a dropped one on Z —
       // should-fix 3 means no row at all, so I is reconsidered next run.
       expect(
-        getImproveLedgerRow(stateDbAfterRun1, storage.stashDir, "memories/i-note", "consolidate-pair"),
+        getImproveLedgerRow(stateDbAfterRun1, stateBundleId(storage.stashDir), "memories/i-note", "consolidate-pair"),
       ).toBeUndefined();
       // Minting (even a proposal later rejected) marks i-note "processed" in
       // the retrieval scope (Blocker 1's exemption covers only the pair
@@ -1495,7 +1518,12 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     // I now has a row: every one of its candidates resolved cleanly this run.
     const stateDbAfterRun2 = openStateDatabase();
     try {
-      const row = getImproveLedgerRow(stateDbAfterRun2, storage.stashDir, "memories/i-note", "consolidate-pair");
+      const row = getImproveLedgerRow(
+        stateDbAfterRun2,
+        stateBundleId(storage.stashDir),
+        "memories/i-note",
+        "consolidate-pair",
+      );
       expect(row?.outcome).toBe("proposed");
     } finally {
       stateDbAfterRun2.close();
@@ -1572,7 +1600,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const stateDbAfterRun1 = openStateDatabase();
     try {
       expect(
-        getImproveLedgerRow(stateDbAfterRun1, storage.stashDir, "memories/i-note", "consolidate-pair"),
+        getImproveLedgerRow(stateDbAfterRun1, stateBundleId(storage.stashDir), "memories/i-note", "consolidate-pair"),
       ).toBeUndefined();
       insertUsageEvent(stateDbAfterRun1, { event_type: "search", entry_ref: "stash//memories/i-note", source: "user" });
     } finally {
@@ -1736,7 +1764,9 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     try {
       // a-note's only candidate (b-note) was skipped (b-note has a pending
       // proposal) — a-note is not "fully judged" and gets no row.
-      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/a-note", "consolidate-pair")).toBeUndefined();
+      expect(
+        getImproveLedgerRow(stateDb, stateBundleId(storage.stashDir), "memories/a-note", "consolidate-pair"),
+      ).toBeUndefined();
     } finally {
       stateDb.close();
     }
@@ -1769,7 +1799,9 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
       // the sole initiator, so b-note has no candidates of its own and gets
       // an unrelated zero-candidate row — the same shape the cap-cut test
       // above already works around.)
-      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/a-note", "consolidate-pair")).toBeUndefined();
+      expect(
+        getImproveLedgerRow(stateDb, stateBundleId(storage.stashDir), "memories/a-note", "consolidate-pair"),
+      ).toBeUndefined();
     } finally {
       stateDb.close();
     }
@@ -1833,7 +1865,12 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
     expect(listProposals(storage.stashDir)).toHaveLength(0);
     const stateDb = openStateDatabase();
     try {
-      const row = getImproveLedgerRow(stateDb, storage.stashDir, "knowledge/topic-note", "consolidate-pair");
+      const row = getImproveLedgerRow(
+        stateDb,
+        stateBundleId(storage.stashDir),
+        "knowledge/topic-note",
+        "consolidate-pair",
+      );
       expect(row?.outcome).toBe("judged_no_action");
     } finally {
       stateDb.close();
@@ -2133,7 +2170,7 @@ describe("memory scope integrity (#1197)", () => {
                   ...proposal,
                   retireAcceptIntent: { backupContent: fs.readFileSync(files[0], "utf8") },
                 },
-                storage.stashDir,
+                stateBundleId(storage.stashDir),
               );
             } finally {
               db.close();
@@ -2228,7 +2265,7 @@ describe("memory scope integrity (#1197)", () => {
     delete (retirement as unknown as Record<string, unknown>).judgedScope;
     const db = openStateDatabase();
     try {
-      upsertProposal(db, { ...proposal, retirement }, storage.stashDir);
+      upsertProposal(db, { ...proposal, retirement }, stateBundleId(storage.stashDir));
     } finally {
       db.close();
     }

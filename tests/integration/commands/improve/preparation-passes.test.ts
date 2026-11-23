@@ -26,6 +26,7 @@ import {
 } from "../../../../src/commands/improve/preparation";
 import { archiveProposal, createProposal } from "../../../../src/commands/proposal/repository";
 import { typeForStashDir } from "../../../../src/core/asset/asset-placement";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { appendEvent } from "../../../../src/core/events";
 import type { ImproveEligibleRef } from "../../../../src/core/improve-types";
@@ -73,7 +74,7 @@ function snapshot(overrides: {
   ] as const) {
     for (const [r, at] of attempts ?? []) {
       ledger.set(ledgerKey(source, r), {
-        stashDir: "/stash",
+        bundleId: "stash",
         ref: r,
         source,
         lastAttemptAt: at,
@@ -340,7 +341,7 @@ describe("buildSnapshotManifest", () => {
     const db = openStateDatabase();
     try {
       recordImproveLedger(db, {
-        stashDir: stash,
+        bundleId: stateBundleId(stash),
         ref: "stash//memories/a",
         source: "reflect",
         outcome: "unchanged",

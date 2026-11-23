@@ -134,7 +134,7 @@ Accepting a consolidate promotion archives the source memory (and its `.derived`
 
 ## Proposal queue
 
-`createProposal` is the write point for reflect, distill, consolidate (promote), extract, schema repair, and `akm proposal new`; the pair pass's retire proposals use `createRetireProposal`. Both write the `proposals` table in `state.db`, partitioned by `stash_dir` (see [Storage Locations](storage-locations.md)). Pending, accepted, rejected, and reverted are statuses on one row; `akm proposal reopen` moves a rejected row back to pending.
+`createProposal` is the write point for reflect, distill, consolidate (promote), extract, schema repair, and `akm proposal new`; the pair pass's retire proposals use `createRetireProposal`. Both write the `proposals` table in `state.db`, partitioned by `bundle_id` (see [Storage Locations](storage-locations.md)). Pending, accepted, rejected, and reverted are statuses on one row; `akm proposal reopen` moves a rejected row back to pending.
 
 ## Scope
 

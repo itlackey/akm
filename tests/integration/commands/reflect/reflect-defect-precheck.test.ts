@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { type AkmReflectOptions, akmReflect } from "../../../../src/commands/improve/reflect";
 import { findReflectDefect } from "../../../../src/commands/improve/reflect-noise";
 import { listProposals } from "../../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
 import { openStateDatabase } from "../../../../src/core/state-db";
@@ -184,7 +185,7 @@ describe("akm reflect — a deterministic defect", () => {
     expect(listProposals(storage.stashDir)).toEqual([]);
     const db = openStateDatabase();
     try {
-      expect(listImproveLedgerRows(db, storage.stashDir, ["reflect"])).toMatchObject([
+      expect(listImproveLedgerRows(db, stateBundleId(storage.stashDir), ["reflect"])).toMatchObject([
         { ref: REF, outcome: "quality_rejected", detail: "placeholder_added" },
       ]);
     } finally {

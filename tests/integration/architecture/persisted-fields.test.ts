@@ -23,9 +23,6 @@ const STORAGE_NAME = /path|dir|root/i;
 
 /** Field -> the phase that removes it. */
 const ALLOWED: Record<string, string> = {
-  "state.proposals.stash_dir": "4d.4",
-  "state.improve_runs.stash_dir": "4d.4",
-  "state.improve_ledger.stash_dir": "4d.4",
   "state.task_history.log_path": "permanent (a run log is state, not an asset)",
   "state.workflow_run_units.worktree_path": "permanent (a git worktree of a run, not an asset)",
   "state.workflow_run_unit_attempts.worktree_path": "permanent (a git worktree of a run, not an asset)",

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { listProposals } from "../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
@@ -50,9 +51,9 @@ function seed(ref: string): string {
   try {
     db.prepare(
       `INSERT INTO proposals
-         (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+         (id, bundle_id, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
        VALUES (?, ?, ?, 'pending', 'distill', ?, ?, 'x', NULL, '{}')`,
-    ).run(id, stash, ref, "2026-07-05T03:03:28.486Z", "2026-07-05T03:03:28.486Z");
+    ).run(id, stateBundleId(stash), ref, "2026-07-05T03:03:28.486Z", "2026-07-05T03:03:28.486Z");
   } finally {
     db.close();
   }

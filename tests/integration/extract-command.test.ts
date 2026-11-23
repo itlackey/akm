@@ -22,6 +22,7 @@ import * as proposalRepository from "../../src/commands/proposal/repository";
 import { listProposals } from "../../src/commands/proposal/repository";
 import { isValidDescription } from "../../src/commands/proposal/validators/proposal-quality-validators";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+import { stateBundleId } from "../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
 import { TransientError, UsageError } from "../../src/core/errors";
@@ -784,7 +785,7 @@ describe("akmExtract — accounting matches persisted effects (#1212)", () => {
       const db = openStateDatabase();
       try {
         recordImproveLedger(db, {
-          stashDir: stash,
+          bundleId: stateBundleId(stash),
           ref: "memories/held",
           source: "extract",
           outcome: "rejected",
@@ -995,7 +996,7 @@ describe("akmExtract — accounting matches persisted effects (#1212)", () => {
       });
       const prior = getExtractedSession(db, "claude", "legacy");
       recordImproveLedger(db, {
-        stashDir: stash,
+        bundleId: stateBundleId(stash),
         ref: "memories/held",
         source: "extract",
         outcome: "rejected",

@@ -9,8 +9,9 @@
  */
 
 import fs from "node:fs";
+import { stateBundleId } from "../../core/bundle-at-dir";
 import type { EventsContext } from "../../core/events";
-import { getStateDbPath, withImmediateTransaction, withStateDb } from "../../core/state-db";
+import { getStateDbPath, openStateReadSnapshot, withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import type { Database } from "../../storage/database";
 import {
@@ -22,7 +23,6 @@ import {
   PAIR_PASS_LEDGER_SOURCE,
   recordImproveLedger,
 } from "../../storage/repositories/improve-ledger-repository";
-import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
 import type { ProposalsContext } from "../proposal/repository";
 
 export type { ImproveLedgerOutcome, ImproveLedgerRow };
@@ -61,7 +61,7 @@ function withLedgerDb<T>(access: LedgerAccess | undefined, fn: (db: Database) =>
   if (borrowed) return fn(borrowed);
   const dbPath = ledgerDbPath(access);
   if (access?.readOnly) {
-    const db = openSqliteReadSnapshot(dbPath ?? getStateDbPath());
+    const db = openStateReadSnapshot(dbPath ?? getStateDbPath());
     if (!db) return undefined;
     try {
       return fn(db);
@@ -102,7 +102,7 @@ export function recordLedgerAttempt(
       withImmediateTransaction(db, () => {
         for (const input of list) {
           recordImproveLedger(db, {
-            stashDir: input.stashDir,
+            bundleId: stateBundleId(input.stashDir),
             ref: input.ref,
             source: input.source,
             outcome: input.outcome,
@@ -146,7 +146,8 @@ export function loadLedgerSnapshot(
   const out = new Map<string, ImproveLedgerRow>();
   try {
     readLedgerDb(access, (db) => {
-      for (const row of listImproveLedgerRows(db, stashDir, sources)) out.set(ledgerKey(row.source, row.ref), row);
+      for (const row of listImproveLedgerRows(db, stateBundleId(stashDir), sources))
+        out.set(ledgerKey(row.source, row.ref), row);
     });
   } catch (error) {
     warn(`[improve] ledger read failed: ${error instanceof Error ? error.message : String(error)}`);

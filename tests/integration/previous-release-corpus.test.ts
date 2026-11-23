@@ -104,6 +104,7 @@ import { inspectTaskFilesMigration } from "../../scripts/akm-migrate/task-migrat
 import { akmHealth } from "../../src/commands/health";
 import { createProposal as createProposalImpl } from "../../src/commands/proposal/repository";
 import { akmTasksSync, akmTasksSyncPlan } from "../../src/commands/tasks/tasks";
+import { stateBundleId } from "../../src/core/bundle-at-dir";
 import {
   loadConfig,
   normalizeConfigFile,
@@ -479,12 +480,12 @@ describe("previous-release corpus — upgrade must not break reads", () => {
         try {
           const insert = db.prepare(
             `INSERT INTO proposals
-             (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+             (id, bundle_id, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
           );
           insert.run(
             legacyIds.accepted,
-            path.resolve(stash),
+            stateBundleId(path.resolve(stash)),
             "akm//knowledge/corpus-legacy-accepted",
             "accepted",
             "consolidate",
@@ -495,7 +496,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           );
           insert.run(
             legacyIds.rejected,
-            path.resolve(stash),
+            stateBundleId(path.resolve(stash)),
             "akm//commands/corpus-legacy-rejected",
             "rejected",
             "reflect",
@@ -506,7 +507,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           );
           insert.run(
             legacyIds.acceptedGated,
-            path.resolve(stash),
+            stateBundleId(path.resolve(stash)),
             "akm//knowledge/corpus-legacy-gated",
             "accepted",
             "consolidate",
@@ -525,7 +526,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           const listDb = openStateDatabase();
           try {
             expect(() => {
-              listed = listStateProposals(listDb, { stashDir: path.resolve(stash) });
+              listed = listStateProposals(listDb, { bundleId: stateBundleId(path.resolve(stash)) });
             }).not.toThrow();
           } finally {
             listDb.close();

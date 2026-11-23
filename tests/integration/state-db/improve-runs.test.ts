@@ -64,7 +64,7 @@ describe("migration 003 — improve_runs", () => {
         expect.arrayContaining([
           "idx_improve_runs_dry_run",
           "idx_improve_runs_started",
-          "idx_improve_runs_stash_scope",
+          "idx_improve_runs_bundle_scope",
         ]),
       );
 
@@ -74,7 +74,7 @@ describe("migration 003 — improve_runs", () => {
         "id",
         "started_at",
         "completed_at",
-        "stash_dir",
+        "bundle_id",
         "dry_run",
         "strategy",
         "scope_mode",
@@ -132,7 +132,7 @@ describe("recordImproveRun", () => {
         id: "run-001",
         startedAt: "2026-05-23T12:00:00.000Z",
         completedAt: "2026-05-23T12:01:00.000Z",
-        stashDir: "/tmp/test-stash",
+        bundleId: "test-stash",
         dryRun: false,
         strategy: "default",
         scopeMode: "type",
@@ -144,7 +144,7 @@ describe("recordImproveRun", () => {
 
       const row = db
         .prepare(
-          `SELECT id, started_at, completed_at, stash_dir, dry_run, strategy,
+          `SELECT id, started_at, completed_at, bundle_id, dry_run, strategy,
                   scope_mode, scope_value, guidance, ok, result_json,
                   metrics_json, metadata_json
            FROM improve_runs WHERE id = 'run-001'`,
@@ -154,7 +154,7 @@ describe("recordImproveRun", () => {
       expect(row.id).toBe("run-001");
       expect(row.started_at).toBe("2026-05-23T12:00:00.000Z");
       expect(row.completed_at).toBe("2026-05-23T12:01:00.000Z");
-      expect(row.stash_dir).toBe("/tmp/test-stash");
+      expect(row.bundle_id).toBe("test-stash");
       expect(row.dry_run).toBe(0);
       expect(row.strategy).toBe("default");
       expect(row.scope_mode).toBe("type");
@@ -189,7 +189,7 @@ describe("recordImproveRun", () => {
         id: "run-strategy",
         startedAt: "2026-07-11T12:00:00.000Z",
         completedAt: "2026-07-11T12:01:00.000Z",
-        stashDir: "/tmp/test-stash",
+        bundleId: "test-stash",
         dryRun: false,
         strategy: "quick",
         scopeMode: "all",
@@ -215,7 +215,7 @@ describe("recordImproveRun", () => {
         id: "run-dry",
         startedAt: "2026-05-23T12:00:00.000Z",
         completedAt: "2026-05-23T12:00:00.000Z",
-        stashDir: "/tmp/test-stash",
+        bundleId: "test-stash",
         dryRun: true,
         strategy: "default",
         scopeMode: "all",
@@ -260,7 +260,7 @@ describe("recordImproveRun", () => {
         id: "run-mixed",
         startedAt: "2026-05-23T12:00:00.000Z",
         completedAt: "2026-05-23T12:00:00.000Z",
-        stashDir: "/tmp/test-stash",
+        bundleId: "test-stash",
         dryRun: false,
         strategy: "default",
         scopeMode: "all",
@@ -374,7 +374,7 @@ describe("recordImproveRun", () => {
         id: "run-aggregate",
         startedAt: "2026-07-05T12:00:00.000Z",
         completedAt: "2026-07-05T12:00:00.000Z",
-        stashDir: "/tmp/test-stash",
+        bundleId: "test-stash",
         dryRun: false,
         strategy: "default",
         scopeMode: "all",
@@ -414,7 +414,7 @@ describe("purgeOldImproveRuns", () => {
         id: "run-old",
         startedAt: oldStarted,
         completedAt: oldStarted,
-        stashDir: "/tmp/test-stash",
+        bundleId: "test-stash",
         dryRun: false,
         strategy: "default",
         scopeMode: "all",
@@ -427,7 +427,7 @@ describe("purgeOldImproveRuns", () => {
         id: "run-recent",
         startedAt: recentStarted,
         completedAt: recentStarted,
-        stashDir: "/tmp/test-stash",
+        bundleId: "test-stash",
         dryRun: false,
         strategy: "default",
         scopeMode: "all",
@@ -458,7 +458,7 @@ describe("purgeOldImproveRuns", () => {
         id: "run-old",
         startedAt: oldStarted,
         completedAt: oldStarted,
-        stashDir: "/tmp/test-stash",
+        bundleId: "test-stash",
         dryRun: false,
         strategy: "default",
         scopeMode: "all",
@@ -486,7 +486,7 @@ describe("purgeOldImproveRuns", () => {
         id: "run-recent",
         startedAt: recentStarted,
         completedAt: recentStarted,
-        stashDir: "/tmp/test-stash",
+        bundleId: "test-stash",
         dryRun: false,
         strategy: "default",
         scopeMode: "all",

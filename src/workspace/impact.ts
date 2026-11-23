@@ -11,6 +11,7 @@
 import { metricsWindow, readLlmRows, readUsageRows } from "../commands/metrics/metrics-cli";
 import type { MetricsUsageRow } from "../commands/metrics/types";
 import { isRetireProposal, type Proposal } from "../commands/proposal/proposal-types";
+import { stateBundleId } from "../core/bundle-at-dir";
 import { resolveStashDir } from "../core/common";
 import { USAGE_EVENT_RETENTION_DAYS } from "../indexer/usage/usage-events";
 import { readStateEvents } from "../storage/repositories/events-repository";
@@ -192,7 +193,7 @@ export function improveImpact(input: { since?: string } = {}) {
       proposals: attempt(
         errors,
         "proposals",
-        () => listStateProposals(db, { stashDir: resolveStashDir(), withContent: false }),
+        () => listStateProposals(db, { bundleId: stateBundleId(resolveStashDir()), withContent: false }),
         [],
       ),
       reopened: attempt(

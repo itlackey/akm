@@ -19,6 +19,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { stateBundleId } from "../../core/bundle-at-dir";
 import { daysToMs } from "../../core/common";
 import type { ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -769,7 +770,7 @@ export function buildSnapshotManifest(args: {
     const fixedAt = new Map<string, string[]>();
     if (stashDir) {
       withRunState(eventsCtx, args.readOnly !== true, (db) => {
-        for (const p of listStateProposals(db, { stashDir, status: "accepted" })) {
+        for (const p of listStateProposals(db, { bundleId: stateBundleId(stashDir), status: "accepted" })) {
           if (p.source === "feedback") fixedAt.set(p.ref, [...(fixedAt.get(p.ref) ?? []), p.createdAt]);
         }
       });
@@ -1231,7 +1232,7 @@ function updateOutcomeScores(args: {
     try {
       const rows = listStateProposals(db, {
         status: "accepted",
-        ...(args.primaryStashDir ? { stashDir: args.primaryStashDir } : {}),
+        ...(args.primaryStashDir ? { bundleId: stateBundleId(args.primaryStashDir) } : {}),
       });
       for (const p of rows) accepted.set(p.ref, (accepted.get(p.ref) ?? 0) + 1);
     } catch {

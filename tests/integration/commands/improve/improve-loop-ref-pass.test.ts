@@ -24,6 +24,7 @@ import {
 } from "../../../../src/commands/improve/loop-stages";
 import type { Proposal } from "../../../../src/commands/proposal/repository";
 import { typeForStashDir } from "../../../../src/core/asset/asset-placement";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { UsageError } from "../../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../../src/core/events";
@@ -225,7 +226,7 @@ describe("processImproveLoopRef — reflect half", () => {
 function ledgerRow(stashDir: string, ref: string, source: string) {
   const db = openStateDatabase();
   try {
-    return getImproveLedgerRow(db, stashDir, ref, source);
+    return getImproveLedgerRow(db, stateBundleId(stashDir), ref, source);
   } finally {
     db.close();
   }

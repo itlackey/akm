@@ -51,6 +51,7 @@ import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
 import { readHealthIndex } from "./health/read-index";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
 import { readSemanticSearchHealth } from "./health/semantic-search-check";
+import { collectStateUnknownBundleCheck } from "./health/state-unknown-bundle-check";
 import { buildTypeDirectoryAdvisory } from "./health/type-directory-check";
 import {
   type AkmHealthResult,
@@ -441,6 +442,13 @@ function gatherAncillaryAdvisories(
   if (bundleSharedPath) advisories.push(bundleSharedPath);
   const adapterSkips = collectAdapterSkipCheck();
   if (adapterSkips) advisories.push(adapterSkips);
+  // State follows a bundle by its name: rows under a name no bundle has are left behind by a rename done by hand.
+  try {
+    const unknownBundle = collectStateUnknownBundleCheck();
+    if (unknownBundle) advisories.push(unknownBundle);
+  } catch {
+    // Non-fatal.
+  }
 
   try {
     const opencodeMajor = collectOpencodeMajorAdvisory(Boolean(options.probe));

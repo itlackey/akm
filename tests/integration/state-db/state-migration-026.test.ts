@@ -17,6 +17,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import {
   getStateMigrationSafety,
   STATE_MIGRATION_SAFETY_BY_ID,
@@ -146,7 +147,7 @@ describe("migration 026-proposals-strip-legacy-fragment-refs — legacy fragment
       try {
         const db = openStateDatabase(file);
         try {
-          const proposals = listStateProposals(db, { stashDir: "/tmp/stash" });
+          const proposals = listStateProposals(db, { bundleId: stateBundleId("/tmp/stash") });
           const byId = new Map(proposals.map((p) => [p.id, p]));
           expect(byId.get("legacy-fragment-qualified")?.ref).toBe("akm//knowledge/brand-aesthetic-guidelines");
           expect(byId.get("legacy-fragment-short")?.ref).toBe("knowledge/other-guide");

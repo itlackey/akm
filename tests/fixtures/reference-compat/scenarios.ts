@@ -25,6 +25,8 @@ export interface Scenario {
   setup?: (sb: Sandbox) => void;
   /** akm commands that run before the recorded ones and are not recorded (an index, say). */
   prep?: string[][];
+  /** Runs once `prep` has: a change to the sandbox that must come after those commands ran (a directory moved once state was filed). */
+  afterPrep?: (sb: Sandbox) => void;
   cases: CorpusCase[];
   /** Bundles whose files each case's result records the changes to (the files that case wrote or removed). */
   track?: string[];
@@ -220,6 +222,84 @@ function promotionProposal(sb: Sandbox, id: string): void {
 const config = (sb: Sandbox) => JSON.parse(fs.readFileSync(sb.configFile, "utf8")) as Record<string, unknown>;
 
 const c = (id: string, args: string[], extra: Partial<CorpusCase> = {}): CorpusCase => ({ id, args, ...extra });
+
+/** Store one proposal (a copy of fixture proposal 0002 with this id and ref) in the queue filed under `stashDir`. */
+function storeProposalIn(sb: Sandbox, id: string, ref: string, stashDir: string): void {
+  const db = new Database(sb.stateDb);
+  try {
+    const row = db.query("SELECT * FROM proposals WHERE id = '00000000-0000-4000-8000-000000000002'").get() as Record<
+      string,
+      unknown
+    >;
+    const columns = Object.keys(row);
+    const copy: Record<string, unknown> = { ...row, id, ref, stash_dir: stashDir };
+    db.query(`INSERT INTO proposals (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`).run(
+      ...columns.map((column) => copy[column] as never),
+    );
+  } finally {
+    db.close();
+  }
+}
+
+/** Two git bundles whose checkouts are in the cache (a bundle's checkout is `<cache>/registry-index/git-<sha256 of its url, 16 hex>/repo`). */
+function gitBundles(sb: Sandbox): string[] {
+  const cfg = config(sb) as { bundles: Record<string, unknown> };
+  const checkouts: string[] = [];
+  for (const name of ["alpha", "beta"]) {
+    const url = `https://example.test/${name}-notes`;
+    const checkout = path.join(
+      sb.env.XDG_CACHE_HOME as string,
+      "akm",
+      "registry-index",
+      `git-${createHash("sha256").update(url).digest("hex").slice(0, 16)}`,
+      "repo",
+    );
+    write(path.join(checkout, "knowledge", "note.md"), `---\ndescription: ${name}\n---\n\n${name} note.\n`);
+    cfg.bundles[name] = { git: url, writable: true };
+    checkouts.push(checkout);
+  }
+  fs.writeFileSync(sb.configFile, JSON.stringify(cfg, null, 2));
+  return checkouts;
+}
+
+/** Move the `main` bundle's directory and point its config entry at the new place (the bundle keeps its name). */
+function moveMainBundle(sb: Sandbox): string {
+  const moved = path.join(sb.fixture, "main-moved");
+  fs.renameSync(path.join(sb.fixture, "main"), moved);
+  const cfg = config(sb) as { bundles: Record<string, { path: string }> };
+  (cfg.bundles.main as { path: string }).path = moved;
+  fs.writeFileSync(sb.configFile, JSON.stringify(cfg, null, 2));
+  return moved;
+}
+
+/** Rename the `main` bundle to `primary` by hand in config: the key, the default and the write target. */
+function renameMainBundleByHand(sb: Sandbox): void {
+  const cfg = config(sb) as Record<string, unknown> & { bundles: Record<string, unknown> };
+  cfg.bundles = Object.fromEntries(
+    Object.entries(cfg.bundles).map(([key, entry]) => [key === "main" ? "primary" : key, entry]),
+  );
+  cfg.defaultBundle = "primary";
+  cfg.defaultWriteTarget = "primary";
+  fs.writeFileSync(sb.configFile, JSON.stringify(cfg, null, 2));
+}
+
+/** What `akm doctor` says about state filed under a bundle name no configured bundle has: the one finding, its status and evidence. */
+function doctorUnknownBundle(sb: Sandbox): unknown {
+  const proc = Bun.spawnSync(
+    [process.execPath, path.join(sb.tree, "src", "cli.ts"), "doctor", "--no-probe", "--format", "json"],
+    {
+      cwd: path.join(sb.root, "work"),
+      env: sb.env,
+      stdin: "ignore",
+      timeout: 120_000,
+    },
+  );
+  const report = JSON.parse(proc.stdout.toString()) as {
+    advisories?: Array<{ name: string; status: string; evidence?: unknown }>;
+  };
+  const found = (report.advisories ?? []).find((entry) => entry.name === "state-unknown-bundle");
+  return found ? { status: found.status, evidence: found.evidence } : "<no state-unknown-bundle finding>";
+}
 
 export const SCENARIOS: Scenario[] = [
   {
@@ -798,6 +878,98 @@ export const SCENARIOS: Scenario[] = [
       c("search newtask", ["search", "newtask"]),
       c("search newflow", ["search", "newflow"]),
       c("env list", ["env", "list"]),
+    ],
+  },
+  {
+    // The `main` bundle's directory moves and its config `path` is edited (its name stays), after a command has run: an
+    // older akm filed proposals, the ledger and runs under the directory, so they stay with the old one (empty queue
+    // here); now they follow the name and the queue is the one it was (§0.2 P8).
+    id: "bundle directory moved",
+    prep: [["proposal", "list"]],
+    afterPrep: moveMainBundle,
+    cases: [
+      c("proposal list", ["proposal", "list"]),
+      c("proposal list pending", ["proposal", "list", "--status", "pending"]),
+      c("proposal list rejected", ["proposal", "list", "--status", "rejected"]),
+      c("proposal show 1", ["proposal", "show", "00000000-0000-4000-8000-000000000001"]),
+      c("proposal show 2", ["proposal", "show", "00000000-0000-4000-8000-000000000002"]),
+      c("proposal list --queue team", ["proposal", "list", "--queue", "team"]),
+      c("improve report", ["improve", "report"]),
+      c("improve dry-run", ["improve", "--dry-run", "--format", "json"]),
+    ],
+    finals: { "doctor state-unknown-bundle": doctorUnknownBundle },
+  },
+  {
+    // The `main` bundle is renamed by hand in config (`primary`), after a command has run: its proposals, ledger and runs
+    // stay under the directory for an older akm, so its queue is as it was; now they follow the name and are left behind
+    // under `main`, which `akm doctor` reports (`state-unknown-bundle`, §0.2 P8, N10).
+    id: "bundle renamed by hand",
+    prep: [["proposal", "list"]],
+    afterPrep: renameMainBundleByHand,
+    cases: [
+      c("proposal list", ["proposal", "list"]),
+      c("proposal list pending", ["proposal", "list", "--status", "pending"]),
+      c("proposal show 1", ["proposal", "show", "00000000-0000-4000-8000-000000000001"]),
+      c("proposal list --queue team", ["proposal", "list", "--queue", "team"]),
+      c("improve report", ["improve", "report"]),
+    ],
+    finals: { "doctor state-unknown-bundle": doctorUnknownBundle },
+  },
+  {
+    // Two git bundles, each with a proposal in its own queue: the queues are separate (a checkout is a directory of its
+    // own, not "repo"), under an older akm and now.
+    id: "two git bundles",
+    setup: (sb) => {
+      const [alpha, beta] = gitBundles(sb);
+      storeProposalIn(sb, "00000000-0000-4000-8000-000000000041", "alpha//knowledge/only-in-alpha", alpha as string);
+      storeProposalIn(sb, "00000000-0000-4000-8000-000000000042", "beta//knowledge/only-in-beta", beta as string);
+    },
+    cases: [
+      c("proposal list --queue alpha", ["proposal", "list", "--queue", "alpha"]),
+      c("proposal list --queue beta", ["proposal", "list", "--queue", "beta"]),
+      c("proposal show 41 --queue alpha", [
+        "proposal",
+        "show",
+        "00000000-0000-4000-8000-000000000041",
+        "--queue",
+        "alpha",
+      ]),
+      c("proposal show 41 --queue beta", [
+        "proposal",
+        "show",
+        "00000000-0000-4000-8000-000000000041",
+        "--queue",
+        "beta",
+      ]),
+      c("proposal list", ["proposal", "list"]),
+    ],
+  },
+  {
+    // Two directories with the same name, neither a configured bundle, each used as the working directory with its own
+    // proposal: the queues are separate, as they were filed by directory.
+    id: "two unconfigured directories with one name",
+    setup: (sb) => {
+      for (const side of ["a", "b"])
+        write(path.join(sb.fixture, side, "akm", "knowledge", "note.md"), "---\ndescription: n\n---\n\nNote.\n");
+      storeProposalIn(
+        sb,
+        "00000000-0000-4000-8000-000000000051",
+        "akm//knowledge/in-a",
+        path.join(sb.fixture, "a", "akm"),
+      );
+      storeProposalIn(
+        sb,
+        "00000000-0000-4000-8000-000000000052",
+        "akm//knowledge/in-b",
+        path.join(sb.fixture, "b", "akm"),
+      );
+    },
+    cases: [
+      c("proposal list in a", ["proposal", "list"], { env: { AKM_BUNDLE_DIR: "{FIXTURE}/a/akm" } }),
+      c("proposal list in b", ["proposal", "list"], { env: { AKM_BUNDLE_DIR: "{FIXTURE}/b/akm" } }),
+      c("proposal show 51 in b", ["proposal", "show", "00000000-0000-4000-8000-000000000051"], {
+        env: { AKM_BUNDLE_DIR: "{FIXTURE}/b/akm" },
+      }),
     ],
   },
 ];

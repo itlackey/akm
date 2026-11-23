@@ -16,6 +16,7 @@ import { isRetireProposal, type Proposal, proposalWaitingSince } from "../comman
 import { diffLoadedProposal, resolveProposalIdIn } from "../commands/proposal/repository";
 import { validateProposal } from "../commands/proposal/validators/proposals";
 import { parsePlacementRef } from "../core/asset/resolve-ref";
+import { stateBundleId } from "../core/bundle-at-dir";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { AkmError, NotFoundError, UsageError } from "../core/errors";
@@ -101,7 +102,7 @@ export function list(input: ListInput = {}) {
   return (
     withReadonlyStateDb((db) => {
       // A list shows summaries, so the proposed content is not read.
-      const all = listStateProposals(db, { stashDir: resolveStashDir(), withContent: false });
+      const all = listStateProposals(db, { bundleId: stateBundleId(resolveStashDir()), withContent: false });
       const picked =
         status === "pending"
           ? all

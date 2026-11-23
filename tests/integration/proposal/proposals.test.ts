@@ -31,6 +31,7 @@ import { validateProposal } from "../../../src/commands/proposal/validators/prop
 import { serializeFrontmatter } from "../../../src/core/asset/asset-serialize";
 import { parseFrontmatter, replaceFrontmatterBlocks } from "../../../src/core/asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../../src/core/asset/frontmatter-lint";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { type AkmConfig, resetConfigCache } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
@@ -767,7 +768,7 @@ describe("akmProposalAccept — validation failure (#284 HIGH 6)", () => {
 function ledgerRow(stash: string, ref: string, source: string) {
   const db = openStateDatabase();
   try {
-    return getImproveLedgerRow(db, stash, ref, source);
+    return getImproveLedgerRow(db, stateBundleId(stash), ref, source);
   } finally {
     db.close();
   }

@@ -10,6 +10,7 @@
  */
 
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { stateBundleId } from "../../core/bundle-at-dir";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
@@ -178,7 +179,7 @@ export function rejectedProposalContext(
       const proposals = listProposalsReadOnly(stash, { ref, status: "rejected", includeArchive: true }, { ...ctx, db });
       const history: Array<{ at: string; entry: RejectedProposalContext }> = [];
       try {
-        const latest = attempt ? getImproveLedgerRow(db, stash, attempt.ref, attempt.source) : undefined;
+        const latest = attempt ? getImproveLedgerRow(db, stateBundleId(stash), attempt.ref, attempt.source) : undefined;
         if (latest?.outcome === "quality_rejected" && latest.detail) {
           history.push({ at: latest.lastAttemptAt, entry: { ref, reason: latest.detail } });
         } else if (
@@ -186,7 +187,7 @@ export function rejectedProposalContext(
           latest.proposalId &&
           !proposals.some((p) => p.id === latest.proposalId)
         ) {
-          const linked = getStateProposal(db, latest.proposalId, stash);
+          const linked = getStateProposal(db, latest.proposalId, stateBundleId(stash));
           if (linked?.status === "rejected") proposals.push(linked);
         }
       } catch (error) {

@@ -23,6 +23,7 @@ import { splitFrontmatter } from "../../../../src/commands/improve/reflect-noise
 import { drainProposals } from "../../../../src/commands/proposal/drain";
 import { akmProposalAccept } from "../../../../src/commands/proposal/proposal";
 import { createProposal, listProposals } from "../../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../../src/core/events";
 import { openStateDatabase } from "../../../../src/core/state-db";
@@ -96,7 +97,7 @@ const PATCH = { description: "Runbook for the required AdGuard config and how to
 function reflectLedgerRows() {
   const db = openStateDatabase();
   try {
-    return listImproveLedgerRows(db, makeStashDir(), ["reflect"]);
+    return listImproveLedgerRows(db, stateBundleId(makeStashDir()), ["reflect"]);
   } finally {
     db.close();
   }
