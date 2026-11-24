@@ -26,7 +26,8 @@ is described in [Architecture: Connections and Harnesses](architecture.md#connec
 > **Migration nearly finished.** [Principled exceptions](#principled-exceptions)
 > lists what stays outside the facade for good. Asset access still done as the
 > base release did it, where the facade would change what a user sees, carries
-> `// asset-io: base` until the owner rules on it (see [Enforcement](#enforcement)).
+> `// asset-io: base`; a later change moves each one with its own approved
+> behaviour change (see [Enforcement](#enforcement)).
 
 ---
 
