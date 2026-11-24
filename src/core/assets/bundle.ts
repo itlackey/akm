@@ -129,6 +129,10 @@ export class AssetBundle {
   place(asset: Pick<NewAsset, "type" | "name">): AssetPlacement {
     return this.#adapter.place(this.#bundle, asset);
   }
+  /** What a create of `type` puts before the asset's name in its concept id (`tasks/`); empty when nothing. */
+  prefixOf(type: string): string {
+    return this.#adapter.prefixOf?.(type) ?? "";
+  }
   /** The concept id a stored key holds, from the key alone; null when it holds none or the adapter has no keys. */
   identifyKey(key: string): string | null {
     return this.#adapter.identifyKey?.(this.#bundle, key) ?? null;

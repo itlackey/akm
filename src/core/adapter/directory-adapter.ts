@@ -357,6 +357,12 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return this.placeAt(b, asset, this.placeFile(b, asset));
   }
 
+  /** What a create of `type` puts before the name in its concept id: the type's folder (`tasks/`), else nothing. */
+  prefixOf(type: string): string {
+    const folder = this.typeFolder(type);
+    return folder === undefined ? "" : `${folder}/`;
+  }
+
   /** {@link place} for a create kept at `file`. */
   protected placeAt(b: Bundle, asset: Pick<NewAsset, "type" | "name">, file: string): AssetPlacement {
     const key = this.relPathOf(b, file);

@@ -125,6 +125,7 @@ interface BundleAdapter {
   contentType?(b: Bundle, entry: AssetEntry): string | undefined;      // the type the bytes give, without describing
   declaredType?(key: string): string | undefined;                      // the type a key's folder declares (`memories/`)
   rendererFor?(type: string): string | undefined;                      // how `akm show` renders a type it does not present
+  prefixOf?(type: string): string;                                     // what a create puts before a name in the concept id (`tasks/`)
   identifyKey?(b: Bundle, key: string): string | null;                 // converters of old stored records only
 }
 ```

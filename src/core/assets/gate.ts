@@ -37,6 +37,11 @@ export function adapterWrites(bundle: string, type: string): boolean {
   return bundleFor(bundle).writes(type);
 }
 
+/** What the bundle's adapter puts before an asset's name in the concept id a create of `type` gives (`tasks/`), or "". */
+export function placedPrefixOf(bundle: string, type: string): string {
+  return bundleFor(bundle).prefixOf(type);
+}
+
 /** Refuse with a message naming the bundle and its adapter: `Bundle "x" uses adapter "y", which <what>.` */
 export function refuseByAdapter(bundle: string, what: string, code: UsageErrorCode): never {
   return bundleFor(bundle).refuse(what, code);

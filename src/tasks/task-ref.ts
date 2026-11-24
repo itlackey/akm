@@ -11,7 +11,7 @@
 import { stashDirFor, withoutTypeHead } from "../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
-import { adapterWrites, bundleAdapterId } from "../core/assets/gate";
+import { adapterWrites, bundleAdapterId, placedPrefixOf } from "../core/assets/gate";
 import { type Asset, listAssets, readAsset, requireAsset } from "../core/assets/read";
 import { assetTypes } from "../core/assets/type";
 import { addressOf } from "../core/assets/write";
@@ -85,10 +85,7 @@ function taskPrefixIn(source: TaskBundleSource): string {
 
 function taskPrefixOf(bundle: string): string {
   // An adapter that does not write tasks places none: a task there is named by its concept id.
-  if (!adapterWrites(bundle, "task")) return "";
-  const probe = "task-name-probe";
-  const placed = addressOf(bundle, conceptIdFromTypeName("task", probe)).conceptId;
-  return placed.endsWith(probe) ? placed.slice(0, placed.length - probe.length) : "";
+  return adapterWrites(bundle, "task") ? placedPrefixOf(bundle, "task") : "";
 }
 
 /**

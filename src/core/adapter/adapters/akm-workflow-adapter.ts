@@ -170,6 +170,11 @@ export class AkmWorkflowAdapter extends AkmFormatAdapterBase {
     return path.join(rootOf(b), `${name}.md`);
   }
 
+  /** At its root: nothing before a workflow's name. */
+  override prefixOf(): string {
+    return "";
+  }
+
   protected spellings(conceptId: string): string[] {
     return [`${toPosix(conceptId).replace(/\.md$/i, "")}.md`];
   }

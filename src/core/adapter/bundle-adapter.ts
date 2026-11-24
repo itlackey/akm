@@ -200,6 +200,8 @@ export interface BundleAdapter {
    * files, where. A name that cannot be placed throws, as does a read-only adapter.
    */
   place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): AssetPlacement;
+  /** What a create of `type` puts before the asset's name in its concept id (`tasks/`). Absent: nothing. */
+  prefixOf?(type: string): string;
   /**
    * Create the asset, in the adapter's own form for its type, or with `verbatim` as exactly `asset.content` (a promoted
    * proposal's bytes are the ones it was reviewed with). Over an existing asset of the same concept it writes the same
