@@ -461,7 +461,7 @@ describe("Bug 2 — promote boundary re-validate after repair", () => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       payload: { content: repaired },
-      changes: [{ path: "lessons/deploy-pipelines.md", op: "create" as const, after: repaired }],
+      changes: [{ ref: "stash//lessons/deploy-pipelines", op: "create" as const, content: repaired }],
     };
     const report = runProposalValidators(proposal as Parameters<typeof runProposalValidators>[0]);
     expect(report.ok).toBe(true);
@@ -492,7 +492,7 @@ describe("Bug 2 — promote boundary re-validate after repair", () => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       payload: { content: repaired },
-      changes: [{ path: "lessons/repo-management.md", op: "create" as const, after: repaired }],
+      changes: [{ ref: "stash//lessons/repo-management", op: "create" as const, content: repaired }],
     };
     const report = runProposalValidators(proposal as Parameters<typeof runProposalValidators>[0]);
     expect(report.ok).toBe(true);
@@ -521,7 +521,7 @@ describe("Bug 2 — promote boundary re-validate after repair", () => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       payload: { content: raw },
-      changes: [{ path: "lessons/short-desc.md", op: "create" as const, after: raw }],
+      changes: [{ ref: "stash//lessons/short-desc", op: "create" as const, content: raw }],
     };
     const report = runProposalValidators(proposal as Parameters<typeof runProposalValidators>[0]);
 
@@ -543,7 +543,7 @@ describe("Bug 2 — promote boundary re-validate after repair", () => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       payload: { content: "   " },
-      changes: [{ path: "lessons/empty.md", op: "create" as const, after: "   " }],
+      changes: [{ ref: "stash//lessons/empty", op: "create" as const, content: "   " }],
     };
     const report = runProposalValidators(proposal as Parameters<typeof runProposalValidators>[0]);
 

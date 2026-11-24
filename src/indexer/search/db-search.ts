@@ -66,7 +66,7 @@ import {
 } from "./ranking";
 import { attachSearchHitAttribution } from "./search-attribution";
 import { enrichSearchHit, type SearchHitContext } from "./search-hit-enrichers";
-import { buildEditHint, findSourceForIndexedPath, isEditable, type SearchSource } from "./search-source";
+import { buildEditHint, findSourceForRow, isEditable, type SearchSource } from "./search-source";
 
 /**
  * Age past which search surfaces a "run akm index" hint. Reads serve the
@@ -453,8 +453,8 @@ function selectFusedEntries(
     const batch: Array<HydratedEntry & { candidate: FusedCandidate }> = [];
     for (const candidate of fused.slice(offset, offset + batchSize)) {
       const row = getEntryById(db, candidate.id);
-      if (!row || !hasIndexedProvenance(row) || seenPaths.has(row.filePath)) continue;
-      seenPaths.add(row.filePath);
+      if (!row || !hasIndexedProvenance(row) || seenPaths.has(row.filePath || row.itemRef)) continue;
+      seenPaths.add(row.filePath || row.itemRef);
       batch.push({ ...row, id: candidate.id, candidate });
     }
     for (const kept of applyEntryFilters(batch, filterOptions)) {
@@ -573,7 +573,7 @@ async function enumerateEntries(
     (a, b) =>
       a.entry.type.localeCompare(b.entry.type) ||
       a.entry.name.localeCompare(b.entry.name) ||
-      a.filePath.localeCompare(b.filePath),
+      (a.filePath || a.itemRef).localeCompare(b.filePath || b.itemRef),
   );
   // D4: narrow to the requested bundle and subtree. Matching is against the
   // conceptId — the spelling every emitted `ref` carries — so a ref copied out
@@ -679,7 +679,7 @@ function entryDay(entry: IndexDocument): string | undefined {
  * source-narrowing → scope → date range → proposed-quality → derived-twin
  * belief inheritance → belief filter.
  */
-export function applyEntryFilters<T extends { id: number; entry: IndexDocument; filePath: string }>(
+export function applyEntryFilters<T extends { id: number; entry: IndexDocument; filePath: string; bundleId?: string }>(
   items: T[],
   opts: EntryFilterOptions,
 ): T[] {
@@ -689,7 +689,7 @@ export function applyEntryFilters<T extends { id: number; entry: IndexDocument; 
   // index spans every configured source, so without this filter a narrowed
   // --from request would still leak results from other sources.
   const sourceFiltered = opts.restrictToSources
-    ? items.filter((item) => findSourceForIndexedPath(item.filePath, opts.sources) !== undefined)
+    ? items.filter((item) => findSourceForRow(item, opts.sources) !== undefined)
     : items;
   // Scope filter: drop entries whose stored scope does not satisfy every
   // supplied key.
@@ -886,8 +886,9 @@ export async function buildDbHit(input: {
   db?: Database;
   eligible?: SearchHitContext["eligible"];
 }): Promise<SourceSearchHit> {
-  const absolutePath = path.resolve(input.path);
-  const source = findSourceForIndexedPath(absolutePath, input.sources);
+  // An entry no file holds has no path: none is printed.
+  const absolutePath = input.path === "" ? "" : path.resolve(input.path);
+  const source = findSourceForRow({ filePath: absolutePath, bundleId: input.bundleId }, input.sources);
   const entryStashDir = source?.path ?? input.defaultStashDir;
 
   const defaultBundleId =
@@ -896,13 +897,14 @@ export async function buildDbHit(input: {
       ? (input.bundleId ?? undefined)
       : undefined);
   const ref = resolveSearchHitRef(input, defaultBundleId);
-  const editable = isEditable(absolutePath, input.config, input.sources);
+  const editable =
+    absolutePath === "" ? source?.writable === true : isEditable(absolutePath, input.config, input.sources);
   const estimatedTokens = typeof input.entry.fileSize === "number" ? Math.round(input.entry.fileSize / 4) : undefined;
 
   const hit: SourceSearchHit = {
     type: input.entry.type,
     name: input.entry.name,
-    path: absolutePath,
+    ...(absolutePath === "" ? {} : { path: absolutePath }),
     ref,
     itemRef: input.itemRef,
     origin: source?.registryId ?? null,
@@ -991,11 +993,12 @@ export function countBrowseEntries(
 }
 
 /** Keep the first entry per file path; the caller owns the order. */
-function deduplicateByPath<T extends { filePath: string }>(items: T[]): T[] {
+function deduplicateByPath<T extends { filePath: string; itemRef: string }>(items: T[]): T[] {
   const seen = new Set<string>();
   return items.filter((item) => {
-    if (seen.has(item.filePath)) return false;
-    seen.add(item.filePath);
+    const key = item.filePath || item.itemRef;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }

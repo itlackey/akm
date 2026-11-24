@@ -103,18 +103,23 @@ function resolveCheckoutEntry(
     const parent = path.dirname(path.dirname(modulePath));
     if (runtime === "node") {
       const wrapper = path.join(parent, "cli-node.mjs");
+      // asset-io: host akm executable lookup
       if (fs.existsSync(wrapper)) return wrapper;
       if (mainPath) {
+        // asset-io: host akm executable lookup
         if (path.basename(mainPath) === "cli-node.mjs" && fs.existsSync(mainPath)) return mainPath;
         const siblingWrapper = path.join(path.dirname(mainPath), "cli-node.mjs");
+        // asset-io: host akm executable lookup
         if (fs.existsSync(siblingWrapper)) return siblingWrapper;
       }
       return undefined;
     }
     const extension = path.extname(modulePath);
     const candidate = path.join(parent, `cli${extension}`);
+    // asset-io: host akm executable lookup
     if (fs.existsSync(candidate)) return candidate;
     const alternate = path.join(parent, extension === ".ts" ? "cli.js" : "cli.ts");
+    // asset-io: host akm executable lookup
     return fs.existsSync(alternate) ? alternate : undefined;
   } catch {
     return runtime === "bun" ? mainPath : undefined;
@@ -129,6 +134,7 @@ function isPublicPackageLauncher(file: string): boolean {
   return (
     path.basename(file).toLowerCase() === "akm" &&
     path.basename(path.dirname(file)).toLowerCase() === "dist" &&
+    // asset-io: host akm executable lookup
     fs.existsSync(file)
   );
 }
@@ -142,6 +148,7 @@ function isCheckoutLauncher(file: string): boolean {
     // The caller gets a missing-path diagnostic from doctor.
   }
   const packageRoot = path.dirname(path.dirname(launcher));
+  // asset-io: host akm executable lookup
   return fs.existsSync(path.join(packageRoot, ".git"));
 }
 
@@ -188,6 +195,7 @@ function resolveAssociatedNpmCli(nodePath: string): string | undefined {
     for (const candidate of candidates) {
       try {
         const resolved = fs.realpathSync(candidate);
+        // asset-io: host akm executable lookup
         if (fs.statSync(resolved).isFile()) return resolved;
       } catch {
         // Try the next layout associated with this Node installation.

@@ -59,8 +59,8 @@ test("migrate apply names the task file it rewrote and the backup, in JSON and i
     bundles: {
       local: {
         path: storage.stashDir,
+        adapter: "akm",
         writable: true,
-        components: { main: { root: ".", adapter: "akm", writable: true } },
       },
     },
   });

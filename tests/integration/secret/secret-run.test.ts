@@ -17,9 +17,9 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { setSecret } from "../../../src/commands/env/secret";
 import { withoutBundleDirNotice } from "../../_helpers/bundle-dir-notice";
 import { makeStashDir, type SandboxedDir } from "../../_helpers/sandbox";
+import { writeSecretFile } from "../../_helpers/secret-file";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
@@ -57,7 +57,7 @@ describe("secret run", () => {
   // KEPT AS A SUBPROCESS: the value is injected into the CHILD process env.
   test("injects the secret value into the named env var of the child", () => {
     const stashDir = makeStash();
-    setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("super-secret-token"));
+    writeSecretFile(path.join(stashDir, "secrets", "demo"), Buffer.from("super-secret-token"));
 
     const { stdout, status } = spawnCli(
       ["secret", "run", "secrets/demo", "TOKEN", "--", "bash", "-lc", 'printf "%s" "$TOKEN"'],
@@ -69,7 +69,7 @@ describe("secret run", () => {
 
   test("injects the trimmed value: a trailing newline never reaches the child", () => {
     const stashDir = makeStash();
-    setSecret(path.join(stashDir, "secrets", "padded"), Buffer.from("tok\n\n"));
+    writeSecretFile(path.join(stashDir, "secrets", "padded"), Buffer.from("tok\n\n"));
 
     const { stdout, status } = spawnCli(
       ["secret", "run", "secrets/padded", "TOKEN", "--", "bash", "-lc", "printf '[%s]' \"$TOKEN\""],
@@ -81,7 +81,7 @@ describe("secret run", () => {
 
   test("a bare name is a usage error naming the full ref", () => {
     const stashDir = makeStash();
-    setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
+    writeSecretFile(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
 
     const { stderr, status } = spawnCli(["secret", "run", "demo", "TOKEN", "--", "true"], {
       AKM_BUNDLE_DIR: stashDir,

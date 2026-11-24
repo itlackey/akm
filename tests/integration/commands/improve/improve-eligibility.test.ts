@@ -32,6 +32,7 @@ import {
   DEFAULT_TYPE_ENCODING_WEIGHTS,
   isContentEncodingRow,
 } from "../../../../src/commands/improve/salience";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import { saveConfig } from "../../../../src/core/config/config";
 import type { ConfigError } from "../../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../../src/core/events";
@@ -125,7 +126,13 @@ function recordAttempt(
 ): void {
   const db = openStateDatabase();
   try {
-    recordImproveLedger(db, { stashDir, ref: key, source, outcome, at: new Date(atMs).toISOString() });
+    recordImproveLedger(db, {
+      bundleId: stateBundleId(stashDir),
+      ref: key,
+      source,
+      outcome,
+      at: new Date(atMs).toISOString(),
+    });
   } finally {
     db.close();
   }
@@ -163,8 +170,8 @@ const okReflect = (ref: string): AkmReflectResult => ({
     createdAt: "2026-05-26T00:00:00.000Z",
     updatedAt: "2026-05-26T00:00:00.000Z",
     payload: { content: "# proposal" },
-    changes: [{ path: "lessons/proposal.md", after: "# proposal", op: "update" }],
-    proposedTarget: { source: "stash", root: "/tmp/stash" },
+    changes: [{ ref: "stash//lessons/proposal", content: "# proposal", op: "update" }],
+    proposedTarget: { source: "stash" },
   },
   ref,
   engine: "test",

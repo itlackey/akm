@@ -4,7 +4,7 @@
 
 /**
  * Chunk-5 Step 2 (spec §14.4): the writer persists the durable bundle-adapter
- * identity + provenance (`item_ref`/`bundle_id`/`component_id`/`concept_id`/
+ * identity + provenance (`item_ref`/`bundle_id`/`concept_id`/
  * `adapter_id`/`type`) into the canonical `entries` schema.
  *
  * This pins the write-boundary derivation to the exact spelling the Step-3
@@ -13,7 +13,6 @@
  *   - conceptId == the qualified placement plus `document_json.name`;
  *   - item_ref  == `<bundle>//<conceptId>` where the bundle id is the
  *     `deriveInstallations` slug of the source root;
- *   - component_id == bundle_id (single-component akm layout);
  *   - adapter_id  == the detected adapter ("akm" for a plain workspace stash);
  *   - type        == the open asset-type token.
  */
@@ -54,7 +53,6 @@ type ProvRow = {
   document_json: string;
   item_ref: string;
   bundle_id: string;
-  component_id: string;
   concept_id: string;
   adapter_id: string;
   type: string;
@@ -64,9 +62,7 @@ function readRows(): ProvRow[] {
   const db = new Database(getDbPath());
   try {
     return db
-      .query(
-        "SELECT file_path, document_json, item_ref, bundle_id, component_id, concept_id, adapter_id, type FROM entries",
-      )
+      .query("SELECT file_path, document_json, item_ref, bundle_id, concept_id, adapter_id, type FROM entries")
       .all() as ProvRow[];
   } finally {
     db.close();
@@ -110,10 +106,8 @@ describe("canonical entries provenance", () => {
       const expectedConceptId = typeStashDir !== undefined ? `${typeStashDir}/${entry.name}` : entry.name;
       expect(row.concept_id, `concept_id for ${row.file_path}`).toBe(expectedConceptId);
 
-      // Bundle/component provenance: the single-component akm layout couples
-      // component id == bundle id == the source-root slug.
+      // Bundle provenance: the bundle id is the source-root slug.
       expect(row.bundle_id, `bundle_id for ${row.file_path}`).toBe(expectedBundle);
-      expect(row.component_id, `component_id for ${row.file_path}`).toBe(expectedBundle);
       expect(row.adapter_id, `adapter_id for ${row.file_path}`).toBe("akm");
 
       // item_ref == `<bundle>//<conceptId>` — the canonical stored spelling

@@ -5,7 +5,7 @@
 /**
  * The base asset checks have one implementation (`runBaseChecks`) and one decision on whether a rule applies to a file
  * (`ruleApplies`). The `akm lint` sweep and an adapter's `validate` reach them by different routes, so one fixture is run
- * through both and the findings must be the same: the skill and LLM Wiki exemptions and the bundle's `lint.skip` hold on
+ * through both and the findings must be the same: the skill exemption and the bundle's `lint.skip` hold on
  * either route.
  */
 
@@ -15,9 +15,10 @@ import path from "node:path";
 import { akmLint } from "../../src/commands/lint";
 import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
 import { okfAdapter } from "../../src/core/adapter/adapters/okf-adapter";
-import { createValidateContext } from "../../src/core/adapter/validate-context";
+import { createFileValidateContext } from "../../src/core/adapter/validate-context";
 import { loadConfig } from "../../src/core/config/config";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
+import { checkChanges } from "../_helpers/adapter-hooks";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -109,22 +110,10 @@ const FIXTURE: Array<{ name: string; rel: string; content: string; expected: Fin
     reportedAt: "skills/broken",
   },
   {
-    name: "an LLM Wiki page is exempt from missing-updated",
+    name: "a file in a wikis/ folder is an ordinary akm file: missing-updated applies",
     rel: "wikis/notes/pages/page.md",
     content: "---\ndescription: A page\npageKind: concept\n---\n\nBody.\n",
-    expected: [],
-  },
-  {
-    name: "an LLM Wiki raw snapshot is exempt from missing-updated",
-    rel: "wikis/notes/raw/snap.md",
-    content: "---\nname: snap\ndescription: Snapshot\nsourceUrl: https://example.test\ntags: [a]\n---\n\nSnapshot.\n",
-    expected: [],
-  },
-  {
-    name: "an LLM Wiki file that reads as a command is exempt from missing-name-or-type",
-    rel: "wikis/notes/pages/runs.md",
-    content: "---\ndescription: Runs\npageKind: concept\n---\n\nRun $ARGUMENTS.\n",
-    expected: [],
+    expected: [["missing-updated", "no updated field in frontmatter"]],
   },
   {
     name: "an unquoted colon in the description",
@@ -186,9 +175,10 @@ describe("the base checks give the same findings through the lint sweep and thro
     const config = loadConfig();
 
     const sweep = (await akmLint({ dir: root, config })).flagged;
-    const ctx = createValidateContext({ root, sources: resolveSourceEntries(root, config) });
-    const validated = await akmAdapter.validate(
-      { id: "stash", adapter: "akm", root, writable: true },
+    const ctx = createFileValidateContext({ root, sources: resolveSourceEntries(root, config) });
+    const validated = await checkChanges(
+      akmAdapter,
+      { id: "stash", root },
       FIXTURE.map((file) => ({ path: file.rel, op: "update" as const })),
       ctx,
     );
@@ -281,10 +271,11 @@ describe("a ref a file declares is checked wherever it points", () => {
       "---\ntype: concept\ntitle: A\nxrefs:\n  - concepts/there\n  - concepts/gone\n---\n\nBody.\n",
     );
     const config = loadConfig();
-    const found = await okfAdapter.validate(
-      { id: "okf", adapter: "okf", root, writable: true },
+    const found = await checkChanges(
+      okfAdapter,
+      { id: "okf", root },
       [{ path: "concepts/a.md", op: "update" }],
-      createValidateContext({ root, sources: [{ path: root }], config }),
+      createFileValidateContext({ root, sources: [{ path: root }], config }),
     );
 
     expect(found.filter((f) => f.issue === "missing-ref").map((f) => f.detail)).toEqual([

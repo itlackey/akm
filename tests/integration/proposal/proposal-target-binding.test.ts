@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
 import { createProposal, listProposals, resolveProposalId } from "../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { type AkmConfig, resetConfigCache } from "../../../src/core/config/config";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { durableItemRef } from "../../_helpers/durable-ref";
@@ -55,9 +56,9 @@ describe("proposal queue target binding", () => {
     try {
       db.prepare(
         `INSERT INTO proposals
-         (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+         (id, bundle_id, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
          VALUES (?, ?, ?, 'pending', 'reflect', ?, ?, ?, NULL, '{}')`,
-      ).run(id, stashDir, ref, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", VALID_LESSON);
+      ).run(id, stateBundleId(stashDir), ref, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", VALID_LESSON);
     } finally {
       db.close();
     }
@@ -101,7 +102,7 @@ describe("proposal queue target binding", () => {
     });
 
     expect(created.ref).toBe("team//lessons/bound-secondary");
-    expect(created.proposedTarget).toEqual({ source: "team", root: path.resolve(team) });
+    expect(created.proposedTarget).toEqual({ source: "team" });
 
     const accepted = await akmProposalAccept({ queue: "team", id: created.id, config: cfg });
     expect(accepted.assetPath).toBe(path.join(team, "lessons", "bound-secondary.md"));
@@ -148,7 +149,7 @@ describe("proposal queue target binding", () => {
       source: "propose",
       payload: { content: VALID_LESSON },
     });
-    expect(created.proposedTarget).toEqual({ source: "team", root: path.resolve(team) });
+    expect(created.proposedTarget).toEqual({ source: "team" });
 
     const accepted = await akmProposalAccept({ queue: "team", id: created.id, config: cfg });
     expect(accepted.assetPath).toBe(path.join(team, "lessons", "git-default-fallback.md"));
@@ -297,7 +298,7 @@ describe("proposal queue target binding", () => {
       payload: { content: VALID_LESSON },
     });
     expect(unqualified.ref).toBe("primary//lessons/configured-default");
-    expect(unqualified.proposedTarget).toEqual({ source: "primary", root: path.resolve(primary) });
+    expect(unqualified.proposedTarget).toEqual({ source: "primary" });
   });
 
   test("a configured bundle name wins even when it matches another queue's directory name", () => {
@@ -320,7 +321,7 @@ describe("proposal queue target binding", () => {
       payload: { content: VALID_LESSON },
     });
     expect(created.ref).toBe("collision//lessons/no-redirect");
-    expect(created.proposedTarget).toEqual({ source: "collision", root: path.resolve(collisionTarget) });
+    expect(created.proposedTarget).toEqual({ source: "collision" });
   });
 
   test("accept rejects a target changed after the proposal captured its before hash", async () => {

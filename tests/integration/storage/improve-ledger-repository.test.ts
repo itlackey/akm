@@ -125,7 +125,7 @@ describe("isContentDrivenRow", () => {
 
 describe("isLedgerBlocked", () => {
   const row = (outcome: "rejected" | "unchanged", at = T0) => ({
-    stashDir: "/s",
+    bundleId: "s",
     ref: "skills/a",
     source: "reflect",
     lastAttemptAt: at,
@@ -155,7 +155,7 @@ describe("isLedgerBlocked", () => {
 
   test("a consolidate-pair row is never blocked, whatever its outcome — nextEligibleAt is always null for that source", () => {
     const pairRow = (outcome: "proposed" | "judged_no_action") => ({
-      stashDir: "/s",
+      bundleId: "s",
       ref: "memories/a",
       source: "consolidate-pair",
       lastAttemptAt: T0,
@@ -179,7 +179,7 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
     const db = openStateDatabase(statePath());
     try {
       recordImproveLedger(db, {
-        stashDir: "/s",
+        bundleId: "s",
         ref: "personal//memories/foo",
         source: "distill",
         outcome: "proposed",
@@ -187,27 +187,27 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
         proposalId: "p1",
       });
       recordImproveLedger(db, {
-        stashDir: "/s",
+        bundleId: "s",
         ref: "personal//memories/foo",
         source: "distill",
         outcome: "proposed",
         at: plusDays(T0, 1),
         proposalId: "p2",
       });
-      expect(listImproveLedgerRows(db, "/s")).toHaveLength(1);
+      expect(listImproveLedgerRows(db, "s")).toHaveLength(1);
 
       // The distill proposal itself is keyed by the derived lesson ref; the
       // decision still lands on the input-keyed row through the proposal id.
       recordImproveLedgerDecision(db, {
         proposalId: "p2",
-        stashDir: "/s",
+        bundleId: "s",
         ref: "personal//lessons/foo",
         source: "distill",
         outcome: "rejected",
         at: plusDays(T0, 2),
         detail: "not novel",
       });
-      const row = getImproveLedgerRow(db, "/s", "personal//memories/foo", "distill");
+      const row = getImproveLedgerRow(db, "s", "personal//memories/foo", "distill");
       expect(row).toMatchObject({
         outcome: "rejected",
         lastAttemptAt: plusDays(T0, 1),
@@ -215,7 +215,7 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
         proposalId: "p2",
         detail: "not novel",
       });
-      expect(getImproveLedgerRow(db, "/s", "personal//lessons/foo", "distill")).toBeUndefined();
+      expect(getImproveLedgerRow(db, "s", "personal//lessons/foo", "distill")).toBeUndefined();
     } finally {
       db.close();
     }
@@ -225,33 +225,33 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
     const db = openStateDatabase(statePath());
     try {
       recordImproveLedger(db, {
-        stashDir: "/s",
+        bundleId: "s",
         ref: "memories/a",
         source: "consolidate-pair",
         outcome: "judged_no_action",
         at: T0,
         contentHash: "hash-v1",
       });
-      expect(getImproveLedgerRow(db, "/s", "memories/a", "consolidate-pair")).toMatchObject({
+      expect(getImproveLedgerRow(db, "s", "memories/a", "consolidate-pair")).toMatchObject({
         contentHash: "hash-v1",
         nextEligibleAt: null,
       });
       // A later attempt (a content change) overwrites it.
       recordImproveLedger(db, {
-        stashDir: "/s",
+        bundleId: "s",
         ref: "memories/a",
         source: "consolidate-pair",
         outcome: "proposed",
         at: plusDays(T0, 1),
         contentHash: "hash-v2",
       });
-      expect(getImproveLedgerRow(db, "/s", "memories/a", "consolidate-pair")).toMatchObject({
+      expect(getImproveLedgerRow(db, "s", "memories/a", "consolidate-pair")).toMatchObject({
         contentHash: "hash-v2",
         outcome: "proposed",
       });
       // A row for a source that never sets contentHash decodes it as null, not undefined/missing.
-      recordImproveLedger(db, { stashDir: "/s", ref: "skills/x", source: "reflect", outcome: "proposed", at: T0 });
-      expect(getImproveLedgerRow(db, "/s", "skills/x", "reflect")?.contentHash).toBeNull();
+      recordImproveLedger(db, { bundleId: "s", ref: "skills/x", source: "reflect", outcome: "proposed", at: T0 });
+      expect(getImproveLedgerRow(db, "s", "skills/x", "reflect")?.contentHash).toBeNull();
     } finally {
       db.close();
     }
@@ -265,7 +265,7 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
         ["p-accepted", "memories/accepted", "accepted"],
       ] as const) {
         recordImproveLedger(db, {
-          stashDir: "/s",
+          bundleId: "s",
           ref: memory,
           source: "consolidate",
           outcome: "proposed",
@@ -275,14 +275,14 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
         // The proposal itself is keyed by the knowledge ref; the decision names the memory.
         recordImproveLedgerDecision(db, {
           proposalId,
-          stashDir: "/s",
+          bundleId: "s",
           ref: memory,
           source: "consolidate",
           outcome,
           at: plusDays(T0, 1),
           contentHash: `hash-of-${outcome}`,
         });
-        expect(getImproveLedgerRow(db, "/s", memory, "consolidate")).toMatchObject({
+        expect(getImproveLedgerRow(db, "s", memory, "consolidate")).toMatchObject({
           outcome,
           lastAttemptAt: T0,
           nextEligibleAt: null,
@@ -298,7 +298,7 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
     const db = openStateDatabase(statePath());
     try {
       recordImproveLedger(db, {
-        stashDir: "/s",
+        bundleId: "s",
         ref: "memories/legacy",
         source: "consolidate",
         outcome: "proposed",
@@ -307,20 +307,20 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
       });
       recordImproveLedgerDecision(db, {
         proposalId: "p-legacy",
-        stashDir: "/s",
+        bundleId: "s",
         ref: "memories/legacy",
         source: "consolidate",
         outcome: "rejected",
         at: T0,
       });
-      expect(getImproveLedgerRow(db, "/s", "memories/legacy", "consolidate")).toMatchObject({
+      expect(getImproveLedgerRow(db, "s", "memories/legacy", "consolidate")).toMatchObject({
         nextEligibleAt: plusDays(T0, 7),
         contentHash: null,
       });
 
       // An expiry is a procedural refusal that judged nothing: the one-day grace stays and the hash is dropped.
       recordImproveLedger(db, {
-        stashDir: "/s",
+        bundleId: "s",
         ref: "memories/expired",
         source: "consolidate",
         outcome: "proposed",
@@ -329,21 +329,21 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
       });
       recordImproveLedgerDecision(db, {
         proposalId: "p-expired",
-        stashDir: "/s",
+        bundleId: "s",
         ref: "memories/expired",
         source: "consolidate",
         outcome: "expired",
         at: T0,
         contentHash: "ignored",
       });
-      expect(getImproveLedgerRow(db, "/s", "memories/expired", "consolidate")).toMatchObject({
+      expect(getImproveLedgerRow(db, "s", "memories/expired", "consolidate")).toMatchObject({
         nextEligibleAt: plusDays(T0, 1),
         contentHash: null,
       });
 
       // Another source is untouched even when a caller passes a hash.
       recordImproveLedger(db, {
-        stashDir: "/s",
+        bundleId: "s",
         ref: "skills/x",
         source: "reflect",
         outcome: "proposed",
@@ -352,14 +352,14 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
       });
       recordImproveLedgerDecision(db, {
         proposalId: "p-reflect",
-        stashDir: "/s",
+        bundleId: "s",
         ref: "skills/x",
         source: "reflect",
         outcome: "rejected",
         at: T0,
         contentHash: "ignored",
       });
-      expect(getImproveLedgerRow(db, "/s", "skills/x", "reflect")).toMatchObject({
+      expect(getImproveLedgerRow(db, "s", "skills/x", "reflect")).toMatchObject({
         nextEligibleAt: plusDays(T0, 14),
         contentHash: null,
       });
@@ -374,7 +374,7 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
       // The row `proposed` left was replaced by a later judged_no_action, which
       // carries no proposal id, so the decision finds no row to update.
       recordImproveLedger(db, {
-        stashDir: "/s",
+        bundleId: "s",
         ref: "memories/overwritten",
         source: "consolidate",
         outcome: "judged_no_action",
@@ -382,14 +382,14 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
       });
       recordImproveLedgerDecision(db, {
         proposalId: "p-late",
-        stashDir: "/s",
+        bundleId: "s",
         ref: "memories/overwritten",
         source: "consolidate",
         outcome: "rejected",
         at: plusDays(T0, 9),
         contentHash: "hash-at-mint",
       });
-      expect(getImproveLedgerRow(db, "/s", "memories/overwritten", "consolidate")).toMatchObject({
+      expect(getImproveLedgerRow(db, "s", "memories/overwritten", "consolidate")).toMatchObject({
         outcome: "rejected",
         nextEligibleAt: null,
         contentHash: "hash-at-mint",
@@ -405,18 +405,18 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
     try {
       recordImproveLedgerDecision(db, {
         proposalId: "legacy",
-        stashDir: "/s",
+        bundleId: "s",
         ref: "personal//skills/x",
         source: "reflect",
         outcome: "accepted",
         at: T0,
       });
-      expect(getImproveLedgerRow(db, "/s", "personal//skills/x", "reflect")).toMatchObject({
+      expect(getImproveLedgerRow(db, "s", "personal//skills/x", "reflect")).toMatchObject({
         outcome: "accepted",
         nextEligibleAt: null,
         proposalId: "legacy",
       });
-      expect(listImproveLedgerRows(db, "/s", ["distill"])).toEqual([]);
+      expect(listImproveLedgerRows(db, "s", ["distill"])).toEqual([]);
     } finally {
       db.close();
     }
@@ -428,7 +428,7 @@ describe("reopening a rejected proposal resets its ledger rows (#997)", () => {
     const db = openStateDatabase(statePath());
     try {
       recordImproveLedger(db, {
-        stashDir: "/s",
+        bundleId: "s",
         ref: "personal//memories/foo",
         source: "distill",
         outcome: "proposed",
@@ -437,25 +437,25 @@ describe("reopening a rejected proposal resets its ledger rows (#997)", () => {
       });
       recordImproveLedgerDecision(db, {
         proposalId: "p1",
-        stashDir: "/s",
+        bundleId: "s",
         ref: "personal//lessons/foo",
         source: "distill",
         outcome: "rejected",
         at: plusDays(T0, 2),
         detail: "not novel",
       });
-      const rejected = getImproveLedgerRow(db, "/s", "personal//memories/foo", "distill");
+      const rejected = getImproveLedgerRow(db, "s", "personal//memories/foo", "distill");
       expect(rejected).toMatchObject({ outcome: "rejected", nextEligibleAt: plusDays(T0, 32) });
       expect(isLedgerBlocked(rejected, plusDays(T0, 3))).toBe(true);
 
       reopenImproveLedgerDecision(db, {
         proposalId: "p1",
-        stashDir: "/s",
+        bundleId: "s",
         source: "distill",
         at: plusDays(T0, 3),
         detail: "reopened: second look",
       });
-      const reopened = getImproveLedgerRow(db, "/s", "personal//memories/foo", "distill");
+      const reopened = getImproveLedgerRow(db, "s", "personal//memories/foo", "distill");
       expect(reopened).toMatchObject({
         outcome: "proposed",
         lastAttemptAt: T0, // a decision — and its undoing — never moves the attempt time
@@ -474,7 +474,7 @@ describe("reopening a rejected proposal resets its ledger rows (#997)", () => {
     const db = openStateDatabase(statePath());
     try {
       recordImproveLedger(db, {
-        stashDir: "/s",
+        bundleId: "s",
         ref: "personal//memories/foo",
         source: "distill",
         outcome: "rejected",
@@ -482,9 +482,9 @@ describe("reopening a rejected proposal resets its ledger rows (#997)", () => {
         proposalId: "p1",
         contentHash: "hash-v1",
       });
-      expect(getImproveLedgerRow(db, "/s", "personal//memories/foo", "distill")?.contentHash).toBe("hash-v1");
-      reopenImproveLedgerDecision(db, { proposalId: "p1", stashDir: "/s", source: "distill", at: T0 });
-      expect(getImproveLedgerRow(db, "/s", "personal//memories/foo", "distill")).toMatchObject({
+      expect(getImproveLedgerRow(db, "s", "personal//memories/foo", "distill")?.contentHash).toBe("hash-v1");
+      reopenImproveLedgerDecision(db, { proposalId: "p1", bundleId: "s", source: "distill", at: T0 });
+      expect(getImproveLedgerRow(db, "s", "personal//memories/foo", "distill")).toMatchObject({
         outcome: "proposed",
         contentHash: null,
         detail: null,
@@ -498,7 +498,7 @@ describe("reopening a rejected proposal resets its ledger rows (#997)", () => {
     const db = openStateDatabase(statePath());
     try {
       recordImproveLedger(db, {
-        stashDir: "/s",
+        bundleId: "s",
         ref: "a",
         source: "reflect",
         outcome: "rejected",
@@ -506,7 +506,7 @@ describe("reopening a rejected proposal resets its ledger rows (#997)", () => {
         proposalId: "p1",
       });
       recordImproveLedger(db, {
-        stashDir: "/s",
+        bundleId: "s",
         ref: "b",
         source: "reflect",
         outcome: "rejected",
@@ -514,7 +514,7 @@ describe("reopening a rejected proposal resets its ledger rows (#997)", () => {
         proposalId: "p2",
       });
       recordImproveLedger(db, {
-        stashDir: "/other",
+        bundleId: "other",
         ref: "a",
         source: "reflect",
         outcome: "rejected",
@@ -522,13 +522,13 @@ describe("reopening a rejected proposal resets its ledger rows (#997)", () => {
         proposalId: "p1",
       });
 
-      reopenImproveLedgerDecision(db, { proposalId: "p1", stashDir: "/s", source: "reflect", at: T0 });
-      reopenImproveLedgerDecision(db, { proposalId: "unknown", stashDir: "/s", source: "reflect", at: T0 });
+      reopenImproveLedgerDecision(db, { proposalId: "p1", bundleId: "s", source: "reflect", at: T0 });
+      reopenImproveLedgerDecision(db, { proposalId: "unknown", bundleId: "s", source: "reflect", at: T0 });
 
-      expect(getImproveLedgerRow(db, "/s", "a", "reflect")?.outcome).toBe("proposed");
-      expect(getImproveLedgerRow(db, "/s", "b", "reflect")?.outcome).toBe("rejected");
-      expect(getImproveLedgerRow(db, "/other", "a", "reflect")?.outcome).toBe("rejected");
-      expect(listImproveLedgerRows(db, "/s")).toHaveLength(2);
+      expect(getImproveLedgerRow(db, "s", "a", "reflect")?.outcome).toBe("proposed");
+      expect(getImproveLedgerRow(db, "s", "b", "reflect")?.outcome).toBe("rejected");
+      expect(getImproveLedgerRow(db, "other", "a", "reflect")?.outcome).toBe("rejected");
+      expect(listImproveLedgerRows(db, "s")).toHaveLength(2);
     } finally {
       db.close();
     }
@@ -540,7 +540,7 @@ describe("reopening a rejected proposal resets its ledger rows (#997)", () => {
       // A retire mint writes no row; its rejection creates one keyed by the proposal's own ref.
       recordImproveLedgerDecision(db, {
         proposalId: "retire-1",
-        stashDir: "/s",
+        bundleId: "s",
         ref: "stash//memories/old-note",
         source: "consolidate-pair",
         outcome: "rejected",
@@ -549,7 +549,7 @@ describe("reopening a rejected proposal resets its ledger rows (#997)", () => {
       });
       // The pair pass's own initiator row for the same asset lives under the bare ref and no proposal id.
       recordImproveLedger(db, {
-        stashDir: "/s",
+        bundleId: "s",
         ref: "memories/old-note",
         source: "consolidate-pair",
         outcome: "proposed",
@@ -557,10 +557,10 @@ describe("reopening a rejected proposal resets its ledger rows (#997)", () => {
         contentHash: "h1",
       });
 
-      forgetImproveLedgerDecision(db, "/s", "retire-1");
+      forgetImproveLedgerDecision(db, "s", "retire-1");
 
-      expect(getImproveLedgerRow(db, "/s", "stash//memories/old-note", "consolidate-pair")).toBeUndefined();
-      expect(getImproveLedgerRow(db, "/s", "memories/old-note", "consolidate-pair")).toMatchObject({
+      expect(getImproveLedgerRow(db, "s", "stash//memories/old-note", "consolidate-pair")).toBeUndefined();
+      expect(getImproveLedgerRow(db, "s", "memories/old-note", "consolidate-pair")).toMatchObject({
         outcome: "proposed",
         contentHash: "h1",
       });
@@ -737,16 +737,19 @@ describe("read/list tolerate a pre-029 improve_ledger with no content_hash colum
       expect(db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'improve_ledger'").get()).toBeTruthy();
       expect(() => db.prepare("SELECT content_hash FROM improve_ledger").get()).toThrow();
 
+      // No released schema has `bundle_id` without `content_hash` (029 precedes 031): the column is renamed here so
+      // the repository's own degrade path, which tolerates a ledger that predates `content_hash`, is still read.
+      db.exec("ALTER TABLE improve_ledger RENAME COLUMN stash_dir TO bundle_id");
       db.prepare(
-        `INSERT INTO improve_ledger (stash_dir, ref, source, outcome, last_attempt_at)
-         VALUES ('/s', 'memories/a', 'consolidate-pair', 'judged_no_action', ?)`,
+        `INSERT INTO improve_ledger (bundle_id, ref, source, outcome, last_attempt_at)
+         VALUES ('s', 'memories/a', 'consolidate-pair', 'judged_no_action', ?)`,
       ).run(T0);
 
-      expect(getImproveLedgerRow(db, "/s", "memories/a", "consolidate-pair")).toMatchObject({
+      expect(getImproveLedgerRow(db, "s", "memories/a", "consolidate-pair")).toMatchObject({
         outcome: "judged_no_action",
         contentHash: null,
       });
-      const rows = listImproveLedgerRows(db, "/s");
+      const rows = listImproveLedgerRows(db, "s");
       expect(rows).toHaveLength(1);
       expect(rows[0]?.contentHash).toBeNull();
     } finally {

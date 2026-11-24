@@ -32,7 +32,7 @@ beforeEach(() => {
     improve: { enabled: false },
     defaultBundle: "fixture",
     bundles: {
-      fixture: { path: storage.stashDir, writable: true, components: { main: { root: ".", adapter: "akm" } } },
+      fixture: { path: storage.stashDir, writable: true, adapter: "akm" },
     },
   });
   fs.mkdirSync(path.join(storage.root, "bin"));

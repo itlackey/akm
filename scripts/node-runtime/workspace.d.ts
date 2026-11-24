@@ -43,12 +43,12 @@ export class TransientError extends AkmError {
 export const CONFLICT_CODES: ReadonlySet<string>;
 
 export function scrubUrlCredentials(value: unknown): unknown;
-/** Refresh the existing index for files just written inside a bundle; fail-open, `false` when the index could not be updated. */
-export function indexWrittenAssets(
-  stashDir: string,
-  filePaths: string[],
-  options?: { bundleId?: string },
-): Promise<boolean>;
+/** Forget what the adapters read of keyrings and vaults: a host serving many requests calls it at the start of each, so a store changed meanwhile is read afresh. */
+export function clearAdapterCaches(): void;
+/** Refresh the existing index for files (absolute paths) just written inside a directory bundle; fail-open, `false` when the index could not be updated. */
+export function indexFiles(bundle: string, files: string[]): Promise<boolean>;
+/** Make the vectors of the rows this request's writes recorded, when semantic search is on; fail-open. A host calls it before a request ends. */
+export function embedPendingWrites(): Promise<void>;
 
 /** The file: its ref, or its bundle-relative path in a named bundle. */
 export interface SensitiveSelector {
@@ -174,12 +174,7 @@ export namespace bundles {
   function list(): Promise<unknown>;
   function remove(input: { bundle: string; confirm: boolean }): Promise<unknown>;
   function rename(input: { bundle: string; name: string; dryRun?: boolean }): Promise<unknown>;
-  function setSettings(input: {
-    bundle?: string;
-    enabled?: boolean;
-    writable?: boolean;
-    componentWritability?: Record<string, boolean>;
-  }): { saved: boolean };
+  function setSettings(input: { bundle?: string; enabled?: boolean; writable?: boolean }): { saved: boolean };
   function update(input: { bundle: string }): Promise<unknown>;
 }
 export namespace config {
@@ -316,7 +311,8 @@ export namespace sensitive {
     type: "env" | "secret";
     name: string;
     bundle: string;
-    path: string;
+    /** The file that holds it; null when its bundle keeps it elsewhere (a secret manager). */
+    path: string | null;
     /** What akm accepts doing to the file: allowed, or the sentence its write path refuses with. */
     actions: Record<"edit" | "delete", { allowed: true } | { allowed: false; reason: string }>;
     revision: string;

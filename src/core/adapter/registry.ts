@@ -3,35 +3,24 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The format-family adapter registry (normative §12.6).
+ * The adapter registry: the one list of adapter ids akm has. The ordered built-in list ({@link BUILTIN_ADAPTERS}) is
+ * defined in `./adapters` and is static and frozen at module load, so there is no registration step and no load-order
+ * dependency; this module exposes read-only lookups over it.
  *
- * A STATIC, FROZEN registry per normative §12.6: the ordered built-in adapter
- * list ({@link BUILTIN_ADAPTERS}) is defined in the built-in barrel
- * (`./adapters`) and this module exposes read-only lookups over it. There is NO
- * mutable registration step and NO load-order dependency — `getAdapters()` and
- * `adapterForId()` are populated at MODULE LOAD, so every production call site
- * sees the full set without anyone first calling a registration function. This
- * replaces the earlier mutable module-level singleton, whose "someone must
- * register the built-ins first" contract left the registry empty in production
- * (every source then fell back to `akm`).
+ * It is keyed by `adapter.id` only. An adapter is a format family: one per bundle root, and `recognize()` says what a
+ * file is. The open OKF `type` lives on the emitted `IndexDocument`, never on the adapter, so there is deliberately no
+ * per-type to adapter mapping.
  *
- * PRODUCTION CONSUMERS (all install/index-time, never query-time): the ordered
- * `looksLikeRoot` probe in `installations.ts#detectAdapterId`, and the
- * bundle-root probe in `provider-utils.ts#detectStashRoot`.
- *
- * KEYED BY `adapter.id` ONLY. Adapters are FORMAT FAMILIES (§0.2): one adapter
- * per component root, and `recognize()` is the single source of truth for what
- * a file IS. The open OKF `type` lives on the emitted `IndexDocument`, never on
- * the adapter — so there is deliberately NO per-`type` → adapter mapping here.
- *
- * QUERY-TIME SAFETY (normative §14.3 / D11 — "adapters/registry never run at
- * query time"): this module is imported only from install/index-time modules;
- * the search path (`indexer/search/**`) does not import it, and importing the
- * frozen list pulls the concrete adapters into no query-time graph.
+ * Consumers: the asset facade (`core/assets/bundle.ts`, through {@link requireAdapter} and {@link bundleOf}), the
+ * `looksLikeRoot` probe in `detect-adapter.ts` (array order is probe precedence), the bundle-root probe in
+ * `provider-utils.ts`, the indexer, and `akm lint`.
  */
 
+import { ConfigError } from "../errors";
 import { BUILTIN_ADAPTERS } from "./adapters";
 import type { BundleAdapter } from "./bundle-adapter";
+import { SecretManagerAdapterBase } from "./secret-manager-adapter";
+import type { Bundle } from "./types";
 
 export { BUILTIN_ADAPTERS } from "./adapters";
 
@@ -48,7 +37,58 @@ export function getAdapters(): BundleAdapter[] {
   return [...BUILTIN_ADAPTERS];
 }
 
-/** Look up an adapter by its own `id` (matches `BundleComponent.adapter`); `undefined` for an unknown id (the caller skips + warns). */
+/** Look up an adapter by its own `id` ; `undefined` for an unknown id (the caller skips + warns). */
 export function adapterForId(id: string): BundleAdapter | undefined {
   return BY_ID.get(id);
+}
+
+/** The id of every built-in adapter, in probe order. */
+export function adapterIds(): string[] {
+  return BUILTIN_ADAPTERS.map((adapter) => adapter.id);
+}
+
+/**
+ * The adapter `bundle` names, or a `ConfigError` listing the ids akm has. With `location` (whether the bundle is
+ * configured with one), also refused when the bundle is not addressed the way the adapter needs: a store adapter
+ * without a `location`, or a directory adapter with one.
+ */
+export function requireAdapter(bundle: string, id: string, address?: { location: boolean }): BundleAdapter {
+  const adapter = BY_ID.get(id);
+  if (!adapter) {
+    throw new ConfigError(
+      `Bundle "${bundle}" names adapter "${id}", which akm does not have. Expected one of: ${adapterIds().join(", ")}.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  if (address && adapter.addressedBy === "location" && !address.location) {
+    throw new ConfigError(
+      `Bundle "${bundle}" uses adapter "${id}", which reads a store named by \`location\`, but the bundle has none: give it a \`location\` in place of its path, git, website or npm, or use an adapter that reads a directory.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  if (address && adapter.addressedBy === "root" && address.location) {
+    throw new ConfigError(
+      `Bundle "${bundle}" uses adapter "${id}", which reads a directory, but the bundle has a \`location\`: use a \`path\` (or git, website, npm) instead, or an adapter that reads a store (${locationAdapterIds().join(", ")}).`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  return adapter;
+}
+
+/** The ids of the adapters whose bundles are named by `location`. */
+function locationAdapterIds(): string[] {
+  return BUILTIN_ADAPTERS.filter((adapter) => adapter.addressedBy === "location").map((adapter) => adapter.id);
+}
+
+/** Forget what the adapters read of their stores. The CLI calls it per command and Desktop per request: a store changes between them. */
+export function clearAdapterCaches(): void {
+  for (const adapter of BUILTIN_ADAPTERS) if (adapter instanceof SecretManagerAdapterBase) adapter.clearCache();
+}
+
+/** The bundle its adapter is called with: its id (its config name), and its `location` when it is a store, else its root. */
+export function bundleOf(source: { name: string; path: string; location?: string }): Bundle {
+  return {
+    id: source.name,
+    ...(source.location ? { location: source.location } : { root: source.path }),
+  };
 }

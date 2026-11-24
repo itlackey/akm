@@ -5,14 +5,14 @@ import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
 import { claudeAdapter } from "../../../src/core/adapter/adapters/claude-adapter";
 import { opencodeAdapter } from "../../../src/core/adapter/adapters/opencode-adapter";
 import type { BundleAdapter } from "../../../src/core/adapter/bundle-adapter";
+import { buildFileContext } from "../../../src/core/adapter/directory/file-context";
 import {
   executionDefaultsFromFrontmatter,
   parseExecutionMarkdown,
   renderMarkdownExecutionSource,
 } from "../../../src/core/adapter/execution-source";
-import type { BundleComponent } from "../../../src/core/adapter/types";
+import type { Bundle } from "../../../src/core/adapter/types";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
-import { buildFileContext } from "../../../src/indexer/walk/file-context";
 import {
   assertFixtureBytesUnchanged,
   captureFixtureBytes,
@@ -38,14 +38,12 @@ const cases: Array<{
 
 function render(testCase: (typeof cases)[number]) {
   const root = path.join(NATIVE_ROOT, testCase.adapterId);
-  const component: BundleComponent = {
+  const bundle: Bundle = {
     id: `fixture-${testCase.adapterId}`,
-    adapter: testCase.adapterId,
     root,
-    writable: false,
   };
   const file = buildFileContext(root, path.join(root, testCase.file));
-  const source = testCase.adapter.renderExecutionSource?.(component, file);
+  const source = testCase.adapter.renderExecutionSource?.(bundle, file);
   if (!source) throw new Error(`${testCase.adapterId}:${testCase.file} did not render an execution source`);
   return { root, file, source };
 }

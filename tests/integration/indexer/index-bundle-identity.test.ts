@@ -309,7 +309,7 @@ describe("full-index bundle identity", () => {
     ).not.toContain("team//knowledge/removed");
   });
 
-  test("an escaping default component root is unresolved and never scanned", async () => {
+  test("an escaping default bundle root is unresolved and never scanned", async () => {
     const bundleRoot = path.join(storage.root, "escaping-bundle");
     fs.mkdirSync(bundleRoot, { recursive: true });
     fs.writeFileSync(
@@ -321,7 +321,7 @@ describe("full-index bundle identity", () => {
       semanticSearchMode: "off",
       defaultBundle: "escaping",
       bundles: {
-        escaping: { path: bundleRoot, components: { main: { root: "..", adapter: "okf" } } },
+        escaping: { path: bundleRoot, adapter: "okf", root: ".." },
       },
     });
     resetConfigCache();
@@ -344,7 +344,7 @@ describe("full-index bundle identity", () => {
       semanticSearchMode: "off",
       defaultBundle: "escaping",
       bundles: {
-        escaping: { path: bundleRoot, components: { main: { root: ".", adapter: "okf" } } },
+        escaping: { path: bundleRoot, adapter: "okf" },
       },
     });
     resetConfigCache();
@@ -354,7 +354,7 @@ describe("full-index bundle identity", () => {
       semanticSearchMode: "off",
       defaultBundle: "escaping",
       bundles: {
-        escaping: { path: bundleRoot, components: { main: { root: "..", adapter: "okf" } } },
+        escaping: { path: bundleRoot, adapter: "okf", root: ".." },
       },
     });
     resetConfigCache();

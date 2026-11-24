@@ -886,11 +886,11 @@ for full before/after examples and recovery guidance.
   that ran the sync, rewritten on every crontab write and removed with the
   last akm block; cron applies it to every row below it.
 - A task's row is its command plus its schedule:
-  `<launcher> task run <id> --bundle <bundle> --scheduled`, and it sets its
+  `<launcher> task run <bundle//concept-id> --scheduled`, and it sets its
   own environment. Every row sets `AKM_BUNDLE_DIR` to the working stash of
   the shell that ran the sync (its `AKM_BUNDLE_DIR`, or the default bundle),
-  so the scheduled run uses the same working stash, `--bundle` finds a stash
-  no config names, and sync tells rows of other installations sharing the
+  so the scheduled run uses the same working stash, the ref's bundle finds a
+  stash no config names, and sync tells rows of other installations sharing the
   scheduler apart. A row also sets `AKM_CONFIG_DIR`, `AKM_DATA_DIR`,
   `AKM_CACHE_DIR` and `AKM_STATE_DIR` for each directory that the shell that ran
   the sync resolved to something other than the default, whatever set it (an
@@ -903,12 +903,16 @@ for full before/after examples and recovery guidance.
   Run the sync from a shell whose environment you would want scheduled.
 
   ```text
-  15 2 * * * AKM_BUNDLE_DIR=/home/u/akm /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm task run nightly --bundle work --scheduled > /home/u/.cache/akm/tasks/logs/nightly.log 2>&1
+  15 2 * * * AKM_BUNDLE_DIR=/home/u/akm /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm task run work//tasks/nightly --scheduled > /home/u/.cache/akm/tasks/logs/nightly.log 2>&1
   ```
 
   A row whose command is over 1,000 bytes runs a wrapper script under the
   log directory instead (`sh <log dir>/.akm-cron-wrapper-<id>-<hash>.sh`);
   sync reads the script to tell which task the row runs.
+
+  Releases before 0.11 wrote `task run <id> --bundle <bundle> --scheduled`. akm
+  still reads and runs such a row until 0.11, and the next `akm doctor scheduler sync`
+  reports it as `updated` and rewrites it in the form above.
 
   Releases 0.9.0 through 0.9.17-alpha.6 wrote a `--scheduler-context
   <file>` argument into each row instead, naming a descriptor file under

@@ -6,14 +6,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef } from "../../core/asset/asset-ref";
+import { addressOf, writeAssets } from "../../core/assets/write";
+import { isWithin } from "../../core/common";
 import { loadConfig, mutateConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import {
-  commitWriteTargetBoundary,
-  prepareWriteTargetForMutation,
-  resolveWriteTarget,
-  writeAssetToSource,
-} from "../../core/write-source";
+import { commitWriteTargetBoundary, prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { selectBackend } from "../../tasks/backends";
 import type { SchedulerBackend } from "../../tasks/backends/types";
@@ -31,9 +28,11 @@ export async function importTaskFile(
   }
   let yaml: string;
   try {
+    // asset-io: user-input import source
     if (!fs.statSync(input.source).isFile()) {
       throw new UsageError(`Expected a readable task definition file: "${input.source}".`, "INVALID_FLAG_VALUE");
     }
+    // asset-io: user-input import source
     yaml = fs.readFileSync(input.source, "utf8");
   } catch (error) {
     if (error instanceof UsageError) throw error;
@@ -46,7 +45,7 @@ export async function importTaskFile(
   const target = resolveWriteTarget(config, input.target, { requireWritable: true, flag: "--bundle" });
   const file = assetPathForName("task", path.join(target.source.path, "tasks"), id);
   return withSchedulerLock(async () => {
-    const existed = fs.existsSync(file);
+    const existed = addressOf(target.source.name, `tasks/${id}`).exists;
     if (existed && !input.force) {
       throw new UsageError(`Task "${id}" already exists. Pass --force to overwrite.`, "RESOURCE_ALREADY_EXISTS");
     }
@@ -66,8 +65,21 @@ export async function importTaskFile(
       }
       if (schedulerEnabledRefs(loadConfig())?.includes(ref)) setSchedulerRefEnabled(ref, false);
     }
-    const result = await writeAssetToSource(prepared.source, prepared.config, { type: "task", name: id }, yaml);
+    // A task file that is a link leaving `tasks/` is refused here, before the write refuses links as it does for every type.
+    if (!isWithin(file, path.join(target.source.path, "tasks"))) {
+      throw new UsageError(
+        `Resolved asset path escapes its source: "${id}" in source "${target.source.name}".`,
+        "PATH_ESCAPE_VIOLATION",
+      );
+    }
+    // An overwrite rewrites the file the task is read from, whatever its spelling.
+    const written =
+      writeAssets(prepared, { purpose: "import-task" }, (w) => {
+        const { file: kept } = w.address(`tasks/${id}`);
+        w.create({ type: "task", name: id, content: yaml }, { exclusive: !input.force });
+        return kept;
+      }) ?? file;
     commitWriteTargetBoundary(prepared, `Import tasks/${id}`);
-    return { ...result, ref };
+    return { path: written, ref };
   });
 }

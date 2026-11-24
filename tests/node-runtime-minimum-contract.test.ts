@@ -74,17 +74,19 @@ describe("Node 22 runtime minimum contract", () => {
       "ci.yml#check",
       "ci.yml#desktop",
       "ci.yml#desktop-package",
-      "ci.yml#node-smoke",
       "ci.yml#plugins-contract",
       "ci.yml#plugins-contract",
-      "ci.yml#upgrade-rehearsal",
       "gated-ci.yml#docker-install",
       "gated-ci.yml#native-scheduler",
       "gated-ci.yml#semantic-search",
       "quality.yml#quality",
       "release.yml#akm-web",
       "release.yml#desktop",
+      "release.yml#desktop-tests",
+      "release.yml#integration",
+      "release.yml#node-smoke",
       "release.yml#release",
+      "release.yml#upgrade-rehearsal",
     ]);
   });
 });

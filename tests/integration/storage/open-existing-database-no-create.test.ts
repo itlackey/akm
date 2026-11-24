@@ -24,9 +24,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../../../src/core/paths";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../../src/storage/repositories/index-db";
+import { indexWrittenAssets } from "../../_helpers/index-written-files";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 describe("openExistingDatabase on a missing index.db", () => {

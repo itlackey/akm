@@ -61,7 +61,7 @@ describe("akm bundle update: embedding durability (#954)", () => {
     const cacheDir = path.join(getRegistryCacheDir(), `${id}-cache`);
     const contentDir = path.join(cacheDir, "content");
     writeMarkdownFiles(contentDir, fileCount, "seed");
-    const bundles = { [id]: { npm: id, components: { main: { root: ".", adapter: "akm", writable: false } } } };
+    const bundles = { [id]: { npm: id, adapter: "akm", writable: false } };
     saveConfig({ semanticSearchMode: "off", bundles });
     seedLockEntries([
       {

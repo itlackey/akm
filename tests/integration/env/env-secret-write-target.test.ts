@@ -191,7 +191,8 @@ describe("env/secret write-target routing", () => {
         stash: { path: storage.stashDir },
         vendor: {
           path: okf,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
+          adapter: "okf",
+          writable: true,
         },
       },
       defaultBundle: "stash",
@@ -265,20 +266,10 @@ describe("env/secret write-target routing", () => {
       defaultWriteTarget: "team",
     });
 
-    const res = await runCliCapture([
-      "env",
-      "create",
-      "env/prod",
-      "--from-file",
-      valueFile(),
-      "--sensitive",
-      "--format",
-      "json",
-    ]);
+    const res = await runCliCapture(["env", "create", "env/prod", "--from-file", valueFile(), "--format", "json"]);
 
     expect(res.code).toBe(0);
     expect(fs.readFileSync(path.join(content, "env", "prod.env"), "utf8")).toBe(SECRET_VALUE);
-    expect(fs.existsSync(path.join(content, "env", "prod.sensitive"))).toBe(true);
     expect(git(repo, ["rev-list", "--count", "HEAD"])).toBe("1");
 
     const secret = await runCliCapture([

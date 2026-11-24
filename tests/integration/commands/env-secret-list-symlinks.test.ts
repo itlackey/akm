@@ -5,8 +5,7 @@
 /**
  * `env list` and `secret list` show file symlinks (#1237). A file symlink under
  * `env/` or `secrets/` is readable and indexed, so its own list command must
- * show it too. A directory symlink is never descended, and a `.sensitive`
- * marker still suppresses listing.
+ * show it too. A directory symlink is never descended.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -42,7 +41,7 @@ function link(kind: "env" | "secrets", name: string, target: string): void {
 }
 
 describe("env list / secret list with symlinks (#1237)", () => {
-  test("env list shows an external file symlink with its keys, not a directory symlink or a sensitive one", async () => {
+  test("env list shows an external file symlink with its keys, not a directory symlink", async () => {
     const real = path.join(externalDir, "prod.env");
     fs.writeFileSync(real, "API_URL=https://example.test\n");
     link("env", "prod.env", real);
@@ -50,10 +49,6 @@ describe("env list / secret list with symlinks (#1237)", () => {
     fs.mkdirSync(dirTarget);
     fs.writeFileSync(path.join(dirTarget, "inner.env"), "X=1\n");
     link("env", "linked-dir", dirTarget);
-    const hidden = path.join(externalDir, "hidden.env");
-    fs.writeFileSync(hidden, "H=1\n");
-    link("env", "hidden.env", hidden);
-    fs.writeFileSync(path.join(stashDir, "env", "hidden.sensitive"), "");
 
     const { stdout, status } = await runCli(["env", "list"]);
     expect(status).toBe(0);

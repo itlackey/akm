@@ -105,13 +105,13 @@ describe("current ref lookup", () => {
         ["skills/deploy", "skills/deploy"],
         ["knowledge/guide", "knowledge/guide"],
       ] as const) {
-        const shortId = findEntryIdByRef(db, shortRef);
+        const shortId = findEntryIdByRef(db, `${bundle}//${shortRef}`);
         expect(shortId, `short lookup ${shortRef}`).toBeDefined();
 
         // Fully-qualified new ref → item_ref exact match.
         expect(findEntryIdByRef(db, `${bundle}//${conceptId}`), `qualified ${conceptId}`).toBe(shortId);
-        // Short conceptId → item_ref //conceptId suffix match.
-        expect(findEntryIdByRef(db, conceptId), `short ${conceptId}`).toBe(shortId);
+        // An unqualified ref is not looked up by suffix: it is qualified first (`qualifyRef`).
+        expect(() => findEntryIdByRef(db, conceptId), `short ${conceptId}`).toThrow(/qualified ref/);
       }
     } finally {
       db.close();
@@ -122,7 +122,7 @@ describe("current ref lookup", () => {
     const db = openDb();
     try {
       const bundle = slugForPath(stashDir);
-      const targetId = findEntryIdByRef(db, "skills/deploy");
+      const targetId = findEntryIdByRef(db, `${bundle}//skills/deploy`);
 
       const ctx = refContextFromDb(db, bundle);
       const resolved = resolveRef("skills/deploy", ctx);
@@ -137,15 +137,15 @@ describe("current ref lookup", () => {
     }
   });
 
-  test("markdown extension aliases preserve short and qualified identity", () => {
+  test("an index lookup is by the exact ref: a file-name spelling is not a row", () => {
     const db = openDb();
     try {
       const bundle = slugForPath(stashDir);
-      const targetId = findEntryIdByRef(db, "knowledge/guide");
+      const targetId = findEntryIdByRef(db, `${bundle}//knowledge/guide`);
       expect(targetId).toBeDefined();
-      // .md-suffixed spellings resolve to the same ext-stripped canonical row.
-      expect(findEntryIdByRef(db, "knowledge/guide.md")).toBe(targetId);
-      expect(findEntryIdByRef(db, `${bundle}//knowledge/guide.md`)).toBe(targetId);
+      // The adapter maps a spelling to the canonical ref before the index is asked.
+      expect(findEntryIdByRef(db, `${bundle}//knowledge/guide.md`)).toBeUndefined();
+      expect(findEntryIdByRef(db, `${bundle}//knowledge/guide`)).toBe(targetId);
     } finally {
       db.close();
     }
@@ -155,10 +155,9 @@ describe("current ref lookup", () => {
     const db = openDb();
     try {
       const bundle = slugForPath(stashDir);
-      const targetId = findEntryIdByRef(db, "memories/first");
+      const targetId = findEntryIdByRef(db, `${bundle}//memories/first`);
       expect(getEntryByRef(db, `${bundle}//memories/first`)).toEqual({ id: targetId as number });
-      expect(getEntryByRef(db, "memories/first")).toEqual({ id: targetId as number });
-      expect(getEntryByRef(db, "memories/does-not-exist")).toBeNull();
+      expect(getEntryByRef(db, `${bundle}//memories/does-not-exist`)).toBeNull();
     } finally {
       db.close();
     }
@@ -168,7 +167,7 @@ describe("current ref lookup", () => {
     const db = openDb();
     try {
       const bundle = slugForPath(stashDir);
-      const targetId = findEntryIdByRef(db, "memories/second");
+      const targetId = findEntryIdByRef(db, `${bundle}//memories/second`);
       expect(targetId).toBeDefined();
 
       for (const column of ["item_ref", "concept_id", "bundle_id"] as const) {
@@ -178,7 +177,6 @@ describe("current ref lookup", () => {
       }
 
       expect(findEntryIdByRef(db, `${bundle}//memories/second`), "qualified new ref").toBe(targetId);
-      expect(findEntryIdByRef(db, "memories/second"), "short new ref").toBe(targetId);
     } finally {
       db.close();
     }

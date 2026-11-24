@@ -1,0 +1,5 @@
+version: 4
+name: report
+description: Runs the release command, unqualified
+uses: commands/release
+schedule: "0 9 * * 1"

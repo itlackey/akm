@@ -9,8 +9,7 @@
  * EXPLICIT-CONFIG ONLY (`akm bundle add . --adapter code-project`): there is no
  * `looksLikeRoot`, so it is never auto-detected.
  *
- * What a document is, in the order `recognize` decides it (path first, so the
- * ownership probe, which treats any content read as a claim, stays exact):
+ * What a document is, in the order `identify` and `describe` decide it (the path first, then the content):
  *   - the path must pass {@link isEligible}: a fixed extension/filename
  *     allowlist (source, Markdown/text docs, a few named config files) minus
  *     generated, lock and secret-shaped names and vendored/build directories.
@@ -19,7 +18,7 @@
  *     is parsed (a YAML config starting with `---` keeps its header).
  *
  * Refs are the file's bundle-relative path, extension included, so
- * `readCandidates` is the identity inversion. Types are open and the adapter
+ * `spellings` is the identity inversion. Types are open and the adapter
  * owns their presentation: `source`, `doc` and `config`. The language is a tag.
  *
  * The walk (`walkMode: "all-directories"`) lists every directory except `.git`
@@ -31,11 +30,13 @@
  */
 
 import path from "node:path";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, IndexDocument } from "../types";
+import type { FileContext } from "../directory/file-context";
+import { DirectoryAdapterBase } from "../directory-adapter";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { hashContent, nonEmptyString, readTags, validateChangesWithBaseChecks } from "./shared";
 
 const LANGUAGE_BY_EXTENSION: Readonly<Record<string, string>> = {
@@ -170,23 +171,14 @@ export function languageOf(relPath: string): string | undefined {
   return LANGUAGE_BY_EXTENSION[path.extname(relPath).toLowerCase()];
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
-  const conceptId = toPosix(file.relPath);
-  const type = eligibleType(conceptId);
-  if (type === undefined) return null; // decided before any byte is read
-
+function describe(file: FileContext, conceptId: string): IndexMetadata {
+  const type = eligibleType(conceptId) as CodeType;
   const raw = file.content();
   const isMarkdown = MARKDOWN_EXTENSIONS.has(file.ext.toLowerCase());
   const parsed = isMarkdown ? parseFrontmatter(raw) : undefined;
 
-  const doc: IndexDocument = {
-    ref: `${c.id}//${conceptId}`,
-    bundle: c.id,
-    component: c.id,
-    conceptId,
-    path: file.absPath,
+  const doc: IndexMetadata = {
     hash: hashContent(raw),
-    adapterId: "code-project",
     ownsPresentation: true,
     type,
     name: conceptId,
@@ -203,23 +195,34 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   return doc;
 }
 
-export const codeProjectAdapter: BundleAdapter = {
-  id: "code-project",
-  version: "0.10.0",
-  // The files `validate` checks; the walk and `recognize` decide what is indexed.
-  extensions: [...MARKDOWN_EXTENSIONS],
-  walkMode: "all-directories",
+export class CodeProjectAdapter extends DirectoryAdapterBase {
+  readonly id = "code-project";
+  readonly version = "0.10.0";
+  protected override readonly walkMode = "all-directories" as const;
 
-  recognize,
+  /** An eligible file is its own concept: its path, extension included. */
+  protected identify(relPath: string): string | null {
+    const posix = toPosix(relPath);
+    return eligibleType(posix) === undefined ? null : posix;
+  }
+
+  protected describe(_b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
+    return describe(file, conceptId);
+  }
 
   // The base checks misfire on source (`stale-path` flags `/tmp/...` literals,
   // the ref regex matches Python's `y//2`), so they run on Markdown only.
-  validate: (c, changes, ctx) =>
-    validateChangesWithBaseChecks(
-      c,
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+    return validateChangesWithBaseChecks(
+      b,
       changes.filter((change) => MARKDOWN_EXTENSIONS.has(path.extname(change.path).toLowerCase())),
       ctx,
-    ),
+    );
+  }
 
-  readCandidates: (c, conceptId) => [{ path: path.join(c.root, conceptId), conceptId }],
-};
+  protected spellings(conceptId: string): string[] {
+    return [conceptId];
+  }
+}
+
+export const codeProjectAdapter = new CodeProjectAdapter();

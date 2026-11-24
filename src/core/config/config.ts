@@ -22,9 +22,9 @@ import {
 } from "./config-io";
 import { AkmConfigSchema, CURRENT_CONFIG_VERSION } from "./config-schema";
 import {
-  bundleComponentConfig,
   bundleContentRoot,
   bundleContentRoots,
+  bundleOverlaps,
   bundleSourceId,
   bundlesToSourceEntries,
   filesystemBundleSourceId,
@@ -41,6 +41,7 @@ import type {
   SourceConfigEntry,
 } from "./config-types";
 import { isOpaqueSchema, resolveSchemaAt } from "./config-walker";
+import { convertBundleComponents } from "./convert-bundle-components";
 import { convertEngineConfig, type EngineTarget } from "./convert-engines";
 import { fileFlatCredentials, writeCredential } from "./credentials";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
@@ -215,7 +216,7 @@ export function loadUserConfig(): AkmConfig {
  * the file that extends it.
  */
 function runConfigFilePipeline(text: string, sourcePath?: string): Record<string, unknown> {
-  return readRetiredEngines(readConfigFile(text, sourcePath), sourcePath);
+  return readRetiredForms(readConfigFile(text, sourcePath), sourcePath);
 }
 
 /**
@@ -300,6 +301,49 @@ function readRetiredEngines(raw: Record<string, unknown>, sourcePath?: string): 
     }. \`akm migrate apply\` rewrites config.json${retiredForm ? "" : " and moves models.json aside"}.${[...notes, ...keyNotes].map((note) => `\n  - ${note}`).join("")}`,
   );
   return config;
+}
+
+/**
+ * `bundles.<name>.components` is retired: a bundle's one component only repeated it. A config in that form is read
+ * with `adapter`, `root` and `writable` on the bundle, in memory, with one warning; `akm migrate apply` writes it back.
+ */
+function readRetiredBundleComponents(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
+  const { config, changed, bundles } = convertBundleComponents(raw);
+  if (!changed) return raw;
+  warnOnce(
+    `config:retired-bundle-components:${sourcePath ?? "inline"}`,
+    `${sourcePath ?? "config.json"} uses the retired bundles.<name>.components form (${bundles.join(", ")}); reading its adapter, root and writable from it. \`akm migrate apply\` rewrites config.json.`,
+  );
+  return config;
+}
+
+/**
+ * The retired `components` entry of each bundle of the config file, as written (the component's name and what it held).
+ * The reader lifts them onto the bundle and forgets which keys were the component's, so `akm bundle list`, whose
+ * deprecated `components` field shows exactly what the component held, reads them here. Removed in 0.11 with the field.
+ */
+export function retiredBundleComponents(): Map<string, { name: string; root?: string; writable?: boolean }> {
+  const found = new Map<string, { name: string; root?: string; writable?: boolean }>();
+  const configPath = getConfigPath();
+  const text = readConfigText(configPath);
+  const bundles = text === undefined ? undefined : parseConfigText(text, configPath).bundles;
+  if (!isPlainObject(bundles)) return found;
+  for (const [bundle, entry] of Object.entries(bundles)) {
+    const [name, component] =
+      isPlainObject(entry) && isPlainObject(entry.components) ? (Object.entries(entry.components)[0] ?? []) : [];
+    if (name === undefined || !isPlainObject(component)) continue;
+    found.set(bundle, {
+      name,
+      ...(typeof component.root === "string" ? { root: component.root } : {}),
+      ...(typeof component.writable === "boolean" ? { writable: component.writable } : {}),
+    });
+  }
+  return found;
+}
+
+/** Every retired form of the file the reader still takes, read as the current one. */
+function readRetiredForms(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
+  return readRetiredBundleComponents(readRetiredEngines(raw, sourcePath), sourcePath);
 }
 
 /** The retired `secret://<name>` credential form; it survives only in {@link readRetiredSecretRefs}. */
@@ -798,16 +842,8 @@ function resolveConfigBundleRefSource(
       "INVALID_CONFIG_FILE",
     );
   }
-  let componentRoot: string | undefined;
-  try {
-    componentRoot = bundleComponentConfig(bundleEntry as BundleConfigEntry)?.root;
-  } catch (err) {
-    throw new ConfigError(
-      `extends "${ref}" names bundle "${bundleId}": ${err instanceof Error ? err.message : String(err)}`,
-      "INVALID_CONFIG_FILE",
-    );
-  }
-  const bundleRoot = bundleContentRoot(bundlePath, componentRoot);
+  const root = typeof bundleEntry.root === "string" ? bundleEntry.root : undefined;
+  const bundleRoot = bundleContentRoot(bundlePath, root);
 
   const resolvedPath = path.resolve(bundleRoot, relativePath);
   const relativeToRoot = path.relative(bundleRoot, resolvedPath);
@@ -986,9 +1022,17 @@ function saveConfigReal(config: AkmConfig): void {
   });
 }
 
-export function validateCompleteConfig(config: AkmConfig): AkmConfig {
+/**
+ * Validate a config about to be written. With `current` (the config on disk) a bundle that overlaps another (equal,
+ * inside or containing) and did not overlap it in `current` is refused: a write may not add an overlap, though a
+ * config that already has one keeps loading and can be written.
+ */
+export function validateCompleteConfig(config: AkmConfig, current?: AkmConfig): AkmConfig {
   const parseResult = AkmConfigSchema.safeParse(config);
-  if (parseResult.success) return parseResult.data;
+  if (parseResult.success) {
+    if (current) assertNoNewBundleOverlap(parseResult.data, current);
+    return parseResult.data;
+  }
   const lines = parseResult.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
   throw new ConfigError(
     `Refusing to save invalid config:\n${lines}`,
@@ -996,6 +1040,37 @@ export function validateCompleteConfig(config: AkmConfig): AkmConfig {
     "Fix the listed fields, or undo the offending `akm config set`. " +
       "If this looks like an akm bug, re-run with --debug to attach the traceback.",
   );
+}
+
+function assertNoNewBundleOverlap(next: AkmConfig, current: AkmConfig): void {
+  // An existing overlap is told by its two roots and kind, not bundle ids: renaming a bundle of an existing pair
+  // keeps the pair. Counted, so a second bundle at the same roots is still a new overlap.
+  const keyOf = (overlap: { roots: readonly string[]; kind: string }) =>
+    `${[...overlap.roots].sort().join("\0")}|${overlap.kind}`;
+  const present = new Map<string, number>();
+  for (const overlap of bundleOverlaps(current)) present.set(keyOf(overlap), (present.get(keyOf(overlap)) ?? 0) + 1);
+  for (const overlap of bundleOverlaps(next)) {
+    const left = present.get(keyOf(overlap)) ?? 0;
+    if (left > 0) {
+      present.set(keyOf(overlap), left - 1);
+      continue;
+    }
+    const [first, second] = overlap.bundles;
+    const [firstRoot, secondRoot] = overlap.roots;
+    const [inner, outer] = overlap.inner === first ? [first, second] : [second, first];
+    const [innerRoot, outerRoot] = overlap.inner === first ? [firstRoot, secondRoot] : [secondRoot, firstRoot];
+    const what =
+      overlap.kind === "same"
+        ? `bundles ${JSON.stringify(first)} and ${JSON.stringify(second)} have the same content root ${firstRoot}`
+        : `bundle ${JSON.stringify(inner)} is inside bundle ${JSON.stringify(outer)} (${innerRoot} is inside ${outerRoot})`;
+    throw new ConfigError(
+      `Refusing to save config: ${what}.`,
+      "INVALID_CONFIG_FILE",
+      "Bundles that overlap share files, and the index files each shared file under the bundle configured first. Add the directory only once, or keep the directories apart " +
+        "(a wiki folder inside a bundle becomes its own bundle once moved out). A symbolic-link alias of a bundle's " +
+        "directory is not a separate bundle.",
+    );
+  }
 }
 
 export interface ConfigMutationResult {
@@ -1141,6 +1216,7 @@ function editedConfigFile(
   // back byte for byte.
   const body = structuredClone(document);
   applyEdit(body, current, next, unremoved);
+  keepRetiredComponentWritable(body, next);
   // A project the caller names is written whole even when it equals the effective entry: the file's own may hold parts the reader ignores.
   for (const name of writeProjects) {
     const entry = next.projects?.[name];
@@ -1159,6 +1235,21 @@ function editedConfigFile(
 }
 
 /**
+ * A bundle still in the retired `components` form keeps its `writable` there, and the reader takes that one over the
+ * bundle's own: an edit to the bundle's `writable` has to reach it, or the next read gives the old value back.
+ */
+function keepRetiredComponentWritable(body: Record<string, unknown>, next: AkmConfig): void {
+  if (!isPlainObject(body.bundles)) return;
+  for (const [name, entry] of Object.entries(body.bundles)) {
+    const writable = next.bundles?.[name]?.writable;
+    if (writable === undefined || !isPlainObject(entry) || !isPlainObject(entry.components)) continue;
+    for (const component of Object.values(entry.components)) {
+      if (isPlainObject(component) && component.writable !== undefined) component.writable = writable;
+    }
+  }
+}
+
+/**
  * A file still in the retired `engines` form holds `engines` and `defaults`, not
  * the `connections`, `harnesses` and `improve` keys the reader makes of them, so
  * removing one of those is a change the file cannot take: the next load would
@@ -1174,7 +1265,7 @@ function refuseRemovalFromRetiredForm(
   );
   if (fromRetiredForm.length === 0) return;
   throw new UsageError(
-    `Cannot remove ${fromRetiredForm.map((keyPath) => keyPath.join(".")).join(", ")}: it comes from the retired engines form or models.json, which this config.json still reads. ` +
+    `Cannot remove ${fromRetiredForm.map((keyPath) => keyPath.join(".")).join(", ")}: it comes from a retired form (engines, bundles.<name>.components) or models.json, which this config.json still reads. ` +
       "Run `akm migrate apply` to convert the file, then repeat the change.",
   );
 }
@@ -1236,7 +1327,7 @@ export function unusableEntryAt(
   const text = readConfigText(configPath);
   if (text === undefined) return undefined;
   const document = readConfigFile(text, configPath);
-  const localRaw = readRetiredEngines(document, configPath);
+  const localRaw = readRetiredForms(document, configPath);
   const entry = findUnusableEntries(localRaw).find(
     (found) => found.name === name && found.kind === (group === "connections" ? "connection" : "harness"),
   );
@@ -1316,7 +1407,8 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     const plan = planKeyMoves(document, converted, {
       resolveSecretRef: (ref) => resolveSecret(ref, options.resolveFromStore),
     });
-    const localRaw = plan.config;
+    const lifted = convertBundleComponents(plan.config);
+    const localRaw = lifted.config;
     const current = buildEffectiveConfig(localRaw, configPath);
     const next = validateCompleteConfig({ ...current, configVersion: CURRENT_CONFIG_VERSION });
     const body = configWriteBody(localRaw, current, next) as Record<string, unknown>;
@@ -1344,7 +1436,14 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     if (dropsStrategy && improveBody) delete improveBody.strategy;
     // A key in the older flat form is filed only under an endpoint this file itself gives the block.
     const flat = fileFlatCredentials((slot) => documentEndpoint(plan.config, slot), false, plan.moves);
-    const notes = [...converted.notes, ...plan.notes, ...flat.notes];
+    const notes = [
+      ...converted.notes,
+      ...plan.notes,
+      ...flat.notes,
+      ...lifted.bundles.map(
+        (name) => `bundles.${name}.components: its adapter, root and writable are now on the bundle itself.`,
+      ),
+    ];
     if (dropsStrategy)
       notes.push(
         `improve.strategy: "${removedStrategy}" was removed in 0.10, so it is dropped and the default strategy applies; name "default" or "consolidate", or define "${removedStrategy}" under improve.strategies.`,
@@ -1414,12 +1513,12 @@ export function mutateConfig(
       return { config: { ...DEFAULT_CONFIG }, written: false };
     }
     const document = text === undefined ? undefined : readConfigFile(text, configPath);
-    const localRaw = document === undefined ? undefined : readRetiredEngines(document, configPath);
+    const localRaw = document === undefined ? undefined : readRetiredForms(document, configPath);
     const current =
       localRaw === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(localRaw, configPath);
     const mutated = mutate(current);
     if (mutated === current) return { config: current, written: false };
-    const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
+    const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION }, current);
     const unremoved: string[][] = [];
     const body = editedConfigFile(document, current, next, [], unremoved, options?.writeProjects);
     refuseRemovalFromRetiredForm(unremoved, document, localRaw);
@@ -1446,11 +1545,11 @@ export async function mutateConfigWithPrecommit<T>(
   try {
     const text = readConfigText(configPath);
     const document = text === undefined ? undefined : readConfigFile(text, configPath);
-    const localRaw = document === undefined ? undefined : readRetiredEngines(document, configPath);
+    const localRaw = document === undefined ? undefined : readRetiredForms(document, configPath);
     const current =
       localRaw === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(localRaw, configPath);
     const mutated = mutate(current);
-    const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
+    const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION }, current);
     const unremoved: string[][] = [];
     const body = editedConfigFile(document, current, next, options?.persistTopLevelKeys, unremoved);
     if (mutated !== current) refuseRemovalFromRetiredForm(unremoved, document, localRaw);
@@ -1576,11 +1675,10 @@ export function resolveSecret(value: string | undefined, resolveFromStore?: Secr
 
 // Re-export source runtime helpers — implementation lives in config-sources.ts.
 export {
-  bundleComponentConfig,
+  bundleAtDir,
   bundleContentRoot,
   bundleContentRoots,
   bundleEntryToSourceEntry,
-  bundleKeyForContentRoot,
   bundlePhysicalContentRoot,
   bundleSourceId,
   bundlesToSourceEntries,

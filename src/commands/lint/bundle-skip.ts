@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
-import { bundleKeyForContentRoot } from "../../core/config/config-sources";
+import { bundleAtDir } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { warnOnce } from "../../core/warn";
 import { LINT_RULES } from "./types";
@@ -40,7 +40,7 @@ function globToRegExp(glob: string): RegExp {
  * and ignored.
  */
 export function bundleLintSkip(config: AkmConfig, bundleRoot: string): (relPath: string) => string[] {
-  const skip = config.bundles?.[bundleKeyForContentRoot(config, bundleRoot) ?? ""]?.lint?.skip ?? {};
+  const skip = config.bundles?.[bundleAtDir(config, bundleRoot) ?? ""]?.lint?.skip ?? {};
   const rules: Array<[string, RegExp[]]> = [];
   for (const [rule, globs] of Object.entries(skip)) {
     if (!(LINT_RULES as readonly string[]).includes(rule)) {

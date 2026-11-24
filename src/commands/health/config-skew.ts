@@ -19,6 +19,7 @@ import type { HealthCheckResult } from "./types";
 export function collectConfigSkewAdvisory(configPath: string): HealthCheckResult | undefined {
   let raw: Record<string, unknown>;
   try {
+    // asset-io: config
     raw = JSON.parse(readTextFile(configPath, "Config file")) as Record<string, unknown>;
   } catch {
     return undefined;

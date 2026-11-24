@@ -4,18 +4,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { detectBundleAdapter } from "../../core/assets/gate";
+import { deriveBundleIds } from "../../core/bundle-id";
 import { isWithin, relativeToRoot, resolveStashDir, safeRealpath, toErrorMessage } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
-import {
-  bundleComponentConfig,
-  bundleKeyForContentRoot,
-  bundlesToSourceEntries,
-  getSources,
-  isBundleEnabled,
-  loadConfig,
-} from "../../core/config/config";
+import { bundleAtDir, bundlesToSourceEntries, getSources, isBundleEnabled, loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
-import { getUnresolvedSourcesDir } from "../../core/paths";
+import { getStoreSourceKey, getUnresolvedSourcesDir } from "../../core/paths";
 import { warn } from "../../core/warn";
 import { resolveGitContentRoot, resolveWritable } from "../../core/write-source";
 import { lockContentRootFor } from "../../integrations/lockfile";
@@ -34,22 +29,25 @@ export interface SearchSource {
   writable?: boolean;
   /** Configured provider kind when this source has a config owner. */
   type?: SourceConfigEntry["type"];
-  /** Adapter selected for this bundle component. Index preflight fills and persists missing ownership. */
+  /** The adapter that reads the bundle: its configured one, else found once when the sources are resolved. */
   adapterId?: string;
   /** Set when the source's provider/path could not be resolved this run: why, and its real directory when it has one. */
   unresolved?: { reason: string; path?: string };
+  /** A location bundle's configured `location`: where its adapter finds it. `path` is then only its key (`getStoreSourceKey`): it has no directory. */
+  location?: string;
 }
 
 // ── Resolution ──────────────────────────────────────────────────────────────
 
 /**
- * The working stash read besides the configured bundles: an explicit argument,
+ * The working stash read besides the configured bundles: an explicit argument (`null`: none),
  * else `AKM_BUNDLE_DIR`, else the platform default stash when no `defaultBundle`
  * is configured. With a `defaultBundle` and no override there is none, because
  * the configured bundle is the working stash. Throws as `resolveStashDir` does
  * when the directory is missing.
  */
-export function implicitStashDir(config: AkmConfig, overrideStashDir?: string): string | undefined {
+export function implicitStashDir(config: AkmConfig, overrideStashDir?: string | null): string | undefined {
+  if (overrideStashDir === null) return undefined;
   if (overrideStashDir !== undefined) return path.resolve(overrideStashDir);
   if (process.env.AKM_BUNDLE_DIR?.trim()) return resolveStashDir();
   return config.defaultBundle ? undefined : resolveStashDir();
@@ -60,7 +58,7 @@ export function implicitStashDir(config: AkmConfig, overrideStashDir?: string): 
  * once. Iteration order:
  *
  *   1. An explicit argument or `AKM_BUNDLE_DIR`, when present.
- *   2. The configured `defaultBundle`, after component-root validation.
+ *   2. The configured `defaultBundle`, after root validation.
  *   3. Remaining configured bundles in installation-priority order.
  *
  * Disabled entries (`enabled: false`) are excluded before materialization.
@@ -68,12 +66,12 @@ export function implicitStashDir(config: AkmConfig, overrideStashDir?: string): 
  * indexer can classify their scan as incomplete instead of mistaking them for
  * removed sources.
  */
-export function resolveSourceEntries(overrideStashDir?: string, existingConfig?: AkmConfig): SearchSource[] {
+export function resolveSourceEntries(overrideStashDir?: string | null, existingConfig?: AkmConfig): SearchSource[] {
   const config = existingConfig ?? loadConfig();
   const configuredEntries = bundlesToSourceEntries(config) ?? [];
   const implicitStash = implicitStashDir(config, overrideStashDir);
 
-  const implicitConfiguredBundle = implicitStash ? bundleKeyForContentRoot(config, implicitStash) : undefined;
+  const implicitConfiguredBundle = implicitStash ? bundleAtDir(config, implicitStash) : undefined;
   if (implicitConfiguredBundle && !isBundleEnabled(config, implicitConfiguredBundle)) {
     throw new ConfigError(
       `The requested working source is disabled as bundle ${JSON.stringify(implicitConfiguredBundle)}.`,
@@ -86,7 +84,15 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
   // A source's path is its real path, so one directory reached through two spellings
   // (a symlink, macOS `/tmp` and `/private/tmp`) keys the same index rows.
   const sources: SearchSource[] = implicitStash
-    ? [{ path: safeRealpath(implicitStash), writable: true, isDefault: true, type: "filesystem" }]
+    ? [
+        {
+          path: safeRealpath(implicitStash),
+          writable: true,
+          isDefault: true,
+          type: "filesystem",
+          adapterId: detectBundleAdapter(safeRealpath(implicitStash)),
+        },
+      ]
     : [];
   const seen = new Set<string>(implicitStash ? [safeRealpath(implicitStash)] : []);
 
@@ -98,6 +104,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     adapterId?: string,
     unresolved?: { reason: string; path?: string },
     isDefault = false,
+    location?: string,
   ) => {
     const resolved = path.resolve(dir);
     const identity = safeRealpath(resolved);
@@ -114,7 +121,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
         if (isDefault) existing.isDefault = true;
         existing.type = type;
         existing.writable = writable;
-        existing.adapterId = adapterId;
+        existing.adapterId = adapterId ?? existing.adapterId;
       }
       if (existing && unresolved) existing.unresolved = unresolved;
       return;
@@ -129,18 +136,19 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       ...(isDefault ? { isDefault: true } : {}),
       writable,
       type,
-      ...(adapterId ? { adapterId } : {}),
+      adapterId: adapterId ?? detectBundleAdapter(identity),
       ...(unresolved ? { unresolved } : {}),
+      ...(location ? { location } : {}),
     });
   };
 
   // Resolve from `bundles` + `defaultBundle`.
   // `bundlesToSourceEntries` returns the configured default first, then map
-  // insertion order. Each entry is validated before insertion so a component
+  // insertion order. Each entry is validated before insertion so a bundle
   // root can never escape its provider's materialized content root.
   for (const entry of configuredEntries) {
     if (entry.enabled === false) continue;
-    const component = bundleComponentConfig(config.bundles?.[entry.name ?? ""]);
+    const bundle = config.bundles?.[entry.name ?? ""];
     const resolvedContent = resolveEntryContent(entry);
     if ("error" in resolvedContent) {
       const unresolvedPath = path.join(
@@ -150,26 +158,26 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       addSource(
         unresolvedPath,
         entry.name,
-        component?.writable ?? resolveWritable(entry),
+        resolveWritable(entry),
         entry.type,
-        component?.adapter,
+        bundle?.adapter,
         { reason: resolvedContent.error },
         entry.name === config.defaultBundle,
       );
       continue;
     }
     const contentRoot = resolvedContent.dir;
-    const dir = path.resolve(contentRoot, component?.root ?? ".");
+    const dir = path.resolve(contentRoot, bundle?.root ?? ".");
     if (!isWithin(dir, contentRoot)) {
-      warn(`Warning: component root "${component?.root}" escapes bundle "${entry.name}"; skipping source.`);
+      warn(`Warning: root "${bundle?.root}" escapes bundle "${entry.name}"; skipping source.`);
       const unresolvedPath = path.join(getUnresolvedSourcesDir(contentRoot), entry.name ?? entry.type);
       addSource(
         unresolvedPath,
         entry.name,
-        component?.writable ?? resolveWritable(entry),
+        resolveWritable(entry),
         entry.type,
-        component?.adapter,
-        { reason: `component root "${component?.root}" escapes bundle "${entry.name}"`, path: dir },
+        bundle?.adapter,
+        { reason: `root "${bundle?.root}" escapes bundle "${entry.name}"`, path: dir },
         entry.name === config.defaultBundle,
       );
       continue;
@@ -177,11 +185,12 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     addSource(
       dir,
       entry.name,
-      component?.writable ?? resolveWritable(entry),
+      resolveWritable(entry),
       entry.type,
-      component?.adapter,
+      bundle?.adapter,
       undefined,
       entry.name === config.defaultBundle,
+      entry.location,
     );
   }
 
@@ -213,6 +222,8 @@ export function resolveEntryContent(entry: SourceConfigEntry): { dir: string } |
   // materialized for the first time).
   const localRoot = lockContentRootFor(entry.name, entry.type);
   if (localRoot != null) return { dir: localRoot };
+  // A location bundle has no content directory: its adapter reads it, and its source carries only a key.
+  if (entry.type === "location") return { dir: getStoreSourceKey(entry.name ?? entry.location ?? "") };
 
   const factory = resolveSourceProviderFactory(entry.type);
   if (!factory) return { error: `no source provider is registered for type "${entry.type}"` };
@@ -263,6 +274,18 @@ export function findSourceForPath(filePath: string, sources: SearchSource[]): Se
 export function findSourceForIndexedPath(filePath: string, sources: SearchSource[]): SearchSource | undefined {
   const resolved = path.resolve(filePath);
   return longestSource(sources, (base) => resolved.startsWith(base + path.sep));
+}
+
+/**
+ * The source an index row belongs to: the one its file lives under, or, for a row no file holds (`filePath` `""`), the
+ * one that is its bundle.
+ */
+export function findSourceForRow(
+  row: { filePath: string; bundleId?: string },
+  sources: SearchSource[],
+): SearchSource | undefined {
+  if (row.filePath !== "") return findSourceForIndexedPath(row.filePath, sources);
+  return row.bundleId === undefined ? undefined : sources[deriveBundleIds([...sources]).indexOf(row.bundleId)];
 }
 
 function longestSource(sources: SearchSource[], within: (base: string) => boolean): SearchSource | undefined {
@@ -450,7 +473,9 @@ export async function ensureSourceCaches(
  */
 function isMaterializedDir(dir: string): boolean {
   try {
+    // asset-io: install checkout probe
     if (!fs.statSync(dir).isDirectory()) return false;
+    // asset-io: install checkout probe
     return fs.readdirSync(dir).length > 0;
   } catch {
     return false;

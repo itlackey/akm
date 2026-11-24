@@ -3,6 +3,10 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { readEvents } from "../../src/core/events";
+import {
+  _setAssetMutationLeaseSyncTimingForTests,
+  acquireAssetMutationLease,
+} from "../../src/indexer/index-writer-lock";
 import { akmIndex } from "../../src/indexer/indexer";
 import { getCachePaths, parseGitRepoUrl } from "../../src/sources/providers/git";
 import { runCliCapture } from "../_helpers/cli";
@@ -94,5 +98,25 @@ describe("feedback lesson publication", () => {
     expect(git(repo, ["rev-list", "--count", "HEAD"])).toBe("3");
     expect(fs.readFileSync(lessonPath, "utf8")).toContain("lessonStrength");
     expect(readEvents({ type: "feedback", ref: memoryRef }).events).toHaveLength(1);
+  });
+
+  test("a failed write names the lesson's file in the warning", async () => {
+    const lease = await acquireAssetMutationLease({ purpose: "test-holder", maxWaitMs: 0 });
+    _setAssetMutationLeaseSyncTimingForTests({ maxWaitMs: 50 });
+    let result: Awaited<ReturnType<typeof runCliCapture>>;
+    try {
+      result = await runCliCapture([
+        "feedback",
+        "memories/note",
+        "--positive",
+        "--applied-to",
+        "team//lessons/credited",
+      ]);
+    } finally {
+      _setAssetMutationLeaseSyncTimingForTests(undefined);
+      lease?.release();
+    }
+
+    expect(result.stderr).toContain(`[feedback] --applied-to: failed to write ${lessonPath}:`);
   });
 });

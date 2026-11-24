@@ -9,7 +9,8 @@
  * workflow compiler (`steps`) and `missing-updated` (every Markdown asset). Anything else in a file is kept as written.
  */
 
-import { KNOWN_CATEGORIES } from "../adapter/adapters/akm-lint";
+/** The `category` values a fact may have: `factDiagnostics` flags any other. */
+export const KNOWN_CATEGORIES = new Set(["personal", "team", "project", "convention", "meta"]);
 
 export type FrontmatterKeyKind = "text" | "list" | "flag" | "map";
 

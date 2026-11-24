@@ -10,22 +10,20 @@ import path from "node:path";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import * as p from "../../cli/clack";
 import { akmTasksSync } from "../../commands/tasks/tasks";
+import { stashDirFor } from "../../core/asset/asset-placement";
 import { makeBundleRef } from "../../core/asset/asset-ref";
+import { listAssets, readAsset } from "../../core/assets/read";
+import { writeAssets } from "../../core/assets/write";
 import { loadConfig, mutateConfig, resetConfigCache } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import {
-  commitWriteTargetBoundary,
-  deleteAssetFromSource,
-  prepareWriteTargetForMutation,
-  resolveWriteTarget,
-  writeAssetToSource,
-} from "../../core/write-source";
+import { commitWriteTargetBoundary, prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
 import { enabledRefsFromInstalled, isSchedulerBundleActive, schedulerEnabledRefs } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../../tasks/embedded";
 import { parseSchedule } from "../../tasks/schedule";
 import type { InstalledSchedulerBinding } from "../../tasks/scheduler-binding";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
+import { taskFileOf } from "../../tasks/task-ref";
 import { prompt } from "../prompt";
 
 /**
@@ -78,6 +76,7 @@ export function detectServerDefault(): boolean {
   // A laptop exposes a battery under /sys/class/power_supply/BAT*. Absence of
   // any battery is our heuristic for "server / desktop".
   try {
+    // asset-io: host battery probe
     const entries = fs.readdirSync("/sys/class/power_supply");
     const hasBattery = entries.some((e) => /^BAT/i.test(e));
     return !hasBattery;
@@ -119,18 +118,18 @@ export interface ScheduledTasksDeps {
 export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
   const config = loadConfig();
   const target = resolveWriteTarget(config, config.defaultBundle, { requireWritable: false });
-  const taskDir = path.join(target.source.path, "tasks");
   const enabledRefs = new Set(schedulerEnabledRefs(config) ?? []);
-  if (!fs.existsSync(taskDir)) return [];
+  const folder = `${stashDirFor("task")}/`;
 
   const tasks: SetupTaskDefinition[] = [];
-  for (const file of fs.readdirSync(taskDir)) {
-    if (!file.endsWith(".yml")) continue;
-    const id = file.slice(0, -4);
-    const filePath = path.join(taskDir, file);
+  for (const asset of listAssets({ bundle: target.source.name, type: "task" })) {
+    // The tasks of the folder itself, not those of a folder below it.
+    if (!asset.conceptId.startsWith(folder) || asset.conceptId.includes("/", folder.length)) continue;
+    const id = asset.conceptId.slice(folder.length);
+    const filePath = taskFileOf(asset);
     try {
       const parsed = parseTaskSource({
-        yaml: fs.readFileSync(filePath, "utf8"),
+        yaml: asset.entry.content(),
         filePath,
       });
       if (parsed.schedule.length === 0) continue;
@@ -139,7 +138,7 @@ export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
         id,
         schedule: schedules[0]!,
         schedules: Object.freeze(schedules),
-        enabled: enabledRefs.has(makeBundleRef(target.source.name, `tasks/${id}`)),
+        enabled: enabledRefs.has(asset.ref),
         ...(parsed.description !== undefined ? { description: parsed.description } : {}),
       });
     } catch (error) {
@@ -155,8 +154,7 @@ export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
 }
 
 export interface PrepareSetupTaskDefinitionsDeps {
-  writeAsset?: typeof writeAssetToSource;
-  deleteAsset?: typeof deleteAssetFromSource;
+  writeAssets?: typeof writeAssets;
   commitBoundary?: typeof commitWriteTargetBoundary;
 }
 
@@ -169,13 +167,12 @@ export async function prepareSetupTaskDefinitions(
     resolveWriteTarget(config, config.defaultBundle, { requireWritable: true }),
   );
   const taskDir = path.join(target.source.path, "tasks");
-  const writeAsset = deps.writeAsset ?? writeAssetToSource;
-  const deleteAsset = deps.deleteAsset ?? deleteAssetFromSource;
+  const write = deps.writeAssets ?? writeAssets;
   const commitBoundary = deps.commitBoundary ?? commitWriteTargetBoundary;
 
   const prepared = tasks.map((plan) => {
     const filePath = path.join(taskDir, `${plan.task.id}.yml`);
-    const original = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : undefined;
+    const original = readAsset(target.source.name, `tasks/${plan.task.id}`)?.entry.content();
     let yaml: string;
     if (original !== undefined) {
       yaml = original;
@@ -189,14 +186,16 @@ export async function prepareSetupTaskDefinitions(
     for (const schedule of parsed.schedule) {
       parseSchedule(schedule.cron, backendNameForPlatform());
     }
-    return { filePath, original, yaml, ref: { type: "task" as const, name: plan.task.id } };
+    return { filePath, original, yaml, name: plan.task.id };
   });
   const changed = prepared.filter((entry) => entry.original !== entry.yaml);
   const attempted: typeof changed = [];
   try {
     for (const entry of changed) {
       attempted.push(entry);
-      await writeAsset(target.source, target.config, entry.ref, entry.yaml);
+      write(target, { purpose: "setup-tasks" }, (w) =>
+        w.create({ type: "task", name: entry.name, content: entry.yaml }),
+      );
     }
     commitBoundary(target, "Prepare scheduled tasks");
   } catch (error) {
@@ -204,10 +203,16 @@ export async function prepareSetupTaskDefinitions(
     for (const entry of [...attempted].reverse()) {
       try {
         if (entry.original === undefined) {
-          if (fs.existsSync(entry.filePath)) await deleteAsset(target.source, target.config, entry.ref);
+          write(target, { purpose: "setup-tasks" }, (w) => {
+            const address = w.address(`tasks/${entry.name}`);
+            if (address.exists) w.delete(address.conceptId);
+          });
         } else {
-          await writeAsset(target.source, target.config, entry.ref, entry.original);
-          fs.writeFileSync(entry.filePath, entry.original, "utf8");
+          const original = entry.original;
+          // The task as it was, byte for byte.
+          write(target, { purpose: "setup-tasks" }, (w) =>
+            w.create({ type: "task", name: entry.name, content: original }, { verbatim: true }),
+          );
         }
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);

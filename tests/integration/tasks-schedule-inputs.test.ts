@@ -104,9 +104,7 @@ describe("schedule[].inputs compiles a sorted --<name> <value> flag tail after -
     expect(plan.desired[0]?.invocation).toEqual([
       "task",
       "run",
-      "scoped-nightly",
-      "--bundle",
-      "team",
+      "team//tasks/scoped-nightly",
       "--scheduled",
       "--alpha",
       "true",
@@ -146,9 +144,7 @@ describe("schedule[].inputs compiles a sorted --<name> <value> flag tail after -
     expect(plan.desired[0]?.invocation).toEqual([
       "task",
       "run",
-      "listy-nightly",
-      "--bundle",
-      "team",
+      "team//tasks/listy-nightly",
       "--scheduled",
       "--tags",
       '["a","b"]',
@@ -179,7 +175,7 @@ describe("schedule[].inputs compiles a sorted --<name> <value> flag tail after -
     });
 
     expect(plan.desired).toHaveLength(1);
-    expect(plan.desired[0]?.invocation).toEqual(["task", "run", "bare-nightly", "--bundle", "team", "--scheduled"]);
+    expect(plan.desired[0]?.invocation).toEqual(["task", "run", "team//tasks/bare-nightly", "--scheduled"]);
   });
 });
 
@@ -225,9 +221,7 @@ describe("a compiled input-flag tail round-trips through the public scheduler in
     const invocation = [
       "task",
       "run",
-      "scoped-nightly",
-      "--bundle",
-      "team",
+      "team//tasks/scoped-nightly",
       "--scheduled",
       "--alpha",
       "true",

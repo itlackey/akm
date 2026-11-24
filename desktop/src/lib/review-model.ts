@@ -13,7 +13,7 @@ export interface ReviewProposal extends Proposal {
   sourceRun?: string;
   decider?: string | null;
   gateDecision?: { outcome: string; reason?: string; judgeReason?: string } | null;
-  proposedTarget?: { source: string; root: string } | null;
+  proposedTarget?: { source: string } | null;
 }
 export const ageBands = {
   underDay: "Under 1 day",

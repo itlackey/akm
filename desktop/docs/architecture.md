@@ -54,7 +54,7 @@ link cannot leave it), the bundle must be one AKM writes to (an installed
 bundle's update would replace the edit), a save is refused when the file's bytes changed since they
 were read (the revision is their SHA-256), and the write is atomic (temporary
 file, then rename, keeping the mode). Afterwards Desktop asks AKM to refresh the
-index for that file with `indexWrittenAssets`, the one index operation the
+index for that file with `indexFiles`, the one index operation the
 workspace exports. `env/` and `secrets/` (checked on the real path) have their own
 masked view. A save does not touch Git; `akm sync` commits it like any other
 edit. Asset-level operations (retire,

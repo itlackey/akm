@@ -52,7 +52,7 @@ function put(name: string, fields: Partial<IndexDocument>, vector: number[], fil
     db,
     filePath ?? `/fixture/knowledge/${name}.md`,
     entry,
-    deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, "knowledge", name),
+    deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "knowledge", name),
   );
   upsertEmbedding(db, id, vector);
 }

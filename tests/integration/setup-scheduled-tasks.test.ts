@@ -7,8 +7,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { _setClackForTests } from "../../src/cli/clack";
 import { akmTasksSync, type TasksSyncResult } from "../../src/commands/tasks/tasks";
+import { writeAssets } from "../../src/core/assets/write";
 import { loadConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
-import { deleteAssetFromSource, writeAssetToSource } from "../../src/core/write-source";
 import { buildSetupSteps } from "../../src/setup/setup";
 import {
   _setScheduledTasksEnvForTests,
@@ -306,6 +306,22 @@ function managedPlans(ids: string[]): PreparedSetupTask[] {
 }
 
 describe("task definition preparation", () => {
+  test("a task held in an off-case file is listed under its id, which `task enable` takes through the F5 path", () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({ bundles: { stash: { path: storage.stashDir } }, defaultBundle: "stash" });
+      const taskDir = path.join(storage.stashDir, "tasks");
+      fs.mkdirSync(taskDir, { recursive: true });
+      fs.writeFileSync(path.join(taskDir, "Up.YML"), "version: 4\nrun: echo up\nschedule: '0 1 * * *'\n", "utf8");
+
+      const listed = listSetupTaskDefinitions();
+      expect(listed.map((task) => task.id)).toEqual(["Up"]);
+      expect(JSON.stringify(listed)).not.toContain("YML");
+    } finally {
+      storage.cleanup();
+    }
+  });
+
   test("setup accepts and preserves every valid schedule in a multi-schedule task", async () => {
     const storage = withIsolatedAkmStorage();
     try {
@@ -382,13 +398,12 @@ describe("task definition preparation", () => {
 
       await expect(
         prepareSetupTaskDefinitions(plans, {
-          writeAsset: async (...args) => {
-            const result = await writeAssetToSource(...args);
+          writeAssets: (target, options, run) => {
+            const result = writeAssets(target, options, run);
             writes += 1;
             if (writes === 2) throw new Error("injected write failure");
             return result;
           },
-          deleteAsset: deleteAssetFromSource,
           commitBoundary: () => {},
         }),
       ).rejects.toThrow("injected write failure");
@@ -414,8 +429,6 @@ describe("task definition preparation", () => {
 
       await expect(
         prepareSetupTaskDefinitions(managedPlans(["improve", "sync"]), {
-          writeAsset: writeAssetToSource,
-          deleteAsset: deleteAssetFromSource,
           commitBoundary: () => {
             commits += 1;
             if (commits === 1) throw new Error("injected commit failure");
@@ -479,7 +492,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
         envPath: false,
       });
       await akmTasksSync({ backend });
-      expect(exec.current()).toContain("task run orphan");
+      expect(exec.current()).toContain("//tasks/orphan --scheduled");
 
       // A pre-0.9.17 config has no list at all: the installed row IS the choice.
       const { scheduler: _dropped, ...withoutList } = loadConfig();
@@ -495,14 +508,14 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
         inspectInstalled: async () => ({ installed: await backend.list() }),
       });
 
-      expect(exec.current()).toContain("task run orphan");
+      expect(exec.current()).toContain("//tasks/orphan --scheduled");
       expect(schedulerEnabledRefs(loadConfig())).toContain("stash//tasks/orphan");
 
       // An explicit empty list is a choice, not a missing one: nothing is re-derived.
       saveConfig({ ...loadConfig(), scheduler: { enabled: [] } });
       resetConfigCache();
       await akmTasksSync({ backend });
-      expect(exec.current()).not.toContain("task run orphan");
+      expect(exec.current()).not.toContain("//tasks/orphan --scheduled");
       expect(schedulerEnabledRefs(loadConfig())).toEqual([]);
     } finally {
       storage.cleanup();
@@ -537,7 +550,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
       state.multiselectReturn = ["extract"];
       state.confirmReturn = true;
       await stepScheduledTasks(deps);
-      expect(exec.current()).toContain("task run extract");
+      expect(exec.current()).toContain("//tasks/extract --scheduled");
       expect(schedulerEnabledRefs(loadConfig())).toContain("stash//tasks/extract");
 
       // Second run: leave `extract` unchecked. Its YAML stays prepared on disk; the choice is the list.
@@ -547,7 +560,7 @@ describe("stepScheduledTasks activation drives the real akmTasksSync", () => {
       await stepScheduledTasks(deps);
 
       expect(schedulerEnabledRefs(loadConfig())).not.toContain("stash//tasks/extract");
-      expect(exec.current()).not.toContain("task run extract");
+      expect(exec.current()).not.toContain("//tasks/extract --scheduled");
     } finally {
       storage.cleanup();
     }

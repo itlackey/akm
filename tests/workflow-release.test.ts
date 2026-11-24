@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
+import { KNOWN_UPGRADE_ORIGINS } from "./integration/upgrade-rehearsal/previous-release";
 
 const source = fs.readFileSync(path.resolve(import.meta.dir, "../.github/workflows/release.yml"), "utf8");
 const STAGE_INPUT = "$" + "{{ inputs.stage }}";
@@ -17,7 +18,7 @@ type Job = {
   if?: string;
   permissions?: unknown;
   steps?: Step[];
-  strategy?: { matrix: { os: string[] } };
+  strategy?: { matrix: Record<string, string[]> };
 };
 const workflow = YAML.parse(source) as {
   on: {
@@ -41,19 +42,47 @@ describe("release workflow", () => {
     });
   });
 
-  test("runs CI and Gated CI as its own jobs for a prerelease, then one release job, then Desktop and akm-web", () => {
-    expect(Object.keys(workflow.jobs)).toEqual(["ci", "gated", "release", "desktop", "akm-web"]);
+  test("runs the gates as its own jobs, then one release job, then Desktop and akm-web", () => {
+    expect(Object.keys(workflow.jobs)).toEqual([
+      "ci",
+      "integration",
+      "node-smoke",
+      "upgrade-rehearsal",
+      "desktop-tests",
+      "gated",
+      "release",
+      "desktop",
+      "akm-web",
+    ]);
     expect(workflow.jobs.ci?.uses).toBe("./.github/workflows/ci.yml");
     expect(workflow.jobs.gated?.uses).toBe("./.github/workflows/gated-ci.yml");
-    expect(workflow.jobs.release?.needs).toEqual(["ci", "gated"]);
+    expect(workflow.jobs.integration?.steps?.some((step) => step.run === "bun run test:integration")).toBe(true);
+    expect(workflow.jobs.release?.needs).toEqual([
+      "ci",
+      "integration",
+      "node-smoke",
+      "upgrade-rehearsal",
+      "desktop-tests",
+      "gated",
+    ]);
     expect(workflow.jobs.desktop?.needs).toBe("release");
     expect(workflow.jobs["akm-web"]?.needs).toBe("release");
-    // The merge that makes a stable passed the gates on its pull request: only a dispatch runs them here.
-    for (const gate of ["ci", "gated"]) {
-      expect(workflow.jobs[gate]?.if).toContain("github.event_name == 'workflow_dispatch'");
-      expect(workflow.jobs[gate]?.if).toContain("!inputs.dry_run");
+    // The merge that makes a stable passed CI on its pull request: only a dispatch runs it here.
+    expect(workflow.jobs.ci?.if).toBe("$" + "{{ github.event_name == 'workflow_dispatch' && !inputs.dry_run }}");
+    // The integration suite, the Node fallback smoke, the upgrade rehearsals and Gated CI run nowhere else, so they
+    // gate the stable push and the prerelease alike.
+    for (const gate of ["integration", "node-smoke", "upgrade-rehearsal", "desktop-tests", "gated"]) {
+      expect(workflow.jobs[gate]?.if).toBe("$" + "{{ !inputs.dry_run }}");
     }
-    // A skipped gate (a stable, a dry run) lets the release go on; a failed or cancelled one stops it.
+    // The Node fallback on both supported Node versions; one rehearsal per KNOWN_UPGRADE_ORIGINS entry.
+    expect(workflow.jobs["node-smoke"]?.strategy?.matrix["node-version"]).toEqual(["22", "24"]);
+    expect(workflow.jobs["node-smoke"]?.steps?.find((step) => step.name === "Verify the Node fallback")?.run).toContain(
+      "bun run test:node-smoke",
+    );
+    expect(workflow.jobs["upgrade-rehearsal"]?.strategy?.matrix.origin).toEqual([...KNOWN_UPGRADE_ORIGINS]);
+    expect(source).toContain("tests/integration/upgrade-rehearsal/");
+    // A skipped gate (CI for a stable, every gate for a dry run) lets the release go on; a failed or cancelled one
+    // stops it.
     expect(workflow.jobs.release?.if).toContain("!contains(needs.*.result, 'failure')");
     expect(workflow.jobs.release?.if).toContain("!contains(needs.*.result, 'cancelled')");
     // Nothing polls another workflow's run.
@@ -62,6 +91,25 @@ describe("release workflow", () => {
     expect(source).toContain("bun run build");
     expect(source).toContain("npm publish");
     expect(source).toContain("gh release create");
+  });
+
+  test("Desktop's tests gate the release: the full sequence, on the commit that ships", () => {
+    const job = workflow.jobs["desktop-tests"];
+    expect(job?.permissions).toEqual({ contents: "read" });
+    const run = JSON.stringify(job?.steps);
+    for (const command of [
+      "npm run check",
+      "npm run build",
+      "npm test",
+      "npm run test:e2e",
+      "npm run test:usability",
+      "npm run test:server",
+      "npm run test:web-package",
+      "xvfb-run -a npm run test:electron",
+    ]) {
+      expect(run, command).toContain(command);
+    }
+    expect(job?.steps?.some((step) => step.run === "bun run desktop:setup")).toBe(true);
   });
 
   test("a stable publishes the version committed in package.json; a prerelease the release branch's version", () => {

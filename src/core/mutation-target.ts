@@ -100,7 +100,7 @@ export function resolveMutationTarget(
   config: AkmConfig,
   ref: AssetRef,
   explicitTarget?: string,
-  options: WriteTargetOptions & { allowedAdapters?: readonly string[] } = {},
+  options: WriteTargetOptions = {},
 ): ResolvedMutationTarget {
   const flag = options.flag ?? "--bundle";
   const writeOptions: WriteTargetOptions = { requireWritable: options.requireWritable, flag };
@@ -122,9 +122,10 @@ export function resolveMutationTarget(
 
   let target = qualifiedTarget ?? explicitResolved ?? resolveWriteTarget(config, undefined, writeOptions);
   const bundleId = ref.origin ?? canonicalBundleIdForTarget(config, target);
+  // The write is an asset of the ref's type: the bundle's adapter must write that type.
   target = prepareWriteTargetForMutation(
     { ...target, source: { ...target.source, name: bundleId } },
-    { allowedAdapters: options.allowedAdapters },
+    { assetType: ref.type },
   );
   const stableRef = { ...ref, origin: bundleId };
   const defaultBundle = defaultBundleForTarget(config);

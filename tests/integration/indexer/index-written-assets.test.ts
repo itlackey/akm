@@ -15,11 +15,11 @@ import path from "node:path";
 import { akmSearch } from "../../../src/commands/read/search";
 import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { deleteMeta, getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
+import { indexWrittenAssets } from "../../_helpers/index-written-files";
 import {
   type Cleanup,
   sandboxEnvDir,

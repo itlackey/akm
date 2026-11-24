@@ -74,6 +74,7 @@ export type ChildGroup = "own" | "shared";
  */
 export function hasControllingTerminal(): boolean {
   try {
+    // asset-io: host controlling terminal
     fs.closeSync(fs.openSync("/dev/tty", "r"));
     return true;
   } catch {

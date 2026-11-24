@@ -14,14 +14,18 @@
  * depends on anyone first calling a registration function (normative §12.6 —
  * "static frozen `BUILTIN_ADAPTERS` map"). The earlier mutable
  * `registerAdapter` singleton that this replaced is retired.
+ *
+ * This list is the one list of adapter ids: adding an adapter is one class
+ * file and one line here (its position is its probe order). The registry
+ * rejects an id that is not in it where a bundle names one.
  */
 
-import { ADAPTER_ID_TABLE } from "../adapter-ids";
 import type { BundleAdapter } from "../bundle-adapter";
 import { agentSkillsAdapter } from "./agent-skills-adapter";
 import { akmAdapter } from "./akm-adapter";
 import { akmTaskAdapter } from "./akm-task-adapter";
 import { akmWorkflowAdapter } from "./akm-workflow-adapter";
+import { azureKeyVaultAdapter } from "./azure-key-vault-adapter";
 import { claudeAdapter } from "./claude-adapter";
 import { codeProjectAdapter } from "./code-project-adapter";
 import { dotenvAdapter } from "./dotenv-adapter";
@@ -29,12 +33,14 @@ import { genericFilesAdapter } from "./generic-files-adapter";
 import { llmWikiAdapter } from "./llm-wiki-adapter";
 import { okfAdapter } from "./okf-adapter";
 import { opencodeAdapter } from "./opencode-adapter";
+import { secretToolAdapter } from "./secret-tool-adapter";
 import { websiteSnapshotAdapter } from "./website-snapshot-adapter";
 
 export { agentSkillsAdapter } from "./agent-skills-adapter";
 export { akmAdapter } from "./akm-adapter";
 export { akmTaskAdapter } from "./akm-task-adapter";
 export { akmWorkflowAdapter } from "./akm-workflow-adapter";
+export { azureKeyVaultAdapter } from "./azure-key-vault-adapter";
 export { claudeAdapter } from "./claude-adapter";
 export { codeProjectAdapter } from "./code-project-adapter";
 export { dotenvAdapter } from "./dotenv-adapter";
@@ -42,6 +48,7 @@ export { genericFilesAdapter } from "./generic-files-adapter";
 export { llmWikiAdapter } from "./llm-wiki-adapter";
 export { okfAdapter } from "./okf-adapter";
 export { opencodeAdapter } from "./opencode-adapter";
+export { secretToolAdapter } from "./secret-tool-adapter";
 export { websiteSnapshotAdapter } from "./website-snapshot-adapter";
 
 /**
@@ -70,6 +77,8 @@ export { websiteSnapshotAdapter } from "./website-snapshot-adapter";
  *    fire on none of the other roots; they come at the front for clarity.
  *  - `generic-files` and `code-project` are EXPLICIT-CONFIG ONLY (neither can
  *    be auto-detected), so they are LAST and can never shadow anything.
+ *  - `secret-tool` and `azure-key-vault` read a bundle kept by a secret manager,
+ *    not a directory: explicit config only, with no probe.
  */
 export const BUILTIN_ADAPTERS: readonly BundleAdapter[] = Object.freeze([
   // Specific, disjoint markers first.
@@ -90,21 +99,7 @@ export const BUILTIN_ADAPTERS: readonly BundleAdapter[] = Object.freeze([
   genericFilesAdapter,
   // Explicit-config only (`--adapter code-project`) — no probe, so order is moot.
   codeProjectAdapter,
+  // Bundles kept by a secret manager, named by a bundle's `location`: no directory to probe.
+  secretToolAdapter,
+  azureKeyVaultAdapter,
 ]);
-
-// Construction-time drift guard (#909): ../adapter-ids.ts's ADAPTER_ID_TABLE
-// is config's dependency-free mirror of this list, kept out of core/config's
-// import graph so config doesn't have to import this (heavier) barrel. Assert
-// they match so the mirror can never silently drift — a new/reordered/renamed
-// adapter that forgets to update adapter-ids.ts fails loudly here instead of
-// quietly breaking config's `components.*.adapter` validation.
-{
-  const actualIds = BUILTIN_ADAPTERS.map((a) => a.id);
-  const expectedIds = [...ADAPTER_ID_TABLE];
-  if (actualIds.length !== expectedIds.length || actualIds.some((id, i) => id !== expectedIds[i])) {
-    throw new Error(
-      `adapter-ids.ts ADAPTER_ID_TABLE (${expectedIds.join(", ")}) does not match ` +
-        `BUILTIN_ADAPTERS (${actualIds.join(", ")}) — update adapter-ids.ts to match.`,
-    );
-  }
-}

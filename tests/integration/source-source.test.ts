@@ -245,14 +245,14 @@ describe("resolveSourceEntries", () => {
     }
   });
 
-  test("represents an escaping default component as unresolved without inserting the escaped root", () => {
+  test("represents an escaping default bundle as unresolved without inserting the escaped root", () => {
     const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-escaping-default-"));
     try {
       saveConfig({
         semanticSearchMode: "off",
         defaultBundle: "escaping",
         bundles: {
-          escaping: { path: bundleRoot, components: { main: { root: "..", adapter: "akm" } } },
+          escaping: { path: bundleRoot, adapter: "akm", root: ".." },
         },
       });
 

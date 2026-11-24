@@ -7,13 +7,16 @@
 # wall clock for ~570s of test time; sharding cuts that to roughly the
 # slowest shard.
 #
-# Sharding is done by EXPLICIT round-robin file lists, NOT bun's `--shard`:
+# Sharding is done by EXPLICIT file lists, NOT bun's `--shard`:
 # on bun 1.3.x that flag only slices when the positional path is the test
 # root (`./tests`, where it slices at the TEST level); with a subdirectory
 # positional like `./tests/integration` it is SILENTLY IGNORED and every
 # process runs the full suite concurrently — 4x the work plus same-file
 # collisions on fixture paths. File-granular lists also guarantee each test
-# file runs in exactly one process.
+# file runs in exactly one process. The lists are balanced by each file's
+# recorded duration (tests/integration/.timings.json, longest first to the
+# least-loaded shard; see scripts/integration-timings.ts), so the shards end
+# close together instead of one running far past the rest.
 #
 # Per-process isolation here is STRICTLY STRONGER than the previous
 # single-process run (files no longer share process.env or module state with
@@ -22,6 +25,7 @@
 #
 # Usage:  scripts/test-integration.sh            # auto shards (min(nproc, 8))
 #         TEST_SHARDS=4 scripts/test-integration.sh
+#         TEST_INTEGRATION_LOGDIR=<dir> scripts/test-integration.sh   # logs and junit kept in <dir>
 set -uo pipefail
 
 cores="$(nproc 2>/dev/null || echo 4)"
@@ -31,8 +35,10 @@ N="${TEST_SHARDS:-$cores}"
 
 bun run sweep:tmp >/dev/null 2>&1 || true
 
-# Deterministic file list; sort so every machine shards identically.
-mapfile -t files < <(find tests/integration -name '*.test.ts' | sort)
+# Deterministic file list; sort so every machine shards identically. The
+# reference-compatibility corpus is not part of this run (it is a local gate for
+# the adapter refactor, run directly: `bun test tests/integration/reference-compat.test.ts`).
+mapfile -t files < <(find tests/integration -name '*.test.ts' ! -name 'reference-compat.test.ts' | sort)
 total="${#files[@]}"
 
 if [ "$total" -eq 0 ]; then
@@ -42,36 +48,51 @@ fi
 [ "$N" -gt "$total" ] && N="$total"
 
 # Shard logs live in an announced directory (not anonymous mktemp files) so a
-# hung or long run can be watched live: `tail -f <dir>/shard-*.log`. Honors
-# $TMPDIR; kept on failure for diagnosis, removed on success.
-logdir="$(mktemp -d "${TMPDIR:-/tmp}/akm-integration-shards.XXXXXX")"
+# hung or long run can be watched live: `tail -f <dir>/shard-*.log`. Each shard
+# also writes a junit report (shard-N.xml: per-file and per-test times, the
+# input of `bun scripts/integration-timings.ts update`) and its file list
+# (shard-N.files). A directory named by TEST_INTEGRATION_LOGDIR (CI names one,
+# and uploads it) is always kept; otherwise the directory is a fresh one under
+# $TMPDIR, kept on failure for diagnosis and removed on success.
+if [ -n "${TEST_INTEGRATION_LOGDIR:-}" ]; then
+  logdir="$TEST_INTEGRATION_LOGDIR"
+  mkdir -p "$logdir"
+  rm -f "$logdir"/shard-*.xml "$logdir"/shard-*.files "$logdir"/shard-*.log  # a reused directory keeps no earlier run's reports
+else
+  logdir="$(mktemp -d "${TMPDIR:-/tmp}/akm-integration-shards.XXXXXX")"
+fi
 echo "── integration: ${N} shards over ${total} files; live logs: ${logdir}/shard-N.log"
+
+if ! plan="$(bun scripts/integration-timings.ts plan "$N" "${files[@]}")"; then
+  echo "── integration: could not plan the shards" >&2
+  exit 1
+fi
 
 # A shard's own --timeout=120000 catches a slow TEST, not a stuck PROCESS —
 # e.g. a child process a test spawned that never exits. That is exactly how
 # the alpha.9 release was lost: one shard hung with no ceiling on `wait`
 # below, was killed at the 20-minute CI job timeout, and GitHub kept no
-# logs. 600s is well above the observed norm — a full `bun run check`
-# (lint, tsc, and BOTH shard runs together) takes ~2m15s locally — and
-# leaves ample margin under the job timeout for this script to notice,
-# kill, and report before GitHub does.
-shard_timeout_secs=600
+# logs. On CI's 4-core runners the slowest round-robin shard took 7-10 min
+# (Nov 2026; 600s killed healthy shards), and everything else in the `check`
+# job takes about a minute, so 900s sits above the norm and still leaves the
+# 20-minute job time for this script to notice, kill, and report before
+# GitHub does.
+shard_timeout_secs=900
 
 # `setsid` (util-linux) isn't on macOS by default. When it's present, a
 # shard runs in its own process group and a hang is killed by group (below).
 # Otherwise, fall back to killing the shard's own pid plus its direct
-# children (`pkill -P`) — the 600s deadline and log-tail message are the
+# children (`pkill -P`) — the deadline and log-tail message are the
 # same either way.
 has_setsid=false
 command -v setsid >/dev/null 2>&1 && has_setsid=true
 
 declare -a pids tmps
 for k in $(seq 0 $((N - 1))); do
-  slice=()
-  for i in "${!files[@]}"; do
-    [ $((i % N)) -eq "$k" ] && slice+=("${files[$i]}")
-  done
+  awk -v k="$((k + 1))" '$1 == k { print $2 }' <<<"$plan" >"${logdir}/shard-$((k + 1)).files"
+  mapfile -t slice <"${logdir}/shard-$((k + 1)).files"
   t="${logdir}/shard-$((k + 1)).log"
+  junit=(--reporter=junit --reporter-outfile="${logdir}/shard-$((k + 1)).xml")
   tmps+=("$t")
   runtime_home="${logdir}/runtime-home-$((k + 1))"
   mkdir -p "$runtime_home"
@@ -82,9 +103,9 @@ for k in $(seq 0 $((N - 1))); do
     # `exec setsid` gives this shard its own process group (pgid == its pid,
     # distinct from every sibling shard's), so the timeout below can kill it
     # — and anything it spawned — without touching the others.
-    ( exec setsid env HOME="$runtime_home" bun test --timeout=120000 "${slice[@]}" >"$t" 2>&1 ) &
+    ( exec setsid env HOME="$runtime_home" bun test --timeout=120000 "${junit[@]}" "${slice[@]}" >"$t" 2>&1 ) &
   else
-    ( HOME="$runtime_home" bun test --timeout=120000 "${slice[@]}" >"$t" 2>&1 ) &
+    ( HOME="$runtime_home" bun test --timeout=120000 "${junit[@]}" "${slice[@]}" >"$t" 2>&1 ) &
   fi
   pids+=($!)
 done
@@ -161,5 +182,9 @@ if [ "$rc" -ne 0 ] || [ "$fail" -ne 0 ] || [ "$filecount" -ne "$total" ]; then
   echo "── integration: shard logs kept for diagnosis: ${logdir}"
   exit 1
 fi
-rm -rf "$logdir"
+if [ -n "${TEST_INTEGRATION_LOGDIR:-}" ]; then
+  rm -rf "$logdir"/runtime-home-*
+else
+  rm -rf "$logdir"
+fi
 exit 0

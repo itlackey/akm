@@ -13,18 +13,17 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { listKeys as listVaultKeys } from "../commands/env/env";
 import { refForFile } from "../core/asset/asset-placement";
 import { parseFrontmatter, readFrontmatterDate } from "../core/asset/frontmatter";
 import { displayRef } from "../core/asset/resolve-ref";
-import { asNonEmptyString, hasErrnoCode } from "../core/common";
+import { findAsset } from "../core/assets/read";
+import { asNonEmptyString, hasErrnoCode, scanEnvKeyNames } from "../core/common";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import type { IndexDocument } from "../indexer/passes/metadata";
 import { extractCommentMetadata } from "../indexer/passes/metadata";
-import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
-import { registerRenderer } from "../indexer/walk/file-context";
 import type { ShowResponse, SourceSearchHit } from "../sources/types";
 import { buildWorkflowAction, workflowMdRenderer } from "../workflows/renderer";
+import { type AssetRenderer, type RenderContext, registerRenderer } from "./renderer-registry";
 
 // ── ExecHints types ──────────────────────────────────────────────────────────
 
@@ -46,13 +45,13 @@ const SETUP_SIGNALS: Record<string, string> = {
 // ── Comment tag extraction ───────────────────────────────────────────────────
 
 /**
- * Extract `@run`, `@setup`, `@cwd` tags from script file header comments.
+ * Extract `@run`, `@setup`, `@cwd` tags from a script's header comments.
  *
- * Scans the first 50 lines of the file for comment lines containing
+ * Scans the first 50 lines of `content` for comment lines containing
  * `@run <value>`, `@setup <value>`, or `@cwd <value>`.
  */
-export function extractCommentTags(filePath: string): ExecHints {
-  const metadata = extractCommentMetadata(filePath);
+export function extractCommentTags(content: string): ExecHints {
+  const metadata = extractCommentMetadata(content);
   return {
     run: metadata?.run,
     setup: metadata?.setup,
@@ -77,6 +76,7 @@ export function detectExecHints(filePath: string, ref: string): ExecHints {
   const dir = path.dirname(filePath);
   try {
     for (const [file, cmd] of Object.entries(SETUP_SIGNALS)) {
+      // asset-io: exec the files beside a script that say how to set it up to run
       if (fs.existsSync(path.join(dir, file))) {
         hints.setup = cmd;
         hints.cwd = dir;
@@ -100,14 +100,19 @@ export function detectExecHints(filePath: string, ref: string): ExecHints {
  * 2. Script file header comments (`@run`/`@setup`/`@cwd`)
  * 3. Auto-detection: `akm run <ref>` and dependency files
  */
-export function resolveExecHints(stashEntry: IndexDocument | undefined, filePath: string, ref: string): ExecHints {
+export function resolveExecHints(
+  stashEntry: IndexDocument | undefined,
+  filePath: string,
+  ref: string,
+  content: string,
+): ExecHints {
   const stashHints: ExecHints = {
     run: stashEntry?.run,
     setup: stashEntry?.setup,
     cwd: stashEntry?.cwd,
   };
 
-  const commentHints = extractCommentTags(filePath);
+  const commentHints = extractCommentTags(content);
   const autoHints = detectExecHints(filePath, ref);
 
   return {
@@ -333,6 +338,7 @@ const scriptSourceRenderer: AssetRenderer = {
         undefined,
         ctx.absPath,
         displayRef({ conceptId, bundleId: ctx.origin }, ctx.defaultBundle),
+        ctx.content(),
       );
 
       if (hints.run) {
@@ -359,11 +365,17 @@ const scriptSourceRenderer: AssetRenderer = {
   },
 
   enrichSearchHit(hit: SourceSearchHit, _stashDir: string): void {
+    if (hit.path === undefined) return;
     const ext = path.extname(hit.path).toLowerCase();
     if (!SCRIPT_EXTENSIONS.has(ext)) return;
 
     try {
-      const hints = resolveExecHints(undefined, hit.path, hit.ref);
+      const hints = resolveExecHints(
+        undefined,
+        hit.path,
+        hit.ref,
+        findAsset(hit.itemRef ?? hit.ref)?.entry.content() ?? "",
+      );
       hit.run = hints.run;
     } catch (error: unknown) {
       if (!hasErrnoCode(error, "ENOENT")) throw error;
@@ -383,7 +395,7 @@ const envFileRenderer: AssetRenderer = {
 
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
-    const { keys } = listVaultKeys(ctx.absPath);
+    const keys = scanEnvKeyNames(ctx.content());
     return {
       type: "env",
       name,
@@ -395,7 +407,9 @@ const envFileRenderer: AssetRenderer = {
   },
 
   enrichSearchHit(hit: SourceSearchHit, _stashDir: string): void {
-    const { keys } = listVaultKeys(hit.path);
+    if (hit.path === undefined) return;
+    const asset = findAsset(hit.itemRef ?? hit.ref);
+    const keys = asset ? scanEnvKeyNames(asset.entry.content()) : [];
     if (keys.length > 0) hit.keys = keys;
   },
 };

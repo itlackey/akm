@@ -146,9 +146,9 @@ describe("akmTasksPrune", () => {
 
     // ABSOLUTE SAFETY REQUIREMENT 1: zero durable writes from the preview call itself.
     expect(exec.writeCalls).toBe(writesBeforePrune);
-    expect(exec.current()).toContain("task run alive");
+    expect(exec.current()).toContain("/tasks/alive --scheduled");
     expect(exec.current()).toContain("task run ghost");
-    expect(exec.current()).toContain("task run stale");
+    expect(exec.current()).toContain("/tasks/stale --scheduled");
   });
 
   test("an older row whose descriptor names no AKM_BUNDLE_DIR is an invalid-context candidate", async () => {
@@ -196,9 +196,9 @@ describe("akmTasksPrune", () => {
     // The unfired-spy problem: prove the write path was actually exercised.
     expect(exec.writeCalls).toBeGreaterThan(writesBeforePrune);
     expect(exec.current()).not.toContain("task run ghost");
-    expect(exec.current()).not.toContain("task run stale");
+    expect(exec.current()).not.toContain("/tasks/stale --scheduled");
     // ABSOLUTE SAFETY REQUIREMENT 3: the live bundle's own entry survives.
-    expect(exec.current()).toContain("task run alive");
+    expect(exec.current()).toContain("/tasks/alive --scheduled");
   });
 
   test("--id narrows removal to exactly the named orphan", async () => {
@@ -214,8 +214,8 @@ describe("akmTasksPrune", () => {
     expect(result.removed).toEqual(["ghost"]);
     expect(exec.current()).not.toContain("task run ghost");
     // Untouched, even though it is also a valid orphan candidate.
-    expect(exec.current()).toContain("task run stale");
-    expect(exec.current()).toContain("task run alive");
+    expect(exec.current()).toContain("/tasks/stale --scheduled");
+    expect(exec.current()).toContain("/tasks/alive --scheduled");
   });
 
   test("ABSOLUTE SAFETY REQUIREMENT: --id naming a live bundle's own entry is refused, never removed", async () => {
@@ -230,7 +230,7 @@ describe("akmTasksPrune", () => {
     );
 
     expect(exec.writeCalls).toBe(writesBeforePrune);
-    expect(exec.current()).toContain("task run alive");
+    expect(exec.current()).toContain("/tasks/alive --scheduled");
   });
 
   test("--id naming an unknown id is refused", async () => {

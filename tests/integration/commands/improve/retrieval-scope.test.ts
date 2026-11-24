@@ -14,6 +14,7 @@ import path from "node:path";
 import { inspectConsolidationPool } from "../../../../src/commands/improve/consolidate";
 import { akmImprove } from "../../../../src/commands/improve/improve";
 import { loadRetrievalScope } from "../../../../src/commands/improve/retrieval-scope";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import { type AkmConfig, saveConfig } from "../../../../src/core/config/config";
 import type { AkmDistillResult, AkmReflectResult } from "../../../../src/core/improve-types";
 import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
@@ -62,7 +63,13 @@ function recordAttempt(
 ): void {
   const db = openStateDatabase();
   try {
-    recordImproveLedger(db, { stashDir, ref, source, outcome, at: new Date(atMs).toISOString() });
+    recordImproveLedger(db, {
+      bundleId: stateBundleId(stashDir),
+      ref,
+      source,
+      outcome,
+      at: new Date(atMs).toISOString(),
+    });
   } finally {
     db.close();
   }
@@ -73,8 +80,8 @@ function recordProposal(stashDir: string, ref: string, source: string): void {
   try {
     const now = new Date().toISOString();
     db.prepare(
-      "INSERT INTO proposals (id, stash_dir, ref, status, source, created_at, updated_at) VALUES (?, ?, ?, 'accepted', ?, ?, ?)",
-    ).run(`p-${source}-${ref}`, stashDir, ref, source, now, now);
+      "INSERT INTO proposals (id, bundle_id, ref, status, source, created_at, updated_at) VALUES (?, ?, ?, 'accepted', ?, ?, ?)",
+    ).run(`p-${source}-${ref}`, stateBundleId(stashDir), ref, source, now, now);
   } finally {
     db.close();
   }
@@ -154,8 +161,8 @@ const okReflect = (ref: string): AkmReflectResult => ({
     createdAt: "2026-05-26T00:00:00.000Z",
     updatedAt: "2026-05-26T00:00:00.000Z",
     payload: { content: "# proposal" },
-    changes: [{ path: "skills/proposal/SKILL.md", after: "# proposal", op: "update" }],
-    proposedTarget: { source: "stash", root: "/tmp/stash" },
+    changes: [{ ref: "stash//skills/proposal", content: "# proposal", op: "update" }],
+    proposedTarget: { source: "stash" },
   },
   ref,
   engine: "test",

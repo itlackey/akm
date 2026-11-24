@@ -6,33 +6,25 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
-import { adapterForId } from "../../core/adapter/registry";
+import type { PackageFile } from "../../core/adapter/bundle-adapter";
 import { placementSpecFor, stashDirFor } from "../../core/asset/asset-placement";
-import { isBundleSlug } from "../../core/asset/asset-ref";
+import { isBundleSlug, makeBundleRef } from "../../core/asset/asset-ref";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, replaceFrontmatterBlocks } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parseQualifiedPlacementRef } from "../../core/asset/resolve-ref";
-import { isWithin, safeRealpath } from "../../core/common";
+import { type Asset, assetAtKey, findAsset, packageFilesAt } from "../../core/assets/read";
+import { assetTypeFresh, embedPendingWrites, indexedPathOf } from "../../core/assets/type";
+import { writeAssets } from "../../core/assets/write";
+import { materialiseBundleDir } from "../../core/bundle-at-dir";
+import { isWithin, relativeToRoot, safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { defaultBundleForTarget } from "../../core/mutation-target";
-import { warn } from "../../core/warn";
-import {
-  commitWriteTargetBoundary,
-  prepareWriteTargetForMutation,
-  type ResolvedWriteTarget,
-  resolveWriteTarget,
-} from "../../core/write-source";
+import { prepareWriteTargetForMutation, type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { buildFileContext } from "../../indexer/walk/file-context";
-import { isFileOrFileSymlink } from "../../indexer/walk/walker";
 import { isRemoteOrigin, resolveSourcesForLocator, resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
-import { resolveAssetPath } from "../../sources/resolve";
 import { inferAssetName } from "../read/knowledge";
 
 export interface CloneOptions {
@@ -146,7 +138,9 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   for (const source of searchSources) {
     try {
       if (known) {
-        sourcePath = await resolveAssetPath(source.path, parsed.type, parsed.name);
+        sourcePath = heldFile(source, conceptIdFromTypeName(parsed.type, parsed.name))?.file;
+        if (!sourcePath)
+          throw new NotFoundError(`Source asset not found for ref: ${options.sourceRef}`, "ASSET_NOT_FOUND");
       } else {
         const owned = resolveOpaqueAsset(source, parsed.name);
         if (!owned) throw new NotFoundError(`Source asset not found for ref: ${options.sourceRef}`, "ASSET_NOT_FOUND");
@@ -237,84 +231,72 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     }
   }
 
-  return withAssetMutationLease("clone", async () => {
-    let destPath: string;
-    let overwritten: boolean;
-    let operationPaths: string[];
-    if (isSkill) {
-      // sourcePath is the authored path; a symlinked skill directory must be
-      // copied by content, never as the link.
-      const sourceSkillDir = fs.realpathSync(path.dirname(sourcePath));
-      const destSkillDir = path.join(destRoot, typeDir, destName);
-      assertNoDestinationSymlinkParent(destRoot, destSkillDir);
-      const existing = lstatIfExists(destSkillDir);
-      overwritten = existing !== undefined;
+  // The source, read through the bundle it is in: a package whole, non-asset files included (§0.2 P12).
+  const sourceKey = sourceSource ? relativeToRoot(sourcePath, sourceSource.path) : undefined;
+  if (!sourceSource || !sourceKey) {
+    throw new NotFoundError(`Source asset not found for ref: ${options.sourceRef}`, "ASSET_NOT_FOUND");
+  }
+  const sourceBundle = materialiseBundleDir(sourceSource.path);
+  const key = sourceKey.split(path.sep).join("/");
+  const stampMarkdown = (bytes: Buffer): Buffer => {
+    const stamped = stampedOrigin(bytes.toString("utf8"), originRef);
+    return stamped === undefined ? bytes : Buffer.from(stamped);
+  };
+  const files = isSkill
+    ? packageFilesAt(sourceBundle, key).map((file) =>
+        file.path === "SKILL.md" ? { ...file, bytes: stampMarkdown(file.bytes) } : file,
+      )
+    : [];
+  const sourceEntry = isSkill ? undefined : assetAtKey(sourceBundle, key)?.entry;
+  const sourceBytes = sourceEntry?.bytes();
+  const sourceMode = sourceEntry?.mode?.();
+  if (!isSkill && !sourceBytes) {
+    throw new NotFoundError(`Source asset not found for ref: ${options.sourceRef}`, "ASSET_NOT_FOUND");
+  }
+  const content =
+    sourceBytes && cloneType !== "workflow" && sourceExt.toLowerCase() === ".md"
+      ? stampMarkdown(sourceBytes)
+      : (sourceBytes ?? Buffer.alloc(0));
+  const refused = (at: string): UsageError =>
+    new UsageError(`Asset already exists ${destLabel}: ${at}. Use --force to overwrite.`, "RESOURCE_ALREADY_EXISTS");
 
-      if (overwritten && !options.force) {
-        throw new UsageError(
-          `Asset already exists ${destLabel}: ${destSkillDir}. Use --force to overwrite.`,
-          "RESOURCE_ALREADY_EXISTS",
-        );
-      }
-      const replacedPaths = existing?.isDirectory() && !existing.isSymbolicLink() ? listTreeFiles(destSkillDir) : [];
-
-      // Stage first so a failed source copy leaves the old entry untouched. A
-      // final symlink is removed as an entry, never traversed.
-      const stagingDir = `${destSkillDir}.tmp-${randomUUID()}`;
-      try {
-        // Directory links are copied as links and never descended (as the walker
-        // does); each file link is then replaced by its content, so the stamp
-        // below never writes through a link.
-        fs.cpSync(sourceSkillDir, stagingDir, { recursive: true, errorOnExist: true, force: false });
-        materializeFileLinks(stagingDir);
-        stampCloneOrigin(path.join(stagingDir, "SKILL.md"), originRef);
-        if (overwritten) fs.rmSync(destSkillDir, { recursive: true, force: true });
-        fs.renameSync(stagingDir, destSkillDir);
-      } catch (err) {
-        fs.rmSync(stagingDir, { recursive: true, force: true });
-        throw err;
-      }
-
-      destPath = path.join(destSkillDir, "SKILL.md");
-      operationPaths = [...new Set([...replacedPaths, ...listTreeFiles(destSkillDir)])];
-    } else {
-      destPath = path.join(destRoot, typeDir, destFileName);
-      assertNoDestinationSymlinkParent(destRoot, destPath);
-      const existing = lstatIfExists(destPath);
-      overwritten = existing !== undefined;
-
-      if (overwritten && !options.force) {
-        throw new UsageError(
-          `Asset already exists ${destLabel}: ${destPath}. Use --force to overwrite.`,
-          "RESOURCE_ALREADY_EXISTS",
-        );
-      }
-
-      fs.mkdirSync(path.dirname(destPath), { recursive: true });
-      const stagingPath = `${destPath}.tmp-${randomUUID()}`;
-      try {
-        fs.copyFileSync(sourcePath, stagingPath, fs.constants.COPYFILE_EXCL);
-        if (cloneType !== "workflow" && sourceExt.toLowerCase() === ".md") stampCloneOrigin(stagingPath, originRef);
-        if (overwritten) fs.rmSync(destPath, { recursive: true, force: true });
-        fs.renameSync(stagingPath, destPath);
-      } catch (err) {
-        fs.rmSync(stagingPath, { force: true });
-        throw err;
-      }
-      operationPaths = [destPath];
-    }
-
+  const response = await withAssetMutationLease("clone", async () => {
     const ref = destinationRef(config, writeTarget, cloneType, destName);
-
-    if (writeTarget) {
-      const commitRoot = writeTarget.source.repoPath ?? writeTarget.source.path;
-      const commitPaths = operationPaths.map((filePath) =>
-        path.relative(commitRoot, filePath).replaceAll(path.sep, "/"),
-      );
-      commitWriteTargetBoundary(writeTarget, `Clone ${ref}`, { paths: commitPaths });
-      if (!(await indexWrittenAssets(writeTarget.source.path, [destPath], { bundleId: writeTarget.source.name }))) {
-        warn(`Clone ${ref} succeeded, but its targeted index update failed; run \`akm index\` to refresh it.`);
-      }
+    const name = isSkill ? destName : destFileName;
+    const unplaced = path.join(destRoot, typeDir, isSkill ? path.join(destName, "SKILL.md") : destFileName);
+    let destPath = unplaced;
+    let overwritten: boolean;
+    if (!writeTarget) {
+      // `--dest`: a directory the user named, outside every bundle: no adapter places, no index row follows.
+      overwritten = copyUnmanaged(destRoot, unplaced, isSkill ? files : content, sourceMode, {
+        force: options.force === true,
+        refused,
+      });
+    } else {
+      assertNoDestinationSymlinkParent(destRoot, isSkill ? path.dirname(unplaced) : unplaced);
+      let held = false;
+      writeAssets(writeTarget, { purpose: "clone", message: `Clone ${ref}` }, (w) => {
+        const placed = w.address(conceptIdFromTypeName(cloneType, name));
+        destPath = placed.file ?? unplaced;
+        held = placed.exists;
+        if (held && !options.force) throw refused(isSkill ? path.dirname(destPath) : destPath);
+        if (isSkill) {
+          try {
+            w.mirrorPackage({ type: cloneType, name }, files, { replace: options.force === true });
+          } catch (error) {
+            // A folder without SKILL.md is no asset to the check above; the refusal is still today's.
+            if (error instanceof UsageError && error.code === "RESOURCE_ALREADY_EXISTS") {
+              throw refused(path.dirname(destPath));
+            }
+            throw error;
+          }
+        } else
+          w.create(
+            { type: cloneType, name, content, ...(sourceMode !== undefined ? { mode: sourceMode } : {}) },
+            { exclusive: !options.force, verbatim: true },
+          );
+      });
+      overwritten = held;
     }
 
     return {
@@ -324,6 +306,92 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       ...(remoteFetched ? { remoteFetched } : {}),
     };
   });
+  // The write recorded the clone's rows; their vectors are made now, fail-open, after the lease is released.
+  await embedPendingWrites();
+  return response;
+}
+
+/**
+ * `--dest`: write the clone into a directory the user named, which is no bundle (no adapter places the file, no index
+ * row follows). A package is staged as a folder and swapped in for the old one, so a failure leaves the old one; a file
+ * is staged beside its target. Says whether it replaced something.
+ */
+function copyUnmanaged(
+  destRoot: string,
+  entryPath: string,
+  what: PackageFile[] | Buffer,
+  mode: number | undefined,
+  options: { force: boolean; refused: (at: string) => UsageError },
+): boolean {
+  const target = Array.isArray(what) ? path.dirname(entryPath) : entryPath;
+  assertNoDestinationSymlinkParent(destRoot, target);
+  const existing = lstatIfExists(target);
+  if (existing && !options.force) throw options.refused(target);
+  const staging = `${target}.tmp-${randomUUID()}`;
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true }); // asset-io: user-input
+    if (Array.isArray(what)) {
+      for (const file of what) {
+        const at = path.join(staging, file.path);
+        fs.mkdirSync(path.dirname(at), { recursive: true }); // asset-io: user-input
+        if (file.link !== undefined) {
+          fs.symlinkSync(file.link, at, "dir"); // asset-io: user-input
+          continue;
+        }
+        fs.writeFileSync(at, file.bytes, { mode: file.mode }); // asset-io: user-input
+        fs.chmodSync(at, file.mode); // asset-io: user-input
+      }
+    } else {
+      fs.writeFileSync(staging, what, { flag: "wx", mode }); // asset-io: user-input
+      if (mode !== undefined) fs.chmodSync(staging, mode); // asset-io: user-input
+    }
+    // A final symlink is removed as an entry, never traversed.
+    if (existing) fs.rmSync(target, { recursive: true, force: true }); // asset-io: user-input
+    fs.renameSync(staging, target); // asset-io: user-input
+  } catch (error) {
+    fs.rmSync(staging, { recursive: true, force: true }); // asset-io: user-input
+    throw error;
+  }
+  return existing !== undefined;
+}
+
+/**
+ * `raw` with the origin ref merged into its `sources:` frontmatter, or undefined when it is to stay as written. `sources:`
+ * is free-form provenance that `akm lint` does not resolve, unlike `xrefs:`: the origin bundle is often not installed
+ * where the clone is read (a shared domain bundle), and an `xrefs:` entry would be reported as a missing ref there. Only
+ * the `sources` block is rewritten; every other byte stays as written. A file whose frontmatter cannot be edited that
+ * way (and still parse back to exactly the intended mapping) is left untouched.
+ */
+export function stampedOrigin(raw: string, originRef: string | undefined): string | undefined {
+  if (!originRef) return undefined;
+  const parsed = parseFrontmatter(raw);
+  const existing = parsed.data.sources;
+  const prior = Array.isArray(existing) ? existing : typeof existing === "string" ? [existing] : [];
+  if (existing !== undefined && prior.length === 0) return undefined;
+  if (prior.includes(originRef)) return undefined;
+  const sources = [...prior, originRef];
+  if (parsed.frontmatter === null) return `---\n${serializeFrontmatter({ sources })}\n---\n${raw}`;
+  const next = replaceFrontmatterBlocks(raw, ["sources"], serializeFrontmatter({ sources }).split("\n"));
+  if (next === null || !isDeepStrictEqual(parseFrontmatter(next).data, { ...parsed.data, sources })) return undefined;
+  return next;
+}
+
+function lstatIfExists(filePath: string): fs.Stats | undefined {
+  try {
+    return fs.lstatSync(filePath); // asset-io: user-input
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+/** The asset `conceptId` names in the bundle at `source`, and the file that holds it as authored (not a link's target). */
+function heldFile(source: SearchSource, conceptId: string): { asset: Asset; file: string } | undefined {
+  const bundle = materialiseBundleDir(source.path);
+  const ref = makeBundleRef(bundle, conceptId);
+  const asset = findAsset(ref);
+  const file = asset ? indexedPathOf(asset) : "";
+  return asset && file ? { asset, file } : undefined;
 }
 
 /**
@@ -333,17 +401,8 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
  * index use, so a clone sees exactly the file the index holds for the ref.
  */
 function resolveOpaqueAsset(source: SearchSource, conceptId: string): { path: string; type?: string } | undefined {
-  const adapterId = source.adapterId ?? detectAdapterId(source.path);
-  const owner = resolveAdapterConceptOwner(source.path, adapterId, conceptId, { mode: "read" });
-  if (!owner) return undefined;
-  let type: string | undefined;
-  try {
-    const component = { id: adapterId, adapter: adapterId, root: source.path, writable: false };
-    type = adapterForId(adapterId)?.recognize(component, buildFileContext(source.path, owner.path))?.type;
-  } catch {
-    // An adapter that cannot recognize the file leaves its type unknown.
-  }
-  return { path: owner.realPath, type };
+  const held = heldFile(source, conceptId);
+  return held ? { path: safeRealpath(held.file), type: assetTypeFresh(held.asset) } : undefined;
 }
 
 /**
@@ -371,43 +430,6 @@ function slugName(conceptId: string): string {
   return inferAssetName("", "clone", stem);
 }
 
-/**
- * Record where a cloned markdown asset came from by merging the origin ref into
- * its `sources:` frontmatter. `sources:` is free-form provenance that `akm lint` does
- * not resolve, unlike `xrefs:`: the origin bundle is often not installed where the
- * clone is read (a shared domain bundle), and an `xrefs:` entry would be reported as
- * a missing ref there. Only the `sources` block is rewritten; every other
- * byte stays as written. A file whose frontmatter cannot be edited that way
- * (and still parse back to exactly the intended mapping) is left untouched.
- */
-export function stampCloneOrigin(filePath: string, originRef: string | undefined): void {
-  if (!originRef) return;
-  const raw = fs.readFileSync(filePath, "utf8");
-  const parsed = parseFrontmatter(raw);
-  const existing = parsed.data.sources;
-  const prior = Array.isArray(existing) ? existing : typeof existing === "string" ? [existing] : [];
-  if (existing !== undefined && prior.length === 0) return;
-  if (prior.includes(originRef)) return;
-  const sources = [...prior, originRef];
-  let next: string | null;
-  if (parsed.frontmatter === null) {
-    next = `---\n${serializeFrontmatter({ sources })}\n---\n${raw}`;
-  } else {
-    next = replaceFrontmatterBlocks(raw, ["sources"], serializeFrontmatter({ sources }).split("\n"));
-    if (next === null || !isDeepStrictEqual(parseFrontmatter(next).data, { ...parsed.data, sources })) return;
-  }
-  fs.writeFileSync(filePath, next);
-}
-
-function lstatIfExists(filePath: string): fs.Stats | undefined {
-  try {
-    return fs.lstatSync(filePath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-}
-
 export function assertNoDestinationSymlinkParent(root: string, destination: string): void {
   const resolvedRoot = path.resolve(root);
   const parentDir = path.dirname(path.resolve(destination));
@@ -423,29 +445,4 @@ export function assertNoDestinationSymlinkParent(root: string, destination: stri
       "PATH_ESCAPE_VIOLATION",
     );
   }
-}
-
-/** Replace each file symlink under `root` with a regular file holding its target's bytes. Directory links are left as links. */
-export function materializeFileLinks(root: string): void {
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    const entryPath = path.join(root, entry.name);
-    if (entry.isDirectory()) {
-      materializeFileLinks(entryPath);
-    } else if (entry.isSymbolicLink() && isFileOrFileSymlink(entryPath)) {
-      const content = fs.readFileSync(entryPath);
-      const { mode } = fs.statSync(entryPath);
-      fs.rmSync(entryPath);
-      fs.writeFileSync(entryPath, content, { mode });
-    }
-  }
-}
-
-export function listTreeFiles(root: string): string[] {
-  const files: string[] = [];
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    const entryPath = path.join(root, entry.name);
-    if (entry.isDirectory()) files.push(...listTreeFiles(entryPath));
-    else files.push(entryPath);
-  }
-  return files;
 }

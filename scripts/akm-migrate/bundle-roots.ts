@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The component roots the runtime reads, for the migration steps that rewrite files in them: each enabled bundle's,
+ * The bundle roots the runtime reads, for the migration steps that rewrite files in them: each enabled bundle's,
  * and the working stash when no configured bundle owns it, with the adapter the configuration names for it and
  * whether akm may write it. Each step takes the roots whose adapters hold the files it rewrites.
  */
@@ -14,11 +14,7 @@ import path from "node:path";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
 import { deriveBundleId } from "../../src/core/bundle-id";
 import type { AkmConfig } from "../../src/core/config/config";
-import {
-  bundleComponentConfig,
-  bundleKeyForContentRoot,
-  bundlesToSourceEntries,
-} from "../../src/core/config/config-sources";
+import { bundleAtDir, bundlesToSourceEntries } from "../../src/core/config/config-sources";
 import { ConfigError } from "../../src/core/errors";
 import { warn } from "../../src/core/warn";
 import { resolveWritable } from "../../src/core/write-source";
@@ -27,7 +23,7 @@ import { implicitStashDir, resolveEntryContent } from "../../src/indexer/search/
 export interface BundleRoot {
   readonly bundleId: string;
   readonly bundleRoot: string;
-  /** The component root: where the bundle's adapter reads its files. */
+  /** The content root: where the bundle's adapter reads its files. */
   readonly root: string;
   /** The adapter the configuration names; absent when the runtime detects it from the files. */
   readonly adapter?: string;
@@ -98,37 +94,36 @@ export function bundleRoots(config: AkmConfig): BundleRoot[] {
     if (!configuredRoot || !existingDirectory(configuredRoot)) continue;
 
     const bundleRoot = path.resolve(configuredRoot);
-    const component = bundleComponentConfig(bundle);
-    const componentRoot = path.resolve(bundleRoot, component?.root ?? ".");
-    const relative = path.relative(bundleRoot, componentRoot);
+    const contentRoot = path.resolve(bundleRoot, bundle.root ?? ".");
+    const relative = path.relative(bundleRoot, contentRoot);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       throw new ConfigError(
-        `Migration component root ${componentRoot} escapes bundle ${bundleId} at ${bundleRoot}.`,
+        `Migration root ${contentRoot} escapes bundle ${bundleId} at ${bundleRoot}.`,
         "INVALID_CONFIG_FILE",
       );
     }
-    if (!existingDirectory(componentRoot)) continue;
+    if (!existingDirectory(contentRoot)) continue;
 
     const candidate: BundleRoot = {
       bundleId,
       bundleRoot,
-      root: componentRoot,
-      ...(component?.adapter ? { adapter: component.adapter } : {}),
-      writable: component?.writable ?? resolveWritable(source),
+      root: contentRoot,
+      ...(bundle.adapter ? { adapter: bundle.adapter } : {}),
+      writable: resolveWritable(source),
     };
-    const existing = rootsByPath.get(componentRoot);
+    const existing = rootsByPath.get(contentRoot);
     if (existing) {
-      reconcileDuplicateRoot(existing, candidate, componentRoot);
+      reconcileDuplicateRoot(existing, candidate, contentRoot);
       continue;
     }
-    rootsByPath.set(componentRoot, candidate);
+    rootsByPath.set(contentRoot, candidate);
   }
 
   // The working stash the runtime reads besides the bundles (`AKM_BUNDLE_DIR`, else the default stash): its files
   // must convert here too. A configured bundle at that directory, under any spelling, owns it as it does for the
   // runtime: the loop above took it with that bundle's policy, or left it as disabled.
   const stashRoot = workingStash(config);
-  if (stashRoot && !rootsByPath.has(stashRoot) && bundleKeyForContentRoot(config, stashRoot) === undefined) {
+  if (stashRoot && !rootsByPath.has(stashRoot) && bundleAtDir(config, stashRoot) === undefined) {
     const bundleId = deriveBundleId(undefined, stashRoot, new Set(Object.keys(config.bundles ?? {})));
     // The runtime reads this stash with the adapter it detects, or `akm`.
     rootsByPath.set(stashRoot, {

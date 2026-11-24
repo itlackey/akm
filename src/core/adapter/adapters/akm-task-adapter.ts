@@ -32,7 +32,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { readBoundedTaskSourceYaml } from "../../../tasks/source/bounded-document";
 import { parseTaskSource, peekTaskSourceVersion } from "../../../tasks/source/parse-task-source";
 import {
@@ -42,38 +41,48 @@ import {
   taskSourceErrorDetail,
 } from "../../../tasks/source-v3";
 import { toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { FileContext } from "../directory/file-context";
+import { DirectoryAdapterBase } from "../directory-adapter";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { hashContent } from "./shared";
 
-/** A native task bundle is single-component; its one component is `main`. */
-const COMPONENT_ID = "main";
 /** The task YAML extension. */
 const TASK_EXT = TASK_EXTENSION;
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
-  if (file.ext !== TASK_EXT) return null;
-  const conceptId = toPosix(file.relPath).replace(/\.yml$/i, "");
-  const name = conceptId.split("/").pop() ?? conceptId;
+function describe(file: FileContext, conceptId: string): IndexMetadata {
   const raw = file.content();
-
-  return {
-    ref: `${c.id}//${conceptId}`,
-    bundle: c.id,
-    component: COMPONENT_ID,
-    conceptId,
-    path: file.absPath,
-    hash: hashContent(raw),
-    adapterId: "akm-task",
-    type: "task",
-    name,
-    content: raw,
-  };
+  return { hash: hashContent(raw), type: "task", name: conceptId.split("/").pop() ?? conceptId, content: raw };
 }
 
-async function validate(_c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+/**
+ * Every `.yaml` file of the bundle, by path. A `.yaml` file is no task, so the bundle does not list it and no change
+ * names it: it is found by scanning the bundle through {@link FileValidateContext.list}, to say what it is (issue #760).
+ */
+async function nearMissFiles(ctx: FileValidateContext, dir = "."): Promise<string[]> {
+  const found: string[] = [];
+  for (const name of await ctx.list(dir)) {
+    if (name.startsWith(".") || name === "node_modules") continue;
+    const relPath = dir === "." ? name : `${dir}/${name}`;
+    if (path.posix.extname(name).toLowerCase() === TASK_NEAR_MISS_EXTENSION) found.push(relPath);
+    else found.push(...(await nearMissFiles(ctx, relPath)));
+  }
+  return found;
+}
+
+async function validate(_c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
+  const changed = new Set(changes.map((change) => toPosix(change.path)));
+  for (const relPath of await nearMissFiles(ctx)) {
+    if (changed.has(relPath)) continue; // reported with the changes below
+    diagnostics.push({
+      file: relPath,
+      issue: "invalid-task-yaml",
+      detail: taskExtensionDetail(relPath),
+      fixed: false,
+    });
+  }
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
@@ -107,30 +116,30 @@ async function validate(_c: BundleComponent, changes: FileChange[], ctx: Validat
   return diagnostics;
 }
 
-export const akmTaskAdapter: BundleAdapter = {
-  id: "akm-task",
-  version: "0.9.2",
-  // `.yaml` is listed as a COLLECTION hint only — `recognize` still gates on
-  // `.yml`, so a `.yaml` file is never indexed as a task. Listing it is what
-  // routes the near-miss file into `validate`, where it is reported instead of
-  // silently skipped (issue #760).
-  extensions: [TASK_EXT, TASK_NEAR_MISS_EXTENSION],
+export class AkmTaskAdapter extends DirectoryAdapterBase {
+  readonly id = "akm-task";
+  readonly version = "0.9.2";
+  /** A `.yml` file is a task; its concept id is its path without the extension. */
+  protected identify(relPath: string): string | null {
+    return path.posix.extname(relPath).toLowerCase() === TASK_EXT ? toPosix(relPath).replace(/\.yml$/i, "") : null;
+  }
 
-  recognize,
-  validate,
+  protected describe(_b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
+    return describe(file, conceptId);
+  }
 
-  readCandidates(c: BundleComponent, conceptId: string) {
-    const posix = toPosix(conceptId).replace(/\.ya?ml$/i, "");
-    return [
-      { path: path.join(c.root, `${posix}.yml`), conceptId: posix },
-      { path: path.join(c.root, `${posix}.yaml`), conceptId: posix },
-    ];
-  },
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+    return validate(b, changes, ctx);
+  }
 
-  /** Tasks live anywhere under the component root. */
-  directoryList(): string[] {
+  protected spellings(conceptId: string): string[] {
+    return [`${toPosix(conceptId).replace(/\.ya?ml$/i, "")}.yml`];
+  }
+
+  /** Tasks live anywhere under the bundle root. */
+  override directoryList(): string[] {
     return ["."];
-  },
+  }
 
   /**
    * Install-time probe (§1.2): a root holding a top-level, valid task source
@@ -164,8 +173,10 @@ export const akmTaskAdapter: BundleAdapter = {
       }
     }
     return false;
-  },
-};
+  }
+}
+
+export const akmTaskAdapter = new AkmTaskAdapter();
 
 /** The executable keys each retired task schema version required one of. */
 const LEGACY_TASK_TARGET_KEYS: Readonly<Record<number, readonly string[]>> = {

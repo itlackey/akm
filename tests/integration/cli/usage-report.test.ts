@@ -498,7 +498,7 @@ test("asset counts are named only for akm's own types; every other type is count
         db,
         path.join(storage.stashDir, `${name}.md`),
         { name, type },
-        deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, type, name),
+        deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, type, name),
       );
     }
   } finally {

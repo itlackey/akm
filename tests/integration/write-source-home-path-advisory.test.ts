@@ -17,10 +17,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { findAbsoluteHomePaths } from "../../src/core/adapter/adapters/akm-format";
 import type { AssetRef } from "../../src/core/asset/resolve-ref";
 import type { SourceConfigEntry } from "../../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
-import { findAbsoluteHomePaths, type WriteTargetSource, writeAssetToSource } from "../../src/core/write-source";
+import type { WriteTargetSource } from "../../src/core/write-source";
+import { writeAssetToSource } from "../_helpers/write-asset";
 
 describe("findAbsoluteHomePaths", () => {
   test("flags an absolute Linux home path", () => {
@@ -116,18 +118,18 @@ describe("writeAssetToSource warns instead of refusing reserved basenames and Wi
     };
   }
 
-  test("warns and still writes a concept literally named `index`", async () => {
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args);
-    });
+  test("refuses a concept literally named `index`: its file would be no asset (N12)", async () => {
     const { source, config } = sink();
     const ref: AssetRef = { type: "knowledge", name: "index" };
 
-    const res = await writeAssetToSource(source, config, ref, "body\n");
-
-    expect(fs.existsSync(res.path)).toBe(true);
-    const joined = warnings.map((a) => a.map(String).join(" ")).join("\n");
-    expect(joined).toContain("index");
+    const seen: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") seen.push(args.map(String).join(" "));
+    });
+    await expect(writeAssetToSource(source, config, ref, "body\n")).rejects.toThrow(
+      'Cannot create knowledge "index" in bundle',
+    );
+    expect(seen.join("\n")).not.toContain("writing it anyway");
   });
 
   test("warns and still writes a concept named after a reserved Windows device name", async () => {

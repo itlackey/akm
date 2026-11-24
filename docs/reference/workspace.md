@@ -329,10 +329,9 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   nested repositories and work outside the bundle are left out); `null` when git could not list the changes.
 - `index` mirrors `akm doctor info`'s `indexStats` and `semanticSearch`. `embeddingCoverage` is embeddings over entries
   (`null` for an empty or missing index). `unavailable` and `unreadable` appear only when `akm doctor info` reports them.
-- Cards also include `enabled`, the raw `writableSetting`, `settingsSource` and existing source `components`
-  (`name`, `root`, `adapter`, optional explicit `writable`, and `configured`). Disabled bundles remain visible.
-  Component overrides take precedence over the bundle writable default. An implicit/detected component is shown
-  without creating new component configuration. Counts describe the existing index; they are not a live file catalog.
+- Cards also include `enabled`, the raw `writableSetting`, `settingsSource`, the bundle's `adapter`, whether it was
+  `detected` rather than configured, and its `root` (`.` when not set). Disabled bundles remain visible. Counts
+  describe the existing index; they are not a live file catalog.
 
 ## `assets.bundleFiles`
 
@@ -520,9 +519,9 @@ pending one, or an asset ref. Unknown: `PROPOSAL_NOT_FOUND`.
       "isRetire": false,
       "retirement": null,
       "sourceRun": "run-1",
-      "proposedTarget": { "source": "stash", "root": "/home/me/akm" },
+      "proposedTarget": { "source": "stash" },
       "payload": { "frontmatter": { "description": "Use ripgrep" } },
-      "changes": [{ "op": "create", "path": "lessons/rg.md" }]
+      "changes": [{ "op": "create", "ref": "stash//lessons/rg" }]
     },
     "validation": {
       "ok": true,
@@ -955,7 +954,7 @@ retry a failed write automatically.
 | `bundles.update` | `{bundle}` → `akm bundle update -- <bundle>`. Fetches/reindexes only on explicit submission. |
 | `bundles.rename` | `{bundle, name, dryRun?: true}` → `akm bundle rename [--dry-run] -- <bundle> <name>`. The result is the CLI's rename plan (`applied` is `false` for a dry run). |
 | `bundles.remove` | `{bundle, confirm: true}` → `akm bundle remove --yes -- <bundle>`. Managed installs may be deleted; local filesystem source files remain on disk. |
-| `bundles.setSettings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Existing validation rejects disabled targets and writable npm/website sources. The default bundle and write target are edited through `config.change`. |
+| `bundles.setSettings` | `{bundle?, enabled?, writable?}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Existing validation rejects disabled targets and writable npm/website sources. The default bundle and write target are edited through `config.change`. |
 | `config.change` | `{set?: {key: string}, unset?: string[]}` → `akm config set` / `unset` on each key, in one validated, atomic write. Values are strings, as on the command line, and are coerced and checked against the schema; literal API keys and `configVersion` are refused. An unset is refused with `TARGET_NOT_UPDATABLE` when the key is inherited from an `extends` base or sits inside a connection or harness entry akm ignores, and an unset with no config file writes nothing (`saved: false`), all as `akm config unset` does. |
 | `config.changeProjects` | `{set?: {name: project}, unset?: string[]}` → adds, replaces and removes `projects` entries in one validated, atomic write; a rename sets the new name and unsets the old. Each `set` value is a whole project (`paths`, `from`, `filters`, `prefer`, `write`), written exactly as sent (the reader takes a project whole by name, so an inherited project's unchanged fields are written too, and a malformed local entry is replaced), and checked by akm's config schema. `none`, `__proto__`, `constructor`, `prototype` and empty names are refused. An `unset` (so a rename) of a project `config.json` does not hold, inherited or ignored by akm, is refused with `TARGET_NOT_UPDATABLE`. A set is a no-op (`saved: false`, nothing written or backed up) only when `config.json` already holds exactly that entry; one with parts akm ignores is rewritten. Names are not dotted keys, so they may contain a dot, which `config.change` cannot address. Unrelated config and credential references are kept, as for `config.change`. |
 | `documents.createFile` | `{bundle, folder?, type?, name, content?}` → a new file in `folder` of the bundle (the root when absent; or, with `type` instead of `folder`, the folder akm keeps that type in, `knowledge/` for `knowledge`), for any type, returning `{bundle, file, type, ref, path, stashDir, indexed}` (`type` and `ref` are `null` for a folder with no type). akm types the folder with the indexer's directory rules (`assets.bundleFiles`' `newFile` says the type) and, when `content` is absent, starts the file with the text its type starts with: the workflow template (`akm workflow create`'s), a task as `task add` renders it, the keys the type's validators require (a lesson's `description` and `when_to_use`, a command's `name`), nothing for a script. A folder with no type gets an empty file of the name given. A name with no extension takes the type's (`.md`, `.yml`, `.sh`); a skill is made as `SKILL.md` in its own folder. The write passes the same checks for every type: a writable akm bundle, the name and folder inside the bundle, malformed frontmatter refused, an existing file never overwritten (`RESOURCE_ALREADY_EXISTS`), env, secret and managed (`.git/`, `.akm/`) places refused, the asset-mutation lease (`ASSET_MUTATION_LEASE_HELD`), the Git boundary commit and the index refresh. |
@@ -971,7 +970,7 @@ retry a failed write automatically.
 | `documents.save` | `{ref, revision, content}` → the existing shared Markdown writer with `force` and the expected raw-content hash. Only indexed writable AKM knowledge/memory documents accepted by `documents.readSource` can be edited. The writer takes the asset-mutation lease and compares the live source with `revision` inside it, immediately before writing. While another writer holds the lease the save fails fast with `ASSET_MUTATION_LEASE_HELD` instead of waiting. A stale revision raises `ASSET_CONTENT_CHANGED` without writing; a source deleted after it was loaded is refused (`ASSET_NOT_FOUND`) rather than recreated. An identical save returns `unchanged: true` without rewriting, reindexing or recording an event. Changed saves retain normal writer validation, indexing and Git effects. |
 | `documents.retire` | `{ref, revision}` → retires an indexed writable AKM asset the way `akm feedback`'s typed fix applies a change: it mints a retire proposal (source `propose`, no judged pair) and accepts it at once, so the asset follows the ordinary proposal-retire lifecycle. Skill packages, env/secret files and sessions are excluded; memory retirement carries its derived twin. The current raw SHA-256 `revision` is required, and the accept is refused if the bytes changed since. |
 
-The `documents.retire` receipt is `{proposalId, ref, bundle, archiveDirs, warnings}`. Undo is `proposals.revert` with that
+The `documents.retire` receipt is `{proposalId, ref, bundle, archiveDirs, warnings}`; `archiveDirs` lists the handles of the retirements (opaque names of the archives; for a directory bundle, their paths relative to the bundle root). Undo is `proposals.revert` with that
 id: the archive moves back without overwriting an occupied path and its tombstone is removed. Like any accepted
 retirement, the archived bytes are purged after the grace period at the next `akm improve` (git-backed bundles only), and
 the row is listed in Review and Activity. If the accept is refused, the proposal is rejected and the operation fails.

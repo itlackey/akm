@@ -12,22 +12,25 @@
 import path from "node:path";
 import { getStringArg, PROJECT_ARG } from "../../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
-import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
+import type { IndexDocument } from "../../core/adapter/types";
+import { stashDirFor } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { displayRefForConceptId } from "../../core/asset/resolve-ref";
+import { adapterWrites } from "../../core/assets/gate";
+import { type Asset, listAssets } from "../../core/assets/read";
+import { indexAsset } from "../../core/assets/type";
 import { compareCodePoints } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
+import { NotFoundError } from "../../core/errors";
 import { type ProjectView, resolveProject } from "../../core/projects";
 import { withStateDbTelemetry } from "../../core/state-db";
 import { warnOnce } from "../../core/warn";
 import { deriveInstallations } from "../../indexer/installations";
 import { isProposedQuality, scopeMatchesFilters } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
-import { drainDirDocuments } from "../../indexer/scan/drain-dir";
+import { indexRowEntry } from "../../indexer/scan/drain-dir";
 import { appliesUnder } from "../../indexer/search/db-search";
 import { insertUsageEvent, resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
-import { buildFileContext } from "../../indexer/walk/file-context";
-import { walkedFiles, walkStash } from "../../indexer/walk/walker";
 import { registerMdRenderer } from "../../output/render-registry";
 import { formatRulesText } from "../../output/text/rules";
 import { TELEMETRY_BUSY_TIMEOUT_MS } from "../../storage/repositories/index-db";
@@ -72,6 +75,18 @@ function bundleNames(from: string | string[] | undefined): string[] | undefined 
   return names.length > 0 ? names : undefined;
 }
 
+const RULES_PREFIX = `${stashDirFor("rule")}/`;
+
+/** What the asset's adapter says about it now, with nothing recorded; undefined when the adapter abstains on it. */
+function describeNow(asset: Asset): IndexDocument | undefined {
+  try {
+    return indexAsset(asset, { persist: false });
+  } catch (error) {
+    if (error instanceof NotFoundError) return undefined;
+    throw error;
+  }
+}
+
 export function akmRules(input: {
   from?: string | string[];
   filters?: string[];
@@ -103,32 +118,31 @@ export function akmRules(input: {
   const bundles: string[] = [];
   const found: Array<RuleItem & { shared: boolean; durableRef: string }> = [];
   for (const source of new Set(wanted)) {
-    const component = installations[sources.indexOf(source)]?.components[0];
-    if (!component || component.adapter !== "akm" || source.unresolved) continue;
-    bundles.push(component.id);
-    const files = walkedFiles(
-      component.root,
-      walkStash(path.join(component.root, "rules"), "rule").flatMap((group) => group.files),
-    );
-    for (const file of files) {
-      const ctx = buildFileContext(component.root, file);
-      const drained = drainDirDocuments(akmAdapter, component, [ctx]);
-      const entry = drained.entries[0];
-      const conceptId = drained.conceptIdByFile.get(ctx.absPath);
-      if (entry?.type !== "rule" || conceptId === undefined) continue;
+    const bundle = installations[sources.indexOf(source)];
+    if (!bundle || source.unresolved || !adapterWrites(bundle.id, "rule")) continue;
+    bundles.push(bundle.id);
+    // Only the rules folder decides a rule (as the walk always read it), so only its assets are described.
+    for (const asset of listAssets({ bundle: bundle.id }).filter(({ conceptId }) =>
+      conceptId.startsWith(RULES_PREFIX),
+    )) {
+      // Read as the adapter describes it now, so a rule edited since the last index applies as written.
+      const document = describeNow(asset);
+      if (document?.type !== "rule") continue;
+      const entry = indexRowEntry(document, path.basename(asset.conceptId));
+      const { conceptId } = asset;
       if (isProposedQuality(entry.quality) || !appliesUnder(entry, context)) continue;
       if (scope && !scopeMatchesFilters(entry, scope)) continue;
       const named = entry.frontmatter?.project;
       found.push({
         ref: displayRefForConceptId(
           conceptId,
-          component.id,
-          config.defaultBundle ?? (source.isDefault ? component.id : undefined),
+          bundle.id,
+          config.defaultBundle ?? (source.isDefault ? bundle.id : undefined),
         ),
-        durableRef: `${component.id}//${conceptId}`,
+        durableRef: `${bundle.id}//${conceptId}`,
         ...(entry.description ? { description: entry.description } : {}),
         ...(named?.length ? { project: named.length === 1 ? named[0] : named } : {}),
-        content: parseFrontmatter(ctx.content()).content.trim(),
+        content: parseFrontmatter(asset.entry.content()).content.trim(),
         shared: !named?.length,
       });
     }

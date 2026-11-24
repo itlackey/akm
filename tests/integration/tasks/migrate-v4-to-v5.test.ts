@@ -518,6 +518,20 @@ describe("only named files change", () => {
 });
 
 describe("the preview is the apply", () => {
+  test("a dangling link or a loop in the bundle, inside a folder or at the top, does not stop the check of a valid conversion", async () => {
+    put("commands/r.md", "R.\n");
+    put("scripts/ok.sh", "#!/bin/sh\ntrue\n");
+    fs.symlinkSync(path.join(storage.stashDir, "nowhere"), path.join(storage.stashDir, "scripts", "z.sh"));
+    fs.symlinkSync("loop-b", path.join(storage.stashDir, "scripts", "loop-a"));
+    fs.symlinkSync("loop-a", path.join(storage.stashDir, "scripts", "loop-b"));
+    fs.symlinkSync(path.join(storage.stashDir, "nowhere"), path.join(storage.stashDir, "dangling"));
+    fs.symlinkSync("top-b", path.join(storage.stashDir, "top-a"));
+    fs.symlinkSync("top-a", path.join(storage.stashDir, "top-b"));
+    const file = task("links", "version: 4\nsteps:\n  - name: a\n    run: ls\n  - name: b\n    prompt: commands/r\n");
+    const preview = await inspectTaskFilesV5Migration([file]);
+    expect(preview.status).toBe("ready");
+  });
+
   test("it reports what apply does, writes nothing, and calls the same conversion", async () => {
     put("commands/r.md", "R.\n");
     const text = "version: 4\nsteps:\n  - name: a\n    run: ls\n  - name: b\n    prompt: commands/r\n";

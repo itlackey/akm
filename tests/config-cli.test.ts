@@ -83,35 +83,57 @@ describe("config CLI helpers", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     expect(() =>
       setConfigValue(base, "bundles", '{"w":{"website":{"url":"https://example.com"},"writable":true}}'),
-    ).toThrow("writable: true is only supported on path and git bundle sources");
+    ).toThrow("writable: true is only supported on path, git and location bundle sources");
   });
 
-  test("setConfigValue rejects empty and multi-entry component maps", () => {
+  test("setConfigValue takes a location bundle, which names the adapter that reads it", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    expect(() => setConfigValue(base, "bundles", '{"empty":{"path":"/tmp/empty","components":{}}}')).toThrow(
-      "a bundle components map must contain exactly one component",
+    const keyring = { location: "akm", adapter: "secret-tool" };
+    expect(setConfigValue(base, "bundles", JSON.stringify({ keyring })).bundles?.keyring).toEqual(keyring);
+    expect(() => setConfigValue(base, "bundles", '{"k":{"location":"akm"}}')).toThrow(
+      "a location bundle names the adapter that reads it, in `adapter`",
     );
-    expect(() =>
-      setConfigValue(
-        base,
-        "bundles",
-        '{"multi":{"path":"/tmp/multi","components":{"a":{"root":"a"},"b":{"root":"b"}}}}',
-      ),
-    ).toThrow("a bundle components map must contain exactly one component");
+    expect(() => setConfigValue(base, "bundles", '{"k":{"location":"akm","path":"/tmp/k"}}')).toThrow(
+      "a bundle entry must carry exactly one source descriptor; got path, location",
+    );
   });
 
-  test("setConfigValue rejects component-level writable website and npm bundles", () => {
+  test("setConfigValue refuses an adapter id akm does not have, as it is typed", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const bundle = { path: "/tmp/docs", adapter: "agent-skills" };
+    const withDocs = setConfigValue(base, "bundles", JSON.stringify({ docs: bundle }));
+    expect(setConfigValue(withDocs, "bundles.docs.adapter", "okf").bundles?.docs?.adapter).toBe("okf");
+    expect(() => setConfigValue(withDocs, "bundles.docs.adapter", "agent_skills")).toThrow(
+      /Bundle "docs" names adapter "agent_skills", which akm does not have\. Expected one of: .*\bagent-skills\b/,
+    );
+    expect(() => setConfigValue(base, "bundles", JSON.stringify({ docs: { ...bundle, adapter: "x" } }))).toThrow(
+      /names adapter "x"/,
+    );
+  });
+
+  test("setConfigValue refuses a bundles.<name>.components path and names the keys that replace it", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const withDocs = setConfigValue(base, "bundles", JSON.stringify({ docs: { path: "/tmp/docs" } }));
+    expect(() => setConfigValue(withDocs, "bundles.docs.components.main.adapter", "okf")).toThrow(
+      /bundles\.docs\.adapter, bundles\.docs\.root or bundles\.docs\.writable/,
+    );
+  });
+
+  test("setConfigValue rejects a writable website or npm bundle", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     expect(() =>
-      setConfigValue(
-        base,
-        "bundles",
-        '{"web":{"website":{"url":"https://example.com"},"components":{"main":{"writable":true}}}}',
-      ),
-    ).toThrow("writable: true is only supported on path and git bundle sources");
-    expect(() =>
-      setConfigValue(base, "bundles", '{"pkg":{"npm":"example-package","components":{"main":{"writable":true}}}}'),
-    ).toThrow("writable: true is only supported on path and git bundle sources");
+      setConfigValue(base, "bundles", '{"web":{"website":{"url":"https://example.com"},"writable":true}}'),
+    ).toThrow("writable: true is only supported on path, git and location bundle sources");
+    expect(() => setConfigValue(base, "bundles", '{"pkg":{"npm":"example-package","writable":true}}')).toThrow(
+      "writable: true is only supported on path, git and location bundle sources",
+    );
+  });
+
+  test("setConfigValue takes root only on a path or git bundle", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    expect(() => setConfigValue(base, "bundles", '{"pkg":{"npm":"example-package","root":"docs"}}')).toThrow(
+      "root is only supported on path and git bundle sources",
+    );
   });
 
   test("setConfigValue sets embedding via JSON", () => {

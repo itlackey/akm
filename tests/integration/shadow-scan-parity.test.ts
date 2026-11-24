@@ -33,11 +33,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
-import type { BundleComponent, IndexDocument } from "../../src/core/adapter/types";
+import { walkStashFlat } from "../../src/core/adapter/directory/walker";
+import type { Bundle, IndexDocument } from "../../src/core/adapter/types";
 import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
 import { indexDocumentToStashEntry } from "../../src/indexer/scan/doc-to-entry";
-import { walkStashFlat } from "../../src/indexer/walk/walker";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
@@ -53,11 +53,10 @@ const STASHES: Array<{ name: string; root: string }> = [
  * `scanComponent` module, owner ruling 2026-07-21).
  */
 function newStream(root: string): IndexDocument[] {
-  const bundle = "parity";
-  const component: BundleComponent = { id: bundle, adapter: "akm", root, writable: true };
+  const bundle: Bundle = { id: "parity", root };
   const docs: IndexDocument[] = [];
   for (const file of walkStashFlat(root)) {
-    const doc = akmAdapter.recognize(component, file);
+    const doc = akmAdapter.recognize(bundle, file);
     if (doc !== null) docs.push(doc);
   }
   return docs;

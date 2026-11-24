@@ -4,7 +4,7 @@
 
 /**
  * A directory whose files the bundle's adapter does not treat as assets (a bundle-root README.md) is a
- * zero-row directory by the adapter's own contract: `akm index` reports it under `--verbose` only.
+ * not listed at all (the adapter's listing is assets only, §0.2 N16): `akm index` prints no zero-row line for it.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -58,9 +58,9 @@ test("a bundle root holding only a README.md prints no zero-row line by default"
   expect(lines.filter((l) => l.includes("zero-row"))).toEqual([]);
 });
 
-test("--verbose still reports the zero-row directory", async () => {
+test("--verbose does not list a directory that holds only non-asset files (N16)", async () => {
   const stashDir = rootWithReadmeAndKnowledge();
   setVerbose(true);
   const { lines } = await indexLines(stashDir);
-  expect(lines.some((l) => l.includes(`zero-row ${stashDir}: empty-generated-set`))).toBe(true);
+  expect(lines.some((l) => l.includes(`zero-row ${stashDir}:`))).toBe(false);
 });

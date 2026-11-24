@@ -198,7 +198,8 @@ test.skipIf(!ENABLED)(
       if (process.platform === "darwin") {
         const plist = fs.readFileSync(plistPath, "utf8");
         expect(plist).toContain(binary);
-        expect(plist).toContain(`<string>${id}</string>`);
+        // The row names its task by ref (`task run <bundle//concept-id> --scheduled`, A11).
+        expect(plist).toContain(`<string>stash//tasks/${id}</string>`);
         expectSuccess(run(["launchctl", "kickstart", "-k", target], env), "launchctl kickstart");
       } else {
         const query = run(["schtasks", "/Query", "/TN", target, "/XML"], env);

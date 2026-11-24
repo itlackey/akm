@@ -396,6 +396,23 @@ describe("cron backend drift detection", () => {
     expect(backend.expectedSignature?.(targetBinding)).not.toBe(backend.expectedSignature?.(SYNC_TASK));
   });
 
+  test("a row in the id form differs from the ref form's signature, and a ref-form row is read with its id and bundle (A11, P11)", () => {
+    const exec = memoryExec();
+    const backend = CRON_BACKEND(opts(exec));
+    const legacy = targeted(SYNC_TASK, "work");
+    const current: SchedulerBinding = { ...legacy, invocation: ["task", "run", "work//tasks/ping", "--scheduled"] };
+    backend.install(legacy);
+    const [idForm] = listSync(backend);
+    expect(idForm!.signature).toBe(backend.expectedSignature?.(legacy));
+    // A sync that compiles the ref form finds the installed row different, so it reports it updated.
+    expect(idForm!.signature).not.toBe(backend.expectedSignature?.(current));
+
+    backend.install(current);
+    const [refForm] = listSync(backend);
+    expect(refForm).toMatchObject({ id: "ping", target: "work", invocation: current.invocation });
+    expect(refForm!.signature).toBe(backend.expectedSignature?.(current));
+  });
+
   test("round-trips a nested logical id through a portable native marker", () => {
     const exec = memoryExec();
     const backend = CRON_BACKEND(opts(exec));

@@ -4,8 +4,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { adapterSkipMessage, adapterSkipOf } from "../../core/adapter/adapter-skips";
 import { isBundleSlug } from "../../core/asset/asset-ref";
+import { adapterAddressedBy, assertKnownAdapter, detectBundleAdapter } from "../../core/assets/gate";
 import { slugForRegistryId, validateExplicitBundleName } from "../../core/bundle-id";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
@@ -18,6 +19,7 @@ import {
   resolveSecret,
 } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
+import { warn } from "../../core/warn";
 import { buildIndex, isSkippedIndexBuild, skippedIndexReport } from "../../indexer/index-build";
 import { deriveBundleId } from "../../indexer/installations";
 import { readLockfile, removeLockEntry, upsertLockEntry } from "../../integrations/lockfile";
@@ -49,7 +51,7 @@ export async function akmAdd(
     writable?: boolean;
     /** Symbolic Git credential reference; resolved only for Git subprocesses. */
     credential?: string;
-    /** Override the auto-detected component adapter (#909). Local (filesystem) adds only. */
+    /** Override the auto-detected adapter (#909) for a local directory, or name the adapter that reads a store: `ref` is then its `location`. */
     adapter?: string;
   } & BundleInsertPosition,
 ): Promise<AddResponse> {
@@ -61,6 +63,11 @@ export async function akmAdd(
     );
 
   const stashDir = resolveStashDir();
+
+  // An adapter that reads a store (a keyring, a vault) takes the store's name, not a directory or a package.
+  if (input.adapter !== undefined && adapterAddressedBy(input.adapter) === "location") {
+    return addLocationSource(ref, stashDir, input.name, input.adapter, input);
+  }
 
   if (shouldAddAsWebsiteUrl(ref)) {
     return addWebsiteSource(ref, stashDir, input.name, input.options, input);
@@ -91,8 +98,9 @@ async function addLocalSource(
 ): Promise<AddResponse> {
   const stashRoot = detectStashRoot(sourcePath);
   const resolvedPath = path.resolve(stashRoot);
-  const adapter = explicitAdapter ?? detectAdapterId(resolvedPath);
+  const adapter = explicitAdapter ?? detectBundleAdapter(resolvedPath);
   let bundleKey = explicitName ?? toReadableId(resolvedPath);
+  assertKnownAdapter(bundleKey, adapter);
   mutateConfig((config) => {
     const existing = bundleKeyForPath(config, resolvedPath);
     if (existing) {
@@ -101,13 +109,10 @@ async function addLocalSource(
       }
       bundleKey = existing;
       const current = config.bundles?.[existing];
-      if (current?.components && explicitAdapter === undefined) return config;
+      if (current?.adapter !== undefined && explicitAdapter === undefined) return config;
       const bundles = { ...(config.bundles ?? {}) };
-      bundles[existing] = {
-        ...current,
-        path: resolvedPath,
-        components: { main: { root: ".", adapter } },
-      };
+      const { root: _root, ...rest } = current ?? {};
+      bundles[existing] = { ...rest, path: resolvedPath, adapter };
       return { ...config, bundles };
     }
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
@@ -116,12 +121,13 @@ async function addLocalSource(
     // used by the out-of-scope `akm source add` (`addStash`) and stays forgiving.
     if (explicitName !== undefined) validateExplicitBundleName(bundles, explicitName);
     bundleKey = nextBundleKey(bundles, explicitName, resolvedPath);
-    const entry: BundleConfigEntry = {
-      path: resolvedPath,
-      components: { main: { root: ".", adapter } },
-    };
+    const entry: BundleConfigEntry = { path: resolvedPath, adapter };
     return { ...config, bundles: placeBundle(bundles, bundleKey, entry, position) };
   });
+
+  // The adapter is compared with akm's here and in `akm doctor`; the index no longer says it.
+  const skip = adapterSkipOf({ name: bundleKey, path: resolvedPath, adapterId: adapter });
+  if (skip) warn(adapterSkipMessage(bundleKey, skip));
 
   const index = await buildIndex({ stashDir });
   const updatedConfig = loadConfig();
@@ -140,6 +146,53 @@ async function addLocalSource(
     config: {
       sourceCount: getSources(updatedConfig).length,
     },
+    index: isSkippedIndexBuild(index)
+      ? { skipped: skippedIndexReport(index) }
+      : {
+          mode: index.mode,
+          totalEntries: index.totalEntries,
+          directoriesScanned: index.directoriesScanned,
+          directoriesSkipped: index.directoriesSkipped,
+          ...(index.warnings?.length ? { warnings: index.warnings } : {}),
+        },
+  };
+}
+
+/** Add a store a location adapter reads (a keyring, a vault) as a bundle: `location` names it. */
+async function addLocationSource(
+  location: string,
+  stashDir: string,
+  explicitName: string | undefined,
+  adapter: string,
+  position: BundleInsertPosition = {},
+): Promise<AddResponse> {
+  let bundleKey = explicitName ?? "";
+  mutateConfig((config) => {
+    const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
+    const existing = Object.entries(bundles).find(
+      // asset-io: config the config entry already naming this location
+      ([, bundle]) => bundle.location === location && bundle.adapter === adapter,
+    )?.[0];
+    if (existing) {
+      if (explicitName !== undefined) validateExplicitBundleName(bundles, explicitName, existing);
+      bundleKey = existing;
+      return config;
+    }
+    if (explicitName !== undefined) validateExplicitBundleName(bundles, explicitName);
+    bundleKey = nextBundleKey(bundles, explicitName, location);
+    return { ...config, bundles: placeBundle(bundles, bundleKey, { location, adapter }, position) };
+  });
+
+  const index = await buildIndex({ stashDir });
+  const updatedConfig = loadConfig();
+
+  return {
+    schemaVersion: 1,
+    bundleDir: stashDir,
+    ref: location,
+    bundleId: bundleKey,
+    sourceAdded: { type: "location", location, name: bundleKey },
+    config: { sourceCount: getSources(updatedConfig).length },
     index: isSkippedIndexBuild(index)
       ? { skipped: skippedIndexReport(index) }
       : {
@@ -201,7 +254,8 @@ async function addWebsiteSource(
     const nextBundle: BundleConfigEntry = {
       ...(existingKey ? bundles[key] : {}),
       website,
-      components: { main: { root: ".", adapter: "website-snapshot", writable: false } },
+      adapter: "website-snapshot",
+      writable: false,
     };
     if (JSON.stringify(bundles[key]) === JSON.stringify(nextBundle)) {
       entry = bundleEntryToSourceEntry(key, bundles[key]!) as SourceConfigEntry;
@@ -278,14 +332,10 @@ async function addRegistryStash(
   }
   const existingBundle = existingBundleKey ? currentConfig.bundles?.[existingBundleKey] : undefined;
   const priorLock = existingBundleKey ? readLockfile().find((entry) => entry.id === existingBundleKey) : undefined;
-  const existingWritable =
-    Object.values(existingBundle?.components ?? {})[0]?.writable ?? existingBundle?.writable === true;
+  const existingWritable = existingBundle?.writable === true;
   const effectiveWritable = writable === true || existingWritable;
-  const requiredRoots = priorLock?.localRoot
-    ? Object.values(existingBundle?.components ?? {}).map((component) =>
-        path.resolve(priorLock.localRoot as string, component.root ?? "."),
-      )
-    : [];
+  const requiredRoots =
+    priorLock?.localRoot && existingBundle ? [path.resolve(priorLock.localRoot, existingBundle.root ?? ".")] : [];
   const synced = await syncFromRef(ref, {
     writable: effectiveWritable,
     // Reuse a checkout only when the install is already writable; promoting a
@@ -338,6 +388,7 @@ async function addRegistryStash(
   // (including one just promoted to writable, #1296) is.
   if (!existingWritable && priorLocalRoot && path.resolve(priorLocalRoot) !== path.resolve(synced.contentDir)) {
     try {
+      // asset-io: install
       fs.rmSync(priorLocalRoot, { recursive: true, force: true });
     } catch {
       // Best-effort cleanup only.
@@ -398,21 +449,7 @@ export function upsertInstalledRegistryEntry(
   const config = mutateConfig((current) => {
     const bundles: Record<string, BundleConfigEntry> = { ...(current.bundles ?? {}) };
     bundleId = resolveInstalledBundleKey(bundles, entry.id, entry.stashRoot, explicitName);
-    const existingComponents = bundles[bundleId]?.components;
-    const components = existingComponents
-      ? Object.fromEntries(
-          Object.entries(existingComponents).map(([id, component]) => [
-            id,
-            { ...component, writable: entry.writable === true },
-          ]),
-        )
-      : {
-          main: {
-            root: ".",
-            adapter: detectAdapterId(path.resolve(entry.stashRoot)),
-            writable: entry.writable === true,
-          },
-        };
+    const existing = bundles[bundleId];
     const descriptor = installedSourceDescriptor(entry.source, entry.ref, path.resolve(entry.stashRoot));
     const effectiveCredential = credential ?? bundles[bundleId]?.credential;
     const nextEntry: BundleConfigEntry = {
@@ -420,7 +457,8 @@ export function upsertInstalledRegistryEntry(
       ...(effectiveCredential ? { credential: effectiveCredential } : {}),
       ...(entry.writable === true ? { writable: true } : {}),
       ...(entry.id !== bundleId ? { registryId: entry.id } : {}),
-      components: components satisfies NonNullable<BundleConfigEntry["components"]>,
+      adapter: existing?.adapter ?? detectBundleAdapter(path.resolve(entry.stashRoot)),
+      ...(existing?.root !== undefined ? { root: existing.root } : {}),
     };
     return { ...current, bundles: placeBundle(bundles, bundleId, nextEntry, position) };
   }).config;

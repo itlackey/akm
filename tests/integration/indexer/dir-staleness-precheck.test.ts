@@ -39,16 +39,8 @@ function persist(db: ReturnType<typeof openIndexDatabase>, dir: string, files: s
   upsertIndexDirState(db, { dirPath: dir, ...computeDirFingerprint(dir, files, VARIANT), reason: "updated", rowCount });
 }
 
-function gate(db: ReturnType<typeof openIndexDatabase>, dir: string, files: string[], priorDirsChanged = false) {
-  return getCachedDirState(
-    db,
-    dir,
-    files,
-    Date.now(),
-    priorDirsChanged,
-    VARIANT,
-    computeDirFingerprint(dir, files, VARIANT),
-  );
+function gate(db: ReturnType<typeof openIndexDatabase>, dir: string, files: string[]) {
+  return getCachedDirState(db, dir, files, Date.now(), VARIANT, computeDirFingerprint(dir, files, VARIANT));
 }
 
 afterAll(() => {

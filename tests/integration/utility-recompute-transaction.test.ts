@@ -36,7 +36,7 @@ function fixture() {
       db,
       `/tmp/${name}.sh`,
       { name, type: "script" },
-      deriveEntryProvenance({ bundleId: "test", componentId: "test", adapterId: "akm" }, "script", name),
+      deriveEntryProvenance({ bundleId: "test", adapterId: "akm" }, "script", name),
     );
     ids.push(id);
     const ref = getItemRefById(db, id) as string;

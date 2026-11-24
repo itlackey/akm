@@ -210,6 +210,7 @@ async function readGraph() {
 /** A file's modification time as an ISO timestamp, or null when it cannot be read. */
 function modifiedAt(file: string): string | null {
   try {
+    // asset-io: base the modification time of an indexed file, shown in the graph
     return fs.statSync(file).mtime.toISOString();
   } catch {
     return null;

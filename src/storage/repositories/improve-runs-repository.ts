@@ -29,7 +29,7 @@ export interface ImproveRunRow {
   id: string;
   started_at: string;
   completed_at: string | null;
-  stash_dir: string;
+  bundle_id: string;
   dry_run: number;
   strategy: string | null;
   scope_mode: string;
@@ -147,7 +147,7 @@ export function recordImproveRun(
     id: string;
     startedAt: string;
     completedAt: string | null;
-    stashDir: string;
+    bundleId: string;
     dryRun: boolean;
     strategy: string;
     scopeMode: "all" | "type" | "ref";
@@ -162,14 +162,14 @@ export function recordImproveRun(
   const metricsObj = input.metrics ?? computeImproveRunMetrics(input.result);
   db.prepare(`
     INSERT INTO improve_runs
-       (id, started_at, completed_at, stash_dir, dry_run, strategy,
+       (id, started_at, completed_at, bundle_id, dry_run, strategy,
        scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.id,
     input.startedAt,
     input.completedAt,
-    input.stashDir,
+    input.bundleId,
     input.dryRun ? 1 : 0,
     input.strategy,
     input.scopeMode,
@@ -220,7 +220,7 @@ export function queryImproveRuns(db: Database, since: string, until?: string): I
 }
 
 const IMPROVE_RUN_ROW_COLUMNS =
-  "id, started_at, completed_at, stash_dir, dry_run, strategy, scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json";
+  "id, started_at, completed_at, bundle_id, dry_run, strategy, scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json";
 
 /**
  * Look up a single `improve_runs` row by its id (#944 — `akm improve report --run <id>`).

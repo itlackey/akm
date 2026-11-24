@@ -66,6 +66,11 @@ and no other layer adds one.
 A child process's environment is built in `childProcessEnv`
 (`src/core/paths.ts`): akm's own, with the directories this akm resolved set
 over it.
+Assets are read, listed, typed, validated and written only through the asset
+facade, `src/core/assets/`, which calls the bundle's adapter
+(`src/core/adapter/`). A caller never learns which adapter holds an asset,
+where, or under what file name: a new storage mechanism is one adapter class and
+no change elsewhere. Access outside it fails `bun run lint`.
 Every agent harness registers once in `HARNESS_REGISTRY`
 (`src/integrations/harnesses/index.ts`) and core imports the registry, not
 a harness. Runtime-specific APIs (`bun:sqlite`, `Bun.*`) are reached only
@@ -81,6 +86,8 @@ the drift is invisible until a user hits the one that differs.
 
 Enforced by: `tests/harnesses-registry.test.ts` for the registry;
 `scripts/lint-secret-resolver-boundary.ts` for secret reads;
+`scripts/lint-asset-io.ts` for asset access (any violation fails; see
+[Adapters](adapters.md#enforcement));
 `tests/contracts/module-boundaries.test.ts` for the module table;
 `tests/contracts/runtime-port-boundary.test.ts` for akm's own runtime, which
 lowering and dispatch reach only through the `AgentRuntime` port
@@ -149,7 +156,9 @@ Why: the documentation drifted from the code for months because the pages
 said "normative" and nothing checked.
 
 Enforced by: `bun run lint` (`scripts/lint-doc-examples.ts`,
-`scripts/lint-shipped-assets.ts`, `scripts/lint-secret-resolver-boundary.ts`),
+`scripts/lint-shipped-assets.ts`, `scripts/lint-secret-resolver-boundary.ts`,
+`scripts/lint-stdio-owner.ts`, `scripts/lint-lockfile.ts`,
+`scripts/lint-asset-io.ts`),
 `tests/contracts/`, `tests/output-shapes-unit.test.ts`.
 
 ### 6. The suite is green by default and sandboxed through the environment
@@ -237,7 +246,7 @@ Enforced by: `tests/contracts/api-surface.test.ts` and
 `tests/contracts/workspace-surface.test.ts` (export lists and the hand-written declarations),
 `tests/integration/install/package-exports.test.ts` (the `exports` map),
 `package.json` (`engines.node`), the Node version check in the launchers and
-`src/cli.ts`, and the `node-smoke` job in `.github/workflows/ci.yml` (Node 22
+`src/cli.ts`, and the `node-smoke` job in `.github/workflows/release.yml` (Node 22
 and 24).
 
 ### 10. Agent harnesses are thin, replaceable internals

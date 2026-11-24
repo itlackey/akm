@@ -46,3 +46,17 @@ test("the plain plan counts the content refs and lists the shadowed ones", () =>
   expect(text).toContain("asset content refs: 5 in 2 file(s) change, 0 skipped, 1 shadowed");
   expect(text).toContain("  - primary: knowledge/wikis/b (now wikis/b)");
 });
+
+test("the plain plan says how many proposal records a run rewrites, and nothing when there are none", () => {
+  const some = formatMigratePlain({
+    status: "ready",
+    proposalRecords: { changed: 3, message: "proposal records: 3 to rewrite" },
+  });
+  expect(some).toContain("    proposal records: 3 to rewrite");
+  expect(
+    formatMigratePlain({
+      status: "current",
+      proposalRecords: { changed: 0, message: "proposal records: 0 to rewrite" },
+    }),
+  ).not.toContain("proposal records");
+});

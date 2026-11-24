@@ -55,7 +55,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | --- | --- | --- |
 | `akm bundle create` | Stable | |
 | `akm bundle add` | Stable | `--allow-dangerous-env-keys` is Deprecated, no effect: accepted through 0.10 and a usage error in 0.11, so drop it; prints a notice since 0.10.261122. |
-| `akm bundle list` | Stable | |
+| `akm bundle list` | Stable | Each entry has `adapter` and `detected` (since 0.10.261130). `components` is Deprecated, removed in 0.11: it holds one entry named `main` with what the entry's `adapter`, `detected`, `root` and `writable` say, so read those. |
 | `akm bundle show` | Evolving | |
 | `akm bundle rename` | Stable | |
 | `akm bundle remove` | Stable | |
@@ -83,7 +83,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm task add` | Deprecated | Removed in 0.11: use `akm import <file> --type task`, then `task enable` when activation is wanted. `--rebind` is Deprecated too: use `akm doctor scheduler sync --rebind`. |
 | `akm task enable` | Evolving | In 0.11 the schedule that runs lives in host config, and a task file's `schedule:` may stay as the default that enabling applies ([#1096](https://github.com/itlackey/akm/issues/1096)); this command's 0.11 form is not final. |
 | `akm task disable` | Evolving | As `task enable`. |
-| `akm task run` | Deprecated | Removed in 0.11: use `akm run <qualified-task-ref>` with the same inputs. |
+| `akm task run` | Deprecated | Removed in 0.11: use `akm run <qualified-task-ref>` with the same inputs. Scheduler rows run `task run <bundle//concept-id> --scheduled`; the form `task run <id> --bundle <bundle> --scheduled` of rows written before is read until 0.11, and the next sync rewrites it. |
 | `akm task history` | Deprecated | Removed in 0.11: `akm task history <id>` becomes `akm doctor log --task <id>` (`--bundle`, `--limit`), first in 0.10.261120. The no-id cross-task form has no replacement; `akm doctor metrics` gives per-task totals. Both print each run's `trigger`. |
 | `akm task sync` | Deprecated | Removed in 0.11: use `akm doctor scheduler sync`, first in 0.10.261120, retaining reconciliation and rebind behavior. |
 | `akm task prune` | Deprecated | Removed in 0.11: use `akm doctor scheduler sync --prune`, first in 0.10.261120 (a preview unless `--yes`; `--id` narrows it). |
@@ -152,12 +152,13 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm env export` | Experimental | Read-and-inject surface. |
 | `akm exec` | Experimental | First in 0.10.261130. Off until `experimental.exec` is `true` in config; otherwise it refuses with a config error (exit 78) and runs nothing. Runs any command with repeatable `--env <ref>` and `--secret <ref>:<VAR>` injected; `akm run` takes the same two flags for an akm asset. One argument after `--` is a shell line, several are a program and its arguments. `--prompt` (or `--prompt-stdin`, with `--harness`, `--connection`, `--model`) runs a prompt on an agent instead. `--cwd` (a missing folder is made), `--timeout`, `--max-retries`, `--clean`, and `--inherit` (alone it starts the command clean) apply to either form; `--clean` keeps akm's location variables. A typed `--timeout` stops the command, not the processes it started. Child-process passthrough, exempt from `--format`. Task steps do not need `experimental.exec`. |
 | `akm env run` | Deprecated | Removed in 0.11: put the command in a script asset under scripts/, run with `akm run --env <ref> scripts/<file>`. Read-and-inject surface. `--allow-dangerous-env-keys` is Deprecated, no effect: accepted through 0.10 and a usage error in 0.11, so drop it; prints a notice since 0.10.261122. |
-| `akm env create` | Experimental | Write verb. |
+| `akm env create` | Experimental | Write verb. `--sensitive` and the `.sensitive` marker it wrote are removed (0.10.261130): a marker left in a bundle is ignored. |
 | `akm env remove` | Experimental | Write verb. |
 | `akm secret list` | Stable | Read-and-inject surface. |
 | `akm secret run` | Deprecated | Removed in 0.11: put the command in a script asset under scripts/, run with `akm run --secret <ref>:<VAR> scripts/<file>`. Read-and-inject surface. |
 | `akm secret set` | Experimental | Write verb. |
 | `akm secret remove` | Experimental | Write verb; restored in 0.10 after its 0.9.0 removal. |
+| Bundles kept by a secret manager (`location` with the `secret-tool` or `azure-key-vault` adapter) | Experimental | A bundle that is one Secret Service keyring or one Azure Key Vault in place of a directory; its secrets are indexed, listed, injected, set and removed as secret files are. The `location` key, the two adapters and how a keyring entry is named may change in any release. See [Environment & Secrets](docs/reference/env-and-secrets.md#secrets-kept-by-a-secret-manager). |
 
 ## 0.10 additions and scheduled 0.11 removals
 

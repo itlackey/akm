@@ -49,7 +49,7 @@ function run(version: string, extra: string[] = [], env: NodeJS.ProcessEnv = {})
   writeSandboxConfig({
     semanticSearchMode: "off",
     defaultBundle: "fixture",
-    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+    bundles: { fixture: { path: storage.stashDir, adapter: "akm" } },
     harnesses: { opencode: { platform: "opencode", bin } },
   });
   const spawn = (args: string[], more: NodeJS.ProcessEnv) =>

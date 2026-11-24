@@ -38,7 +38,7 @@ describe("the step", () => {
   function configure(writable = true, adapter = "akm"): void {
     writeSandboxConfig({
       defaultBundle: "primary",
-      bundles: { primary: { path: stash(), writable, components: { main: { root: ".", adapter } } } },
+      bundles: { primary: { path: stash(), writable, adapter } },
     });
   }
 
@@ -169,8 +169,8 @@ describe("the step", () => {
     writeSandboxConfig({
       defaultBundle: "primary",
       bundles: {
-        primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } },
-        frozen: { path: frozenRoot, writable: true, components: { main: { root: ".", adapter: "generic-files" } } },
+        primary: { path: stash(), writable: true, adapter: "akm" },
+        frozen: { path: frozenRoot, writable: true, adapter: "generic-files" },
       },
     });
     const links = seed();
@@ -213,7 +213,7 @@ describe("the step", () => {
     const schema = write("schema.md", "See knowledge/pages/target.\n");
     writeSandboxConfig({
       defaultBundle: "primary",
-      bundles: { primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "llm-wiki" } } } },
+      bundles: { primary: { path: stash(), writable: true, adapter: "llm-wiki" } },
     });
 
     await runMigration({ apply: true });
@@ -276,8 +276,8 @@ describe("the step", () => {
     writeSandboxConfig({
       defaultBundle: "primary",
       bundles: {
-        primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } },
-        other: { path: other, writable: false, components: { main: { root: ".", adapter: "agent-skills" } } },
+        primary: { path: stash(), writable: true, adapter: "akm" },
+        other: { path: other, writable: false, adapter: "agent-skills" },
       },
     });
 

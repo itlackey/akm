@@ -23,9 +23,9 @@ import os from "node:os";
 import path from "node:path";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
 import { akmWorkflowAdapter } from "../../../src/core/adapter/adapters/akm-workflow-adapter";
-import type { BundleComponent } from "../../../src/core/adapter/types";
+import { buildFileContext } from "../../../src/core/adapter/directory/file-context";
+import type { Bundle } from "../../../src/core/adapter/types";
 import { drainDirDocuments } from "../../../src/indexer/scan/drain-dir";
-import { buildFileContext } from "../../../src/indexer/walk/file-context";
 
 const VALID_WORKFLOW = `---
 type: workflow
@@ -63,8 +63,8 @@ function makeStash(): { stashDir: string; goodPath: string; badPath: string } {
   return { stashDir, goodPath, badPath };
 }
 
-function component(root: string): BundleComponent {
-  return { id: "b", adapter: "akm", root, writable: true };
+function bundle(root: string): Bundle {
+  return { id: "b", root };
 }
 
 describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
@@ -74,7 +74,7 @@ describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
     // The adapter fold does NOT throw and does NOT abstain on a broken workflow
     // — it returns a full IndexDocument. Without the drain re-check this would
     // silently land in the index.
-    const doc = akmAdapter.recognize(component(stashDir), brokenCtx);
+    const doc = akmAdapter.recognize(bundle(stashDir), brokenCtx);
     expect(doc).not.toBeNull();
     expect(doc?.type).toBe("workflow");
   });
@@ -83,7 +83,7 @@ describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
     const { stashDir, goodPath, badPath } = makeStash();
     const ctxs = [buildFileContext(stashDir, goodPath), buildFileContext(stashDir, badPath)];
 
-    const drained = drainDirDocuments(akmAdapter, component(stashDir), ctxs);
+    const drained = drainDirDocuments(akmAdapter, bundle(stashDir), ctxs);
 
     // Only the valid workflow survives.
     expect(drained.entries).toHaveLength(1);
@@ -106,9 +106,9 @@ describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
   });
 
   test.each([
-    ["ordinary", akmAdapter, "akm", "workflows"],
-    ["standalone", akmWorkflowAdapter, "akm-workflow", "."],
-  ] as const)("%s adapter drains prose step content without scanning it for native-tool constructs", (_label, adapter, adapterId, subdir) => {
+    ["ordinary", akmAdapter, "workflows"],
+    ["standalone", akmWorkflowAdapter, "."],
+  ] as const)("%s adapter drains prose step content without scanning it for native-tool constructs", (_label, adapter, subdir) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-drain-template-"));
     const ownedDir = path.join(root, subdir);
     fs.mkdirSync(ownedDir, { recursive: true });
@@ -129,7 +129,7 @@ describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
       ].join("\n"),
     );
     try {
-      const c: BundleComponent = { id: "b", adapter: adapterId, root, writable: true };
+      const c: Bundle = { id: "b", root };
       const context = buildFileContext(root, templatePath);
       expect(adapter.recognize(c, context)).toMatchObject({ type: "workflow" });
 

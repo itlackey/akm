@@ -5,6 +5,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { convertBundleComponents } from "./config/convert-bundle-components";
 import { ConfigError } from "./errors";
 import { getConfigPath, getDefaultStashDir, getRegistryCacheDir, getRegistryIndexCacheDir } from "./paths";
 import { isTerminal } from "./stdio";
@@ -321,37 +322,24 @@ function readStashDirFromConfig(): string | undefined {
     // `defaultBundle`'s filesystem `path`. Read it directly (no config module
     // import) so the primary-stash location survives the stashDir → bundles
     // migration without a runtime rewire.
-    const bundles = raw.bundles as Record<string, { path?: string; components?: unknown }> | undefined;
+    const bundles = convertBundleComponents(raw).config.bundles as
+      | Record<string, { path?: string; root?: string }>
+      | undefined;
     const defaultBundle = raw.defaultBundle;
     const selectedBundle = typeof defaultBundle === "string" ? bundles?.[defaultBundle] : undefined;
     const selectedBundlePath = typeof selectedBundle?.path === "string" ? selectedBundle.path : undefined;
     if (bundles && typeof bundles === "object" && typeof defaultBundle === "string" && selectedBundlePath?.trim()) {
-      const bundle = selectedBundle as { path: string; components?: unknown };
-      const bundlePath = bundle.path.trim();
-      if (bundle.components !== undefined) {
-        if (typeof bundle.components !== "object" || bundle.components === null) {
-          throw new ConfigError("A bundle components map must contain exactly one component.", "INVALID_CONFIG_FILE");
-        }
-        const components = Object.values(bundle.components);
-        if (components.length !== 1) {
-          throw new ConfigError("A bundle components map must contain exactly one component.", "INVALID_CONFIG_FILE");
-        }
-        const component = components[0];
-        if (typeof component === "object" && component !== null) {
-          const componentConfig = component as Record<string, unknown>;
-          if (typeof componentConfig.root !== "string") return bundlePath;
-          const bundleRoot = path.resolve(bundlePath);
-          const componentRoot = path.resolve(bundleRoot, componentConfig.root);
-          if (!isWithin(componentRoot, bundleRoot)) {
-            throw new ConfigError(
-              `Component root "${componentConfig.root}" escapes bundle "${defaultBundle}".`,
-              "INVALID_CONFIG_FILE",
-            );
-          }
-          return componentRoot;
-        }
+      const bundlePath = selectedBundlePath.trim();
+      if (typeof selectedBundle?.root !== "string") return bundlePath;
+      const bundleRoot = path.resolve(bundlePath);
+      const root = path.resolve(bundleRoot, selectedBundle.root);
+      if (!isWithin(root, bundleRoot)) {
+        throw new ConfigError(
+          `Root "${selectedBundle.root}" escapes bundle "${defaultBundle}".`,
+          "INVALID_CONFIG_FILE",
+        );
       }
-      return bundlePath;
+      return root;
     }
   } catch (err) {
     // An unsupported-shape refusal must reach the caller; genuine missing/invalid

@@ -80,7 +80,7 @@ export function ensureAkmMarkdownType(content: string, type: string, now: Date =
 }
 
 /**
- * The exact text `writeAssetToSource` writes for an AKM Markdown asset: the
+ * The exact text an akm adapter writes for an AKM Markdown asset: the
  * conformant document from {@link ensureAkmMarkdownType}, ending in a line
  * break in the document's own line-ending style.
  */

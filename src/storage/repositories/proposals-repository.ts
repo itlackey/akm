@@ -11,35 +11,32 @@
  * @module proposals-repository
  */
 
-import path from "node:path";
-import type { Proposal, ProposalGateDecisionOutcome } from "../../commands/proposal/proposal-types";
+import { convertLegacyProposalMetadata, warnLegacyProposalRecords } from "../../commands/proposal/legacy-records";
+import type { Proposal, ProposalChange, ProposalGateDecisionOutcome } from "../../commands/proposal/proposal-types";
 import { stashDirFor } from "../../core/asset/asset-placement";
 import { bundleRefToString, isBundleSlug, parseBundleRef } from "../../core/asset/asset-ref";
-import type { FileChange } from "../../core/file-change";
 import { warnOnce } from "../../core/warn";
 import type { Database, SqlValue } from "../database";
 import { escapeLikePattern } from "../like-pattern";
 
 /**
- * Persisted shape of one `FileChange` inside `metadata_json.changes`.
+ * Persisted shape of one `ProposalChange` inside `metadata_json.changes`.
  *
- * `before` is never persisted (transaction-time capture only), and the FIRST
- * entry's `after` is implied by the dedicated `content` column — storing it
- * again would double every row. Non-primary entries (multi-file proposals)
- * carry their own `after`.
+ * The FIRST entry's `content` is implied by the dedicated `content` column — storing it again would double every
+ * row. Non-primary entries (multi-asset proposals) carry their own `content`.
  */
-interface StoredFileChange {
-  path: string;
-  op: FileChange["op"];
-  after?: string;
+interface StoredChange {
+  ref: string;
+  op: ProposalChange["op"];
+  content?: string;
 }
 
-/** Serialize `Proposal.changes` for `metadata_json` (see {@link StoredFileChange}). */
-function changesToStored(changes: FileChange[]): StoredFileChange[] {
+/** Serialize `Proposal.changes` for `metadata_json` (see {@link StoredChange}). */
+function changesToStored(changes: ProposalChange[]): StoredChange[] {
   return changes.map((c, i) => ({
-    path: c.path,
+    ref: c.ref,
     op: c.op,
-    ...(i > 0 && c.after !== undefined ? { after: c.after } : {}),
+    ...(i > 0 && c.content !== undefined ? { content: c.content } : {}),
   }));
 }
 
@@ -60,7 +57,7 @@ function changesToStored(changes: FileChange[]): StoredFileChange[] {
  * missing change list for new proposals, so this leniency only ever applies
  * to pre-existing rows.
  */
-function storedToChanges(stored: unknown, content: string): FileChange[] {
+function storedToChanges(stored: unknown, content: string): ProposalChange[] {
   if (stored === undefined) {
     return [];
   }
@@ -69,20 +66,20 @@ function storedToChanges(stored: unknown, content: string): FileChange[] {
   }
   return stored.map((value, i) => {
     if (typeof value !== "object" || value === null) throw new Error("Proposal metadata has invalid changes.");
-    const c = value as { path?: unknown; op?: unknown; after?: unknown };
+    const c = value as { ref?: unknown; op?: unknown; content?: unknown };
     if (
-      typeof c.path !== "string" ||
+      typeof c.ref !== "string" ||
       (c.op !== "create" && c.op !== "update" && c.op !== "delete") ||
-      (c.after !== undefined && typeof c.after !== "string") ||
-      (c.op === "delete" && c.after !== undefined) ||
-      (i > 0 && c.op !== "delete" && typeof c.after !== "string")
+      (c.content !== undefined && typeof c.content !== "string") ||
+      (c.op === "delete" && c.content !== undefined) ||
+      (i > 0 && c.op !== "delete" && typeof c.content !== "string")
     ) {
       throw new Error("Proposal metadata has invalid changes.");
     }
     return {
-      path: c.path,
+      ref: c.ref,
       op: c.op,
-      ...(i === 0 ? (c.op === "delete" ? {} : { after: content }) : c.after !== undefined ? { after: c.after } : {}),
+      ...(i === 0 ? (c.op === "delete" ? {} : { content }) : c.content !== undefined ? { content: c.content } : {}),
     };
   });
 }
@@ -120,16 +117,11 @@ function currentProposalRef(ref: string, requireQualified = false): string {
 
 function currentProposalTarget(value: unknown): NonNullable<Proposal["proposedTarget"]> {
   if (typeof value !== "object" || value === null) throw new Error("Proposal metadata has an invalid proposedTarget.");
-  const target = value as { source?: unknown; root?: unknown };
-  if (
-    typeof target.source !== "string" ||
-    !isBundleSlug(target.source) ||
-    typeof target.root !== "string" ||
-    !path.isAbsolute(target.root)
-  ) {
+  const target = value as { source?: unknown };
+  if (typeof target.source !== "string" || !isBundleSlug(target.source)) {
     throw new Error("Proposal metadata has an invalid proposedTarget.");
   }
-  return { source: target.source, root: path.resolve(target.root) };
+  return { source: target.source };
 }
 
 function invalidPresentField(name: string): never {
@@ -232,12 +224,9 @@ function validatePresentMetadata(meta: Record<string, unknown>): void {
     if (
       typeof target !== "object" ||
       target === null ||
-      typeof target.source !== "string" ||
-      !isBundleSlug(target.source) ||
-      typeof target.root !== "string" ||
-      !path.isAbsolute(target.root) ||
-      typeof target.path !== "string" ||
-      !path.isAbsolute(target.path) ||
+      typeof target.bundle !== "string" ||
+      !isBundleSlug(target.bundle) ||
+      typeof target.ref !== "string" ||
       typeof target.contentHash !== "string"
     ) {
       invalidPresentField("acceptedTarget");
@@ -277,22 +266,23 @@ function validatePresentMetadata(meta: Record<string, unknown>): void {
     if (
       typeof archive !== "object" ||
       archive === null ||
-      !Array.isArray(archive.dirs) ||
-      archive.dirs.length === 0 ||
-      archive.dirs.some((dir) => typeof dir !== "string" || dir.length === 0)
+      !Array.isArray(archive.retired) ||
+      archive.retired.length === 0 ||
+      archive.retired.some(
+        (entry) =>
+          !isRecord(entry) ||
+          typeof entry.ref !== "string" ||
+          entry.ref.length === 0 ||
+          typeof entry.handle !== "string" ||
+          entry.handle.length === 0,
+      )
     ) {
       invalidPresentField("retiredArchive");
     }
   }
   if (Object.hasOwn(meta, "retireAcceptIntent")) {
     const intent = meta.retireAcceptIntent as Record<string, unknown> | null;
-    if (
-      typeof intent !== "object" ||
-      intent === null ||
-      typeof intent.assetPath !== "string" ||
-      intent.assetPath.length === 0 ||
-      typeof intent.backupContent !== "string"
-    ) {
+    if (typeof intent !== "object" || intent === null || typeof intent.backupContent !== "string") {
       invalidPresentField("retireAcceptIntent");
     }
   }
@@ -308,7 +298,7 @@ function validatePresentMetadata(meta: Record<string, unknown>): void {
  */
 export interface ProposalRow {
   id: string;
-  stash_dir: string;
+  bundle_id: string;
   ref: string;
   status: string;
   source: string;
@@ -349,6 +339,10 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
   } catch (error) {
     throw new Error("Proposal row has invalid metadata_json.", { cause: error });
   }
+  // A record an older akm wrote names files: it is read as the current shape, and a command says so once (§0.2 P5).
+  const converted = convertLegacyProposalMetadata(meta, row.ref);
+  if (converted.legacy) warnLegacyProposalRecords();
+  meta = converted.meta;
   validatePresentMetadata(meta);
 
   const changes = storedToChanges(meta.changes, row.content);
@@ -398,9 +392,9 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
 
 /**
  * Convert a public `Proposal` to column values ready for an INSERT/UPDATE.
- * The `stash_dir` comes from the call site (proposals.ts has it in scope).
+ * The `bundle_id` comes from the call site (proposals.ts has it in scope).
  */
-export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<ProposalRow, "id"> & { id: string } {
+export function proposalToRowValues(proposal: Proposal, bundleId: string): Omit<ProposalRow, "id"> & { id: string } {
   // Fields that have no dedicated column live in metadata_json.
   const metaObj: Record<string, unknown> = {};
   // #859: `changes` and `proposedTarget` are only enforced as REQUIRED when
@@ -428,10 +422,10 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   if (
     proposal.changes.some(
       (change) =>
-        typeof change.path !== "string" ||
-        change.path.length === 0 ||
+        typeof change.ref !== "string" ||
+        change.ref.length === 0 ||
         !["create", "update", "delete"].includes(change.op) ||
-        (change.op === "delete" ? change.after !== undefined : typeof change.after !== "string"),
+        (change.op === "delete" ? change.content !== undefined : typeof change.content !== "string"),
     )
   ) {
     throw new Error(`Proposal ${proposal.id} has invalid file changes.`);
@@ -460,7 +454,7 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
 
   return {
     id: proposal.id,
-    stash_dir: stashDir,
+    bundle_id: bundleId,
     ref: currentProposalRef(proposal.ref, true),
     status: proposal.status,
     source: proposal.source,
@@ -476,14 +470,14 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
  * Upsert a proposal row. Called by the proposal write path when state.db is
  * the active backend.
  */
-export function upsertProposal(db: Database, proposal: Proposal, stashDir: string): void {
-  const v = proposalToRowValues(proposal, stashDir);
+export function upsertProposal(db: Database, proposal: Proposal, bundleId: string): void {
+  const v = proposalToRowValues(proposal, bundleId);
   db.prepare(`
     INSERT INTO proposals
-      (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+      (id, bundle_id, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
-      stash_dir        = excluded.stash_dir,
+      bundle_id        = excluded.bundle_id,
       ref              = excluded.ref,
       status           = excluded.status,
       source           = excluded.source,
@@ -493,7 +487,7 @@ export function upsertProposal(db: Database, proposal: Proposal, stashDir: strin
       metadata_json    = excluded.metadata_json
   `).run(
     v.id,
-    v.stash_dir,
+    v.bundle_id,
     v.ref,
     v.status,
     v.source,
@@ -506,7 +500,7 @@ export function upsertProposal(db: Database, proposal: Proposal, stashDir: strin
 }
 
 /**
- * List proposals, optionally filtered by stashDir, status, and/or ref.
+ * List proposals, optionally filtered by bundleId, status, and/or ref.
  *
  * Results are ordered by `created_at ASC` (matching the historical
  * `listProposals()` sort), with `rowid` as a deterministic tiebreak so two
@@ -515,7 +509,7 @@ export function upsertProposal(db: Database, proposal: Proposal, stashDir: strin
 export function listStateProposals(
   db: Database,
   options: {
-    stashDir?: string;
+    bundleId?: string;
     status?: string;
     ref?: string;
     /**
@@ -527,9 +521,9 @@ export function listStateProposals(
 ): Proposal[] {
   const conditions: string[] = [];
   const params: unknown[] = [];
-  if (options.stashDir) {
-    conditions.push("stash_dir = ?");
-    params.push(options.stashDir);
+  if (options.bundleId) {
+    conditions.push("bundle_id = ?");
+    params.push(options.bundleId);
   }
   if (options.status) {
     conditions.push("status = ?");
@@ -542,7 +536,7 @@ export function listStateProposals(
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const rows = db
     .prepare(
-      `SELECT id, stash_dir, ref, status, source, created_at, updated_at,
+      `SELECT id, bundle_id, ref, status, source, created_at, updated_at,
               ${options.withContent === false ? "'' AS content, '{}' AS frontmatter_json" : "content, frontmatter_json"}, metadata_json
        FROM proposals ${where} ORDER BY created_at ASC, rowid ASC`,
     )
@@ -574,17 +568,17 @@ export function listStateProposals(
  * Look up a single proposal by id, optionally scoped to one stash root.
  * Returns undefined when not found.
  */
-export function getStateProposal(db: Database, id: string, stashDir?: string): Proposal | undefined {
-  const sql = `SELECT id, stash_dir, ref, status, source, created_at, updated_at,
+export function getStateProposal(db: Database, id: string, bundleId?: string): Proposal | undefined {
+  const sql = `SELECT id, bundle_id, ref, status, source, created_at, updated_at,
               content, frontmatter_json, metadata_json
-       FROM proposals WHERE id = ?${stashDir ? " AND stash_dir = ?" : ""}`;
-  const row = (stashDir ? db.prepare(sql).get(id, stashDir) : db.prepare(sql).get(id)) as ProposalRow | undefined;
+       FROM proposals WHERE id = ?${bundleId ? " AND bundle_id = ?" : ""}`;
+  const row = (bundleId ? db.prepare(sql).get(id, bundleId) : db.prepare(sql).get(id)) as ProposalRow | undefined;
   return row ? proposalRowToProposal(row) : undefined;
 }
 
 /** `(ref, source)` of every proposal, any status, in one stash: no payload is read. */
-export function listProposalRefSources(db: Database, stashDir: string): Array<{ ref: string; source: string }> {
-  return db.prepare("SELECT ref, source FROM proposals WHERE stash_dir = ?").all(stashDir) as Array<{
+export function listProposalRefSources(db: Database, bundleId: string): Array<{ ref: string; source: string }> {
+  return db.prepare("SELECT ref, source FROM proposals WHERE bundle_id = ?").all(bundleId) as Array<{
     ref: string;
     source: string;
   }>;
@@ -598,15 +592,15 @@ export function listProposalRefSources(db: Database, stashDir: string): Array<{ 
  *
  * `%` / `_` / `\` in the prefix are escaped so the LIKE pattern is literal.
  */
-export function listStateProposalIdsByPrefix(db: Database, stashDir: string, idPrefix: string): string[] {
+export function listStateProposalIdsByPrefix(db: Database, bundleId: string, idPrefix: string): string[] {
   const escaped = escapeLikePattern(idPrefix);
   const rows = db
     .prepare(
       `SELECT id FROM proposals
-       WHERE stash_dir = ? AND status = 'pending' AND id LIKE ? ESCAPE '\\'
+       WHERE bundle_id = ? AND status = 'pending' AND id LIKE ? ESCAPE '\\'
        ORDER BY id ASC`,
     )
-    .all(stashDir, `${escaped}%`) as Array<{ id: string }>;
+    .all(bundleId, `${escaped}%`) as Array<{ id: string }>;
   return rows.map((r) => r.id);
 }
 
@@ -617,9 +611,10 @@ function proposalTargetCount(db: Database, bundleId: string): number {
       .prepare(
         `SELECT COUNT(*) AS n FROM proposals
          WHERE json_extract(metadata_json, '$.proposedTarget.source') = ?
+            OR json_extract(metadata_json, '$.acceptedTarget.bundle') = ?
             OR json_extract(metadata_json, '$.acceptedTarget.source') = ?`,
       )
-      .get(bundleId, bundleId) as { n: number }
+      .get(bundleId, bundleId, bundleId) as { n: number }
   ).n;
 }
 
@@ -662,11 +657,38 @@ export function renameProposalsBundleRef(
     // The write-target bundle a pending proposal would apply to, and the one an accepted proposal
     // is bound to (revert refuses a target whose bundle name differs).
     const targets = proposalTargetCount(db, oldBundleId);
-    for (const field of ["proposedTarget", "acceptedTarget"]) {
+    // (`acceptedTarget.source` is the shape an older akm wrote, still read until `akm migrate apply` rewrites it.)
+    for (const field of ["proposedTarget.source", "acceptedTarget.bundle", "acceptedTarget.source"]) {
       db.prepare(
-        `UPDATE proposals SET metadata_json = json_set(metadata_json, '$.${field}.source', ?)
-         WHERE json_extract(metadata_json, '$.${field}.source') = ?`,
+        `UPDATE proposals SET metadata_json = json_set(metadata_json, '$.${field}', ?)
+         WHERE json_extract(metadata_json, '$.${field}') = ?`,
       ).run(newBundleId, oldBundleId);
+    }
+    // The refs a proposal's changes and accepted target carry name the bundle too.
+    const holders = db
+      .prepare(`SELECT id, metadata_json FROM proposals WHERE instr(metadata_json, ?) > 0`)
+      .all(`"${prefix}`) as Array<{ id: string; metadata_json: string }>;
+    const rename = (ref: unknown): unknown =>
+      typeof ref === "string" && ref.startsWith(prefix) ? `${newBundleId}//${ref.slice(prefix.length)}` : ref;
+    for (const holder of holders) {
+      const meta = JSON.parse(holder.metadata_json) as Record<string, unknown>;
+      if (Array.isArray(meta.changes)) {
+        meta.changes = meta.changes.map((change: Record<string, unknown>) =>
+          typeof change === "object" && change !== null ? { ...change, ref: rename(change.ref) } : change,
+        );
+      }
+      const accepted = meta.acceptedTarget as Record<string, unknown> | undefined;
+      if (typeof accepted === "object" && accepted !== null && "ref" in accepted) {
+        meta.acceptedTarget = { ...accepted, ref: rename(accepted.ref) };
+      }
+      const archive = meta.retiredArchive as Record<string, unknown> | undefined;
+      if (isRecord(archive) && Array.isArray(archive.retired)) {
+        meta.retiredArchive = {
+          ...archive,
+          retired: archive.retired.map((entry) => (isRecord(entry) ? { ...entry, ref: rename(entry.ref) } : entry)),
+        };
+      }
+      db.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(meta), holder.id);
     }
     return { refs, targets };
   })();

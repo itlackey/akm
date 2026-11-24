@@ -32,7 +32,6 @@
     "raw/2026-07-http-rfc.md": {
       "recognized": true,
       "adapterId": "llm-wiki",
-      "component": "main",
       "type": "wiki-source",
       "conceptId": "raw/2026-07-http-rfc",
       "ref": "sample-wiki//raw/2026-07-http-rfc",
@@ -43,7 +42,6 @@
     "pages/http-caching.md": {
       "recognized": true,
       "adapterId": "llm-wiki",
-      "component": "main",
       "type": "concept",
       "conceptId": "pages/http-caching",
       "ref": "sample-wiki//pages/http-caching",
@@ -56,7 +54,6 @@
     "pages/entities/varnish.md": {
       "recognized": true,
       "adapterId": "llm-wiki",
-      "component": "main",
       "type": "entity",
       "conceptId": "pages/entities/varnish",
       "ref": "sample-wiki//pages/entities/varnish",
@@ -69,7 +66,6 @@
     "pages/orphan.md": {
       "recognized": true,
       "adapterId": "llm-wiki",
-      "component": "main",
       "type": "note",
       "conceptId": "pages/orphan",
       "ref": "sample-wiki//pages/orphan",

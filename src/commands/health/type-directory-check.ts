@@ -19,18 +19,18 @@
  * reads differently from an unexplained one.
  */
 
-import fs from "node:fs";
-import path from "node:path";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { buildFileContext } from "../../indexer/walk/file-context";
-import { declaredTypeForPath } from "../../indexer/walk/matchers";
+import { findAsset } from "../../core/assets/read";
+import { typeDeclaredByLocation } from "../../core/assets/type";
 import type { HealthCheckResult } from "./types";
 
 /** The minimal shape this check needs from an indexed `entries` row. */
 export interface TypeDirectoryEntry {
+  /** The indexed ref: its content is read through the asset facade. */
+  ref?: string;
   filePath: string;
   type: string;
-  /** Component root the entry was indexed under; directory intent is read only from inside it. */
+  /** Bundle root the entry was indexed under; directory intent is read only from inside it. */
   root: string;
   /** Owning adapter; only the `akm` adapter declares stash directory rules. */
   adapterId: string;
@@ -39,13 +39,10 @@ export interface TypeDirectoryEntry {
 /**
  * The type the entry's location declares under the `akm` stash rules, derived
  * with the indexer's own directory predicates (see `declaredTypeForPath`).
- * Other adapters, and paths outside the component root, declare nothing.
+ * Other adapters, and paths outside the bundle root, declare nothing.
  */
 function declaredTypeFor(entry: TypeDirectoryEntry): string | undefined {
-  if (entry.adapterId !== "akm" || !entry.root) return undefined;
-  const rel = path.relative(entry.root, entry.filePath);
-  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return undefined;
-  return declaredTypeForPath(buildFileContext(entry.root, entry.filePath));
+  return typeDeclaredByLocation({ adapterId: entry.adapterId, root: entry.root, path: entry.filePath });
 }
 
 export interface TypeDirectoryDisagreement {
@@ -58,12 +55,12 @@ export interface TypeDirectoryDisagreement {
   knownGoodOverride: boolean;
 }
 
-/** Injectable file-read seam so the pure collector never needs a real filesystem in tests. */
-export type ReadFileFn = (absPath: string) => string | undefined;
+/** Injectable content-read seam so the pure collector never needs a real bundle in tests. */
+export type ReadFileFn = (entry: TypeDirectoryEntry) => string | undefined;
 
-const realReadFile: ReadFileFn = (absPath) => {
+const realReadFile: ReadFileFn = (entry) => {
   try {
-    return fs.readFileSync(absPath, "utf8");
+    return entry.ref === undefined ? undefined : findAsset(entry.ref)?.entry.content();
   } catch {
     return undefined;
   }
@@ -119,7 +116,7 @@ export function collectTypeDirectoryDisagreements(
   for (const entry of entries) {
     const declared = declaredTypeFor(entry);
     if (!declared || declared === entry.type) continue;
-    const content = readFile(entry.filePath);
+    const content = readFile(entry);
     const explanation = content === undefined ? undefined : explainOverride(entry.type, content);
     disagreements.push({
       path: entry.filePath,

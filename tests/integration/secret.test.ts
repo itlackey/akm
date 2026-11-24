@@ -14,11 +14,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { secretLockPath, setSecret, withSecretLock } from "../../src/commands/env/secret";
-import { readValue } from "../../src/core/secret-value";
+import { readSecret } from "../../src/core/env-secret-ref";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
 import { runCliCapture } from "../_helpers/cli";
 import { makeStashDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
+import { writeSecretFile } from "../_helpers/secret-file";
 
 // ── Core-module fixtures (tracked tmp dirs) ──────────────────────────────────
 
@@ -66,77 +66,52 @@ async function runCli(
   });
 }
 
-// ── Core module ──────────────────────────────────────────────────────────────
+// ── Stored and read values ───────────────────────────────────────────────────
 
-describe("secret core module", () => {
-  test("setSecret writes the file at mode 0600 and readValue returns the value", () => {
-    const root = tmpDir();
-    const fp = path.join(root, "secrets", "token");
-    setSecret(fp, Buffer.from("opaque-value"));
-    expect(fs.existsSync(fp)).toBe(true);
-    expect(fs.statSync(fp).mode & 0o777).toBe(0o600);
-    expect(readValue(fp)).toBe("opaque-value");
-  });
+describe("secret values", () => {
+  test("a secret set from a file is stored byte-exact at mode 0600, and read back trimmed", async () => {
+    const stashDir = makeStash();
+    const src = path.join(tmpDir(), "pem");
+    const pem = "-----BEGIN KEY-----\nabc\ndef\n-----END KEY-----\n";
+    fs.writeFileSync(src, pem);
+    expect(
+      (await runCli(["secret", "set", "secrets/key", "--from-file", src], { AKM_BUNDLE_DIR: stashDir })).status,
+    ).toBe(0);
 
-  test("multi-line / binary values are stored byte-exact; readValue trims the surrounding whitespace", () => {
-    const root = tmpDir();
-    const fp = path.join(root, "secrets", "key");
-    const pem = Buffer.from("-----BEGIN KEY-----\nabc\ndef\n-----END KEY-----\n");
-    setSecret(fp, pem);
-    expect(fs.readFileSync(fp).equals(pem)).toBe(true);
-    expect(readValue(fp)).toBe("-----BEGIN KEY-----\nabc\ndef\n-----END KEY-----");
-
-    const binary = Buffer.from([0x00, 0x01, 0xff, 0xfe, 0x0a, 0x00]);
-    const bp = path.join(root, "secrets", "blob");
-    setSecret(bp, binary);
-    expect(fs.readFileSync(bp).equals(binary)).toBe(true);
-  });
-
-  test("a hand-written value's surrounding whitespace is never part of the secret", () => {
-    const fp = path.join(tmpDir(), "secrets", "padded");
-    setSecret(fp, Buffer.from("  token-value \r\n\n"));
-    expect(readValue(fp)).toBe("token-value");
-  });
-
-  test("setSecret leaves no lock or mutex state inside the bundle", () => {
-    const root = tmpDir();
-    const fp = path.join(root, "secrets", "locked");
-    setSecret(fp, Buffer.from("recovered"));
-    expect(readValue(fp)).toBe("recovered");
-    expect(fs.readdirSync(path.dirname(fp))).toEqual(["locked"]);
-  });
-
-  test("setSecret recovers an external stale lock left by a dead PID", () => {
-    const root = tmpDir();
-    const fp = path.join(root, "secrets", "stale");
-    const lock = secretLockPath(fp);
-    fs.mkdirSync(path.dirname(lock), { recursive: true });
-    fs.writeFileSync(lock, "999999999");
-    setSecret(fp, Buffer.from("recovered"));
-    expect(readValue(fp)).toBe("recovered");
-    expect(fs.existsSync(lock)).toBe(false);
-  });
-
-  test("the active secret lock and its mutex stay outside the bundle", () => {
-    const root = tmpDir();
-    const fp = path.join(root, "secrets", "active");
-    fs.mkdirSync(path.dirname(fp), { recursive: true });
-    withSecretLock(fp, () => {
-      expect(fs.readdirSync(path.dirname(fp))).toEqual([]);
+    const fp = path.join(stashDir, "secrets", "key");
+    expect(fs.readFileSync(fp, "utf8")).toBe(pem);
+    if (process.platform !== "win32") expect(fs.statSync(fp).mode & 0o777).toBe(0o600);
+    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+      expect(readSecret("secrets/key").value).toBe("-----BEGIN KEY-----\nabc\ndef\n-----END KEY-----");
     });
   });
 
-  test("secret lock identity follows a symlinked parent and normalizes Windows case", () => {
-    const realRoot = tmpDir("secret-lock-real");
-    const linkedRoot = `${realRoot}-link`;
-    fs.symlinkSync(realRoot, linkedRoot);
-    expect(secretLockPath(path.join(linkedRoot, "secrets", "token"))).toBe(
-      secretLockPath(path.join(realRoot, "secrets", "token")),
-    );
-    expect(secretLockPath(path.join(realRoot, "Secrets", "TOKEN"), "win32")).toBe(
-      secretLockPath(path.join(realRoot, "secrets", "token"), "win32"),
-    );
-    fs.rmSync(linkedRoot);
+  test("binary values are stored byte-exact", async () => {
+    const stashDir = makeStash();
+    const src = path.join(tmpDir(), "blob");
+    const binary = Buffer.from([0x00, 0x01, 0xff, 0xfe, 0x0a, 0x00]);
+    fs.writeFileSync(src, binary);
+    expect(
+      (await runCli(["secret", "set", "secrets/blob", "--from-file", src], { AKM_BUNDLE_DIR: stashDir })).status,
+    ).toBe(0);
+    expect(fs.readFileSync(path.join(stashDir, "secrets", "blob")).equals(binary)).toBe(true);
+  });
+
+  test("a hand-written value's surrounding whitespace is never part of the secret", async () => {
+    const stashDir = makeStash();
+    writeSecretFile(path.join(stashDir, "secrets", "padded"), "  token-value \r\n\n");
+    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+      expect(readSecret("secrets/padded").value).toBe("token-value");
+    });
+  });
+
+  test("setting a secret leaves nothing but the secret in the bundle", async () => {
+    const stashDir = makeStash();
+    await runCli(["secret", "set", "secrets/plain", "--from-env", "AKM_VALUE"], {
+      AKM_BUNDLE_DIR: stashDir,
+      AKM_VALUE: "v",
+    });
+    expect(fs.readdirSync(path.join(stashDir, "secrets"))).toEqual(["plain"]);
   });
 });
 
@@ -180,7 +155,7 @@ describe("secret set", () => {
 describe("secret list", () => {
   test("lists names without values or paths", async () => {
     const stashDir = makeStash();
-    setSecret(path.join(stashDir, "secrets", "deploy-key"), Buffer.from("the-actual-secret-value"));
+    writeSecretFile(path.join(stashDir, "secrets", "deploy-key"), Buffer.from("the-actual-secret-value"));
 
     const { stdout, status } = await runCli(["secret", "list", "--format", "json"], { AKM_BUNDLE_DIR: stashDir });
     expect(status).toBe(0);
@@ -195,11 +170,10 @@ describe("secret list", () => {
 
 // `akm secret remove` was removed in 0.9.0 (R-027 / D-49) and is back, shaped like `akm env remove`.
 describe("secret remove", () => {
-  test("removes the secret file and its .sensitive marker, and reports it", async () => {
+  test("removes the secret file and reports it", async () => {
     const stashDir = makeStash();
     const fp = path.join(stashDir, "secrets", "demo");
-    setSecret(fp, Buffer.from("topsecret-value"));
-    fs.writeFileSync(`${fp}.sensitive`, "");
+    writeSecretFile(fp, Buffer.from("topsecret-value"));
 
     const { stdout, status } = await runCli(["secret", "remove", "secrets/demo", "--yes", "--format", "json"], {
       AKM_BUNDLE_DIR: stashDir,
@@ -210,13 +184,12 @@ describe("secret remove", () => {
     expect(JSON.parse(stdout).ref).toEndWith("//secrets/demo");
     expect(stdout).not.toContain("topsecret-value");
     expect(fs.existsSync(fp)).toBe(false);
-    expect(fs.existsSync(`${fp}.sensitive`)).toBe(false);
   });
 
   test("a secret that does not exist is a not-found error and nothing else is touched", async () => {
     const stashDir = makeStash();
     const other = path.join(stashDir, "secrets", "other");
-    setSecret(other, Buffer.from("v"));
+    writeSecretFile(other, Buffer.from("v"));
 
     const { stderr, status } = await runCli(["secret", "remove", "secrets/demo", "--yes"], {
       AKM_BUNDLE_DIR: stashDir,
@@ -230,7 +203,7 @@ describe("secret remove", () => {
   test("refuses to delete without --yes when not interactive", async () => {
     const stashDir = makeStash();
     const fp = path.join(stashDir, "secrets", "demo");
-    setSecret(fp, Buffer.from("v"));
+    writeSecretFile(fp, Buffer.from("v"));
 
     const { status } = await runCli(["secret", "remove", "secrets/demo"], { AKM_BUNDLE_DIR: stashDir });
 
@@ -251,7 +224,7 @@ describe("secret slash ref form", () => {
     // parseSecretRef resolution without that exit call.
     const stashDir = makeStash();
     const fp = path.join(stashDir, "secrets", "deploy-key");
-    setSecret(fp, Buffer.from("v"));
+    writeSecretFile(fp, Buffer.from("v"));
 
     const { status } = await runCli(["secret", "set", "secrets/deploy-key", "--from-env", "AKM_VALUE"], {
       AKM_BUNDLE_DIR: stashDir,

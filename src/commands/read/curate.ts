@@ -17,9 +17,9 @@
  * drive `curateSearchResults` with a fixture search response.
  */
 
-import fs from "node:fs";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { findAsset, qualifyRef } from "../../core/assets/read";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { includesProposed, normalizeInclude } from "../../core/include";
@@ -76,7 +76,8 @@ export type CuratedStashItem = {
   type: string;
   name: string;
   ref: string;
-  path: string;
+  /** The file that holds the asset. Absent when no file does. */
+  path?: string;
   editable: boolean;
   editHint?: string;
   description?: string;
@@ -299,7 +300,9 @@ function eligibleEvidence(ref: string, policy: EvidencePolicy): { itemRef: strin
     if (!row || id === undefined) return undefined;
     let raw: string;
     try {
-      raw = fs.readFileSync(row.filePath, "utf8");
+      const asset = findAsset(row.itemRef);
+      if (!asset) return undefined;
+      raw = asset.entry.content();
     } catch {
       return undefined;
     }
@@ -436,7 +439,7 @@ async function enrichCuratedStashHit(
   eventSource?: UsageEventSource,
   policy?: EvidencePolicy,
 ): Promise<CuratedStashItem | undefined> {
-  const evidence = policy ? eligibleEvidence(hit.itemRef ?? hit.ref, policy) : undefined;
+  const evidence = policy ? eligibleEvidence(hit.itemRef ?? qualifyRef(hit.ref), policy) : undefined;
   if (policy && !evidence) return undefined;
   let shown: ShowResponse | undefined;
   try {

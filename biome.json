@@ -25,6 +25,8 @@
       "!src/vendor/**",
       "!tests/fixtures/goldens/**/*.json",
       "!tests/fixtures/format-family-goldens/**/*.json",
+      "!tests/fixtures/reference-compat/expected.json",
+      "!tests/fixtures/reference-compat/differences.json",
       "!.claude/**",
       "desktop/**",
       "!desktop/**/*.svelte",

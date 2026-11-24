@@ -19,10 +19,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { okfAdapter, resolveOkfLinks } from "../../../../src/core/adapter/adapters/okf-adapter";
-import type { BundleComponent, Diagnostic, ValidateContext } from "../../../../src/core/adapter/types";
-import type { FileChange } from "../../../../src/core/file-change";
+import { buildFileContext, type FileContext } from "../../../../src/core/adapter/directory/file-context";
+import type { FileChange } from "../../../../src/core/adapter/file-change";
+import type { Bundle } from "../../../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../../../src/core/adapter/validate-context";
 import { presentationFor } from "../../../../src/core/type-presentation";
-import { buildFileContext, type FileContext } from "../../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../../fixtures/bundles/okf-sample");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../../fixtures/format-family-goldens/okf");
@@ -32,8 +34,8 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(overrides: Partial<BundleComponent> = {}): BundleComponent {
-  return { id: BUNDLE_ID, adapter: "okf", root: FIXTURE_ROOT, writable: true, ...overrides };
+function bundle(overrides: Partial<Bundle> = {}): Bundle {
+  return { id: BUNDLE_ID, root: FIXTURE_ROOT, ...overrides };
 }
 
 /** A real FileContext for a fixture-relative path. */
@@ -45,7 +47,9 @@ function fc(relPath: string): FileContext {
 function synthetic(relPath: string, content: string): FileContext {
   return {
     absPath: path.join(FIXTURE_ROOT, relPath),
+    file: path.join(FIXTURE_ROOT, relPath),
     relPath,
+    key: relPath,
     ext: path.extname(relPath).toLowerCase(),
     fileName: path.basename(relPath),
     parentDir: path.basename(path.dirname(relPath)),
@@ -53,12 +57,13 @@ function synthetic(relPath: string, content: string): FileContext {
     ancestorDirs: path.dirname(relPath) === "." ? [] : path.dirname(relPath).split("/"),
     stashRoot: FIXTURE_ROOT,
     content: () => content,
+    bytes: () => Buffer.from(content),
     frontmatter: () => null,
     stat: () => ({}) as Stats,
   };
 }
 
-function makeValidateContext(overrides: Partial<ValidateContext> = {}): ValidateContext {
+function makeValidateContext(overrides: Partial<FileValidateContext> = {}): FileValidateContext {
   return {
     readFile: async () => null,
     list: async () => [],
@@ -70,9 +75,8 @@ function makeValidateContext(overrides: Partial<ValidateContext> = {}): Validate
 // ── adapter metadata ─────────────────────────────────────────────────────────
 
 describe("okf adapter — metadata", () => {
-  test("id / extensions per §5", () => {
+  test("id per §5", () => {
     expect(okfAdapter.id).toBe("okf");
-    expect(okfAdapter.extensions).toEqual([".md"]);
   });
 });
 
@@ -80,32 +84,32 @@ describe("okf adapter — metadata", () => {
 
 describe("okf adapter — recognize reads `type` from frontmatter", () => {
   test("free-form OKF type is read verbatim from frontmatter", () => {
-    const doc = okfAdapter.recognize(component(), fc("tables/orders.md"));
+    const doc = okfAdapter.recognize(bundle(), fc("tables/orders.md"));
     expect(doc?.type).toBe("BigQuery Table");
   });
 
   test("a second free-form type (Metric) is read verbatim", () => {
-    const doc = okfAdapter.recognize(component(), fc("metrics/wau.md"));
+    const doc = okfAdapter.recognize(bundle(), fc("metrics/wau.md"));
     expect(doc?.type).toBe("Metric");
   });
 
   test("type ABSENT from frontmatter => `knowledge` default", () => {
-    const doc = okfAdapter.recognize(component(), fc("guides/onboarding.md"));
+    const doc = okfAdapter.recognize(bundle(), fc("guides/onboarding.md"));
     expect(doc?.type).toBe("knowledge");
   });
 
   test("no frontmatter at all => `knowledge` default", () => {
-    const doc = okfAdapter.recognize(component(), synthetic("notes/plain.md", "# Plain\n\nNo frontmatter here.\n"));
+    const doc = okfAdapter.recognize(bundle(), synthetic("notes/plain.md", "# Plain\n\nNo frontmatter here.\n"));
     expect(doc?.type).toBe("knowledge");
   });
 
   test("blank/whitespace `type` falls back to the `knowledge` default (non-empty string only)", () => {
-    const doc = okfAdapter.recognize(component(), synthetic("notes/blank.md", '---\ntype: "  "\n---\n\nbody\n'));
+    const doc = okfAdapter.recognize(bundle(), synthetic("notes/blank.md", '---\ntype: "  "\n---\n\nbody\n'));
     expect(doc?.type).toBe("knowledge");
   });
 
   test("the directory NEVER determines type (no directory gate) — a `tables/` doc with Metric type stays Metric", () => {
-    const doc = okfAdapter.recognize(component(), synthetic("tables/weird.md", "---\ntype: Metric\n---\n\nbody\n"));
+    const doc = okfAdapter.recognize(bundle(), synthetic("tables/weird.md", "---\ntype: Metric\n---\n\nbody\n"));
     expect(doc?.type).toBe("Metric");
   });
 });
@@ -114,38 +118,37 @@ describe("okf adapter — recognize reads `type` from frontmatter", () => {
 
 describe("okf adapter — reserved files return null (§5, OKF §1.4)", () => {
   test("root index.md and log.md are excluded", () => {
-    expect(okfAdapter.recognize(component(), fc("index.md"))).toBeNull();
-    expect(okfAdapter.recognize(component(), fc("log.md"))).toBeNull();
+    expect(okfAdapter.recognize(bundle(), fc("index.md"))).toBeNull();
+    expect(okfAdapter.recognize(bundle(), fc("log.md"))).toBeNull();
   });
 
   test("nested index.md is excluded at any level", () => {
-    expect(okfAdapter.recognize(component(), fc("tables/index.md"))).toBeNull();
+    expect(okfAdapter.recognize(bundle(), fc("tables/index.md"))).toBeNull();
   });
 
   test("reserved-file match is case-insensitive", () => {
-    expect(okfAdapter.recognize(component(), synthetic("INDEX.MD", "# listing\n"))).toBeNull();
-    expect(okfAdapter.recognize(component(), synthetic("sub/Log.md", "# log\n"))).toBeNull();
+    expect(okfAdapter.recognize(bundle(), synthetic("INDEX.MD", "# listing\n"))).toBeNull();
+    expect(okfAdapter.recognize(bundle(), synthetic("sub/Log.md", "# log\n"))).toBeNull();
   });
 
   test("a non-.md file is abstained on (null)", () => {
-    expect(okfAdapter.recognize(component(), synthetic("data.json", "{}"))).toBeNull();
+    expect(okfAdapter.recognize(bundle(), synthetic("data.json", "{}"))).toBeNull();
   });
 });
 
 // ── recognize: conceptId / ref / projection ──────────────────────────────────
 
 describe("okf adapter — conceptId + OKF field projection (§0.1/§3)", () => {
-  test("conceptId = path within component root minus `.md`; ref = `<c.id>//<conceptId>`", () => {
-    const doc = okfAdapter.recognize(component(), fc("tables/orders.md"));
+  test("conceptId = path within bundle root minus `.md`; ref = `<c.id>//<conceptId>`", () => {
+    const doc = okfAdapter.recognize(bundle(), fc("tables/orders.md"));
     expect(doc?.conceptId).toBe("tables/orders");
     expect(doc?.ref).toBe("okf-sample//tables/orders");
     expect(doc?.bundle).toBe(BUNDLE_ID);
-    expect(doc?.component).toBe(BUNDLE_ID);
     expect(doc?.adapterId).toBe("okf");
   });
 
   test("name <- title; description <- description; tags <- tags; updated <- legacy timestamp fallback (v0.1 fixture carries no `generated`)", () => {
-    const doc = okfAdapter.recognize(component(), fc("tables/orders.md"));
+    const doc = okfAdapter.recognize(bundle(), fc("tables/orders.md"));
     expect(doc?.name).toBe("Orders");
     expect(doc?.description).toBe("One row per completed customer order.");
     expect(doc?.tags).toEqual(["sales", "revenue"]);
@@ -153,12 +156,12 @@ describe("okf adapter — conceptId + OKF field projection (§0.1/§3)", () => {
   });
 
   test("name falls back to the last path segment when `title` is absent", () => {
-    const doc = okfAdapter.recognize(component(), synthetic("tables/no_title.md", "---\ntype: Metric\n---\n\nbody\n"));
+    const doc = okfAdapter.recognize(bundle(), synthetic("tables/no_title.md", "---\ntype: Metric\n---\n\nbody\n"));
     expect(doc?.name).toBe("no_title");
   });
 
   test("content is the body; hash is a sha256 hex digest", () => {
-    const doc = okfAdapter.recognize(component(), fc("metrics/wau.md"));
+    const doc = okfAdapter.recognize(bundle(), fc("metrics/wau.md"));
     expect(doc?.content).toContain("WAU counts distinct");
     expect(doc?.content).not.toContain("type: Metric"); // frontmatter excluded from content
     expect(doc?.hash).toMatch(/^[0-9a-f]{64}$/);
@@ -170,7 +173,7 @@ describe("okf adapter — conceptId + OKF field projection (§0.1/§3)", () => {
 describe("okf adapter — v0.2 `updated` precedence: generated.at over legacy timestamp fallback", () => {
   test("generated.at WINS when both generated.at and legacy timestamp are present (v0.2 breaking change)", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic(
         "reports/both.md",
         "---\ntype: Report\ngenerated:\n  by: human:jdoe\n  at: 2026-06-20T22:53:05Z\ntimestamp: 2020-01-01T00:00:00Z\n---\n\nbody\n",
@@ -181,7 +184,7 @@ describe("okf adapter — v0.2 `updated` precedence: generated.at over legacy ti
 
   test("generated.at is used when legacy timestamp is absent entirely", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic(
         "reports/generated-only.md",
         "---\ntype: Report\ngenerated:\n  by: human:jdoe\n  at: 2026-06-21T00:00:00Z\n---\n\nbody\n",
@@ -192,7 +195,7 @@ describe("okf adapter — v0.2 `updated` precedence: generated.at over legacy ti
 
   test("legacy timestamp is used as the fallback when generated (or generated.at) is absent — the v0.2-permitted fallback", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic("reports/timestamp-only.md", "---\ntype: Report\ntimestamp: 2020-01-01T00:00:00Z\n---\n\nbody\n"),
     );
     expect(doc?.updated).toBe("2020-01-01T00:00:00Z");
@@ -200,7 +203,7 @@ describe("okf adapter — v0.2 `updated` precedence: generated.at over legacy ti
 
   test("a `generated` mapping missing `at` still falls back to legacy timestamp (tolerant of a malformed generated block)", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic(
         "reports/generated-no-at.md",
         "---\ntype: Report\ngenerated:\n  by: human:jdoe\ntimestamp: 2020-01-01T00:00:00Z\n---\n\nbody\n",
@@ -210,7 +213,7 @@ describe("okf adapter — v0.2 `updated` precedence: generated.at over legacy ti
   });
 
   test("neither generated.at nor timestamp present => `updated` stays undefined (both remain optional)", () => {
-    const doc = okfAdapter.recognize(component(), synthetic("reports/neither.md", "---\ntype: Report\n---\n\nbody\n"));
+    const doc = okfAdapter.recognize(bundle(), synthetic("reports/neither.md", "---\ntype: Report\n---\n\nbody\n"));
     expect(doc?.updated).toBeUndefined();
   });
 });
@@ -220,7 +223,7 @@ describe("okf adapter — v0.2 `updated` precedence: generated.at over legacy ti
 describe("okf adapter — v0.2 provenance family: generated/verified/sources land under the NAMESPACED `provenance` field (D1.3 collision avoidance)", () => {
   test("generated {by, at} populates provenance.generatedBy / provenance.generatedAt", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic(
         "reports/gen.md",
         "---\ntype: Report\ngenerated:\n  by: reference_agent/gemini-2.5-pro\n  at: 2026-06-20T22:53:05Z\n---\n\nbody\n",
@@ -232,7 +235,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
 
   test("verified LIST form (multiple entries) populates provenance.verified", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic(
         "reports/verified-list.md",
         "---\ntype: Report\nverified:\n  - by: human:ahormati\n    at: 2026-06-25T09:00:00Z\n  - by: process:finance-nightly\n    at: 2026-06-26T03:00:00Z\n---\n\nbody\n",
@@ -246,7 +249,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
 
   test("verified SINGLE-MAPPING form (no list dash, v0.2 §-permitted shorthand) normalizes to a one-element array", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic(
         "reports/verified-single.md",
         "---\ntype: Report\nverified:\n  by: human:ahormati\n  at: 2026-06-18T00:05:00Z\n---\n\nbody\n",
@@ -257,7 +260,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
 
   test("a verified entry missing `at` is still recorded with just `by`", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic("reports/verified-no-at.md", "---\ntype: Report\nverified:\n  by: human:ahormati\n---\n\nbody\n"),
     );
     expect(doc?.provenance?.verified).toEqual([{ by: "human:ahormati" }]);
@@ -265,7 +268,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
 
   test("a verified entry missing `by` is dropped (tolerant — never rejects the document)", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic("reports/verified-no-by.md", "---\ntype: Report\nverified:\n  at: 2026-06-18T00:05:00Z\n---\n\nbody\n"),
     );
     expect(doc).not.toBeNull();
@@ -274,7 +277,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
 
   test("v0.2 OBJECT-LIST `sources` survive INTACT under provenance.sources — today they would be dropped if folded onto the bare native `sources` string field", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic(
         "reports/sources.md",
         [
@@ -314,7 +317,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
 
   test("a `sources` entry missing `resource` is dropped (tolerant); an empty/all-dropped list leaves provenance.sources unset", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic(
         "reports/sources-malformed.md",
         "---\ntype: Report\nsources:\n  - title: No resource here\n---\n\nbody\n",
@@ -326,7 +329,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
   test("status is read into lifecycleStatus for each of draft/stable/deprecated", () => {
     for (const status of ["draft", "stable", "deprecated"] as const) {
       const doc = okfAdapter.recognize(
-        component(),
+        bundle(),
         synthetic(`reports/status-${status}.md`, `---\ntype: Report\nstatus: ${status}\n---\n\nbody\n`),
       );
       expect(doc?.lifecycleStatus).toBe(status);
@@ -335,7 +338,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
 
   test("an unrecognized status value is ignored (never rejects; lifecycleStatus stays unset)", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic("reports/status-bogus.md", "---\ntype: Report\nstatus: not-a-real-status\n---\n\nbody\n"),
     );
     expect(doc?.lifecycleStatus).toBeUndefined();
@@ -343,7 +346,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
 
   test("stale_after is read verbatim into staleAfter", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic("reports/stale.md", '---\ntype: Report\nstale_after: "2026-12-31"\n---\n\nbody\n'),
     );
     expect(doc?.staleAfter).toBe("2026-12-31");
@@ -351,14 +354,14 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
 
   test("okf_version is read into okfVersion best-effort (Rule 9) even on a non-root concept", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic("reports/versioned.md", '---\ntype: Report\nokf_version: "0.2"\n---\n\nbody\n'),
     );
     expect(doc?.okfVersion).toBe("0.2");
   });
 
   test("a concept with none of the v0.2 families sets no v0.2 fields (fully optional, never defaulted)", () => {
-    const doc = okfAdapter.recognize(component(), synthetic("reports/none.md", "---\ntype: Report\n---\n\nbody\n"));
+    const doc = okfAdapter.recognize(bundle(), synthetic("reports/none.md", "---\ntype: Report\n---\n\nbody\n"));
     expect(doc?.provenance).toBeUndefined();
     expect(doc?.lifecycleStatus).toBeUndefined();
     expect(doc?.staleAfter).toBeUndefined();
@@ -367,7 +370,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
 
   test("generated/verified/sources/status/stale_after/okf_version never leak into documentJson (no duplication with the first-class fields)", () => {
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic(
         "reports/all-families.md",
         [
@@ -398,7 +401,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
   test("wildly malformed v0.2 fields (wrong shapes) never throw and never reject the document", () => {
     expect(() =>
       okfAdapter.recognize(
-        component(),
+        bundle(),
         synthetic(
           "reports/garbage.md",
           [
@@ -420,7 +423,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
       ),
     ).not.toThrow();
     const doc = okfAdapter.recognize(
-      component(),
+      bundle(),
       synthetic(
         "reports/garbage.md",
         [
@@ -451,14 +454,14 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
 // ── links: both OKF forms (§9) ───────────────────────────────────────────────
 
 describe("okf adapter — OKF link resolution, both forms (§9)", () => {
-  test("`/`-rooted and relative links both resolve to component-root-relative conceptIds", () => {
-    const doc = okfAdapter.recognize(component(), fc("tables/orders.md"));
+  test("`/`-rooted and relative links both resolve to bundle-root-relative conceptIds", () => {
+    const doc = okfAdapter.recognize(bundle(), fc("tables/orders.md"));
     // `/tables/customers.md` (dedup of two occurrences) + `../metrics/wau.md`
     expect(doc?.links).toEqual(["tables/customers", "metrics/wau"]);
   });
 
   test("standard relative same-dir link resolves", () => {
-    const doc = okfAdapter.recognize(component(), fc("tables/customers.md"));
+    const doc = okfAdapter.recognize(bundle(), fc("tables/customers.md"));
     expect(doc?.links).toEqual(["tables/orders"]); // ./orders.md
   });
 
@@ -474,12 +477,12 @@ describe("okf adapter — OKF link resolution, both forms (§9)", () => {
     expect(resolveOkfLinks(body, "tables/orders.md")).toEqual(["tables/customers", "tables/sibling", "metrics/wau"]);
   });
 
-  test("a relative link that escapes the component root is dropped (tolerant)", () => {
+  test("a relative link that escapes the bundle root is dropped (tolerant)", () => {
     expect(resolveOkfLinks("[out](../../outside.md)", "tables/orders.md")).toEqual([]);
   });
 
   test("a concept with no links has no `links` field", () => {
-    const doc = okfAdapter.recognize(component(), synthetic("notes/plain.md", "# Plain\n\nNo links.\n"));
+    const doc = okfAdapter.recognize(bundle(), synthetic("notes/plain.md", "# Plain\n\nNo links.\n"));
     expect(doc?.links).toBeUndefined();
   });
 });
@@ -488,7 +491,7 @@ describe("okf adapter — OKF link resolution, both forms (§9)", () => {
 
 describe("okf adapter — placement / probe", () => {
   test("directoryList => ['.']", () => {
-    expect(okfAdapter.directoryList?.(component())).toEqual(["."]);
+    expect(okfAdapter.directoryList?.(bundle())).toEqual(["."]);
   });
 
   test("looksLikeRoot fires on a root WITH index.md", () => {
@@ -527,8 +530,9 @@ function readFixture(relPath: string): string {
 
 describe("okf adapter — validate is LENIENT (§5)", () => {
   test("missing `type` => an INFO diagnostic (issue `missing-type`), never an error", async () => {
-    const diags = await okfAdapter.validate(
-      component(),
+    const diags = await checkChanges(
+      okfAdapter,
+      bundle(),
       [change("guides/onboarding.md", readFixture("guides/onboarding.md"))],
       makeValidateContext({ resolveRef: async () => ({ exists: true }) }),
     );
@@ -540,8 +544,9 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("a concept WITH a `type` does not get a missing-type diagnostic", async () => {
-    const diags = await okfAdapter.validate(
-      component(),
+    const diags = await checkChanges(
+      okfAdapter,
+      bundle(),
       [change("tables/orders.md", readFixture("tables/orders.md"))],
       makeValidateContext({ resolveRef: async () => ({ exists: true }) }),
     );
@@ -549,8 +554,9 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("a broken OKF link => a non-blocking WARNING (issue `missing-ref`)", async () => {
-    const diags = await okfAdapter.validate(
-      component(),
+    const diags = await checkChanges(
+      okfAdapter,
+      bundle(),
       [change("tables/orders.md", readFixture("tables/orders.md"))],
       makeValidateContext({ resolveRef: async () => ({ exists: false }) }),
     );
@@ -564,8 +570,9 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("resolvable OKF links produce no missing-ref diagnostics", async () => {
-    const diags = await okfAdapter.validate(
-      component(),
+    const diags = await checkChanges(
+      okfAdapter,
+      bundle(),
       [change("tables/orders.md", readFixture("tables/orders.md"))],
       makeValidateContext({ resolveRef: async () => ({ exists: true }) }),
     );
@@ -573,8 +580,9 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("a `timestamp` satisfies the freshness check — no `missing-updated` (§0.1, legacy v0.1 fallback)", async () => {
-    const diags = await okfAdapter.validate(
-      component(),
+    const diags = await checkChanges(
+      okfAdapter,
+      bundle(),
       [change("tables/orders.md", readFixture("tables/orders.md"))],
       makeValidateContext({ resolveRef: async () => ({ exists: true }) }),
     );
@@ -582,8 +590,9 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("a v0.2 `generated.at` (no legacy timestamp) ALSO satisfies the freshness check — no `missing-updated`", async () => {
-    const diags = await okfAdapter.validate(
-      component(),
+    const diags = await checkChanges(
+      okfAdapter,
+      bundle(),
       [
         change(
           "reports/generated-only.md",
@@ -596,8 +605,9 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("missing optional timestamp never produces AKM's `missing-updated` diagnostic", async () => {
-    const diags = await okfAdapter.validate(
-      component(),
+    const diags = await checkChanges(
+      okfAdapter,
+      bundle(),
       [change("notes/stale.md", "---\ntype: knowledge\ntitle: Stale\n---\n\nbody\n")],
       makeValidateContext({ resolveRef: async () => ({ exists: true }) }),
     );
@@ -605,8 +615,9 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("neither timestamp nor generated present — still no `missing-updated` (both remain fully optional under v0.2)", async () => {
-    const diags = await okfAdapter.validate(
-      component(),
+    const diags = await checkChanges(
+      okfAdapter,
+      bundle(),
       [change("reports/neither.md", "---\ntype: Report\n---\n\nbody\n")],
       makeValidateContext({ resolveRef: async () => ({ exists: true }) }),
     );
@@ -614,8 +625,9 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 
   test("unknown frontmatter keys never fail; delete changes are skipped; validate does not throw", async () => {
-    const diags = await okfAdapter.validate(
-      component(),
+    const diags = await checkChanges(
+      okfAdapter,
+      bundle(),
       [
         change("notes/extra.md", "---\ntype: knowledge\ntimestamp: 2026-01-01\nproducerKey: anything\n---\n\nbody\n"),
         { path: "gone.md", op: "delete" },
@@ -623,12 +635,13 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
       makeValidateContext({ resolveRef: async () => ({ exists: true }) }),
     );
     // No diagnostic keyed on the unknown `producerKey`; nothing thrown.
-    expect(diags.every((d: Diagnostic) => !d.detail.includes("producerKey"))).toBe(true);
+    expect(diags.every((d: FileDiagnostic) => !d.detail.includes("producerKey"))).toBe(true);
   });
 
   test("reserved index.md is not treated as a concept (no missing-type)", async () => {
-    const diags = await okfAdapter.validate(
-      component(),
+    const diags = await checkChanges(
+      okfAdapter,
+      bundle(),
       [change("index.md", readFixture("index.md"))],
       makeValidateContext({ resolveRef: async () => ({ exists: false }) }),
     );
@@ -653,7 +666,7 @@ describe("okf adapter — recognition golden", () => {
 
   for (const [relPath, expected] of Object.entries(byRelPath)) {
     test(`recognize(${relPath})`, () => {
-      const doc = okfAdapter.recognize(component(), fc(relPath));
+      const doc = okfAdapter.recognize(bundle(), fc(relPath));
       if (expected.recognized === false) {
         expect(doc, `${relPath} must NOT be recognized (reserved)`).toBeNull();
         return;
@@ -661,7 +674,6 @@ describe("okf adapter — recognition golden", () => {
       expect(doc, `${relPath} must be recognized`).not.toBeNull();
       if (!doc) throw new Error("unreachable");
       expect(doc.adapterId).toBe(expected.adapterId as string);
-      expect(doc.component).toBe(expected.component as string);
       expect(doc.type).toBe(expected.type as string);
       expect(doc.conceptId).toBe(expected.conceptId as string);
       expect(doc.ref).toBe(expected.ref as string);
@@ -689,7 +701,7 @@ describe("okf adapter — renderer golden (presentationFor is adapter-agnostic, 
   test("every type recognized in the golden fixture is covered above", () => {
     const seen = new Set<string>();
     for (const relPath of Object.keys((loadGolden("recognition").byRelPath as Record<string, unknown>) ?? {})) {
-      const doc = okfAdapter.recognize(component(), fc(relPath));
+      const doc = okfAdapter.recognize(bundle(), fc(relPath));
       if (doc) seen.add(doc.type);
     }
     expect([...seen].sort()).toEqual(Object.keys(byType).sort());
@@ -698,7 +710,7 @@ describe("okf adapter — renderer golden (presentationFor is adapter-agnostic, 
 
 describe("okf adapter — lint golden", () => {
   const golden = loadGolden("lint");
-  const perType = golden.perType as Record<string, { relPath: string; issues: Diagnostic[] }>;
+  const perType = golden.perType as Record<string, { relPath: string; issues: FileDiagnostic[] }>;
 
   test("each fixture file validates to exactly the golden's issue list", async () => {
     const changes: FileChange[] = Object.values(perType).map((e) => ({
@@ -706,14 +718,15 @@ describe("okf adapter — lint golden", () => {
       op: "update" as const,
       after: readFixture(e.relPath),
     }));
-    const diags = await okfAdapter.validate(
-      component(),
+    const diags = await checkChanges(
+      okfAdapter,
+      bundle(),
       changes,
       makeValidateContext({
         resolveRef: async (ref) => ({ exists: fs.existsSync(path.join(FIXTURE_ROOT, `${ref}.md`)) }),
       }),
     );
-    const byFile = new Map<string, Diagnostic[]>();
+    const byFile = new Map<string, FileDiagnostic[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d]);
     for (const entry of Object.values(perType)) {
       expect(byFile.get(entry.relPath) ?? [], entry.relPath).toEqual(entry.issues ?? []);

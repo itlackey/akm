@@ -9,10 +9,10 @@
  * https://code.claude.com/docs/en/claude-directory): a root `CLAUDE.md` →
  * `instruction`, `commands/*.md` → `command`, `agents/*.md` → `agent`,
  * `skills/<name>/SKILL.md` → `skill` (item = the dir; bundled resources abstain),
- * and ABSTAINS on runtime config (`settings.json`, `.mcp.json`). The component
- * id is the PROVENANCE `.claude`; the ref prefix is the bundle id (`c.id`).
+ * and ABSTAINS on runtime config (`settings.json`, `.mcp.json`). The ref prefix
+ * is the bundle id (`c.id`).
  *
- * All behavior lives in the shared tool-dir codec ({@link makeToolDirAdapter});
+ * All behavior lives in the shared tool-dir codec ({@link ToolDirAdapterBase});
  * this module supplies only the `.claude` layout + the install-time probe.
  *
  * Conformance oracle (authored, DO NOT modify): fixture
@@ -22,12 +22,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { BundleAdapter } from "../bundle-adapter";
-import { makeToolDirAdapter, type ToolDirLayout } from "./tool-dir-shared";
+import { ToolDirAdapterBase, type ToolDirLayout } from "./tool-dir-shared";
 
 const LAYOUT: ToolDirLayout = {
   adapterId: "claude",
-  componentId: ".claude",
   instructionFile: "CLAUDE.md",
   instructionConceptId: "CLAUDE",
   commandDirs: new Set(["commands"]),
@@ -62,4 +60,14 @@ function claudeLooksLikeRoot(root: string): boolean {
   return ["commands", "agents", "skills"].some((d) => dirExists(path.join(root, d)));
 }
 
-export const claudeAdapter: BundleAdapter = makeToolDirAdapter(LAYOUT, claudeLooksLikeRoot);
+export class ClaudeAdapter extends ToolDirAdapterBase {
+  constructor() {
+    super(LAYOUT);
+  }
+
+  looksLikeRoot(root: string): boolean {
+    return claudeLooksLikeRoot(root);
+  }
+}
+
+export const claudeAdapter = new ClaudeAdapter();

@@ -167,11 +167,7 @@ function buildFixture(): void {
       },
     ];
     for (const e of entries) {
-      const provenance = deriveEntryProvenance(
-        { bundleId: "stash", componentId: "stash", adapterId: "akm" },
-        e.entry.type,
-        e.entry.name,
-      );
+      const provenance = deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, e.entry.type, e.entry.name);
       upsertEntry(db, e.filePath, e.entry, provenance);
     }
     rebuildFts(db);
@@ -193,7 +189,7 @@ for (const bundleId of ["stash", "team"]) {
         db,
         "/unread/parent.derived.md",
         child,
-        deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, "memory", child.name),
+        deriveEntryProvenance({ bundleId, adapterId: "akm" }, "memory", child.name),
       );
       const hit: SourceSearchHit = { name: "parent", type: "memory", path: "/unread/parent.md", ref: "wiki:parent" };
       await enrichSearchHit(hit, {
@@ -295,7 +291,7 @@ for (const fixture of fallbackFixtures) {
         db,
         `/unread/${child.name}.md`,
         child,
-        deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, "memory", child.name),
+        deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "memory", child.name),
       );
       const entry: IndexDocument = {
         name: fixture.name,

@@ -80,7 +80,7 @@ function insertTestEntry(
     db,
     opts?.filePath ?? path.join(opts?.stashDir ?? "/test/stash", `${key}.ts`),
     entry,
-    deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, type, key),
+    deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, type, key),
   );
 }
 
@@ -303,7 +303,7 @@ describe("searchVec and getNeighborsByEntryId with a scope (#998)", () => {
       db,
       path.join("/test/stash", `${key}.md`),
       makeEntry({ name: key, type }),
-      deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, key),
+      deriveEntryProvenance({ bundleId, adapterId: "akm" }, type, key),
     );
     if (deg !== undefined) upsertEmbedding(db, id, at(deg));
     return id;

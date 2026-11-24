@@ -67,7 +67,7 @@ beforeEach(async () => {
   writeSandboxConfig({
     semanticSearchMode: "off",
     defaultBundle: "fixture",
-    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+    bundles: { fixture: { path: storage.stashDir, adapter: "akm" } },
     harnesses: {
       reviewer: { platform: "codex", bin: fakeCodex, args: [] },
       flaky: { platform: "codex", bin: flakyCodex, args: [] },
@@ -168,7 +168,7 @@ describe("additive akm run", () => {
     writeSandboxConfig({
       bundles: {
         fixture: { path: storage.stashDir },
-        other: { path: other, components: { main: { root: ".", adapter: "akm" } } },
+        other: { path: other, adapter: "akm" },
       },
     });
     const run = await runCliCapture(["run", "other//tasks/check", "--label=001", "--scheduled"]);
@@ -197,7 +197,7 @@ describe("additive akm run", () => {
     writeSandboxConfig({
       bundles: {
         fixture: { path: storage.stashDir },
-        other: { path: other, components: { main: { root: ".", adapter: "akm" } } },
+        other: { path: other, adapter: "akm" },
       },
     });
     const only = await runCliCapture(["run", "tasks/only-there"]);
@@ -286,12 +286,12 @@ describe("additive akm run", () => {
   });
 
   test("dispatch follows adapter type rather than a native-looking path prefix", async () => {
-    const componentRoot = path.join(storage.root, "standalone");
-    write("scripts/deep/nightly.yml", "version: 4\nrun: printf standalone\nshell: sh\n", componentRoot);
+    const contentRoot = path.join(storage.root, "standalone");
+    write("scripts/deep/nightly.yml", "version: 4\nrun: printf standalone\nshell: sh\n", contentRoot);
     writeSandboxConfig({
       bundles: {
         fixture: { path: storage.stashDir },
-        standalone: { path: componentRoot, components: { main: { root: ".", adapter: "akm-task" } } },
+        standalone: { path: contentRoot, adapter: "akm-task" },
       },
     });
     const result = await runCliCapture(["run", "standalone//scripts/deep/nightly"]);
@@ -454,8 +454,8 @@ describe("akm run scripts/<file>", () => {
     write("scripts/args.sh", 'printf mine > "$B5_OUT"\n', other);
     writeSandboxConfig({
       bundles: {
-        fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } },
-        other: { path: other, components: { main: { root: ".", adapter: "akm" } } },
+        fixture: { path: storage.stashDir, adapter: "akm" },
+        other: { path: other, adapter: "akm" },
       },
     });
     expect((await runCliCapture(["run", "scripts/args.sh", "--bundle", "other"])).code).toBe(0);
@@ -514,7 +514,7 @@ describe("akm run scripts/<file>", () => {
     writeSandboxConfig({
       bundles: {
         fixture: { path: storage.stashDir },
-        other: { path: other, components: { main: { root: ".", adapter: "akm" } } },
+        other: { path: other, adapter: "akm" },
       },
     });
     const result = await runCliCapture(["run", "other//scripts/hello.sh"]);

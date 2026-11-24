@@ -85,7 +85,7 @@ function makeEntry(type: string, name: string): IndexDocument {
 }
 
 function infoEntryProvenance(type: string, name: string) {
-  return deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, type, name);
+  return deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, type, name);
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

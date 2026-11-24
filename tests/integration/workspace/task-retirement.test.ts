@@ -77,6 +77,12 @@ beforeEach(async () => {
   }
 });
 
+/** Whether an installed row runs the task `id`: by its ref, or in the id form written before 0.11. */
+function namesTask(row: { invocation?: readonly string[] }, id: string): boolean {
+  const subject = row.invocation?.[2];
+  return subject === id || subject?.endsWith(`//tasks/${id}`) === true;
+}
+
 afterEach(() => {
   selection.mockRestore();
   storage.cleanup();
@@ -84,7 +90,7 @@ afterEach(() => {
 
 for (const through of ["workspace", "proposal"] as const) {
   test(`${through} retirement removes all native bindings and activation; revert restores only the source`, async () => {
-    const beforeOther = (await backend.list()).filter((row) => row.invocation?.[2] !== "nightly");
+    const beforeOther = (await backend.list()).filter((row) => !namesTask(row, "nightly"));
     const proposalId =
       through === "workspace"
         ? (await documents.retire({ ref, revision: revision() })).proposalId
@@ -97,7 +103,7 @@ for (const through of ["workspace", "proposal"] as const) {
     expect(loadConfig().scheduler?.enabled).toEqual(["stash//tasks/other"]);
     expect(await backend.list()).toEqual(beforeOther);
     const proposal = getProposal(storage.stashDir, proposalId);
-    const archive = proposal.retiredArchive?.dirs[0];
+    const archive = proposal.retiredArchive?.retired[0]?.handle;
     expect(archive).toBeDefined();
     expect(fs.readFileSync(path.join(storage.stashDir, archive!, "tasks/nightly.yml"), "utf8")).toBe(source);
     // Accepting again reads only the archive: no scheduler lock, bundle lookup or native query.
@@ -126,7 +132,7 @@ test("failed native removal leaves the bytes and the activation in place; retry 
   await akmProposalAccept({ id: proposal.id });
   expect(fs.existsSync(taskFile())).toBe(false);
   expect(loadConfig().scheduler?.enabled).toEqual(["stash//tasks/other"]);
-  expect((await backend.list()).every((row) => row.invocation?.[2] !== "nightly")).toBe(true);
+  expect((await backend.list()).every((row) => !namesTask(row, "nightly"))).toBe(true);
 });
 
 test("a stale proposal does not change scheduler config or native rows", async () => {
@@ -170,8 +176,8 @@ test("a legacy host adopts its other installed tasks before removing the retired
   saveConfig(config);
   await documents.retire({ ref, revision: revision() });
   expect(loadConfig().scheduler?.enabled).toEqual(["stash//tasks/other"]);
-  expect((await backend.list()).some((row) => row.invocation?.[2] === "nightly")).toBe(false);
-  expect((await backend.list()).filter((row) => row.invocation?.[2] === "other")).toHaveLength(2);
+  expect((await backend.list()).some((row) => namesTask(row, "nightly"))).toBe(false);
+  expect((await backend.list()).filter((row) => namesTask(row, "other"))).toHaveLength(2);
 });
 
 test("another task's source failure is reported with its path and does not block the retirement", async () => {
@@ -180,7 +186,7 @@ test("another task's source failure is reported with its path and does not block
   const result = await akmProposalAccept({ id: proposal.id });
   expect(result.warnings).toHaveLength(1);
   expect(result.warnings?.[0]).toContain("tasks/other.yml");
-  expect((await backend.list()).some((row) => row.invocation?.[2] === "nightly")).toBe(false);
+  expect((await backend.list()).some((row) => namesTask(row, "nightly"))).toBe(false);
   expect(fs.existsSync(taskFile())).toBe(false);
   expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted");
 });
@@ -212,14 +218,14 @@ test("a failed task-disable followed by a fresh retirement still removes native 
   const disabled = await akmTasksDisable(ref, {}, { backend });
   expect(disabled.sync.failures.length).toBeGreaterThan(0);
   expect(loadConfig().scheduler?.enabled).not.toContain(ref);
-  expect((await backend.list()).some((row) => row.invocation?.[2] === "nightly")).toBe(true);
+  expect((await backend.list()).some((row) => namesTask(row, "nightly"))).toBe(true);
   await expect(documents.retire({ ref, revision: revision() })).rejects.toThrow("native scheduler unavailable");
   expect(fs.readFileSync(taskFile(), "utf8")).toBe(source);
   failWrite = false;
   const receipt = await documents.retire({ ref, revision: revision() });
   expect(receipt.warnings).toEqual([]);
   expect(fs.existsSync(taskFile())).toBe(false);
-  expect((await backend.list()).some((row) => row.invocation?.[2] === "nightly")).toBe(false);
+  expect((await backend.list()).some((row) => namesTask(row, "nightly"))).toBe(false);
 });
 
 test("fresh workspace retries after rejected retirement cannot hide failed native cleanup", async () => {
@@ -227,12 +233,12 @@ test("fresh workspace retries after rejected retirement cannot hide failed nativ
   for (let attempt = 0; attempt < 2; attempt++) {
     await expect(documents.retire({ ref, revision: revision() })).rejects.toThrow("native scheduler unavailable");
     expect(fs.readFileSync(taskFile(), "utf8")).toBe(source);
-    expect((await backend.list()).some((row) => row.invocation?.[2] === "nightly")).toBe(true);
+    expect((await backend.list()).some((row) => namesTask(row, "nightly"))).toBe(true);
   }
   failWrite = false;
   const receipt = await documents.retire({ ref, revision: revision() });
   expect(receipt.warnings).toEqual([]);
-  expect((await backend.list()).some((row) => row.invocation?.[2] === "nightly")).toBe(false);
+  expect((await backend.list()).some((row) => namesTask(row, "nightly"))).toBe(false);
 });
 
 test("proposal acceptance exposes incomplete cleanup when disabled native state is unknown", async () => {
@@ -276,7 +282,7 @@ for (const resume of [false, true]) {
     expect(getProposal(storage.stashDir, proposal.id).retiredArchive).toBeUndefined();
     // The refused retirement left a live task, so it is scheduled as it was.
     expect(loadConfig().scheduler?.enabled).toEqual([ref, "stash//tasks/other"]);
-    expect((await backend.list()).filter((row) => row.invocation?.[2] === "nightly")).toHaveLength(2);
+    expect((await backend.list()).filter((row) => namesTask(row, "nightly"))).toHaveLength(2);
   });
 }
 
@@ -373,11 +379,11 @@ test("enabled retirement verifies remaining unknown ownership after removing its
     "",
   ].join("\n");
   table += unknownRow;
-  expect((await backend.list()).filter((row) => row.invocation?.[2] === "nightly")).toHaveLength(3);
+  expect((await backend.list()).filter((row) => namesTask(row, "nightly"))).toHaveLength(3);
   const receipt = await documents.retire({ ref, revision: revision() });
   expect(receipt.warnings?.[0]).toContain("owning bundle path could not be read");
   expect(loadConfig().scheduler?.enabled).not.toContain(ref);
-  const remaining = (await backend.list()).filter((row) => row.invocation?.[2] === "nightly");
+  const remaining = (await backend.list()).filter((row) => namesTask(row, "nightly"));
   expect(remaining).toHaveLength(1);
   expect(remaining[0]?.contextPath).toBe(missingContext);
   expect(table).toContain(unknownRow.trim());
@@ -390,7 +396,7 @@ test("a backend reporting successful removal does not prove that native bindings
       "remains installed in the native scheduler",
     );
     expect(fs.readFileSync(taskFile(), "utf8")).toBe(source);
-    expect((await backend.list()).some((row) => row.invocation?.[2] === "nightly")).toBe(true);
+    expect((await backend.list()).some((row) => namesTask(row, "nightly"))).toBe(true);
   } finally {
     uninstall.mockRestore();
   }

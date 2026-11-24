@@ -60,8 +60,8 @@ async function indexRepo(root: string): Promise<void> {
     semanticSearchMode: "off",
     defaultBundle: "local",
     bundles: {
-      local: { path: stashDir, writable: true, components: { main: { root: ".", adapter: "akm", writable: true } } },
-      proj: { path: root, components: { main: { root: ".", adapter: "code-project" } } },
+      local: { path: stashDir, writable: true, adapter: "akm" },
+      proj: { path: root, adapter: "code-project" },
     },
   });
   resetConfigCache();

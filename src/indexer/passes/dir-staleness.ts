@@ -114,14 +114,13 @@ export function getDirIndexState(
  * persisted row cannot recognize differently than last time, so it is skipped
  * before `drainDirDocuments` reads a single file. A row that recorded a real
  * generation (`rowCount > 0`) is skipped outright; a zero-row or pre-#900 row
- * goes through the entries-aware check so the dedup-order guard still applies.
+ * goes through the entries-aware check.
  */
 export function getCachedDirState(
   db: Database,
   dirPath: string,
   files: string[],
   builtAtMs: number,
-  priorDirsChanged: boolean,
   indexVariant: string,
   fingerprint: DirFingerprint,
 ): DirIndexState | undefined {
@@ -132,16 +131,7 @@ export function getCachedDirState(
   }
   const state = getDirIndexState(db, dirPath, files, builtAtMs, indexVariant, fingerprint);
   if (state.stale || state.reason.kind !== "cached-zero-row-state") return undefined;
-  if (!canUseIncrementalSkip(state, priorDirsChanged)) return undefined;
   return state;
-}
-
-export function canUseIncrementalSkip(state: DirIndexState, priorDirsChanged: boolean): boolean {
-  return !(
-    priorDirsChanged &&
-    state.reason.kind === "cached-zero-row-state" &&
-    state.reason.detail === "deduped-zero-row"
-  );
 }
 
 export function computeDirFingerprint(_dirPath: string, files: string[], indexVariant = ""): DirFingerprint {
@@ -167,6 +157,7 @@ export function computeDirFingerprint(_dirPath: string, files: string[], indexVa
       // `bigint: true` is the same syscall but reports nanoseconds. Millisecond
       // floats would let an edit made inside the same millisecond as the last
       // run's stat land on an identical digest.
+      // asset-io: state the directory scan's incremental state (principled exception 6)
       const stat = fs.statSync(file, { bigint: true });
       fileMtimeMaxMs = Math.max(fileMtimeMaxMs, Number(stat.mtimeMs));
       entries.push(`${name}\0${stat.size}\0${stat.mtimeNs}\0${stat.ctimeNs}`);
@@ -211,6 +202,7 @@ function getDirStaleReason(
 
   for (const file of currentFiles) {
     try {
+      // asset-io: state the directory scan's incremental state (principled exception 6)
       if (fs.statSync(file).mtimeMs > builtAtMs) return { kind: "mtime-changed", detail: path.basename(file) };
     } catch {
       return { kind: "missing-file", detail: path.basename(file) };
@@ -225,9 +217,7 @@ export function inferZeroRowReason(
   priorReason: { kind: string; detail?: string } | undefined,
   warnings: string[],
   dirPath: string,
-  dedupedRows: number,
 ): string {
-  if (dedupedRows > 0) return "deduped-zero-row";
   const workflowNoise = warnings.some(
     (warning) => warning.startsWith("Skipped workflow ") && warning.includes(dirPath),
   );

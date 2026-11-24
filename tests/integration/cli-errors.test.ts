@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { main } from "../../src/cli";
 import { GLOBAL_OUTPUT_ARGS } from "../../src/cli/shared";
-import { VALID_ADAPTER_IDS } from "../../src/core/adapter/adapter-ids";
+import { adapterIds } from "../../src/core/adapter/registry";
 import { ConfigError, NotFoundError, UsageError } from "../../src/core/errors";
 import { formatExemptSurfaces } from "../../src/output/format-exempt";
 import { runCliCapture } from "../_helpers/cli";
@@ -834,7 +834,7 @@ describe("S11: sectioned root help", () => {
   });
 
   test("akm bundle add --help lists every registry adapter id in --adapter's description (#909)", () => {
-    // Regression: there was no way to discover the valid `components.*.adapter`
+    // Regression: there was no way to discover the valid `bundles.<name>.adapter`
     // names from the CLI at all (`akm bundle add --help` named no `--adapter`
     // flag, let alone a registry listing). RED on old code: no `--adapter` flag
     // existed, so none of these assertions held.
@@ -842,7 +842,7 @@ describe("S11: sectioned root help", () => {
     expect(status).toBe(0);
     expect(stderr).toBe("");
     expect(stdout).toContain("--adapter");
-    for (const id of VALID_ADAPTER_IDS) {
+    for (const id of adapterIds()) {
       expect(stdout).toContain(id);
     }
     expect(stdout).toContain("--credential");

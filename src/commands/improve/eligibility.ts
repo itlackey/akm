@@ -4,11 +4,12 @@
 
 /** The refs an improve run may consider, read from the index, and the small predicates over them. */
 
-import fs from "node:fs";
 import path from "node:path";
-import { parseBundleRef } from "../../core/asset/asset-ref";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef, resolveRef } from "../../core/asset/resolve-ref";
+import { findAsset } from "../../core/assets/read";
+import { materialiseBundleDir } from "../../core/bundle-at-dir";
+import { deriveBundleIds } from "../../core/bundle-id";
 import { closestMatch } from "../../core/closest-match";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -19,8 +20,8 @@ import { getDbPath } from "../../core/paths";
 import { KNOWN_TYPES } from "../../core/recognition-util";
 import { warn } from "../../core/warn";
 import { deriveInstallations, deriveWritableBundleIds } from "../../indexer/installations";
+import { findAssetOnDisk, resolveAssetPath } from "../../indexer/path-resolver";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { Database } from "../../storage/database";
 import {
   closeDatabase,
@@ -33,6 +34,7 @@ import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-
 import { SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
 import { isDistillRefusedInputType } from "./distill";
 import { isStrategyFilteredForAllPasses } from "./improve-strategies";
+import { indexedAsset, plannedAsset } from "./indexed-asset";
 import { parseMemoryRef } from "./memory/derived-ref";
 
 type Scope = { mode: "all" | "type" | "ref"; value?: string };
@@ -261,8 +263,8 @@ async function collectEligibleRefsFromIndex(
         );
       }
       const indexed = entriesByItemRef.get(`${resolved.bundle}//${resolved.conceptId}`);
-      if (!indexed?.bundleId || !indexed.conceptId || !fs.existsSync(indexed.filePath)) {
-        if (await findAssetFilePath(scope.value, stashDir)) return empty(ready);
+      if (!indexed?.bundleId || !indexed.conceptId || !indexedAsset(indexed.bundleId, indexed.conceptId)) {
+        if (findAssetOnDisk(scope.value, { stashDir })) return empty(ready);
         throw new NotFoundError(`Asset not found in the selected writable source: ${scope.value}`, "ASSET_NOT_FOUND");
       }
       if (!isCandidateBundle(indexed.bundleId)) return empty(ready);
@@ -348,10 +350,12 @@ export function memoryCleanupParentRef(scope: Scope, stashDir?: string): string 
   const parsed = scopePlacement(scope.value);
   if (parsed?.type !== "memory") return undefined;
   if (!parsed.name.endsWith(".derived")) return conceptIdFromTypeName(parsed.type, parsed.name);
-  for (const source of resolveSourceEntries(stashDir)) {
-    const candidate = path.join(source.path, "memories", `${parsed.name}.md`);
-    if (!fs.existsSync(candidate)) continue;
-    const fm = parseFrontmatter(fs.readFileSync(candidate, "utf8")).data;
+  if (stashDir !== undefined) materialiseBundleDir(stashDir);
+  const sources = resolveSourceEntries(stashDir);
+  for (const id of deriveBundleIds(sources)) {
+    const held = findAsset(makeBundleRef(id, conceptIdFromTypeName("memory", parsed.name)));
+    if (!held) continue;
+    const fm = held.entry.frontmatter() ?? {};
     const parent = parseMemoryRef(typeof fm.source === "string" ? fm.source : undefined);
     if (parent) return parent;
   }
@@ -359,17 +363,21 @@ export function memoryCleanupParentRef(scope: Scope, stashDir?: string): string 
 }
 
 /** Should this ref enter the distill queue? Types distill refuses never do. */
-export function isDistillCandidateRef(planned: Pick<ImproveEligibleRef, "ref" | "type" | "filePath">): boolean {
+export function isDistillCandidateRef(
+  planned: Pick<ImproveEligibleRef, "ref" | "type" | "filePath" | "itemRef">,
+  stashDir?: string,
+): boolean {
   if (isDistillRefusedInputType(planned.type)) return false;
-  return shouldDistillMemoryRef(planned);
+  return shouldDistillMemoryRef(planned, stashDir);
 }
 
 /** A non-derived memory that is not marked `quality: proposed`. */
-export function shouldDistillMemoryRef(planned: Pick<ImproveEligibleRef, "ref" | "type" | "filePath">): boolean {
+export function shouldDistillMemoryRef(
+  planned: Pick<ImproveEligibleRef, "ref" | "type" | "filePath" | "itemRef">,
+  stashDir?: string,
+): boolean {
   if (planned.type !== "memory") return false;
-  if (planned.filePath && fs.existsSync(planned.filePath)) {
-    if (parseFrontmatter(fs.readFileSync(planned.filePath, "utf8")).data.quality === "proposed") return false;
-  }
+  if (planned.filePath && plannedAsset(planned, stashDir)?.entry.frontmatter()?.quality === "proposed") return false;
   return !planned.ref.endsWith(".derived");
 }
 

@@ -27,7 +27,7 @@
  * `placeholder-stub` and `orphaned-stub` carry a `--fix` DELETE in the live
  * linters; `BundleAdapter.validate` MUST NOT write, so both are emitted as
  * non-fixable Diagnostics here (never delete). All reads route through
- * `ValidateContext` (the run snapshot + pending overlay) — the live linters'
+ * `FileValidateContext` (the run snapshot + pending overlay) — the live linters'
  * `fs.existsSync` sibling/SKILL.md probes become `ctx.readFile` lookups.
  *
  * ── env/secret dangerous-key narrowness (PRESERVED) ──
@@ -60,11 +60,10 @@ import { taskSourceErrorDetail } from "../../../tasks/source-v3";
 import { checkWorkflowPlan, compileWorkflowSource } from "../../../workflows/compile";
 import { type RuleScope, ruleApplies } from "../../asset/lint-text";
 import { conceptIdForStashFile } from "../../asset/resolve-ref";
+import { KNOWN_CATEGORIES } from "../../asset/type-keys";
 import { isAkmRegistryCachePath, scanEnvKeyNames } from "../../common";
-import type { BundleComponent, Diagnostic, ValidateContext } from "../types";
-
-/** Recommended `category` values for facts — `commands/lint/fact-linter.ts:9`. */
-export const KNOWN_CATEGORIES = new Set(["personal", "team", "project", "convention", "meta"]);
+import type { Bundle } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 
 /** Placeholder markers a workflow stub carries — `commands/lint/workflow-linter.ts:10`. */
 const PLACEHOLDER_STRINGS = ["Describe what this workflow accomplishes", "Example Workflow"];
@@ -110,7 +109,7 @@ export function nameOrTypeDiagnostics(
   data: Record<string, unknown>,
   frontmatter: string | null,
   allowedTypes: readonly string[],
-): Diagnostic[] {
+): FileDiagnostic[] {
   const missingFieldDetail = checkMissingNameOrType(data, frontmatter);
   if (missingFieldDetail) {
     const slug = suggestSlug(relPath);
@@ -159,7 +158,7 @@ function collectSuppressedKeys(raw: string): Set<string> {
  * `env:<base>` / `secret:<base>` would use a colon grammar the ref parser
  * rejects — a dead-end ref on a *security* finding.
  */
-export function dangerousEnvKeyDiagnostics(type: string | undefined, relPath: string, raw: string): Diagnostic[] {
+export function dangerousEnvKeyDiagnostics(type: string | undefined, relPath: string, raw: string): FileDiagnostic[] {
   if (type !== "env" && type !== "secret") return [];
   const baseNameWithExt = path.basename(relPath);
   if (!baseNameWithExt.endsWith(".env")) return []; // NARROWNESS: collectEnvFiles only visits *.env
@@ -168,7 +167,7 @@ export function dangerousEnvKeyDiagnostics(type: string | undefined, relPath: st
 
   const keys = scanEnvKeyNames(raw);
   const suppressed = collectSuppressedKeys(raw);
-  const diagnostics: Diagnostic[] = [];
+  const diagnostics: FileDiagnostic[] = [];
   for (const key of keys) {
     if (!isDangerousEnvKey(key)) continue;
     if (suppressed.has(key)) continue;
@@ -191,7 +190,7 @@ const AKM_SKILL_DIRS: ReadonlySet<string> = new Set(["skills"]);
 export const MAX_SKILL_GROUP_DEPTH = 3;
 
 /** True when a skill package (a `SKILL.md`) sits somewhere below `dir`, which is `depth` levels under the type dir. */
-async function hasSkillBelow(dir: string, depth: number, ctx: ValidateContext): Promise<boolean> {
+async function hasSkillBelow(dir: string, depth: number, ctx: FileValidateContext): Promise<boolean> {
   if (depth >= MAX_SKILL_GROUP_DEPTH) return false;
   for (const entry of await ctx.list(dir)) {
     if (entry.startsWith(".")) continue;
@@ -218,9 +217,9 @@ async function hasSkillBelow(dir: string, depth: number, ctx: ValidateContext): 
 export async function skillDirectoryDiagnostics(
   relPath: string,
   seen: Set<string>,
-  ctx: ValidateContext,
+  ctx: FileValidateContext,
   skillDirs: ReadonlySet<string> = AKM_SKILL_DIRS,
-): Promise<Diagnostic[]> {
+): Promise<FileDiagnostic[]> {
   const segments = relPath
     .replace(/\\/g, "/")
     .split("/")
@@ -264,7 +263,7 @@ export function derivedSiblingPath(memoryPath: string): string {
   return `${memoryPath.replace(/\.md$/i, "")}.derived.md`;
 }
 
-type TypeCheck = (input: TypeCheckInput) => Diagnostic[];
+type TypeCheck = (input: TypeCheckInput) => FileDiagnostic[];
 
 const nameOrType =
   (allowed: string): TypeCheck =>
@@ -308,12 +307,12 @@ const TYPE_CHECKS: ReadonlyMap<string, TypeCheck> = new Map<string, TypeCheck>([
 ]);
 
 /** The checks of the file's own type. */
-export function perTypeChecks(input: TypeCheckInput): Diagnostic[] {
+export function perTypeChecks(input: TypeCheckInput): FileDiagnostic[] {
   return (input.type === undefined ? undefined : TYPE_CHECKS.get(input.type))?.(input) ?? [];
 }
 
 /** Everything an adapter's `validate` reports of the file's own type: its checks, then its frontend's findings and advisories. */
-export function perTypeDiagnostics(input: TypeCheckInput, parsePath: string): Diagnostic[] {
+export function perTypeDiagnostics(input: TypeCheckInput, parsePath: string): FileDiagnostic[] {
   const frontend = perTypeFrontend(input, parsePath);
   return [...perTypeChecks(input), ...frontend.errors, ...frontend.warnings];
 }
@@ -333,7 +332,7 @@ export function perTypeFrontend(
 }
 
 /** FactLinter extra check (`fact-linter.ts:23-44`). */
-export function factDiagnostics(relPath: string, data: Record<string, unknown>): Diagnostic[] {
+export function factDiagnostics(relPath: string, data: Record<string, unknown>): FileDiagnostic[] {
   const category = typeof data.category === "string" ? data.category.trim() : "";
   if (!category) {
     return [
@@ -370,7 +369,7 @@ export function factDiagnostics(relPath: string, data: Record<string, unknown>):
  * contract; the cron suits the local scheduler backend), so `akm lint --type
  * tasks` never reports clean a task that sync would refuse.
  */
-export function taskDiagnostics(relPath: string, raw: string): Diagnostic[] {
+export function taskDiagnostics(relPath: string, raw: string): FileDiagnostic[] {
   try {
     const parsed = parseTaskSource({
       filePath: relPath,
@@ -418,7 +417,7 @@ export function workflowStructureDiagnostics(
 }
 
 /**
- * The `Diagnostic.line` fragment for a line-anchored workflow finding. Every
+ * The `FileDiagnostic.line` fragment for a line-anchored workflow finding. Every
  * `WorkflowError` carries a 1-indexed `line`; keeping it gives an author linting a
  * 300-line workflow a location, as the same error has on the `workflow create`
  * path. Spread (`...lineOf(err)`) rather than assigned, so a nonsense line
@@ -433,7 +432,7 @@ function lineOf(err: { line?: number }): { line?: number } {
  * codes this pass emits, so a caller can route the result onto its own closed
  * issue union (`commands/lint/types.ts`'s `LintIssueType`) without a cast.
  */
-export type WorkflowFrontendDiagnostic = Diagnostic & {
+export type WorkflowFrontendDiagnostic = FileDiagnostic & {
   issue: "invalid-workflow-structure" | "workflow-warning";
 };
 
@@ -529,6 +528,6 @@ export function memoryOrphanStubApplies(data: Record<string, unknown>, body: str
   return data.inferenceProcessed === true && body.trim().length < 100;
 }
 
-// Re-export the component type so `akm-adapter.ts` can share it without a
+// Re-export the bundle type so `akm-adapter.ts` can share it without a
 // second import site if it ever needs it here (keeps the leaf self-describing).
-export type { BundleComponent };
+export type { Bundle };

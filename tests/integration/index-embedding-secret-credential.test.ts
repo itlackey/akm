@@ -34,10 +34,10 @@ import { akmUpdate } from "../../src/commands/sources/installed-stashes";
 import { resetConfigCache } from "../../src/core/config/config";
 import { writeCredential } from "../../src/core/config/credentials";
 import { getRegistryCacheDir } from "../../src/core/paths";
-import { indexWrittenAssets } from "../../src/indexer/index-written-assets";
 import { akmIndex } from "../../src/indexer/indexer";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
 import * as syncFromRefModule from "../../src/sources/providers/sync-from-ref";
+import { indexWrittenAssets } from "../_helpers/index-written-files";
 import { seedLockEntries } from "../_helpers/lockfile";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
@@ -269,7 +269,7 @@ describe("akm bundle update: the update's embedding phase carries the stored cre
     writeSandboxConfig({
       semanticSearchMode: "auto",
       bundles: {
-        [id]: { npm: id, components: { main: { root: ".", adapter: "akm", writable: false } } },
+        [id]: { npm: id, adapter: "akm", writable: false },
       },
       embedding: { endpoint: capture.url, model: "mock", dimension: 8 },
     });

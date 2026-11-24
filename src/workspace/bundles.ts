@@ -53,10 +53,9 @@ export async function list() {
       writeBlocker: inspectWriteTarget(config, source.name).blocker,
       enabled: config.bundles?.[source.name]?.enabled !== false,
       writableSetting: config.bundles?.[source.name]?.writable,
-      components: source.components.map((component) => ({
-        ...component,
-        configured: !!config.bundles?.[source.name]?.components?.[component.name],
-      })),
+      adapter: source.adapter,
+      detected: source.detected,
+      root: config.bundles?.[source.name]?.root ?? ".",
       settingsSource: configSource(["bundles", source.name]),
       version: source.version ?? null,
       exists: source.status.exists,
@@ -179,12 +178,7 @@ export async function rename(input: { bundle: string; name: string; dryRun?: boo
   ]);
 }
 
-export function setSettings(input: {
-  bundle?: string;
-  enabled?: boolean;
-  writable?: boolean;
-  componentWritability?: Record<string, boolean>;
-}) {
+export function setSettings(input: { bundle?: string; enabled?: boolean; writable?: boolean }) {
   // Without a bundle there is nothing to change.
   if (input.bundle === undefined) return { saved: false };
   const result = mutateConfig((current) => {
@@ -197,14 +191,6 @@ export function setSettings(input: {
       if (input[key] === undefined) continue;
       if (typeof input[key] !== "boolean") throw new UsageError(`${key} must be a boolean.`);
       updated = setConfigValue(updated, `bundles.${bundle}.${key}`, String(input[key]));
-    }
-    if (input.componentWritability !== undefined) {
-      for (const [id, writable] of Object.entries(input.componentWritability)) {
-        if (!Object.hasOwn(entry.components ?? {}, id) || id.includes(".") || typeof writable !== "boolean") {
-          throw new UsageError("Only existing components with a boolean writable value can be changed.");
-        }
-        updated = setConfigValue(updated, `bundles.${bundle}.components.${id}.writable`, String(writable));
-      }
     }
     // Only a write can drop credentials, so a request that changes nothing is never refused.
     if (updated !== current) preserveUnrelatedConfig(current);

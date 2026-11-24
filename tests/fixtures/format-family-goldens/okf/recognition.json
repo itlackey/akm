@@ -31,7 +31,6 @@
     "guides/onboarding.md": {
       "recognized": true,
       "adapterId": "okf",
-      "component": "okf-sample",
       "type": "knowledge",
       "conceptId": "guides/onboarding",
       "ref": "okf-sample//guides/onboarding",
@@ -45,7 +44,6 @@
     "metrics/wau.md": {
       "recognized": true,
       "adapterId": "okf",
-      "component": "okf-sample",
       "type": "Metric",
       "conceptId": "metrics/wau",
       "ref": "okf-sample//metrics/wau",
@@ -59,7 +57,6 @@
     "tables/customers.md": {
       "recognized": true,
       "adapterId": "okf",
-      "component": "okf-sample",
       "type": "BigQuery Table",
       "conceptId": "tables/customers",
       "ref": "okf-sample//tables/customers",
@@ -73,7 +70,6 @@
     "tables/orders.md": {
       "recognized": true,
       "adapterId": "okf",
-      "component": "okf-sample",
       "type": "BigQuery Table",
       "conceptId": "tables/orders",
       "ref": "okf-sample//tables/orders",

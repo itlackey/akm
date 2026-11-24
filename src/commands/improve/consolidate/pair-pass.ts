@@ -39,6 +39,7 @@ import { concurrentMap } from "../../../core/concurrent";
 import type { AkmConfig } from "../../../core/config/config";
 import { SHIPPED_ALIAS } from "../../../core/config/model-aliases";
 import { UsageError } from "../../../core/errors";
+import { runGit } from "../../../core/git-run";
 import type {
   ConsolidatePairJudgeLabel,
   ConsolidatePairPassResult,
@@ -54,7 +55,6 @@ import { sameScope, scopeFromFrontmatter } from "../../../indexer/passes/metadat
 import type { RunnerSpec } from "../../../integrations/agent/runner";
 import type { Judge } from "../../../judges/registry";
 import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from "../../../llm/client";
-import { runGit } from "../../../sources/providers/git-install";
 import type { Database } from "../../../storage/database";
 import {
   closeDatabase,
@@ -81,6 +81,7 @@ import {
 import type { AkmConsolidateOptions } from "../consolidate";
 import { contentHash, stripFrontmatterBody } from "../content-hash";
 import { resolveImproveExecution } from "../execution";
+import { indexedAsset, indexedContent, indexedModifiedMs } from "../indexed-asset";
 import { loadLedgerSnapshot, PAIR_PASS_LEDGER_SOURCE, recordLedgerAttempt, stripBundle } from "../ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "../retrieval-scope";
 import { callStage } from "../stage";
@@ -180,6 +181,8 @@ function claimList(value: unknown): string[] | undefined {
 /** A pair-pass asset: any type `getAllEntries` returns, not just memories. @internal exported for unit tests. */
 export interface PairAsset {
   ref: string;
+  /** The id of the bundle that holds it; absent: the first bundle that holds the ref. */
+  bundleId?: string;
   type: string;
   name: string;
   filePath: string;
@@ -206,9 +209,10 @@ export function isOwnTwinOrParent(a: PairAsset, b: PairAsset): boolean {
 export function loadPairPassPool(db: Database, bundleId: string): PairAsset[] {
   const assets: PairAsset[] = [];
   for (const e of getAllEntries(db, "memory")) {
-    if (e.bundleId !== bundleId || !fs.existsSync(e.filePath)) continue;
+    if (e.bundleId !== bundleId || !indexedAsset(e.bundleId, e.conceptId)) continue;
     assets.push({
       ref: e.conceptId,
+      bundleId: e.bundleId,
       type: "memory",
       name: e.entry.name,
       filePath: e.filePath,
@@ -216,9 +220,10 @@ export function loadPairPassPool(db: Database, bundleId: string): PairAsset[] {
     });
   }
   for (const e of getAllEntries(db, "knowledge")) {
-    if (e.bundleId !== bundleId || !isFlatName(e.entry.name) || !fs.existsSync(e.filePath)) continue;
+    if (e.bundleId !== bundleId || !isFlatName(e.entry.name) || !indexedAsset(e.bundleId, e.conceptId)) continue;
     assets.push({
       ref: e.conceptId,
+      bundleId: e.bundleId,
       type: "knowledge",
       name: e.entry.name,
       filePath: e.filePath,
@@ -226,9 +231,10 @@ export function loadPairPassPool(db: Database, bundleId: string): PairAsset[] {
     });
   }
   for (const e of getAllEntries(db, "lesson")) {
-    if (e.bundleId !== bundleId || !fs.existsSync(e.filePath)) continue;
+    if (e.bundleId !== bundleId || !indexedAsset(e.bundleId, e.conceptId)) continue;
     assets.push({
       ref: e.conceptId,
+      bundleId: e.bundleId,
       type: "lesson",
       name: e.entry.name,
       filePath: e.filePath,
@@ -264,6 +270,7 @@ const GIT_LOG_MAX_BUFFER = 16 * 1024 * 1024;
  * nested inside a larger repo.
  */
 export function loadGitFirstAddedMap(stashDir: string): ReadonlyMap<string, number> | undefined {
+  // asset-io: bundle-root git checkout probe
   if (!fs.existsSync(path.join(stashDir, ".git"))) return undefined;
   let result: ReturnType<typeof runGit>;
   try {
@@ -338,11 +345,7 @@ function createdMsOf(
 ): number {
   const known = gitFirstAdded?.get(repoRelativeKey(stashDir, asset.filePath));
   if (known !== undefined) return known;
-  try {
-    return fs.statSync(asset.filePath).mtimeMs;
-  } catch {
-    return 0;
-  }
+  return indexedModifiedMs(asset.bundleId, asset.ref) ?? 0;
 }
 
 export interface Initiator extends PairAsset {
@@ -436,12 +439,8 @@ export function selectInitiators(
   for (const asset of pool) {
     if (!isInRetrievalScope(retrievalScope, asset.ref, asset.filePath)) continue;
     const row = ledger.get(`${PAIR_PASS_LEDGER_SOURCE}\0${asset.ref}`);
-    let raw: string;
-    try {
-      raw = fs.readFileSync(asset.filePath, "utf8");
-    } catch {
-      continue; // unreadable: selectCandidates/judgeOne would skip it anyway
-    }
+    const raw = indexedContent(asset.bundleId, asset.ref);
+    if (raw === undefined) continue; // unreadable: selectCandidates/judgeOne would skip it anyway
     const bodyHash = contentHash(raw, "body");
     if (row && row.contentHash === bodyHash) continue; // unchanged since the last full attempt: not eligible
     const createdMs = createdMsOf(asset, gitFirstAdded, stashDir);
@@ -491,9 +490,10 @@ export function selectCandidates(
       if (!entry || entry.bundleId !== bundleId) continue;
       if (entry.entry.type !== "memory" && entry.entry.type !== "knowledge" && entry.entry.type !== "lesson") continue;
       if (entry.entry.type === "knowledge" && !isFlatName(entry.entry.name)) continue;
-      if (!fs.existsSync(entry.filePath)) continue;
+      if (!indexedAsset(entry.bundleId, entry.conceptId)) continue;
       const other: PairAsset = {
         ref: entry.conceptId,
+        bundleId: entry.bundleId,
         type: entry.entry.type,
         name: entry.entry.name,
         filePath: entry.filePath,
@@ -538,12 +538,8 @@ function loadSide(
   gitFirstAdded: ReadonlyMap<string, number> | undefined,
   stashDir: string,
 ): PairSide | undefined {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(asset.filePath, "utf8");
-  } catch {
-    return undefined;
-  }
+  const raw = indexedContent(asset.bundleId, asset.ref);
+  if (raw === undefined) return undefined;
   const frontmatter = frontmatterOf(raw);
   // B1: created is the git first-add time (mtime only when git does not know
   // the file, or the bundle has none) — frontmatter createdAt/created is not
@@ -924,12 +920,9 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
 
   // Guards.
   if (retired.asset.type === "memory" && retired.asset.name.endsWith(DERIVED_SUFFIX)) {
-    // Derive the parent path from the FULL file path, not from name +
-    // dirname: for a subfolder memory (e.g. memories/sub/foo.derived) the
-    // name already carries "sub/", so joining dirname(filePath) (which ALSO
-    // ends in "sub") with it would double the subfolder segment.
-    const parentPath = retired.asset.filePath.replace(/\.derived\.md$/, ".md");
-    if (fs.existsSync(parentPath)) return {}; // never retire a .derived memory whose parent still exists
+    // The parent is the ref without the `.derived` suffix, so a subfolder memory keeps its folder.
+    const parentRef = retired.asset.ref.replace(/\.derived$/, "");
+    if (indexedAsset(retired.asset.bundleId, parentRef)) return {}; // never retire a .derived memory whose parent still exists
   }
   const retiredHash = contentHash(retired.raw, "body");
   const successorHash = contentHash(successor.raw, "body");

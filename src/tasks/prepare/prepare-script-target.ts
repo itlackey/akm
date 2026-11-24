@@ -29,11 +29,12 @@ export interface PrepareScriptTargetInput {
   readonly ref: string;
   readonly file: string;
   readonly bundleRoot: string;
-  readonly readFile: (file: string, bundleRoot?: string) => Uint8Array;
+  /** Reads the script's bytes by its ref. */
+  readonly read: (ref: string) => Uint8Array;
 }
 
 /** Project a script asset's own identity into the frozen shape a workflow script step dispatches. */
 export function prepareScriptTarget(input: PrepareScriptTargetInput): PreparedScriptTarget {
-  const captured = captureScriptTarget(input.ref, input.file, input.bundleRoot, input.readFile);
+  const captured = captureScriptTarget(input.ref, input.file, input.bundleRoot, input.read);
   return Object.freeze({ ref: input.ref, ...captured });
 }

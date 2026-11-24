@@ -5,15 +5,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import workflowTemplate from "../../assets/workflows/workflow-template.md" with { type: "text" };
-import { ensureAkmMarkdownType } from "../../core/asset/akm-markdown";
 import { makeBundleRef } from "../../core/asset/asset-ref";
-import { isWithin, writeFileAtomic } from "../../core/common";
+import { writeAssets } from "../../core/assets/write";
+import { isWithin } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { defaultBundleForTarget } from "../../core/mutation-target";
 import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../../core/recognition-util";
 import { warn } from "../../core/warn";
-import { prepareWriteTargetForMutation, resolveWriteTarget, withWriteTargetMutation } from "../../core/write-source";
+import { prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
 import { checkWorkflowPlan, compileWorkflowSource } from "../compile";
 import type { WorkflowError } from "../plan";
 
@@ -72,8 +72,9 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
 
   const config = loadConfig();
   const resolvedTarget = resolveWriteTarget(config);
-  const target = prepareWriteTargetForMutation(resolvedTarget, { allowedAdapters: ["akm", "akm-workflow"] });
+  const target = prepareWriteTargetForMutation(resolvedTarget, { assetType: "workflow" });
   const bundleDir = target.source.path;
+  // asset-io: deprecated workflows are not read through the adapters
   const standaloneWorkflowBundle = target.source.adapterId === "akm-workflow";
   const typeRoot = standaloneWorkflowBundle ? bundleDir : path.join(bundleDir, "workflows");
 
@@ -101,6 +102,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
       "RESOURCE_ALREADY_EXISTS",
     );
   }
+  // asset-io: deprecated
   if (fs.existsSync(assetPath) && !input.force) {
     throw new UsageError(
       `Workflow "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
@@ -115,15 +117,12 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
 
   validateWorkflowContent(content, sourcePath);
 
-  const authoredContent = ensureAkmMarkdownType(content, "workflow");
-  const mode = fs.existsSync(assetPath) ? fs.lstatSync(assetPath).mode & 0o777 : 0o644;
-
   const defaultBundle = defaultBundleForTarget(config);
   const ref = makeBundleRef(target.source.name === defaultBundle ? undefined : target.source.name, conceptId);
-  withWriteTargetMutation(target, [assetPath], { purpose: "workflow-authoring", message: `Create ${ref}` }, () => {
-    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
-    writeFileAtomic(assetPath, authoredContent.endsWith("\n") ? authoredContent : `${authoredContent}\n`, mode);
-  });
+  // The bundle's adapter places the workflow and makes it a conformant akm document.
+  const written = writeAssets(target, { purpose: "workflow-authoring", message: `Create ${ref}` }, (w) =>
+    w.create({ type: "workflow", name: normalizedName, content }),
+  );
 
   return {
     ref,
@@ -136,6 +135,7 @@ function readWorkflowSource(source: string, bundleDir: string): string {
   const resolved = path.resolve(source);
   let stat: fs.Stats;
   try {
+    // asset-io: deprecated
     stat = fs.statSync(resolved);
   } catch {
     throw new UsageError(`Workflow source not found: "${source}".`);
@@ -152,6 +152,7 @@ function readWorkflowSource(source: string, bundleDir: string): string {
         `If this was unintentional, abort and re-run with a --from path inside ${bundleDir}.`,
     );
   }
+  // asset-io: deprecated
   return fs.readFileSync(resolved, "utf8");
 }
 
@@ -202,6 +203,7 @@ function findExistingWorkflowPaths(typeRoot: string, normalizedName: string): st
   const parent = path.join(typeRoot, path.dirname(normalizedName));
   let entries: fs.Dirent[];
   try {
+    // asset-io: deprecated
     entries = fs.readdirSync(parent, { withFileTypes: true });
   } catch {
     return [];

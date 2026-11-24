@@ -17,9 +17,10 @@ import { collectEligibleRefs } from "../../src/commands/improve/eligibility";
 import { resolveImproveStrategy, shouldSkipRef } from "../../src/commands/improve/improve-strategies";
 import { akmProposalAccept, akmProposalRevert } from "../../src/commands/proposal/proposal";
 import { createProposal, createRetireProposal, getProposal } from "../../src/commands/proposal/repository";
+import { addressOf } from "../../src/core/assets/write";
 import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
-import { resolveWriteAddress } from "../../src/indexer/lookup/adapter-concept-owner";
+import { configureBundles } from "../_helpers/bundle-config";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -70,26 +71,32 @@ const LOOSE: Array<[rel: string, ref: string]> = [
   ["release.md", "release"],
 ];
 
+/** The address of `ref` in the bundle `stash`, which the test makes the config's bundle. */
+function addressIn(ref: string) {
+  const [id] = configureBundles([{ path: stash, registryId: "stash" }]);
+  return addressOf(id as string, ref);
+}
+
 describe("the write address of an existing asset", () => {
   test.each(LOOSE)("%s is written at its own file, with the type its file is recognized as", async (rel, ref) => {
     const file = write(rel, NOTE);
-    expect(resolveWriteAddress(stash, ref)).toMatchObject({ type: "knowledge", conceptId: ref, path: file });
+    expect(addressIn(ref)).toMatchObject({ type: "knowledge", conceptId: ref, file });
   });
 
   test("its ref in the outdated type-folder spelling writes the same file", () => {
     const file = write("reports/release.md", NOTE);
-    expect(resolveWriteAddress(stash, "knowledge/reports/release")).toMatchObject({
+    expect(addressIn("knowledge/reports/release")).toMatchObject({
       type: "knowledge",
       conceptId: "reports/release",
-      path: file,
+      file,
     });
   });
 
   test("a new asset is placed in its ref's type folder", () => {
-    expect(resolveWriteAddress(stash, "lessons/new-one")).toMatchObject({
+    expect(addressIn("lessons/new-one")).toMatchObject({
       type: "lesson",
       conceptId: "lessons/new-one",
-      path: path.join(stash, "lessons", "new-one.md"),
+      file: path.join(stash, "lessons", "new-one.md"),
     });
   });
 });
@@ -112,7 +119,7 @@ describe("a proposal for a loose asset", () => {
     await index();
     const proposal = createProposal(stash, { ref, source: "reflect", payload: { content: UPDATED } });
     expect(proposal.ref).toBe(`stash//${ref}`);
-    expect(proposal.changes).toEqual([expect.objectContaining({ path: rel, op: "update" })]);
+    expect(proposal.changes).toEqual([expect.objectContaining({ ref: `stash//${ref}`, op: "update" })]);
 
     const config = makeConfig(stash);
     const before = assetFiles();
@@ -143,12 +150,12 @@ describe("a proposal for a loose asset", () => {
         reason: "duplicate",
       },
     });
-    expect(proposal.changes).toEqual([{ path: "reports/old.md", op: "delete" }]);
+    expect(proposal.changes).toEqual([{ ref: "stash//reports/old", op: "delete" }]);
 
     const config = makeConfig(stash);
     await akmProposalAccept({ stashDir: stash, id: proposal.id, config });
     expect(fs.existsSync(retired)).toBe(false);
-    expect(getProposal(stash, proposal.id).retiredArchive?.dirs).toHaveLength(1);
+    expect(getProposal(stash, proposal.id).retiredArchive?.retired).toHaveLength(1);
 
     await akmProposalRevert({ stashDir: stash, id: proposal.id, config });
     expect(fs.readFileSync(retired, "utf8")).toBe(NOTE);

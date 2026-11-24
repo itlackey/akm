@@ -29,11 +29,11 @@ import {
   REDACTED_CONTENT_MARKER,
   REFLECT_AVOID_PATTERNS_HEADING,
 } from "../../../core/content-safety";
-import { proposalContent } from "../../../core/file-change";
 import { detectTruncatedDescription, TRUNCATION_TRAILING_WORDS } from "../../../core/text-truncation";
 import { REFLECT_TRUNCATION_MARKER } from "../../../integrations/agent/prompts";
 import { splitFrontmatter } from "../../improve/reflect-noise";
 import type { ProposalValidator } from "../proposal-types";
+import { proposalContent } from "../proposal-types";
 
 /** The asset name a ref names, lower-cased — what the "just restates the ref" checks compare. */
 function refNameTail(inputRef: string): string {

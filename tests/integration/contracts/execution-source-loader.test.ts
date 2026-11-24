@@ -10,7 +10,6 @@ import {
   type ExecutionSourceLookup,
   loadAdapterExecutionSource,
 } from "../../../src/commands/command/execution-source-loader";
-import { adapterForId } from "../../../src/core/adapter/registry";
 import { slugForPath } from "../../../src/core/bundle-id";
 import type { AkmConfig } from "../../../src/core/config/config-types";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
@@ -46,7 +45,7 @@ function fixtureConfig(root: string, adapter: string): AkmConfig {
     bundles: {
       fixture: {
         path: root,
-        components: { main: { root: ".", adapter } },
+        adapter,
       },
     },
   };
@@ -218,7 +217,7 @@ describe("adapter-owned execution source loading", () => {
           ...config,
           bundles: {
             fixture: {
-              components: { main: { root: ".", adapter: "akm" } },
+              adapter: "akm",
             },
           },
         },
@@ -260,7 +259,7 @@ describe("adapter-owned execution source loading", () => {
           bundles: {
             fixture: {
               git: "https://example.invalid/fixture-never-cloned.git",
-              components: { main: { root: ".", adapter: "akm" } },
+              adapter: "akm",
             },
           },
         },
@@ -269,8 +268,8 @@ describe("adapter-owned execution source loading", () => {
     ).rejects.toThrow(/missing|unreadable|materialized/i);
   });
 
-  test("rejects configured component roots that lexically or physically escape their materialized source", async () => {
-    const container = tempRoot("component-containment");
+  test("rejects configured bundle roots that lexically or physically escape their materialized source", async () => {
+    const container = tempRoot("bundle-containment");
     const sourceRoot = path.join(container, "source");
     const outsideRoot = path.join(container, "outside");
     const outsideFile = path.join(outsideRoot, "commands", "escaped.md");
@@ -288,15 +287,16 @@ describe("adapter-owned execution source loading", () => {
           bundles: {
             fixture: {
               path: sourceRoot,
-              components: { main: { root: "../outside", adapter: "akm" } },
+              adapter: "akm",
+              root: "../outside",
             },
           },
         },
         lookup: lookupFor(entry),
       }),
-    ).rejects.toThrow(/component root.*outside|escape|contain/i);
+    ).rejects.toThrow(/bundle root.*outside|escape|contain/i);
 
-    const symlink = path.join(sourceRoot, "linked-component");
+    const symlink = path.join(sourceRoot, "linked-bundle");
     fs.symlinkSync(outsideRoot, symlink, "dir");
     await expect(
       loadAdapterExecutionSource("fixture//commands/escaped", "command", {
@@ -307,13 +307,14 @@ describe("adapter-owned execution source loading", () => {
           bundles: {
             fixture: {
               path: sourceRoot,
-              components: { main: { root: "linked-component", adapter: "akm" } },
+              adapter: "akm",
+              root: "linked-bundle",
             },
           },
         },
         lookup: lookupFor(entry),
       }),
-    ).rejects.toThrow(/component root.*outside|escape|contain/i);
+    ).rejects.toThrow(/bundle root.*outside|escape|contain/i);
   });
 
   test("rejects fragments and missing indexed refs before any renderer runs", async () => {
@@ -342,28 +343,22 @@ describe("adapter-owned execution source loading", () => {
   test("rejects renderer file and hash identity drift", async () => {
     const fixture = installFixture("akm", "command");
     const entry = entryFor(fixture.root, fixture.destination, "akm", fixture.conceptId, "command");
-    const adapter = adapterForId("akm");
-    if (!adapter) throw new Error("missing built-in akm adapter");
-
     await expect(
       loadAdapterExecutionSource("fixture//commands/contract-review", "command", {
         config: fixtureConfig(fixture.root, "akm"),
         lookup: lookupFor(entry),
-        adapterFor: () => ({
-          ...adapter,
-          renderExecutionSource: () =>
-            createAdapterRenderedExecutionSource({
-              kind: "command",
-              content: "forged body",
-              identity: {
-                ref: entry.itemRef,
-                bundle: entry.bundleId,
-                adapter: entry.adapterId,
-                file: "commands/other.md",
-                hash: "b".repeat(64),
-              },
-            }),
-        }),
+        render: () =>
+          createAdapterRenderedExecutionSource({
+            kind: "command",
+            content: "forged body",
+            identity: {
+              ref: entry.itemRef,
+              bundle: entry.bundleId,
+              adapter: entry.adapterId,
+              file: "commands/other.md",
+              hash: "b".repeat(64),
+            },
+          }),
       }),
     ).rejects.toThrow(/identity drift|hash|file/i);
   });

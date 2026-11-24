@@ -14,21 +14,22 @@
  * unscoped input stays flat.
  */
 
-import fs from "node:fs";
-import path from "node:path";
 import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge-system.md" with { type: "text" };
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
-import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { type Asset, findAsset, lookupAsset, readAsset } from "../../core/assets/read";
+import { assetType, indexedPathOf } from "../../core/assets/type";
+import { addressOf, conceptIdAtFile, writeAssets } from "../../core/assets/write";
 import { authoringRulesForType } from "../../core/authoring-rules";
+import { materialiseBundleDir } from "../../core/bundle-at-dir";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
-import { UsageError } from "../../core/errors";
+import { assetNotFound, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { AkmDistillResult, DistillOutcome } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
@@ -37,10 +38,9 @@ import { getDbPath } from "../../core/paths";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { withStateDb } from "../../core/state-db";
 import { warn, warnVerbose } from "../../core/warn";
-import { recordWrittenPath } from "../../core/write-provenance";
+import { resolveWriteTarget, writeTargetAt } from "../../core/write-source";
 import { type NoticeSet, noticeSet } from "../../execution/notices";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
-import { resolveOwnedType, resolveWriteAddress } from "../../indexer/lookup/adapter-concept-owner";
 import {
   SCOPE_FRONTMATTER_KEYS,
   type StashEntryScope,
@@ -48,8 +48,7 @@ import {
   scopeFromFrontmatter,
   stampScope,
 } from "../../indexer/passes/metadata";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { resolveAssetPath } from "../../indexer/walk/path-resolver";
+import { findAssetOnDisk } from "../../indexer/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { chatCompletion } from "../../llm/client";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
@@ -123,8 +122,8 @@ export interface AkmDistillOptions {
   eventsCtx?: EventsContext;
   /** Test seam: event reader. */
   readEventsFn?: typeof readEvents;
-  /** Test seam: resolve a ref to its file path (`null` when absent). */
-  lookupFn?: (ref: string) => Promise<string | null>;
+  /** Test seam: the asset a ref names (`undefined` when absent). */
+  lookupFn?: (ref: string) => Promise<Asset | undefined>;
   /** Source-run id stamped on the queued proposal. */
   sourceRun?: string;
   /** Feedback events whose ref is listed never reach the prompt (`bench evolve` gold refs). */
@@ -421,7 +420,6 @@ interface DistillRun {
   asset: { path: string | null; content: string | null };
   vocabulary: Set<string>;
   related: (query: string, n: number) => Promise<RelatedAsset[]>;
-  lookup: (ref: string) => Promise<string | null>;
 }
 
 function emitDistill(run: Pick<DistillRun, "ledgerRef" | "eligMeta" | "options">, meta: Record<string, unknown>): void {
@@ -477,7 +475,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const config = options.config ?? loadConfig();
   const stash = options.stashDir ?? resolveStashDir();
   // An existing input is addressed where its file is; only a ref no file owns is read by placement.
-  const address = resolveWriteAddress(stash, inputRef);
+  const address = addressOf(materialiseBundleDir(stash), inputRef);
   const profile = options.improveProfile ?? resolveImproveStrategy(undefined, config).config;
   options = { ...options, improveProfile: profile };
   const targetKind = options.proposalKind ?? "lesson";
@@ -498,11 +496,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const ledgerRef = options.itemRef ?? inputRef;
   const eligMeta = options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {};
   // The input's type is its file's; the ref's first folder names it only for a ref no file owns.
-  const inputType =
-    resolveOwnedType(parseBundleRef(inputRef), resolveSourceEntries(options.stashDir, config), {
-      mode: "read",
-      includeSensitive: true,
-    }) ?? address.type;
+  const owned = lookupAsset(inputRef, { bundle: materialiseBundleDir(stash) });
+  const inputType = owned ? assetType(owned) : address.type;
   if (isDistillRefusedInputType(inputType)) {
     const secret = inputType === "env" || inputType === "secret";
     const proposalRef = secret ? inputRef : conceptIdFromTypeName("lesson", address.name);
@@ -532,7 +527,6 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     asset,
     vocabulary: loadRefVocabulary(),
     related: options.fetchRelatedFn ?? fetchRelatedAssets,
-    lookup,
   };
   const feedbackEvents = readDistillFeedback(run);
   const result = await distill(run, targetKind, kind, outputRef, feedbackEvents);
@@ -661,16 +655,9 @@ function feedbackLines(feedback: BuildPromptInput["feedback"]): string[] {
   return lines;
 }
 
-/** Whether a file already holds the lesson `ref` in the stash the proposal would be filed in. */
+/** Whether the stash the proposal would be filed in holds the lesson `ref`, under any spelling of its file. */
 function lessonExists(run: DistillRun, ref: string): boolean {
-  const { type, name } = parsePlacementRef(ref);
-  const typeDir = stashDirFor(type);
-  if (!typeDir) return false;
-  try {
-    return fs.statSync(assetPathForName(type, path.join(run.stash, typeDir), name)).isFile();
-  } catch {
-    return false;
-  }
+  return readAsset(materialiseBundleDir(run.stash), ref) !== undefined;
 }
 
 /** Turn the response into validated content: structured JSON or markdown, then lesson repairs and lint. */
@@ -882,15 +869,16 @@ async function proposeLessonUpdate(
   const said = finding.toLowerCase();
   if (!run.runner || !qualityGateEnabled(run) || !memory) return undefined;
   const memoryScope = inputScope(run);
-  const lessons: Array<UpdateCandidate & { path: string; content: string }> = [];
+  const lessons: Array<UpdateCandidate & { content: string }> = [];
   for (const asset of related ?? (await run.related(memory.slice(0, 500), RELATED_COUNT))) {
     if (asset.type !== "lesson" || !asset.path || !isWithin(asset.path, run.stash)) continue;
     try {
-      const content = fs.readFileSync(asset.path, "utf8");
+      const content = findAsset(asset.ref)?.entry.content();
+      if (content === undefined) continue;
       // A memory is never merged into a lesson of another scope.
       if (!sameScope(memoryScope, scopeFromFrontmatter(parseFrontmatter(content).data))) continue;
       const { conceptId: ref } = parseBundleRef(asset.ref);
-      lessons.push({ ref, path: asset.path, content, body: parseFrontmatter(content).content.trim() });
+      lessons.push({ ref, content, body: parseFrontmatter(content).content.trim() });
     } catch {
       // A lesson that cannot be read cannot be extended.
     }
@@ -955,7 +943,7 @@ async function proposeLessonUpdate(
   // The proposal's before-hash is taken at mint: a lesson edited since it was read is not what the writer extended.
   let proposal: Proposal;
   try {
-    if (fs.readFileSync(target.path, "utf8") !== target.content) {
+    if (readAsset(materialiseBundleDir(run.stash), target.ref)?.entry.content() !== target.content) {
       return {
         skipReason: "update_not_written",
         detail: `An update of ${target.ref} was not proposed: the lesson changed meanwhile.`,
@@ -1155,13 +1143,10 @@ async function planPromotion(
     feedbackEvents,
   });
   if (!assessment.promote || !assessment.content) return null;
-  const existingPath = await run.lookup(assessment.knowledgeRef);
   let existing: string | null = null;
   try {
     // The promotion is filed in run.stash, so only that bundle's doc is its destination (#1000).
-    if (existingPath && fs.existsSync(existingPath) && isWithin(existingPath, run.stash)) {
-      existing = fs.readFileSync(existingPath, "utf8");
-    }
+    existing = readAsset(materialiseBundleDir(run.stash), assessment.knowledgeRef)?.entry.content() ?? null;
   } catch {
     existing = null;
   }
@@ -1269,12 +1254,12 @@ async function promoteToKnowledge(run: DistillRun, plan: PromotionPlan): Promise
 
 /** Read the input asset (best-effort: an unindexed asset distils from feedback alone). */
 async function loadInput(
-  lookup: (ref: string) => Promise<string | null>,
+  lookup: (ref: string) => Promise<Asset | undefined>,
   inputRef: string,
 ): Promise<DistillRun["asset"]> {
   try {
-    const filePath = await lookup(inputRef);
-    if (filePath && fs.existsSync(filePath)) return { path: filePath, content: fs.readFileSync(filePath, "utf8") };
+    const found = await lookup(inputRef);
+    if (found) return { path: indexedPathOf(found) || null, content: found.entry.content() };
   } catch {
     // An index miss is not fatal.
   }
@@ -1315,9 +1300,22 @@ function stampInputSalience(run: DistillRun): void {
     const scored = scoreEncodingSalience({ body: content, type, existingRefVocabulary: run.vocabulary, revisionCount });
     const updated = writeSalienceToFrontmatter(content, scored.score, scored);
     if (updated !== content) {
-      fs.writeFileSync(filePath, updated, "utf8");
-      recordWrittenPath(filePath);
-      run.asset.content = updated;
+      try {
+        // The mirror is written to the asset the input names, in the bundle that holds it (the journal records it, #652).
+        const stash = writeTargetAt(run.stash);
+        // The asset the input names, looked for first in the stash it was loaded from, then in every other bundle.
+        const owned = lookupAsset(run.inputRef, { bundle: stash.source.name });
+        const target =
+          owned === undefined || owned.bundle === stash.source.name
+            ? stash
+            : resolveWriteTarget(run.config, owned.bundle, { requireWritable: false });
+        const conceptId = owned?.conceptId ?? conceptIdAtFile(stash.source.name, filePath);
+        if (conceptId === undefined) throw assetNotFound(run.inputRef);
+        writeAssets(target, { purpose: "distill-salience" }, (w) => w.update(conceptId, updated));
+        run.asset.content = updated;
+      } catch {
+        // The salience row below is then the only persistence.
+      }
     }
     try {
       withStateDb((stateDb) =>
@@ -1425,12 +1423,8 @@ async function buildDistillMessages(
   };
 }
 
-async function defaultLookup(ref: string, stashDir: string): Promise<string | null> {
-  return resolveAssetPath(ref, {
-    stashDir,
-    mode: "disk-only",
-    honorOrigin: false,
-  });
+async function defaultLookup(ref: string, stashDir: string): Promise<Asset | undefined> {
+  return findAssetOnDisk(ref, { stashDir, honorOrigin: false });
 }
 
 /** What the library already holds on a subject: lessons and knowledge notes say it, a skill is how to do it. */
@@ -1452,7 +1446,7 @@ async function fetchRelatedAssets(query: string, n: number): Promise<RelatedAsse
       .map((h) => {
         let content = "";
         try {
-          if (h.path && fs.existsSync(h.path)) content = fs.readFileSync(h.path, "utf8");
+          content = findAsset(h.itemRef ?? h.ref)?.entry.content() ?? "";
         } catch {
           // best-effort
         }

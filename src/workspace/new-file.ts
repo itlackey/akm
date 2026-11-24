@@ -13,9 +13,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { renderTaskYaml } from "../commands/tasks/tasks";
 import { assertFlatAssetName, normalizeCreateSubPath } from "../core/asset/asset-create";
-import { documentStashDirFor, refForFile } from "../core/asset/asset-placement";
+import { documentStashDirFor, stashDirFor } from "../core/asset/asset-placement";
 import { serializeFrontmatter } from "../core/asset/asset-serialize";
+import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
 import { frontmatterKeysFor } from "../core/asset/type-keys";
+import { indexFiles, placeTypeOf } from "../core/assets/files";
+import { embedPendingWrites } from "../core/assets/type";
+import { writeAssets } from "../core/assets/write";
 import { isWithin } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
@@ -28,18 +32,12 @@ import {
   prepareWriteTargetForMutation,
   writeSourceFile,
 } from "../core/write-source";
-import { indexWrittenAssets } from "../indexer/index-written-assets";
-import { buildFileContext } from "../indexer/walk/file-context";
-import { declaredTypeForPath } from "../indexer/walk/matchers";
 import { buildWorkflowTemplate } from "../workflows/authoring/authoring";
 import { type FileVerdict, folderBlocker, plainWriteBlocker, type WriteBlockers } from "./file-actions";
 import { interactive } from "./lease";
 
 /** The extensions a new file may take, in the order a folder's type is tried when the name gives none. */
 const EXTENSIONS = [".md", ".yml", ".sh"];
-
-const typeAt = (relative: string): string | undefined =>
-  declaredTypeForPath(buildFileContext("/", path.posix.join("/", relative)));
 
 /** The file name a new file gets in `folder` and the type its place declares (null: none). `name` absent asks about the folder alone. */
 export function planNewFile(folder: string, name?: string): { type: string | null; fileName: string | undefined } {
@@ -50,7 +48,7 @@ export function planNewFile(folder: string, name?: string): { type: string | nul
         ? [name]
         : EXTENSIONS.map((ext) => `${name}${ext}`);
   for (const fileName of candidates) {
-    const type = typeAt(path.posix.join(folder, fileName));
+    const type = placeTypeOf(path.posix.join(folder, fileName));
     if (type !== undefined) return { type, fileName: name === undefined ? undefined : fileName };
   }
   return { type: null, fileName: name };
@@ -133,29 +131,46 @@ export async function createFile(input: CreateFileInput) {
     const blocker = folderBlocker(folder) ?? plainWriteBlocker(config, bundle);
     if (blocker !== null) throw new UsageError(blocker);
     const { type, fileName } = planNewFile(folder, name);
-    // A file of no type is a plain file; a typed asset goes through akm's writer, which takes akm bundles only.
+    // A file of no type is a plain file; a typed asset is written by the bundle's adapter, which must write that type.
     const resolved = resolveBundleWriteTarget(config, bundle, { requireWritable: true });
-    const target = prepareWriteTargetForMutation(
-      resolved,
-      type === null ? { allowedAdapters: [resolved.source.adapterId ?? "akm"] } : undefined,
-    );
+    const target = prepareWriteTargetForMutation(resolved, type === null ? { plain: true } : { assetType: type });
     if (type === null) assertPlainWritable(target.source, target.config);
-    else assertWritableSource(target.source, target.config);
+    else assertWritableSource(target.source, target.config, type);
     if (type === "skill" && fileName !== "SKILL.md")
       throw new UsageError("A skill is a folder with a SKILL.md: create the folder first.");
     const root = target.source.path;
     const file = path.join(root, folder, fileName as string);
     if (!isWithin(file, root)) throw new UsageError(`"${name}" resolves outside the bundle.`, "PATH_ESCAPE_VIOLATION");
-    if (fs.existsSync(file))
-      throw new UsageError("That file name is already used in this folder.", "RESOURCE_ALREADY_EXISTS");
     const relative = path.posix.join(folder, fileName as string);
     const stem = path.posix.basename(fileName as string, path.posix.extname(fileName as string));
     const content = input.content ?? (type === null ? "" : startingText(type, stem));
-    writeSourceFile(target.source, file, content, relative, type ?? undefined);
-    commitWriteTargetBoundary(target, `Create ${relative}`);
-    const indexed = await indexWrittenAssets(root, [file], { bundleId: bundle });
-    const concept = type === null ? undefined : refForFile(type, root, file);
-    const ref = concept === undefined ? null : `${bundle}//${concept}`;
+    const used = () => new UsageError("That file name is already used in this folder.", "RESOURCE_ALREADY_EXISTS");
+    let indexed: boolean;
+    let ref: string | null = null;
+    if (type === null) {
+      // asset-io: files-view a plain file, not an asset
+      if (fs.existsSync(file)) throw used();
+      writeSourceFile(target.source, file, content);
+      commitWriteTargetBoundary(target, `Create ${relative}`);
+      indexed = await indexFiles(bundle, [file]);
+    } else {
+      // A typed asset is created by the bundle's adapter, which keeps it where it keeps its type: the file is its.
+      const typeFolder = stashDirFor(type);
+      const inFolder = typeFolder !== undefined && relative.startsWith(`${typeFolder}/`);
+      const nameOfAsset = inFolder ? relative.slice((typeFolder as string).length + 1) : relative;
+      const bare =
+        type === "script"
+          ? nameOfAsset
+          : nameOfAsset.slice(0, nameOfAsset.length - path.posix.extname(nameOfAsset).length);
+      const created = writeAssets(target, { purpose: "ui-file-create", message: `Create ${relative}` }, (w) => {
+        const address = w.address(`${bundle}//${conceptIdFromTypeName(type, bare)}`);
+        if (address.exists) throw used();
+        return w.create({ type, name: bare, content, label: relative }, { exclusive: true });
+      });
+      ref = created.ref;
+      await embedPendingWrites();
+      indexed = true;
+    }
     appendEvent({
       eventType: "import",
       ...(ref ? { ref } : {}),

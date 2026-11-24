@@ -354,7 +354,7 @@ describe("akm metrics", () => {
       task.run("t-ok", "completed", iso(3), iso(3), JSON.stringify({ durationMs: 1000, detail: null }));
       task.run("t-bad", "failed", iso(2), iso(2), JSON.stringify({ durationMs: 500, detail: null }));
       const proposal = state.prepare(
-        "INSERT INTO proposals (id, stash_dir, ref, status, source, created_at, updated_at) VALUES (?, '/s', ?, ?, 'reflect', ?, ?)",
+        "INSERT INTO proposals (id, bundle_id, ref, status, source, created_at, updated_at) VALUES (?, 's', ?, ?, 'reflect', ?, ?)",
       );
       proposal.run("p1", "main//skills/a", "pending", iso(5), iso(5));
       proposal.run("p2", "main//skills/b", "accepted", iso(5), iso(1));

@@ -72,6 +72,7 @@ import {
 import { _resetParsedInvocationForTests } from "../../src/cli/invocation";
 import { emitJsonError } from "../../src/cli/shared";
 import { assertKnownFlags, assertNoStrayPositionals, type FlagScanCommand } from "../../src/cli/unknown-flags";
+import { embedPendingWrites } from "../../src/core/assets/type";
 import { DEFAULT_CONFIG, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { AkmError } from "../../src/core/errors";
 import { clearLogFile, resetQuiet, resetVerbose } from "../../src/core/warn";
@@ -318,6 +319,8 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
       }
     }
   } finally {
+    // The dispatcher (`runCliInvocation`) awaits this before a command ends: the vectors of the rows its writes recorded.
+    await embedPendingWrites();
     // If the command set process.exitCode without calling process.exit() (deferred
     // exit pattern used to allow stdout flush before terminating), pick it up here
     // so the captured code reflects the intended exit status. Only act when the

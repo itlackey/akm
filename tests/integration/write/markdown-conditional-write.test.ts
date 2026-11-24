@@ -38,7 +38,7 @@ beforeEach(async () => {
     defaultBundle: "stash",
     defaultWriteTarget: "stash",
     bundles: {
-      stash: { git: url, writable: true, components: { main: { root: ".", adapter: "akm", writable: true } } },
+      stash: { git: url, writable: true, adapter: "akm" },
     },
   });
   await akmIndex({ stashDir: storage.stashDir, full: true });

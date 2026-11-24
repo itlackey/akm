@@ -17,7 +17,6 @@
     "notes.md": {
       "recognized": true,
       "adapterId": "generic-files",
-      "component": "main",
       "type": "document",
       "conceptId": "notes",
       "ref": "sample-generic//notes",
@@ -27,7 +26,6 @@
     "build.sh": {
       "recognized": true,
       "adapterId": "generic-files",
-      "component": "main",
       "type": "script",
       "conceptId": "build.sh",
       "ref": "sample-generic//build.sh",
@@ -37,7 +35,6 @@
     "data.csv": {
       "recognized": true,
       "adapterId": "generic-files",
-      "component": "main",
       "type": "file",
       "conceptId": "data.csv",
       "ref": "sample-generic//data.csv",

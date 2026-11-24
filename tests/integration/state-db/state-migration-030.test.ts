@@ -63,7 +63,7 @@ describe("migration 030-usage-events-created-at-index", () => {
         id: MIGRATION_ID,
       });
       // CREATE INDEX IF NOT EXISTS: re-running the body on a database that has the index is a no-op.
-      db.exec(STATE_MIGRATIONS[STATE_MIGRATIONS.length - 1]?.up ?? "");
+      db.exec(STATE_MIGRATIONS.find((m) => m.id === MIGRATION_ID)?.up ?? "");
     } finally {
       db.close();
     }

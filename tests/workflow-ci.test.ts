@@ -12,7 +12,7 @@ const source = fs.readFileSync(path.join(WORKFLOWS_DIR, "ci.yml"), "utf8");
 const workflow = YAML.parse(source) as {
   on: Record<string, unknown>;
   concurrency: { group: string; "cancel-in-progress": boolean };
-  jobs: Record<string, { if?: string; needs?: string; uses?: string; steps?: Array<{ run?: string }> }>;
+  jobs: Record<string, { if?: string; needs?: string; uses?: string; steps?: Array<{ name?: string; run?: string }> }>;
 };
 
 // A draft pull request into main is the release pull request opened early: nothing runs on it until it is ready.
@@ -27,13 +27,48 @@ describe("CI workflow", () => {
     expect(workflow.on.pull_request).toEqual({ types: ["opened", "synchronize", "reopened", "ready_for_review"] });
   });
 
-  test("the fast gate runs on every pull request except a draft into main: check, the Node smoke, Desktop", () => {
-    for (const job of ["check", "node-smoke", "desktop"]) {
+  test("the fast gate runs on every pull request except a draft into main: check, Desktop", () => {
+    for (const job of ["check", "desktop"]) {
       expect(workflow.jobs[job]?.if, job).toBe(`$` + `{{ !(${DRAFT_RELEASE_PULL_REQUEST}) }}`);
       expect(workflow.jobs[job]?.needs, job).toBeUndefined();
     }
-    expect(source).toContain('node-version: ["22", "24"]');
     expect(workflow.jobs.check?.steps?.some((step) => step.run === "bun run check")).toBe(true);
+  });
+
+  test("the desktop job runs Desktop's check and build, and none of its tests: they gate releases, from release.yml", () => {
+    const steps = workflow.jobs.desktop?.steps ?? [];
+    expect(steps.some((step) => step.run === "bun run desktop:setup")).toBe(true);
+    const run = steps.find((step) => step.name === "Check and build Desktop")?.run ?? "";
+    expect(run).toContain("npm run check");
+    expect(run).toContain("npm run build");
+    const desktopSource = JSON.stringify(steps);
+    for (const command of [
+      "npm test",
+      "test:e2e",
+      "test:usability",
+      "test:server",
+      "test:web-package",
+      "test:electron",
+    ]) {
+      expect(desktopSource, command).not.toContain(command);
+    }
+    expect(desktopSource).not.toContain("playwright");
+    expect(desktopSource).not.toContain("electron/install.js");
+  });
+
+  test("runs neither the integration suite nor Gated CI: they gate releases only, from release.yml", () => {
+    const manifest = JSON.parse(fs.readFileSync(path.resolve(import.meta.dir, "../package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    expect(manifest.scripts.check).not.toContain("test:integration");
+    expect(source).not.toContain("test:integration");
+    expect(source).not.toContain("gated-ci.yml");
+    // The Node fallback smoke and the upgrade rehearsals run integration tests: they are Release jobs too.
+    expect(workflow.jobs["node-smoke"]).toBeUndefined();
+    expect(workflow.jobs["upgrade-rehearsal"]).toBeUndefined();
+    expect(source).not.toContain("test:node-smoke");
+    expect(source).not.toContain("test:node-compat");
+    expect(source).not.toContain("tests/integration/upgrade-rehearsal/");
   });
 
   test("only a release branch merges to main, and it ships the version it is named for", () => {
@@ -50,12 +85,11 @@ describe("CI workflow", () => {
     expect(run).toContain('[ "$VERSION" != "$' + '{HEAD#release/}" ]');
   });
 
-  test("the platform jobs, the plugins contract and Gated CI follow the release-branch check, so they run on a release pull request only", () => {
-    for (const job of ["desktop-package", "upgrade-rehearsal", "plugins-contract", "gated"]) {
+  test("the platform jobs and the plugins contract follow the release-branch check, so they run on a release pull request only", () => {
+    for (const job of ["desktop-package", "plugins-contract"]) {
       expect(workflow.jobs[job]?.needs, job).toBe("release-branch-only");
       expect(workflow.jobs[job]?.if, job).toBeUndefined();
     }
-    expect(workflow.jobs.gated?.uses).toBe("./.github/workflows/gated-ci.yml");
   });
 
   test("one run per pull request; a dispatch, a call from Release or a skipped draft run cancels nothing", () => {

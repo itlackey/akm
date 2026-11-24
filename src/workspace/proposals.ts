@@ -4,7 +4,6 @@
 
 /** Proposals: the review queue, one proposal with its capped diff, the decisions, and the recent changes. */
 
-import path from "node:path";
 import {
   akmProposalAccept,
   akmProposalAcceptMany,
@@ -16,12 +15,12 @@ import {
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../commands/proposal/proposal-types";
 import { diffLoadedProposal, resolveProposalIdIn } from "../commands/proposal/repository";
 import { validateProposal } from "../commands/proposal/validators/proposals";
+import { parsePlacementRef } from "../core/asset/resolve-ref";
+import { stateBundleId } from "../core/bundle-at-dir";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { AkmError, NotFoundError, UsageError } from "../core/errors";
 import { resolveWriteTarget } from "../core/write-source";
-import { buildFileContext } from "../indexer/walk/file-context";
-import { declaredTypeForPath } from "../indexer/walk/matchers";
 import { listStateProposals } from "../storage/repositories/proposals-repository";
 import { classifyOutcome, decidedAt, weekOf } from "./derive";
 import { readRecentCommits } from "./git-read";
@@ -103,7 +102,7 @@ export function list(input: ListInput = {}) {
   return (
     withReadonlyStateDb((db) => {
       // A list shows summaries, so the proposed content is not read.
-      const all = listStateProposals(db, { stashDir: resolveStashDir(), withContent: false });
+      const all = listStateProposals(db, { bundleId: stateBundleId(resolveStashDir()), withContent: false });
       const picked =
         status === "pending"
           ? all
@@ -136,9 +135,14 @@ export function list(input: ListInput = {}) {
 
 /** True when the proposal's target is an env or secret asset, whose content never leaves the machine's files via the UI. */
 function targetsSensitiveAsset(proposal: Proposal): boolean {
-  const file = proposal.changes[0]?.path;
-  const type = file === undefined ? undefined : declaredTypeForPath(buildFileContext("/", path.posix.join("/", file)));
-  return type === "env" || type === "secret";
+  const ref = proposal.changes[0]?.ref;
+  if (ref === undefined) return false;
+  try {
+    const { type } = parsePlacementRef(ref);
+    return type === "env" || type === "secret";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -192,7 +196,7 @@ export function get(input: { id: string }) {
         ...summary(proposal),
         ...rest,
         payload: { frontmatter: payload.frontmatter ?? null },
-        changes: changes.map((change) => ({ op: change.op, path: change.path })),
+        changes: changes.map((change) => ({ op: change.op, ref: change.ref })),
       },
       validation: validateProposal(proposal),
       diff,

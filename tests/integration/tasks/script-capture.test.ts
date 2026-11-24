@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import type { Asset } from "../../../src/core/assets/read";
 import { UsageError } from "../../../src/core/errors";
 import { scriptProgram } from "../../../src/tasks/frozen-script";
 import {
@@ -147,16 +148,29 @@ describe("scriptCommand: a runtime without Bun", () => {
 });
 
 describe("scriptProgram: the command for a script asset", () => {
-  test("reads the file's own first line, and says which script and first line it came from", () => {
+  test("reads the asset's own first line, and says which script and first line it came from", () => {
     const sandbox = makeSandboxDir("script-program");
     try {
       const file = path.join(sandbox.dir, "a.sh");
       fs.writeFileSync(file, "#!/bin/bash -e\nfalse\n", { mode: 0o644 });
-      const { argv, script } = scriptProgram("scripts/a.sh", file, ["x"]);
+      // The asset reads its bytes when asked, as the adapter's entry does.
+      const assetOf = (): Asset => ({
+        ref: "stash//scripts/a.sh",
+        bundle: "stash",
+        conceptId: "scripts/a.sh",
+        entry: {
+          key: "scripts/a.sh",
+          file,
+          content: () => fs.readFileSync(file, "utf8"),
+          bytes: () => fs.readFileSync(file),
+          frontmatter: () => null,
+        },
+      });
+      const { argv, script } = scriptProgram("scripts/a.sh", assetOf(), ["x"]);
       expect(argv).toEqual(["/bin/bash", "-e", file, "x"]);
       expect(script).toEqual({ ref: "scripts/a.sh", firstLine: "#!/bin/bash -e" });
       fs.writeFileSync(file, "echo hi\n");
-      expect(scriptProgram("scripts/a.sh", file, []).script.firstLine).toBeUndefined();
+      expect(scriptProgram("scripts/a.sh", assetOf(), []).script.firstLine).toBeUndefined();
     } finally {
       sandbox.cleanup();
     }
@@ -169,11 +183,11 @@ describe("captureScriptTarget refuses a script scriptCommand cannot start", () =
     try {
       const file = path.join(sandbox.dir, "data.xyz");
       fs.writeFileSync(file, "data\n");
-      expect(() => captureScriptTarget("scripts/data.xyz", file, sandbox.dir, (f) => fs.readFileSync(f))).toThrow(
+      expect(() => captureScriptTarget("scripts/data.xyz", file, sandbox.dir, () => fs.readFileSync(file))).toThrow(
         UsageError,
       );
       fs.writeFileSync(file, "#!/bin/sh\necho\n");
-      expect(captureScriptTarget("scripts/data.xyz", file, sandbox.dir, (f) => fs.readFileSync(f)).extension).toBe(
+      expect(captureScriptTarget("scripts/data.xyz", file, sandbox.dir, () => fs.readFileSync(file)).extension).toBe(
         ".xyz",
       );
     } finally {

@@ -1,0 +1,77 @@
+{
+  "configVersion": "0.9.0",
+  "defaultBundle": "main",
+  "defaultWriteTarget": "main",
+  "semanticSearchMode": "off",
+  "usage": {
+    "capture": false,
+    "report": false
+  },
+  "connections": {
+    "default": {
+      "endpoint": "http://127.0.0.1:1/v1",
+      "models": {
+        "fast": "m",
+        "balanced": "m",
+        "reasoning": "m"
+      }
+    }
+  },
+  "bundles": {
+    "main": {
+      "path": "@FIXTURE@/main",
+      "writable": true
+    },
+    "team": {
+      "path": "@FIXTURE@/team",
+      "writable": true
+    },
+    "files": {
+      "path": "@FIXTURE@/files",
+      "components": {
+        "main": {
+          "root": ".",
+          "adapter": "generic-files"
+        }
+      }
+    },
+    "okf": {
+      "path": "@FIXTURE@/okf",
+      "components": {
+        "main": {
+          "adapter": "okf"
+        }
+      }
+    },
+    "wiki": {
+      "path": "@FIXTURE@/wiki",
+      "components": {
+        "main": {
+          "adapter": "llm-wiki"
+        }
+      }
+    },
+    "snapshot": {
+      "path": "@FIXTURE@/snapshot",
+      "components": {
+        "main": {
+          "adapter": "website-snapshot"
+        }
+      }
+    },
+    "flows": {
+      "path": "@FIXTURE@/flows",
+      "components": {
+        "main": {
+          "adapter": "akm-workflow"
+        }
+      }
+    }
+  },
+  "workflow": {
+    "maxConcurrency": 2
+  },
+  "scheduler": {
+    "enabled": ["main//tasks/nightly", "team//tasks/team-task", "main//tasks/report"]
+  }
+}

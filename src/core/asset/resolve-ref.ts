@@ -14,9 +14,9 @@
  *                 `ResolvedRef` ever crosses a storage boundary.
  *                 It answers "which bundle" against an injected index snapshot;
  *                 it does not find files. "Where is the file for this ref right
- *                 now" has one answer, `resolveConceptOwner`
- *                 (`src/indexer/lookup/adapter-concept-owner.ts`), which
- *                 every resolver that needs a path calls.
+ *                 now" has one answer, `findAsset`
+ *                 (`src/core/assets/read.ts`), which every resolver that
+ *                 needs a path calls.
  *   - serialize — `bundleRefToString` (`asset-ref.ts`); serializing a
  *                 `ResolvedRef` always emits the fully-qualified form.
  *

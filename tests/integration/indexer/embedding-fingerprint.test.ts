@@ -83,16 +83,11 @@ describe("generateEmbeddingsForDb: per-row embedding model", () => {
 
   function seedEntries(db: Database, count: number): void {
     const installation = deriveInstallations([{ path: storage.stashDir, writable: true }])[0];
-    const component = installation?.components[0];
-    if (!installation || !component) throw new Error("failed to derive a test bundle installation");
+    if (!installation) throw new Error("failed to derive a test bundle installation");
     for (let i = 0; i < count; i++) {
       const name = `memory-${i}`;
       const entry = { name, type: "memories", filename: `${name}.md` };
-      const provenance = deriveEntryProvenance(
-        { bundleId: installation.id, componentId: component.id, adapterId: component.adapter },
-        "memories",
-        name,
-      );
+      const provenance = deriveEntryProvenance({ bundleId: installation.id, adapterId: "akm" }, "memories", name);
       upsertEntry(db, `${storage.stashDir}/memories/${name}.md`, entry, provenance);
     }
   }

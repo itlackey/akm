@@ -10,15 +10,14 @@
  * records a failed scheduled activation if this rejects, or reserves an execution after it resolves.
  */
 
-import fs from "node:fs";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { makeBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
-import { resolveStashDir } from "../../core/common";
+import { activeSources } from "../../core/assets/gate";
+import { findAsset } from "../../core/assets/read";
+import { bundleSourceAt } from "../../core/bundle-at-dir";
 import { loadConfig } from "../../core/config/config";
-import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { UsageError } from "../../core/errors";
 import { assertBundleNotDisabled } from "../../core/write-source";
 import {
   applyInputDefaults,
@@ -28,10 +27,9 @@ import {
   validateInputs,
 } from "../../execution/input-contract";
 import type { ExecutionJsonObject } from "../../execution/json";
-import { resolveAdapterConceptOwner, resolveConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
-import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import { sourceOfBundle } from "../../indexer/installations";
+import type { SearchSource } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
-import { resolveAssetPath } from "../../sources/resolve";
 import type { TaskInvocation } from "../model/invocation";
 import { prepareTaskV3Execution } from "../prepare/prepare";
 import type { PreparedTaskV3Execution } from "../prepare/prepared-execution";
@@ -39,7 +37,15 @@ import { scheduledTaskContextEnv } from "../scheduler-invocation";
 import { parseTaskSource, taskValueInputs } from "../source/parse-task-source";
 import { projectTaskSourceV4 } from "../source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
-import { validateTaskConceptId, validateTaskId } from "../task-id";
+import { validateTaskConceptId } from "../task-id";
+import {
+  resolveOwnBundleAsset,
+  resolveTask,
+  taskAssetFile,
+  taskAssetNotFound,
+  taskNameOf,
+  taskNotFound,
+} from "../task-ref";
 import type { PreparedTaskV5 } from "../v5/run";
 import type { RunTaskOptions } from "./task-result";
 
@@ -60,15 +66,7 @@ const CONFIG_FREE_TASK_RUNTIME: AkmConfig = Object.freeze({
  * other bundles still resolve.
  */
 export function activeTaskSources(config: AkmConfig): SearchSource[] {
-  try {
-    return resolveSourceEntries(undefined, config);
-  } catch (cause) {
-    const working = bundleKeyForContentRoot(config, resolveStashDir());
-    const entry = working ? config.bundles?.[working] : undefined;
-    if (!(cause instanceof ConfigError) || !working || !entry || entry.enabled !== false) throw cause;
-    const enabled = { ...config, bundles: { ...config.bundles, [working]: { ...entry, enabled: true } } };
-    return resolveSourceEntries(undefined, enabled).filter((source) => source.registryId !== working);
-  }
+  return activeSources(config);
 }
 
 /**
@@ -83,8 +81,8 @@ export function resolveBundleAsset(
 ): { file: string; bundleRoot: string } {
   const conceptId = conceptIdFromTypeName(type, name);
   const sources = activeTaskSources(config);
-  const match = resolveConceptOwner({ bundle, conceptId }, sources);
-  if (match) return { file: match.owner.path, bundleRoot: match.source.path };
+  const asset = findAsset(makeBundleRef(bundle, conceptId));
+  if (asset) return { file: taskAssetFile(asset), bundleRoot: sourceOfBundle(sources, asset.bundle).path };
   if (resolveSourcesForOrigin(bundle, sources).length === 0) {
     assertBundleNotDisabled(config, bundle);
     throw new UsageError(
@@ -92,7 +90,7 @@ export function resolveBundleAsset(
       "INVALID_FLAG_VALUE",
     );
   }
-  throw new NotFoundError(`Task asset ${makeBundleRef(bundle, conceptId)} was not found.`, "ASSET_NOT_FOUND");
+  throw taskAssetNotFound(makeBundleRef(bundle, conceptId));
 }
 
 /** Resolve, parse, and project one task-v3 asset into a frozen, executable projection. */
@@ -101,19 +99,21 @@ export async function loadPreparedTask(
   options: RunTaskOptions,
 ): Promise<PreparedTaskV3Execution | PreparedTaskV5> {
   const bundleDir = options.bundleDir;
-  const adapterId = options.adapterId ?? detectAdapterId(bundleDir);
-  if (adapterId === "akm-task") validateTaskConceptId(id);
-  else validateTaskId(id);
-  const taskConceptId = adapterId === "akm" ? `tasks/${id}` : id;
-  const owner = resolveAdapterConceptOwner(bundleDir, adapterId, taskConceptId);
-  if (!owner) {
-    throw new NotFoundError(
-      `Task ${JSON.stringify(id)} was not found in the configured ${JSON.stringify(adapterId)} component.`,
-      "ASSET_NOT_FOUND",
-    );
-  }
-  const filePath = owner.path;
-  const yaml = fs.readFileSync(filePath, "utf8");
+  validateTaskConceptId(id);
+  const bundle = bundleSourceAt(bundleDir);
+  const taskSource = {
+    name: options.bundleName ?? bundle.name,
+    path: bundleDir,
+    adapterId: options.adapterId ?? bundle.adapterId,
+  };
+  const found = resolveTask(taskSource, id);
+  if (!found) throw taskNotFound(taskSource, taskNameOf(taskSource, id));
+  const { asset } = found;
+  const taskConceptId = asset.conceptId;
+  // asset-io: display the file names the task source in messages
+  const filePath = asset.entry.file;
+  if (filePath === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
+  const yaml = asset.entry.content();
   const parsed = parseTaskSource({ yaml, filePath });
   if (parsed.version !== 4) {
     return Object.freeze({
@@ -189,7 +189,10 @@ export async function loadPreparedTask(
     ...(options.scheduled ? { schedulerContext: scheduledTaskContextEnv() } : {}),
     resolveAsset: async ({ bundle, type, name }) => {
       if (bundle === bundleName) {
-        return { file: await resolveAssetPath(bundleDir, type, name), bundleRoot: bundleDir };
+        return resolveOwnBundleAsset(
+          { name: bundleName, path: bundleDir, adapterId: taskSource.adapterId },
+          { type, name },
+        );
       }
       return resolveBundleAsset(requiresCommandConfig ? config : loadConfig(), { bundle, type, name });
     },

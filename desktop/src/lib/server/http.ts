@@ -2,7 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { AkmError, CONFLICT_CODES, scrubUrlCredentials } from "akm-cli/workspace";
+import {
+  AkmError,
+  CONFLICT_CODES,
+  clearAdapterCaches,
+  embedPendingWrites,
+  scrubUrlCredentials,
+} from "akm-cli/workspace";
 import { NEWER_INDEX_MESSAGE } from "../engine-skew.js";
 import { HttpFailure } from "./input.js";
 import { type Route, routes } from "./routes.js";
@@ -84,6 +90,8 @@ export async function dispatch(request: Request, url: URL): Promise<Response> {
   const found = find(read ? "GET" : "POST", url.pathname);
   if (!found) return failure(404, "NOT_FOUND", read ? "No such API route." : "No such action.");
   const { route, params } = found;
+  // What akm read of a keyring or vault lives for one request.
+  clearAdapterCaches();
   try {
     let input: unknown = url.searchParams;
     if (route.method === "POST") {
@@ -94,5 +102,8 @@ export async function dispatch(request: Request, url: URL): Promise<Response> {
     return route.literal ? literal(data) : success(data);
   } catch (error) {
     return failed(error);
+  } finally {
+    // The vectors of the rows this request's writes recorded, before the request ends (fail-open).
+    await embedPendingWrites();
   }
 }

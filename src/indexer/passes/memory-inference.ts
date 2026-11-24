@@ -11,7 +11,7 @@
  * parent memory.
  *
  * Pending predicate (see {@link isPendingMemory}):
- *   - File lives under `<stashRoot>/memories/` and ends in `.md`.
+ *   - A memory the bundle at `<stashRoot>` lists, under its memory folder.
  *   - Frontmatter does NOT have `inferenceProcessed: true` (parent already split).
  *   - Frontmatter does NOT have `inferred: true` (this is itself a child fact).
  *
@@ -33,15 +33,13 @@
  * Locked v1 contract:
  *   - LLM access is exclusively via the frozen runner returned by
  *     `resolveIndexPassExecution("memory", config)`.
- *   - All child memory writes go through `writeAssetToSource` in
- *     `src/core/write-source.ts`. The parent's frontmatter rewrite is an
+ *   - All child memory writes go through `writeAssets` in
+ *     `src/core/assets/write.ts`. The parent's frontmatter rewrite is an
  *     explicit narrow exception — see {@link markParentProcessed}.
  */
 
-import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import {
   parseFrontmatter,
@@ -49,15 +47,19 @@ import {
   readFrontmatterDate,
   replaceFrontmatterBlocks,
 } from "../../core/asset/frontmatter";
-import { conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
+import { adapterWrites } from "../../core/assets/gate";
+import { type Asset, listAssets, readAsset } from "../../core/assets/read";
+import { assetTypesByContent, indexedPathOf } from "../../core/assets/type";
+import { writeAssets } from "../../core/assets/write";
 import { bestEffort } from "../../core/best-effort";
-import { asNonEmptyString, existingFileMode, writeFileAtomic } from "../../core/common";
+import { materialiseBundleDir } from "../../core/bundle-at-dir";
+import { asNonEmptyString } from "../../core/common";
 import { concurrentMap } from "../../core/concurrent";
-import type { SourceConfigEntry } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
-import { beginWriteProvenance, recordWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
-import { type WriteTargetSource, writeAssetToSource } from "../../core/write-source";
+import { beginWriteProvenance, type WriteProvenanceJournal } from "../../core/write-provenance";
+import { resolveWritable, writeTargetAt } from "../../core/write-source";
 import { type NoticeSink, noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -67,7 +69,6 @@ import * as memoryInfer from "../../llm/memory-infer";
 import { computeBodyHash, getLlmCacheEntry } from "../../storage/repositories/index-llm-cache-repository";
 import { pkgVersion } from "../../version";
 import { withLlmCache } from "../db/llm-cache";
-import { walkMarkdownFiles } from "../walk/walker";
 import {
   applyProvenanceFrontmatter,
   type IndexDocument,
@@ -171,7 +172,7 @@ export interface MemoryInferenceResult {
   notices?: readonly Readonly<LoweringNotice>[];
   /**
    * Absolute paths this call actually wrote or rewrote — every derived child
-   * (`writeAssetToSource`) and every parent whose frontmatter was stamped
+   * (`writeAssets`) and every parent whose frontmatter was stamped
    * `inferenceProcessed: true` (`markParentProcessed`), plus every child whose
    * scope was synced. Lets the caller index
    * exactly these files (`indexWrittenAssets`) instead of a full reindex
@@ -269,7 +270,7 @@ function planPendingMemoryRecord(
   ctx: Pick<MemoryInferencePassContext, "signal" | "db" | "reEnrich">,
 ): MemoryInferencePlan {
   if (ctx.signal?.aborted) return { kind: "aborted", record };
-  if (fs.existsSync(derivedChildPath(record))) return { kind: "existing-child", record };
+  if (derivedChildExists(record)) return { kind: "existing-child", record };
   if (ctx.db && !ctx.reEnrich) {
     const cached = readCachedMemoryDecision(ctx.db, record);
     if (cached) return { kind: "cache-hit", record, decision: cached };
@@ -307,7 +308,7 @@ async function inferPendingMemoryRecord(
 
   // Existing children are complete, but the parent may be unmarked after a
   // crash between the child write and parent update (or an external write).
-  if (fs.existsSync(derivedChildPath(record))) {
+  if (derivedChildExists(record)) {
     markParentProcessed(record);
     return {
       skipped: false,
@@ -474,17 +475,28 @@ async function runMemoryInferencePassBody(
     warn("memory inference: skipped — no default bundle among the sources, so there is no write target");
     return completeResult();
   }
-  if ((primary.adapterId ?? detectAdapterId(primary.path)) !== "akm") {
+  if (!adapterWrites(primary, "memory")) {
     warn(`memory inference: skipped — the default bundle at ${primary.path} is not an akm bundle`);
+    return completeResult();
+  }
+
+  // One decision, before any model call: the bundle derived memories are written to, resolved as the write resolves
+  // it. A bundle that takes no writes skips the pass, so its pending memories wait instead of each paying a model call
+  // for a write that is then refused.
+  const target = writeTargetAt(primary.path, config);
+  if (!resolveWritable(target.config)) {
+    warn(`memory inference: skipped — bundle "${target.source.name}" is not writable, so its pending memories wait`);
     return completeResult();
   }
 
   const inCandidates = (ref: string) => !options.candidateRefs || options.candidateRefs.has(ref);
   const scan = scanMemories(primary.path);
-  // A read-only default bundle keeps its children as they are; the
-  // deterministic scope rewrite runs before, and apart from, any model work.
-  if (primary.writable !== false && !signal?.aborted) {
-    result.scopeSynced = syncDerivedChildScopes(scan.scopeDrift.filter((drift) => inCandidates(drift.parentRef)));
+  // The deterministic scope rewrite runs before, and apart from, any model work.
+  if (!signal?.aborted) {
+    result.scopeSynced = syncDerivedChildScopes(
+      primary.path,
+      scan.scopeDrift.filter((drift) => inCandidates(drift.parentRef)),
+    );
   }
   const pending = scan.pending.filter((record) => inCandidates(record.ref));
   result.considered = pending.length;
@@ -601,11 +613,7 @@ export function countPendingMemoriesNeedingDecision(
   return pending.filter((record) => readCachedMemoryDecision(db, record) !== memoryInfer.MEMORY_INFER_NO_CHANGE).length;
 }
 
-/**
- * Walk `<stashRoot>/memories/` (recursively) and return every memory that
- * still needs inference. The directory may not exist on a fresh stash; that
- * is treated as "no pending memories" rather than an error.
- */
+/** Every memory the bundle at `stashRoot` lists that still needs inference; none in a bundle without memories. */
 export function collectPendingMemories(stashRoot: string): MemoryRecord[] {
   return scanMemories(stashRoot).pending;
 }
@@ -622,33 +630,25 @@ interface ScopeDrift {
 }
 
 /**
- * One walk of `<stashRoot>/memories/`: the pending parents, and the existing
- * derived children whose scope has drifted from their parent's.
+ * One listing of the memories of the bundle at `stashRoot`: the pending parents, and the existing derived children
+ * whose scope has drifted from their parent's.
  */
 function scanMemories(stashRoot: string): { pending: MemoryRecord[]; scopeDrift: ScopeDrift[] } {
-  const memoriesDir = path.join(stashRoot, "memories");
-  if (!fs.existsSync(memoriesDir)) return { pending: [], scopeDrift: [] };
-
   const out: MemoryRecord[] = [];
   const parentScopes = new Map<string, StashEntryScope>();
   const children: { filePath: string; name: string; data: Record<string, unknown> }[] = [];
-  const walked = walkMarkdownFiles(memoriesDir);
-  if (!walked.complete) {
-    warn(`memory inference: directory scan under ${memoriesDir} is incomplete — some memories may be missing`);
-  }
-  for (const filePath of walked.files) {
+  for (const { memory, name: relName } of listMemories(materialiseBundleDir(stashRoot))) {
+    const filePath = indexedPathOf(memory);
     let raw: string;
     try {
-      raw = fs.readFileSync(filePath, "utf8");
+      raw = memory.entry.content();
     } catch (err) {
       warn(
-        `memory inference: failed to read candidate memory ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+        `memory inference: failed to read candidate memory ${memory.ref}: ${err instanceof Error ? err.message : String(err)}`,
       );
       continue;
     }
     const parsed = parseFrontmatter(raw);
-    const relName = toMemoryName(memoriesDir, filePath);
-    if (!relName) continue;
     if (relName.endsWith(".derived")) {
       children.push({ filePath, name: relName, data: parsed.data });
       continue;
@@ -754,12 +754,19 @@ export function isPendingMemory(frontmatter: Record<string, unknown>, filePath?:
   return true;
 }
 
-function toMemoryName(memoriesDir: string, filePath: string): string | undefined {
-  const rel = path.relative(memoriesDir, filePath);
-  if (!rel || rel.startsWith("..")) return undefined;
-  // Strip the `.md` extension; preserve any nested subdirectory layout the
-  // user has organised under memories/.
-  return rel.replace(/\\/g, "/").replace(/\.md$/i, "");
+/**
+ * The memories of the bundle `bundle`, each with its name: its path under the memory folder. One listing, typed by
+ * content, so no index is read or written (a dry run stays read-only) and a file the walk does not reach is none.
+ */
+export function listMemories(bundle: string): Array<{ memory: Asset; name: string }> {
+  const folder = conceptIdFromTypeName("memory", "");
+  const listed = listAssets({ bundle }).flatMap((memory) =>
+    memory.conceptId.startsWith(folder) && memory.conceptId.length > folder.length
+      ? [{ memory, name: memory.conceptId.slice(folder.length) }]
+      : [],
+  );
+  const types = assetTypesByContent(listed.map(({ memory }) => memory));
+  return listed.filter(({ memory }) => types.get(memory) === "memory");
 }
 
 // ── Writing derived memories + marking parent ───────────────────────────────
@@ -779,31 +786,16 @@ interface WriteDerivedOutcome {
 }
 
 /**
- * Absolute path of the derived child for a parent memory. Single source of
- * truth for the `<parent>.derived.md` naming convention — used both by the
- * pre-LLM existence check (#588) and the write path.
+ * Whether the derived child `<parent>.derived` of a parent memory exists. Single source of truth for the naming
+ * convention — used both by the pre-LLM existence check (#588) and the write path.
  */
-function derivedChildPath(parent: MemoryRecord): string {
-  return path.join(parent.stashRoot, "memories", `${parent.name}.derived.md`);
+function derivedChildExists(parent: MemoryRecord): boolean {
+  return readAsset(materialiseBundleDir(parent.stashRoot), `${parent.ref}.derived`) !== undefined;
 }
 
 async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft): Promise<WriteDerivedOutcome> {
-  const writeTarget: WriteTargetSource = {
-    kind: "filesystem",
-    name: "stash",
-    path: parent.stashRoot,
-    adapterId: "akm",
-  };
-  const writeConfig: SourceConfigEntry = {
-    type: "filesystem",
-    name: "stash",
-    path: parent.stashRoot,
-    writable: true,
-  };
-
   const childName = `${parent.name}.derived`;
-  const childRefStr = `memories/${childName}`;
-  if (fs.existsSync(derivedChildPath(parent))) {
+  if (derivedChildExists(parent)) {
     // The derived child appeared on disk after the caller's pre-check (#588)
     // — a rare mid-flight race. Report `childExists` so the caller marks the
     // parent processed (#550) instead of re-queueing it forever.
@@ -812,8 +804,9 @@ async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDr
 
   try {
     const content = renderDerivedMemory(parent, derived);
-    const childRef = parsePlacementRef(childRefStr);
-    await writeAssetToSource(writeTarget, writeConfig, childRef, content);
+    writeAssets(writeTargetAt(parent.stashRoot), { purpose: "memory-inference" }, (w) =>
+      w.create({ type: "memory", name: childName, content }),
+    );
     return { written: 1, childExists: false };
   } catch (err) {
     warn(
@@ -863,39 +856,26 @@ function renderDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft):
 }
 
 function markParentProcessed(parent: MemoryRecord): void {
-  // Frontmatter-only rewrite of an existing asset: not a new asset write,
-  // so writeAssetToSource isn't a fit here (it would round-trip the body
-  // through the asset-spec rendering layer instead of preserving the
-  // user's original markdown bytes verbatim). This is the narrow exception
-  // to routing asset writes through writeAssetToSource.
-  let raw: string;
+  // A frontmatter-only update of the asset as it is now: its body bytes are kept (`parent.data` was parsed before the model
+  // call, and writing it back would revert any edit made to the file since).
   try {
-    raw = fs.readFileSync(parent.filePath, "utf8");
-  } catch (err) {
-    warn(
-      `memory inference: failed to re-read parent ${parent.filePath}: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return;
-  }
-
-  const block = parseFrontmatterBlock(raw);
-  if (!block) {
-    // Cannot safely rewrite malformed frontmatter — skip marking so the memory
-    // is retried on the next run once the frontmatter is repaired. Writing with
-    // `body = raw` would wrap the entire file (including the bad frontmatter)
-    // in a new block, producing a duplicate-frontmatter corruption.
-    warn(`memory inference: skipping markParentProcessed for ${parent.filePath} — could not parse frontmatter block`);
-    return;
-  }
-  // Stamp the frontmatter as it is now: `parent.data` was parsed before the model
-  // call, and writing it back would revert any edit made to the file since.
-  const updatedFm: Record<string, unknown> = { ...parseFrontmatter(raw).data, [FM_INFERENCE_PROCESSED]: true };
-  const next = assembleAsset(updatedFm, block.content);
-  try {
-    fs.writeFileSync(parent.filePath, next, "utf8");
-    // #652: the parent's `inference_processed` stamp is a real asset mutation
-    // (the documented writeAssetToSource exception above) — journal it.
-    recordWrittenPath(parent.filePath);
+    writeAssets(writeTargetAt(parent.stashRoot), { purpose: "memory-inference" }, (w) => {
+      const held = w.read(parent.ref);
+      if (!held) throw new Error("the memory is gone");
+      const raw = held.entry.content();
+      const block = parseFrontmatterBlock(raw);
+      if (!block) {
+        // Cannot safely rewrite malformed frontmatter — skip marking so the memory is retried on the next run once the
+        // frontmatter is repaired. Writing with `body = raw` would wrap the entire file (including the bad frontmatter)
+        // in a new block, producing a duplicate-frontmatter corruption.
+        warn(
+          `memory inference: skipping markParentProcessed for ${parent.filePath} — could not parse frontmatter block`,
+        );
+        return;
+      }
+      const updatedFm: Record<string, unknown> = { ...parseFrontmatter(raw).data, [FM_INFERENCE_PROCESSED]: true };
+      w.update(held.conceptId, assembleAsset(updatedFm, block.content));
+    });
   } catch (err) {
     warn(
       `memory inference: failed to mark parent processed ${parent.filePath}: ${err instanceof Error ? err.message : String(err)}`,
@@ -911,27 +891,34 @@ function markParentProcessed(parent: MemoryRecord): void {
  * since the walk is judged as it is now; one that no longer drifts, is no
  * longer a derived child of that parent, or whose frontmatter cannot be edited
  * in place is left untouched. Like {@link markParentProcessed}, this is a
- * frontmatter-only exception to `writeAssetToSource`, written atomically and
+ * frontmatter-only exception to `writeAssets`, written atomically and
  * journaled so the caller indexes and commits it. Returns the rewrite count.
  */
-function syncDerivedChildScopes(drifts: readonly ScopeDrift[]): number {
+function syncDerivedChildScopes(stashRoot: string, drifts: readonly ScopeDrift[]): number {
   let synced = 0;
   for (const drift of drifts) {
     try {
-      const raw = fs.readFileSync(drift.childPath, "utf8");
-      const data = parseFrontmatter(raw).data;
-      if (!isDerivedChildOf(data, drift.parentName) || sameScope(scopeFromFrontmatter(data), drift.scope)) continue;
-      const flat = stampScope({}, drift.scope).data;
-      const lines = Object.keys(flat).length > 0 ? serializeFrontmatter(flat).split("\n") : [];
-      const next = replaceFrontmatterBlocks(raw, SCOPE_FRONTMATTER_KEYS, lines);
-      const expected = stampScope(data, drift.scope).data;
-      if (next === null || !isDeepStrictEqual(parseFrontmatter(next).data, expected)) {
-        warn(`memory inference: scope of ${drift.childPath} differs from its parent but cannot be rewritten in place`);
-        continue;
-      }
-      writeFileAtomic(drift.childPath, next, existingFileMode(drift.childPath));
-      recordWrittenPath(drift.childPath);
-      synced += 1;
+      const written = writeAssets(writeTargetAt(stashRoot), { purpose: "memory-inference" }, (w) => {
+        const held = w.read(`${conceptIdFromTypeName("memory", drift.parentName)}.derived`);
+        if (!held) throw new Error("the derived memory is gone");
+        const raw = held.entry.content();
+        const data = parseFrontmatter(raw).data;
+        if (!isDerivedChildOf(data, drift.parentName) || sameScope(scopeFromFrontmatter(data), drift.scope))
+          return false;
+        const flat = stampScope({}, drift.scope).data;
+        const lines = Object.keys(flat).length > 0 ? serializeFrontmatter(flat).split("\n") : [];
+        const next = replaceFrontmatterBlocks(raw, SCOPE_FRONTMATTER_KEYS, lines);
+        const expected = stampScope(data, drift.scope).data;
+        if (next === null || !isDeepStrictEqual(parseFrontmatter(next).data, expected)) {
+          warn(
+            `memory inference: scope of ${drift.childPath} differs from its parent but cannot be rewritten in place`,
+          );
+          return false;
+        }
+        w.update(held.conceptId, next);
+        return true;
+      });
+      if (written) synced += 1;
     } catch (err) {
       warn(
         `memory inference: failed to sync scope of ${drift.childPath}: ${err instanceof Error ? err.message : String(err)}`,

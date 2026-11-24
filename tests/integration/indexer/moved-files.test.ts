@@ -11,7 +11,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { akmRules } from "../../../src/commands/read/rules";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { resetConfigCache } from "../../../src/core/config/config";
+import { listEnvsRecursive } from "../../../src/core/env-secret-ref";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import { getDbPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
@@ -46,8 +49,8 @@ beforeEach(() => {
     semanticSearchMode: "off",
     defaultBundle: "stash",
     bundles: {
-      stash: { path: storage.stashDir, writable: true, components: { main: { root: ".", adapter: "akm" } } },
-      other: { path: other, writable: true, components: { main: { root: ".", adapter: "akm" } } },
+      stash: { path: storage.stashDir, writable: true, adapter: "akm" },
+      other: { path: other, writable: true, adapter: "akm" },
     },
   });
 });
@@ -91,11 +94,11 @@ function seedHistory(ref: string, entryId: number): void {
       source: "user",
     });
     db.prepare(
-      "INSERT INTO proposals (id, stash_dir, ref, status, source, created_at, updated_at) VALUES (?, ?, ?, 'accepted', 'reflect', 't', 't')",
-    ).run(`p-${ref}`, storage.stashDir, ref);
+      "INSERT INTO proposals (id, bundle_id, ref, status, source, created_at, updated_at) VALUES (?, ?, ?, 'accepted', 'reflect', 't', 't')",
+    ).run(`p-${ref}`, stateBundleId(storage.stashDir), ref);
     db.prepare(
-      "INSERT INTO improve_ledger (stash_dir, ref, source, last_attempt_at, outcome) VALUES (?, ?, 'reflect', 't', 'accepted')",
-    ).run(storage.stashDir, ref);
+      "INSERT INTO improve_ledger (bundle_id, ref, source, last_attempt_at, outcome) VALUES (?, ?, 'reflect', 't', 'accepted')",
+    ).run(stateBundleId(storage.stashDir), ref);
     db.prepare("INSERT INTO asset_salience (asset_ref) VALUES (?)").run(ref);
     db.prepare("INSERT INTO asset_outcome (asset_ref) VALUES (?)").run(ref);
   } finally {
@@ -248,6 +251,50 @@ describe("a plain rename is a move", () => {
     await akmIndex({ stashDir: storage.stashDir });
 
     expect(utilityOf("stash//knowledge/renamed/alpha")).toEqual(before);
+  });
+});
+
+describe("a read that indexes an asset on a miss does not hide its move", () => {
+  // `akm env list` types every asset of the bundle, so it writes the moved file's row; `akm rules` does not.
+  const reads: Array<[string, () => unknown, boolean]> = [
+    ["akm rules", () => akmRules({}), false],
+    ["akm env list", () => listEnvsRecursive(), true],
+  ];
+  for (const [name, read, writesRow] of reads) {
+    test(`a file renamed, then ${name}, then index is a move: id, vector and history follow`, async () => {
+      put("knowledge/alpha.md", doc("alpha"));
+      const id = await indexWithHistory("stash//knowledge/alpha");
+
+      move("knowledge/alpha.md", "knowledge/alpha-renamed.md");
+      read();
+      if (writesRow) expect(entry("stash//knowledge/alpha-renamed")).toBeDefined();
+      const result = await akmIndex({ stashDir: storage.stashDir });
+
+      expect(result.moves).toEqual({
+        moved: [{ from: "stash//knowledge/alpha", to: "stash//knowledge/alpha-renamed" }],
+        unpaired: 0,
+      });
+      expect(historyAt("stash//knowledge/alpha-renamed")).toEqual(SEEDED);
+      expect(entry("stash//knowledge/alpha")).toBeUndefined();
+      expect(entry("stash//knowledge/alpha-renamed")?.id).toBe(id);
+      expect(vectorOf(id)).toBe("0000803E0000003F0000403F0000803F");
+      expect(utilityOf("stash//knowledge/alpha-renamed")).toBeDefined();
+    });
+  }
+
+  test("a new file indexed on a miss, with content no deleted file had, is no move", async () => {
+    put("knowledge/alpha.md", doc("alpha"));
+    await indexWithHistory("stash//knowledge/alpha");
+
+    fs.rmSync(path.join(storage.stashDir, "knowledge/alpha.md"));
+    put("knowledge/beta.md", doc("beta", "Different body."));
+    akmRules({});
+    const result = await akmIndex({ stashDir: storage.stashDir });
+
+    expect(result.moves).toBeUndefined();
+    expect(entry("stash//knowledge/alpha")).toBeUndefined();
+    expect(entry("stash//knowledge/beta")).toBeDefined();
+    expect(historyAt("stash//knowledge/beta")).toEqual(NONE);
   });
 });
 

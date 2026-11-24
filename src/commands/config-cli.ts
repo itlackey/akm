@@ -2,6 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { isDeepStrictEqual } from "node:util";
+import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
 /**
  * Config CLI commands — `akm config get/set/unset/list`.
  *
@@ -13,8 +15,7 @@
  * settings use their canonical connection, harness and strategy paths; retired aliases are not
  * rewritten at this boundary.
  */
-import { isDeepStrictEqual } from "node:util";
-import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
+import { assertKnownAdapter } from "../core/assets/gate";
 import { isRecord } from "../core/common";
 import {
   type AkmConfig,
@@ -26,6 +27,7 @@ import {
   resolveConfigRefSource,
   unusableEntryAt,
 } from "../core/config/config";
+import { resolveConfiguredSources } from "../core/config/config-sources";
 import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config/config-walker";
 import { isEnvReference } from "../core/config/schema/primitives";
 import { UsageError } from "../core/errors";
@@ -40,7 +42,26 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
 }
 
 export function setConfigValue(config: AkmConfig, key: string, rawValue: string): AkmConfig {
-  return configSet(config as unknown as Record<string, unknown>, key, rawValue) as unknown as AkmConfig;
+  const [group, bundle, member] = key.split(".");
+  if (group === "bundles" && member === "components") {
+    throw new UsageError(
+      `Config key "${key}" is retired: a bundle has no components. Set bundles.${bundle}.adapter, bundles.${bundle}.root or bundles.${bundle}.writable.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  const next = configSet(config as unknown as Record<string, unknown>, key, rawValue) as unknown as AkmConfig;
+  // A typo in an adapter id, or an adapter the bundle is not addressed for, is caught as it is typed, not when a bundle
+  // is next read.
+  if (key === "bundles" || key.startsWith("bundles.")) {
+    // Only the bundle the key names (every bundle for `bundles` itself): another bundle's fault is not this edit's.
+    const touched = key.split(".")[1];
+    for (const source of resolveConfiguredSources(next)) {
+      if (touched !== undefined && source.name !== touched) continue;
+      if (source.adapterId !== undefined)
+        assertKnownAdapter(source.name, source.adapterId, { location: source.source.type === "location" });
+    }
+  }
+  return next;
 }
 
 export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {

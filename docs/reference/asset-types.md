@@ -67,7 +67,9 @@ definition. Body placeholders such as `$ARGUMENTS` also discover commands in
 untyped directories, but do not override knowledge, memory, or other typed
 directory placement. Workflow assets are `.md`, classified by `type: workflow`
 or placement. Skills are a
-**packaging convention**: a directory containing a `SKILL.md` file.
+**packaging convention**: a directory containing a `SKILL.md` file. Which file
+is an asset, and its ref, come from the path alone; only the type of a loose
+`.md` file reads its content, and the index records it.
 
 See [Classification](../architecture/internals/classification.md) for the
 full specificity-based matching system.

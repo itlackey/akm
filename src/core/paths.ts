@@ -364,9 +364,9 @@ export function getStateDir(env: NodeJS.ProcessEnv = process.env, platform = pro
 /**
  * Deterministic, filesystem-safe key for machine-local state that belongs to
  * one stash but must not live under `$STASH` itself. Namespaces `$STATE`/
- * `$CACHE` writers by the resolved absolute stash directory — the filesystem
- * counterpart of how `state.db`'s `proposals` table keys per-stash rows by
- * its `stash_dir` column — so two stashes on one machine never collide.
+ * `$CACHE` writers by the resolved absolute stash directory, so two stashes on
+ * one machine never collide. (`state.db` rows follow a bundle's name instead,
+ * §0.2 P8; files here belong to the directory.)
  *
  * Reuses {@link shortHash} (bundle-id.ts) rather than growing a second
  * sha256-truncated-hex helper. `shortHash` trims to 8 hex chars (32
@@ -395,6 +395,17 @@ function stashScopedDir(base: string, stashDir: string): string {
  */
 export function getUnresolvedSourcesDir(stashDir: string): string {
   return stashScopedDir(path.join(getCacheDir(), "index", "unresolved-sources"), stashDir);
+}
+
+/**
+ * `$CACHE/index/bundles/<bundle>` — the `path` a store's source carries (a keyring,
+ * a vault). A store has no directory, but the source lists, the write targets and
+ * the indexer tell sources apart by `path`, so each store needs a value of its own
+ * that is the same in every process; one inside akm's cache that akm never creates
+ * names no directory a reader of `path` could find. Never written to disk.
+ */
+export function getStoreSourceKey(bundle: string): string {
+  return path.join(getCacheDir(), "index", "bundles", bundle);
 }
 
 /**

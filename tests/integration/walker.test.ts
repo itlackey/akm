@@ -3,8 +3,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { walkStash, walkStashFlat, walkStashFlatWithStatus } from "../../src/core/adapter/directory/walker";
 import { isScratchPath } from "../../src/core/asset/scratch";
-import { walkStash, walkStashFlat, walkStashFlatWithStatus } from "../../src/indexer/walk/walker";
 
 const createdTmpDirs: string[] = [];
 

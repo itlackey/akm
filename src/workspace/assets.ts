@@ -12,6 +12,8 @@ import { parseBundleRef } from "../core/asset/asset-ref";
 import { readFrontmatter } from "../core/asset/frontmatter-edit";
 import { parseMarkdownToc, uniqueHeadingSlugs } from "../core/asset/markdown";
 import { markdownLinkTargets } from "../core/asset/markdown-link-targets";
+import { protectedTypeOf } from "../core/assets/files";
+import { assetType } from "../core/assets/type";
 import { loadConfig } from "../core/config/config";
 import { defaultExcludedTypes } from "../core/config/schema/search";
 import { resolveRefOwner } from "../core/env-secret-ref";
@@ -24,7 +26,6 @@ import type { ScopeFilters } from "../indexer/passes/metadata";
 import { resolveReadSources } from "../indexer/read-preflight";
 import { countBrowseEntries } from "../indexer/search/db-search";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
-import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
 import { countFeedbackBySignal, listFeedbackEventRows } from "../storage/repositories/metrics-repository";
 import { assetImprove } from "./asset-improve";
@@ -175,7 +176,8 @@ function feedbackFor(durableRef: string | null) {
 export async function show(input: { ref: string }) {
   const ref = (input.ref ?? "").trim();
   if (!ref) throw new UsageError("An asset ref is required.", "MISSING_REQUIRED_ARGUMENT");
-  const type = resolveRefOwner(ref)?.type;
+  const owner = resolveRefOwner(ref);
+  const type = owner ? assetType(owner) : undefined;
   if (type === "env" || type === "secret") {
     // Values never leave the machine's own files through the UI, whatever the renderers would show.
     return { redacted: true, type, ref, note: "Env and secret values are never shown in the UI." };
@@ -189,6 +191,7 @@ export async function show(input: { ref: string }) {
   const slugs = uniqueHeadingSlugs(headings);
   const links: Record<string, string> = {};
   if (shown.path && durableRef) {
+    const shownDir = path.dirname(shown.path);
     const owner = parseBundleRef(durableRef).bundle;
     readUsableIndex((db) => {
       for (const raw of markdownLinkTargets(content, false)) {
@@ -201,7 +204,7 @@ export async function show(input: { ref: string }) {
         } catch {
           continue;
         }
-        const id = getEntryIdByFilePath(db, path.resolve(path.dirname(shown.path), decoded));
+        const id = getEntryIdByFilePath(db, path.resolve(shownDir, decoded));
         const target = id === undefined ? undefined : getItemRefById(db, id);
         if (target && parseBundleRef(target).bundle === owner) links[raw] = target + (fragment ? `#${fragment}` : "");
       }

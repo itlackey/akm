@@ -5,10 +5,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
-import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
-import { MEMORY_ARCHIVE_REL } from "../../../core/asset/memory-archive";
+import { editFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
 import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
-import { asNonEmptyString, groupBy, stringArray, toPosix } from "../../../core/common";
+import { readAsset } from "../../../core/assets/read";
+import { indexedPathOf } from "../../../core/assets/type";
+import { type AssetWriter, conceptIdAtFile, writeAssets } from "../../../core/assets/write";
+import { materialiseBundleDir } from "../../../core/bundle-at-dir";
+import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
+import { assetNotFound } from "../../../core/errors";
 import type {
   ArchivedMemoryCleanupRecord,
   MemoryBeliefState,
@@ -20,10 +24,9 @@ import type {
   RelativeDateCandidate,
 } from "../../../core/improve-types";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
-import { warn } from "../../../core/warn";
-import { recordWrittenPath } from "../../../core/write-provenance";
-import { walkMarkdownFiles } from "../../../indexer/walk/walker";
-import { checkGitPathSafety, isGitBackedStash } from "../../../sources/providers/git-stash";
+import { beginWriteProvenance, recordWrittenPath } from "../../../core/write-provenance";
+import { resolveWritable, writeTargetAt } from "../../../core/write-source";
+import { listMemories } from "../../../indexer/passes/memory-inference";
 import { contentHash } from "../content-hash";
 import { isDerivedMemory, memoryIdentityRef, parseMemoryName, resolveParentRef } from "./derived-ref";
 
@@ -241,7 +244,11 @@ export function applyMemoryCleanup(stashDir: string, plan: MemoryCleanupPlan): M
     const filePath = fileByRef.get(transition.ref);
     if (!filePath) continue;
     try {
-      persistBeliefStateTransition(filePath, transition);
+      persistBeliefStateTransition(
+        stashDir,
+        conceptIdAtFile(materialiseBundleDir(stashDir), filePath) ?? transition.ref,
+        transition,
+      );
       appliedBeliefTransitions.push(transition);
     } catch (error) {
       warnings.push(formatApplyWarning("belief-transition", transition.ref, error));
@@ -273,22 +280,27 @@ export function applyMemoryCleanup(stashDir: string, plan: MemoryCleanupPlan): M
   let relativeDatesResolved = 0;
   for (const candidate of plan.relativeDateCandidates) {
     try {
-      const raw = fs.readFileSync(candidate.filePath, "utf8");
-      const fm = parseFrontmatter(raw);
+      const target = writeTargetAt(stashDir);
+      const held = readAsset(
+        target.source.name,
+        conceptIdAtFile(target.source.name, candidate.filePath) ?? candidate.ref,
+      );
+      if (!held) throw assetNotFound(candidate.ref);
+      const fm = parseFrontmatter(held.entry.content());
       const createdAtStr = fm.data.createdAt as string | undefined;
+      const modified = (): Date => held.entry.modified?.() ?? new Date();
       let referenceDate: Date;
       if (createdAtStr) {
         const parsed = new Date(createdAtStr);
-        referenceDate = Number.isNaN(parsed.getTime()) ? new Date(fs.statSync(candidate.filePath).mtimeMs) : parsed;
+        referenceDate = Number.isNaN(parsed.getTime()) ? modified() : parsed;
       } else {
-        referenceDate = new Date(fs.statSync(candidate.filePath).mtimeMs);
+        referenceDate = modified();
       }
       const resolvedBody = resolveRelativeDates(fm.content ?? "", referenceDate);
       if (resolvedBody === (fm.content ?? "")) continue; // no change
       const newContent = assembleAsset(fm.data, resolvedBody);
-      fs.writeFileSync(candidate.filePath, newContent, "utf8");
-      // #652: relative-date resolution rewrites the asset in place.
-      recordWrittenPath(candidate.filePath);
+      // The journal (#652) records the asset the update rewrites in place.
+      writeAssets(target, { purpose: "memory-cleanup" }, (w) => w.update(held.conceptId, newContent));
       relativeDatesResolved++;
     } catch (error) {
       warnings.push(formatApplyWarning("relative-date-resolve", candidate.ref, error));
@@ -561,19 +573,18 @@ function stronglyConnectedComponents(
 }
 
 /**
- * The `.derived` twin of a non-derived memory file, if one exists on disk:
- * `<name>.derived.md` beside it, the naming convention
+ * The concept id the `.derived` twin of a non-derived memory would have:
+ * `<name>.derived` beside it, the naming convention
  * `indexer/passes/memory-inference.ts`'s `derivedChildPath` writes.
- * `undefined` for a knowledge or lesson ref (no such twin exists), or for a
+ * `undefined` for a knowledge or lesson (no such twin exists), or for a
  * memory that is already itself `.derived` (it has no further twin).
  *
  * Used by `akm proposal accept` to take a retired or promoted
  * memory's derived child along when it archives the memory.
  */
-export function derivedTwinPath(filePath: string, refType: string): string | undefined {
-  if (refType !== "memory" || filePath.endsWith(`${DERIVED_SUFFIX}.md`)) return undefined;
-  const twin = `${filePath.slice(0, -3)}${DERIVED_SUFFIX}.md`;
-  return fs.existsSync(twin) ? twin : undefined;
+export function derivedTwinOf(conceptId: string, type: string): string | undefined {
+  if (type !== "memory" || conceptId.endsWith(DERIVED_SUFFIX)) return undefined;
+  return `${conceptId}${DERIVED_SUFFIX}`;
 }
 
 /**
@@ -598,106 +609,91 @@ function isRetireCandidate(candidate: MemoryPruneCandidate): boolean {
  */
 function resolvePreviousBeliefState(
   candidate: MemoryPruneCandidate,
-  filePath: string,
+  content: () => string,
 ): Exclude<MemoryBeliefState, "archived"> {
   if (!isRetireCandidate(candidate)) return priorBeliefStateForArchive(candidate);
   try {
-    return resolveBeliefState(parseFrontmatter(fs.readFileSync(filePath, "utf8")).data);
+    return resolveBeliefState(parseFrontmatter(content()).data);
   } catch {
     return "active";
   }
 }
 
 /**
- * Move `filePath` into the recoverable cleanup archive
- * (`.akm/memory-cleanup/archive/<stamp>-<ref>/`) with a `cleanup.md`
- * tombstone, journaling both ends (`recordWrittenPath`) so a LATER sync
- * commits the move — `akm sync`, or the batched auto-sync an `akm improve`
- * run does at its own end (`docs/architecture/improvement.md`, "Auto-sync").
- * This call does not itself commit anything: a standalone `akm proposal
- * accept` (the only way a retire proposal is ever accepted — triage never
- * auto-accepts one) leaves the move journaled but uncommitted until
- * something later reads that journal, unless the write target's `kind` is
- * `"git"`, in which case the caller's own `commitWriteTargetBoundary` commits
- * (and maybe pushes) immediately as part of the SAME accept.
- *
- * Covers any memory, knowledge or lesson file in a
- * writable bundle — not only `.derived` memories — so `akm proposal accept`
- * can archive a consolidate pair-pass `retire` proposal's target, or (O1) an
- * accepted promotion's source memory, through the same one encoding memory
- * cleanup already used (D27: never two coexisting encodings). A
- * retire-proposal candidate (one carrying `proposalId`) additionally stamps
- * `proposalId`, `successorRefs` and `retiredAt` on the tombstone.
+ * Retire the memory, knowledge or lesson file `filePath` of the bundle at
+ * `stashDir` into the recoverable cleanup archive: {@link retireCleanupCandidate}
+ * in a write session of its own.
  */
 export function archiveCleanupCandidate(
   stashDir: string,
   candidate: MemoryPruneCandidate,
   filePath: string,
 ): ArchivedMemoryCleanupRecord {
+  const target = writeTargetAt(stashDir);
+  const conceptId = conceptIdAtFile(target.source.name, filePath);
+  if (conceptId === undefined) throw assetNotFound(candidate.ref);
+  return writeAssets(target, { purpose: "memory-cleanup" }, (w) => retireCleanupCandidate(w, conceptId, candidate))
+    .record;
+}
+
+/**
+ * Retire the asset `conceptId` into the bundle's recoverable cleanup archive,
+ * with a tombstone the bundle's adapter keeps. Every file it touched is
+ * journaled (`recordWrittenPath`) so a LATER sync commits the retirement —
+ * `akm sync`, or the batched auto-sync an `akm improve` run does at its own
+ * end (`docs/architecture/improvement.md`, "Auto-sync"). This call does not
+ * itself commit anything: a standalone `akm proposal accept` (the only way a
+ * retire proposal is ever accepted — triage never auto-accepts one) commits
+ * the accept's own paths.
+ *
+ * Covers any memory, knowledge or lesson asset in a writable bundle — not
+ * only `.derived` memories — so `akm proposal accept` can archive a
+ * consolidate pair-pass `retire` proposal's target, or (O1) an accepted
+ * promotion's source memory, through the same one encoding memory cleanup
+ * already used (D27: never two coexisting encodings). A retire-proposal
+ * candidate (one carrying `proposalId`) additionally stamps `proposalId`,
+ * `successorRefs` and `retiredAt` on the tombstone.
+ *
+ * The record names the retirement by `handle`; `retired` is every retirement
+ * the call made (a package's entry first), for a caller that records or undoes them.
+ */
+export function retireCleanupCandidate(
+  w: AssetWriter,
+  conceptId: string,
+  candidate: MemoryPruneCandidate,
+): { record: ArchivedMemoryCleanupRecord; retired: Array<{ ref: string; handle: string }> } {
   const archivedAt = new Date().toISOString();
-  const previousBeliefState = resolvePreviousBeliefState(candidate, filePath);
-  const originalPath = path.relative(stashDir, filePath).replace(/\\/g, "/");
-  const archiveDir = createArchiveDir(stashDir, candidate.ref, archivedAt);
-  const archivedPath = path.join(archiveDir, originalPath);
-  fs.mkdirSync(path.dirname(archivedPath), { recursive: true });
-
+  const previousBeliefState = resolvePreviousBeliefState(candidate, () => w.read(conceptId)?.entry.content() ?? "");
   const retiring = isRetireCandidate(candidate);
-  const archiveRef = path.relative(stashDir, archivedPath).replace(/\\/g, "/");
-  const auditPath = path.join(archiveDir, "cleanup.md");
-  const auditRef = path.relative(stashDir, auditPath).replace(/\\/g, "/");
-  const auditAsset = assembleAsset(
-    {
-      schemaVersion: 1,
-      kind: "memory-cleanup-archive",
-      archivedAt,
-      beliefState: "archived",
-      previousBeliefState,
-      ref: candidate.ref,
-      ...(candidate.parentRef ? { parentRef: candidate.parentRef } : {}),
-      reason: candidate.reason,
-      ...(candidate.survivorRef ? { survivorRef: candidate.survivorRef } : {}),
-      originalPath,
-      archivedPath: archiveRef,
-      ...(retiring ? { proposalId: candidate.proposalId, retiredAt: archivedAt } : {}),
-      ...(retiring && candidate.successorRefs && candidate.successorRefs.length > 0
-        ? { successorRefs: candidate.successorRefs }
-        : {}),
-    },
-    "Archived derived memory for recoverable cleanup.\n",
-  );
-  // Write the tombstone BEFORE moving the file: a crash in between would
-  // otherwise leave a file already at archivedPath with no cleanup.md to
-  // explain it (unrecoverable: revert refuses on a missing tombstone, and
-  // nothing else knows this archive dir exists). In this order, a crash
-  // leaves, at worst, a tombstone describing a move
-  // that has not happened yet, with the file still at its original
-  // location — the ordinary "nothing archived yet" state every caller
-  // already handles.
-  fs.writeFileSync(auditPath, auditAsset, "utf8");
-  recordWrittenPath(auditPath);
-
-  fs.renameSync(filePath, archivedPath);
-  // #652: an archive is a delete + a create. BOTH ends are journaled so the
-  // sync stages the removal of the original alongside the archived copy.
-  recordWrittenPath(filePath);
-  recordWrittenPath(archivedPath);
-
-  return {
+  const retired = w.retire(conceptId, {
+    archivedAt,
+    beliefState: "archived",
+    previousBeliefState,
     ref: candidate.ref,
+    ...(candidate.parentRef ? { parentRef: candidate.parentRef } : {}),
+    reason: candidate.reason,
+    ...(candidate.survivorRef ? { survivorRef: candidate.survivorRef } : {}),
+    ...(retiring ? { proposalId: candidate.proposalId, retiredAt: archivedAt } : {}),
+    ...(retiring && candidate.successorRefs && candidate.successorRefs.length > 0
+      ? { successorRefs: candidate.successorRefs }
+      : {}),
+  });
+
+  const record: ArchivedMemoryCleanupRecord = {
+    ref: candidate.ref,
+    handle: (retired[0] as { handle: string }).handle,
     ...(candidate.parentRef ? { parentRef: candidate.parentRef } : {}),
     reason: candidate.reason,
     beliefState: "archived",
     previousBeliefState,
     ...(candidate.survivorRef ? { survivorRef: candidate.survivorRef } : {}),
-    originalPath,
-    archivedPath: archiveRef,
-    auditPath: auditRef,
     archivedAt,
     ...(retiring ? { proposalId: candidate.proposalId, retiredAt: archivedAt } : {}),
     ...(retiring && candidate.successorRefs && candidate.successorRefs.length > 0
       ? { successorRefs: candidate.successorRefs }
       : {}),
   };
+  return { record, retired };
 }
 
 /**
@@ -709,9 +705,6 @@ export const RETIRE_GRACE_DAYS = 30;
 
 const RETIRE_GRACE_MS = RETIRE_GRACE_DAYS * 24 * 60 * 60 * 1000;
 
-/** The one file every archive dir keeps forever — never deleted by the purge sweep. */
-const TOMBSTONE_FILENAME = "cleanup.md";
-
 export interface ArchivePurgeResult {
   /** Archive directories whose bytes were purged this run. */
   purgedDirs: number;
@@ -719,173 +712,74 @@ export interface ArchivePurgeResult {
   purgedFiles: number;
 }
 
-const EMPTY_ARCHIVE_PURGE_RESULT: ArchivePurgeResult = { purgedDirs: 0, purgedFiles: 0 };
-
 /**
- * The purge sweep: deterministic, no LLM, run once at improve-run start. Deletes the archived asset bytes —
- * never `cleanup.md` — of every retirement whose tombstone `retiredAt` is
- * more than {@link RETIRE_GRACE_DAYS} old AND whose archived files are all
- * git-tracked and clean at the time of the sweep (see below). Git history
- * keeps the bytes (D27); the tombstone, and ref resolution through it
- * (`core/asset/memory-archive.ts`), are unaffected — only the tombstone's
- * own `originalPath` file(s) are removed.
- *
- * Git-backed bundles only: a bundle with no `.git` of its own has no history
- * to fall back on, so its archive is left untouched (`akm health` reports
- * its size instead — see `health/archive-usage.ts`). Every deleted path is
- * journaled (`recordWrittenPath`) so the end-of-run sync commits the
- * removal, the same way it commits the archive move itself (#652).
- *
- * `.git` presence is necessary but NOT sufficient: `proposal accept` only
- * commits for a `kind: "git"` write target (`core/write-source.ts`
- * `commitWriteTargetBoundary`), and improve's own auto-sync stages only the
- * paths its own run wrote. A filesystem-kind bundle that merely happens to
- * have a `.git` directory (e.g. the owner committing by hand, or an old
- * repo that was never configured as a git source) can carry retirements
- * that were archived but never committed — deleting those would lose the
- * only surviving copy. So every archived file under a directory past grace
- * is checked against `git ls-files` (tracked), `git status --porcelain
- * -uall` (clean), and `git ls-files -v` (verifiable — an assume-unchanged
- * or skip-worktree file hides its own edits from `git status`, so it is
- * never trusted as clean either) — each computed ONCE per sweep, not per
- * directory; a directory with even one untracked, modified, or
- * unverifiable file (tombstone included) is left whole for a later sweep.
- * If any of those three git calls itself fails (a broken submodule can fail
- * `git status` while `git ls-files` still succeeds, or git can be missing
- * from `PATH` entirely), the whole sweep purges nothing and warns once —
- * an empty result from a FAILED check is never treated the same as a
- * verified-empty one.
- *
- * A memory-cleanup family-prune archive (not a retire proposal's) carries no
- * `retiredAt` in its tombstone at all, so it is never a candidate here —
- * this sweep only ever touches retirements, never that older archive class.
+ * The purge sweep: deterministic, no LLM, run once at improve-run start. Expires the retired content of every
+ * retirement more than {@link RETIRE_GRACE_DAYS} past its `retiredAt`, when the bundle's adapter can recover it
+ * elsewhere (a directory bundle: when git holds it; `expireArchive`, in `core/adapter/directory-archive.ts`, has the
+ * safety rules). Every deleted path is journaled so the end-of-run sync commits the removal, the same way it commits
+ * the retirement itself (#652).
  */
 export function purgeGracedArchive(stashDir: string, now: Date = new Date()): ArchivePurgeResult {
-  if (!isGitBackedStash(stashDir)) return EMPTY_ARCHIVE_PURGE_RESULT;
-  const archiveRoot = path.join(stashDir, MEMORY_ARCHIVE_REL);
-  let entries: fs.Dirent[];
+  const target = writeTargetAt(stashDir);
+  // A stash config does not let akm write is left as it is (F28).
+  if (!resolveWritable(target.config)) return { purgedDirs: 0, purgedFiles: 0 };
+  const before = new Date(now.getTime() - RETIRE_GRACE_MS);
+  const journal = beginWriteProvenance();
   try {
-    entries = fs.readdirSync(archiveRoot, { withFileTypes: true });
-  } catch {
-    return EMPTY_ARCHIVE_PURGE_RESULT; // no archive yet
+    const purgedDirs = writeAssets(target, { purpose: "memory-cleanup" }, (w) => {
+      const restorable = (): Set<string> =>
+        new Set(w.retired().flatMap((retirement) => (retirement.restorable ? [retirement.handle] : [])));
+      // Nothing past the grace period (an adapter that retires nothing has no retirements): nothing to purge.
+      const due = w.retired().some((retirement) => {
+        const retiredAt = retirement.note.retiredAt;
+        return typeof retiredAt === "string" && Date.parse(retiredAt) < before.getTime();
+      });
+      if (!due) return 0;
+      const restorableBefore = restorable();
+      w.expireRetired(before);
+      const after = restorable();
+      return [...restorableBefore].filter((handle) => !after.has(handle)).length;
+    });
+    return { purgedDirs, purgedFiles: journal.writtenPaths().length };
+  } finally {
+    journal.end();
   }
-  const cutoffMs = now.getTime() - RETIRE_GRACE_MS;
-  // One git inspection per sweep, not per directory. All three sets are
-  // repo-relative POSIX paths, matched below against each archived file's
-  // own repo-relative path — a file is safe to delete only if it is in
-  // `tracked`, NOT in `dirty`, and NOT in `unverifiable`.
-  //
-  // Each of the three git calls can itself fail independently — a broken
-  // submodule can make `git status` exit nonzero while `git ls-files`
-  // succeeds, or vice versa (round-3 review, probes G8/G9). `[]` from a
-  // failed call is indistinguishable from a genuinely empty result once it
-  // is in a Set, so this checks `ok` FIRST: any failure purges nothing this
-  // sweep rather than silently trusting whichever check happened to
-  // succeed — a `dirty`/`unverifiable` set that came back empty ONLY
-  // because the call failed must never read as "nothing to protect".
-  // G10: assume-unchanged / skip-worktree files never show up as dirty even
-  // when genuinely modified — `checkGitPathSafety` treats them the same as
-  // "not tracked" below, so such a file (and its whole retirement) is left
-  // for a later sweep.
-  const gitSafety = checkGitPathSafety(stashDir, MEMORY_ARCHIVE_REL);
-  if (!gitSafety.ok) {
-    warn(
-      `[improve] archive purge: skipped this sweep — could not determine the archive's git state at ${stashDir} ` +
-        "(git status/ls-files failed); nothing was purged.",
+}
+
+function persistBeliefStateTransition(
+  stashDir: string,
+  conceptId: string,
+  transition: MemoryBeliefStateTransition,
+): void {
+  writeAssets(writeTargetAt(stashDir), { purpose: "memory-cleanup" }, (w) => {
+    const held = w.read(conceptId);
+    if (!held) throw assetNotFound(transition.ref);
+    const next = editFrontmatter(
+      held.entry.content(),
+      (parsed) => {
+        const nextFrontmatter: Record<string, unknown> = {
+          ...parsed.data,
+          beliefState: transition.toState,
+        };
+
+        const currentBeliefRefs = [...new Set(transition.currentBeliefRefs ?? [])].sort();
+        if (transition.toState === "contradicted") {
+          nextFrontmatter.contradictedBy = [...currentBeliefRefs];
+        } else {
+          delete nextFrontmatter.contradictedBy;
+          if (parsed.data.supersededBy !== undefined && refArray(parsed.data.supersededBy).length === 0) {
+            delete nextFrontmatter.supersededBy;
+          }
+        }
+
+        if (currentBeliefRefs.length > 0) nextFrontmatter.currentBeliefRefs = [...currentBeliefRefs];
+        else delete nextFrontmatter.currentBeliefRefs;
+
+        return nextFrontmatter;
+      },
+      held.ref,
     );
-    return EMPTY_ARCHIVE_PURGE_RESULT;
-  }
-  let purgedDirs = 0;
-  let purgedFiles = 0;
-  for (const entry of entries) {
-    // `Dirent.isDirectory()` reflects `lstat`, so it is false for a symlink
-    // even when the symlink points at a directory — a symlinked
-    // `archive/<name>` is skipped here, never followed (N1). Everything
-    // below only ever joins path components onto `archiveRoot` through
-    // `entry.name`/`readdirSync` results, so a purge can never reach
-    // outside `.akm/memory-cleanup/archive/`.
-    if (!entry.isDirectory()) continue;
-    const dir = path.join(archiveRoot, entry.name);
-    let data: Record<string, unknown>;
-    try {
-      data = parseFrontmatter(fs.readFileSync(path.join(dir, TOMBSTONE_FILENAME), "utf8")).data;
-    } catch {
-      continue; // not a tombstone dir, or unreadable — never guess
-    }
-    const retiredAt = data.retiredAt;
-    if (typeof retiredAt !== "string") continue; // family-prune archive, not a retirement — out of scope
-    const retiredMs = Date.parse(retiredAt);
-    if (!Number.isFinite(retiredMs) || retiredMs >= cutoffMs) continue; // "more than" the grace period — exactly at it is not enough
-    const allFiles = listFilesRecursive(dir); // tombstone included — the whole entry must be a clean, committed unit
-    const isSafeToPurge = allFiles.every((filePath) => gitSafety.isSafe(toPosix(path.relative(stashDir, filePath))));
-    if (!isSafeToPurge) continue; // untracked, modified, or unverifiable entry — skip the whole directory this sweep (B1, G10)
-    let children: string[];
-    try {
-      children = fs.readdirSync(dir);
-    } catch {
-      continue;
-    }
-    let purgedAnyInThisDir = false;
-    for (const child of children) {
-      if (child === TOMBSTONE_FILENAME) continue;
-      const childPath = path.join(dir, child);
-      // The archived original path may be nested (e.g. `memories/sub/foo.md`
-      // under this dir) — the journal (like git) tracks FILES, so every leaf
-      // under childPath is recorded individually, not the directory itself.
-      const filesUnderChild = listFilesRecursive(childPath);
-      try {
-        fs.rmSync(childPath, { recursive: true, force: true });
-        for (const filePath of filesUnderChild) recordWrittenPath(filePath);
-        purgedFiles += filesUnderChild.length;
-        purgedAnyInThisDir = purgedAnyInThisDir || filesUnderChild.length > 0;
-      } catch {
-        // Best-effort: a locked or already-gone entry is skipped, not fatal to the run.
-      }
-    }
-    if (purgedAnyInThisDir) purgedDirs++;
-  }
-  return { purgedDirs, purgedFiles };
-}
-
-/** Every file under `target` (itself included if it's a file), for individual journaling before a recursive delete. */
-function listFilesRecursive(target: string): string[] {
-  let stat: fs.Stats;
-  try {
-    stat = fs.lstatSync(target);
-  } catch {
-    return [];
-  }
-  if (!stat.isDirectory()) return stat.isFile() ? [target] : [];
-  let children: string[];
-  try {
-    children = fs.readdirSync(target);
-  } catch {
-    return [];
-  }
-  return children.flatMap((child) => listFilesRecursive(path.join(target, child)));
-}
-
-function persistBeliefStateTransition(filePath: string, transition: MemoryBeliefStateTransition): void {
-  mutateFrontmatter(filePath, (parsed) => {
-    const nextFrontmatter: Record<string, unknown> = {
-      ...parsed.data,
-      beliefState: transition.toState,
-    };
-
-    const currentBeliefRefs = [...new Set(transition.currentBeliefRefs ?? [])].sort();
-    if (transition.toState === "contradicted") {
-      nextFrontmatter.contradictedBy = [...currentBeliefRefs];
-    } else {
-      delete nextFrontmatter.contradictedBy;
-      if (parsed.data.supersededBy !== undefined && refArray(parsed.data.supersededBy).length === 0) {
-        delete nextFrontmatter.supersededBy;
-      }
-    }
-
-    if (currentBeliefRefs.length > 0) nextFrontmatter.currentBeliefRefs = [...currentBeliefRefs];
-    else delete nextFrontmatter.currentBeliefRefs;
-
-    return nextFrontmatter;
+    if (next !== null) w.update(held.conceptId, next);
   });
 }
 
@@ -909,6 +803,7 @@ function appendBeliefStateTransitionLog(stashDir: string, transitions: MemoryBel
       } satisfies MemoryBeliefTransitionLogRecord),
     )
     .join("\n");
+  // asset-io: state the belief-transition log, akm's record of what cleanup did (not an asset)
   fs.appendFileSync(logPath, `${lines}\n`, "utf8");
   recordWrittenPath(logPath);
   return logPath;
@@ -919,41 +814,12 @@ function priorBeliefStateForArchive(candidate: MemoryPruneCandidate): Exclude<Me
   return "active";
 }
 
-function createArchiveDir(stashDir: string, ref: string, archivedAt: string): string {
-  const baseName = `${archivedAt.replace(/[:.]/g, "-")}-${sanitizeRef(ref)}`;
-  const root = path.join(stashDir, MEMORY_ARCHIVE_REL);
-  fs.mkdirSync(root, { recursive: true });
-  let attempt = 0;
-  while (true) {
-    const candidate = path.join(root, attempt === 0 ? baseName : `${baseName}-${attempt}`);
-    if (!fs.existsSync(candidate)) {
-      fs.mkdirSync(candidate, { recursive: true });
-      return candidate;
-    }
-    attempt += 1;
-  }
-}
-
-function sanitizeRef(ref: string): string {
-  return ref.replace(/[^a-z0-9._-]+/gi, "-");
-}
-
 function collectDerivedMemories(stashDir: string, parentRefFilter?: string): DerivedMemoryRecord[] {
-  const memoriesDir = path.join(stashDir, "memories");
-  if (!fs.existsSync(memoriesDir)) return [];
-
   const records: DerivedMemoryRecord[] = [];
-  const walked = walkMarkdownFiles(memoriesDir);
-  if (!walked.complete) {
-    warn(`memory improve: directory scan under ${memoriesDir} is incomplete — some derived memories may be missing`);
-  }
-  for (const filePath of walked.files) {
-    const name = toMemoryName(memoriesDir, filePath);
-    if (!name) continue;
-
+  for (const { memory, name } of listMemories(materialiseBundleDir(stashDir))) {
     let raw: string;
     try {
-      raw = fs.readFileSync(filePath, "utf8");
+      raw = memory.entry.content();
     } catch {
       continue;
     }
@@ -974,7 +840,7 @@ function collectDerivedMemories(stashDir: string, parentRefFilter?: string): Der
     records.push({
       ref: `memory:${name}`,
       name,
-      filePath,
+      filePath: indexedPathOf(memory),
       parentRef,
       title,
       description,
@@ -1176,10 +1042,4 @@ function firstNonEmpty(values: Array<string | undefined>): string | undefined {
     if (value && value.trim().length > 0) return value;
   }
   return undefined;
-}
-
-function toMemoryName(memoriesDir: string, filePath: string): string | undefined {
-  const rel = path.relative(memoriesDir, filePath);
-  if (!rel || rel.startsWith("..")) return undefined;
-  return rel.replace(/\\/g, "/").replace(/\.md$/i, "");
 }

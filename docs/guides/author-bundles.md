@@ -182,7 +182,7 @@ directory that has two or more of akm's type directories (`skills/`,
 directory of its own (a `scripts/` is the common one) is normally taken as the
 bundle, and the whole repository is indexed; your users can then
 [index only the subdirectory](bundles.md#akm-bundle-add) with
-`components.main.root`.
+`bundles.<name>.root`.
 
 ### Sharing on npm
 
@@ -259,10 +259,7 @@ file; a file with only key names and comments produces no findings. Suppress a
 single key with a `# akm-lint-ok: dangerous-env-key` comment on the preceding
 line.
 
-Key names are listed by `akm env list` and appear in search results. The
-`--sensitive` flag on `akm env create` leaves a file out of `env list` and the
-search index; its key names then appear only when the file is shown directly
-by ref.
+Key names are listed by `akm env list` and appear in search results; values never do.
 
 ## Project Rules
 

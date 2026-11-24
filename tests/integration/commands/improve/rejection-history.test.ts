@@ -10,6 +10,7 @@ import { akmDistill } from "../../../../src/commands/improve/distill";
 import { akmReflect } from "../../../../src/commands/improve/reflect";
 import { archiveProposal, listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
+import { byFile } from "../../../_helpers/asset-at-file";
 import { reflectReply } from "../../../_helpers/factories";
 import { testLlmRunner } from "../../../_helpers/llm-runner";
 import { withIsolatedAkmStorage } from "../../../_helpers/sandbox";
@@ -101,7 +102,7 @@ test.each([
           ? { improveProfile: { processes: { distill: { enabled: true, qualityGate: { enabled: true } } } } }
           : {}),
         llmRunner,
-        lookupFn: async () => file,
+        lookupFn: byFile(async () => file),
         fetchRelatedFn: async () => [],
         chat: async (_connection, messages) => {
           const prompt = messages.at(-1)?.content;

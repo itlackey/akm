@@ -2,8 +2,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildShellExportScript, createEnv, listKeys, loadEnv, parseEnvText } from "../../../src/commands/env/env";
-import { sensitiveMarkerPath } from "../../../src/core/env-secret-ref";
+import { buildShellExportScript, parseEnvText } from "../../../src/commands/env/env";
+import { scanEnvKeyNames } from "../../../src/core/common";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
@@ -59,32 +59,24 @@ async function runCli(
   });
 }
 
-// ── listKeys ────────────────────────────────────────────────────────────────
+// ── scanEnvKeyNames ─────────────────────────────────────────────────────────
 
-describe("listKeys", () => {
+describe("scanEnvKeyNames", () => {
   test("returns key names only — no values, no comment text", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(
-      fp,
+    const keys = scanEnvKeyNames(
       ["# top comment", "DB_URL=postgres://example", "API_TOKEN=secret-value-do-not-leak", "# bottom comment"].join(
         "\n",
       ),
     );
-    const result = listKeys(fp);
-    expect(result.keys).toEqual(["DB_URL", "API_TOKEN"]);
-    expect(Object.keys(result)).toEqual(["keys"]);
-    const json = JSON.stringify(result);
+    expect(keys).toEqual(["DB_URL", "API_TOKEN"]);
+    const json = JSON.stringify(keys);
     expect(json).not.toContain("secret-value-do-not-leak");
     expect(json).not.toContain("top comment");
     expect(json).not.toContain("bottom comment");
   });
 
   test("comment text is never extracted — commented-out credentials stay private", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(
-      fp,
+    const keys = scanEnvKeyNames(
       [
         "# OLD_GITEA_TOKEN=zqxcommentedoutcredential",
         "  # webhook: https://hooks.example.com/services/zqxfreetexttoken",
@@ -92,77 +84,34 @@ describe("listKeys", () => {
         "BAZ=qux",
       ].join("\n"),
     );
-    const result = listKeys(fp);
-    expect(result.keys).toEqual(["FOO", "BAZ"]);
-    const json = JSON.stringify(result);
+    expect(keys).toEqual(["FOO", "BAZ"]);
+    const json = JSON.stringify(keys);
     expect(json).not.toContain("zqxcommentedoutcredential");
     expect(json).not.toContain("zqxfreetexttoken");
     expect(json).not.toContain("trailing-comment-not-extracted");
   });
 
   test("preserves key order and de-duplicates", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(fp, "FOO=first\nBAR=middle\nFOO=second\n");
-    expect(listKeys(fp).keys).toEqual(["FOO", "BAR"]);
+    expect(scanEnvKeyNames("FOO=first\nBAR=middle\nFOO=second\n")).toEqual(["FOO", "BAR"]);
   });
 
   test("recognises `export KEY=value`", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(fp, "export FOO=bar\n");
-    expect(listKeys(fp).keys).toEqual(["FOO"]);
+    expect(scanEnvKeyNames("export FOO=bar\n")).toEqual(["FOO"]);
   });
 
-  test("returns empty result for missing file", () => {
-    const result = listKeys(path.join(tmpDir(), "missing.env"));
-    expect(result).toEqual({ keys: [] });
+  test("an empty file has no keys", () => {
+    expect(scanEnvKeyNames("")).toEqual([]);
   });
 });
 
-// ── loadEnv (delegates to dotenv) ───────────────────────────────────────────
+// ── parseEnvText (delegates to dotenv) ─────────────────────────────────────
 
-describe("loadEnv", () => {
+describe("parseEnvText", () => {
   test("returns parsed key/value pairs via dotenv", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(fp, 'FOO=bar\nQUOTED="hello world"\nMULTI="line1\\nline2"\n');
-    const env = loadEnv(fp);
+    const env = parseEnvText('FOO=bar\nQUOTED="hello world"\nMULTI="line1\\nline2"\n');
     expect(env.FOO).toBe("bar");
     expect(env.QUOTED).toBe("hello world");
     expect(env.MULTI).toBe("line1\nline2");
-  });
-
-  test("returns empty object for missing file", () => {
-    expect(loadEnv(path.join(tmpDir(), "missing.env"))).toEqual({});
-  });
-});
-
-// ── createEnv ─────────────────────────────────────────────────────────────
-
-describe("createEnv", () => {
-  test("creates an empty file", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "env", "prod.env");
-    createEnv(fp);
-    expect(fs.existsSync(fp)).toBe(true);
-    expect(fs.readFileSync(fp, "utf8")).toBe("");
-  });
-
-  test("does not overwrite an existing file", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(fp, "FOO=existing\n");
-    createEnv(fp);
-    expect(loadEnv(fp).FOO).toBe("existing");
-  });
-
-  test("creates the file with mode 0600", () => {
-    if (process.platform === "win32") return; // chmod is best-effort on win32
-    const dir = tmpDir();
-    const fp = path.join(dir, "env", "secrets.env");
-    createEnv(fp);
-    expect(fs.statSync(fp).mode & 0o777).toBe(0o600);
   });
 });
 
@@ -179,7 +128,7 @@ describe("buildShellExportScript", () => {
     const dir = tmpDir();
     const fp = path.join(dir, "v.env");
     fs.writeFileSync(fp, "PLAIN=hello\nDOLLAR='abc$HOME'\nAPOS=\"it's fine\"\n");
-    const script = buildShellExportScript(fp);
+    const script = buildShellExportScript(fs.readFileSync(fp, "utf8"));
     for (const line of script.split("\n").filter(Boolean)) {
       expect(line).toMatch(/^export [A-Za-z_][A-Za-z0-9_]*='.*'$/);
     }
@@ -210,7 +159,7 @@ describe("buildShellExportScript", () => {
       .map(([k, v]) => `${k}='${v}'`)
       .join("\n");
     fs.writeFileSync(fp, `${raw}\n`);
-    const env = loadEnv(fp);
+    const env = parseEnvText(fs.readFileSync(fp, "utf8"));
     for (const [k, v] of Object.entries(payloads)) {
       expect(env[k]).toBe(v);
     }
@@ -433,6 +382,48 @@ describe("env list", () => {
   });
 });
 
+describe("an env file outside the top-level env/ folder is an env asset (§0.2 N24)", () => {
+  function stashWithNestedEnv(): string {
+    const stashDir = makeTempDir("akm-envcli-nested-");
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.mkdirSync(path.join(stashDir, "x", "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "top.env"), "TOP=1\n", "utf8");
+    fs.writeFileSync(path.join(stashDir, "x", "env", "app.env"), "NEST=2\n", "utf8");
+    return stashDir;
+  }
+
+  test("env list lists it, with its key names", async () => {
+    const stashDir = stashWithNestedEnv();
+    const result = await runCli(["env", "list", "--format", "json"], { AKM_BUNDLE_DIR: stashDir });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim()).envs).toEqual([
+      expect.objectContaining({ ref: "env/top", keys: ["TOP"] }),
+      expect.objectContaining({ ref: "x/env/app", keys: ["NEST"] }),
+    ]);
+  });
+
+  test("env run, env path and show accept what env list lists, in either spelling", async () => {
+    const stashDir = stashWithNestedEnv();
+    const file = path.join(stashDir, "x", "env", "app.env");
+    for (const ref of ["x/env/app", "x/env/app.env"]) {
+      const out = path.join(stashDir, `out-${ref.endsWith(".env") ? "file" : "name"}.txt`);
+      const ran = await runCli(["env", "run", ref, "--", "sh", "-c", `printf %s "$NEST" > "${out}"`], {
+        AKM_BUNDLE_DIR: stashDir,
+      });
+      expect(ran.status).toBe(0);
+      expect(fs.readFileSync(out, "utf8")).toBe("2");
+
+      const where = await runCli(["env", "path", ref, "--quiet"], { AKM_BUNDLE_DIR: stashDir });
+      expect(where.stdout.trim()).toBe(file);
+
+      const shown = await runCli(["show", ref, "--format", "json"], { AKM_BUNDLE_DIR: stashDir });
+      expect(shown.status).toBe(0);
+      expect(JSON.parse(shown.stdout.trim())).toMatchObject({ type: "env", ref: "x/env/app", keys: ["NEST"] });
+      expect(shown.stdout).not.toContain('"2"');
+    }
+  });
+});
+
 describe("env export / path (read-path safety)", () => {
   test("env export writes safe single-quoted lines to --out, never to stdout", async () => {
     const stashDir = makeTempDir("akm-envcli-stash-");
@@ -538,20 +529,81 @@ describe("env create --from-file / --from-stdin", () => {
   });
 });
 
+describe("env create over an env kept under another spelling (§0.2 N20)", () => {
+  test("`env/default` with `env/default.env` present is refused and writes nothing", async () => {
+    const stashDir = makeTempDir("akm-envcli-stash-");
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "default.env"), "KEEP=me\n", "utf8");
+
+    const result = await runCli(["env", "create", "env/default"], { AKM_BUNDLE_DIR: stashDir });
+
+    expect(result.status).toBe(2);
+    expect((JSON.parse(result.stderr) as { code?: string }).code).toBe("RESOURCE_ALREADY_EXISTS");
+    expect(fs.readdirSync(path.join(stashDir, "env"))).toEqual(["default.env"]);
+    expect(fs.readFileSync(path.join(stashDir, "env", "default.env"), "utf8")).toBe("KEEP=me\n");
+  });
+
+  test("an env already kept in the file a create writes is left as it is, exit 0", async () => {
+    const stashDir = makeTempDir("akm-envcli-stash-");
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "KEEP=me\n", "utf8");
+    fs.writeFileSync(path.join(stashDir, "env", ".env"), "KEEP=default\n", "utf8");
+
+    for (const ref of ["env/prod", "env/default"]) {
+      const result = await runCli(["env", "create", ref], { AKM_BUNDLE_DIR: stashDir });
+      expect(result.status).toBe(0);
+    }
+    expect(fs.readFileSync(path.join(stashDir, "env", "prod.env"), "utf8")).toBe("KEEP=me\n");
+    expect(fs.readFileSync(path.join(stashDir, "env", ".env"), "utf8")).toBe("KEEP=default\n");
+  });
+});
+
+describe("env create by the file spelling of an env that exists (§0.2 N20)", () => {
+  test("`env/default.env` with `env/.env` present is refused, with and without content, and `env/.env` is untouched", async () => {
+    const stashDir = makeTempDir("akm-envcli-stash-");
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", ".env"), "KEEP=me\n", "utf8");
+    const seed = path.join(stashDir, "seed.txt");
+    fs.writeFileSync(seed, "NEW=1\n", "utf8");
+
+    for (const args of [
+      ["env/default.env"],
+      ["env/default.env", "--from-file", seed],
+      ["env/default", "--from-file", seed],
+    ]) {
+      const result = await runCli(["env", "create", ...args], { AKM_BUNDLE_DIR: stashDir });
+      expect(result.status, args.join(" ")).toBe(2);
+      expect((JSON.parse(result.stderr) as { code?: string }).code).toBe("RESOURCE_ALREADY_EXISTS");
+    }
+    expect(fs.readdirSync(path.join(stashDir, "env"))).toEqual([".env"]);
+    expect(fs.readFileSync(path.join(stashDir, "env", ".env"), "utf8")).toBe("KEEP=me\n");
+  });
+
+  test("a symbolic-linked env is refused as before, not left as it is", async () => {
+    const stashDir = makeTempDir("akm-envcli-stash-");
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "app.env"), "KEEP=me\n", "utf8");
+    fs.symlinkSync("app.env", path.join(stashDir, "env", "lnk.env"));
+
+    const result = await runCli(["env", "create", "env/lnk"], { AKM_BUNDLE_DIR: stashDir });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("symbolic link");
+    expect(fs.readFileSync(path.join(stashDir, "env", "app.env"), "utf8")).toBe("KEEP=me\n");
+  });
+});
+
 describe("env remove", () => {
-  test("removes an env file (and its .sensitive marker)", async () => {
+  test("removes an env file", async () => {
     const stashDir = makeTempDir("akm-envcli-stash-");
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     const dest = path.join(stashDir, "env", "prod.env");
-    const marker = sensitiveMarkerPath(dest, "env");
     fs.writeFileSync(dest, "API_KEY=secret\n", "utf8");
-    fs.writeFileSync(marker, "", "utf8");
 
     const result = await runCli(["env", "remove", "env/prod", "--yes"], { AKM_BUNDLE_DIR: stashDir });
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(dest)).toBe(false);
-    expect(fs.existsSync(marker)).toBe(false);
   });
 
   test("never deletes the frozen vaults/ copy", async () => {

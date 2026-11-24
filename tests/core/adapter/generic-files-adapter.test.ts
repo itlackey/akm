@@ -17,10 +17,12 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { genericFilesAdapter } from "../../../src/core/adapter/adapters/generic-files-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
-import type { FileChange } from "../../../src/core/file-change";
+import { buildFileContext } from "../../../src/core/adapter/directory/file-context";
+import type { FileChange } from "../../../src/core/adapter/file-change";
+import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adapter/validate-context";
 import { presentationFor } from "../../../src/core/type-presentation";
-import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/generic-files");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/generic-files");
@@ -30,15 +32,15 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(): BundleComponent {
-  return { id: BUNDLE_ID, adapter: "generic-files", root: FIXTURE_ROOT, writable: true };
+function bundle(): Bundle {
+  return { id: BUNDLE_ID, root: FIXTURE_ROOT };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {
-  return genericFilesAdapter.recognize(component(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
+  return genericFilesAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
-const ctx: ValidateContext = {
+const ctx: FileValidateContext = {
   readFile: async (p) => {
     try {
       return fs.readFileSync(path.join(FIXTURE_ROOT, p), "utf8");
@@ -69,7 +71,6 @@ describe("generic-files adapter — recognition golden (script/document/file)", 
       expect(doc, `${relPath} must be recognized`).not.toBeNull();
       if (!doc) throw new Error("unreachable");
       expect(doc.adapterId).toBe(expected.adapterId as string);
-      expect(doc.component).toBe(expected.component as string);
       expect(doc.type).toBe(expected.type as string);
       expect(doc.conceptId).toBe(expected.conceptId as string);
       expect(doc.ref).toBe(expected.ref as string);
@@ -95,7 +96,7 @@ describe("generic-files adapter — renderer golden (script known; document/file
 });
 
 describe("generic-files adapter — lint golden (base checks only)", () => {
-  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: Diagnostic[] }>;
+  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: FileDiagnostic[] }>;
 
   test("every file validates clean ([])", async () => {
     const changes: FileChange[] = Object.values(perType).map((e) => ({
@@ -103,7 +104,7 @@ describe("generic-files adapter — lint golden (base checks only)", () => {
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await genericFilesAdapter.validate(component(), changes, ctx);
+    const diags = await checkChanges(genericFilesAdapter, bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {

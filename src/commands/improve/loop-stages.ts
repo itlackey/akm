@@ -4,7 +4,8 @@
 
 /** The improve loop (reflect + distill per ref), the post-loop checks and the maintenance passes. */
 
-import fs from "node:fs";
+import { indexFiles } from "../../core/assets/files";
+import { materialiseBundleDir } from "../../core/bundle-at-dir";
 import { daysToMs } from "../../core/common";
 import { type AkmConfig, type ImproveProfileConfig, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -14,7 +15,6 @@ import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath, getTaskLogDir } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
 import { info } from "../../core/warn";
-import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import {
   countPendingMemoriesNeedingDecision,
   type MemoryInferenceResult,
@@ -58,6 +58,7 @@ import type {
   ImproveScope,
 } from "./improve-run-types";
 import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
+import { plannedAsset } from "./indexed-asset";
 import { type ImproveLedgerOutcome, recordLedgerAttempt, stateKey, stripBundle } from "./ledger";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
 import { isDeprecatedOrSuperseded, isFlaggedSinceLastEdit, pushRecentError } from "./preparation";
@@ -297,17 +298,17 @@ async function runLoopDistillPass(
   }
   const explicitRefScope = env.scope.mode === "ref";
   // The ledger holds cooled refs; an explicit scope ref overrides it.
-  if (!isDistillCandidateRef(planned)) return;
+  if (!isDistillCandidateRef(planned, env.options.stashDir)) return;
   if (env.distillCooledRefs.has(planned.ref) && !explicitRefScope) return;
   // A memory flagged wrong and not edited since is no source for a lesson. The attempt goes in the
   // ledger so the ref waits for newer feedback; an explicit scope ref still runs.
-  if (!explicitRefScope && isFlaggedSinceLastEdit(planned, env.eventsCtx)) {
+  if (!explicitRefScope && isFlaggedSinceLastEdit(planned, env.eventsCtx, env.options.stashDir)) {
     recordLoopAttempt(planned, env, "distill", "unchanged", FLAGGED_WRONG_REASON);
     return recordSkip(tally, planned.ref, FLAGGED_WRONG_REASON, { env, reason: "distill_flagged_wrong" });
   }
   // A memory marked deprecated or superseded is no longer true, so it gives no lesson. The ledger holds it; an
   // explicit scope ref still runs.
-  if (!explicitRefScope && isDeprecatedOrSuperseded(planned)) {
+  if (!explicitRefScope && isDeprecatedOrSuperseded(planned, env.options.stashDir)) {
     recordLoopAttempt(planned, env, "distill", "unchanged", DEPRECATED_REASON);
     return recordSkip(tally, planned.ref, DEPRECATED_REASON, { env, reason: "distill_deprecated_or_superseded" });
   }
@@ -422,7 +423,7 @@ export async function runImprovePostLoopStage(args: {
           let body = "";
           if (r.filePath) {
             try {
-              body = fs.readFileSync(r.filePath, "utf8");
+              body = plannedAsset(r, primaryStashDir)?.entry.content() ?? "";
             } catch {
               // best-effort
             }
@@ -514,14 +515,15 @@ export async function runImproveMaintenancePasses(args: {
     allWarnings.push(...inference.warnings);
     const written = inference.memoryInference?.writtenPaths ?? [];
     if (written.length > 0) {
-      // Index exactly the files inference wrote. indexWrittenAssets opens its
-      // own write handle, so ours closes first and reopens after.
+      // Index exactly the files inference wrote (the pass is injectable: a writer that did not go through the facade has no
+      // rows yet, and one that did has them refreshed again), with their vectors. The index opens its own write handle,
+      // so ours closes first and reopens after.
       info(`[improve] indexing ${written.length} file(s) written by memory inference`);
       try {
         if (dbCell.current) closeDatabase(dbCell.current);
         dbCell.current = undefined;
         try {
-          await indexWrittenAssets(primaryStashDir, written);
+          await indexFiles(materialiseBundleDir(primaryStashDir), written);
         } finally {
           dbCell.current = openIndexDb();
         }

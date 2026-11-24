@@ -21,7 +21,7 @@ import {
 
 const historicalRow = {
   id: "historical",
-  stash_dir: "/tmp/stash",
+  bundle_id: "stash",
   ref: "team//lessons/history",
   status: "pending",
   source: "reflect",
@@ -99,8 +99,8 @@ describe("proposal repository — pure helpers (post-split)", () => {
     const base = proposalRowToProposal({
       ...historicalRow,
       metadata_json: JSON.stringify({
-        changes: [{ path: "lessons/history.md", op: "update" }],
-        proposedTarget: { source: "team", root: "/tmp/stash" },
+        changes: [{ ref: "team//lessons/history", op: "update" }],
+        proposedTarget: { source: "team" },
       }),
     });
     const reviewHistory = [
@@ -111,16 +111,16 @@ describe("proposal repository — pure helpers (post-split)", () => {
         reopenReason: "second look",
       },
     ];
-    const values = proposalToRowValues({ ...base, reviewHistory }, historicalRow.stash_dir);
+    const values = proposalToRowValues({ ...base, reviewHistory }, historicalRow.bundle_id);
     expect(proposalRowToProposal({ ...historicalRow, ...values }).reviewHistory).toEqual(reviewHistory);
     // Never written when absent, so a row that was never reopened is byte-identical to before.
-    expect(proposalToRowValues(base, historicalRow.stash_dir).metadata_json).not.toContain("reviewHistory");
+    expect(proposalToRowValues(base, historicalRow.bundle_id).metadata_json).not.toContain("reviewHistory");
 
     const withHistory = (history: unknown) => ({
       ...historicalRow,
       metadata_json: JSON.stringify({
-        changes: [{ path: "lessons/history.md", op: "update" }],
-        proposedTarget: { source: "team", root: "/tmp/stash" },
+        changes: [{ ref: "team//lessons/history", op: "update" }],
+        proposedTarget: { source: "team" },
         reviewHistory: history,
       }),
     });
@@ -134,13 +134,13 @@ describe("proposal repository — pure helpers (post-split)", () => {
 
   test("acceptedAt round-trips through the row codec, old-shape rows decode without it, a non-string is refused", () => {
     const envelope = {
-      changes: [{ path: "lessons/history.md", op: "update" }],
-      proposedTarget: { source: "team", root: "/tmp/stash" },
+      changes: [{ ref: "team//lessons/history", op: "update" }],
+      proposedTarget: { source: "team" },
     };
     const oldRow = { ...historicalRow, status: "accepted", metadata_json: JSON.stringify(envelope) };
     const old = proposalRowToProposal(oldRow);
     expect(old.acceptedAt).toBeUndefined();
-    expect(proposalToRowValues(old, historicalRow.stash_dir).metadata_json).not.toContain("acceptedAt");
+    expect(proposalToRowValues(old, historicalRow.bundle_id).metadata_json).not.toContain("acceptedAt");
 
     const acceptedAt = "2026-01-02T00:00:00.000Z";
     const accepted = { ...old, acceptedAt };
@@ -149,7 +149,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
       status: "reverted" as const,
       review: { outcome: "rejected" as const, reason: "reverted", decidedAt: "2026-01-09T00:00:00.000Z" },
     };
-    const values = proposalToRowValues(reverted, historicalRow.stash_dir);
+    const values = proposalToRowValues(reverted, historicalRow.bundle_id);
     expect(proposalRowToProposal({ ...historicalRow, ...values }).acceptedAt).toBe(acceptedAt);
 
     const bad = { ...oldRow, metadata_json: JSON.stringify({ ...envelope, acceptedAt: 5 }) };
@@ -157,7 +157,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
   });
 
   test("review.decidedBy round-trips, old-shape reviews decode without it, a non-string is refused", () => {
-    const envelope = { changes: [{ path: "lessons/history.md", op: "update" }] };
+    const envelope = { changes: [{ ref: "team//lessons/history", op: "update" }] };
     const review = { outcome: "accepted", decidedAt: "2026-01-02T00:00:00.000Z" };
     const row = (r: Record<string, unknown>) => ({
       ...historicalRow,
@@ -169,7 +169,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
     for (const decidedBy of ["triage", "human"] as const) {
       const decoded = proposalRowToProposal(row({ ...review, decidedBy }));
       expect(decoded.review?.decidedBy).toBe(decidedBy);
-      const values = proposalToRowValues(decoded, historicalRow.stash_dir);
+      const values = proposalToRowValues(decoded, historicalRow.bundle_id);
       expect(proposalRowToProposal({ ...historicalRow, ...values }).review?.decidedBy).toBe(decidedBy);
     }
 
@@ -205,7 +205,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
   test("tolerates a legacy row missing only `changes` (#858/#859)", () => {
     const proposal = proposalRowToProposal({
       ...historicalRow,
-      metadata_json: JSON.stringify({ proposedTarget: { source: "team", root: "/tmp/stash" } }),
+      metadata_json: JSON.stringify({ proposedTarget: { source: "team" } }),
     });
     expect(proposal.changes).toEqual([]);
   });
@@ -213,7 +213,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
   test("tolerates a legacy row missing only `proposedTarget` (#859)", () => {
     const proposal = proposalRowToProposal({
       ...historicalRow,
-      metadata_json: JSON.stringify({ changes: [{ path: "lessons/history.md", op: "update" }] }),
+      metadata_json: JSON.stringify({ changes: [{ ref: "team//lessons/history", op: "update" }] }),
     });
     expect(proposal.proposedTarget).toBeUndefined();
   });
@@ -224,15 +224,15 @@ describe("proposal repository — pure helpers (post-split)", () => {
     expect(() =>
       proposalRowToProposal({
         ...historicalRow,
-        metadata_json: JSON.stringify({ changes: [{ path: 1, op: "create" }] }),
+        metadata_json: JSON.stringify({ changes: [{ ref: 1, op: "create" }] }),
       }),
     ).toThrow(/changes/i);
     expect(() =>
       proposalRowToProposal({
         ...historicalRow,
         metadata_json: JSON.stringify({
-          changes: [{ path: "lessons/history.md", op: "update" }],
-          proposedTarget: { source: "team" },
+          changes: [{ ref: "team//lessons/history", op: "update" }],
+          proposedTarget: { source: 42 },
         }),
       }),
     ).toThrow(/proposedTarget/i);
@@ -242,11 +242,11 @@ describe("proposal repository — pure helpers (post-split)", () => {
     const proposal = proposalRowToProposal({
       ...historicalRow,
       metadata_json: JSON.stringify({
-        changes: [{ path: "lessons/history.md", op: "update" }],
-        proposedTarget: { source: "team", root: "/tmp/stash" },
+        changes: [{ ref: "team//lessons/history", op: "update" }],
+        proposedTarget: { source: "team" },
       }),
     });
-    expect(proposalToRowValues(proposal, historicalRow.stash_dir).metadata_json).toContain("proposedTarget");
+    expect(proposalToRowValues(proposal, historicalRow.bundle_id).metadata_json).toContain("proposedTarget");
   });
 
   // #859: field-by-field real-archive absence combinations (see the
@@ -300,25 +300,20 @@ describe("proposal repository — pure helpers (post-split)", () => {
   test("a fully-populated modern row round-trips every field", () => {
     const metadata = {
       sourceRun: "reflect-modern",
-      changes: [{ path: "lessons/history.md", op: "update" }],
-      proposedTarget: { source: "team", root: "/tmp/stash" },
+      changes: [{ ref: "team//lessons/history", op: "update" }],
+      proposedTarget: { source: "team" },
       beforeHash: "a".repeat(64),
       beforeHashNormalized: "c".repeat(64),
       review: { outcome: "accepted", decidedAt: "2026-01-01T00:00:00.000Z" },
       confidence: 0.5,
       gateDecision: { outcome: "deferred", reason: "mid-band", decidedAt: "2026-01-01T00:00:00.000Z" },
       backupContent: "prior content",
-      acceptedTarget: {
-        source: "team",
-        root: "/tmp/stash",
-        path: "/tmp/stash/lessons/history.md",
-        contentHash: "b".repeat(64),
-      },
+      acceptedTarget: { bundle: "team", ref: "team//lessons/history", contentHash: "b".repeat(64) },
       eligibilitySource: "signal-delta",
     };
     const proposal = proposalRowToProposal({ ...terminalRow, metadata_json: JSON.stringify(metadata) });
-    expect(proposal.changes).toEqual([{ path: "lessons/history.md", op: "update", after: "historical body" }]);
-    expect(proposal.proposedTarget).toEqual({ source: "team", root: "/tmp/stash" });
+    expect(proposal.changes).toEqual([{ ref: "team//lessons/history", op: "update", content: "historical body" }]);
+    expect(proposal.proposedTarget).toEqual({ source: "team" });
     expect(proposal.beforeHash).toBe(metadata.beforeHash);
     expect(proposal.beforeHashNormalized).toBe(metadata.beforeHashNormalized);
     expect(proposal.confidence).toBe(0.5);
@@ -361,8 +356,8 @@ describe("proposal repository — pure helpers (post-split)", () => {
       reason: "duplicate" as const,
     };
     const metadata = {
-      changes: [{ path: "memories/old-note.md", op: "delete" }],
-      proposedTarget: { source: "team", root: "/tmp/stash" },
+      changes: [{ ref: "team//memories/old-note", op: "delete" }],
+      proposedTarget: { source: "team" },
       retirement,
       promotionSource: undefined,
     };
@@ -372,27 +367,39 @@ describe("proposal repository — pure helpers (post-split)", () => {
       content: "",
       metadata_json: JSON.stringify(metadata),
     });
-    expect(proposal.changes).toEqual([{ path: "memories/old-note.md", op: "delete" }]);
+    expect(proposal.changes).toEqual([{ ref: "team//memories/old-note", op: "delete" }]);
     expect(proposal.retirement).toEqual(retirement);
 
     // Round-trips back through the write path unchanged.
     const rowValues = proposalToRowValues(proposal, "/tmp/stash");
     const decoded = proposalRowToProposal({ ...historicalRow, ...rowValues });
     expect(decoded.retirement).toEqual(retirement);
-    expect(decoded.changes).toEqual([{ path: "memories/old-note.md", op: "delete" }]);
+    expect(decoded.changes).toEqual([{ ref: "team//memories/old-note", op: "delete" }]);
   });
 
   test("retiredArchive, promotionSource and promotionSourceHash round-trip", () => {
     const proposal = proposalRowToProposal({
       ...terminalRow,
       metadata_json: JSON.stringify({
-        retiredArchive: { dirs: [".akm/memory-cleanup/archive/2026-09-28T00-00-00-000Z-memories-old-note"] },
+        retiredArchive: {
+          retired: [
+            {
+              ref: "team//memories/old-note",
+              handle: ".akm/memory-cleanup/archive/2026-09-28T00-00-00-000Z-memories-old-note",
+            },
+          ],
+        },
         promotionSource: "team//memories/promoted-source",
         promotionSourceHash: "c".repeat(64),
       }),
     });
     expect(proposal.retiredArchive).toEqual({
-      dirs: [".akm/memory-cleanup/archive/2026-09-28T00-00-00-000Z-memories-old-note"],
+      retired: [
+        {
+          ref: "team//memories/old-note",
+          handle: ".akm/memory-cleanup/archive/2026-09-28T00-00-00-000Z-memories-old-note",
+        },
+      ],
     });
     expect(proposal.promotionSource).toBe("team//memories/promoted-source");
     expect(proposal.promotionSourceHash).toBe("c".repeat(64));
@@ -422,16 +429,16 @@ describe("proposal repository — pure helpers (post-split)", () => {
   test("write path: pending status still requires the full envelope (write path not weakened)", () => {
     const pendingNoTarget = proposalRowToProposal({
       ...historicalRow,
-      metadata_json: JSON.stringify({ changes: [{ path: "lessons/history.md", op: "update" }] }),
+      metadata_json: JSON.stringify({ changes: [{ ref: "team//lessons/history", op: "update" }] }),
     });
     expect(pendingNoTarget.status).toBe("pending");
-    expect(() => proposalToRowValues(pendingNoTarget, historicalRow.stash_dir)).toThrow(/proposedTarget/i);
+    expect(() => proposalToRowValues(pendingNoTarget, historicalRow.bundle_id)).toThrow(/proposedTarget/i);
 
     const pendingNoChanges = proposalRowToProposal({
       ...historicalRow,
-      metadata_json: JSON.stringify({ proposedTarget: { source: "team", root: "/tmp/stash" } }),
+      metadata_json: JSON.stringify({ proposedTarget: { source: "team" } }),
     });
-    expect(() => proposalToRowValues(pendingNoChanges, historicalRow.stash_dir)).toThrow(/no file changes/i);
+    expect(() => proposalToRowValues(pendingNoChanges, historicalRow.bundle_id)).toThrow(/no file changes/i);
   });
 
   test("write path: a terminal-status row carrying forward legacy gaps re-persists without error", () => {
@@ -445,7 +452,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
     expect(legacyAccepted.changes).toEqual([]);
     expect(legacyAccepted.proposedTarget).toBeUndefined();
     const reverted = { ...legacyAccepted, status: "reverted" as const };
-    const row = proposalToRowValues(reverted, historicalRow.stash_dir);
+    const row = proposalToRowValues(reverted, historicalRow.bundle_id);
     expect(row.metadata_json).not.toContain("proposedTarget");
     // An empty `changes` list is never written: an absent key is the legacy shape the reader tolerates, an empty
     // array is corruption it refuses, so writing `[]` made the row unreadable after the transition (#1513).
@@ -457,7 +464,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
   // `<type>:<name>` ref and none of the current envelope.
   const legacyColonRow = {
     id: "00000000-0000-4000-8000-000000000001",
-    stash_dir: "/tmp/example-stash",
+    bundle_id: "example-stash",
     ref: "lesson:example-legacy-note",
     status: "pending",
     source: "distill",
@@ -508,7 +515,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
   test("a decision on a legacy-ref row keeps its ref and content and reads back; a pending write is still refused (#1513)", () => {
     const proposal = proposalRowToProposal(legacyColonRow);
     // Nothing mints a pending proposal in this shape: the write path keeps requiring the full envelope.
-    expect(() => proposalToRowValues(proposal, legacyColonRow.stash_dir)).toThrow(/no file changes/i);
+    expect(() => proposalToRowValues(proposal, legacyColonRow.bundle_id)).toThrow(/no file changes/i);
 
     const decidedAt = "2026-11-09T12:00:00.000Z";
     const rejected = {
@@ -517,7 +524,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
       updatedAt: decidedAt,
       review: { outcome: "rejected" as const, reason: "predates concept IDs", decidedAt, decidedBy: "human" as const },
     };
-    const values = proposalToRowValues(rejected, legacyColonRow.stash_dir);
+    const values = proposalToRowValues(rejected, legacyColonRow.bundle_id);
     expect(values.ref).toBe("lesson:example-legacy-note");
     expect(values.content).toBe(legacyColonRow.content);
     expect(values.created_at).toBe(legacyColonRow.created_at);

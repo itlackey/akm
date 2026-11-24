@@ -215,7 +215,8 @@ describe("bundle settings and config", () => {
         ...current.bundles,
         stash: {
           ...current.bundles!.stash!,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
+          adapter: "akm",
+          writable: true,
         },
       },
       unrelated: { keep: [1, "two"] },
@@ -225,7 +226,6 @@ describe("bundle settings and config", () => {
       bundle: "stash",
       enabled: false,
       writable: false,
-      componentWritability: { main: false },
       connections: { default: { apiKey: "[redacted]" } },
       unrelated: "overwrite attempt",
     } as never);
@@ -234,7 +234,6 @@ describe("bundle settings and config", () => {
     expect(saved.bundles.stash).toMatchObject({
       enabled: false,
       writable: false,
-      components: { main: { writable: false } },
     });
     expect(saved.connections.default.apiKey).toBe("$AKM_UI_TEST_KEY");
     expect(saved.someToken).toBe(PLANTED_CONFIG_TOKEN);
@@ -242,7 +241,6 @@ describe("bundle settings and config", () => {
     const listed = await out(bundles.list());
     expect(listed.bundles.find((b: Json) => b.name === "stash")).toMatchObject({ enabled: false, writable: false });
     await expectUsage(() => bundles.setSettings({ bundle: "constructor", enabled: true }));
-    await expectUsage(() => bundles.setSettings({ bundle: "stash", componentWritability: { constructor: true } }));
     // The defaults are edited through config only; settings ignore them.
     expect(bundles.setSettings({ defaultWriteTarget: "stash" } as never)).toEqual({ saved: false });
     expect(loadConfig().defaultWriteTarget).toBeUndefined();

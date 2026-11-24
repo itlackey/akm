@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
@@ -11,19 +10,20 @@ import { type BundleRef, makeBundleRef, parseBundleRef } from "../core/asset/ass
 import { assembleAsset, serializeFrontmatter } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "../core/asset/frontmatter";
 import { type AssetRef, displayDefaultBundle, displayRef } from "../core/asset/resolve-ref";
-import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
+import { assetRevision, findAsset, qualifyRef, readAsset, requireAsset } from "../core/assets/read";
+import { addressOf, writeAssets } from "../core/assets/write";
+import { materialiseBundleDir } from "../core/bundle-at-dir";
+import { isWithin, resolveStashDir, safeRealpath } from "../core/common";
 import { loadConfig } from "../core/config/config";
-import { ConfigError, NotFoundError, TransientError, UsageError } from "../core/errors";
+import { assetNotFound, ConfigError, NotFoundError, TransientError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { resolveMutationTarget } from "../core/mutation-target";
 import { getStateDbPath, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
-import { withWriteTargetMutation } from "../core/write-source";
 import { NO_INDEX_MESSAGE, openUsableIndex } from "../indexer/index-readiness";
 import { heldRebuildLock } from "../indexer/index-rebuild-lock";
 import { recomputeUtilityScores } from "../indexer/indexer";
-import { currentConceptId, resolveWriteAddress } from "../indexer/lookup/adapter-concept-owner";
-import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
+import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
 import { insertUsageEventStrict, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { Database } from "../storage/database";
@@ -95,13 +95,14 @@ function appendLessonStrength(
 ): { ref: string; strength: number } | null {
   // `findEntryIdByRef` keys on the stored `item_ref`; the lesson's type is the one its entry records.
   const config = loadConfig();
-  const conceptId = currentConceptId(parseBundleRef(raw), resolveSourceEntries(undefined, config));
+  const qualified = qualifyRef(raw);
+  const { conceptId } = parseBundleRef(qualified);
   let filePath: string | undefined;
   let bundleId: string | undefined;
   let type: string | undefined;
   const db = openExistingDatabase();
   try {
-    const entryId = findEntryIdByRef(db, makeBundleRef(origin, conceptId));
+    const entryId = findEntryIdByRef(db, qualified);
     if (entryId !== undefined) {
       const itemRef = getItemRefById(db, entryId);
       const parsedItemRef = itemRef ? parseBundleRef(itemRef) : undefined;
@@ -121,7 +122,7 @@ function appendLessonStrength(
     );
     return null;
   }
-  if (!filePath || !bundleId || !fs.existsSync(filePath)) {
+  if (!filePath || !bundleId) {
     warn(`[feedback] --applied-to: lesson ${requestedRef} is not in the index or is missing on disk.`);
     return null;
   }
@@ -131,8 +132,12 @@ function appendLessonStrength(
     throw new UsageError(`Resolved lesson ${requestedRef} is outside bundle "${bundleId}".`);
   }
 
-  fs.lstatSync(filePath);
-  const initialUpdate = buildLessonStrengthUpdate(fs.readFileSync(filePath), feedbackRef);
+  const lesson = readAsset(bundleId, conceptId);
+  if (!lesson) {
+    warn(`[feedback] --applied-to: lesson ${requestedRef} is not in the index or is missing on disk.`);
+    return null;
+  }
+  const initialUpdate = buildLessonStrengthUpdate(lesson.entry.bytes(), feedbackRef);
   if (!initialUpdate.nextBytes) {
     return { ref: makeBundleRef(bundleId, conceptId), strength: initialUpdate.strength };
   }
@@ -140,21 +145,19 @@ function appendLessonStrength(
   let strength = initialUpdate.strength;
   let mutationStarted = false;
   try {
-    withWriteTargetMutation(
+    writeAssets(
       resolved.target,
-      [filePath],
-      {
-        purpose: "feedback-lesson-credit",
-        message: `Update ${makeBundleRef(bundleId, conceptId)}`,
-      },
-      () => {
-        const stat = fs.lstatSync(filePath);
-        const update = buildLessonStrengthUpdate(fs.readFileSync(filePath), feedbackRef);
+      { purpose: "feedback-lesson-credit", message: `Update ${makeBundleRef(bundleId, conceptId)}` },
+      (w) => {
+        // The lesson as it is now, and refused if it changes between this read and the write.
+        const held = w.read(conceptId);
+        if (!held) throw assetNotFound(requestedRef);
+        const bytes = held.entry.bytes();
+        const update = buildLessonStrengthUpdate(bytes, feedbackRef);
         strength = update.strength;
         if (!update.nextBytes) return;
         mutationStarted = true;
-        // Preserve the existing file's permission bits (markdown assets are typically 0o644).
-        writeFileAtomic(filePath, update.nextBytes, stat.mode & 0o777);
+        w.update(held.conceptId, update.nextBytes, { revision: assetRevision(bytes) });
       },
     );
   } catch (err) {
@@ -275,10 +278,11 @@ function recordFeedbackUsage(
  * Reflect compares it with the asset's current body to tell feedback given on
  * an earlier version of the text. An env or secret file is never read.
  */
-function judgedTextHash(type: string | undefined, filePath: string | undefined): string | undefined {
+function judgedTextHash(type: string | undefined, filePath: string | undefined, itemRef: string): string | undefined {
   try {
     if (!filePath || type === "env" || type === "secret") return undefined;
-    return contentHash(fs.readFileSync(filePath, "utf8"), "body");
+    const held = findAsset(itemRef);
+    return held ? contentHash(held.entry.content(), "body") : undefined;
   } catch {
     return undefined;
   }
@@ -360,7 +364,7 @@ function assertFrontmatterStillParses(before: string, after: string, file: strin
  * not the indexed one, so accepting the proposal would leave the real one unfixed.
  */
 export function assertProposalWritesFile(itemRef: string, root: string, filePath: string): void {
-  const { type, path: writes } = resolveWriteAddress(path.resolve(root), itemRef);
+  const { type, file: writes } = addressOf(materialiseBundleDir(path.resolve(root)), itemRef);
   if (writes !== undefined && safeRealpath(writes) === safeRealpath(filePath)) return;
   throw new UsageError(
     `akm cannot queue a fix for ${itemRef}: its file is ${filePath}, but a proposal would write ${writes ?? `no file (akm has no directory for "${type}" assets)`}. Edit the file directly.`,
@@ -377,9 +381,8 @@ type HistoryMark = { supersededBy: string } | { outdated: true };
  * The durable ref of the asset `--superseded-by` names. It must be indexed and
  * must not be the asset itself, or nothing is recorded.
  */
-function resolveSuccessorRef(db: Database, input: string, itemRef: string, sources: SearchSource[]): string {
-  const parsed = parseBundleRef(input);
-  const id = findEntryIdByRef(db, makeBundleRef(parsed.bundle, currentConceptId(parsed, sources)), parsed.bundle);
+function resolveSuccessorRef(db: Database, input: string, itemRef: string): string {
+  const id = findEntryIdByRef(db, qualifyRef(input));
   const successor = id === undefined ? null : getItemRefById(db, id);
   if (!successor) {
     throw new UsageError(
@@ -715,8 +718,7 @@ export const feedbackCommand = defineJsonCommand({
       if (parsedRef.bundle && !requestedSource) {
         throw new UsageError(`Source "${parsedRef.bundle}" is not configured.`, "INVALID_FLAG_VALUE");
       }
-      const lookupRef = makeBundleRef(parsedRef.bundle, currentConceptId(parsedRef, sources));
-      const entryId = findEntryIdByRef(db, lookupRef, parsedRef.bundle);
+      const entryId = findEntryIdByRef(db, qualifyRef(ref));
       if (entryId === undefined) {
         // NotFoundError (exit 1), not UsageError (exit 2): the flags parsed
         // fine, the asset just isn't there. The documented exit-code table
@@ -745,11 +747,11 @@ export const feedbackCommand = defineJsonCommand({
         displayDefaultBundle(config.defaultBundle, filePath ? findSourceForPath(filePath, sources) : undefined, bundle),
       );
       const entryType = getEntryById(db, entryId)?.entry.type;
-      const textHash = judgedTextHash(entryType, filePath);
+      const textHash = judgedTextHash(entryType, filePath, itemRef);
       if (textHash) metadataObj.contentHash = textHash;
       if (fixPairs.length > 0 || hasMark) {
         // Checked before anything is recorded, so a fix that does not apply leaves no trace.
-        if (!filePath || !fs.existsSync(filePath)) {
+        if (!filePath || !findAsset(itemRef)) {
           throw new NotFoundError(`The file for ${itemRef} is missing on disk.`, "ASSET_NOT_FOUND");
         }
         // The existing asset is written where it is: its bundle picks the target, and
@@ -771,10 +773,10 @@ export const feedbackCommand = defineJsonCommand({
           }
           mark =
             supersededBy !== undefined
-              ? { supersededBy: resolveSuccessorRef(db, supersededBy.trim(), itemRef, sources) }
+              ? { supersededBy: resolveSuccessorRef(db, supersededBy.trim(), itemRef) }
               : { outdated: true };
         }
-        const before = fs.readFileSync(filePath, "utf8");
+        const before = requireAsset(itemRef).entry.content();
         let after = applyExactReplacements(before, fixPairs, filePath);
         if (mark) after = applyHistoryMark(after, mark, filePath);
         if (after === before) throw new UsageError("The fix changes nothing.", "INVALID_FLAG_VALUE");

@@ -39,21 +39,27 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   akmAdapter,
+  azureKeyVaultAdapter,
   dotenvAdapter,
   genericFilesAdapter,
   llmWikiAdapter,
   okfAdapter,
   opencodeAdapter,
+  secretToolAdapter,
 } from "../../../../src/core/adapter/adapters";
-import type { BundleAdapter } from "../../../../src/core/adapter/bundle-adapter";
+import { hashContent } from "../../../../src/core/adapter/adapters/shared";
+import { buildFileContext } from "../../../../src/core/adapter/directory/file-context";
+import { walkStashFlat } from "../../../../src/core/adapter/directory/walker";
+import { DirectoryAdapterBase } from "../../../../src/core/adapter/directory-adapter";
 import { adapterForId, getAdapters } from "../../../../src/core/adapter/registry";
-import type { BundleComponent, IndexDocument } from "../../../../src/core/adapter/types";
-import {
-  AdapterConceptCollisionError,
-  resolveAdapterConceptOwner,
-} from "../../../../src/indexer/lookup/adapter-concept-owner";
-import { buildFileContext } from "../../../../src/indexer/walk/file-context";
-import { walkStashFlat } from "../../../../src/indexer/walk/walker";
+import { type Bundle, type IndexDocument, rootOf } from "../../../../src/core/adapter/types";
+import { assetBundleOf } from "../../../../src/core/assets/bundle";
+import { writeAssets } from "../../../../src/core/assets/write";
+import { assetNotFound, NotFoundError, UsageError } from "../../../../src/core/errors";
+import { fileMode, identify, serialize, spellings, typeOf } from "../../../_helpers/adapter-hooks";
+import { withFakeSecretStores } from "../../../_helpers/fake-secret-stores";
+import { findInBundle } from "../../../_helpers/find-in-bundle";
+
 import { sandboxStashDir } from "../../../_helpers/sandbox";
 
 /** The `okf` reference bundle's own root (root `index.md`, no `TYPE_DIRS` subdir). */
@@ -95,6 +101,11 @@ const OWN_ROOT_BY_ID: Record<string, string> = {
   "code-project": CODE_PROJECT_ROOT,
 };
 
+/** The adapters this suite covers: every adapter that reads a directory. A secret manager's adapters have no root to probe and no fixture files; `tests/integration/secret-manager-bundles.test.ts` covers them. */
+function directoryAdapters(): DirectoryAdapterBase[] {
+  return getAdapters().filter((adapter): adapter is DirectoryAdapterBase => adapter instanceof DirectoryAdapterBase);
+}
+
 /** Adapters whose `looksLikeRoot` is intentionally never-firing (explicit-config, §1.2). */
 const NEVER_FIRES = new Set(["generic-files", "code-project"]);
 
@@ -113,8 +124,8 @@ function orderedProbeOwner(root: string): string | undefined {
   return undefined;
 }
 
-function component(id: string, adapterId: string, root: string): BundleComponent {
-  return { id, adapter: adapterId, root, writable: true };
+function bundle(id: string, root: string): Bundle {
+  return { id, root };
 }
 
 /** `{ref, type}` projection of a doc stream — the comparison key for the walk×recognize mapping. */
@@ -123,9 +134,9 @@ function refType(docs: IndexDocument[]): Array<{ ref: string | undefined; type: 
 }
 
 /** fold(recognize): map `adapter.recognize` over the SAME `walkStashFlat(root)` files directly, dropping abstentions. */
-function foldRecognize(adapter: BundleAdapter, c: BundleComponent): IndexDocument[] {
+function foldRecognize(adapter: DirectoryAdapterBase, c: Bundle): IndexDocument[] {
   const out: IndexDocument[] = [];
-  for (const file of walkStashFlat(c.root)) {
+  for (const file of walkStashFlat(rootOf(c))) {
     const doc = adapter.recognize(c, file);
     if (doc !== null) out.push(doc);
   }
@@ -135,10 +146,10 @@ function foldRecognize(adapter: BundleAdapter, c: BundleComponent): IndexDocumen
 // ── 1. looksLikeRoot own-root-only (§4) ──────────────────────────────────────
 
 describe("conformance — looksLikeRoot own-root-only (§4)", () => {
-  test("the built-in registry is exactly the 12 format families, and every one has a fixture root", () => {
-    // Pins the fixture set: every registered adapter has a golden/fixture root in
+  test("the built-in registry holds exactly 12 directory format families, and every one has a fixture root", () => {
+    // Pins the fixture set: every registered directory adapter has a golden/fixture root in
     // OWN_ROOT_BY_ID, so the ordered-probe matrix below is complete.
-    const ids = getAdapters().map((a) => a.id);
+    const ids = directoryAdapters().map((a) => a.id);
     expect(ids.sort()).toEqual([
       "agent-skills",
       "akm",
@@ -199,60 +210,55 @@ describe("conformance — fold(recognize) over the walk", () => {
   // recognize-over-walk behavior directly (owner ruling 2026-07-21 — the
   // walk×recognize mapping the retired `scanComponent` module used to wrap).
   test("akm: fold(recognize) over the all-types walk yields a stable ref/type stream", () => {
-    const c = component("all-types", "akm", AKM_ROOT);
+    const c = bundle("all-types", AKM_ROOT);
     const folded = foldRecognize(akmAdapter, c);
     expect(folded.length).toBeGreaterThan(0); // the fixture actually exercises the walk
     expect(refType(folded)).toEqual(refType(foldRecognize(akmAdapter, c)));
   });
 
   test("okf: fold(recognize) over the okf-sample walk yields a stable ref/type stream", () => {
-    const c = component("okf-sample", "okf", OKF_ROOT);
+    const c = bundle("okf-sample", OKF_ROOT);
     const folded = foldRecognize(okfAdapter, c);
     expect(folded.length).toBeGreaterThan(0);
     expect(refType(folded)).toEqual(refType(foldRecognize(okfAdapter, c)));
   });
 
   test("llm-wiki: fold(recognize) over the llm-wiki walk yields a stable ref/type stream", () => {
-    const c = component("sample-wiki", "llm-wiki", LLM_WIKI_ROOT);
+    const c = bundle("sample-wiki", LLM_WIKI_ROOT);
     const folded = foldRecognize(llmWikiAdapter, c);
     expect(folded.length).toBeGreaterThan(0);
     expect(refType(folded)).toEqual(refType(foldRecognize(llmWikiAdapter, c)));
   });
 });
 
-describe("conformance — read candidates and recognition are two-way canonical peers", () => {
-  test("every registered adapter maps each recognized fixture file back from its canonical concept", () => {
-    for (const adapter of getAdapters()) {
+describe("conformance — identity and spellings are two-way canonical peers", () => {
+  test("every registered adapter spells each recognized fixture file back from its canonical concept", () => {
+    for (const adapter of directoryAdapters()) {
       const root = OWN_ROOT_BY_ID[adapter.id]!;
-      const c = component(adapter.id, adapter.id, root);
-      expect(typeof adapter.readCandidates, adapter.id).toBe("function");
+      const c = bundle(adapter.id, root);
       for (const file of walkStashFlat(root)) {
         const document = adapter.recognize(c, file);
         if (!document?.conceptId) continue;
-        const candidates = adapter.readCandidates?.(c, document.conceptId) ?? [];
+        expect(identify(adapter, file.relPath), `${adapter.id}:${file.relPath}`).toBe(document.conceptId);
         expect(
-          candidates.some(
-            (candidate) =>
-              candidate.conceptId === document.conceptId && path.resolve(candidate.path) === path.resolve(file.absPath),
-          ),
+          spellings(adapter, document.conceptId).map((spelling) => spelling.toLowerCase()),
           `${adapter.id}:${document.conceptId} must include ${file.relPath}`,
-        ).toBe(true);
+        ).toContain(file.relPath.toLowerCase());
       }
     }
   });
 
-  test("every existing fixture candidate either abstains or recognizes the queried canonical concept", () => {
-    for (const adapter of getAdapters()) {
+  test("every existing fixture spelling either is no asset or names the queried canonical concept", () => {
+    for (const adapter of directoryAdapters()) {
       const root = OWN_ROOT_BY_ID[adapter.id]!;
-      const c = component(adapter.id, adapter.id, root);
+      const c = bundle(adapter.id, root);
       for (const file of walkStashFlat(root)) {
         const indexed = adapter.recognize(c, file);
         if (!indexed?.conceptId) continue;
-        for (const candidate of adapter.readCandidates?.(c, indexed.conceptId) ?? []) {
-          expect(candidate.conceptId, `${adapter.id}:${candidate.path}`).toBe(indexed.conceptId);
-          if (!fs.existsSync(candidate.path)) continue;
-          const recognized = adapter.recognize(c, buildFileContext(root, candidate.path));
-          if (recognized) expect(recognized.conceptId, `${adapter.id}:${candidate.path}`).toBe(indexed.conceptId);
+        for (const spelling of spellings(adapter, indexed.conceptId)) {
+          if (!fs.existsSync(path.join(root, spelling))) continue;
+          const identified = identify(adapter, spelling);
+          if (identified !== null) expect(identified, `${adapter.id}:${spelling}`).toBe(indexed.conceptId);
         }
       }
     }
@@ -266,23 +272,28 @@ describe("conformance — read candidates and recognition are two-way canonical 
       const toolRoot = path.join(sandbox.dir, "tool");
       for (const root of [genericRoot, dotenvRoot, toolRoot]) fs.mkdirSync(root, { recursive: true });
 
-      const genericComponent = component("generic", "generic-files", genericRoot);
+      const genericComponent = bundle("generic", genericRoot);
       const upperText = path.join(genericRoot, "docs", "format.TEXT");
       fs.mkdirSync(path.dirname(upperText), { recursive: true });
       fs.writeFileSync(upperText, "generic text");
       expect(genericFilesAdapter.recognize(genericComponent, buildFileContext(genericRoot, upperText))?.conceptId).toBe(
         "docs/format",
       );
-      expect(resolveAdapterConceptOwner(genericRoot, "generic-files", "docs/format")?.path).toBe(upperText);
+      expect(findInBundle({ name: "test", path: genericRoot }, "generic-files", "docs/format")?.entry.file).toBe(
+        upperText,
+      );
 
       fs.writeFileSync(path.join(genericRoot, "docs", "format.md"), "# collision");
-      expect(() => resolveAdapterConceptOwner(genericRoot, "generic-files", "docs/format")).toThrow(
-        AdapterConceptCollisionError,
+      // Two spellings: the first in the adapter's order wins, `.md` before `.TEXT`.
+      expect(findInBundle({ name: "test", path: genericRoot }, "generic-files", "docs/format")?.entry.file).toBe(
+        path.join(genericRoot, "docs", "format.md"),
       );
 
       const extensionless = path.join(genericRoot, "LICENSE");
       fs.writeFileSync(extensionless, "license");
-      expect(resolveAdapterConceptOwner(genericRoot, "generic-files", "LICENSE")?.path).toBe(extensionless);
+      expect(findInBundle({ name: "test", path: genericRoot }, "generic-files", "LICENSE")?.entry.file).toBe(
+        extensionless,
+      );
       const reserved = path.join(genericRoot, "index.md");
       fs.writeFileSync(reserved, "# reserved");
       expect(genericFilesAdapter.recognize(genericComponent, buildFileContext(genericRoot, reserved))).toBeNull();
@@ -293,31 +304,25 @@ describe("conformance — read candidates and recognition are two-way canonical 
       fs.writeFileSync(outside, "outside");
       const linked = path.join(genericRoot, "linked.md");
       fs.symlinkSync(outside, linked);
-      const linkedOwner = resolveAdapterConceptOwner(genericRoot, "generic-files", "linked");
-      expect(linkedOwner?.path).toBe(linked);
-      expect(linkedOwner?.realPath).toBe(fs.realpathSync(outside));
+      const linkedOwner = findInBundle({ name: "test", path: genericRoot }, "generic-files", "linked");
+      expect(linkedOwner?.entry.file).toBe(linked);
 
-      const dotenvComponent = component("dotenv", "dotenv", dotenvRoot);
+      const dotenvComponent = bundle("dotenv", dotenvRoot);
       const defaultEnv = path.join(dotenvRoot, "env", ".env");
       fs.mkdirSync(path.dirname(defaultEnv), { recursive: true });
       fs.writeFileSync(defaultEnv, "TOKEN=hidden\n");
       expect(dotenvAdapter.recognize(dotenvComponent, buildFileContext(dotenvRoot, defaultEnv))?.conceptId).toBe(
         "env/default",
       );
-      expect(dotenvAdapter.readCandidates?.(dotenvComponent, "env/default")).toContainEqual({
-        path: defaultEnv,
-        conceptId: "env/default",
-      });
-      fs.writeFileSync(path.join(dotenvRoot, "env", ".sensitive"), "");
-      expect(dotenvAdapter.recognize(dotenvComponent, buildFileContext(dotenvRoot, defaultEnv))).toBeNull();
-      expect(resolveAdapterConceptOwner(dotenvRoot, "dotenv", "env/default")).toBeUndefined();
+      expect(spellings(dotenvAdapter, "env/default")).toContain("env/.env");
+      expect(findInBundle({ name: "test", path: dotenvRoot }, "dotenv", "env/default")?.entry.file).toBe(defaultEnv);
 
-      const toolComponent = component("tool", "opencode", toolRoot);
+      const toolComponent = bundle("tool", toolRoot);
       const singular = path.join(toolRoot, "skill", "pkg", "SKILL.md");
       fs.mkdirSync(path.dirname(singular), { recursive: true });
       fs.writeFileSync(singular, "---\nname: pkg\ndescription: pkg\n---\n");
       expect(opencodeAdapter.recognize(toolComponent, buildFileContext(toolRoot, singular))).toBeNull();
-      expect(opencodeAdapter.readCandidates?.(toolComponent, "skill/pkg")).toEqual([]);
+      expect(spellings(opencodeAdapter, "skill/pkg")).toEqual([]);
 
       const canonicalSkill = path.join(toolRoot, "skills", "pkg", "SKILL.md");
       fs.mkdirSync(path.dirname(canonicalSkill), { recursive: true });
@@ -325,15 +330,12 @@ describe("conformance — read candidates and recognition are two-way canonical 
       expect(opencodeAdapter.recognize(toolComponent, buildFileContext(toolRoot, canonicalSkill))?.conceptId).toBe(
         "skills/pkg",
       );
-      expect(opencodeAdapter.readCandidates?.(toolComponent, "skills/pkg")[0]).toEqual({
-        path: canonicalSkill,
-        conceptId: "skills/pkg",
-      });
+      expect(spellings(opencodeAdapter, "skills/pkg")[0]).toBe("skills/pkg/SKILL.md");
       const nested = path.join(toolRoot, "skills", "pkg", "nested", "SKILL.md");
       fs.mkdirSync(path.dirname(nested), { recursive: true });
       fs.writeFileSync(nested, "---\nname: nested\ndescription: nested\n---\n");
       expect(opencodeAdapter.recognize(toolComponent, buildFileContext(toolRoot, nested))).toBeNull();
-      expect(opencodeAdapter.readCandidates?.(toolComponent, "skills/pkg/nested")).toEqual([]);
+      expect(spellings(opencodeAdapter, "skills/pkg/nested")).toEqual([]);
     } finally {
       sandbox.cleanup();
     }
@@ -361,7 +363,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
         ["env/team/.env", "TOKEN=hidden\n"],
       ] as const;
       const expected: Array<{ adapterId: string; root: string; path: string; conceptId: string }> = [];
-      const akmComponent = component("akm", "akm", akmRoot);
+      const akmComponent = bundle("akm", akmRoot);
       for (const [relativePath, content] of authored) {
         const filePath = path.join(akmRoot, relativePath);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -376,7 +378,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
       fs.mkdirSync(path.dirname(nestedDefault), { recursive: true });
       fs.writeFileSync(nestedDefault, "TOKEN=hidden\n");
       const dotenvDocument = dotenvAdapter.recognize(
-        component("dotenv", "dotenv", dotenvRoot),
+        bundle("dotenv", dotenvRoot),
         buildFileContext(dotenvRoot, nestedDefault),
       );
       expect(dotenvDocument?.conceptId).toBe("env/team/default");
@@ -399,10 +401,10 @@ describe("conformance — read candidates and recognition are two-way canonical 
       try {
         for (const entry of expected) {
           expect(
-            resolveAdapterConceptOwner(entry.root, entry.adapterId, entry.conceptId),
+            findInBundle({ name: "test", path: entry.root }, entry.adapterId, entry.conceptId),
             entry.conceptId,
           ).toMatchObject({
-            path: entry.path,
+            entry: { file: entry.path },
             conceptId: entry.conceptId,
           });
         }
@@ -413,10 +415,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
       for (const entry of expected) {
         const adapter = adapterForId(entry.adapterId)!;
         expect(
-          adapter.recognize(
-            component(entry.adapterId, entry.adapterId, entry.root),
-            buildFileContext(entry.root, entry.path),
-          )?.conceptId,
+          adapter.recognize(bundle(entry.adapterId, entry.root), buildFileContext(entry.root, entry.path))?.conceptId,
           entry.path,
         ).toBe(entry.conceptId);
       }
@@ -425,7 +424,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
     }
   });
 
-  test("two files that invert to one ref collide without reading either file", () => {
+  test("two files that invert to one ref collide without reading either file: the first spelling is the asset", () => {
     const sandbox = sandboxStashDir();
     try {
       const root = path.join(sandbox.dir, "akm");
@@ -442,12 +441,494 @@ describe("conformance — read candidates and recognition are two-way canonical 
         return originalRead(candidate, options as never);
       }) as typeof fs.readFileSync);
       try {
-        expect(() => resolveAdapterConceptOwner(root, "akm", "tasks/same")).toThrow(AdapterConceptCollisionError);
-
-        const owner = resolveAdapterConceptOwner(root, "akm", "tasks/same", { mode: "read" });
-        expect(owner?.path).toBe(loose);
+        const owner = findInBundle({ name: "test", path: root }, "akm", "tasks/same");
+        expect(owner?.entry.file).toBe(canonical);
+        expect(
+          akmAdapter
+            .list({ id: "test", root })
+            .assets.filter((asset) => asset.conceptId === "tasks/same")
+            .map((asset) => asset.entry.file),
+        ).toEqual([canonical]);
       } finally {
         readSpy.mockRestore();
+      }
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+});
+
+describe("conformance — declared writes and what an adapter refuses", () => {
+  test("every adapter declares the types it writes and retires; what it retires, it writes", () => {
+    for (const adapter of getAdapters()) {
+      expect(Array.isArray(adapter.writes), `${adapter.id} writes`).toBe(true);
+      expect(Array.isArray(adapter.retires), `${adapter.id} retires`).toBe(true);
+      for (const type of adapter.retires) expect(adapter.writes, `${adapter.id} retires ${type}`).toContain(type);
+    }
+  });
+
+  test("an env file and a secret are never retired", () => {
+    for (const adapter of getAdapters()) {
+      expect(adapter.retires, adapter.id).not.toContain("env");
+      expect(adapter.retires, adapter.id).not.toContain("secret");
+    }
+  });
+
+  test("every adapter declares the types it writes; a read-only adapter's create and place refuse", () => {
+    const b: Bundle = { id: "b", root: "/nonexistent/bundle", location: "x" };
+    for (const adapter of getAdapters()) {
+      expect(Array.isArray(adapter.writes), adapter.id).toBe(true);
+      if (adapter.writes.length > 0) continue;
+      expect(() => adapter.place(b, { type: "knowledge", name: "a" }), `${adapter.id} place`).toThrow();
+      expect(() => adapter.create(b, { type: "knowledge", name: "a", content: "x" }), `${adapter.id} create`).toThrow();
+    }
+  });
+
+  test("the writing adapters are the akm formats and the secret managers", () => {
+    expect(
+      getAdapters()
+        .filter((adapter) => adapter.writes.length > 0)
+        .map((adapter) => adapter.id),
+    ).toEqual(["dotenv", "akm-workflow", "akm", "secret-tool", "azure-key-vault"]);
+  });
+
+  test("a secret manager's entry has no file, and its index document has no path", async () => {
+    const keyring = [
+      {
+        path: "/org/freedesktop/secrets/collection/akm/1",
+        label: "gh_token",
+        attributes: { akm: "akm/gh_token" },
+        secret: "v",
+      },
+    ];
+    await withFakeSecretStores({ keyrings: { akm: keyring }, vaults: { vault: { token: "v" } } }, async () => {
+      for (const [adapter, location] of [
+        [secretToolAdapter, "akm"],
+        [azureKeyVaultAdapter, "vault"],
+      ] as const) {
+        const b: Bundle = { id: "bundle", root: "/not/a/directory", location };
+        const { assets, complete } = adapter.list(b);
+        expect(complete, adapter.id).toBe(true);
+        expect(assets.length, adapter.id).toBe(1);
+        const entry = assets[0]?.entry;
+        expect(entry?.file, adapter.id).toBeUndefined();
+        expect(entry?.key.startsWith("secrets/"), adapter.id).toBe(true);
+        const document = adapter.recognize(b, entry as NonNullable<typeof entry>);
+        expect(document?.type, adapter.id).toBe("secret");
+        expect(document, adapter.id).not.toHaveProperty("path");
+      }
+    });
+  });
+});
+
+// ── 3. Writes: one refusal per gate ──────────────────────────────────────────
+
+/** The adapters that write files. */
+function writableDirectoryAdapters(): DirectoryAdapterBase[] {
+  return directoryAdapters().filter((adapter) => adapter.writes.length > 0);
+}
+
+/** A name every type of a writing adapter can place (a script's file needs an extension). */
+function probeName(type: string, name: string): string {
+  return type === "script" ? `${name}.sh` : name;
+}
+
+/** Names that would place a file no adapter recognizes (a reserved name, a sidecar) next to ordinary ones. */
+const HOSTILE_NAMES = ["index", "log", "a/index", "x.lock", "x.sensitive", "README", "ok", "nested/ok"];
+
+describe("conformance — create, place and read agree", () => {
+  test("a created asset is read back under the id place gave, and its entry is the file create wrote", () => {
+    for (const adapter of writableDirectoryAdapters()) {
+      for (const type of adapter.writes) {
+        const sandbox = sandboxStashDir();
+        try {
+          const b = bundle("round-trip", path.join(sandbox.dir, "b"));
+          const { conceptId } = adapter.place(b, { type, name: probeName(type, "probe/sample") });
+          const change = adapter.create(b, { type, name: probeName(type, "probe/sample"), content: "# probe\n" });
+          expect(change.conceptId, `${adapter.id} ${type}`).toBe(conceptId);
+          const read = adapter.read(b, conceptId);
+          expect(read?.conceptId, `${adapter.id} ${type}`).toBe(conceptId);
+          expect(change.changed, `${adapter.id} ${type}`).toContain(read?.entry.file as string);
+          expect(fs.existsSync(read?.entry.file as string), `${adapter.id} ${type}`).toBe(true);
+        } finally {
+          sandbox.cleanup();
+        }
+      }
+    }
+  });
+
+  test("place never returns an id that is no concept: it names a file the adapter lists, or it refuses", () => {
+    for (const adapter of writableDirectoryAdapters()) {
+      for (const type of adapter.writes) {
+        for (const name of HOSTILE_NAMES) {
+          const sandbox = sandboxStashDir();
+          try {
+            const b = bundle("place", path.join(sandbox.dir, "b"));
+            let conceptId: string;
+            try {
+              conceptId = adapter.place(b, { type, name }).conceptId;
+            } catch (error) {
+              expect(error, `${adapter.id} ${type} "${name}"`).toBeInstanceOf(UsageError);
+              expect(() => adapter.create(b, { type, name, content: "x" }), `${adapter.id} ${type} "${name}"`).toThrow(
+                UsageError,
+              );
+              continue;
+            }
+            adapter.create(b, { type, name, content: "x" });
+            expect(
+              adapter.list(b).assets.map((asset) => asset.conceptId),
+              `${adapter.id} ${type} "${name}"`,
+            ).toContain(conceptId);
+          } finally {
+            sandbox.cleanup();
+          }
+        }
+      }
+    }
+  });
+
+  test("create over an existing concept is refused without replace, by every writing adapter", () => {
+    for (const adapter of writableDirectoryAdapters()) {
+      for (const type of adapter.writes) {
+        const sandbox = sandboxStashDir();
+        try {
+          const b = bundle("twice", path.join(sandbox.dir, "b"));
+          adapter.create(b, { type, name: probeName(type, "probe"), content: "# one\n" });
+          expect(
+            () => adapter.create(b, { type, name: probeName(type, "probe"), content: "# two\n" }),
+            `${adapter.id} ${type}`,
+          ).toThrow(/over an existing asset/);
+          expect(() =>
+            adapter.create(b, { type, name: probeName(type, "probe"), content: "# two\n" }, { replace: true }),
+          ).not.toThrow();
+        } finally {
+          sandbox.cleanup();
+        }
+      }
+    }
+  });
+
+  test("a replacing create rewrites the file the concept is read from, never a twin beside it", () => {
+    // An off-spelling the adapter still reads (`.MD`, `env/default.env` for the default env that places at `env/.env`).
+    const cases: Array<[DirectoryAdapterBase, string, string, string]> = [
+      [akmAdapter, "knowledge", "guide", "knowledge/guide.MD"],
+      [akmAdapter, "memory", "note", "memories/note.MD"],
+      [dotenvAdapter, "env", "default", "env/default.env"],
+    ];
+    for (const [adapter, type, name, relPath] of cases) {
+      const sandbox = sandboxStashDir();
+      try {
+        const root = path.join(sandbox.dir, "b");
+        fs.mkdirSync(path.dirname(path.join(root, relPath)), { recursive: true });
+        fs.writeFileSync(path.join(root, relPath), "old\n");
+        const b = bundle("twin", root);
+        const before = adapter.list(b).assets;
+        expect(
+          before.map((asset) => asset.entry.key),
+          `${adapter.id} ${relPath}`,
+        ).toContain(relPath);
+        const change = adapter.create(b, { type, name, content: "# new\n" }, { replace: true });
+        expect(change.changed, `${adapter.id} ${relPath}`).toContain(path.join(root, relPath));
+        expect(fs.readFileSync(path.join(root, relPath), "utf8"), `${adapter.id} ${relPath}`).not.toBe("old\n");
+        expect(
+          adapter.list(b).assets.map((asset) => asset.entry.key),
+          `${adapter.id} ${relPath}`,
+        ).toEqual(before.map((asset) => asset.entry.key));
+      } finally {
+        sandbox.cleanup();
+      }
+    }
+  });
+
+  test("a secret manager refuses a create over an existing secret without replace, and replaces with it", async () => {
+    const keyring = [
+      { path: "/org/freedesktop/secrets/collection/akm/1", label: "t", attributes: { akm: "akm/t" }, secret: "v1" },
+    ];
+    await withFakeSecretStores({ keyrings: { akm: keyring }, vaults: { vault: { t: "v1" } } }, async () => {
+      for (const [adapter, location] of [
+        [secretToolAdapter, "akm"],
+        [azureKeyVaultAdapter, "vault"],
+      ] as const) {
+        const b: Bundle = { id: "managed", root: "/not/a/directory", location };
+        // A keyring entry is read by what a listing (the index's) recorded of it, which the facade hands back.
+        const { locator } = adapter.list(b).assets.find((asset) => asset.conceptId === "secrets/t")?.entry ?? {};
+        expect(() => adapter.create(b, { type: "secret", name: "t", content: "v2" }, { locator }), adapter.id).toThrow(
+          /over an existing secret/,
+        );
+        expect(adapter.read(b, "secrets/t", locator)?.entry.content(), adapter.id).toBe("v1");
+        const replaced = adapter.create(b, { type: "secret", name: "t", content: "v2" }, { replace: true, locator });
+        expect(adapter.read(b, "secrets/t", replaced.entry?.locator ?? locator)?.entry.content(), adapter.id).toBe(
+          "v2",
+        );
+        // A write hands back the entry it wrote: the keyring's item as the service now holds it.
+        const fresh = adapter.create(b, { type: "secret", name: "fresh", content: "v3" });
+        expect(fresh.entry?.key, adapter.id).toBe(adapter === secretToolAdapter ? "secrets/fresh" : undefined);
+        expect(adapter.read(b, "secrets/fresh", fresh.entry?.locator)?.entry.content(), adapter.id).toBe("v3");
+      }
+    });
+  });
+
+  test("list reports assets only, one per concept, in the order the walk found them (N16)", () => {
+    for (const adapter of directoryAdapters()) {
+      const root = OWN_ROOT_BY_ID[adapter.id]!;
+      const listing = adapter.list(bundle(adapter.id, root));
+      expect(Object.keys(listing).sort(), adapter.id).not.toContain("files");
+      const walked = walkStashFlat(root, { includeAllDirectories: true }).map((file) => file.relPath);
+      const listed = listing.assets.map((asset) => asset.entry.key);
+      expect(listed, adapter.id).toEqual(walked.filter((relPath) => listed.includes(relPath)));
+      const concepts = listing.assets.map((asset) => asset.conceptId);
+      expect(new Set(concepts).size, adapter.id).toBe(concepts.length);
+    }
+  });
+
+  test("a directory adapter's index hash is the hash of its entry's content (the assetTypeFresh contract)", () => {
+    for (const adapter of directoryAdapters()) {
+      const b = bundle(adapter.id, OWN_ROOT_BY_ID[adapter.id]!);
+      let checked = 0;
+      for (const listed of adapter.list(b).assets) {
+        const doc = adapter.recognize(b, listed.entry);
+        if (doc === null) continue;
+        expect(doc.hash, `${adapter.id}:${listed.conceptId}`).toBe(hashContent(listed.entry.content()));
+        checked++;
+      }
+      expect(checked, adapter.id).toBeGreaterThan(0);
+    }
+  });
+
+  test("list and read agree on the winner, for every listed asset and for a file spelling of it", () => {
+    for (const adapter of directoryAdapters()) {
+      const b = bundle(adapter.id, OWN_ROOT_BY_ID[adapter.id]!);
+      for (const listed of adapter.list(b).assets) {
+        const read = adapter.read(b, listed.conceptId);
+        expect(read?.conceptId, `${adapter.id}:${listed.conceptId}`).toBe(listed.conceptId);
+        expect(read?.entry.file, `${adapter.id}:${listed.conceptId}`).toBe(listed.entry.file);
+        const fileSpelling = adapter.read(b, listed.entry.key);
+        if (fileSpelling) expect(fileSpelling.entry.file, `${adapter.id}:${listed.entry.key}`).toBe(listed.entry.file);
+      }
+    }
+    const sandbox = sandboxStashDir();
+    try {
+      const root = path.join(sandbox.dir, "akm");
+      fs.mkdirSync(path.join(root, "tasks"), { recursive: true });
+      fs.writeFileSync(path.join(root, "tasks", "dup.md"), "# note\n");
+      fs.writeFileSync(path.join(root, "tasks", "dup.yml"), "name: dup\n");
+      const b = bundle("akm", root);
+      const winner = akmAdapter.list(b).assets.filter((asset) => asset.conceptId === "tasks/dup");
+      expect(winner.map((asset) => asset.entry.file)).toEqual([path.join(root, "tasks", "dup.yml")]);
+      for (const asked of ["tasks/dup", "tasks/dup.md", "tasks/dup.yml"]) {
+        expect(akmAdapter.read(b, asked)?.entry.file, asked).toBe(path.join(root, "tasks", "dup.yml"));
+      }
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  test("the facade writes the same bytes each time it creates one asset", () => {
+    for (const adapter of writableDirectoryAdapters()) {
+      for (const type of adapter.writes) {
+        const sandbox = sandboxStashDir();
+        try {
+          const root = path.join(sandbox.dir, "b");
+          fs.mkdirSync(root, { recursive: true });
+          const target = {
+            source: { kind: "filesystem" as const, name: "b", path: root, adapterId: adapter.id },
+            config: { type: "filesystem" as const, name: "b", path: root, writable: true },
+          };
+          const create = () =>
+            writeAssets(target, { purpose: "conformance" }, (w) => {
+              const result = w.create({ type, name: probeName(type, "probe"), content: "# probe\n" });
+              return fs.readFileSync(w.read(result.ref.slice("b//".length))?.entry.file as string);
+            });
+          const first = create();
+          expect(create().equals(first), `${adapter.id} ${type}`).toBe(true);
+        } finally {
+          sandbox.cleanup();
+        }
+      }
+    }
+  });
+});
+
+describe("conformance — the gate rule: a content type has its path type's write behaviour", () => {
+  /** Content that gives a loose or typed Markdown file a different type than its path alone. */
+  const CONTENTS = [
+    "# plain\n",
+    "Use $ARGUMENTS exactly.\n",
+    "---\nagent: planner\n---\nbody\n",
+    "---\nmodel: local\n---\nbody\n",
+    "---\ntype: workflow\n---\n\n# W\n",
+    "---\ntype: knowledge\n---\nbody\n",
+    "---\ntype: command\n---\nbody\n",
+    "---\ntype: memory\n---\nbody\n",
+  ];
+  const PATHS = [
+    "loose.md",
+    "docs/loose.md",
+    "knowledge/k.md",
+    "commands/c.md",
+    "agents/a.md",
+    "memories/m.md",
+    "workflows/w.md",
+    "lessons/l.md",
+    "tasks/t.md",
+    "env/e.env",
+    "secrets/s",
+  ];
+
+  /** What a file of `type` holds for a sample, with the type's name left out. */
+  const serializedAs = (adapter: DirectoryAdapterBase, type: string, file: string): string =>
+    String(serialize(adapter, type, file, "# sample\n")).replace(/^type: .*$/m, "type: <type>");
+
+  test("for every writing adapter, each type recognize gives a path has the writes, retires, file mode and bytes of typeOf(path)", () => {
+    for (const adapter of writableDirectoryAdapters()) {
+      const sandbox = sandboxStashDir();
+      try {
+        const root = path.join(sandbox.dir, adapter.id);
+        const b = bundle(adapter.id, root);
+        let checked = 0;
+        for (const relPath of PATHS) {
+          const file = path.join(root, relPath);
+          fs.mkdirSync(path.dirname(file), { recursive: true });
+          for (const content of CONTENTS) {
+            fs.writeFileSync(file, content);
+            const document = adapter.recognize(b, buildFileContext(root, file));
+            if (!document) continue;
+            const pathType = typeOf(adapter, relPath);
+            const label = `${adapter.id}:${relPath} ${JSON.stringify(content.slice(0, 24))} (${document.type} vs ${pathType})`;
+            expect(adapter.writes.includes(document.type), label).toBe(adapter.writes.includes(pathType));
+            expect(adapter.retires.includes(document.type), label).toBe(adapter.retires.includes(pathType));
+            expect(fileMode(adapter, document.type), label).toBe(fileMode(adapter, pathType));
+            // Serialization records the type's own name in the document (`type: command`); it is the same otherwise.
+            expect(serializedAs(adapter, document.type, file), label).toEqual(serializedAs(adapter, pathType, file));
+            checked += 1;
+          }
+        }
+        expect(checked, adapter.id).toBeGreaterThan(0);
+      } finally {
+        sandbox.cleanup();
+      }
+    }
+  });
+});
+
+describe("conformance — refusal and not-found sentences have one home", () => {
+  test("a missing asset is refused with assetNotFound's sentence, by every adapter and by the facade", async () => {
+    for (const adapter of writableDirectoryAdapters()) {
+      const sandbox = sandboxStashDir();
+      try {
+        const root = path.join(sandbox.dir, "b");
+        fs.mkdirSync(root, { recursive: true });
+        const b = bundle("b", root);
+        const type = adapter.writes[0] as string;
+        const { conceptId: asked } = adapter.place(b, { type, name: "none" });
+        const expected = assetNotFound(`b//${asked}`);
+        const changes: Array<() => unknown> = [() => adapter.update(b, asked, "x"), () => adapter.delete(b, asked)];
+        if (adapter.retires.length > 0) changes.push(() => adapter.retire(b, asked, {}));
+        for (const change of changes) expect(change, adapter.id).toThrow(expected.message);
+        const target = {
+          source: { kind: "filesystem" as const, name: "b", path: root, adapterId: adapter.id },
+          config: { type: "filesystem" as const, name: "b", path: root, writable: true },
+        };
+        let failure: unknown;
+        try {
+          writeAssets(target, { purpose: "conformance" }, (w) => w.update(asked, "x"));
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure, adapter.id).toBeInstanceOf(NotFoundError);
+        expect((failure as NotFoundError).message, adapter.id).toBe(expected.message);
+        expect((failure as NotFoundError).code, adapter.id).toBe("ASSET_NOT_FOUND");
+      } finally {
+        sandbox.cleanup();
+      }
+    }
+    await withFakeSecretStores({ keyrings: { akm: [] }, vaults: { vault: {} } }, async () => {
+      for (const [adapter, location] of [
+        [secretToolAdapter, "akm"],
+        [azureKeyVaultAdapter, "vault"],
+      ] as const) {
+        const b: Bundle = { id: "managed", root: "/not/a/directory", location };
+        const expected = assetNotFound("managed//secrets/none");
+        expect(() => adapter.update(b, "secrets/none", "x"), adapter.id).toThrow(expected.message);
+        expect(() => adapter.delete(b, "secrets/none"), adapter.id).toThrow(expected.message);
+      }
+    });
+  });
+
+  test("the user-facing gate sentences are the facade's, word for word", () => {
+    const sandbox = sandboxStashDir();
+    try {
+      const akm = assetBundleOf({ name: "stash", path: sandbox.dir, adapterId: "akm" });
+      const readOnly = assetBundleOf({ name: "wiki", path: sandbox.dir, adapterId: "okf" });
+      expect(() => readOnly.assertWrites("knowledge")).toThrow(
+        'Bundle "wiki" uses adapter "okf", which does not support AKM asset writes.',
+      );
+      expect(() => akm.assertWrites("nope")).toThrow(
+        'Bundle "stash" uses adapter "akm", which does not support AKM asset writes.',
+      );
+      expect(() => akm.assertRetires("env")).toThrow(
+        'Bundle "stash" uses adapter "akm", which does not support AKM asset writes.',
+      );
+      expect(() => readOnly.assertRetiring()).toThrow(
+        'Bundle "wiki" uses adapter "okf", which does not support AKM asset writes.',
+      );
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  test("an adapter's own gate failures are invariant errors, never the facade's user-facing refusals", () => {
+    const sandbox = sandboxStashDir();
+    try {
+      const root = path.join(sandbox.dir, "b");
+      fs.mkdirSync(path.join(root, "env"), { recursive: true });
+      fs.writeFileSync(path.join(root, "env", "prod.env"), "A=1\n");
+      const b = bundle("b", root);
+      const keyring: Bundle = { ...b, location: "akm" };
+      const errors: unknown[] = [];
+      for (const run of [
+        () => okfAdapter.create(b, { type: "knowledge", name: "a", content: "x" }),
+        () => akmAdapter.retire(b, "env/prod", {}),
+        () => okfAdapter.restore(b, "h"),
+        () => okfAdapter.forget(b, "h"),
+        () => okfAdapter.expireRetired(b, new Date()),
+        () => secretToolAdapter.create(keyring, { type: "knowledge", name: "a", content: "x" }),
+        () => secretToolAdapter.retire(keyring, "secrets/a", {}),
+      ]) {
+        try {
+          run();
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      expect(errors).toHaveLength(7);
+      for (const error of errors) {
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(UsageError);
+        expect(error).not.toBeInstanceOf(NotFoundError);
+      }
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  test("create refuses a name whose file would be no asset, with one sentence (N12)", () => {
+    const sandbox = sandboxStashDir();
+    try {
+      const root = path.join(sandbox.dir, "b");
+      fs.mkdirSync(root, { recursive: true });
+      const target = {
+        source: { kind: "filesystem" as const, name: "b", path: root, adapterId: "akm" },
+        config: { type: "filesystem" as const, name: "b", path: root, writable: true },
+      };
+      for (const [type, name, file] of [
+        ["knowledge", "index", "knowledge/index.md"],
+        ["secret", "x.lock", "secrets/x.lock"],
+      ] as const) {
+        expect(() =>
+          writeAssets(target, { purpose: "conformance" }, (w) => w.create({ type, name, content: "x" })),
+        ).toThrow(`Cannot create ${type} "${name}" in bundle "b": it would be kept at ${file}, which is not an asset.`);
+        expect(fs.existsSync(path.join(root, file))).toBe(false);
       }
     } finally {
       sandbox.cleanup();

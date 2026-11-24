@@ -15,7 +15,7 @@ import { displayRef } from "../core/asset/resolve-ref";
 import { isInstalledBundle, resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
 import { substituteRefTokens } from "../core/ref-token";
-import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
+import type { AssetRenderer, RenderContext } from "../output/renderer-registry";
 import type {
   ShowResponse,
   WorkflowParameter,
@@ -160,13 +160,13 @@ export function resolveOrchestrationRefs(summary: WorkflowStepOrchestrationSumma
   const refs: WorkflowStepRef[] = [];
   const unresolved: Array<Pick<WorkflowStepRef, "ref" | "in">> = [];
   const note = (ref: string, where: WorkflowStepRef["in"]): void => {
-    let owner: ReturnType<typeof resolveRefOwner>;
+    let asset: ReturnType<typeof resolveRefOwner>;
     try {
-      owner = resolveRefOwner(ref);
+      asset = resolveRefOwner(ref);
     } catch {
-      owner = undefined;
+      asset = undefined;
     }
-    if (owner) refs.push({ ref, resolved: owner.ref, in: where });
+    if (asset) refs.push({ ref, resolved: asset.ref, in: where });
     else unresolved.push({ ref, in: where });
   };
   const tokens = (values: string[], where: "argv" | "cwd"): void => {

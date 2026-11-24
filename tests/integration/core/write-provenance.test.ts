@@ -8,13 +8,15 @@ import { expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { mutateFrontmatter, parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import { editFrontmatter, parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import { writeAssets } from "../../../src/core/assets/write";
 import {
   beginWriteProvenance,
   isWriteProvenanceActive,
   recordWrittenPath,
   relativeWrittenPath,
 } from "../../../src/core/write-provenance";
+import { writeTargetAt } from "../../../src/core/write-source";
 
 test("records absolute, deduped, sorted paths while open — and nothing once closed", () => {
   expect(isWriteProvenanceActive()).toBe(false);
@@ -68,12 +70,20 @@ test("relativeWrittenPath returns POSIX-relative inside the root, undefined outs
 
 test("an in-place frontmatter stamp journals the asset it rewrote", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-provenance-"));
-  const filePath = path.join(dir, "note.md");
+  const filePath = path.join(dir, "memories", "note.md");
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, "---\ntype: memory\n---\n\nBody.\n", "utf8");
   const journal = beginWriteProvenance();
   try {
-    mutateFrontmatter(filePath, (parsed) => ({ ...parsed.data, beliefState: "deprecated" }));
-    expect(journal.writtenPaths()).toEqual([filePath]);
+    writeAssets(writeTargetAt(dir), { purpose: "test" }, (w) => {
+      const held = w.read("memories/note");
+      const next = editFrontmatter(held?.entry.content() as string, (parsed) => ({
+        ...parsed.data,
+        beliefState: "deprecated",
+      }));
+      w.update("memories/note", next as string);
+    });
+    expect(journal.writtenPaths()).toEqual([fs.realpathSync(filePath)]);
     expect(parseFrontmatter(fs.readFileSync(filePath, "utf8")).data.beliefState).toBe("deprecated");
   } finally {
     journal.end();

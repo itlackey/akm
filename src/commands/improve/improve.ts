@@ -10,10 +10,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
-import { stashDirNames } from "../../core/asset/asset-placement";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { indexFiles } from "../../core/assets/files";
+import { akmOwnedDirNames } from "../../core/assets/gate";
+import { materialiseBundleDir } from "../../core/bundle-at-dir";
 import { type AkmConfig, bundlesToSourceEntries, loadConfig } from "../../core/config/config";
 import { collectCredentialValues } from "../../core/config/credentials";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
@@ -31,13 +32,12 @@ import { classifyImproveAction, foldDistillSkipped } from "../../core/improve-ty
 import { resolveMutationTarget } from "../../core/mutation-target";
 import { getDbPath, getStashLocksDir, getStateDbPathInDataDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
-import { openStateDatabase } from "../../core/state-db";
+import { openStateDatabase, openStateReadSnapshot } from "../../core/state-db";
 import { info, warn, warnVerbose } from "../../core/warn";
 import { beginWriteProvenance, relativeWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
 import { resolveWorkingStashTarget, resolveWritable, resolveWriteTarget } from "../../core/write-source";
 import { type Notice, noticeSet } from "../../execution/notices";
 import { buildIndex, isSkippedIndexBuild } from "../../indexer/index-build";
-import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import type { IndexResponse } from "../../indexer/indexer";
 import { countPendingMemoriesNeedingDecision } from "../../indexer/passes/memory-inference";
 import { resolveEntryContent, resolveSourceEntries } from "../../indexer/search/search-source";
@@ -55,7 +55,7 @@ import type { Database } from "../../storage/database";
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { withIndexDb } from "../../storage/repositories/index-db";
 import { getEntryCount } from "../../storage/repositories/index-entries-repository";
-import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
+import { SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
 import { summarizeLlmUsageRecordsCrossTab } from "../health/llm-usage";
 import { type DrainResult, drainProposals } from "../proposal/drain";
 import type { EligibilitySource } from "../proposal/proposal-types";
@@ -324,7 +324,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // Index triage's own writes incrementally so selection sees them.
       const triageWrittenPaths = journal?.writtenPaths() ?? [];
       if (setup.primaryStashDir && triageWrittenPaths.length > 0) {
-        await indexWrittenAssets(setup.primaryStashDir, triageWrittenPaths);
+        await indexFiles(materialiseBundleDir(setup.primaryStashDir), triageWrittenPaths);
       }
     }
 
@@ -594,6 +594,7 @@ function countUndecidedPendingMemories(stashDir: string): number {
 
 function probeEntryCount(): number | undefined {
   try {
+    // asset-io: state index database
     if (!fs.existsSync(getDbPath())) return undefined;
     const db = openExistingDatabase();
     try {
@@ -718,7 +719,7 @@ async function runDryPlanningStage(
   let stateSnapshotUnavailable = false;
   try {
     try {
-      stateDb = openSqliteReadSnapshot(run.resolvedStateDbPath);
+      stateDb = openStateReadSnapshot(run.resolvedStateDbPath);
       stateSnapshotUnavailable = !stateDb;
     } catch (error) {
       if (!(error instanceof SqliteReadSnapshotUnavailableError)) throw error;
@@ -1042,8 +1043,7 @@ function syncBeforeRun(run: ImproveRunSetup, eventsCtx: EventsContext): ImproveS
 
 /** Changed paths under the asset directories and `.akm`, minus ignored ones (git refuses to stage those). */
 function managedFallbackPaths(repoDir: string, changedPaths: string[]): string[] {
-  const ownedDirs =
-    akmAdapter.directoryList?.({ id: "akm", adapter: "akm", root: repoDir, writable: false }) ?? stashDirNames();
+  const ownedDirs = akmOwnedDirNames(repoDir);
   const prefixes = [...ownedDirs, ".akm"];
   const managed = changedPaths.filter((changedPath) =>
     prefixes.some((prefix) => changedPath === prefix || changedPath.startsWith(`${prefix}/`)),

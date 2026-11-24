@@ -155,8 +155,8 @@
     {#if !info.actions.edit.allowed}<p class="muted small" id="protected-reason">{info.actions.edit.reason}</p>{/if}
     {#if deleting}<section class="notice" aria-label="Delete file">
         <h3>Delete this file?</h3>
-        <p class="mono wrap">{info.path}</p>
-        <p>This removes the file and its sensitive marker. There is no Undo; existing Git history is unchanged.</p>
+        {#if info.path}<p class="mono wrap">{info.path}</p>{/if}
+        <p>This removes the file. There is no Undo; existing Git history is unchanged.</p>
         <div class="btn-row">
           <button class="btn-secondary" disabled={busy} onclick={() => (deleting = false)}>Keep file</button><button
             class="btn-danger"

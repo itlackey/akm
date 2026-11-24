@@ -18,8 +18,8 @@ function configureTaskBundle(stashDir: string): void {
     bundles: {
       local: {
         path: stashDir,
+        adapter: "akm",
         writable: true,
-        components: { main: { root: ".", adapter: "akm", writable: true } },
       },
     },
   });

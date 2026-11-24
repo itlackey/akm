@@ -11,13 +11,14 @@ import { akmSearch } from "../../src/commands/read/search";
 import { assembleAsset } from "../../src/core/asset/asset-serialize";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { saveConfig } from "../../src/core/config/config";
+import { _setWarnSinkForTests } from "../../src/core/warn";
 import { akmIndex } from "../../src/indexer/indexer";
 import { runMemoryInferencePass } from "../../src/indexer/passes/memory-inference";
 import { scopeFromFrontmatter } from "../../src/indexer/passes/metadata";
 import type { SearchSource } from "../../src/indexer/search/search-source";
 import { _setChatCompletionForTests } from "../../src/llm/client";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
-import { overrideSeam } from "../_helpers/seams";
+import { overrideSeam, withSeam } from "../_helpers/seams";
 
 let storage: IsolatedAkmStorage;
 let requests: number;
@@ -33,17 +34,17 @@ beforeEach(() => {
 });
 afterEach(() => storage.cleanup());
 
-function config() {
+function config(writable?: boolean) {
   return {
     semanticSearchMode: "off" as const,
-    bundles: { stash: { path: storage.stashDir } },
+    bundles: { stash: { path: storage.stashDir, ...(writable === undefined ? {} : { writable }) } },
     defaultBundle: "stash",
     connections: { memory: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "scripted" } } },
     index: { connection: "memory" },
   };
 }
-function run(sources: SearchSource[] = [{ path: storage.stashDir, isDefault: true, writable: true }]) {
-  return runMemoryInferencePass({ config: config(), sources });
+function run(sources: SearchSource[] = [{ path: storage.stashDir, isDefault: true, writable: true }], cfg = config()) {
+  return runMemoryInferencePass({ config: cfg, sources });
 }
 function memoryFile(name: string, root = storage.stashDir): string {
   return path.join(root, "memories", `${name}.md`);
@@ -209,7 +210,7 @@ test("a read-only bundle is skipped without error", async () => {
   writeParent({ scope_user: "alice" });
   const child = writeChild({});
   const bytes = fs.readFileSync(child, "utf8");
-  const readOnly = await run([{ path: storage.stashDir, isDefault: true, writable: false }]);
+  const readOnly = await run([{ path: storage.stashDir, isDefault: true, writable: false }], config(false));
   expect(readOnly).toMatchObject({ scopeSynced: 0, writtenPaths: [] });
   expect(fs.readFileSync(child, "utf8")).toBe(bytes);
 
@@ -242,4 +243,29 @@ test("legacy nested scope on the parent or child normalizes to the flat keys", a
   expect((await run()).scopeSynced).toBe(0);
   expect(fs.readFileSync(child, "utf8")).toBe(bytes);
   expect(fs.statSync(child).mtimeMs).toBe(mtime);
+});
+
+test("the scope sync writes what it wrote before: only the scope lines change, a home path stays, the mode is kept (P17)", async () => {
+  writeParent({ scope_user: "alice" });
+  const child = memoryFile("tunnel.derived");
+  const head = [
+    "---",
+    "inferred: true",
+    "derivedFrom: tunnel",
+    "source: memories/tunnel",
+    "description: Tunnel restart",
+  ];
+  const body = "\nRestarted from /home/alice/vpn/restart.sh.\n";
+  fs.writeFileSync(child, [...head, "---", body].join("\n"));
+  fs.chmodSync(child, 0o640);
+  const warnings: string[] = [];
+  const result = await withSeam(
+    _setWarnSinkForTests,
+    (_level, args) => warnings.push(args.join(" ")),
+    () => run(),
+  );
+  expect(result.scopeSynced).toBe(1);
+  expect(fs.readFileSync(child, "utf8")).toBe([...head, "scope_user: alice", "---", body].join("\n"));
+  expect(fs.statSync(child).mode & 0o777).toBe(0o640);
+  expect(warnings).toEqual([]);
 });

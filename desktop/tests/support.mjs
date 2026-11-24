@@ -89,7 +89,7 @@ function seedRuns(fixture) {
       }),
     );
     db.prepare(
-      "INSERT INTO improve_runs (id, started_at, completed_at, stash_dir, scope_mode, ok, strategy, result_json) VALUES (?, ?, ?, ?, 'all', 1, 'default', ?)",
+      "INSERT INTO improve_runs (id, started_at, completed_at, bundle_id, scope_mode, ok, strategy, result_json) VALUES (?, ?, ?, ?, 'all', 1, 'default', ?)",
     ).run(
       "synthetic-improve",
       at(30),
@@ -146,7 +146,7 @@ function seedRunViews(fixture) {
   const improve = (id, minutesAgo, ok, report, extra = {}) =>
     db
       .prepare(
-        "INSERT INTO improve_runs (id, started_at, completed_at, stash_dir, scope_mode, ok, strategy, result_json) VALUES (?, ?, ?, ?, 'all', ?, 'default', ?)",
+        "INSERT INTO improve_runs (id, started_at, completed_at, bundle_id, scope_mode, ok, strategy, result_json) VALUES (?, ?, ?, ?, 'all', ?, 'default', ?)",
       )
       .run(
         id,
@@ -383,6 +383,19 @@ export async function pick(page, name) {
 export async function open(page, server, route) {
   await page.goto(server.url);
   if (route && route !== "/") await page.goto(server.origin + route);
+}
+/**
+ * The server's answer to a POST to `pathname` (a string, or a RegExp a path must match). A write that runs akm (setup,
+ * a move, a save and its index, a proposal decision) can outlast an assertion's wait on a loaded machine, so a test
+ * that reads what the page says about a write waits for this first; the assertion and its wait stay as they were.
+ */
+export function answered(page, pathname) {
+  return page.waitForResponse((response) => {
+    const path = new URL(response.url()).pathname;
+    return (
+      response.request().method() === "POST" && (typeof pathname === "string" ? path === pathname : pathname.test(path))
+    );
+  });
 }
 export function go(page, href) {
   return page.evaluate((href) => {

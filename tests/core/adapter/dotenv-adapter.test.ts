@@ -18,10 +18,12 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { dotenvAdapter } from "../../../src/core/adapter/adapters/dotenv-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
-import type { FileChange } from "../../../src/core/file-change";
+import { buildFileContext } from "../../../src/core/adapter/directory/file-context";
+import type { FileChange } from "../../../src/core/adapter/file-change";
+import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adapter/validate-context";
 import { presentationFor } from "../../../src/core/type-presentation";
-import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/dotenv");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/dotenv");
@@ -31,12 +33,12 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(): BundleComponent {
-  return { id: BUNDLE_ID, adapter: "dotenv", root: FIXTURE_ROOT, writable: true };
+function bundle(): Bundle {
+  return { id: BUNDLE_ID, root: FIXTURE_ROOT };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {
-  return dotenvAdapter.recognize(component(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
+  return dotenvAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
 /** Assert none of the value/secret tokens leak into the serialized document. */
@@ -47,7 +49,7 @@ function assertNoLeak(doc: IndexDocument, forbidden: string[]): void {
   }
 }
 
-const ctx: ValidateContext = {
+const ctx: FileValidateContext = {
   readFile: async (p) => {
     try {
       return fs.readFileSync(path.join(FIXTURE_ROOT, p), "utf8");
@@ -74,7 +76,6 @@ describe("dotenv adapter — recognition golden (env keys only / secret name onl
       expect(doc, `${relPath} must be recognized`).not.toBeNull();
       if (!doc) throw new Error("unreachable");
       expect(doc.adapterId).toBe(expected.adapterId as string);
-      expect(doc.component).toBe(expected.component as string);
       expect(doc.type).toBe(expected.type as string);
       expect(doc.conceptId).toBe(expected.conceptId as string);
       expect(doc.ref).toBe(expected.ref as string);
@@ -134,7 +135,7 @@ describe("dotenv adapter — renderer golden (field-omission redaction)", () => 
 });
 
 describe("dotenv adapter — lint golden (dangerous-env-key, .env-suffix-narrow)", () => {
-  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: Diagnostic[] }>;
+  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: FileDiagnostic[] }>;
 
   test("each file validates to exactly the golden's issue codes", async () => {
     const changes: FileChange[] = Object.values(perType).map((e) => ({
@@ -142,7 +143,7 @@ describe("dotenv adapter — lint golden (dangerous-env-key, .env-suffix-narrow)
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await dotenvAdapter.validate(component(), changes, ctx);
+    const diags = await checkChanges(dotenvAdapter, bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {
@@ -156,9 +157,9 @@ describe("dotenv adapter — lint golden (dangerous-env-key, .env-suffix-narrow)
       op: "update",
       after: fs.readFileSync(path.join(FIXTURE_ROOT, rel), "utf8"),
     });
-    const dangerous = await dotenvAdapter.validate(component(), [mk("env/dangerous.env")], ctx);
+    const dangerous = await checkChanges(dotenvAdapter, bundle(), [mk("env/dangerous.env")], ctx);
     expect(dangerous.map((d) => d.issue)).toEqual(["dangerous-env-key", "dangerous-env-key"]);
-    const bareSecret = await dotenvAdapter.validate(component(), [mk("secrets/deploy-key")], ctx);
+    const bareSecret = await checkChanges(dotenvAdapter, bundle(), [mk("secrets/deploy-key")], ctx);
     expect(bareSecret).toEqual([]);
   });
 });

@@ -107,9 +107,9 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
     expect(JSON.parse(ambiguous.stderr)).toMatchObject({ ok: false, code: "INVALID_FLAG_VALUE" });
   });
 
-  test("a non-task component adapter cannot claim a task-shaped public ref", async () => {
+  test("a bundle whose adapter holds no task does not have a task-shaped public ref", async () => {
     const storage = withIsolatedAkmStorage();
-    const bundle = makeSandboxDir("akm-workflow-component");
+    const bundle = makeSandboxDir("akm-workflow-bundle");
     disposers.push(bundle);
     try {
       saveConfig({
@@ -120,28 +120,33 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
           stash: { path: storage.stashDir, writable: true },
           workflows: {
             path: bundle.dir,
-            components: { main: { root: ".", adapter: "akm-workflow", writable: false } },
+            adapter: "akm-workflow",
+            writable: false,
           },
         },
       });
 
       const result = await runCliCapture(["task", "run", "tasks/nightly", "--bundle", "workflows", "--scheduled"]);
-      expect(result.code).toBe(2);
-      expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code: "INVALID_FLAG_VALUE" });
+      expect(result.code).toBe(1);
+      expect(JSON.parse(result.stderr)).toMatchObject({
+        ok: false,
+        code: "ASSET_NOT_FOUND",
+        error: expect.stringContaining('Task "tasks/nightly" was not found'),
+      });
     } finally {
       storage.cleanup();
     }
   });
 
   test.each([
-    ["flat component", "."],
-    ["nested component", "components/scheduled"],
-  ] as const)("a real scheduled CLI invocation resolves an akm-task %s", async (_label, componentRoot) => {
+    ["flat bundle", "."],
+    ["nested bundle", "components/scheduled"],
+  ] as const)("a real scheduled CLI invocation resolves an akm-task %s", async (_label, contentRoot) => {
     const storage = withIsolatedAkmStorage();
-    const bundle = makeSandboxDir("akm-task-component");
+    const bundle = makeSandboxDir("akm-task-bundle");
     disposers.push(bundle);
     try {
-      const taskRoot = path.join(bundle.dir, componentRoot);
+      const taskRoot = path.join(bundle.dir, contentRoot);
       fs.mkdirSync(taskRoot, { recursive: true });
       fs.writeFileSync(
         path.join(taskRoot, "standalone.yml"),
@@ -155,7 +160,9 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
           stash: { path: storage.stashDir, writable: true },
           scheduled: {
             path: bundle.dir,
-            components: { main: { root: componentRoot, adapter: "akm-task", writable: false } },
+            adapter: "akm-task",
+            root: contentRoot,
+            writable: false,
           },
         },
       });
@@ -179,12 +186,12 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
 
   test("a real bundle-qualified scheduled invocation preserves a deep akm-task id in history", async () => {
     const storage = withIsolatedAkmStorage();
-    const bundle = makeSandboxDir("akm-task-deep-component");
+    const bundle = makeSandboxDir("akm-task-deep-bundle");
     disposers.push(bundle);
     try {
-      const componentRoot = "components/scheduled";
+      const contentRoot = "components/scheduled";
       const taskId = "sub/deep/nightly";
-      const taskRoot = path.join(bundle.dir, componentRoot);
+      const taskRoot = path.join(bundle.dir, contentRoot);
       fs.mkdirSync(path.join(taskRoot, "sub", "deep"), { recursive: true });
       fs.writeFileSync(
         path.join(taskRoot, `${taskId}.yml`),
@@ -198,7 +205,9 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
           stash: { path: storage.stashDir, writable: true },
           scheduled: {
             path: bundle.dir,
-            components: { main: { root: componentRoot, adapter: "akm-task", writable: false } },
+            adapter: "akm-task",
+            root: contentRoot,
+            writable: false,
           },
         },
       });
@@ -228,7 +237,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
 
   test("a standalone task whose first component is tasks keeps that component in runtime identity", async () => {
     const storage = withIsolatedAkmStorage();
-    const bundle = makeSandboxDir("akm-task-native-prefix-component");
+    const bundle = makeSandboxDir("akm-task-native-prefix-bundle");
     disposers.push(bundle);
     try {
       const taskId = "tasks/nightly";
@@ -245,7 +254,8 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
           stash: { path: storage.stashDir, writable: true },
           scheduled: {
             path: bundle.dir,
-            components: { main: { root: ".", adapter: "akm-task", writable: false } },
+            adapter: "akm-task",
+            writable: false,
           },
         },
       });
@@ -270,7 +280,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
     "knowledge/ops/nightly",
   ])("a standalone native-looking concept %s round-trips through CLI and history", async (taskId) => {
     const storage = withIsolatedAkmStorage();
-    const bundle = makeSandboxDir("akm-task-native-looking-component");
+    const bundle = makeSandboxDir("akm-task-native-looking-bundle");
     disposers.push(bundle);
     try {
       fs.mkdirSync(path.dirname(path.join(bundle.dir, `${taskId}.yml`)), { recursive: true });
@@ -286,7 +296,8 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
           stash: { path: storage.stashDir, writable: true },
           scheduled: {
             path: bundle.dir,
-            components: { main: { root: ".", adapter: "akm-task", writable: false } },
+            adapter: "akm-task",
+            writable: false,
           },
         },
       });

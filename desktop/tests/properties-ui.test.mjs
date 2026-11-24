@@ -5,9 +5,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { akm, go, launchFixture } from "./support.mjs";
+import { akm, answered, go, launchFixture } from "./support.mjs";
 
 export const lesson =
   "---\ndescription: Restore in order\nwhen_to_use: Before restoring a laptop\ntags: [backup, restore]\ncustom_key: kept as written\nupdated: 2026-11-01\n---\n# Restore order\n\nRestore the disk first.\n";
@@ -28,7 +28,7 @@ export async function kinds(fixture) {
   json.bundles.claude = {
     path: path.join(fixture.root, "claude"),
     writable: true,
-    components: { main: { root: ".", adapter: "claude" } },
+    adapter: "claude",
   };
   await fs.writeFile(config, JSON.stringify(json));
   await put("claude/commands/review.md", "---\ndescription: Review a change\n---\n# Review\n\nLook at the diff.\n");
@@ -39,6 +39,16 @@ export async function kinds(fixture) {
 async function session(t, options = {}, viewport = { width: 1280, height: 860 }) {
   const app = await launchFixture({ configureFixture: kinds, ...options });
   t.after(() => app.stop());
+  return browse(t, app, viewport);
+}
+// The tests that only read share one workspace; each starts its own browser.
+let shared;
+after(async () => (await shared?.catch(() => null))?.stop());
+function readingSession(t) {
+  shared ??= launchFixture({ configureFixture: kinds });
+  return shared.then((app) => browse(t, app));
+}
+async function browse(t, app, viewport = { width: 1280, height: 860 }) {
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport });
@@ -52,7 +62,7 @@ const open = (page, bundle, folder, name, ref) =>
   );
 
 test("every kind shows its frontmatter under the title, the keys that find it first, and Source is the whole file", async (t) => {
-  const { app, page } = await session(t);
+  const { app, page } = await readingSession(t);
   await open(page, "personal", "lessons", "restore-order.md", "personal//lessons/restore-order");
   const properties = page.getByRole("region", { name: "Properties" });
   await expect(properties).toContainText("Restore in order");
@@ -77,7 +87,7 @@ test("every kind shows its frontmatter under the title, the keys that find it fi
 });
 
 test("a script reads as code and a task as YAML with its lines", async (t) => {
-  const { page } = await session(t);
+  const { page } = await readingSession(t);
   await open(page, "personal", "scripts", "hello.sh", "personal//scripts/hello.sh");
   await expect(page.locator(".document-body pre")).toContainText("hello from the script");
   await expect(page.getByText("This asset has no body.")).toHaveCount(0);
@@ -152,7 +162,10 @@ test("the editor's properties are fields: change, add and remove a key through a
   await expect(box).toHaveValue(/description: Restore a laptop in order\n/);
   await expect(box).toHaveValue(/owner: ops\n---\n/);
   await expect(box).not.toHaveValue(/custom_key/);
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/file/save"),
+    page.getByRole("button", { name: "Save changes" }).click(),
+  ]);
   await expect(page.getByRole("status").filter({ hasText: "Changes saved." })).toBeVisible();
   assert.equal(
     await fs.readFile(lessonPath(app), "utf8"),
@@ -203,7 +216,10 @@ test("save checks: findings are listed with their lines and jump to them; one th
   ).body.data.findings[0];
   await box.fill(noUpdated);
   await expect(checks.getByRole("listitem")).toContainText(finding.detail);
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/file/save"),
+    page.getByRole("button", { name: "Save changes" }).click(),
+  ]);
   await expect(page.getByRole("status").filter({ hasText: "Changes saved." })).toBeVisible();
   const original = await fs.readFile(lessonPath(app), "utf8");
   assert.equal(original, noUpdated, "a finding that leaves the asset readable does not block the save");
@@ -235,7 +251,10 @@ test("save checks: findings are listed with their lines and jump to them; one th
     "the cursor is on the line akm names",
   );
   await page.getByRole("button", { name: "Save changes" }).click();
-  await page.getByRole("alert").filter({ hasText: "Not saved." }).getByRole("button", { name: "Save anyway" }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/file/save"),
+    page.getByRole("alert").filter({ hasText: "Not saved." }).getByRole("button", { name: "Save anyway" }).click(),
+  ]);
   await expect(page.getByRole("status").filter({ hasText: "Changes saved." })).toBeVisible();
   assert.match(await fs.readFile(lessonPath(app), "utf8"), /tags: \[backup, restore\n/);
   // The page says why akm cannot read the frontmatter: akm's own reason.
@@ -275,7 +294,10 @@ test("a workflow that would not compile stops the save; saved anyway it drops ou
   assert.match(reason, /^Workflow has errors/);
   await expect(page.getByRole("alert").filter({ hasText: "Not saved." })).toContainText(reason.split("\n")[1]);
   assert.equal(await fs.readFile(file, "utf8"), before);
-  await page.getByRole("button", { name: "Save anyway" }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/file/save"),
+    page.getByRole("button", { name: "Save anyway" }).click(),
+  ]);
   await expect(page.getByRole("status").filter({ hasText: "Not indexed" })).toContainText(reason.split("\n")[1]);
   assert.equal(await fs.readFile(file, "utf8"), broken);
 });
@@ -292,13 +314,16 @@ test("a text akm cannot check is saved, and the page says it could not check", a
   await page
     .getByRole("textbox", { name: /^Markdown (body|source)/ })
     .fill("---\ndescription: Review a change\n---\n# Review\n\nLook closely.\n");
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/file/save"),
+    page.getByRole("button", { name: "Save changes" }).click(),
+  ]);
   await expect(page.getByRole("status").filter({ hasText: "Changes saved." })).toBeVisible();
   assert.match(await fs.readFile(path.join(app.root, "claude/commands/review.md"), "utf8"), /Look closely/);
 });
 
 test("an asset with no file in a bundle is read from the text akm returned, from the body start akm gives", async (t) => {
-  const { app, page } = await session(t);
+  const { app, page } = await readingSession(t);
   const ref = "registry//knowledge/remote-guide";
   await page.route("**/api/asset?*", async (route) => {
     const real = await (

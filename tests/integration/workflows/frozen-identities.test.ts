@@ -370,7 +370,7 @@ describe("${ref} in an exec unit", () => {
     writeSandboxConfig({
       bundles: {
         a: { path: a },
-        team: { path: team, components: { main: { root: ".", adapter: "akm-workflow" } } },
+        team: { path: team, adapter: "akm-workflow" },
       },
     });
     resetConfigCache();

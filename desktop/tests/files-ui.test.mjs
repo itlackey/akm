@@ -7,7 +7,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { go, launchFixture } from "./support.mjs";
+import { answered, go, launchFixture } from "./support.mjs";
 
 const opened = (ref, folder, file) =>
   `/library/files?${new URLSearchParams({ bundle: "personal", path: folder, file, ref, open: "1" })}`;
@@ -46,7 +46,10 @@ test("Move to… on the open file asks for a folder in the tree, and the page fo
   await menu.getByRole("menuitem", { name: /^Move to…/ }).click();
   const dialog = page.getByRole("dialog", { name: "Move restore-laptop.md" });
   await dialog.getByRole("treeitem", { name: "archive" }).click();
-  await dialog.getByRole("button", { name: "Move here" }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/files/move"),
+    dialog.getByRole("button", { name: "Move here" }).click(),
+  ]);
   await expect(
     page.getByRole("status").filter({ hasText: "Moved restore-laptop.md to knowledge/archive." }),
   ).toBeAttached();
@@ -70,7 +73,7 @@ async function claudeBundle(fixture) {
   config.bundles.claude = {
     path: path.join(fixture.root, "claude"),
     writable: true,
-    components: { main: { root: ".", adapter: "claude" } },
+    adapter: "claude",
   };
   await fs.writeFile(file, JSON.stringify(config));
   await fs.mkdir(path.join(fixture.root, "claude/commands"), { recursive: true });
@@ -134,7 +137,7 @@ test("a rename in the tree is a rename on disk, announced, and the open page fol
   const input = tree.getByRole("textbox", { name: "New name for restore-laptop.md" });
   await expect(input).toBeFocused();
   await input.fill("restore-desktop.md");
-  await page.keyboard.press("Enter");
+  await Promise.all([answered(page, "/api/desktop/files/move"), page.keyboard.press("Enter")]);
   await expect(
     page.getByRole("status").filter({ hasText: "Renamed restore-laptop.md to restore-desktop.md." }),
   ).toBeAttached();
@@ -169,7 +172,10 @@ test("dropping a file on a folder names both and asks once; protected files cann
   await dialog.getByRole("button", { name: "Cancel" }).click();
   assert.equal(await exists(app.documentPath), true, "cancelling moves nothing");
   await row.dragTo(folder);
-  await page.getByRole("dialog").getByRole("button", { name: "Move here" }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/files/move"),
+    page.getByRole("dialog").getByRole("button", { name: "Move here" }).click(),
+  ]);
   await expect(page.getByRole("row", { name: /restore-laptop\.md/ })).toHaveCount(0);
   assert.equal(await exists(path.join(app.root, "personal/knowledge/archive/restore-laptop.md")), true);
   await go(page, "/library/files?bundle=personal&path=env");
@@ -218,7 +224,10 @@ test("after a move the page counts the links that still name the old place; one 
   await page.keyboard.press("ContextMenu");
   await page.getByRole("menuitem", { name: /^Move to…/ }).click();
   await page.getByRole("dialog").getByRole("treeitem", { name: "archive" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Move here" }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/files/move"),
+    page.getByRole("dialog").getByRole("button", { name: "Move here" }).click(),
+  ]);
   const notice = page.getByRole("region", { name: "Links to the old place" });
   await expect(notice).toContainText("2 links still point at the old place.");
   // The read-only bundle is counted and says why it is not updated: akm's sentence.
@@ -228,7 +237,10 @@ test("after a move the page counts the links that still name the old place; one 
   await expect(notice).toContainText(`1 in vendor, not updated: ${blocker}`);
   const before = await fs.readFile(path.join(app.root, "personal/knowledge/linker.md"), "utf8");
   assert.match(before, /personal\/\/knowledge\/restore-laptop /, "nothing is rewritten before the click");
-  await notice.getByRole("button", { name: "Update 1 link" }).click();
+  await Promise.all([
+    answered(page, "/api/assets/update-moved-links"),
+    notice.getByRole("button", { name: "Update 1 link" }).click(),
+  ]);
   await expect(page.getByRole("status").filter({ hasText: "Updated 1 link in 1 file" })).toContainText("linker.md");
   assert.match(
     await fs.readFile(path.join(app.root, "personal/knowledge/linker.md"), "utf8"),
@@ -291,7 +303,10 @@ test("New names what akm says the folder holds and makes it in this folder of th
   await go(page, "/library/files?bundle=shared&path=knowledge/team");
   await page.getByRole("button", { name: "New knowledge", exact: true }).click();
   await page.getByRole("textbox", { name: "Name of the new knowledge" }).fill("onboarding");
-  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await Promise.all([
+    answered(page, "/api/documents/create-file"),
+    page.getByRole("button", { name: "Create", exact: true }).click(),
+  ]);
   await expect(page.getByRole("heading", { name: /onboarding/i })).toBeVisible();
   assert.equal(await exists(path.join(app.root, "shared/knowledge/team/onboarding.md")), true);
   assert.equal(await exists(path.join(app.root, "personal/knowledge/onboarding.md")), false);
@@ -299,7 +314,10 @@ test("New names what akm says the folder holds and makes it in this folder of th
   await go(page, "/library/files?bundle=personal&path=lessons");
   await page.getByRole("button", { name: "New lesson", exact: true }).click();
   await page.getByRole("textbox", { name: "Name of the new lesson" }).fill("restore-order");
-  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await Promise.all([
+    answered(page, "/api/documents/create-file"),
+    page.getByRole("button", { name: "Create", exact: true }).click(),
+  ]);
   await expect(page.getByRole("button", { name: "Save changes" })).toBeVisible();
   const text = await fs.readFile(path.join(app.root, "personal/lessons/restore-order.md"), "utf8");
   assert.match(text, /^---\n/);
@@ -311,7 +329,10 @@ test("New names what akm says the folder holds and makes it in this folder of th
   await go(page, "/library/files?bundle=personal&path=lessons");
   await page.getByRole("button", { name: "New lesson", exact: true }).click();
   await page.getByRole("textbox", { name: "Name of the new lesson" }).fill("restore-order");
-  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await Promise.all([
+    answered(page, "/api/documents/create-file"),
+    page.getByRole("button", { name: "Create", exact: true }).click(),
+  ]);
   await expect(page.getByRole("alert")).toBeVisible();
   assert.equal(await fs.readFile(path.join(app.root, "personal/lessons/restore-order.md"), "utf8"), text);
 });
@@ -347,7 +368,10 @@ test("where akm refuses a new file the button is disabled with its sentence; a f
   await go(page, "/library/files?bundle=personal&path=skills");
   await page.getByRole("button", { name: "New folder", exact: true }).click();
   await page.getByRole("textbox", { name: "Name of the new folder" }).fill("restore");
-  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/files/folder"),
+    page.getByRole("button", { name: "Create", exact: true }).click(),
+  ]);
   await expect(page.getByRole("row", { name: /^restore/ })).toBeVisible();
   assert.equal((await fs.stat(path.join(app.root, "personal/skills/restore"))).isDirectory(), true);
 });
@@ -377,7 +401,10 @@ test("a file that is no asset and an empty folder are deleted after one confirma
   // An empty folder: one confirmation, then it is gone.
   await (await choose("empty", "Delete")).click();
   await expect(page.getByRole("dialog", { name: "Delete empty?" })).toBeVisible();
-  await page.getByRole("dialog").getByRole("button", { name: "Delete", exact: true }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/files/delete"),
+    page.getByRole("dialog").getByRole("button", { name: "Delete", exact: true }).click(),
+  ]);
   await expect(row("empty")).toHaveCount(0);
   assert.equal(await exists(path.join(app.root, "personal/empty")), false);
   // A file that is no asset.
@@ -387,7 +414,10 @@ test("a file that is no asset and an empty folder are deleted after one confirma
   assert.equal(await exists(path.join(app.root, "personal/notes/todo.txt")), true, "cancelling deletes nothing");
   await expect(page.getByRole("button", { name: "Actions for todo.txt" })).toBeFocused();
   await (await choose("todo.txt", "Delete")).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Delete", exact: true }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/files/delete"),
+    page.getByRole("dialog").getByRole("button", { name: "Delete", exact: true }).click(),
+  ]);
   await expect(row("todo.txt")).toHaveCount(0);
   assert.equal(await exists(path.join(app.root, "personal/notes/todo.txt")), false);
   // An asset is retired, not deleted, and the archive is recoverable.
@@ -395,7 +425,7 @@ test("a file that is no asset and an empty folder are deleted after one confirma
   const asset = await choose("review-example.md", "Delete");
   await expect(asset).toHaveAttribute("aria-disabled", "true");
   await expect(asset).toContainText(await reasonOf(app, "personal", "knowledge", "review-example.md", "delete"));
-  await page.getByRole("menuitem", { name: /^Retire/ }).click();
+  await Promise.all([answered(page, "/api/asset/retire"), page.getByRole("menuitem", { name: /^Retire/ }).click()]);
   await expect(page.getByRole("status").filter({ hasText: "Retired review-example.md." })).toBeAttached();
   await expect(row("review-example")).toHaveCount(0);
   assert.equal(await exists(path.join(app.root, "personal/knowledge/review-example.md")), false);
@@ -420,7 +450,7 @@ test("the bundle header counts the files akm would commit and a Commit button co
   const head = async () =>
     (await app.call("/api/bundles")).body.data.bundles.find((b) => b.name === "personal").git.lastCommit.sha;
   const before = await head();
-  await header.getByRole("button", { name: "Commit" }).click();
+  await Promise.all([answered(page, "/api/bundles/commit"), header.getByRole("button", { name: "Commit" }).click()]);
   await expect(header.getByRole("status")).toContainText("Committed");
   await expect(header).toContainText("0 files uncommitted");
   const after = await head();
@@ -541,7 +571,10 @@ test("a skill copies as its folder, from its page and from the tree, and the dia
   await expect(dialog).toContainText("copies the whole folder skills/backup-check");
   await expect(dialog.getByRole("textbox", { name: "Name of the copy" })).toHaveValue("backup-check");
   await dialog.getByRole("treeitem", { name: "shared", exact: true }).click();
-  await dialog.getByRole("button", { name: "Copy here", exact: true }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/files/copy"),
+    dialog.getByRole("button", { name: "Copy here", exact: true }).click(),
+  ]);
   await expect(page.getByRole("status").filter({ hasText: "Copied" })).toBeVisible();
   await arrived("backup-check");
   // From the tree, under another name; the same copy twice is refused.
@@ -552,13 +585,19 @@ test("a skill copies as its folder, from its page and from the tree, and the dia
   await expect(again).toContainText("copies the whole folder");
   await again.getByRole("treeitem", { name: "shared", exact: true }).click();
   await again.getByRole("textbox", { name: "Name of the copy" }).fill("backup-check-b");
-  await again.getByRole("button", { name: "Copy here", exact: true }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/files/copy"),
+    again.getByRole("button", { name: "Copy here", exact: true }).click(),
+  ]);
   await expect(page.getByRole("status").filter({ hasText: "Copied" })).toBeVisible();
   await arrived("backup-check-b");
   await page.getByRole("button", { name: "Actions for SKILL.md", exact: true }).click();
   await page.getByRole("menuitem", { name: /^Copy to…/ }).click();
   const third = page.getByRole("dialog", { name: "Copy SKILL.md" });
   await third.getByRole("treeitem", { name: "shared", exact: true }).click();
-  await third.getByRole("button", { name: "Copy here", exact: true }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/files/copy"),
+    third.getByRole("button", { name: "Copy here", exact: true }).click(),
+  ]);
   await expect(third.getByRole("alert")).toBeVisible();
 });

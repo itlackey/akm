@@ -729,7 +729,7 @@ Primary result fields:
 | Field | Description |
 | --- | --- |
 | `status` | Overall health verdict: `fail` when a hard check fails, `warn` when any check (hard or advisory, heuristic included) warns, else `pass`; `unknown` checks do not count. Exit code 1, 4 and 0 respectively |
-| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip` (`unknown` in a read-only run, which skips it), `state-db-integrity`, `state-db-migrations`, `task-history-read`, `active-runs`, `connections-and-harnesses`, `index-sources` (sources the last `akm index` could not scan completely), and `semantic-search` |
+| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip` (`unknown` in a read-only run, which skips it), `state-db-integrity`, `state-db-migrations`, `task-history-read`, `active-runs`, `connections-and-harnesses`, `index-sources` (sources the last `akm index` could not scan completely), `bundle-adapters` (a bundle naming an adapter akm does not have), and `semantic-search` |
 | `advisories` | Non-fatal warnings including `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release on its channel), `plugin-version`, `codex-plugin-version`, `opencode-plugin-version` and `opencode-v2-plugin-version` (harness plugins), `scheduler-binary`, `opencode-major` (present only when an `opencode` harness is installed: `warn` for each one whose binary is OpenCode 1, which is Deprecated and removed in 0.11; `unknown` under `--no-probe` or when its version cannot be read), and `cli-usage-store` |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate` (task runs that failed), `agentFailureRate` and `agentFailureReasonCounts` (every agent dispatch: v4 `command` rows and each v5 step that ran an agent), `stuckActiveRuns` (active runs whose akm process is gone), `llmUsage`. A rate is `null` (unknown) when the window holds no run or dispatch to count, and `0` means there were some and none failed; when `state.db` cannot be read every field is `null`. In a window comparison a metric that is unknown in either window has the delta `pctChange: "unknown"`, and text and Markdown print `unknown` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events; `null` when `state.db` cannot be read |
@@ -1581,6 +1581,7 @@ See [Workflows](workflows.md) for the complete authoring contract.
 | `akm bundle add github:owner/repo` | Clones the repo into akm's cache as a `git` source |
 | `akm bundle add @scope/pkg` | Installs the npm package as an `npm` source |
 | `akm bundle add https://docs.example.com` | Crawls and caches a website as a `website` source |
+| `akm bundle add akm --adapter secret-tool` | Adds the keyring `akm` as a `location` bundle (`--adapter azure-key-vault`: a vault); the ref is the store's name |
 | `akm registry add <url>` | Adds a discovery registry (separate concept) |
 
 HTTP(S) URLs on known Git hosts, and URLs ending in `.git`, are treated as git
@@ -1621,14 +1622,14 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--allow-dangerous-env-keys` | Deprecated, no effect. `bundle add` no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
-| `--credential` | Git HTTPS bearer credential, stored as a reference and never a literal token: `$VAR`, `${VAR}`, or an akm ref such as `${secrets/gitea_token}` (`${team//secrets/gitea_token}` for a secret in another bundle). Resolved only when git runs |
+| `--credential` | Git HTTPS token (sent as HTTP Basic auth with the token as the password, the form GitHub, Gitea, GitLab and Azure DevOps accept), stored as a reference and never a literal token: `$VAR`, `${VAR}`, or an akm ref such as `${secrets/gitea_token}` (`${team//secrets/gitea_token}` for a secret in another bundle). Resolved only when git runs |
 
-To index only a subdirectory of a git bundle, set the component `root` after
+To index only a subdirectory of a git bundle, set the bundle's `root` after
 adding it:
 
 ```sh
 akm bundle add <url> --name <name>
-akm config set bundles.<name>.components.main.root <subdir>
+akm config set bundles.<name>.root <subdir>
 akm bundle update <name>
 ```
 
@@ -1703,7 +1704,12 @@ akm bundle list --kind filesystem,git      # Multiple kinds (comma-separated)
 
 | Flag | Description |
 | --- | --- |
-| `--kind` | Filter by source provider: `filesystem`, `git`, `npm`, `website` (comma-separated). Any other value is a usage error (exit 2) — there is no `local`/`managed`/`remote` grouping. |
+| `--kind` | Filter by source provider: `filesystem`, `git`, `npm`, `website`, `location` (comma-separated). Any other value is a usage error (exit 2) — there is no `local`/`managed`/`remote` grouping. |
+
+Each entry has `adapter` (the adapter that reads the bundle: the configured one, or the one detected from its content)
+and `detected` (`true` when no `adapter` is configured). `components`, a one-entry list
+(`name`, `root`, `adapter`, `detected`, `writable`), is **Deprecated** and removed in 0.11: read `adapter` and
+`detected` on the entry itself.
 
 ### bundle remove
 
@@ -1826,7 +1832,8 @@ half-publishing a failed one.
 Rename a configured bundle's key everywhere akm itself persists it — the one
 command allowed to change it (renaming by hand-editing `config.json`'s
 `bundles` key strands every durable ref the tool minted under the old id; see
-`akm doctor` / the startup warning that names this).
+`akm doctor` / the startup warning that names this, and `state-unknown-bundle`
+for the proposals, improve ledger and improve runs left under the old name).
 
 ```sh
 akm bundle rename old-name new-name
@@ -1842,8 +1849,9 @@ bundle add` enforces) or the rename fails before any write. Rewritten: the
 config `bundles` key; `defaultBundle`/`defaultWriteTarget` when they name the
 old id; every `scheduler.enabled[].ref` with the old `<old>//` prefix; the
 lockfile entry id; every indexed entry's `bundle_id`/ref; and this tool's own
-state rows that name the old bundle (`proposals.ref`, a pending proposal's
-write target, workflow `task_history.target_ref`, `workflow_runs.workflow_ref`,
+state rows that name the old bundle (the `bundle_id` of every proposal, improve
+run and improve-ledger row, which follow a bundle by its name; `proposals.ref`,
+a pending proposal's write target, workflow `task_history.target_ref`, `workflow_runs.workflow_ref`,
 the recorded feedback and usage in `usage_events.entry_ref` and `events.ref`,
 and the improve loop's `improve_ledger`, `asset_salience` and `asset_outcome`
 rows, so search and improve keep counting the bundle's feedback; the old name
@@ -2816,7 +2824,17 @@ in order:
    never modified. The config is written first (its own backup), then the
    files under one backup directory per run. A bundle with that line and no
    config entry is listed in `bundlePolicy.notes`;
-7. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
+7. proposals recorded by an older akm with the files they change (a path, a
+   target directory) rewritten as the current record, which names assets by
+   ref (`proposalRecords`), in one transaction after a copy of `state.db`
+   (`state.db.pre-proposal-records.bak`). Until then every command reads them as
+   converted and warns once; `status` and `apply --dry-run` say
+   `proposal records: <n> to rewrite`;
+8. index rows an earlier akm keyed under a path inside a keyring's or vault's
+   bundle root re-keyed to hold no path (`indexRows`, present only when such
+   rows exist), in one update that changes no column and not the index layout;
+   `status` and `apply --dry-run` say `index rows: <n> to re-key`;
+9. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
    the stash, and the transaction-journal, maintenance-barrier, lock-mutex and
    version-stamp files older releases kept under `$DATA`, `$STATE` and
    `$CONFIG`.
@@ -3069,7 +3087,7 @@ Subcommands:
 | `create <ref>` | Create an env file (a full ref such as `env/prod`). Empty by default; seed with `--from-file <path>` or `--from-stdin` |
 | `path <ref>` | Print the absolute env file path (Docker `_FILE` / `--env-file` / direct editing). `--quiet` suppresses the warning |
 | `export <ref> --out <file>` | Write a safe sourceable `export` script to a file (never to stdout) |
-| `remove <ref>` | Delete an env file (and its `.sensitive` marker) |
+| `remove <ref>` | Delete an env file |
 
 > **Removed in 0.9.0:** `akm env set`/`akm env unset`. akm does not manage
 > individual keys — edit the `.env` file directly.
@@ -3120,7 +3138,6 @@ akm env create env/prod                   # empty
 akm env create env/prod --from-file ./.env  # seed from an existing .env (byte-for-byte)
 printf 'A=1\nB=2\n' | akm env create env/prod --from-stdin
 akm env create env/prod --path staging    # creates env/staging/prod.env
-akm env create env/prod --sensitive       # hidden from `env list` and the search index
 akm env create env/prod --bundle team     # write to the `team` source
 ```
 
@@ -3129,12 +3146,11 @@ akm env create env/prod --bundle team     # write to the `team` source
 | `--path <dir>` | Relative subdirectory under `env/` to place the file in. The filename comes from `<name>`. |
 | `--from-file <path>` | Seed the env file from an existing `.env` at this path |
 | `--from-stdin` | Seed the env file from stdin |
-| `--sensitive` | Exclude this env file from `env list` output and the search index |
 | `--bundle <source>` | Override the write destination (falls back to `defaultWriteTarget` then the working bundle) |
 
 Creates `env/prod.env` with mode 0600. Empty `create` is a no-op if the file
 exists; `--from-file`/`--from-stdin` **refuse to clobber** an existing env (remove
-it first). `--sensitive` hides the file from `env list` and the search index.
+it first).
 
 #### env list
 
@@ -3221,7 +3237,7 @@ Subcommands:
 | `list` | List all secrets across all bundles by name (contents never shown) |
 | `set <ref>` | Create/overwrite a secret — value from stdin (default), `--from-file`, or `--from-env` |
 | `run <ref> <VAR> -- <command>` | Run a command with the secret value injected into `$VAR` in the child only |
-| `remove <ref>` | Remove a secret file (and its `.sensitive` marker). `--yes` skips the prompt; `--bundle` picks the write target |
+| `remove <ref>` | Remove a secret file. `--yes` skips the prompt; `--bundle` picks the write target |
 
 > **Removed in 0.9.0: `secret path`.** It exits 2 with `Unknown command`. A ref's
 > file lives at `<bundle>/secrets/<name>` (run `akm bundle list` for bundle
@@ -3247,8 +3263,8 @@ AKM_VALUE="$TOKEN" akm secret set secrets/api --from-env AKM_VALUE
 The value is **never accepted via positional arguments**. With stdin, a single
 trailing newline is stripped (so `echo "$TOKEN" | akm secret set …` stores the
 token without the shell-added newline); use `--from-file` for byte-exact storage
-of multi-line material. Writes are atomic (mode 0600) under an exclusive
-`<secret>.lock`. Maximum size is 5 MB.
+of multi-line material. Writes are atomic (mode 0600) and take the asset-mutation lease; there is no
+per-secret lock file. Maximum size is 5 MB.
 
 `secret set` selects its write destination like every other write command: an
 explicit `--bundle <source>` wins, else `defaultWriteTarget`, else the working
@@ -3281,12 +3297,6 @@ through in clean mode.
 > (`<bundle>/secrets/<name>`) so the value never sits in an environment
 > variable. Avoid commands that print the environment in agent contexts unless
 > you explicitly intend to expose the child environment.
-
-#### Sensitive marker
-
-A sibling `<name>.sensitive` marker file excludes a secret from `secret list`
-**and** from indexing entirely (parallel to env files). The secret remains usable
-via `secret run`.
 
 ### Wikis (no dedicated command)
 

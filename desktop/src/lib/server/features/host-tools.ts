@@ -128,6 +128,7 @@ export async function hostEnvironment(
   if (platform === "win32") extra.push(cliDirectory(platform, next, home).path);
   try {
     const nvm = path.join(next.NVM_DIR || path.join(home, ".nvm"), "versions/node");
+    // asset-io: host host tool probe
     const versions = (await readdir(nvm))
       .filter((item) => /^v\d+\.\d+\.\d+$/.test(item))
       .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
@@ -145,6 +146,7 @@ export const findProgram: Find = async (name, env = process.env) => {
   for (const directory of (env.PATH ?? "").split(path.delimiter).filter((item) => path.isAbsolute(item))) {
     for (const file of names.map((item) => path.join(directory, item))) {
       try {
+        // asset-io: host host tool probe
         await access(file, constants.X_OK);
         return file;
       } catch {
@@ -240,6 +242,7 @@ async function openCodePlugin(env: Env, home: string, major: number) {
   for (const file of files) {
     let text: string;
     try {
+      // asset-io: install harness plugin config
       text = await readFile(file as string, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
@@ -354,18 +357,18 @@ export class HostTools {
     const cli = await this.detect("akm", env);
     const bun = { ...(await this.detect("bun", env)), installCommand: bunInstallCommand(this.platform) };
     const harnesses = await Promise.all(
-      harnessIds.map(async (id) => {
-        const harness = await this.detect(id, env);
+      harnessIds.map(async (harnessId) => {
+        const harness = await this.detect(harnessId, env);
         if (!harness.runnable || !harness.path) return harness;
         try {
-          if (id === "claude") {
+          if (harnessId === "claude") {
             const list = json(await this.invoke(harness.path, ["plugin", "list", "--json"], env));
             if (!Array.isArray(list)) throw new Error("Unrecognized plugin inventory.");
             const item = list.find((item: Loose) => item.id === pluginId && (!item.scope || item.scope === "user"));
             harness.plugin = item
               ? { state: item.enabled === false ? "disabled" : "installed", version: item.version }
               : { state: "missing" };
-          } else if (id === "codex") {
+          } else if (harnessId === "codex") {
             const list = json(
               await this.invoke(harness.path, ["plugin", "list", "--marketplace", "akm-plugins", "--json"], env),
             );
@@ -398,6 +401,7 @@ export class HostTools {
     const target = cliDirectory(this.platform, env, this.home).path;
     const file = path.join(target, this.platform === "win32" ? "akm.exe" : "akm");
     // Desktop's own install is a regular file where its installer puts it, and a standalone binary as akm itself reports (so only after a check): a link, or a file akm has not yet reported as a standalone binary, is not Desktop's to replace.
+    // asset-io: host host tool probe
     const stat = await lstat(file).catch(() => undefined);
     const method = this.state.upgrade?.installMethod;
     const cliManaged = cli.path === file && stat?.isFile() === true && method === "binary";
@@ -586,8 +590,10 @@ export class HostTools {
         `akm is installed at ${detected.path}, not as a standalone binary Desktop put in ${target.shown}. Update or repair it with the installer that owns it (for example your package manager); Desktop will not replace it.`,
       );
     await mkdir(directory, { recursive: true });
+    // asset-io: host host tool probe
     await access(directory, constants.W_OK);
     // A binary already in the install directory (even off PATH, or one that does not run) is replaced only on request.
+    // asset-io: host host tool probe
     const found = await lstat(targetFile).catch((error) => {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       return undefined;
@@ -623,6 +629,7 @@ export class HostTools {
     const temporary = await mkdtemp(path.join(os.tmpdir(), "akm-desktop-install-"));
     const file = path.join(temporary, script);
     try {
+      // asset-io: scratch downloaded installer
       await writeFile(file, text, { mode: 0o600 });
       const installEnv = { ...env, AKM_INSTALL_DIR: directory };
       if (windows) {
@@ -639,6 +646,7 @@ export class HostTools {
         await this.invoke("/bin/bash", [file, ...tag], installEnv, 10 * 60_000);
       }
     } finally {
+      // asset-io: scratch downloaded installer
       await rm(temporary, { recursive: true, force: true });
     }
     const installed = await this.detect("akm", env);
@@ -653,19 +661,19 @@ export class HostTools {
         : "Add that directory to your terminal PATH if needed; Desktop already finds it."
     }`;
   }
-  async installPlugin(id: string, channel: string, env: Env, options: StartOptions) {
-    const harness = this.state.harnesses.find((item) => item.id === id);
+  async installPlugin(harnessId: string, channel: string, env: Env, options: StartOptions) {
+    const harness = this.state.harnesses.find((item) => item.id === harnessId);
     if (!harness?.runnable || !harness.path || !this.state.cli?.runnable)
       throw new SoftwareError("Install AKM and the harness first.");
     const harnessPath = harness.path;
     if (harness.plugin?.state !== "missing")
       throw new SoftwareError("The plugin is already present or could not be verified. No change was made.");
     const command = async (args: string[]) => {
-      this.state.command = [id, ...args].join(" ");
+      this.state.command = [harnessId, ...args].join(" ");
       await this.invoke(harnessPath, args, env, 180_000);
     };
     let kept = false;
-    if (id === "claude" || id === "codex") {
+    if (harnessId === "claude" || harnessId === "codex") {
       if (!this.state.bun?.installed)
         throw new SoftwareError("Install Bun first: the AKM hooks use it. No harness configuration was changed.");
       // List first: preserve an existing marketplace's source and release channel.
@@ -676,7 +684,7 @@ export class HostTools {
       // The marketplace's own channel is its ref, which only an explicit channel switch changes: installing from one that
       // is already there uses that channel, so the prerelease choice is not applied until the person agrees.
       if (exists && channel === "next" && !options.consent) {
-        this.state.consent = id;
+        this.state.consent = harnessId;
         throw new SoftwareError(
           "The akm-plugins marketplace is already set up and keeps the channel it follows, so the prerelease choice would not apply to this install. Nothing was changed.",
         );
@@ -687,10 +695,12 @@ export class HostTools {
           "plugin",
           "marketplace",
           "add",
-          `itlackey/akm-plugins${id === "claude" && channel === "next" ? "@next" : ""}`,
-          ...(id === "codex" && channel === "next" ? ["--ref", "next"] : []),
+          `itlackey/akm-plugins${harnessId === "claude" && channel === "next" ? "@next" : ""}`,
+          ...(harnessId === "codex" && channel === "next" ? ["--ref", "next"] : []),
         ]);
-      await command(id === "claude" ? ["plugin", "install", pluginId, "--scope", "user"] : ["plugin", "add", pluginId]);
+      await command(
+        harnessId === "claude" ? ["plugin", "install", pluginId, "--scope", "user"] : ["plugin", "add", pluginId],
+      );
     } else {
       const pkg = harness.major === 2 ? "akm-opencode-v2" : "akm-opencode";
       await command(
@@ -698,11 +708,11 @@ export class HostTools {
       );
     }
     await this.inventory(env);
-    const after = this.state.harnesses.find((item) => item.id === id)?.plugin;
+    const after = this.state.harnesses.find((item) => item.id === harnessId)?.plugin;
     if (!after || !["installed", "configured"].includes(after.state))
       throw new Error("The native installation could not be verified.");
     this.state.receipt =
-      (id === "codex"
+      (harnessId === "codex"
         ? "AKM installed for Codex. Review its hooks in Codex /hooks to enable automatic recall."
         : "AKM plugin installed. Restart the harness to load it.") +
       (kept ? " The existing akm-plugins marketplace was kept; its channel was not changed." : "");

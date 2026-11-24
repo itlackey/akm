@@ -31,20 +31,21 @@ import { validateProposal } from "../../../src/commands/proposal/validators/prop
 import { serializeFrontmatter } from "../../../src/core/asset/asset-serialize";
 import { parseFrontmatter, replaceFrontmatterBlocks } from "../../../src/core/asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../../src/core/asset/frontmatter-lint";
-import type { AkmConfig } from "../../../src/core/config/config";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
+import { type AkmConfig, resetConfigCache } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
 import { getDbPath, getIndexRebuildLockPath, getIndexWriterLockPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { pkgVersion } from "../../../src/version";
 import { makeConfig } from "../../_helpers/factories";
+import { indexWrittenAssets } from "../../_helpers/index-written-files";
 import { spawnLiveHolder } from "../../_helpers/live-holder";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 // ── Test setup ──────────────────────────────────────────────────────────────
 
@@ -381,6 +382,44 @@ describe("ref-filter parse failures are LOUD (D-R3)", () => {
       _setWarnSinkForTests(undefined);
     }
     expect(warnings.filter((w) => w.includes('"knowledge/WORK/plan" is outdated'))).toHaveLength(1);
+  });
+
+  test("a proposal stored under a file spelling is found by the asset's ref, and the file spelling finds a canonical one", () => {
+    const isolated = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({
+        semanticSearchMode: "off",
+        defaultBundle: "main",
+        bundles: { main: { path: isolated.stashDir, writable: true } },
+      });
+      resetConfigCache();
+      fs.mkdirSync(path.join(isolated.stashDir, "lessons"), { recursive: true });
+      fs.writeFileSync(path.join(isolated.stashDir, "lessons", "x.md"), VALID_LESSON, "utf8");
+      const created = createProposal(isolated.stashDir, {
+        ref: "lessons/x",
+        source: "distill",
+        payload: { content: VALID_LESSON },
+        target: { source: "main", root: isolated.stashDir },
+      });
+      expect(created.ref).toBe("main//lessons/x");
+      const state = openStateDatabase();
+      try {
+        state.prepare("UPDATE proposals SET ref = ? WHERE id = ?").run("main//lessons/x.md", created.id);
+      } finally {
+        state.close();
+      }
+
+      for (const ref of ["lessons/x", "lessons/x.md", "main//lessons/x"]) {
+        expect(
+          listProposals(isolated.stashDir, { ref }).map((p) => p.id),
+          ref,
+        ).toEqual([created.id]);
+        expect(resolveProposalId(isolated.stashDir, ref).id, ref).toBe(created.id);
+      }
+      expect(listProposals(isolated.stashDir, { ref: "lessons/y" })).toEqual([]);
+    } finally {
+      isolated.cleanup();
+    }
   });
 
   test("resolveProposalId with a legacy ref throws UsageError instead of silently falling through", () => {
@@ -729,7 +768,7 @@ describe("akmProposalAccept — validation failure (#284 HIGH 6)", () => {
 function ledgerRow(stash: string, ref: string, source: string) {
   const db = openStateDatabase();
   try {
-    return getImproveLedgerRow(db, stash, ref, source);
+    return getImproveLedgerRow(db, stateBundleId(stash), ref, source);
   } finally {
     db.close();
   }
@@ -1955,10 +1994,10 @@ describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native 
   });
 });
 
-// ── WI-6.2 — FileChange[] envelope + mint-time beforeHash ───────────────────
+// ── WI-6.2 — change envelope + mint-time beforeHash ───────────────────
 
-describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
-  test("new target: single create change, after IS the payload content, no beforeHash", () => {
+describe("createProposal derives the change envelope (WI-6.2)", () => {
+  test("new target: single create change, content IS the payload content, no beforeHash", () => {
     const stash = makeStashDir();
     const created = createProposal(stash, {
       ref: "lessons/envelope-new",
@@ -1970,14 +2009,11 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
     expect(created.changes).toHaveLength(1);
     const change = created.changes[0];
     expect(change?.op).toBe("create");
-    expect(change?.after).toBe(created.payload.content);
-    // Mint-time before-state is summarised by beforeHash only — the change
-    // body's `before` is a transaction-time capture and must stay unset.
-    expect(change?.before).toBeUndefined();
+    expect(change?.content).toBe(created.payload.content);
     expect(created.beforeHash).toBeUndefined();
-    // The mint-time path resolves against the proposal's own stash, relative.
-    expect(change?.path.startsWith("lessons")).toBe(true);
-    expect(path.isAbsolute(change?.path ?? "/")).toBe(false);
+    // The change names the asset by ref, never the file it will be kept in.
+    expect(change?.ref).toBe(created.ref);
+    expect(Object.keys(change ?? {}).sort()).toEqual(["content", "op", "ref"]);
   });
 
   test("existing target: update change + beforeHash = sha256 of the on-disk content", () => {
@@ -1989,8 +2025,9 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
       sourceRun: "run-envelope",
       payload: { content: VALID_LESSON },
     });
-    // Materialise the target at the exact mint-time path the envelope recorded.
-    const abs = path.join(stash, created0.changes[0]?.path ?? "");
+    // Materialise the target where the asset's ref places it.
+    expect(created0.changes[0]?.ref).toBe(created0.ref);
+    const abs = path.join(stash, "lessons", "envelope-existing.md");
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, before, "utf8");
 
@@ -2002,11 +2039,10 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
     });
 
     expect(created.changes[0]?.op).toBe("update");
-    expect(created.changes[0]?.before).toBeUndefined();
     expect(created.beforeHash).toBe(createHash("sha256").update(before, "utf8").digest("hex"));
   });
 
-  test("round-trip: changes + beforeHash survive persistence (entry-0 after from the content column)", () => {
+  test("round-trip: changes + beforeHash survive persistence (entry-0 content from the content column)", () => {
     const stash = makeStashDir();
     const created = createProposal(stash, {
       ref: "lessons/envelope-roundtrip",
@@ -2018,15 +2054,15 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
     const reread = getProposal(stash, created.id);
     expect(reread.changes).toEqual(created.changes);
     expect(reread.beforeHash).toBe(created.beforeHash);
-    expect(reread.changes[0]?.after).toBe(reread.payload.content);
-    // The row must NOT duplicate the primary change's after body in metadata.
+    expect(reread.changes[0]?.content).toBe(reread.payload.content);
+    // The row must NOT duplicate the primary change's content in metadata.
     const state = openStateDatabase();
     const row = state.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(created.id) as {
       metadata_json: string;
     };
     state.close();
     const meta = JSON.parse(row.metadata_json) as { changes?: Array<Record<string, unknown>> };
-    expect(meta.changes?.[0]?.after).toBeUndefined();
+    expect(meta.changes?.[0]?.content).toBeUndefined();
   });
 
   test("a row without persisted changes (pre-#858/#859 legacy row) reads back with an empty change list", () => {
@@ -2115,7 +2151,7 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
       metadata_json: string;
     };
     const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
-    metadata.proposedTarget = { source: "primary" }; // missing `root`
+    metadata.proposedTarget = { source: 42 }; // not a bundle name
     state.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(metadata), created.id);
     state.close();
 

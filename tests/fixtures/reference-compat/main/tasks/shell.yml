@@ -1,0 +1,4 @@
+version: 4
+name: shell
+description: A shell task with no refs
+run: echo shell

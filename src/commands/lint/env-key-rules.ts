@@ -27,8 +27,7 @@
  *   advisory, so ignore it after review.
  */
 
-import fs from "node:fs";
-import { listKeys } from "../env/env";
+import { scanEnvKeyNames } from "../../core/common";
 import type { LintIssue } from "./types";
 
 // ── Dangerous key set ─────────────────────────────────────────────────────────
@@ -128,7 +127,7 @@ export function isDangerousEnvKey(key: string): boolean {
  * Inspect an `.env` file and return a lint finding for every key whose name
  * appears in `DANGEROUS_ENV_KEYS` or matches `DANGEROUS_ENV_KEY_PATTERNS`.
  *
- * @param envPath    Absolute path to the `.env` file.
+ * @param content    The `.env` file's text.
  * @param relPath    Stash-relative path used as the `file` field in findings
  *                   (e.g. `"env/prod.env"`).
  * @param envRef     Human-readable env ref (e.g. `"env/prod"`) shown in
@@ -141,14 +140,8 @@ const SUPPRESSION_COMMENT = "# akm-lint-ok: dangerous-env-key";
  * Returns the set of keys suppressed by an inline `# akm-lint-ok: dangerous-env-key`
  * comment on the line immediately preceding the key assignment in the `.env` file.
  */
-function collectSuppressedKeys(envPath: string): Set<string> {
+function collectSuppressedKeys(raw: string): Set<string> {
   const suppressed = new Set<string>();
-  let raw: string;
-  try {
-    raw = fs.readFileSync(envPath, "utf8");
-  } catch {
-    return suppressed;
-  }
   const lines = raw.split(/\r?\n/);
   let prevNonEmpty = "";
   for (const line of lines) {
@@ -163,9 +156,9 @@ function collectSuppressedKeys(envPath: string): Set<string> {
   return suppressed;
 }
 
-export function checkEnvForDangerousKeys(envPath: string, relPath: string, envRef: string): LintIssue[] {
-  const { keys } = listKeys(envPath);
-  const suppressed = collectSuppressedKeys(envPath);
+export function checkEnvForDangerousKeys(content: string, relPath: string, envRef: string): LintIssue[] {
+  const keys = scanEnvKeyNames(content);
+  const suppressed = collectSuppressedKeys(content);
   const issues: LintIssue[] = [];
 
   for (const key of keys) {

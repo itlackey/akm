@@ -16,7 +16,6 @@
     "nightly-index.yml": {
       "recognized": true,
       "adapterId": "akm-task",
-      "component": "main",
       "type": "task",
       "conceptId": "nightly-index",
       "ref": "sample-akm-task//nightly-index",
@@ -26,7 +25,6 @@
     "two-targets.yml": {
       "recognized": true,
       "adapterId": "akm-task",
-      "component": "main",
       "type": "task",
       "conceptId": "two-targets",
       "ref": "sample-akm-task//two-targets",

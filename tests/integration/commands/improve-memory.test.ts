@@ -12,7 +12,6 @@ import { akmIndex } from "../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
 import { getWebsiteCachePaths } from "../../../src/sources/snapshot-fetchers/website-ingest";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
-import { getEntryByRef } from "../../../src/storage/repositories/index-entries-repository";
 import { writeMemory } from "../../_helpers/assets";
 import { makeProposal } from "../../_helpers/factories";
 import { withImproveAutonomy, withTestImproveLlm } from "../../_helpers/improve-config";
@@ -239,15 +238,14 @@ describe("akm improve memory cleanup", () => {
       reason: "duplicate-derived",
       beliefState: "archived",
       previousBeliefState: "active",
-      originalPath: "memories/deploy-duplicate.derived.md",
     });
-    const archivedPath = result.memoryCleanup?.archived?.[0]?.archivedPath;
-    const auditPath = result.memoryCleanup?.archived?.[0]?.auditPath;
-    expect(archivedPath).toBeTruthy();
-    expect(auditPath).toBeTruthy();
-    expect(fs.existsSync(path.join(stashDir, archivedPath as string))).toBe(true);
-    expect(fs.existsSync(path.join(stashDir, auditPath as string))).toBe(true);
-    const auditRaw = fs.readFileSync(path.join(stashDir, auditPath as string), "utf8");
+    const archived = result.memoryCleanup?.archived?.[0] as unknown as Record<string, unknown>;
+    // A retirement is named by its opaque handle, not by the files it moved (§0.2 P7).
+    expect(Object.keys(archived).filter((key) => /Path$/.test(key))).toEqual([]);
+    const handle = archived.handle as string;
+    expect(handle).toBeTruthy();
+    expect(fs.existsSync(path.join(stashDir, handle, "memories/deploy-duplicate.derived.md"))).toBe(true);
+    const auditRaw = fs.readFileSync(path.join(stashDir, handle, "cleanup.md"), "utf8");
     expect(auditRaw).toContain("kind: memory-cleanup-archive");
     expect(auditRaw).toContain("ref: memory:deploy-duplicate.derived");
     expect(
@@ -1230,7 +1228,7 @@ describe("akm improve memory cleanup", () => {
 
     const checkDb = openIndexDatabase(getDbPath());
     try {
-      expect(getEntryByRef(checkDb, "memories/vpn.derived")).not.toBeNull();
+      expect(checkDb.prepare("SELECT 1 FROM entries WHERE concept_id = ?").get("memories/vpn.derived")).not.toBeNull();
     } finally {
       closeDatabase(checkDb);
     }

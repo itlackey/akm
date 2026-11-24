@@ -26,6 +26,12 @@ Examples: `scripts/deploy.sh`, `agents/reviewer`, `knowledge/api-guide`,
 `workflows/ship-release`, `team-catalog//scripts/deploy.sh`,
 `personal//knowledge/guide`, `knowledge/api-guide#authentication`.
 
+The path of a file that holds a concept reads that concept too:
+`akm show tasks/nightly.yml` answers as `tasks/nightly`, and
+`skills/rollout/SKILL.md` as `skills/rollout`. Where two files hold one
+concept, either path reads the one akm uses. Output always carries the
+concept's ref.
+
 Source locators like `github:owner/repo` and `npm:@scope/pkg` are **install
 refs**, a distinct grammar for `akm bundle add` and `akm import --asset-ref`. They are not
 asset refs and `akm show` does not accept them.

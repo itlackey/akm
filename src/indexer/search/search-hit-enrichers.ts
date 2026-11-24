@@ -4,11 +4,11 @@
 
 import { displayRef } from "../../core/asset/resolve-ref";
 import { presentationFor } from "../../core/type-presentation";
+import { getRenderer } from "../../output/renderer-registry";
 import type { SourceSearchHit } from "../../sources/types";
 import type { Database } from "../../storage/database";
 import { getDerivedForParent, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { extractDirTagsFromName, extractTagsFromPath, type IndexDocument } from "../passes/metadata";
-import { getRenderer } from "../walk/file-context";
 import { attachSearchHitAttribution } from "./search-attribution";
 
 export interface SearchHitContext {
@@ -27,7 +27,7 @@ export interface SearchHitContext {
    */
   db?: Database;
   /** A derived surface must satisfy the parent search's existing recall policy. */
-  eligible?: (row: { id: number; entry: IndexDocument; filePath: string }) => boolean;
+  eligible?: (row: { id: number; entry: IndexDocument; filePath: string; bundleId?: string }) => boolean;
 }
 
 /**

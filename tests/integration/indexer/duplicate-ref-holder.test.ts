@@ -5,11 +5,11 @@
 /**
  * Two files of one source can claim one ref: a note `notes/demo.md` and a skill
  * `notes/demo/SKILL.md` are both `notes/demo`. The index holds one row for the ref, and
- * the file with the smaller path holds it, whichever directories a run drains
- * and in whatever order the walk met them (#1050). Before, the first file the
- * run persisted held it, so a full build followed the filesystem's listing
- * order and the first incremental run, which drains only the directory that
- * lost, handed the row to the file that had lost.
+ * the file whose spelling the adapter puts first holds it (a skill's manifest before a loose note), whichever
+ * directories a run drains and in whatever order the walk met them (#1050). The adapter lists one asset for the ref,
+ * so the index never arbitrates: before, the first file the run persisted held it, so a full build followed the
+ * filesystem's listing order and the first incremental run, which drains only the directory that lost, handed the row
+ * to the file that had lost.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -72,43 +72,53 @@ beforeEach(() => {
 afterEach(() => storage.cleanup());
 
 describe("a ref that two files claim", () => {
-  test("is held by the file with the smaller path, and the first incremental run leaves the row alone", async () => {
+  test("is held by the file the adapter spells first, and the first incremental run leaves the row alone", async () => {
     write(IN_KNOWLEDGE, "from knowledge");
     write(IN_SKILLS, "from skills");
     write(OTHER, "only in skills");
 
     const full = await akmIndex({ stashDir: storage.stashDir, full: true });
     const afterFull = holder();
-    expect(afterFull?.file).toBe(IN_KNOWLEDGE);
-    // The collision is reported, naming the file indexed and the one skipped.
-    expect(full.warnings).toEqual([
-      `Two files claim stash//${REF}: indexed ${path.join(storage.stashDir, IN_KNOWLEDGE)}, skipped ${path.join(storage.stashDir, IN_SKILLS)}.`,
-    ]);
+    expect(afterFull?.file).toBe(IN_SKILLS);
+    // The adapter lists one entry for the ref, so the index never sees the collision; `akm lint` reports the ignored file.
+    expect(full.warnings ?? []).toEqual([]);
 
     // No file is touched: nothing may change, the winner, its entry id, and the text its vector is embedded from.
     const incremental = await akmIndex({ stashDir: storage.stashDir });
     expect(incremental.mode).toBe("incremental");
     expect(holder()).toEqual(afterFull);
-    expect(incremental.warnings).toHaveLength(1);
+    expect(incremental.warnings ?? []).toEqual([]);
 
     // `--full` over an existing index agrees with both.
     await akmIndex({ stashDir: storage.stashDir, full: true });
     expect(holder()).toEqual(afterFull);
   });
 
-  test("goes to a file with a smaller path that appears later, as a full index would give it", async () => {
+  test("goes to a file whose spelling comes first that appears later, as a full index would give it", async () => {
+    write(IN_KNOWLEDGE, "from knowledge");
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    expect(holder()?.file).toBe(IN_KNOWLEDGE);
+
     write(IN_SKILLS, "from skills");
     write(OTHER, "only in skills");
-    await akmIndex({ stashDir: storage.stashDir, full: true });
-    expect(holder()?.file).toBe(IN_SKILLS);
-
-    write(IN_KNOWLEDGE, "from knowledge");
     await akmIndex({ stashDir: storage.stashDir });
     const incremental = holder();
-    expect(incremental?.file).toBe(IN_KNOWLEDGE);
+    expect(incremental?.file).toBe(IN_SKILLS);
 
     await akmIndex({ stashDir: storage.stashDir, full: true });
     expect(holder()).toEqual(incremental);
+  });
+
+  test("stays with the file the adapter spells first when a later spelling appears", async () => {
+    write(IN_SKILLS, "from skills");
+    write(OTHER, "only in skills");
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const before = holder();
+    expect(before?.file).toBe(IN_SKILLS);
+
+    write(IN_KNOWLEDGE, "from knowledge");
+    await akmIndex({ stashDir: storage.stashDir });
+    expect(holder()).toEqual(before);
   });
 
   test("costs no embedding call on the first incremental run: the held row keeps its vector", async () => {
@@ -125,9 +135,9 @@ describe("a ref that two files claim", () => {
         return vectors;
       },
     });
-    // A git stash is walked in sorted order, so the full build gives the row to the file with the smaller path
-    // and the first incremental run is the one that used to take it away. (A plain directory is walked in the
-    // filesystem's order, and only half of the orders did that.)
+    // A git stash is walked in sorted order, so the full build gave the row to the file with the smaller path
+    // and the first incremental run was the one that used to take it away. (A plain directory is walked in the
+    // filesystem's order, and only half of the orders did that.) The adapter's spelling order decides it now.
     git(storage.stashDir, ["init", "-q"]);
     write(IN_KNOWLEDGE, "from knowledge");
     write(IN_SKILLS, "from skills");
@@ -154,20 +164,19 @@ describe("a ref that two files claim", () => {
   });
 
   test("falls back to the other file in the same run when the file that holds it is deleted", async () => {
+    write(IN_KNOWLEDGE, "from knowledge");
     write(IN_SKILLS, "from skills");
     write(OTHER, "only in skills");
     await akmIndex({ stashDir: storage.stashDir, full: true });
-    write(IN_KNOWLEDGE, "from knowledge");
-    await akmIndex({ stashDir: storage.stashDir });
-    expect(holder()?.file).toBe(IN_KNOWLEDGE);
+    expect(holder()?.file).toBe(IN_SKILLS);
 
-    // The directory was skipped when the other file took the ref over. It must drain again to take it
-    // back; it used to stay skipped, and the ref left the index although its file was still on disk.
-    fs.rmSync(path.join(storage.stashDir, IN_KNOWLEDGE));
+    // The directory that held the ref drains again, and the other spelling takes it, in the same run.
+    fs.rmSync(path.join(storage.stashDir, IN_SKILLS));
+    fs.rmSync(path.join(storage.stashDir, OTHER));
     const result = await akmIndex({ stashDir: storage.stashDir });
-    expect(result.totalEntries).toBe(2);
+    expect(result.totalEntries).toBe(1);
     const afterDelete = holder();
-    expect(afterDelete?.file).toBe(IN_SKILLS);
+    expect(afterDelete?.file).toBe(IN_KNOWLEDGE);
 
     await akmIndex({ stashDir: storage.stashDir });
     expect(holder()).toEqual(afterDelete);

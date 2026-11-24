@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { detectBundleAdapter } from "../../core/assets/gate";
 import { validateExplicitBundleName } from "../../core/bundle-id";
 import { isRemoteUrl } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
@@ -118,10 +118,8 @@ export function addStash(
       key = nextBundleKey(bundles, name, resolvedPath);
       const entry: BundleConfigEntry = {
         path: resolvedPath,
-        ...(writable === true ? { writable: true } : {}),
-        components: {
-          main: { root: ".", adapter: detectAdapterId(resolvedPath), writable: writable ?? true },
-        },
+        adapter: detectBundleAdapter(resolvedPath),
+        writable: writable ?? true,
       };
       const nextBundles = placeBundle(bundles, key, entry, { before, after });
       const next = { ...config, bundles: nextBundles };
@@ -154,7 +152,8 @@ function urlBundleDescriptor(
     // round-trip back to `entry.options` via bundleEntryToSourceEntry.
     return {
       website: { url: locator, ...(options ?? {}) },
-      components: { main: { root: ".", adapter: "website-snapshot", writable: false } },
+      adapter: "website-snapshot",
+      writable: false,
     };
   }
   if (providerType === "npm") return { npm: locator };

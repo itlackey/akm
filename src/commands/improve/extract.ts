@@ -19,6 +19,8 @@ import type { SelectionFlags } from "../../cli/selection";
 import type { StashEntryScope } from "../../core/adapter/types";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
+import { embedPendingWrites } from "../../core/assets/type";
+import { stateBundleId } from "../../core/bundle-at-dir";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
@@ -46,7 +48,6 @@ import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warn, warnVerbose } from "../../core/warn";
 import { noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { fillMetadata, stampScope } from "../../indexer/passes/metadata";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { collectDispatchSensitiveValues } from "../../integrations/agent/runner-dispatch";
@@ -671,7 +672,7 @@ async function maybeWriteSessionAsset(
     );
     if (!result.written) return {};
     // A standalone extract has no post-loop reindex to pick the file up.
-    if (result.filePath) await indexWrittenAssets(run.stashDir, [result.filePath]);
+    await embedPendingWrites();
     return {
       ...(result.ref ? { sessionAssetRef: result.ref } : {}),
       ...(result.logPath ? { sessionLogPath: result.logPath } : {}),
@@ -752,12 +753,12 @@ async function processSession(
     ];
     try {
       readLedgerDb(access, (db) => {
-        for (const row of listImproveLedgerRows(db, stashDir, ["extract"]))
+        for (const row of listImproveLedgerRows(db, stateBundleId(stashDir), ["extract"]))
           ledger.set(ledgerKey(row.source, row.ref), row);
         for (const candidate of payload.candidates) {
           const row = ledger.get(ledgerKey("extract", deriveExtractCandidateRef(candidate, data.ref, projectName)));
           if (row?.outcome !== "accepted" || !row.proposalId) continue;
-          const fm = getStateProposal(db, row.proposalId, stashDir)?.payload.frontmatter ?? {};
+          const fm = getStateProposal(db, row.proposalId, stateBundleId(stashDir))?.payload.frontmatter ?? {};
           const sources = (fm.provenance as { sources?: Array<{ resource?: unknown }> } | undefined)?.sources;
           const cited = [fm.xrefs, fm.evidenceSources, Array.isArray(sources) ? sources.map((s) => s?.resource) : []];
           if (cited.some((list) => Array.isArray(list) && list.some((mark) => marks.includes(mark)))) {

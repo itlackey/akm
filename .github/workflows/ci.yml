@@ -1,12 +1,13 @@
 name: CI
 
-# Every pull request, whatever its base branch, runs the fast gate: `check` (lint, types, the unit and integration
-# suites, the build), the Node fallback smoke on both supported Node versions, and Desktop's own tests on Linux.
+# Every pull request, whatever its base branch, runs the fast gate: `check` (lint, types, the unit suite, the
+# architecture checks, the build) and Desktop's static checks (type check, lint, build) on Linux.
 # A pull request into `main` is a release, and the only place the platform jobs run: Desktop packaged on all three
-# platforms, the upgrade rehearsals, akm-plugins' contract tests and Gated CI. It must come from a release branch
-# (`release-branch-only`).
-# The Release workflow calls this workflow on a prerelease dispatch; a stable needs no run of its own because the
-# pull request that merged it ran everything here. docs/maintainers/release-checklist.md describes the branch model.
+# platforms and akm-plugins' contract tests. It must come from a release branch (`release-branch-only`).
+# The integration suite (the Node fallback smoke and the upgrade rehearsals with it), Desktop's tests and Gated CI
+# run nowhere here: they gate every release, as jobs of the Release workflow (release.yml), which also calls this workflow on a
+# prerelease dispatch; a stable needs no run of this workflow because the pull request that merged it ran everything
+# here. docs/maintainers/release-checklist.md describes the branch model.
 on:
   workflow_dispatch:
   workflow_call:
@@ -45,6 +46,14 @@ jobs:
           node-version: 22
       - run: bun install --frozen-lockfile
       - run: bun run check
+      # Three integration tests guard module boundaries and stored fields cheaply, so they run on every pull request,
+      # not only at release; the FTA complexity report goes to the job summary and never fails the step.
+      - name: Architecture checks and complexity report
+        run: |
+          status=0
+          bun run test:architecture || status=$?
+          bun run report:complexity || true
+          exit "$status"
       - run: bun run build
 
   release-branch-only:
@@ -73,8 +82,8 @@ jobs:
           fi
 
   desktop:
-    # Desktop's type check, unit, browser, usability, server, package and Electron tests, on Linux, on every pull
-    # request. `test:workspace-package` stays in node-smoke.
+    # Desktop's static checks, on Linux, on every pull request: type check, lint and build. Desktop's tests run
+    # nowhere here: they gate releases, as the `desktop-tests` job of the Release workflow (release.yml).
     if: ${{ !(github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -85,40 +94,16 @@ jobs:
           bun-version: 1.3.14
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
         with:
-          # Latest 22.x: Desktop needs 22.18 or later (its tests load TypeScript through Node's type stripping).
+          # Latest 22.x: Desktop needs 22.18 or later.
           node-version: 22
       - run: bun install --frozen-lockfile
-      - name: Cache the Electron and Playwright downloads
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
-        with:
-          path: |
-            ~/.cache/electron
-            ~/.cache/ms-playwright
-          key: desktop-downloads-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
       - name: Build repository-backed Desktop
         run: bun run desktop:setup
-      - name: Verify Desktop workflows
+      - name: Check and build Desktop
         working-directory: desktop
         run: |
-          node node_modules/electron/install.js
-          node node_modules/@playwright/test/cli.js install --with-deps chromium
           npm run check
           npm run build
-          npm test
-          npm run test:e2e
-          npm run test:usability
-      - name: Verify the web process runs without Electron
-        working-directory: desktop
-        run: npm run test:server
-      - name: Verify the akm-web package installs and runs
-        working-directory: desktop
-        run: npm run test:web-package
-      - name: Verify the Electron shell
-        working-directory: desktop
-        run: |
-          # Ubuntu 24.04 restricts unprivileged user namespaces, which Electron's sandbox needs.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          xvfb-run -a npm run test:electron
 
   desktop-package:
     # Builds Desktop's installers (Linux AppImage, macOS dmg and zip, Windows NSIS; unsigned) and starts each packaged
@@ -158,65 +143,6 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
-  node-smoke:
-    if: ${{ !(github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.pull_request.draft) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: ["22", "24"]
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
-        with:
-          bun-version: 1.3.14
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
-        with:
-          node-version: ${{ matrix.node-version }}
-      - run: bun install --frozen-lockfile
-      - run: bun run build
-      # Installs the SPEC THE PACKAGE DECLARES, read back out of package.json so
-      # the two cannot drift — this job exists to prove the binding npm users
-      # actually get works. Why it is pinned: package.json → pinNotes
-      # ["better-sqlite3@13.0.3"]. scripts/node-smoke.ts preflights that what
-      # landed is that exact version and that it loads under this node.
-      - name: Verify the Node fallback
-        run: |
-          spec=$(node -p "require('./package.json').optionalDependencies['better-sqlite3']")
-          # `bun install` leaves it out (Bun tries to build it and drops the optional
-          # dependency when that fails), so npm installs it here.
-          npm install --no-save "better-sqlite3@$spec"
-          bun run test:node-smoke
-          bun run test:node-compat
-          bun run test:workspace-package
-        env:
-          AKM_SMOKE_NODE: node
-
-  upgrade-rehearsal:
-    # Two origin-release installs per job, on release pull requests only.
-    needs: release-branch-only
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      # One job per KNOWN_UPGRADE_ORIGINS entry (tests/integration/upgrade-rehearsal/previous-release.ts).
-      matrix:
-        origin: [previous, "0.9.32", "0.9.15"]
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
-        with:
-          fetch-depth: 0
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
-        with:
-          bun-version: 1.3.14
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
-        with:
-          node-version: 22
-      - run: bun install --frozen-lockfile
-      - run: bun run build
-      - run: AKM_UPGRADE_REHEARSAL=1 AKM_UPGRADE_REHEARSAL_ORIGIN="${{ matrix.origin }}" TMPDIR=/tmp bun test --timeout=900000 tests/integration/upgrade-rehearsal/
-
   plugins-contract:
     # akm-plugins' contract tests against this build, on release pull requests only: they run the real akm the way
     # the plugins call it (envelopes, ref grammar, show/feedback refusals), which akm's own suites do not.
@@ -254,8 +180,3 @@ jobs:
         working-directory: akm-plugins
         # Name filters, not paths: the files are the plugins' (fake-akm-contract, ref-extraction, ref-resolver-contract).
         run: bun test fake-akm-contract ref-extraction ref-resolver-contract
-
-  gated:
-    # Real embeddings, the Docker install matrix and the native schedulers, on release pull requests only.
-    needs: release-branch-only
-    uses: ./.github/workflows/gated-ci.yml

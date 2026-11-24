@@ -13,17 +13,17 @@ function workspace(): string {
   return root;
 }
 
-function workflowProposal(filePath: string, content: string, root: string): Proposal {
+function workflowProposal(conceptId: string, content: string): Proposal {
   return {
     id: "proposal-workflow-source-ir",
-    ref: "stash//workflows/source-ir",
+    ref: `stash//${conceptId}`,
     status: "pending",
     source: "propose",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     payload: { content },
-    changes: [{ path: filePath, after: content, op: "create" }],
-    proposedTarget: { source: "stash", root },
+    changes: [{ ref: `stash//${conceptId}`, content, op: "create" }],
+    proposedTarget: { source: "stash" },
   };
 }
 
@@ -61,7 +61,7 @@ describe("proposal workflow source-IR boundary", () => {
     const root = workspace();
     const before = fs.readdirSync(root);
 
-    expect(validateProposal(workflowProposal("workflows/source-ir.md", MARKDOWN_WORKFLOW, root))).toEqual({
+    expect(validateProposal(workflowProposal("workflows/source-ir", MARKDOWN_WORKFLOW))).toEqual({
       ok: true,
       findings: [],
     });
@@ -74,7 +74,7 @@ describe("proposal workflow source-IR boundary", () => {
   ])("unsupported .%s proposals fail closed with source diagnostics and no workspace leak", (extension) => {
     const root = workspace();
     const before = fs.readdirSync(root);
-    const report = validateProposal(workflowProposal(`workflows/source-ir.${extension}`, GITHUB_WORKFLOW, root));
+    const report = validateProposal(workflowProposal(`workflows/source-ir.${extension}`, GITHUB_WORKFLOW));
 
     expect(report.ok).toBe(false);
     expect(report.findings).toHaveLength(1);

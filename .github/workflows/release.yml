@@ -1,10 +1,13 @@
 name: Release
 
-# A stable release is the merge of a release branch into main. The push publishes the version committed in
-# package.json to npm `latest` and a GitHub release, then builds Desktop and akm-web from that tarball. The pull
-# request that merged it ran the whole gate (CI, including Gated CI), so nothing is tested again here.
-# A prerelease is a dispatch on a release branch, release/<version>, with a stage: CI and Gated CI run as jobs of
-# this run on the commit, then <version>-<stage>.N goes to npm `next` and a GitHub prerelease, N counting up from 1.
+# A stable release is the merge of a release branch into main. The push runs the integration suite (with the Node
+# fallback smoke and the upgrade rehearsals), Desktop's tests and Gated CI on the merged commit, then publishes the
+# version committed in package.json to npm `latest` and a GitHub release, and builds Desktop and akm-web from that
+# tarball. The pull request that merged it ran CI, so CI does not run again.
+# A prerelease is a dispatch on a release branch, release/<version>, with a stage: CI, the integration suite (with
+# the Node fallback smoke and the upgrade rehearsals), Desktop's tests and Gated CI run as jobs of this run on the
+# commit, then <version>-<stage>.N goes to npm `next` and a GitHub prerelease, N counting up from 1. The integration
+# suite, Desktop's tests and Gated CI run nowhere else: every release passes them here.
 # docs/maintainers/release-checklist.md describes the branch model.
 on:
   push:
@@ -31,19 +34,177 @@ permissions:
   id-token: write
 
 jobs:
-  # The gates, for a prerelease: the merge that makes a stable passed them on its pull request, and a dry run
-  # proves nothing about the packaging by running them.
+  # The gates. A dry run proves nothing about the packaging by running them. CI runs for a prerelease only: the merge
+  # that makes a stable passed it on its pull request. The integration suite (node-smoke and upgrade-rehearsal
+  # included), Desktop's tests and Gated CI run for both.
   ci:
     if: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run }}
     uses: ./.github/workflows/ci.yml
 
+  # The integration suite (scripts/test-integration.sh: duration-balanced shards, each killed at 900s), set up the
+  # way CI's `check` job is.
+  integration:
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: bun run test:integration
+        env:
+          # Keeps the shards' logs and junit reports, uploaded below.
+          TEST_INTEGRATION_LOGDIR: ${{ runner.temp }}/akm-integration-shards
+      # Every run, green or not: the per-file times regenerate tests/integration/.timings.json
+      # (docs/architecture/testing/testing-workflow.md), and a red run's full shard logs show where it failed.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: always()
+        with:
+          name: integration-shards
+          path: ${{ runner.temp }}/akm-integration-shards/shard-*
+          retention-days: 14
+          if-no-files-found: ignore
+          overwrite: true
+
+  # The Node fallback on both supported Node versions: the smoke drives the built CLI under Node, then the node-compat
+  # and workspace-package integration tests.
+  node-smoke:
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["22", "24"]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      # Installs the SPEC THE PACKAGE DECLARES, read back out of package.json so
+      # the two cannot drift — this job exists to prove the binding npm users
+      # actually get works. Why it is pinned: package.json → pinNotes
+      # ["better-sqlite3@13.0.3"]. scripts/node-smoke.ts preflights that what
+      # landed is that exact version and that it loads under this node.
+      - name: Verify the Node fallback
+        run: |
+          spec=$(node -p "require('./package.json').optionalDependencies['better-sqlite3']")
+          # `bun install` leaves it out (Bun tries to build it and drops the optional
+          # dependency when that fails), so npm installs it here.
+          npm install --no-save "better-sqlite3@$spec"
+          bun run test:node-smoke
+          bun run test:node-compat
+          bun run test:workspace-package
+        env:
+          AKM_SMOKE_NODE: node
+
+  # The candidate installed over a home that an origin release built (tests/integration/upgrade-rehearsal/), two
+  # origin-release installs per job.
+  upgrade-rehearsal:
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      # One job per KNOWN_UPGRADE_ORIGINS entry (tests/integration/upgrade-rehearsal/previous-release.ts).
+      matrix:
+        origin: [previous, "0.9.32", "0.9.15"]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - run: AKM_UPGRADE_REHEARSAL=1 AKM_UPGRADE_REHEARSAL_ORIGIN="${{ matrix.origin }}" TMPDIR=/tmp bun test --timeout=900000 tests/integration/upgrade-rehearsal/
+
+  # Desktop's tests (type check, unit, browser, usability, server, package and Electron), on Linux. Pull requests run
+  # only Desktop's check and build. `test:workspace-package` stays in node-smoke.
+  desktop-tests:
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
+        with:
+          # Latest 22.x: Desktop needs 22.18 or later (its tests load TypeScript through Node's type stripping).
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - name: Cache the Electron and Playwright downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/ms-playwright
+          key: desktop-downloads-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
+      - name: Build repository-backed Desktop
+        run: bun run desktop:setup
+      - name: Verify Desktop workflows
+        working-directory: desktop
+        run: |
+          node node_modules/electron/install.js
+          node node_modules/@playwright/test/cli.js install --with-deps chromium
+          npm run check
+          npm run build
+          npm test
+          npm run test:e2e
+          npm run test:usability
+      - name: Verify the web process runs without Electron
+        working-directory: desktop
+        run: npm run test:server
+      - name: Verify the akm-web package installs and runs
+        working-directory: desktop
+        run: npm run test:web-package
+      - name: Verify the Electron shell
+        working-directory: desktop
+        run: |
+          # Ubuntu 24.04 restricts unprivileged user namespaces, which Electron's sandbox needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          xvfb-run -a npm run test:electron
+
   gated:
-    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run }}
+    if: ${{ !inputs.dry_run }}
     uses: ./.github/workflows/gated-ci.yml
 
   release:
-    needs: [ci, gated]
-    # The gates passed, or did not run (a stable, or a dry run). A failed or cancelled gate stops here.
+    needs: [ci, integration, node-smoke, upgrade-rehearsal, desktop-tests, gated]
+    # The gates passed, or did not run (CI for a stable; every gate for a dry run). A failed or cancelled gate stops
+    # here.
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-latest
     outputs:
@@ -102,7 +263,7 @@ jobs:
 
       # tests/release-check.sh proves the packaged artifact: npm bin targets,
       # the akm-migrate bundle under Bun and Node, and package acceptance. Docker
-      # runs in Gated CI; the upgrade rehearsal runs in CI.
+      # runs in Gated CI; the upgrade rehearsal in the upgrade-rehearsal job.
       - name: Release check
         run: ./tests/release-check.sh --skip-docker
 

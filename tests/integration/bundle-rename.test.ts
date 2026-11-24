@@ -16,9 +16,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { buildSnapshotManifest } from "../../src/commands/improve/preparation";
 import type { Proposal } from "../../src/commands/proposal/proposal-types";
+import { listProposals } from "../../src/commands/proposal/repository";
 import { akmSearch } from "../../src/commands/read/search";
 import { akmShowUnified as akmShow } from "../../src/commands/read/show";
 import { akmTasksSync, type TasksSyncResult } from "../../src/commands/tasks/tasks";
+import { stateBundleId } from "../../src/core/bundle-at-dir";
 import { renameBundle } from "../../src/core/bundle-rename";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { NotFoundError, UsageError } from "../../src/core/errors";
@@ -37,6 +39,7 @@ import {
   recordImproveLedger,
   renameImproveLedgerRefs,
 } from "../../src/storage/repositories/improve-ledger-repository";
+import { recordImproveRun } from "../../src/storage/repositories/improve-runs-repository";
 import { closeDatabase } from "../../src/storage/repositories/index-connection";
 import {
   getAssetOutcome,
@@ -117,7 +120,7 @@ async function seedBundleWithOneEntry(): Promise<void> {
   writeKnowledgeAsset(storage.stashDir, "hello", "---\ndescription: hello doc\n---\n\n# Hello\n");
   saveConfig({
     semanticSearchMode: "off",
-    bundles: { original: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+    bundles: { original: { path: storage.stashDir, adapter: "akm" } },
     defaultBundle: "original",
     defaultWriteTarget: "original",
   });
@@ -151,8 +154,8 @@ function makeProposal(id: string, ref: string, targetSource: string): Proposal {
     createdAt: now,
     updatedAt: now,
     payload: { content: `content for ${ref}` },
-    changes: [{ path: `${ref}.md`, after: `content for ${ref}`, op: "create" }],
-    proposedTarget: { source: targetSource, root: storage.stashDir },
+    changes: [{ ref, content: `content for ${ref}`, op: "create" }],
+    proposedTarget: { source: targetSource },
   } as unknown as Proposal;
 }
 
@@ -232,7 +235,11 @@ describe("akm bundle rename — applied", () => {
     // A pending proposal whose ref and proposedTarget.source name the bundle.
     const stateDb = openStateDatabase();
     try {
-      upsertProposal(stateDb, makeProposal("p1", "original//knowledge/new-thing", "original"), storage.stashDir);
+      upsertProposal(
+        stateDb,
+        makeProposal("p1", "original//knowledge/new-thing", "original"),
+        stateBundleId(storage.stashDir),
+      );
       upsertTaskHistory(stateDb, {
         task_id: "wf-run",
         status: "completed",
@@ -289,6 +296,8 @@ describe("akm bundle rename — applied", () => {
       };
       expect(proposalRow.ref).toBe("renamed//knowledge/new-thing");
       expect(JSON.parse(proposalRow.metadata_json).proposedTarget.source).toBe("renamed");
+      // The refs a proposal's changes carry name the bundle too.
+      expect(JSON.parse(proposalRow.metadata_json).changes[0].ref).toBe("renamed//knowledge/new-thing");
 
       const taskRow = readDb.prepare("SELECT target_ref FROM task_history WHERE task_id = ?").get("wf-run") as {
         target_ref: string;
@@ -357,7 +366,11 @@ describe("akm bundle rename — applied", () => {
         target_ref: `${oldId}//workflows/x`,
         metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 60_000, detail: null }),
       });
-      upsertProposal(stateDb, makeProposal("p-astral", `${oldId}//knowledge/x`, oldId), storage.stashDir);
+      upsertProposal(
+        stateDb,
+        makeProposal("p-astral", `${oldId}//knowledge/x`, oldId),
+        stateBundleId(storage.stashDir),
+      );
 
       expect(renameWorkflowRunRefs(stateDb, oldId, "team")).toBe(1);
       expect(renameTaskHistoryTargetRefs(stateDb, oldId, "team")).toBe(1);
@@ -429,7 +442,13 @@ describe("akm bundle rename — applied", () => {
         // Left by a removed bundle that was also called "renamed": the renamed bundle's row replaces it.
         ["renamed//knowledge/hello", "2026-01-01T00:00:00.000Z"],
       ] as const) {
-        recordImproveLedger(stateDb, { stashDir: storage.stashDir, ref, source: "reflect", outcome: "unchanged", at });
+        recordImproveLedger(stateDb, {
+          bundleId: stateBundleId(storage.stashDir),
+          ref,
+          source: "reflect",
+          outcome: "unchanged",
+          at,
+        });
       }
       for (const [ref, rankScore] of [
         ["original//knowledge/hello", 0.9],
@@ -480,13 +499,64 @@ describe("akm bundle rename — applied", () => {
         "original2//knowledge/hello",
         "knowledge/hello",
       ]);
-      const ledgerAt = (ref: string) => getImproveLedgerRow(readDb, storage.stashDir, ref, "reflect")?.lastAttemptAt;
+      const ledgerAt = (ref: string) =>
+        getImproveLedgerRow(readDb, stateBundleId(storage.stashDir), ref, "reflect")?.lastAttemptAt;
       expect(ledgerAt("original//knowledge/hello")).toBeUndefined();
       expect(ledgerAt("renamed//knowledge/hello")).toBe("2026-10-02T00:00:00.000Z");
       expect(ledgerAt("original2//knowledge/hello")).toBe("2026-10-03T00:00:00.000Z");
     } finally {
       closeDatabase(readDb);
     }
+  });
+
+  test("carries the proposals, improve runs and ledger rows filed under the bundle, and no other bundle's (§0.2 P8)", async () => {
+    await seedBundleWithOneEntry();
+    const other = "elsewhere";
+    const stateDb = openStateDatabase();
+    try {
+      for (const bundleId of ["original", other]) {
+        upsertProposal(stateDb, makeProposal(`p-${bundleId}`, `${bundleId}//knowledge/x`, bundleId), bundleId);
+        recordImproveLedger(stateDb, {
+          bundleId,
+          ref: `${bundleId}//knowledge/x`,
+          source: "reflect",
+          outcome: "unchanged",
+          at: "2026-10-01T00:00:00.000Z",
+        });
+        recordImproveRun(stateDb, {
+          id: `run-${bundleId}`,
+          startedAt: "2026-10-01T00:00:00.000Z",
+          completedAt: "2026-10-01T00:01:00.000Z",
+          bundleId,
+          dryRun: false,
+          strategy: "default",
+          scopeMode: "all",
+          scopeValue: null,
+          guidance: null,
+          ok: true,
+          result: { ok: true } as never,
+        });
+      }
+    } finally {
+      closeDatabase(stateDb);
+    }
+
+    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+
+    const readDb = openStateDatabase();
+    try {
+      for (const table of ["proposals", "improve_runs", "improve_ledger"]) {
+        const ids = (
+          readDb.prepare(`SELECT bundle_id AS id FROM ${table} ORDER BY bundle_id`).all() as Array<{ id: string }>
+        ).map((row) => row.id);
+        expect(ids).toEqual([other, "renamed"]);
+      }
+    } finally {
+      closeDatabase(readDb);
+    }
+    // And the renamed bundle's queue is the one a command at its directory reads.
+    expect(stateBundleId(storage.stashDir)).toBe("renamed");
+    expect(listProposals(storage.stashDir).map((p) => p.id)).toEqual(["p-original"]);
   });
 
   test("improve still reads the bundle's feedback and its own attempts after the rename (#1250)", async () => {
@@ -503,7 +573,7 @@ describe("akm bundle rename — applied", () => {
     const stateDb = openStateDatabase();
     try {
       recordImproveLedger(stateDb, {
-        stashDir: storage.stashDir,
+        bundleId: stateBundleId(storage.stashDir),
         ref: "original//knowledge/hello",
         source: "reflect",
         outcome: "unchanged",
@@ -566,7 +636,7 @@ describe("akm bundle rename — applied", () => {
           ref: `${bundle}//knowledge/x`,
         });
         recordImproveLedger(stateDb, {
-          stashDir: storage.stashDir,
+          bundleId: stateBundleId(storage.stashDir),
           ref: `${bundle}//knowledge/x`,
           source: "reflect",
           outcome: "unchanged",
@@ -603,7 +673,11 @@ describe("akm bundle rename — applied", () => {
     const stateDb = openStateDatabase();
     try {
       for (const bundle of ["team", "Team"]) {
-        upsertProposal(stateDb, makeProposal(`p-${bundle}`, `${bundle}//knowledge/x`, bundle), storage.stashDir);
+        upsertProposal(
+          stateDb,
+          makeProposal(`p-${bundle}`, `${bundle}//knowledge/x`, bundle),
+          stateBundleId(storage.stashDir),
+        );
         upsertTaskHistory(stateDb, {
           task_id: `wf-${bundle}`,
           status: "completed",
@@ -628,7 +702,7 @@ describe("akm bundle rename — applied", () => {
           ref: `${bundle}//knowledge/x`,
         });
         recordImproveLedger(stateDb, {
-          stashDir: storage.stashDir,
+          bundleId: stateBundleId(storage.stashDir),
           ref: `${bundle}//knowledge/x`,
           source: "reflect",
           outcome: "unchanged",
@@ -704,18 +778,18 @@ describe("akm bundle rename — native scheduler sync", () => {
     // Install the native row under the OLD name first, exactly as a real
     // prior `akm task sync` would have.
     await akmTasksSync({ backend }, "original");
-    expect(exec.current()).toContain("task run foo --bundle original --scheduled");
+    expect(exec.current()).toContain("task run original//tasks/foo --scheduled");
 
     // --dry-run reports the stale row and leaves the crontab untouched.
     const plan = await renameBundle("original", "renamed", { dryRun: true }, renameDeps(backend));
-    expect(plan.nativeSchedulerRows.some((row) => row.includes("--bundle original"))).toBe(true);
-    expect(exec.current()).toContain("--bundle original");
+    expect(plan.nativeSchedulerRows.some((row) => row.includes("original//tasks/foo"))).toBe(true);
+    expect(exec.current()).toContain("original//tasks/foo");
 
     const result = await renameBundle("original", "renamed", {}, renameDeps(backend));
     expect(result.applied).toBe(true);
     expect(result.taskSync?.ok).toBe(true);
-    expect(exec.current()).toContain("task run foo --bundle renamed --scheduled");
-    expect(exec.current()).not.toContain("--bundle original");
+    expect(exec.current()).toContain("task run renamed//tasks/foo --scheduled");
+    expect(exec.current()).not.toContain("original//");
   });
 
   // a binding that fails to re-sync must not be reported as success —
@@ -738,7 +812,7 @@ describe("akm bundle rename — native scheduler sync", () => {
     // Install the native row under the OLD name first, exactly as a real
     // prior `akm task sync` would have.
     await akmTasksSync({ backend }, "original");
-    expect(exec.current()).toContain("task run foo --bundle original --scheduled");
+    expect(exec.current()).toContain("task run original//tasks/foo --scheduled");
 
     // An invalid schedule written before the rename — the same #867 shape
     // `akmTasksSync` reports as a failure rather than installing.
@@ -757,7 +831,7 @@ describe("akm bundle rename — native scheduler sync", () => {
     expect(syncResult?.failures[0]?.reason).toMatch(/version is required and must be 4/);
     // The stale old-name row was still removed, even though the new one
     // could not be installed in its place.
-    expect(exec.current()).not.toContain("--bundle original");
+    expect(exec.current()).not.toContain("original//");
     expect(exec.current()).not.toContain("--bundle renamed");
   });
 });

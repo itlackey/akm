@@ -21,23 +21,24 @@ import os from "node:os";
 import path from "node:path";
 
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
-import type { SourceConfigEntry } from "../../../src/core/config/config";
-import { ConfigError, UsageError } from "../../../src/core/errors";
+import { type AssetWriter, writeAssets } from "../../../src/core/assets/write";
+import { type SourceConfigEntry, saveConfig } from "../../../src/core/config/config";
+import { ConfigError, NotFoundError, UsageError } from "../../../src/core/errors";
 import { sanitizeCommitMessage } from "../../../src/core/git-message";
 import {
   commitWriteTargetBoundary,
-  deleteAssetFromSource,
   formatRefForMessage,
   type ResolvedWriteTarget,
   resolveWritable,
   resolveWriteTarget,
   type WriteTargetSource,
-  writeAssetToSource,
+  writeTargetAt,
 } from "../../../src/core/write-source";
 import { resolveSourceEntries } from "../../../src/indexer/search/search-source";
 import { writeLockfile } from "../../../src/integrations/lockfile";
 import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { deleteAssetFromSource, writeAssetToSource } from "../../_helpers/write-asset";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -340,7 +341,9 @@ describe("deleteAssetFromSource", () => {
     const source: WriteTargetSource = { kind: "filesystem", name: "mine", path: dir };
     const config: SourceConfigEntry = { type: "filesystem", writable: true };
 
-    await expect(deleteAssetFromSource(source, config, { type: "memory", name: "ghost" })).rejects.toThrow(UsageError);
+    await expect(deleteAssetFromSource(source, config, { type: "memory", name: "ghost" })).rejects.toThrow(
+      NotFoundError,
+    );
   });
 
   test("refuses to delete from a non-writable source", async () => {
@@ -559,6 +562,86 @@ describe("resolveWriteTarget", () => {
     expect(failure("frozen").hint).toContain("or pass --bundle to a different source");
     expect(failure("frozen", "--into").hint).toContain("or pass --into to a different source");
     expect(failure("frozen", "--into").hint).not.toContain("--bundle");
+  });
+});
+
+// ── writeTargetAt: the write target of a directory a command holds ─────────
+
+describe("writeTargetAt", () => {
+  let storage: IsolatedAkmStorage;
+
+  beforeEach(() => {
+    storage = withIsolatedAkmStorage();
+  });
+
+  afterEach(() => {
+    storage.cleanup();
+  });
+
+  const write = (target: ResolvedWriteTarget, run: (w: AssetWriter) => unknown, message?: string) =>
+    writeAssets(target, { purpose: "test", ...(message ? { message } : {}) }, run);
+
+  test("a directory a read-only configured bundle holds keeps its permission: every change is refused", () => {
+    const dir = makeTempDir("akm-target-at-ro-");
+    fs.mkdirSync(path.join(dir, "memories"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "memories", "m.md"), "---\ndescription: m\n---\nm\n");
+    saveConfig({ semanticSearchMode: "off", bundles: { frozen: { path: dir, writable: false } } });
+
+    const target = writeTargetAt(dir);
+    const refused = 'Source "frozen" is not writable.';
+    expect(() => write(target, (w) => w.create({ type: "memory", name: "new", content: "x" }))).toThrow(refused);
+    expect(() => write(target, (w) => w.update("memories/m", "changed\n"))).toThrow(refused);
+    expect(() => write(target, (w) => w.delete("memories/m"))).toThrow(refused);
+    expect(() => write(target, (w) => w.retire("memories/m", { reason: "test" }))).toThrow(refused);
+    expect(fs.readdirSync(path.join(dir, "memories"))).toEqual(["m.md"]);
+    expect(fs.readFileSync(path.join(dir, "memories", "m.md"), "utf8")).toContain("\nm\n");
+  });
+
+  test("a directory a writable git bundle holds is written as that bundle: its boundary commits the change", async () => {
+    const { workDir } = initBareGitRepo();
+    await writeLockfile([
+      { id: "team", source: "git", ref: "https://example.invalid/acme/team.git", localRoot: workDir },
+    ]);
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { team: { git: "https://example.invalid/acme/team.git", writable: true } },
+    });
+
+    const target = writeTargetAt(workDir);
+    expect(target.source).toMatchObject({ kind: "git", name: "team" });
+    write(target, (w) => w.create({ type: "memory", name: "alpha", content: "body" }), "Add memory:alpha");
+
+    const log = spawnSync("git", ["-C", workDir, "log", "--format=%s"], { encoding: "utf8" });
+    expect(log.stdout.trim().split("\n")).toEqual(["Add memory:alpha", "seed"]);
+  });
+
+  test("a git bundle configured without `writable` is read-only there, as config resolves it", async () => {
+    const { workDir } = initBareGitRepo();
+    await writeLockfile([
+      { id: "team", source: "git", ref: "https://example.invalid/acme/team.git", localRoot: workDir },
+    ]);
+    saveConfig({ semanticSearchMode: "off", bundles: { team: { git: "https://example.invalid/acme/team.git" } } });
+
+    expect(() =>
+      write(writeTargetAt(workDir), (w) => w.create({ type: "memory", name: "alpha", content: "body" })),
+    ).toThrow('Source "team" is not writable.');
+    expect(fs.existsSync(path.join(workDir, "memories", "alpha.md"))).toBe(false);
+  });
+
+  test("a writable configured directory and a directory no bundle holds both take writes", () => {
+    const configured = makeTempDir("akm-target-at-rw-");
+    const loose = makeTempDir("akm-target-at-loose-");
+    saveConfig({ semanticSearchMode: "off", bundles: { notes: { path: configured } } });
+
+    const created = write(writeTargetAt(configured), (w) => w.create({ type: "memory", name: "a", content: "a" })) as {
+      ref: string;
+    };
+    expect(created.ref).toBe("notes//memories/a");
+    const target = writeTargetAt(loose);
+    expect(target.config.writable).toBe(true);
+    write(target, (w) => w.create({ type: "memory", name: "b", content: "b" }));
+    expect(fs.existsSync(path.join(configured, "memories", "a.md"))).toBe(true);
+    expect(fs.existsSync(path.join(loose, "memories", "b.md"))).toBe(true);
   });
 });
 

@@ -8,8 +8,8 @@ import type { MarkdownTocEntry } from "../core/asset/markdown";
 import type { IncludeSelectors } from "../core/include";
 import type { ProjectView } from "../core/projects";
 import type { SkippedIndexReport } from "../indexer/index-build";
+import type { SemanticSearchStatus } from "../indexer/index-context";
 import type { ScopeFilters } from "../indexer/passes/metadata";
-import type { SemanticSearchStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
 import type { WorkflowExec as ProgramExecCore } from "../workflows/plan";
 
@@ -57,7 +57,8 @@ export interface FragmentProvenance {
 export interface SourceSearchHit {
   type: string;
   name: string;
-  path: string;
+  /** The file that holds the asset. Absent when no file does (a secret manager's). */
+  path?: string;
   ref: string;
   /** Durable fully-qualified `bundle//conceptId` of the indexed entry; `ref` is its display spelling. */
   itemRef?: string;
@@ -299,6 +300,11 @@ export interface AddResponse {
         url: string;
         name?: string;
         stashRoot: string;
+      }
+    | {
+        type: "location";
+        location: string;
+        name: string;
       };
   config: {
     sourceCount: number;
@@ -320,10 +326,10 @@ export interface SourceInstallStatus extends InstalledBundle {
 }
 
 /** Canonical source provider kinds. */
-export type SourceKind = "filesystem" | "git" | "npm" | "website";
+export type SourceKind = "filesystem" | "git" | "npm" | "website" | "location";
 
 export interface SourceDescriptor {
-  kind: "path" | "git" | "npm" | "website";
+  kind: "path" | "git" | "npm" | "website" | "location";
   locator: string;
   maxPages?: number;
 }
@@ -340,16 +346,6 @@ export interface SourceLock {
   installedAt?: string;
 }
 
-export interface SourceComponent {
-  name: string;
-  root?: string;
-  /** The EFFECTIVE adapter — explicitly configured, or auto-detected when not (#908). */
-  adapter?: string;
-  /** `true` when `adapter` came from auto-detection rather than explicit config (#908). */
-  detected?: boolean;
-  writable?: boolean;
-}
-
 export interface SourceEntry {
   name: string;
   kind: SourceKind;
@@ -361,7 +357,12 @@ export interface SourceEntry {
   version?: string;
   writable: boolean;
   registryId?: string;
-  components: SourceComponent[];
+  /** The EFFECTIVE adapter — explicitly configured, or auto-detected when not (#908). */
+  adapter: string;
+  /** `true` when `adapter` was auto-detected rather than configured (#908). */
+  detected: boolean;
+  /** Deprecated, removed in 0.11: one entry named `main`; read `adapter` and `detected` above. */
+  components: Array<{ name: string; root?: string; adapter: string; detected: boolean; writable?: boolean }>;
   lock: SourceLock | null;
   itemCount: number;
   byType: Record<string, number>;
@@ -508,7 +509,8 @@ export interface ShowResponse extends FragmentProvenance {
   schemaVersion?: number;
   type: string;
   name: string;
-  path: string;
+  /** The file that holds the asset. Absent when no file does (a secret manager's). */
+  path?: string;
   /** Canonical indexed ref for a materialized local asset. */
   ref?: string;
   content?: string;

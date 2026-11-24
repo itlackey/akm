@@ -13,10 +13,14 @@ import {
 } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { renameBundle } from "../../../src/core/bundle-rename";
 import { saveConfig } from "../../../src/core/config/config";
+import { UsageError } from "../../../src/core/errors";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeLockfile } from "../../../src/integrations/lockfile";
+import { upsertProposal } from "../../../src/storage/repositories/proposals-repository";
 import type { SchedulerBackend } from "../../../src/tasks/backends/types";
 import { assets, documents } from "../../../src/workspace";
 import { git, makeGitRepo } from "../../_helpers/git";
@@ -60,7 +64,7 @@ test("retire is an accepted retire proposal; revert restores bytes, mode and bel
   const row = getProposal(storage.stashDir, receipt.proposalId);
   expect(row).toMatchObject({ status: "accepted", source: "propose", ref });
   expect(row.retirement).toBeUndefined();
-  expect(row.retiredArchive?.dirs).toEqual(receipt.archiveDirs);
+  expect(row.retiredArchive?.retired.map(({ handle }) => handle)).toEqual(receipt.archiveDirs);
   expect(getProposal(storage.stashDir, pending.id).status).toBe("pending");
   const [dir] = archived(receipt);
   expect(fs.readFileSync(path.join(dir!, "memories/manual.md"), "utf8")).toBe(body);
@@ -137,7 +141,7 @@ test("revert still works after the bundle is renamed, for a manual retirement an
   });
   await akmProposalAccept({ stashDir: storage.stashDir, id: edit.id });
   expect((await rename()).applied).toBe(true);
-  expect(getProposal(storage.stashDir, receipt.proposalId).acceptedTarget?.source).toBe("renamed");
+  expect(getProposal(storage.stashDir, receipt.proposalId).acceptedTarget?.bundle).toBe("renamed");
   expect((await revert(receipt)).proposal.status).toBe("reverted");
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
   expect((await akmProposalRevert({ id: edit.id })).proposal.status).toBe("reverted");
@@ -159,11 +163,52 @@ test("an archive directory that is a symbolic link is refused before anything mo
 });
 
 test("a failed archive of the derived twin puts the primary back", async () => {
-  fs.mkdirSync(file().replace(".md", ".derived.md"));
-  await expect(retireAsset(ref, hash())).rejects.toThrow();
+  const twin = file().replace(".md", ".derived.md");
+  fs.writeFileSync(twin, "---\ndescription: derived\n---\nDerived.\n");
+  const read = fs.readFileSync;
+  const failing = spyOn(fs, "readFileSync").mockImplementation(((target: fs.PathOrFileDescriptor, options) => {
+    if (typeof target === "string" && path.resolve(target) === twin) throw new Error("the twin cannot be read");
+    return read(target, options);
+  }) as typeof fs.readFileSync);
+  try {
+    await expect(retireAsset(ref, hash())).rejects.toThrow("the twin cannot be read");
+  } finally {
+    failing.mockRestore();
+  }
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
+  expect(fs.existsSync(twin)).toBe(true);
   expect(fs.readdirSync(path.join(storage.stashDir, ".akm/memory-cleanup/archive"))).toEqual([]);
   expect(listProposals(storage.stashDir, { includeArchive: true })[0]?.status).toBe("rejected");
+});
+
+test("a revert restores the primary before its twin, so a primary that cannot be restored leaves the twin retired (F23)", async () => {
+  const twin = file().replace(".md", ".derived.md");
+  fs.writeFileSync(twin, "---\ndescription: derived\n---\nDerived.\n");
+  const receipt = await retireAsset(ref, hash());
+  expect(fs.existsSync(twin)).toBe(false);
+  // A resumed accept can record the twin's retirement first.
+  const accepted = getProposal(storage.stashDir, receipt.proposalId);
+  const db = openStateDatabase();
+  try {
+    upsertProposal(
+      db,
+      { ...accepted, retiredArchive: { retired: [...(accepted.retiredArchive?.retired ?? [])].reverse() } },
+      stateBundleId(storage.stashDir),
+    );
+  } finally {
+    db.close();
+  }
+  const primaryDir = archived(receipt).find((dir) => tombstone(dir).originalPath === "memories/manual.md") as string;
+  const audit = path.join(primaryDir, "cleanup.md");
+  fs.writeFileSync(audit, fs.readFileSync(audit, "utf8").replace(/^archivedPath: .*\n/m, ""));
+
+  const refused = await revert(receipt).catch((error: unknown) => error);
+  expect(refused).toBeInstanceOf(UsageError);
+  expect((refused as UsageError).code).toBe("INVALID_FLAG_VALUE");
+  expect((refused as UsageError).message).toContain("does not say where its file went");
+  expect(fs.existsSync(twin)).toBe(false);
+  expect(fs.existsSync(file())).toBe(false);
+  expect(getProposal(storage.stashDir, receipt.proposalId).status).toBe("accepted");
 });
 
 test("a revert that crashed after moving the file back resumes; a different file at the path is not overwritten", async () => {
@@ -257,7 +302,7 @@ test("Git retirement commits only its paths and the manual archive is grace-purg
     semanticSearchMode: "off",
     defaultBundle: "stash",
     bundles: {
-      stash: { git: url, writable: true, components: { main: { root: ".", adapter: "akm", writable: true } } },
+      stash: { git: url, writable: true, adapter: "akm" },
     },
   });
   const receipt = await retireAsset(ref, hash());

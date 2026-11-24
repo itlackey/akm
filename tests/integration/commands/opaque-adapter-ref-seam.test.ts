@@ -17,7 +17,7 @@
  *
  * This file drives each of those command-level surfaces (utility-repo
  * coverage lives in `tests/integration/get-retrieval-counts.test.ts`, next to
- * its existing durable-ref suite) against a real OKF-adapter component whose
+ * its existing durable-ref suite) against a real OKF-adapter bundle whose
  * conceptId (`tables/customers`) has NO AKM placement type at all — proving
  * the round trip end to end, not just that the parser stops throwing.
  */
@@ -29,7 +29,7 @@ import { planTaskToV4File } from "../../../scripts/akm-migrate/migrate/task-to-v
 import { resolveImproveScope } from "../../../src/commands/improve/eligibility";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
-import { resolveAssetPath } from "../../../src/indexer/walk/path-resolver";
+import { resolveAssetPath } from "../../../src/indexer/path-resolver";
 import { type ProposalRow, proposalRowToProposal } from "../../../src/storage/repositories/proposals-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
@@ -62,13 +62,13 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
       bundles: {
         local: {
           path: storage.stashDir,
+          adapter: "akm",
           writable: true,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
         },
         adversarial: {
           path: okfRoot,
+          adapter: "okf",
           writable: true,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
         },
       },
     });
@@ -106,7 +106,7 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
   test("proposals repo: a stored opaque conceptId round-trips through the canonical-ref check", () => {
     const row: ProposalRow = {
       id: "prop-opaque-1",
-      stash_dir: storage.stashDir,
+      bundle_id: "stash",
       ref: "adversarial//tables/customers",
       status: "pending",
       source: "propose",
@@ -115,7 +115,7 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
       content: "Customer records.",
       frontmatter_json: null,
       metadata_json: JSON.stringify({
-        proposedTarget: { source: "adversarial", root: okfRoot },
+        proposedTarget: { source: "adversarial" },
         changes: [{ path: "tables/customers.md", op: "update" }],
       }),
     };

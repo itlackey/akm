@@ -22,9 +22,12 @@ import type {
 } from "./types";
 
 /**
- * Pass an HTTPS bearer credential to Git without placing it in the remote URL
- * or argv. The value exists only in the child-process environment and is never
- * persisted or included in diagnostics.
+ * Pass an HTTPS token to Git without placing it in the remote URL or argv. The
+ * value exists only in the child-process environment and is never persisted or
+ * included in diagnostics. It is sent as HTTP Basic auth with the token as the
+ * password: GitHub's Git endpoint accepts a personal access token only that
+ * way (it rejects `Bearer`), and Gitea, GitLab and Azure DevOps take a token
+ * as the Basic password whatever the username.
  */
 export function gitCredentialEnvironment(credential?: string): NodeJS.ProcessEnv {
   if (!credential) return { ...process.env };
@@ -40,7 +43,7 @@ export function gitCredentialEnvironment(credential?: string): NodeJS.ProcessEnv
     ...process.env,
     GIT_CONFIG_COUNT: String(nextIndex + 1),
     [`GIT_CONFIG_KEY_${nextIndex}`]: "http.extraHeader",
-    [`GIT_CONFIG_VALUE_${nextIndex}`]: `Authorization: Bearer ${credential}`,
+    [`GIT_CONFIG_VALUE_${nextIndex}`]: `Authorization: Basic ${Buffer.from(`x-access-token:${credential}`).toString("base64")}`,
   };
 }
 
@@ -292,6 +295,7 @@ function tryParseLocalRef(rawRef: string, explicitPath: boolean): ParsedLocalRef
   const resolvedPath = path.resolve(rawRef);
   let stat: fs.Stats;
   try {
+    // asset-io: user-input path the user named
     stat = fs.statSync(resolvedPath);
   } catch {
     // Explicit paths (./foo, ../bar, /abs) should throw on missing
@@ -682,6 +686,7 @@ function toReadableLocalId(absolutePath: string): string {
 function findGitRepoRoot(startDir: string): string | undefined {
   let current = path.resolve(startDir);
   while (true) {
+    // asset-io: host git root of the working directory
     if (fs.existsSync(path.join(current, ".git"))) {
       return current;
     }
