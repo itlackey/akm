@@ -6,6 +6,7 @@
   },
   "src/commands/command/execution-source-loader.ts": {
     "adapter-import": {
+      "src/core/adapter/directory/file-context": 1,
       "src/core/adapter/registry": 1
     },
     "asset-io": {
@@ -20,6 +21,9 @@
   "src/commands/env/env-binding.ts": {
     "entry-file": {
       "entry.file": 2
+    },
+    "entry-file-logic": {
+      "compare": 1
     }
   },
   "src/commands/env/env-cli.ts": {
@@ -27,9 +31,32 @@
       "entry.file": 1
     }
   },
+  "src/commands/health.ts": {
+    "entries-sql": {
+      "entries": 1
+    }
+  },
+  "src/commands/health/archive-usage.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/held-files": 1
+    }
+  },
   "src/commands/health/bundle-adapters-check.ts": {
     "adapter-import": {
       "src/core/adapter/registry": 1
+    },
+    "store-sniff": {
+      "location": 1
+    }
+  },
+  "src/commands/health/index-sources.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/index-context": 1
+    }
+  },
+  "src/commands/health/semantic-search-check.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/index-context": 1
     }
   },
   "src/commands/improve/consolidate.ts": {
@@ -39,13 +66,24 @@
     }
   },
   "src/commands/improve/distill.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/path-resolver": 1
+    },
     "asset-io": {
       "existsSync": 3,
       "readFileSync": 5,
       "statSync": 1
     }
   },
+  "src/commands/improve/eligibility.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/path-resolver": 1
+    }
+  },
   "src/commands/improve/memory/memory-improve.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/walker": 1
+    },
     "asset-io": {
       "existsSync": 1,
       "readFileSync": 1
@@ -60,6 +98,9 @@
     "adapter-id": {
       "akm": 2,
       "okf": 1
+    },
+    "store-sniff": {
+      "location": 1
     }
   },
   "src/commands/read/related.ts": {
@@ -71,10 +112,16 @@
     "adapter-id": {
       "akm": 1
     },
+    "adapter-import": {
+      "src/core/adapter/directory/file-context": 1
+    },
     "asset-io": {
       "buildFileContext": 2,
       "lstatSync": 1,
       "statSync": 1
+    },
+    "entry-file-logic": {
+      "compare": 1
     }
   },
   "src/commands/sources/add-cli.ts": {
@@ -87,9 +134,27 @@
       "existsSync": 1
     }
   },
+  "src/commands/sources/installed-stashes.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/index-context": 1
+    },
+    "store-sniff": {
+      "location": 2
+    }
+  },
   "src/commands/sources/plugin-upgrade.ts": {
     "adapter-id": {
       "akm": 1
+    }
+  },
+  "src/commands/sources/schema-repair.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/path-resolver": 1
+    }
+  },
+  "src/commands/sources/source-add.ts": {
+    "store-sniff": {
+      "location": 1
     }
   },
   "src/core/asset/llm-wiki-root.ts": {
@@ -104,21 +169,66 @@
       "statSync": 1
     }
   },
+  "src/core/assets/bundle.ts": {
+    "facade-fs": {
+      "existsSync": 1
+    }
+  },
   "src/core/assets/type.ts": {
+    "facade-adapter-id": {
+      "akm": 2,
+      "akm-workflow": 1
+    },
     "facade-export": {
       "forgetIndexedAsset": 1,
       "indexAssets": 1,
       "refreshIndexedAsset": 1
+    },
+    "facade-fs": {
+      "buildFileContext": 1
+    }
+  },
+  "src/core/assets/write.ts": {
+    "facade-adapter-id": {
+      "location": 1
+    }
+  },
+  "src/core/config/config-sources.ts": {
+    "store-sniff": {
+      "location": 2
+    }
+  },
+  "src/core/config/schema/sources-bundles.ts": {
+    "store-sniff": {
+      "location": 1
     }
   },
   "src/core/env-secret-ref.ts": {
     "entry-file": {
       "entry.file": 4
+    },
+    "entry-file-logic": {
+      "compare": 2
     }
   },
   "src/core/write-source.ts": {
     "adapter-import": {
       "src/core/adapter/directory-adapter": 1
+    }
+  },
+  "src/indexer/indexer.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/file-context": 1,
+      "src/core/adapter/directory/index-context": 1,
+      "src/core/adapter/directory/walker": 1
+    },
+    "store-sniff": {
+      "isStore": 4
+    }
+  },
+  "src/indexer/installations.ts": {
+    "store-sniff": {
+      "location": 1
     }
   },
   "src/indexer/passes/dir-staleness.ts": {
@@ -127,6 +237,9 @@
     }
   },
   "src/indexer/passes/memory-inference.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/walker": 1
+    },
     "asset-io": {
       "existsSync": 1,
       "readFileSync": 1
@@ -144,13 +257,27 @@
       "existsSync": 1
     }
   },
+  "src/indexer/scan/drain-dir.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/file-context": 1
+    }
+  },
+  "src/indexer/search/search-hit-enrichers.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/file-context": 1
+    }
+  },
   "src/output/renderers.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/file-context": 2
+    },
     "asset-io": {
       "existsSync": 1
     }
   },
   "src/sources/resolve.ts": {
     "adapter-import": {
+      "src/core/adapter/directory/walker": 1,
       "src/core/adapter/recognize-match": 1
     },
     "asset-io": {
@@ -159,17 +286,71 @@
       "walkStashFlat": 1
     }
   },
+  "src/sources/types.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/index-context": 1
+    }
+  },
+  "src/tasks/task-ref.ts": {
+    "store-sniff": {
+      "location": 1
+    }
+  },
+  "src/workflows/renderer.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/file-context": 1
+    }
+  },
+  "src/workflows/source-files.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/file-context": 1,
+      "src/core/adapter/directory/matchers": 1
+    }
+  },
+  "src/workspace/assets.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/place-rules": 1
+    }
+  },
+  "src/workspace/bundle-files.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/place-rules": 1
+    }
+  },
+  "src/workspace/check-text.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/place-rules": 1
+    }
+  },
+  "src/workspace/copy-entry.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/place-rules": 1,
+      "src/core/adapter/directory/walker": 1
+    }
+  },
+  "src/workspace/file-actions.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/place-rules": 1
+    }
+  },
   "src/workspace/graph.ts": {
     "asset-io": {
       "statSync": 1
     }
   },
   "src/workspace/new-file.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/file-context": 1,
+      "src/core/adapter/directory/matchers": 1
+    },
     "asset-io": {
       "buildFileContext": 1
     }
   },
   "src/workspace/sensitive.ts": {
+    "adapter-import": {
+      "src/core/adapter/directory/place-rules": 1
+    },
     "entry-file": {
       "entry.file": 1
     }
