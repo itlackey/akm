@@ -14,12 +14,12 @@ import { COMPOSITION_INVALID_MULTI_JOB_HINT, ConfigError, NotFoundError, UsageEr
 import { warn } from "../../core/warn";
 import { isPortableExecutionAgentSelector, type UnresolvedExecutionDefaults } from "../../execution/source";
 import { buildExecution } from "../../integrations/agent/execution";
-import { resolveAssetPath } from "../../sources/resolve";
 import { checkWorkflowPlan, compileWorkflowSource } from "../../workflows/compile";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { isInferredSecretName } from "../log-redaction";
 import { SCHEDULED_TASK_CONTEXT_KEYS } from "../scheduler-invocation";
 import type { TaskV3Environment, TaskV3HostShell, TaskV3SourceDocument } from "../source-v3";
+import { resolveOwnBundleAsset } from "../task-ref";
 import type { PrepareTaskV3ExecutionContext, TaskV3PreparedBase } from "./prepared-execution";
 
 function own(value: object | undefined, key: PropertyKey): boolean {
@@ -138,10 +138,7 @@ export async function resolvedOwnedAsset(
       "ASSET_NOT_FOUND",
     );
   }
-  return Object.freeze({
-    file: await resolveAssetPath(context.bundleRoot, type, name),
-    bundleRoot: context.bundleRoot,
-  });
+  return Object.freeze(resolveOwnBundleAsset({ name: context.bundleName, path: context.bundleRoot }, { type, name }));
 }
 
 export function defaultTaskShell(platform: NodeJS.Platform): TaskV3HostShell {

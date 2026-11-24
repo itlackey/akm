@@ -12,9 +12,9 @@ import { isBundleSlug, makeBundleRef } from "../../core/asset/asset-ref";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, replaceFrontmatterBlocks } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parseQualifiedPlacementRef } from "../../core/asset/resolve-ref";
-import { assetAtKey, findAsset, packageFilesAt } from "../../core/assets/read";
-import { assetTypeFresh, embedPendingWrites } from "../../core/assets/type";
-import { fileOfRef, writeAssets } from "../../core/assets/write";
+import { type Asset, assetAtKey, findAsset, packageFilesAt } from "../../core/assets/read";
+import { assetTypeFresh, embedPendingWrites, indexedPathOf } from "../../core/assets/type";
+import { writeAssets } from "../../core/assets/write";
 import { materialiseBundleDir } from "../../core/bundle-at-dir";
 import { isWithin, relativeToRoot, safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -25,7 +25,6 @@ import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { isRemoteOrigin, resolveSourcesForLocator, resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
-import { resolveAssetPath } from "../../sources/resolve";
 import { inferAssetName } from "../read/knowledge";
 
 export interface CloneOptions {
@@ -139,7 +138,9 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   for (const source of searchSources) {
     try {
       if (known) {
-        sourcePath = await resolveAssetPath(source.path, parsed.type, parsed.name);
+        sourcePath = heldFile(source, conceptIdFromTypeName(parsed.type, parsed.name))?.file;
+        if (!sourcePath)
+          throw new NotFoundError(`Source asset not found for ref: ${options.sourceRef}`, "ASSET_NOT_FOUND");
       } else {
         const owned = resolveOpaqueAsset(source, parsed.name);
         if (!owned) throw new NotFoundError(`Source asset not found for ref: ${options.sourceRef}`, "ASSET_NOT_FOUND");
@@ -384,6 +385,15 @@ function lstatIfExists(filePath: string): fs.Stats | undefined {
   }
 }
 
+/** The asset `conceptId` names in the bundle at `source`, and the file that holds it as authored (not a link's target). */
+function heldFile(source: SearchSource, conceptId: string): { asset: Asset; file: string } | undefined {
+  const bundle = materialiseBundleDir(source.path);
+  const ref = makeBundleRef(bundle, conceptId);
+  const asset = findAsset(ref);
+  const file = asset ? indexedPathOf(asset) : "";
+  return asset && file ? { asset, file } : undefined;
+}
+
 /**
  * Find an opaque concept (one whose id is not under a known type directory) in
  * a source through the adapter that owns it, and name the type that adapter
@@ -391,12 +401,8 @@ function lstatIfExists(filePath: string): fs.Stats | undefined {
  * index use, so a clone sees exactly the file the index holds for the ref.
  */
 function resolveOpaqueAsset(source: SearchSource, conceptId: string): { path: string; type?: string } | undefined {
-  const bundle = materialiseBundleDir(source.path);
-  const ref = makeBundleRef(bundle, conceptId);
-  const asset = findAsset(ref);
-  const file = asset ? fileOfRef(bundle, ref) : undefined;
-  if (!asset || !file) return undefined;
-  return { path: safeRealpath(file), type: assetTypeFresh(asset) };
+  const held = heldFile(source, conceptId);
+  return held ? { path: safeRealpath(held.file), type: assetTypeFresh(held.asset) } : undefined;
 }
 
 /**
