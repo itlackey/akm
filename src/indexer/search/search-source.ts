@@ -40,13 +40,14 @@ export interface SearchSource {
 // ── Resolution ──────────────────────────────────────────────────────────────
 
 /**
- * The working stash read besides the configured bundles: an explicit argument,
+ * The working stash read besides the configured bundles: an explicit argument (`null`: none),
  * else `AKM_BUNDLE_DIR`, else the platform default stash when no `defaultBundle`
  * is configured. With a `defaultBundle` and no override there is none, because
  * the configured bundle is the working stash. Throws as `resolveStashDir` does
  * when the directory is missing.
  */
-export function implicitStashDir(config: AkmConfig, overrideStashDir?: string): string | undefined {
+export function implicitStashDir(config: AkmConfig, overrideStashDir?: string | null): string | undefined {
+  if (overrideStashDir === null) return undefined;
   if (overrideStashDir !== undefined) return path.resolve(overrideStashDir);
   if (process.env.AKM_BUNDLE_DIR?.trim()) return resolveStashDir();
   return config.defaultBundle ? undefined : resolveStashDir();
@@ -65,7 +66,7 @@ export function implicitStashDir(config: AkmConfig, overrideStashDir?: string): 
  * indexer can classify their scan as incomplete instead of mistaking them for
  * removed sources.
  */
-export function resolveSourceEntries(overrideStashDir?: string, existingConfig?: AkmConfig): SearchSource[] {
+export function resolveSourceEntries(overrideStashDir?: string | null, existingConfig?: AkmConfig): SearchSource[] {
   const config = existingConfig ?? loadConfig();
   const configuredEntries = bundlesToSourceEntries(config) ?? [];
   const implicitStash = implicitStashDir(config, overrideStashDir);
