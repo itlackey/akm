@@ -168,6 +168,8 @@ bun scripts/integration-timings.ts update /tmp/shards/shard-*.xml
 `update` takes the reported time for every file the reports name, keeps the
 record of any other file, and drops files that no longer exist. A local run works
 the same way: `TEST_INTEGRATION_LOGDIR=/tmp/shards bun run test:integration`.
+The committed file comes from local runs; once a Release run has uploaded an
+`integration-shards` artifact, regenerate it from that run's reports.
 
 ### The preload
 
