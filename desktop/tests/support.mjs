@@ -384,6 +384,19 @@ export async function open(page, server, route) {
   await page.goto(server.url);
   if (route && route !== "/") await page.goto(server.origin + route);
 }
+/**
+ * The server's answer to a POST to `pathname` (a string, or a RegExp a path must match). A write that runs akm (setup,
+ * a move, a save and its index, a proposal decision) can outlast an assertion's wait on a loaded machine, so a test
+ * that reads what the page says about a write waits for this first; the assertion and its wait stay as they were.
+ */
+export function answered(page, pathname) {
+  return page.waitForResponse((response) => {
+    const path = new URL(response.url()).pathname;
+    return (
+      response.request().method() === "POST" && (typeof pathname === "string" ? path === pathname : pathname.test(path))
+    );
+  });
+}
 export function go(page, href) {
   return page.evaluate((href) => {
     const link = document.createElement("a");
