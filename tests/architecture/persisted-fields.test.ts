@@ -14,11 +14,11 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { openStateDatabase } from "../../../src/core/state-db";
-import { openIndexDatabase } from "../../../src/storage/repositories/index-connection";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { openStateDatabase } from "../../src/core/state-db";
+import { openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
-const REPO_ROOT = path.resolve(import.meta.dir, "../../..");
+const REPO_ROOT = path.resolve(import.meta.dir, "../..");
 const STORAGE_NAME = /path|dir|root/i;
 
 /** Field -> the phase that removes it. */

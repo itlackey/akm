@@ -14,9 +14,9 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { makeSandboxDir } from "../../_helpers/sandbox";
+import { makeSandboxDir } from "../_helpers/sandbox";
 
-const REPO_ROOT = path.resolve(import.meta.dir, "../../..");
+const REPO_ROOT = path.resolve(import.meta.dir, "../..");
 const LINT_SCRIPT = path.join(REPO_ROOT, "scripts", "lint-secret-resolver-boundary.ts");
 const UPDATE_COMMAND = path.join(REPO_ROOT, "src", "commands", "sources", "installed-stashes.ts");
 
