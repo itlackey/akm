@@ -68,6 +68,9 @@
       }
     }
   },
+  "workflow": {
+    "maxConcurrency": 2
+  },
   "scheduler": {
     "enabled": ["main//tasks/nightly", "team//tasks/team-task", "main//tasks/report"]
   }
