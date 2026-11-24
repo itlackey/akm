@@ -27,14 +27,6 @@
       "entry.file": 1
     }
   },
-  "src/commands/feedback-cli.ts": {
-    "asset-io": {
-      "existsSync": 2,
-      "lstatSync": 2,
-      "readFileSync": 2,
-      "writeFileAtomic": 1
-    }
-  },
   "src/commands/health/bundle-adapters-check.ts": {
     "adapter-import": {
       "src/core/adapter/registry": 1
@@ -50,13 +42,7 @@
     "asset-io": {
       "existsSync": 3,
       "readFileSync": 5,
-      "statSync": 1,
-      "writeFileSync": 1
-    }
-  },
-  "src/commands/improve/memory/memory-belief.ts": {
-    "asset-io": {
-      "mutateFrontmatter": 1
+      "statSync": 1
     }
   },
   "src/commands/improve/memory/memory-improve.ts": {
@@ -66,20 +52,13 @@
     "asset-io": {
       "appendFileSync": 1,
       "existsSync": 2,
-      "mutateFrontmatter": 1,
-      "readFileSync": 3,
-      "statSync": 2,
-      "writeFileSync": 1
+      "readFileSync": 2,
+      "statSync": 2
     }
   },
   "src/commands/improve/retrieval-scope.ts": {
     "asset-io": {
       "statSync": 1
-    }
-  },
-  "src/commands/improve/session-asset.ts": {
-    "asset-io": {
-      "writeFileSync": 1
     }
   },
   "src/commands/lint/index.ts": {
@@ -97,15 +76,6 @@
       "rmSync": 3,
       "statSync": 1,
       "writeFileSync": 1
-    }
-  },
-  "src/commands/read/knowledge.ts": {
-    "adapter-id": {
-      "akm": 2
-    },
-    "asset-io": {
-      "existsSync": 2,
-      "readFileSync": 2
     }
   },
   "src/commands/read/related.ts": {
@@ -154,12 +124,6 @@
       "entry.file": 2
     }
   },
-  "src/core/asset/frontmatter.ts": {
-    "asset-io": {
-      "readFileSync": 1,
-      "writeFileAtomic": 1
-    }
-  },
   "src/core/asset/llm-wiki-root.ts": {
     "asset-io": {
       "existsSync": 1,
@@ -184,11 +148,6 @@
       "refreshIndexedAsset": 1
     }
   },
-  "src/core/assets/write.ts": {
-    "facade-export": {
-      "AssetWriter": 1
-    }
-  },
   "src/core/env-secret-ref.ts": {
     "entry-file": {
       "entry.file": 4
@@ -196,22 +155,7 @@
   },
   "src/core/write-source.ts": {
     "adapter-import": {
-      "src/core/adapter/adapters/akm-format": 1,
       "src/core/adapter/directory-adapter": 1
-    },
-    "asset-io": {
-      "writeFileAtomic": 1
-    }
-  },
-  "src/indexer/index-written-assets.ts": {
-    "adapter-import": {
-      "src/core/adapter/registry": 1
-    },
-    "asset-io": {
-      "adapterForId": 1,
-      "buildFileContext": 1,
-      "existsSync": 1,
-      "lstatSync": 1
     }
   },
   "src/indexer/passes/dir-staleness.ts": {
@@ -220,14 +164,9 @@
     }
   },
   "src/indexer/passes/memory-inference.ts": {
-    "adapter-id": {
-      "akm": 1
-    },
     "asset-io": {
-      "existsSync": 4,
-      "readFileSync": 3,
-      "writeFileAtomic": 1,
-      "writeFileSync": 1
+      "existsSync": 1,
+      "readFileSync": 1
     }
   },
   "src/indexer/passes/metadata.ts": {
@@ -247,11 +186,6 @@
       "existsSync": 1
     }
   },
-  "src/setup/steps/tasks.ts": {
-    "asset-io": {
-      "writeFileSync": 1
-    }
-  },
   "src/sources/resolve.ts": {
     "adapter-import": {
       "src/core/adapter/recognize-match": 1
@@ -269,8 +203,7 @@
   },
   "src/workspace/new-file.ts": {
     "asset-io": {
-      "buildFileContext": 1,
-      "existsSync": 1
+      "buildFileContext": 1
     }
   },
   "src/workspace/sensitive.ts": {

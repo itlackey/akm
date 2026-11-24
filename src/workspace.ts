@@ -10,6 +10,7 @@
 
 export { indexFiles } from "./core/assets/files";
 export { clearAdapterCaches } from "./core/assets/gate";
+export { embedPendingWrites } from "./core/assets/type";
 export {
   AkmError,
   type AkmErrorKind,

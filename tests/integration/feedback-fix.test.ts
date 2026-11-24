@@ -6,6 +6,8 @@ import { writeSupersededEdge } from "../../src/commands/improve/memory/memory-be
 import { buildSnapshotManifest } from "../../src/commands/improve/preparation";
 import { getProposal, listProposals } from "../../src/commands/proposal/repository";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+import { writeAssets } from "../../src/core/assets/write";
+import { writeTargetAt } from "../../src/core/bundle-at-dir";
 import { saveConfig } from "../../src/core/config/config";
 import { UsageError } from "../../src/core/errors";
 import { readEvents } from "../../src/core/events";
@@ -630,7 +632,8 @@ describe("applyHistoryMark", () => {
   });
 
   test("agrees with writeSupersededEdge on what a successor does to the frontmatter", () => {
-    const file = path.join(stashDir, "parity.md");
+    fs.mkdirSync(path.join(stashDir, "memories"), { recursive: true });
+    const file = path.join(stashDir, "memories", "parity.md");
     for (const frontmatter of [
       "description: d",
       "beliefState: active",
@@ -642,7 +645,7 @@ describe("applyHistoryMark", () => {
     ]) {
       const raw = doc(frontmatter);
       fs.writeFileSync(file, raw);
-      writeSupersededEdge(file, REF);
+      writeAssets(writeTargetAt(stashDir), { purpose: "test" }, (w) => writeSupersededEdge(w, "memories/parity", REF));
       // writeSupersededEdge sorts the list; a line edit appends, so compare the lists sorted.
       const sorted = (data: Record<string, unknown>) => ({
         ...data,

@@ -23,13 +23,16 @@ import { resolveInjectionRefs } from "../../src/commands/env/injection";
 import { collectBundleAdaptersCheck } from "../../src/commands/health/bundle-adapters-check";
 import { azureKeyVaultAdapter, purgeRetry } from "../../src/core/adapter/adapters/azure-key-vault-adapter";
 import { secretToolAdapter } from "../../src/core/adapter/adapters/secret-tool-adapter";
+import type { NewAsset } from "../../src/core/adapter/bundle-adapter";
 import { clearAdapterCaches } from "../../src/core/adapter/registry";
 import { clientFailure } from "../../src/core/adapter/secret-manager-adapter";
+import type { Bundle } from "../../src/core/adapter/types";
 import { parseBundleRef } from "../../src/core/asset/asset-ref";
 import { assetBundleOf } from "../../src/core/assets/bundle";
 import { resetConfigCache } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
 import { _setWarnSinkForTests } from "../../src/core/warn";
+import { readUsableIndex } from "../../src/indexer/index-readiness";
 import { akmIndex } from "../../src/indexer/indexer";
 import { sensitive } from "../../src/workspace";
 import { runCliCapture } from "../_helpers/cli";
@@ -100,6 +103,32 @@ function requests(calls: string[][]): string[] {
     return `${program} ${program === "az" ? words[2] : words[0]}`;
   });
 }
+
+/**
+ * The keyring adapter as the facade calls it: a keyring entry is found by what the index recorded of it (its `locator`),
+ * which the facade reads from the index row and hands over; a write hands back the entry it wrote.
+ */
+function locatorFromIndex(bundleId: string, conceptId: string): unknown {
+  return readUsableIndex((db) => {
+    const row = db.prepare("SELECT document_json FROM entries WHERE item_ref = ?").get(`${bundleId}//${conceptId}`) as
+      | { document_json: string }
+      | undefined;
+    return row ? (JSON.parse(row.document_json) as { locator?: unknown }).locator : undefined;
+  }, undefined);
+}
+const withLocator = (b: { id: string }, conceptId: string) => {
+  const locator = locatorFromIndex(b.id, conceptId);
+  return locator === undefined ? {} : { locator };
+};
+const keyringAdapter = {
+  list: (b: Bundle) => secretToolAdapter.list(b),
+  read: (b: Bundle, conceptId: string) => secretToolAdapter.read(b, conceptId, locatorFromIndex(b.id, conceptId)),
+  create: (b: Bundle, asset: NewAsset, options: { replace?: boolean } = {}) =>
+    secretToolAdapter.create(b, asset, { ...options, ...withLocator(b, `secrets/${asset.name}`) }),
+  update: (b: Bundle, conceptId: string, content: string) =>
+    secretToolAdapter.update(b, conceptId, content, withLocator(b, conceptId)),
+  delete: (b: Bundle, conceptId: string) => secretToolAdapter.delete(b, conceptId, withLocator(b, conceptId)),
+};
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 /** The error code a workspace operation fails with. */
@@ -544,7 +573,7 @@ describe("secret manager bundles: what the stores do that a file does not", () =
     };
     await withFakeSecretStores({ keyrings: clash }, async () => {
       await indexStores();
-      const adapter = secretToolAdapter;
+      const adapter = keyringAdapter;
       const read = () => adapter.read(bundle("keyring", "akm"), "secrets/wifi")?.entry.content();
       expect(read).toThrow(/"wifi-login".*include those of "wifi"/);
       expect(() => adapter.update(bundle("keyring", "akm"), "secrets/wifi", "new")).toThrow(/"wifi-login"/);
@@ -555,7 +584,7 @@ describe("secret manager bundles: what the stores do that a file does not", () =
     await withFakeSecretStores({ keyrings: KEYRING }, async (stores) => {
       await indexStores();
       const before = stores.state().calls.length;
-      expect(secretToolAdapter.read(bundle("keyring", "akm"), "secrets/wifi")?.entry.content()).toBe("hunter2");
+      expect(keyringAdapter.read(bundle("keyring", "akm"), "secrets/wifi")?.entry.content()).toBe("hunter2");
       const calls = stores.state().calls.slice(before);
       expect(requests(calls)).toEqual(["busctl call", "secret-tool lookup"]);
       expect(calls[0]).toContain("SearchItems");
@@ -585,7 +614,7 @@ describe("secret manager bundles: what the stores do that a file does not", () =
       const state = JSON.parse(fs.readFileSync(process.env.AKM_FAKE_STORE_STATE as string, "utf8"));
       state.keyrings.akm[1].attributes = { server: "Secret Service", type: "plaintext", user: "wifi" };
       fs.writeFileSync(process.env.AKM_FAKE_STORE_STATE as string, JSON.stringify(state));
-      expect(() => secretToolAdapter.read(bundle("keyring", "akm"), "secrets/wifi")?.entry.content()).toThrow(
+      expect(() => keyringAdapter.read(bundle("keyring", "akm"), "secrets/wifi")?.entry.content()).toThrow(
         'Keyring "akm" no longer holds "wifi" as indexed: run akm index.',
       );
       expect(stores.state().calls.some((call) => call[0] === "secret-tool" && call[1] === "lookup")).toBe(false);
@@ -666,7 +695,7 @@ describe("secret manager bundles: what the stores do that a file does not", () =
 
   test("a misconfigured secret bundle does not throw for a ref that is not a secret", () => {
     const b = { id: "keyring", root: "/x", writable: true };
-    expect(secretToolAdapter.read(b, "skills/x")).toBeUndefined();
+    expect(keyringAdapter.read(b, "skills/x")).toBeUndefined();
   });
 
   test("showing a store secret does not say its value is a file", async () => {
@@ -720,7 +749,7 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
     await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
       await indexStores();
       const warnings = await capture(() => {
-        expect(secretToolAdapter.read(b, "secrets/wifi")?.entry.content()).toBe("hunter2");
+        expect(keyringAdapter.read(b, "secrets/wifi")?.entry.content()).toBe("hunter2");
       });
       expect(warnings).toEqual([lockedWarning]);
       expect(stores.state().locked).toEqual([]);
@@ -731,7 +760,7 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
   test("a store into a locked keyring prints the unlock line once, and succeeds", async () => {
     await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
       const warnings = await capture(() => {
-        secretToolAdapter.create(b, { type: "secret", name: "new", content: "fresh" });
+        keyringAdapter.create(b, { type: "secret", name: "new", content: "fresh" });
       });
       expect(warnings).toEqual([lockedWarning]);
       expect(stores.state().locked).toEqual([]);
@@ -743,7 +772,7 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
     await withFakeSecretStores({ keyrings: KEYRING, locked: ["akm"] } as never, async (stores) => {
       await indexStores();
       const warnings = await capture(() => {
-        secretToolAdapter.delete(b, "secrets/wifi");
+        keyringAdapter.delete(b, "secrets/wifi");
       });
       expect(warnings).toEqual([lockedWarning]);
       expect(stores.state().keyrings.akm?.map((item) => item.label)).toEqual(["gh_token"]);
@@ -756,7 +785,7 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
   test("a delete the keyring answers but does not carry out is an error", async () => {
     await withFakeSecretStores({ keyrings: KEYRING, deleteKeeps: ["akm"] } as never, async () => {
       await indexStores();
-      expect(() => secretToolAdapter.delete(b, "secrets/wifi")).toThrow("is still there");
+      expect(() => keyringAdapter.delete(b, "secrets/wifi")).toThrow("is still there");
     });
   });
 
@@ -776,8 +805,8 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
       await indexStores();
       const listed = secretToolAdapter.list(b).assets.map((asset) => asset.conceptId);
       expect(listed).toEqual(["secrets/dup", "secrets/solo"]);
-      expect(secretToolAdapter.read(b, "secrets/dup")?.entry.content()).toBe("one");
-      expect(secretToolAdapter.read(b, "secrets/solo")?.entry.content()).toBe("s");
+      expect(keyringAdapter.read(b, "secrets/dup")?.entry.content()).toBe("one");
+      expect(keyringAdapter.read(b, "secrets/solo")?.entry.content()).toBe("s");
     });
   });
 
@@ -787,7 +816,7 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
       async (stores) => {
         await indexStores();
         await capture(() => {
-          expect(() => secretToolAdapter.read(b, "secrets/wifi")?.entry.content()).toThrow("locked");
+          expect(() => keyringAdapter.read(b, "secrets/wifi")?.entry.content()).toThrow("locked");
         });
         expect(stores.state().locked).toEqual(["akm"]);
       },
@@ -819,15 +848,15 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
       { keyrings: wallet, labels: { wallet: "akm-test" }, unaliased: ["wallet"] } as never,
       async (stores) => {
         await indexStores("akm-test");
-        expect(secretToolAdapter.read(hyphen, "secrets/wifi")?.entry.content()).toBe("hunter2");
-        secretToolAdapter.create(hyphen, { type: "secret", name: "fresh", content: "v1" });
+        expect(keyringAdapter.read(hyphen, "secrets/wifi")?.entry.content()).toBe("hunter2");
+        keyringAdapter.create(hyphen, { type: "secret", name: "fresh", content: "v1" });
         expect(
           stores
             .state()
             .keyrings.wallet?.map((item) => item.label)
             .sort(),
         ).toEqual(["fresh", "wifi"]);
-        secretToolAdapter.create(hyphen, { type: "secret", name: "again", content: "v2" }, { replace: true });
+        keyringAdapter.create(hyphen, { type: "secret", name: "again", content: "v2" }, { replace: true });
         expect(stores.state().aliases).toBeUndefined();
         expect(stores.state().calls.some((call) => call.includes("SetAlias"))).toBe(false);
         const stored = stores.state().calls.filter((call) => call[0] === "secret-tool" && call[1] === "store");
@@ -865,7 +894,7 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
       await indexStores();
       expect(secretToolAdapter.list(b).assets.map((asset) => asset.conceptId)).toEqual(["secrets/dup", "secrets/solo"]);
       // The lowest object path wins.
-      expect(secretToolAdapter.read(b, "secrets/dup")?.entry.content()).toBe("first-value");
+      expect(keyringAdapter.read(b, "secrets/dup")?.entry.content()).toBe("first-value");
       // What `akm index` recorded, which the facade adds to the adapter's own findings.
       const found = await assetBundleOf({
         name: "keyring",
@@ -876,13 +905,13 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
       expect(found).toHaveLength(1);
       expect(found[0]).toMatchObject({ ref: "keyring//secrets/dup", issue: "shadowed-spelling", fixed: false });
       expect(found[0]?.detail).toContain(`${KEYRING_PATH}/1 is used and ${KEYRING_PATH}/2, ${KEYRING_PATH}/3 ignored`);
-      secretToolAdapter.update(b, "secrets/dup", "changed");
-      expect(secretToolAdapter.read(b, "secrets/dup")?.entry.content()).toBe("changed");
+      keyringAdapter.update(b, "secrets/dup", "changed");
+      expect(keyringAdapter.read(b, "secrets/dup")?.entry.content()).toBe("changed");
     });
     const plain = { akm: [keyringItem(7, "same", "seven", { a: "1" }), keyringItem(5, "same", "five", { a: "2" })] };
     await withFakeSecretStores({ keyrings: plain }, async () => {
       await indexStores();
-      expect(secretToolAdapter.read(b, "secrets/same")?.entry.content()).toBe("five");
+      expect(keyringAdapter.read(b, "secrets/same")?.entry.content()).toBe("five");
     });
   });
 
@@ -903,9 +932,9 @@ describe("a keyring behaves like a directory of secrets (A10, N3)", () => {
       expect(listed).toEqual(["secrets/good", "secrets/nested/name"]);
       for (const conceptId of listed) {
         expect(parseBundleRef(`keyring//${conceptId}`).conceptId).toBe(conceptId);
-        expect(secretToolAdapter.read(b, conceptId)?.conceptId).toBe(conceptId);
+        expect(keyringAdapter.read(b, conceptId)?.conceptId).toBe(conceptId);
       }
-      expect(secretToolAdapter.read(b, "secrets/has#hash")).toBeUndefined();
+      expect(keyringAdapter.read(b, "secrets/has#hash")).toBeUndefined();
       // What `akm index` recorded, which the facade adds to the adapter's own findings.
       const found = await assetBundleOf({
         name: "keyring",
@@ -1128,7 +1157,7 @@ describe("review fixes (K gate)", () => {
       { keyrings: login, labels: { login: "Login" }, unaliased: ["login"] } as never,
       async () => {
         await indexStores("login");
-        expect(secretToolAdapter.read(b, "secrets/wifi")?.entry.content()).toBe("w");
+        expect(keyringAdapter.read(b, "secrets/wifi")?.entry.content()).toBe("w");
       },
     );
   });

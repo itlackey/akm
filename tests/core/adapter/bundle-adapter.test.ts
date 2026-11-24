@@ -109,7 +109,7 @@ const stubAdapter: BundleAdapter = {
     return [];
   },
 
-  place(): string {
+  place(): never {
     throw new Error("read-only");
   },
   create(): never {

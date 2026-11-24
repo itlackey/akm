@@ -137,7 +137,8 @@ Also exported: `AkmError`, `UsageError`, `NotFoundError`, `ConfigError`, `Transi
 serves many requests calls it at the start of each, so a keyring or vault that changed in between is
 read afresh) and `indexFiles(bundle,
 files)`, which refreshes the index rows for files a host edited inside a bundle itself
-(it never rebuilds the index and fails open, returning `false`). No primitive is exported: the
+(it never rebuilds the index and fails open, returning `false`) and `embedPendingWrites()`, which makes the
+vectors of the rows the request's writes recorded (a host awaits it before the request ends; fail-open). No primitive is exported: the
 env/secret, lease, write-target and dispatcher functions stay inside the operations.
 
 **Revisions.** A `revision` is the sha256 hex of the raw file bytes, for every single-file asset,

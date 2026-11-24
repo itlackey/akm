@@ -110,8 +110,8 @@ describe("identity is the path: every directory adapter, on its fixture", () => 
         const [type] = adapter.writes;
         if (type !== undefined) {
           const placed = adapter.place(b, { type, name: "probe/new" });
-          expect(placed, `${adapter.id} places ${type}`).toBeString();
-          expect(adapter.read(b, placed), `${adapter.id}: a placed concept is not there yet`).toBeUndefined();
+          expect(placed.conceptId, `${adapter.id} places ${type}`).toBeString();
+          expect(adapter.read(b, placed.conceptId), `${adapter.id}: a placed concept is not there yet`).toBeUndefined();
         }
         expect(adapter.retired(b), `${adapter.id} retired`).toEqual([]);
       } finally {
@@ -234,9 +234,9 @@ describe("identity is the path: a secret manager's entries", () => {
         expect(assets.length, adapter.id).toBe(1);
         const [asset] = assets as [(typeof assets)[number]];
         expect(asset.entry.key, adapter.id).toBe(asset.conceptId);
-        expect(adapter.read(b, asset.conceptId)?.conceptId, adapter.id).toBe(asset.conceptId);
+        expect(adapter.read(b, asset.conceptId, asset.entry.locator)?.conceptId, adapter.id).toBe(asset.conceptId);
         expect(adapter.recognize(b, asset.entry)?.conceptId, adapter.id).toBe(asset.conceptId);
-        expect(adapter.place(b, { type: "secret", name: "other" }), adapter.id).toBe("secrets/other");
+        expect(adapter.place(b, { type: "secret", name: "other" }), adapter.id).toEqual({ conceptId: "secrets/other" });
         expect(adapter.retired(b), adapter.id).toEqual([]);
       }
     });
@@ -253,12 +253,12 @@ describe("a validated create is checked at the file a create writes", () => {
       const b: Bundle = { id: "b", root: sandbox.dir };
       const asset = { type, name: "probe" };
       let conceptId: string;
+      let placed: string | undefined;
       try {
-        conceptId = adapter.place(b, asset);
+        ({ conceptId, file: placed } = adapter.place(b, asset));
       } catch {
         return; // a name the adapter refuses to place has no file to compare
       }
-      const placed = adapter.placement(b, asset)?.file;
       expect(placed).toBeDefined();
       expect(
         path

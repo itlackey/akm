@@ -209,10 +209,10 @@ export async function prepareSetupTaskDefinitions(
           });
         } else {
           const original = entry.original;
+          // The task as it was, byte for byte.
           write(target, { purpose: "setup-tasks" }, (w) =>
-            w.create({ type: "task", name: entry.name, content: original }),
+            w.create({ type: "task", name: entry.name, content: original }, { verbatim: true }),
           );
-          fs.writeFileSync(entry.filePath, entry.original, "utf8");
         }
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);

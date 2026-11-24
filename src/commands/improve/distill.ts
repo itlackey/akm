@@ -27,13 +27,13 @@ import { stripMarkdownFences } from "../../core/asset/markdown";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { lookupAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
-import { addressOf } from "../../core/assets/write";
+import { addressOf, conceptIdAtFile, writeAssets } from "../../core/assets/write";
 import { authoringRulesForType } from "../../core/authoring-rules";
-import { materialiseBundleDir } from "../../core/bundle-at-dir";
+import { materialiseBundleDir, writeTargetAt } from "../../core/bundle-at-dir";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
-import { UsageError } from "../../core/errors";
+import { assetNotFound, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { AkmDistillResult, DistillOutcome } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
@@ -42,7 +42,6 @@ import { getDbPath } from "../../core/paths";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { withStateDb } from "../../core/state-db";
 import { warn, warnVerbose } from "../../core/warn";
-import { recordWrittenPath } from "../../core/write-provenance";
 import { type NoticeSet, noticeSet } from "../../execution/notices";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
 import {
@@ -1314,8 +1313,14 @@ function stampInputSalience(run: DistillRun): void {
     const scored = scoreEncodingSalience({ body: content, type, existingRefVocabulary: run.vocabulary, revisionCount });
     const updated = writeSalienceToFrontmatter(content, scored.score, scored);
     if (updated !== content) {
-      fs.writeFileSync(filePath, updated, "utf8");
-      recordWrittenPath(filePath);
+      // The mirror is written to the asset the input names, in its own bundle (the journal records it, #652).
+      const target = writeTargetAt(run.stash);
+      // The asset the input names in the stash it was loaded from, else the one its file would hold.
+      const owned = lookupAsset(run.inputRef, { bundle: target.source.name });
+      const conceptId =
+        owned?.bundle === target.source.name ? owned.conceptId : conceptIdAtFile(target.source.name, filePath);
+      if (conceptId === undefined) throw assetNotFound(run.inputRef);
+      writeAssets(target, { purpose: "distill-salience" }, (w) => w.update(conceptId, updated));
       run.asset.content = updated;
     }
     try {

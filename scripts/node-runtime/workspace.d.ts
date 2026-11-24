@@ -47,6 +47,8 @@ export function scrubUrlCredentials(value: unknown): unknown;
 export function clearAdapterCaches(): void;
 /** Refresh the existing index for files (absolute paths) just written inside a directory bundle; fail-open, `false` when the index could not be updated. */
 export function indexFiles(bundle: string, files: string[]): Promise<boolean>;
+/** Make the vectors of the rows this request's writes recorded, when semantic search is on; fail-open. A host calls it before a request ends. */
+export function embedPendingWrites(): Promise<void>;
 
 /** The file: its ref, or its bundle-relative path in a named bundle. */
 export interface SensitiveSelector {

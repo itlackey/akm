@@ -17,9 +17,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../../../src/core/paths";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { openDatabase } from "../../../src/storage/database";
+import { indexWrittenAssets } from "../../_helpers/index-written-files";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const QUERIES = ["topic3", "widget7", "note", "words", "twice"];

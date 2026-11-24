@@ -9,14 +9,12 @@
  * `log_path` + `access` in the frontmatter tell any agent how to read the raw log.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { stashDirFor } from "../../core/asset/asset-placement";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
+import { writeAssets } from "../../core/assets/write";
+import { writeTargetAt } from "../../core/bundle-at-dir";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { redactCredentialPatterns, redactSensitiveText } from "../../core/redaction";
-import { recordWrittenPath } from "../../core/write-provenance";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionData, SessionEvent } from "../../integrations/session-logs/types";
 import { fenceTranscript } from "./extract-prompt";
@@ -222,12 +220,6 @@ export function buildSessionAssetContent(
   return { name, frontmatter, content };
 }
 
-/** Resolve `<stash>/sessions/<harness>/<session-id>.md`. */
-export function resolveSessionAssetPath(stashDir: string, harness: string, sessionId: string): string {
-  const dir = stashDirFor("session") ?? "sessions";
-  return path.join(stashDir, dir, harness, `${sessionId}.md`);
-}
-
 export interface WriteSessionAssetResult {
   written: boolean;
   filePath?: string;
@@ -252,15 +244,15 @@ export async function writeSessionAsset(
   const { content } = buildSessionAssetContent(data, summary, projectName);
   const harness = data.ref.harness;
   const sessionId = data.ref.sessionId;
-  const filePath = resolveSessionAssetPath(stashDir, harness, sessionId);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, "utf8");
-  // Written outside the proposal queue: journal it so auto-sync commits it (#652).
-  recordWrittenPath(filePath);
+  // Kept exactly as built; the write is journaled so auto-sync commits it (#652), and the facade records its index row.
+  const filePath = writeAssets(writeTargetAt(stashDir), { purpose: "session-asset" }, (w) => {
+    w.create({ type: "session", name: `${harness}/${sessionId}`, content }, { verbatim: true });
+    return w.address(conceptIdFromTypeName("session", `${harness}/${sessionId}`)).file;
+  });
 
   return {
     written: true,
-    filePath,
+    ...(filePath !== undefined ? { filePath } : {}),
     ref: conceptIdFromTypeName("session", `${harness}/${sessionId}`),
     logPath: data.ref.filePath,
   };

@@ -12,6 +12,7 @@ import { isBundleSlug, makeBundleRef } from "../../core/asset/asset-ref";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, replaceFrontmatterBlocks } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parseQualifiedPlacementRef } from "../../core/asset/resolve-ref";
+import { indexFiles } from "../../core/assets/files";
 import { findAsset } from "../../core/assets/read";
 import { assetTypeFresh } from "../../core/assets/type";
 import { materialiseBundleDir } from "../../core/bundle-at-dir";
@@ -27,7 +28,6 @@ import {
   resolveWriteTarget,
 } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { isRemoteOrigin, resolveSourcesForLocator, resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
@@ -311,7 +311,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
         path.relative(commitRoot, filePath).replaceAll(path.sep, "/"),
       );
       commitWriteTargetBoundary(writeTarget, `Clone ${ref}`, { paths: commitPaths });
-      if (!(await indexWrittenAssets(writeTarget.source.path, [destPath], { bundleId: writeTarget.source.name }))) {
+      if (!(await indexFiles(writeTarget.source.name, [destPath]))) {
         warn(`Clone ${ref} succeeded, but its targeted index update failed; run \`akm index\` to refresh it.`);
       }
     }

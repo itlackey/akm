@@ -29,6 +29,7 @@ import {
 import { MEMORY_ARCHIVE_REL } from "../../core/asset/memory-archive";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { stalePathRoots } from "../../core/asset/stale-path";
+import { indexFiles } from "../../core/assets/files";
 import { assertAdapterWrites } from "../../core/assets/gate";
 import { currentConceptId, qualifyRef, readAsset } from "../../core/assets/read";
 import { type AssetAddress, addressOf, legacyRefOf, writeAssets } from "../../core/assets/write";
@@ -54,7 +55,6 @@ import {
   type WriteTargetSource,
 } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { deriveInstallations } from "../../indexer/installations";
 import { sameScope, scopeFromFrontmatter } from "../../indexer/passes/metadata";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
@@ -1204,7 +1204,7 @@ function writeProposalAssetFile(assetPath: string, content: string): void {
 async function indexWrittenProposalAssets(target: ResolvedWriteTarget, assetPaths: string[]): Promise<void> {
   const label = assetPaths.join(", ");
   try {
-    if (!(await indexWrittenAssets(target.source.path, assetPaths, { bundleId: target.source.name }))) {
+    if (!(await indexFiles(target.source.name, assetPaths))) {
       warn(`[proposals] ${label} was written but not indexed; run \`akm index\`.`);
     }
   } catch (error) {
@@ -2099,7 +2099,9 @@ async function retireProposalWithLease(
     scheduler = await disableRetiredTask(ref, target.source.name);
     if (retirement?.judgeLabel === "supersedes") {
       try {
-        writeSupersededEdge(assetPath, retirement.successorRef);
+        writeAssets(target, { purpose: "proposal-retire" }, (w) =>
+          writeSupersededEdge(w, ref.conceptId, retirement.successorRef),
+        );
       } catch (error) {
         warn(
           `[proposal] failed to write the supersede edge for ${proposal.id} (continuing with the retire): ${error instanceof Error ? error.message : String(error)}`,

@@ -23,14 +23,12 @@
  * prompt to that process, which waits for the answer.
  */
 
-import { compareCodePoints } from "../../common";
 import { ConfigError, UsageError } from "../../errors";
 import { warn } from "../../warn";
 import {
   type Client,
   type ClientResult,
   clientFailure,
-  isConceptName,
   requireClient,
   runClient,
   type SecretItem,
@@ -140,7 +138,7 @@ function requireCollection(location: string): string {
 function runSecretTool(
   keyring: string,
   locked: boolean,
-  action: string,
+  _action: string,
   args: readonly string[],
   input?: Buffer,
 ): ClientResult {
@@ -235,13 +233,8 @@ function lookup(item: KeyringItem): string {
   return result.stdout;
 }
 
-/** The entries listed or written this command, by `<keyring>/<name>`: a write's index row is refreshed from them, before the next `akm index`. */
-const written = new Map<string, KeyringItem>();
-
-/** The entry `name` of `keyring` as this command wrote it, else as the index recorded it (`locator`, from the facade). */
+/** The entry `name` of `keyring` as the index recorded it (`locator`, from the facade). */
 function recorded(keyring: string, name: string, locator: KeyringLocator | undefined): KeyringItem | undefined {
-  const fresh = written.get(`${keyring}/${name}`);
-  if (fresh) return fresh;
   return locator ? keyringItem(keyring, locator.item, name, locator.attributes) : undefined;
 }
 
@@ -255,7 +248,6 @@ export class SecretToolAdapter extends SecretManagerAdapterBase {
   override clearCache(): void {
     super.clearCache();
     collections.clear();
-    written.clear();
   }
 
   protected locate(keyring: string): boolean {
@@ -274,12 +266,7 @@ export class SecretToolAdapter extends SecretManagerAdapterBase {
         "BUNDLE_UNREACHABLE",
       );
     }
-    const items = paths.map((path) => itemAt(path, reading, keyring));
-    for (const item of [...items].sort((left, right) => compareCodePoints(left.path, right.path))) {
-      if (isConceptName(item.name) && !written.has(`${keyring}/${item.name}`))
-        written.set(`${keyring}/${item.name}`, item);
-    }
-    return items;
+    return paths.map((path) => itemAt(path, reading, keyring));
   }
 
   protected override findSecret(keyring: string, name: string, locator?: unknown): SecretItem | undefined {
@@ -287,7 +274,7 @@ export class SecretToolAdapter extends SecretManagerAdapterBase {
   }
 
   /** Store `value` as the secret `name`: into its existing entry, or a new one akm can find again. */
-  protected storeSecret(keyring: string, name: string, value: Buffer, existing?: SecretItem): void {
+  protected storeSecret(keyring: string, name: string, value: Buffer, existing?: SecretItem): SecretItem | undefined {
     const entry = existing as KeyringItem | undefined;
     const collection = entry ? collectionOf(entry) : requireCollection(keyring);
     const locked = entry
@@ -316,12 +303,11 @@ export class SecretToolAdapter extends SecretManagerAdapterBase {
       ...pairs,
     ]);
     const path = [...unlocked, ...lockedPaths].find((found) => found.startsWith(`${collection}/`));
-    if (path) written.set(`${keyring}/${name}`, itemAt(path, action, keyring));
+    return path ? itemAt(path, action, keyring) : undefined;
   }
 
   protected deleteSecret(keyring: string, item: SecretItem): void {
     const entry = item as KeyringItem;
-    written.delete(`${keyring}/${item.name}`);
     const refusal = () =>
       new ConfigError(
         `Keyring "${keyring}" asks for confirmation before it deletes "${item.name}".`,

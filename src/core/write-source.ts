@@ -42,9 +42,7 @@ import {
   saveGitStash,
 } from "../sources/providers/git";
 import { listIgnoredExactPaths } from "../sources/providers/git-stash";
-import { findAbsoluteHomePaths } from "./adapter/adapters/akm-format";
 import { assertWritableFile } from "./adapter/directory-adapter";
-import { normalizeAkmMarkdown } from "./asset/akm-markdown";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName } from "./asset/resolve-ref";
 import { assertAdapterWrites, detectBundleAdapter } from "./assets/gate";
@@ -428,36 +426,18 @@ export function assertPlainWritable(source: WriteTargetSource, config: SourceCon
 }
 
 /**
- * Write a text file into `source` at `filePath` (already resolved inside it, after {@link assertWritableSource}), the
- * atomic write every authored file goes through; `label` names it in warnings. Markdown of a known `type` is made a conformant document first; a file
- * of no type (`type` undefined) is written as given; an empty file stays empty.
+ * Write a plain text file (a file of no asset type: the Desktop Files view's) into `source` at `filePath` (already resolved
+ * inside it, after {@link assertPlainWritable}), atomically: sibling temp file, fdatasync, rename, so a crash or a full disk
+ * never leaves a half-written file where a good one was. Written as given; the Markdown policy of an asset (normalized
+ * document, trailing line break, home-path advisory) is the adapter's, in `serialize` (`akm-format.ts`).
  */
-export function writeSourceFile(
-  source: WriteTargetSource,
-  filePath: string,
-  content: string,
-  label: string,
-  type?: string,
-): void {
-  const authored =
-    type !== undefined && filePath.toLowerCase().endsWith(".md") ? normalizeAkmMarkdown(content, type) : content;
-  const normalized = authored === "" || authored.endsWith("\n") ? authored : `${authored}\n`;
+export function writeSourceFile(source: WriteTargetSource, filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  // Atomic: sibling temp file, fdatasync, rename — a crash or a full disk never
-  // leaves a half-written asset where a good one was.
-  writeFileAtomic(filePath, normalized, existingFileMode(filePath));
+  // asset-io: files-view a plain file, not an asset
+  writeFileAtomic(filePath, content, existingFileMode(filePath));
   recordWriteTargetPath(source, filePath);
   // Run-scoped write provenance (#652).
   recordWrittenPath(filePath);
-
-  // Non-fatal portability advisory, after the write so it never blocks it.
-  const hostPaths = findAbsoluteHomePaths(normalized);
-  if (hostPaths.length > 0) {
-    warn(
-      `warning: asset "${label}" embeds absolute host path(s): ${hostPaths.join(", ")}. ` +
-        "These make the stash non-portable and leak the local username — prefer $HOME or ~ relative references.",
-    );
-  }
 }
 
 /** Refuse a write to a source that is not write-activated. */

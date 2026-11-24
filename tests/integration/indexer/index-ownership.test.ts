@@ -19,7 +19,6 @@ import { resetConfigCache, saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
 import { heldRebuildLock } from "../../../src/indexer/index-rebuild-lock";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import * as indexerModule from "../../../src/indexer/indexer";
 import { _setIndexTransactionHookForTests, akmIndex } from "../../../src/indexer/indexer";
 import {
@@ -30,6 +29,7 @@ import {
 import { deleteMeta, getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { runCliCapture } from "../../_helpers/cli";
 import { damageIndexHeader, damageIndexInterior } from "../../_helpers/index-damage";
+import { indexWrittenAssets } from "../../_helpers/index-written-files";
 import { spawnLiveHolder, stopLiveHolders } from "../../_helpers/live-holder";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 

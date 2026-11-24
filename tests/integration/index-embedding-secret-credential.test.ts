@@ -34,10 +34,10 @@ import { akmUpdate } from "../../src/commands/sources/installed-stashes";
 import { resetConfigCache } from "../../src/core/config/config";
 import { writeCredential } from "../../src/core/config/credentials";
 import { getRegistryCacheDir } from "../../src/core/paths";
-import { indexWrittenAssets } from "../../src/indexer/index-written-assets";
 import { akmIndex } from "../../src/indexer/indexer";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
 import * as syncFromRefModule from "../../src/sources/providers/sync-from-ref";
+import { indexWrittenAssets } from "../_helpers/index-written-files";
 import { seedLockEntries } from "../_helpers/lockfile";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 

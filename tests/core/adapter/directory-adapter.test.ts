@@ -28,7 +28,12 @@ afterEach(() => sandbox.cleanup());
 
 describe("DirectoryAdapterBase", () => {
   test("place names the concept id a create would give, without writing", () => {
-    expect(akmAdapter.place(bundle, { type: "knowledge", name: "notes/idea" })).toBe("knowledge/notes/idea");
+    expect(akmAdapter.place(bundle, { type: "knowledge", name: "notes/idea" })).toEqual({
+      conceptId: "knowledge/notes/idea",
+      key: "knowledge/notes/idea.md",
+      occupied: false,
+      file: path.join(bundle.root, "knowledge", "notes", "idea.md"),
+    });
     expect(fs.existsSync(path.join(bundle.root, "knowledge", "notes"))).toBe(false);
   });
 

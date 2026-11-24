@@ -20,11 +20,11 @@ import { akmShowUnified } from "../../../src/commands/read/show";
 import { assembleInfo } from "../../../src/commands/sources/info";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getConfigPath, getDbPath } from "../../../src/core/paths";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { rekeyEntryInPlace, renameEntriesBundleId } from "../../../src/storage/repositories/index-entries-repository";
 import { assets } from "../../../src/workspace";
+import { indexWrittenAssets } from "../../_helpers/index-written-files";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

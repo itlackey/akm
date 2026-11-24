@@ -21,6 +21,7 @@ import { hashContent } from "./adapters/shared";
 import type {
   AssetChange,
   AssetEntry,
+  AssetPlacement,
   BundleAdapter,
   BundleAsset,
   BundleListing,
@@ -128,8 +129,16 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   protected abstract locate(location: string): boolean;
   /** Every item of the store, valid name or not, each with how to read its value. */
   protected abstract listSecrets(location: string): SecretItem[];
-  /** Store `value` as the secret `name`: in `existing` when the name has an item, else as a new item. */
-  protected abstract storeSecret(location: string, name: string, value: Buffer, existing?: SecretItem): void;
+  /**
+   * Store `value` as the secret `name`: in `existing` when the name has an item, else as a new item. Answers the item as
+   * the store now holds it, when the write tells (a keyring's object path and attributes), so the index row records it.
+   */
+  protected abstract storeSecret(
+    location: string,
+    name: string,
+    value: Buffer,
+    existing?: SecretItem,
+  ): SecretItem | undefined;
   /** Delete `item`. */
   protected abstract deleteSecret(location: string, item: SecretItem): void;
   /** The item that holds `name`, or undefined. By default the winner of one listing; a store can ask for it directly (a vault by name, a keyring by the `locator` the index recorded). */
@@ -182,9 +191,16 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     return asset.name;
   }
 
-  /** What a write did to the secret `name` (its `content` after a store): no file changed. */
-  private change(name: string, content?: string | Buffer): AssetChange {
-    return { conceptId: secretEntryPath(name), changed: [], ...(content !== undefined ? { content } : {}) };
+  /** What a write did to the secret `name` (its `content` after a store, and the entry of the item it was stored in): no file changed. */
+  private change(name: string, content?: string | Buffer, stored?: SecretItem): AssetChange {
+    return {
+      conceptId: secretEntryPath(name),
+      changed: [],
+      ...(content !== undefined ? { content } : {}),
+      ...(content !== undefined && stored
+        ? { entry: secretEntry(name, () => content.toString(), stored.locator) }
+        : {}),
+    };
   }
 
   /** Run a write on the store: whatever was read of it is stale afterwards, whether the write worked or not. */
@@ -266,8 +282,8 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     return [];
   }
 
-  place(_b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {
-    return secretEntryPath(this.secretNameFor(asset));
+  place(_b: Bundle, asset: Pick<NewAsset, "type" | "name">): AssetPlacement {
+    return { conceptId: secretEntryPath(this.secretNameFor(asset)) };
   }
 
   create(
@@ -283,8 +299,8 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
         `Adapter "${this.id}" will not create "${b.id}//${secretEntryPath(name)}" over an existing secret without \`replace\`; the asset facade checks \`exclusive\` first.`,
       );
     }
-    this.writing(location, () => this.storeSecret(location, name, Buffer.from(asset.content), existing));
-    return this.change(name, asset.content);
+    const stored = this.writing(location, () => this.storeSecret(location, name, Buffer.from(asset.content), existing));
+    return this.change(name, asset.content, stored);
   }
 
   update(b: Bundle, conceptId: string, content: string | Buffer, options: { locator?: unknown } = {}): AssetChange {
@@ -292,8 +308,8 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     const name = requireSecretName(b.id, conceptId);
     const existing = this.findSecret(location, name, options.locator);
     if (!existing) throw assetNotFound(`${b.id}//${conceptId}`);
-    this.writing(location, () => this.storeSecret(location, name, Buffer.from(content), existing));
-    return this.change(name, content);
+    const stored = this.writing(location, () => this.storeSecret(location, name, Buffer.from(content), existing));
+    return this.change(name, content, stored);
   }
 
   delete(b: Bundle, conceptId: string, options: { locator?: unknown } = {}): AssetChange {

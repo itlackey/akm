@@ -34,12 +34,12 @@ import { ConfigError } from "../../src/core/errors";
 import { getDataDir, getDbPath } from "../../src/core/paths";
 import { getStateDbPath } from "../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../src/core/warn";
-import { indexWrittenAssets } from "../../src/indexer/index-written-assets";
 import { akmIndex, type IndexCleanResult, type IndexResponse } from "../../src/indexer/indexer";
 import { removeLockEntry, upsertLockEntry } from "../../src/integrations/lockfile";
 import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { rekeyEntryInPlace } from "../../src/storage/repositories/index-entries-repository";
 import { runCliCapture } from "../_helpers/cli";
+import { indexWrittenAssets } from "../_helpers/index-written-files";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { makePathUnresolvableInPlace, makeUnresolvablePath } from "../_helpers/unreadable-path";
 

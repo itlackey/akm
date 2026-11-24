@@ -127,7 +127,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     );
   }
   /** The bytes a file of `type` holds for `content`. */
-  protected serialize(_type: string, _file: string, content: string | Buffer): string | Buffer {
+  protected serialize(_type: string, _file: string, content: string | Buffer, _label?: string): string | Buffer {
     return content;
   }
   /** The mode a new file of `type` gets. Undefined: an existing file keeps its mode. */
@@ -348,29 +348,28 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return dir === undefined ? file : { ...file, resources: () => packageResources(dir, file.absPath) };
   }
 
-  placement(b: Bundle, asset: Pick<NewAsset, "type" | "name">): AssetPlacement | undefined {
-    return this.writes.includes(asset.type) ? this.placementOf(b, this.placeFile(b, asset)) : undefined;
-  }
-
-  /** The placement of `file`, which a create of an asset writes. */
-  protected placementOf(b: Bundle, file: string): AssetPlacement {
-    return { key: this.relPathOf(b, file), occupied: fs.existsSync(file), file };
-  }
-
   identifyKey(_b: Bundle, key: string): string | null {
     return this.identify(key);
   }
 
-  /** The concept id a new asset gets; refused when its file would be no asset (`knowledge` named `index`, `secret` named `x.lock`). */
-  place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {
-    const relPath = this.relPathOf(b, this.placeFile(b, asset));
-    const conceptId = this.identify(relPath);
+  /**
+   * Where a new asset goes: its concept id, the key and file that keep it, and whether anything is kept there now.
+   * Refused when its file would be no asset (`knowledge` named `index`, `secret` named `x.lock`).
+   */
+  place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): AssetPlacement {
+    return this.placeAt(b, asset, this.placeFile(b, asset));
+  }
+
+  /** {@link place} for a create kept at `file`. */
+  protected placeAt(b: Bundle, asset: Pick<NewAsset, "type" | "name">, file: string): AssetPlacement {
+    const key = this.relPathOf(b, file);
+    const conceptId = this.identify(key);
     if (conceptId === null) {
       throw new UsageError(
-        `Cannot create ${asset.type} "${asset.name}" in bundle "${b.id}": it would be kept at ${relPath}, which is not an asset.`,
+        `Cannot create ${asset.type} "${asset.name}" in bundle "${b.id}": it would be kept at ${key}, which is not an asset.`,
       );
     }
-    return conceptId;
+    return { conceptId, key, occupied: fs.existsSync(file), file };
   }
 
   create(
@@ -383,7 +382,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
         `Adapter "${this.id}" does not write ${asset.type} assets in bundle "${b.id}"; the asset facade checks \`writes\` first.`,
       );
     }
-    const conceptId = this.place(b, asset);
+    const { conceptId } = this.place(b, asset);
     const held = this.read(b, conceptId);
     if (!options.replace && held) {
       throw new Error(
@@ -393,7 +392,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     // A replacing create rewrites the file the concept is read from (`guide.MD`), never a twin beside it.
     const file = held?.entry.file ?? this.placeFile(b, asset);
     const entry = buildFileContext(rootOf(b), file);
-    const content = options.verbatim ? asset.content : this.serialize(asset.type, file, asset.content);
+    const content = options.verbatim ? asset.content : this.serialize(asset.type, file, asset.content, asset.label);
     const changed = asset.resources?.length
       ? this.writePackage(b, asset, entry, content, asset.resources)
       : this.writeFile(b, asset.type, file, content, options.replaceLink);

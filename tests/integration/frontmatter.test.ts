@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  mutateFrontmatter,
+  editFrontmatter,
   parseFrontmatter,
   parseFrontmatterBlock,
   parseYamlScalar,
@@ -198,42 +198,22 @@ describe("parseFrontmatterBlock", () => {
   });
 });
 
-// ── mutateFrontmatter ───────────────────────────────────────────────────────
+// ── editFrontmatter ─────────────────────────────────────────────────────────
 //
-// SPEC-5 (stash-conventions-code-spec.md): a frontmatter mutation is a
-// METADATA edit, not a content edit. When the file already has a frontmatter
-// block, only the block is replaced and the body bytes are kept verbatim —
-// including a writer's single-newline fence-to-body separator and a missing
-// trailing newline, both of which routing through `assembleAsset` would
-// silently re-normalize. Files gaining their FIRST block still take the
-// canonical `assembleAsset` shape.
+// SPEC-5 (stash-conventions-code-spec.md): a frontmatter edit is a METADATA edit, not a content edit. When the text
+// already has a frontmatter block, only the block is replaced and the body bytes are kept verbatim — including a
+// writer's single-newline fence-to-body separator and a missing trailing newline, both of which routing through
+// `assembleAsset` would silently re-normalize. Text gaining its FIRST block still takes the canonical `assembleAsset`
+// shape. The function is pure: the caller writes what it answers.
 
-describe("mutateFrontmatter", () => {
-  const disposers: SandboxedDir[] = [];
-
-  afterEach(() => {
-    for (const d of disposers.splice(0)) d.cleanup();
-  });
-
-  function writeTmpFile(content: string): string {
-    const sandbox = makeSandboxDir("akm-mutate-fm");
-    disposers.push(sandbox);
-    const filePath = path.join(sandbox.dir, "asset.md");
-    fs.writeFileSync(filePath, content, "utf8");
-    return filePath;
-  }
-
+describe("editFrontmatter", () => {
   test("existing block: body bytes preserved verbatim (single-newline separator, no trailing newline)", () => {
-    // Hot-path writer shape: one newline after the closing fence, body does
-    // not end in a newline. assembleAsset would insert a blank-line separator
-    // and force a trailing newline — a whitespace content edit.
     const body = "Body line without trailing newline";
-    const filePath = writeTmpFile(`---\ncaptureMode: hot\n---\n${body}`);
+    const raw = editFrontmatter(`---\ncaptureMode: hot\n---\n${body}`, (parsed) => ({
+      ...parsed.data,
+      beliefState: "superseded",
+    })) as string;
 
-    const wrote = mutateFrontmatter(filePath, (parsed) => ({ ...parsed.data, beliefState: "superseded" }));
-    expect(wrote).toBe(true);
-
-    const raw = fs.readFileSync(filePath, "utf8");
     const block = parseFrontmatterBlock(raw);
     expect(block?.content).toBe(body);
     expect(raw.endsWith("\n")).toBe(false);
@@ -243,22 +223,16 @@ describe("mutateFrontmatter", () => {
   });
 
   test("existing block: leading blank lines in the body survive the round-trip", () => {
-    const filePath = writeTmpFile("---\nk: v\n---\n\n\nSpaced body.\n");
-    const before = parseFrontmatterBlock(fs.readFileSync(filePath, "utf8"));
-
-    mutateFrontmatter(filePath, (parsed) => ({ ...parsed.data, extra: 1 }));
-
-    const after = parseFrontmatterBlock(fs.readFileSync(filePath, "utf8"));
-    expect(after?.content).toBe(before?.content);
+    const before = "---\nk: v\n---\n\n\nSpaced body.\n";
+    const after = editFrontmatter(before, (parsed) => ({ ...parsed.data, extra: 1 })) as string;
+    expect(parseFrontmatterBlock(after)?.content).toBe(parseFrontmatterBlock(before)?.content);
   });
 
-  test("file gaining its FIRST block uses the canonical assembleAsset shape", () => {
-    const filePath = writeTmpFile("Plain incumbent body.\n");
-
-    const wrote = mutateFrontmatter(filePath, (parsed) => ({ ...parsed.data, beliefState: "superseded" }));
-    expect(wrote).toBe(true);
-
-    const raw = fs.readFileSync(filePath, "utf8");
+  test("text gaining its FIRST block uses the canonical assembleAsset shape", () => {
+    const raw = editFrontmatter("Plain incumbent body.\n", (parsed) => ({
+      ...parsed.data,
+      beliefState: "superseded",
+    })) as string;
     expect(raw.startsWith("---\n")).toBe(true);
     expect(raw.endsWith("\n")).toBe(true);
     const parsed = parseFrontmatter(raw);
@@ -266,23 +240,15 @@ describe("mutateFrontmatter", () => {
     expect(parsed.content.replace(/^\n+/, "")).toBe("Plain incumbent body.\n");
   });
 
-  test("mutator returning null skips the write and leaves the file byte-identical", () => {
-    const original = "---\nk: v\n---\nBody.\n";
-    const filePath = writeTmpFile(original);
-
-    const wrote = mutateFrontmatter(filePath, () => null);
-    expect(wrote).toBe(false);
-    expect(fs.readFileSync(filePath, "utf8")).toBe(original);
+  test("a mutator returning null answers null: there is nothing to write", () => {
+    expect(editFrontmatter("---\nk: v\n---\nBody.\n", () => null)).toBeNull();
   });
 
   test("refuses to serialize a lenient parse of malformed frontmatter", () => {
     const original = '---\nsource: memory:parent\ntitle: "unterminated\ntags:\n  - keep-me\n---\nBody.\n';
-    const filePath = writeTmpFile(original);
-
-    expect(() => mutateFrontmatter(filePath, (parsed) => ({ ...parsed.data, source: "memories/parent" }))).toThrow(
+    expect(() => editFrontmatter(original, (parsed) => ({ ...parsed.data, source: "memories/parent" }))).toThrow(
       /malformed YAML frontmatter/i,
     );
-    expect(fs.readFileSync(filePath, "utf8")).toBe(original);
   });
 });
 

@@ -14,9 +14,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { isWalkedFile, walkedFiles, walkStashFlat } from "../../../src/core/adapter/directory/walker";
 import { saveConfig } from "../../../src/core/config/config";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { runCliCapture } from "../../_helpers/cli";
+import { indexWrittenAssets } from "../../_helpers/index-written-files";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

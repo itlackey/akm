@@ -11,10 +11,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
+import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { inspectWriteTarget } from "../../../src/core/write-source";
 import { assets, documents } from "../../../src/workspace";
 import { makeConfig } from "../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
+import { overrideSeam } from "../../_helpers/seams";
 
 let storage: IsolatedAkmStorage;
 let locked: string;
@@ -244,5 +246,24 @@ describe("a listing says what a new file in its folder would be", () => {
     expect(await place("stash", "env")).toMatchObject({ allowed: false, reason: expect.stringContaining("protected") });
     expect(await place("stash", ".git")).toMatchObject({ allowed: false, reason: ".git/ is managed by akm." });
     expect(await place("locked", "")).toMatchObject({ allowed: false, reason: expect.stringContaining("read-only") });
+  });
+});
+
+describe("the home-path advisory names the asset by the caller's label (P17)", () => {
+  test("a new file with an absolute host path is named by its path in the bundle, not its file's basename", async () => {
+    const warnings: string[] = [];
+    overrideSeam(_setWarnSinkForTests, (level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    await create(
+      "knowledge/notes",
+      "hosted",
+      "stash",
+      "---\ndescription: d\n---\n\nSee /home/someone/project/file.txt\n",
+    );
+    expect(warnings.some((line) => line.includes('asset "knowledge/notes/hosted.md" embeds absolute host path'))).toBe(
+      true,
+    );
+    expect(read("knowledge/notes/hosted.md")).toContain("/home/someone/project/file.txt");
   });
 });

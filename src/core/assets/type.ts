@@ -13,13 +13,18 @@
 import path from "node:path";
 import { addIndexOnMissRefs } from "../../indexer/index-on-miss";
 import { openUsableIndex, readUsableIndex } from "../../indexer/index-readiness";
+import { upsertIndexRows, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../../indexer/index-rows";
 import { withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
-import { upsertIndexRows, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../../indexer/index-written-assets";
-import { embeddingInputCap } from "../../indexer/materialize-embeddings";
+import {
+  embeddingInputCap,
+  generateEmbeddingsForDb,
+  publishTargetedEmbeddingMeta,
+} from "../../indexer/materialize-embeddings";
 import { brokenWorkflowWarning, indexRowEntry } from "../../indexer/scan/drain-dir";
 import { closeDatabase } from "../../storage/repositories/index-connection";
 import { deleteEntriesByIds } from "../../storage/repositories/index-entries-repository";
 import { bundleVariantKey, getMeta } from "../../storage/repositories/index-meta-repository";
+import { isSqliteContentionError } from "../../storage/sqlite-transaction";
 import { hashContent } from "../adapter/adapters/shared";
 import type { AssetEntry } from "../adapter/bundle-adapter";
 import { buildFileContext, fileContextOfEntry, type MatchResult } from "../adapter/directory/file-context";
@@ -28,11 +33,11 @@ import { recognizeMatch } from "../adapter/recognize-match";
 import type { IndexDocument } from "../adapter/types";
 import { parseFrontmatter } from "../asset/frontmatter";
 import { loadConfig } from "../config/config";
-import { assetNotFound } from "../errors";
+import { assetNotFound, isDataDirUnreadableError, TransientError } from "../errors";
 import { isPathAbsent } from "../path-access";
 import { getDbPath } from "../paths";
 import { presentationFor } from "../type-presentation";
-import { warnVerbose } from "../warn";
+import { warn, warnVerbose } from "../warn";
 import { type Asset, bundleHolding } from "./asset";
 import { type AssetBundle, bundleFor } from "./bundle";
 
@@ -75,7 +80,14 @@ function record(documents: ReadonlyMap<Asset, IndexDocument>, onMiss: boolean): 
     // The index-writer lock the indexer takes; held by a running rebuild, nothing is written (no waiting).
     return withAssetMutationLeaseSync("index-asset", () => write(documents, onMiss), { maxWaitMs: 0 });
   } catch (error) {
-    warnVerbose("Index update skipped (the assets are indexed by the next `akm index`):", error);
+    // A permission fault is the one failure the next `akm index` will not heal: the write stands, and it is said (#791).
+    if (isDataDirUnreadableError(error)) {
+      warn(
+        `Write-path index update skipped — ${error.message} The asset will not appear in search until that is fixed.`,
+      );
+    } else {
+      warnVerbose("Index update skipped (the assets are indexed by the next `akm index`):", error);
+    }
     return false;
   }
 }
@@ -98,7 +110,19 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, onMiss: boolean): b
         for (const [asset, document] of documents) {
           const held = bundleHolding(asset);
           // The scan drops a workflow that does not compile, so no ask of it records a row either.
-          if (brokenWorkflowWarning(document, fileContextOfEntry(held.root, asset.entry)) !== null) continue;
+          if (brokenWorkflowWarning(document, fileContextOfEntry(held.root, asset.entry)) !== null) {
+            // An asset akm just wrote that no longer compiles is indexed as the scan would: not at all, so its old row goes.
+            if (!onMiss) {
+              const stale = db.prepare("SELECT id FROM entries WHERE item_ref = ?").all(asset.ref) as Array<{
+                id: number;
+              }>;
+              deleteEntriesByIds(
+                db,
+                stale.map((row) => row.id),
+              );
+            }
+            continue;
+          }
           const file = indexedPathOf(asset);
           if (
             onMiss &&
@@ -121,12 +145,79 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, onMiss: boolean): b
             cap,
           );
           if (onMiss) written.push(asset.ref);
+          // akm's own write: its vector is made after the lease is released (`embedPendingWrites`).
+          else pendingEmbeddings.add(held.root, asset.ref);
         }
         addIndexOnMissRefs(db, written);
       })();
       return true;
     } finally {
       closeDatabase(usable.db);
+    }
+  }
+}
+
+/**
+ * The refs whose rows akm's own writes recorded since the last {@link embedPendingWrites}, by the root of the bundle
+ * that holds them. A write stays synchronous and holds the lease only for its rows; their vectors are made after.
+ */
+const pendingEmbeddings = {
+  byRoot: new Map<string, Set<string>>(),
+  add(root: string, ref: string): void {
+    const refs = this.byRoot.get(root) ?? new Set<string>();
+    refs.add(ref);
+    this.byRoot.set(root, refs);
+  },
+  take(): Array<[string, Set<string>]> {
+    const taken = [...this.byRoot];
+    this.byRoot.clear();
+    return taken;
+  },
+};
+
+/**
+ * Make the vectors of the rows akm's writes have recorded, when semantic search is on. Called outside the lease: by every
+ * caller that awaits its writes, and by the CLI dispatcher and the Desktop route wrapper before a command or request
+ * ends, which covers every other write. Fail-open: a failure to embed is a verbose-only warning (the next `akm index`
+ * makes the vector), a busy index is not a failure, no usable index is nothing to do. The input is the row's text,
+ * never a secret's value.
+ */
+export async function embedPendingWrites(): Promise<void> {
+  for (const [root, refs] of pendingEmbeddings.take()) {
+    try {
+      if (isPathAbsent(getDbPath())) continue;
+      const config = loadConfig();
+      if (config.semanticSearchMode === "off") continue;
+      const usable = openUsableIndex(root, { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
+      if (!usable) continue;
+      try {
+        const { db } = usable;
+        const find = db.prepare("SELECT id FROM entries WHERE item_ref = ?");
+        const ids = [...refs].flatMap((ref) => {
+          const row = find.get(ref) as { id: number } | undefined;
+          return row ? [row.id] : [];
+        });
+        if (ids.length === 0) continue;
+        await generateEmbeddingsForDb(db, config, () => {}, undefined, ids);
+        publishTargetedEmbeddingMeta(db, config);
+      } finally {
+        closeDatabase(usable.db);
+      }
+    } catch (error) {
+      if (isDataDirUnreadableError(error)) {
+        warn(
+          `Write-path index update skipped — ${error.message} The asset will not appear in search until that is fixed.`,
+        );
+      } else if (
+        isSqliteContentionError(error) ||
+        (error instanceof TransientError && error.code === "INDEX_DB_CONTENDED")
+      ) {
+        warnVerbose(
+          `Write-path index update skipped, the index is busy (asset appears after the next build): ${error instanceof Error ? error.message : String(error)}`,
+        );
+      } else {
+        warnVerbose("Write-path index update skipped (asset appears after the next full index):", error);
+      }
     }
   }
 }

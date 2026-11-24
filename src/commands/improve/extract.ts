@@ -19,6 +19,7 @@ import type { SelectionFlags } from "../../cli/selection";
 import type { StashEntryScope } from "../../core/adapter/types";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
+import { embedPendingWrites } from "../../core/assets/type";
 import { stateBundleId } from "../../core/bundle-at-dir";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
@@ -47,7 +48,6 @@ import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warn, warnVerbose } from "../../core/warn";
 import { noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { fillMetadata, stampScope } from "../../indexer/passes/metadata";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { collectDispatchSensitiveValues } from "../../integrations/agent/runner-dispatch";
@@ -672,7 +672,7 @@ async function maybeWriteSessionAsset(
     );
     if (!result.written) return {};
     // A standalone extract has no post-loop reindex to pick the file up.
-    if (result.filePath) await indexWrittenAssets(run.stashDir, [result.filePath]);
+    await embedPendingWrites();
     return {
       ...(result.ref ? { sessionAssetRef: result.ref } : {}),
       ...(result.logPath ? { sessionLogPath: result.logPath } : {}),

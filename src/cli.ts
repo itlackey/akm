@@ -131,6 +131,7 @@ import { akmHealth } from "./commands/health";
 import { doctorMetricsCommand } from "./commands/metrics/usage-cli";
 import { akmTasksDoctor } from "./commands/tasks/tasks";
 import { clearAdapterCaches } from "./core/assets/gate";
+import { embedPendingWrites } from "./core/assets/type";
 import { closestMatch } from "./core/closest-match";
 import { explainedByReaderGone, isTerminal, stdout } from "./core/stdio";
 import "./commands/health/renderers";
@@ -1513,6 +1514,8 @@ async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
     emitJsonError(error);
   } finally {
     disposeLlmUsageSink();
+    // The vectors of the rows this command's writes recorded (fail-open); a write that awaits its own has none left.
+    await embedPendingWrites();
   }
 }
 

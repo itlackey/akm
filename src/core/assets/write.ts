@@ -8,11 +8,13 @@
  * same order, whichever adapter holds the bundle, and its files are recorded for the target's boundary commit.
  */
 
+import path from "node:path";
 import { withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
 import type { AssetChange, AssetPlacement, NewAsset, Retirement, RetireNote } from "../adapter/bundle-adapter";
 import { stashDirFor } from "../asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { parsePlacementRef } from "../asset/resolve-ref";
+import { toPosix } from "../common";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
 import { warn } from "../warn";
 import { recordWrittenPath } from "../write-provenance";
@@ -23,7 +25,7 @@ import {
   type ResolvedWriteTarget,
   recordWriteTargetPath,
 } from "../write-source";
-import { type Asset, readFrom } from "./asset";
+import { type Asset, assetOf, readFrom } from "./asset";
 import { type AssetBundle, assetBundleOf, bundleFor } from "./bundle";
 import { assetRevision } from "./read";
 import { assetType, forgetIndexedAsset, refreshIndexedAsset } from "./type";
@@ -110,13 +112,13 @@ function addressIn(held: AssetBundle, ref: string): AssetAddress {
       exists: true,
       ...(found.entry.file !== undefined ? { file: found.entry.file } : {}),
       // The asset is kept under a key other than the one a create of the ref writes.
-      ...(placement !== undefined && placement.key !== found.entry.key ? { heldElsewhere: true } : {}),
+      ...(placement?.key !== undefined && placement.key !== found.entry.key ? { heldElsewhere: true } : {}),
     };
   };
-  /** Where a create of the ref is kept; undefined when it has none, and for a name that cannot be placed. */
+  /** Where a create of the ref goes; undefined for a name that cannot be placed. */
   const placementOf = (): AssetPlacement | undefined => {
     try {
-      return held.placement(parsePlacementRef(ref));
+      return held.place(parsePlacementRef(ref));
     } catch {
       return undefined;
     }
@@ -130,12 +132,8 @@ function addressIn(held: AssetBundle, ref: string): AssetAddress {
   const shown = placement?.file !== undefined ? { file: placement.file } : {};
   // Not a write: the asset is named as written; the file is only the display path the adapter would give it.
   if (!held.writes(placed.type)) return { conceptId: written, ...named, ...shown };
-  let conceptId = written;
-  try {
-    conceptId = held.place(placed);
-  } catch {
-    // A name that cannot be placed is named as written; a write refuses it where it is made.
-  }
+  // A name that cannot be placed is named as written; a write refuses it where it is made.
+  const conceptId = placement?.conceptId ?? written;
   // A create replaces the asset at the concept it places (`env/default` is placed as the concept `env/.env` holds).
   const there = conceptId !== written && fragment === undefined ? readIn(conceptId) : undefined;
   if (there) return holding(there, placement);
@@ -180,6 +178,16 @@ export function legacyRefOf(bundle: string, relPath: string): string | undefined
   return conceptId === null ? undefined : makeBundleRef(bundle, conceptId);
 }
 
+/**
+ * The concept id of the asset a file of the directory bundle `bundle` would hold, from the path alone (the adapter's rule);
+ * undefined when the file is outside the bundle or no asset's. For a caller that holds a file it read and writes the asset.
+ */
+export function conceptIdAtFile(bundle: string, file: string): string | undefined {
+  const held = bundleFor(bundle);
+  const key = toPosix(path.relative(held.root, file));
+  return key === "" || key.startsWith("..") ? undefined : (held.identifyKey(key) ?? undefined);
+}
+
 function writerFor(target: ResolvedWriteTarget): AssetWriter {
   const { source, config } = target;
   const held = assetBundleOf(source);
@@ -193,7 +201,12 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
   };
   /** What the index holds for the asset a change touched: its row is written again, or dropped with the asset. */
   const reindex = (change: AssetChange, kept: boolean): void => {
-    const asset = kept ? readFrom(held, change.conceptId) : undefined;
+    // The entry the write handed back (a keyring's item), else what the bundle reads for the concept now.
+    const asset = !kept
+      ? undefined
+      : change.entry
+        ? assetOf(held, { conceptId: change.conceptId, entry: change.entry })
+        : readFrom(held, change.conceptId);
     const updated = asset ? refreshIndexedAsset(asset) : forgetIndexedAsset(held, change.conceptId);
     // A store's asset is found through its index row alone: a row not updated is a secret later commands miss or still list.
     if (!updated && held.isStore) {
@@ -233,7 +246,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
       gate(source, config);
       held.assertWrites(asset.type);
       if (options?.exclusive) {
-        const conceptId = held.place(asset);
+        const { conceptId } = held.place(asset);
         if (held.read(conceptId)) {
           throw new UsageError(`Asset "${source.name}//${conceptId}" already exists.`, "RESOURCE_ALREADY_EXISTS");
         }

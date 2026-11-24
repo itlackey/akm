@@ -9,6 +9,7 @@
  * spec, and Markdown is made a conformant akm document.
  */
 
+import fs from "node:fs";
 import path from "node:path";
 import { normalizeAkmMarkdown } from "../../asset/akm-markdown";
 import { assetPathForName, stashDirFor } from "../../asset/asset-placement";
@@ -71,7 +72,12 @@ export function placeInTypeFolder(b: Bundle, { type, name }: Pick<NewAsset, "typ
  * as given. Text ends in a line break, and Markdown of a type is made a
  * conformant akm document.
  */
-export function serializeAkmContent(type: string, file: string, content: string | Buffer): string | Buffer {
+export function serializeAkmContent(
+  type: string,
+  file: string,
+  content: string | Buffer,
+  label?: string,
+): string | Buffer {
   if (type === "env" || type === "secret" || Buffer.isBuffer(content)) return content;
   const authored = file.toLowerCase().endsWith(".md") ? normalizeAkmMarkdown(content, type) : content;
   const text = authored === "" || authored.endsWith("\n") ? authored : `${authored}\n`;
@@ -79,7 +85,7 @@ export function serializeAkmContent(type: string, file: string, content: string 
   if (hostPaths.length > 0) {
     // Non-fatal portability advisory.
     warn(
-      `warning: asset "${path.basename(file)}" embeds absolute host path(s): ${hostPaths.join(", ")}. ` +
+      `warning: asset "${label ?? path.basename(file)}" embeds absolute host path(s): ${hostPaths.join(", ")}. ` +
         "These make the stash non-portable and leak the local username — prefer $HOME or ~ relative references.",
     );
   }
@@ -104,17 +110,14 @@ export abstract class AkmFormatAdapterBase extends DirectoryAdapterBase {
     return placeInTypeFolder(b, asset);
   }
 
-  /** Display only: the type's folder holds the file even for a type this adapter does not write (a write refuses it). */
-  override placement(b: Bundle, asset: Pick<NewAsset, "type" | "name">): AssetPlacement | undefined {
-    return this.placementOf(
-      b,
-      this.writes.includes(asset.type) ? this.placeFile(b, asset) : placeInTypeFolder(b, asset),
-    );
-  }
-
-  /** A name some tooling treats specially is warned about only when its asset is placed, never before a refusal. */
-  override place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string {
-    const conceptId = super.place(b, asset);
+  /**
+   * A name some tooling treats specially is warned about only when its asset is placed, never before a refusal. For a
+   * type this adapter does not write the answer is display only: the type's folder holds the file (a write refuses it).
+   */
+  override place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): AssetPlacement {
+    const placed = this.writes.includes(asset.type)
+      ? super.place(b, asset)
+      : this.displayPlace(b, asset, placeInTypeFolder(b, asset));
     const basename = path.posix.basename(asset.name.replaceAll("\\", "/")).replace(/\.md$/i, "").toLowerCase();
     if (basename === "index" || basename === "log") {
       warnOnce(
@@ -122,11 +125,17 @@ export abstract class AkmFormatAdapterBase extends DirectoryAdapterBase {
         `Concept name "${basename}" collides with a reserved word some tooling treats specially; writing it anyway.`,
       );
     }
-    return conceptId;
+    return placed;
   }
 
-  protected override serialize(type: string, file: string, content: string | Buffer): string | Buffer {
-    return serializeAkmContent(type, file, content);
+  /** The placement of a type the adapter does not write: its folder, and no refusal of a name it would not place. */
+  private displayPlace(b: Bundle, _asset: Pick<NewAsset, "type" | "name">, file: string): AssetPlacement {
+    const key = this.relPathOf(b, file);
+    return { conceptId: this.identify(key) ?? key, key, occupied: fs.existsSync(file), file };
+  }
+
+  protected override serialize(type: string, file: string, content: string | Buffer, label?: string): string | Buffer {
+    return serializeAkmContent(type, file, content, label);
   }
 
   /** Env files and secrets are readable by their owner only. */

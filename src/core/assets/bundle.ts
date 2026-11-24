@@ -125,19 +125,16 @@ export class AssetBundle {
     if (!this.isStore) return found;
     return [...found, ...readUsableIndex((db) => getStoreFindings(db, this.name) ?? [], [])];
   }
-  place(asset: Pick<NewAsset, "type" | "name">): string {
+  /** Where a create of the asset goes: its concept id and, for a bundle kept in files, where. A name that cannot be placed throws. */
+  place(asset: Pick<NewAsset, "type" | "name">): AssetPlacement {
     return this.#adapter.place(this.#bundle, asset);
-  }
-  /** Where a create of the asset is kept, when its adapter keeps assets as files; undefined otherwise. */
-  placement(asset: Pick<NewAsset, "type" | "name">): AssetPlacement | undefined {
-    return this.#adapter.placement?.(this.#bundle, asset);
   }
   /** The concept id a stored key holds, from the key alone; null when it holds none or the adapter has no keys. */
   identifyKey(key: string): string | null {
     return this.#adapter.identifyKey?.(this.#bundle, key) ?? null;
   }
   create(asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean }): AssetChange {
-    const locator = this.isStore ? this.#locator(this.place(asset)) : undefined;
+    const locator = this.isStore ? this.#locator(this.place(asset).conceptId) : undefined;
     return this.#adapter.create(this.#bundle, asset, { ...options, ...(locator !== undefined ? { locator } : {}) });
   }
   update(conceptId: string, content: string | Buffer, options?: { throughLink?: boolean }): AssetChange {

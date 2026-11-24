@@ -129,7 +129,7 @@ export class AzureKeyVaultAdapter extends SecretManagerAdapterBase {
     }
   }
 
-  protected storeSecret(vault: string, name: string, value: Buffer): void {
+  protected storeSecret(vault: string, name: string, value: Buffer): undefined {
     // `az` takes a value as an argument or from a file. An argument is readable by other
     // processes, so the value goes through a file only this user can read, removed afterwards.
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "akm-secret-"));

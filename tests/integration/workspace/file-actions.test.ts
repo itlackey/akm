@@ -11,11 +11,11 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { resetConfigCache } from "../../../src/core/config/config";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { assets, documents, indexFiles } from "../../../src/workspace";
 import type { FileActions } from "../../../src/workspace/file-actions";
 import { makeConfig } from "../../_helpers/factories";
+import { indexWrittenAssets } from "../../_helpers/index-written-files";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

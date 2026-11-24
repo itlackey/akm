@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
@@ -11,17 +10,16 @@ import { type BundleRef, makeBundleRef, parseBundleRef } from "../core/asset/ass
 import { assembleAsset, serializeFrontmatter } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "../core/asset/frontmatter";
 import { type AssetRef, displayDefaultBundle, displayRef } from "../core/asset/resolve-ref";
-import { findAsset, qualifyRef, requireAsset } from "../core/assets/read";
-import { addressOf } from "../core/assets/write";
+import { assetRevision, findAsset, qualifyRef, readAsset, requireAsset } from "../core/assets/read";
+import { addressOf, writeAssets } from "../core/assets/write";
 import { materialiseBundleDir } from "../core/bundle-at-dir";
-import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
+import { isWithin, resolveStashDir, safeRealpath } from "../core/common";
 import { loadConfig } from "../core/config/config";
-import { ConfigError, NotFoundError, TransientError, UsageError } from "../core/errors";
+import { assetNotFound, ConfigError, NotFoundError, TransientError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { resolveMutationTarget } from "../core/mutation-target";
 import { getStateDbPath, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
-import { withWriteTargetMutation } from "../core/write-source";
 import { NO_INDEX_MESSAGE, openUsableIndex } from "../indexer/index-readiness";
 import { heldRebuildLock } from "../indexer/index-rebuild-lock";
 import { recomputeUtilityScores } from "../indexer/indexer";
@@ -124,7 +122,7 @@ function appendLessonStrength(
     );
     return null;
   }
-  if (!filePath || !bundleId || !fs.existsSync(filePath)) {
+  if (!filePath || !bundleId) {
     warn(`[feedback] --applied-to: lesson ${requestedRef} is not in the index or is missing on disk.`);
     return null;
   }
@@ -134,8 +132,12 @@ function appendLessonStrength(
     throw new UsageError(`Resolved lesson ${requestedRef} is outside bundle "${bundleId}".`);
   }
 
-  fs.lstatSync(filePath);
-  const initialUpdate = buildLessonStrengthUpdate(fs.readFileSync(filePath), feedbackRef);
+  const lesson = readAsset(bundleId, conceptId);
+  if (!lesson) {
+    warn(`[feedback] --applied-to: lesson ${requestedRef} is not in the index or is missing on disk.`);
+    return null;
+  }
+  const initialUpdate = buildLessonStrengthUpdate(lesson.entry.bytes(), feedbackRef);
   if (!initialUpdate.nextBytes) {
     return { ref: makeBundleRef(bundleId, conceptId), strength: initialUpdate.strength };
   }
@@ -143,26 +145,26 @@ function appendLessonStrength(
   let strength = initialUpdate.strength;
   let mutationStarted = false;
   try {
-    withWriteTargetMutation(
+    writeAssets(
       resolved.target,
-      [filePath],
-      {
-        purpose: "feedback-lesson-credit",
-        message: `Update ${makeBundleRef(bundleId, conceptId)}`,
-      },
-      () => {
-        const stat = fs.lstatSync(filePath);
-        const update = buildLessonStrengthUpdate(fs.readFileSync(filePath), feedbackRef);
+      { purpose: "feedback-lesson-credit", message: `Update ${makeBundleRef(bundleId, conceptId)}` },
+      (w) => {
+        // The lesson as it is now, and refused if it changes between this read and the write.
+        const held = w.read(conceptId);
+        if (!held) throw assetNotFound(requestedRef);
+        const bytes = held.entry.bytes();
+        const update = buildLessonStrengthUpdate(bytes, feedbackRef);
         strength = update.strength;
         if (!update.nextBytes) return;
         mutationStarted = true;
-        // Preserve the existing file's permission bits (markdown assets are typically 0o644).
-        writeFileAtomic(filePath, update.nextBytes, stat.mode & 0o777);
+        w.update(held.conceptId, update.nextBytes, { revision: assetRevision(bytes) });
       },
     );
   } catch (err) {
     if (mutationStarted) throw err;
-    warn(`[feedback] --applied-to: failed to write ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+    warn(
+      `[feedback] --applied-to: failed to write ${requestedRef}: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return null;
   }
   return { ref: makeBundleRef(bundleId, conceptId), strength };
@@ -751,7 +753,7 @@ export const feedbackCommand = defineJsonCommand({
       if (textHash) metadataObj.contentHash = textHash;
       if (fixPairs.length > 0 || hasMark) {
         // Checked before anything is recorded, so a fix that does not apply leaves no trace.
-        if (!filePath || !fs.existsSync(filePath)) {
+        if (!filePath || !findAsset(itemRef)) {
           throw new NotFoundError(`The file for ${itemRef} is missing on disk.`, "ASSET_NOT_FOUND");
         }
         // The existing asset is written where it is: its bundle picks the target, and

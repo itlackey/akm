@@ -14,7 +14,9 @@
  * replaces and clears edges) and deliberately does not use this (#885).
  */
 
-import { mutateFrontmatter } from "../../../core/asset/frontmatter";
+import { editFrontmatter } from "../../../core/asset/frontmatter";
+import type { AssetWriter } from "../../../core/assets/write";
+import { assetNotFound } from "../../../core/errors";
 
 export type { MemoryBeliefState, MemoryBeliefStateTransition } from "../../../core/improve-types";
 export type { MemoryBeliefTransitionLogRecord } from "./memory-improve";
@@ -29,17 +31,27 @@ export function readEdgeList(value: unknown): string[] {
   return [];
 }
 
-/** Mark an asset superseded by a correction (`akm remember|import --supersedes`). */
-export function writeSupersededEdge(filePath: string, supersededByRef: string): void {
-  mutateFrontmatter(filePath, (parsed) => {
-    const existing = readEdgeList(parsed.data.supersededBy);
-    const currentState = parsed.data.beliefState;
-    const nextState = currentState === "contradicted" || currentState === "archived" ? currentState : "superseded";
-    if (existing.includes(supersededByRef) && currentState === nextState) return null;
-    return {
-      ...parsed.data,
-      supersededBy: [...new Set([...existing, supersededByRef])].sort(),
-      beliefState: nextState,
-    };
-  });
+/**
+ * Mark the asset `conceptId` superseded by a correction, in the write session `w`: a metadata-only update of its
+ * frontmatter. An asset a session cannot read is `assetNotFound`; malformed frontmatter is refused (not rewritten).
+ */
+export function writeSupersededEdge(w: AssetWriter, conceptId: string, supersededByRef: string): void {
+  const held = w.read(conceptId);
+  if (!held) throw assetNotFound(conceptId);
+  const next = editFrontmatter(
+    held.entry.content(),
+    (parsed) => {
+      const existing = readEdgeList(parsed.data.supersededBy);
+      const currentState = parsed.data.beliefState;
+      const nextState = currentState === "contradicted" || currentState === "archived" ? currentState : "superseded";
+      if (existing.includes(supersededByRef) && currentState === nextState) return null;
+      return {
+        ...parsed.data,
+        supersededBy: [...new Set([...existing, supersededByRef])].sort(),
+        beliefState: nextState,
+      };
+    },
+    held.ref,
+  );
+  if (next !== null) w.update(held.conceptId, next);
 }

@@ -21,8 +21,11 @@ import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement"
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
-import { bundleAdapterId } from "../../core/assets/gate";
+import { adapterWrites } from "../../core/assets/gate";
+import { readAsset } from "../../core/assets/read";
+import { embedPendingWrites } from "../../core/assets/type";
 import { addressOf, writeAssets } from "../../core/assets/write";
+import { materialiseBundleDir, writeTargetAt } from "../../core/bundle-at-dir";
 import { bundleIdForDir } from "../../core/bundle-id";
 import { isHttpUrl, isWithin, resolveStashDir, safeRealpath, samePath, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -34,11 +37,9 @@ import {
   commitWriteTargetBoundary,
   formatRefForMessage,
   type ResolvedWriteTarget,
-  recordWriteTargetPath,
   resolveWriteTarget,
 } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { storeSecretResolver } from "../../sources/snapshot-fetchers/secret-seam";
@@ -281,9 +282,15 @@ function resolveWriteRefRoots(target?: string, targetFlag?: string): { roots: Wr
       .filter((p) => fs.existsSync(p))
       .map((p) => {
         const source = namedSources.find((candidate) => samePath(candidate.path, p));
-        const mutable = samePath(p, stashRoot)
-          ? writeTarget.source.adapterId === "akm"
-          : source?.writable === true && bundleAdapterId(source) === "akm";
+        // The demotion of a superseded asset is an update of knowledge or a memory: its bundle's adapter writes them.
+        const writesAssets = ((): boolean => {
+          try {
+            return adapterWrites(materialiseBundleDir(p), "memory");
+          } catch {
+            return false;
+          }
+        })();
+        const mutable = samePath(p, stashRoot) ? writesAssets : source?.writable === true && writesAssets;
         return {
           path: p,
           source,
@@ -334,6 +341,7 @@ function locateWriteRefInRoot(type: string, name: string, root: string): string 
   if (type === "workflow") {
     const typeRoot = path.join(root, stashDirFor("workflow") ?? "workflows");
     const candidate = assetPathForName("workflow", typeRoot, name);
+    // asset-io: deprecated workflow ref probe, removed with workflows
     if (fs.existsSync(candidate)) return candidate;
   }
   const relPath = refToRelPath(type, name);
@@ -754,12 +762,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
       );
     }
     if (options.expectedContentHash !== undefined) {
-      let existing: Buffer | undefined;
-      try {
-        existing = fs.readFileSync(assetPath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
+      const existing = readAsset(source.name, conceptIdFromTypeName(options.type, normalizedName))?.entry.bytes();
       if (!existing || createHash("sha256").update(existing).digest("hex") !== options.expectedContentHash) {
         throw new UsageError(
           "The document changed or was removed after it was loaded. Reload its source before saving.",
@@ -796,7 +799,6 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
     // demoted incumbent into the single boundary commit instead of leaving the
     // metadata edit as dirty residue after it.
     const superseded: Array<{ ref: string; applied: boolean; reason?: string }> = [];
-    const demotedByRoot = new Map<string, string[]>();
     for (const item of options.supersedes ?? []) {
       if (!item.writable) {
         const reason = item.reason ?? "target is not writable";
@@ -812,11 +814,14 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
       // scanner and re-serializing that result destroys list/nested values —
       // skip instead of rewriting, mirroring mergeXrefsIntoContent's
       // abort-on-malformed policy (the correction itself still writes).
+      const oldConceptId = parseBundleRef(item.ref).conceptId;
+      const oldTarget = samePath(item.stashRoot, source.path) ? target : writeTargetAt(item.stashRoot);
       let oldFrontmatter: string | null = null;
       try {
-        oldFrontmatter = parseFrontmatter(fs.readFileSync(item.filePath, "utf8")).frontmatter;
+        const old = readAsset(oldTarget.source.name, oldConceptId);
+        if (old) oldFrontmatter = parseFrontmatter(old.entry.content()).frontmatter;
       } catch {
-        // Unreadable file — let writeSupersededEdge surface the real fs error.
+        // Unreadable asset — let writeSupersededEdge surface the real error.
       }
       if (oldFrontmatter?.trim() && !isParseableYamlMapping(oldFrontmatter)) {
         const reason =
@@ -835,11 +840,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
       // on a git target, uncommitted (and a re-run hits RESOURCE_ALREADY_EXISTS).
       // Degrade to the same applied:false report the non-writable path uses.
       try {
-        const sameSource = samePath(item.stashRoot, source.path);
-        writeSupersededEdge(item.filePath, durableRef);
-        if (sameSource) {
-          recordWriteTargetPath(source, item.filePath);
-        }
+        writeAssets(oldTarget, { purpose: "markdown-write" }, (w) => writeSupersededEdge(w, oldConceptId, durableRef));
       } catch (error) {
         const reason = `demotion failed: ${error instanceof Error ? error.message : String(error)}`;
         warn(
@@ -850,33 +851,18 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
         continue;
       }
       superseded.push({ ref: item.ref, applied: true });
-      const files = demotedByRoot.get(item.stashRoot) ?? [];
-      files.push(item.filePath);
-      demotedByRoot.set(item.stashRoot, files);
     }
     // Single batch commit at the write boundary for git
     // targets. No-op for filesystem/primary-stash targets.
     commitWriteTargetBoundary(target, `Update ${formatRefForMessage(resolved.ref)}`);
-    return { result, superseded, demotedByRoot };
+    return { result, superseded };
   });
   if (written.unchanged) return written;
-  const { result, superseded, demotedByRoot } = written;
-  // Write-path indexing: the asset is searchable immediately. Fail-open; reads
-  // do not trigger reindexes, so keeping the index current is the writer's
-  // job. Demoted files reindex under their own containing root (usually the
-  // write target itself; the working stash when writing to a --bundle) so
-  // `--belief current` filtering takes effect without waiting for the next
-  // full index. (Belief weights do not affect ranking; `--belief` is
-  // the only reader of `beliefState`.)
-  const demotedInTargetRoot = demotedByRoot.get(source.path) ?? [];
-  demotedByRoot.delete(source.path);
-  await indexWrittenAssets(source.path, [result.path, ...demotedInTargetRoot], { bundleId: resolved.ref.origin });
-  const sourceEntries = resolveSourceEntries(undefined, cfg);
-  const sourceInstallations = deriveInstallations(sourceEntries);
-  for (const [root, files] of demotedByRoot) {
-    const sourceIndex = sourceEntries.findIndex((entry) => samePath(entry.path, root));
-    await indexWrittenAssets(root, files, { bundleId: sourceInstallations[sourceIndex]?.id });
-  }
+  const { result, superseded } = written;
+  // Write-path indexing: the facade recorded the rows of the new asset and of each demoted one, so they are searchable
+  // immediately (`--belief current` takes effect without waiting for the next full index); their vectors are made now,
+  // fail-open, after the lease is released.
+  await embedPendingWrites();
   // Placement hint (stash-organization conventions): CLI writers never receive
   // the resolveStashStandards prompt injection LLM flows get, so a type-root
   // write into a stash that carries convention/meta facts points the writer at
@@ -889,8 +875,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
         // Only point at the canonical organization fact when it actually
         // exists — resolveStashStandards fires for ANY convention/meta fact,
         // and a dead `akm show` pointer is worse than generic wording.
-        const orgFactPath = path.join(source.path, "facts", "conventions", "organization.md");
-        hint = fs.existsSync(orgFactPath)
+        hint = readAsset(source.name, "facts/conventions/organization")
           ? `Wrote to the ${options.type} root. This stash has placement conventions — see \`akm show facts/conventions/organization\`.`
           : `Wrote to the ${options.type} root. This stash has placement conventions — see the convention facts under its facts/ directory.`;
       }

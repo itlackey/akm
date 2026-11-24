@@ -38,12 +38,12 @@ import { readEvents } from "../../../src/core/events";
 import { getDbPath, getIndexRebuildLockPath, getIndexWriterLockPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { pkgVersion } from "../../../src/version";
 import { makeConfig } from "../../_helpers/factories";
+import { indexWrittenAssets } from "../../_helpers/index-written-files";
 import { spawnLiveHolder } from "../../_helpers/live-holder";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 

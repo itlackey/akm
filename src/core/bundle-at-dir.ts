@@ -17,6 +17,7 @@ import { bundleIdForDir } from "./bundle-id";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { bundleAtDir } from "./config/config-sources";
 import { holdMaterialised, materialisedBundles, materialisedIdOf, materialisedIdTaken } from "./materialised-bundles";
+import type { ResolvedWriteTarget } from "./write-source";
 
 /** The key rows for the bundle at `dir` are filed under: its id, else (no configured bundle) the directory's own path. */
 export function bundleKeyForDir(config: AkmConfig, dir: string): string {
@@ -67,6 +68,23 @@ export function materialiseBundleDir(
   if (materialisedIdTaken(id, dir)) id = bundleIdForDir(dir, new Set([...taken, id]));
   holdMaterialised({ name: id, path: dir, adapterId: as.adapterId ?? detectBundleAdapter(dir) });
   return id;
+}
+
+/**
+ * The write target of the directory `dir` a command holds (the working stash, a `--dir`, a root a stored record names): the
+ * bundle at it, materialised when no config names it, taking writes as a plain filesystem bundle with its adapter.
+ */
+export function writeTargetAt(
+  dir: string,
+  config: AkmConfig = loadConfig(),
+  as: { name?: string; adapterId?: string } = {},
+): ResolvedWriteTarget {
+  const name = materialiseBundleDir(dir, config, as);
+  const adapterId = as.adapterId ?? config.bundles?.[name]?.adapter ?? detectBundleAdapter(dir);
+  return {
+    source: { kind: "filesystem", name, path: dir, adapterId },
+    config: { type: "filesystem", name, path: dir, writable: true },
+  };
 }
 
 /**

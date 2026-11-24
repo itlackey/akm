@@ -7,9 +7,13 @@ import path from "node:path";
 import { walkMarkdownFiles } from "../../../core/adapter/directory/walker";
 import { type ArchiveWrite, archiveFile, expireArchive } from "../../../core/adapter/directory-archive";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
-import { mutateFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
+import { editFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
 import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
+import { readAsset } from "../../../core/assets/read";
+import { conceptIdAtFile, writeAssets } from "../../../core/assets/write";
+import { materialiseBundleDir, writeTargetAt } from "../../../core/bundle-at-dir";
 import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
+import { assetNotFound } from "../../../core/errors";
 import type {
   ArchivedMemoryCleanupRecord,
   MemoryBeliefState,
@@ -240,7 +244,11 @@ export function applyMemoryCleanup(stashDir: string, plan: MemoryCleanupPlan): M
     const filePath = fileByRef.get(transition.ref);
     if (!filePath) continue;
     try {
-      persistBeliefStateTransition(filePath, transition);
+      persistBeliefStateTransition(
+        stashDir,
+        conceptIdAtFile(materialiseBundleDir(stashDir), filePath) ?? transition.ref,
+        transition,
+      );
       appliedBeliefTransitions.push(transition);
     } catch (error) {
       warnings.push(formatApplyWarning("belief-transition", transition.ref, error));
@@ -272,8 +280,13 @@ export function applyMemoryCleanup(stashDir: string, plan: MemoryCleanupPlan): M
   let relativeDatesResolved = 0;
   for (const candidate of plan.relativeDateCandidates) {
     try {
-      const raw = fs.readFileSync(candidate.filePath, "utf8");
-      const fm = parseFrontmatter(raw);
+      const target = writeTargetAt(stashDir);
+      const held = readAsset(
+        target.source.name,
+        conceptIdAtFile(target.source.name, candidate.filePath) ?? candidate.ref,
+      );
+      if (!held) throw assetNotFound(candidate.ref);
+      const fm = parseFrontmatter(held.entry.content());
       const createdAtStr = fm.data.createdAt as string | undefined;
       let referenceDate: Date;
       if (createdAtStr) {
@@ -285,9 +298,8 @@ export function applyMemoryCleanup(stashDir: string, plan: MemoryCleanupPlan): M
       const resolvedBody = resolveRelativeDates(fm.content ?? "", referenceDate);
       if (resolvedBody === (fm.content ?? "")) continue; // no change
       const newContent = assembleAsset(fm.data, resolvedBody);
-      fs.writeFileSync(candidate.filePath, newContent, "utf8");
-      // #652: relative-date resolution rewrites the asset in place.
-      recordWrittenPath(candidate.filePath);
+      // The journal (#652) records the asset the update rewrites in place.
+      writeAssets(target, { purpose: "memory-cleanup" }, (w) => w.update(held.conceptId, newContent));
       relativeDatesResolved++;
     } catch (error) {
       warnings.push(formatApplyWarning("relative-date-resolve", candidate.ref, error));
@@ -709,27 +721,40 @@ export function purgeGracedArchive(stashDir: string, now: Date = new Date()): Ar
   return { purgedDirs, purgedFiles: changed.length };
 }
 
-function persistBeliefStateTransition(filePath: string, transition: MemoryBeliefStateTransition): void {
-  mutateFrontmatter(filePath, (parsed) => {
-    const nextFrontmatter: Record<string, unknown> = {
-      ...parsed.data,
-      beliefState: transition.toState,
-    };
+function persistBeliefStateTransition(
+  stashDir: string,
+  conceptId: string,
+  transition: MemoryBeliefStateTransition,
+): void {
+  writeAssets(writeTargetAt(stashDir), { purpose: "memory-cleanup" }, (w) => {
+    const held = w.read(conceptId);
+    if (!held) throw assetNotFound(transition.ref);
+    const next = editFrontmatter(
+      held.entry.content(),
+      (parsed) => {
+        const nextFrontmatter: Record<string, unknown> = {
+          ...parsed.data,
+          beliefState: transition.toState,
+        };
 
-    const currentBeliefRefs = [...new Set(transition.currentBeliefRefs ?? [])].sort();
-    if (transition.toState === "contradicted") {
-      nextFrontmatter.contradictedBy = [...currentBeliefRefs];
-    } else {
-      delete nextFrontmatter.contradictedBy;
-      if (parsed.data.supersededBy !== undefined && refArray(parsed.data.supersededBy).length === 0) {
-        delete nextFrontmatter.supersededBy;
-      }
-    }
+        const currentBeliefRefs = [...new Set(transition.currentBeliefRefs ?? [])].sort();
+        if (transition.toState === "contradicted") {
+          nextFrontmatter.contradictedBy = [...currentBeliefRefs];
+        } else {
+          delete nextFrontmatter.contradictedBy;
+          if (parsed.data.supersededBy !== undefined && refArray(parsed.data.supersededBy).length === 0) {
+            delete nextFrontmatter.supersededBy;
+          }
+        }
 
-    if (currentBeliefRefs.length > 0) nextFrontmatter.currentBeliefRefs = [...currentBeliefRefs];
-    else delete nextFrontmatter.currentBeliefRefs;
+        if (currentBeliefRefs.length > 0) nextFrontmatter.currentBeliefRefs = [...currentBeliefRefs];
+        else delete nextFrontmatter.currentBeliefRefs;
 
-    return nextFrontmatter;
+        return nextFrontmatter;
+      },
+      held.ref,
+    );
+    if (next !== null) w.update(held.conceptId, next);
   });
 }
 

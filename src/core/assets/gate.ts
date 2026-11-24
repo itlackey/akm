@@ -25,6 +25,11 @@ export function assertAdapterWrites(bundle: string, type?: string): void {
   bundleFor(bundle).assertWrites(type);
 }
 
+/** Whether the adapter with the registry id `adapterId` writes assets of `type`: for a caller that holds the id, not a bundle. */
+export function adapterIdWrites(adapterId: string, type: string): boolean {
+  return adapterForId(adapterId)?.writes.includes(type) === true;
+}
+
 /** Whether the bundle's adapter writes assets of `type`: it holds them as its own, not as files it reads. */
 export function adapterWrites(bundle: string, type: string): boolean {
   return bundleFor(bundle).writes(type);

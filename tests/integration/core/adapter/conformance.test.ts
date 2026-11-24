@@ -543,7 +543,7 @@ describe("conformance — create, place and read agree", () => {
         const sandbox = sandboxStashDir();
         try {
           const b = bundle("round-trip", path.join(sandbox.dir, "b"));
-          const conceptId = adapter.place(b, { type, name: probeName(type, "probe/sample") });
+          const { conceptId } = adapter.place(b, { type, name: probeName(type, "probe/sample") });
           const change = adapter.create(b, { type, name: probeName(type, "probe/sample"), content: "# probe\n" });
           expect(change.conceptId, `${adapter.id} ${type}`).toBe(conceptId);
           const read = adapter.read(b, conceptId);
@@ -566,7 +566,7 @@ describe("conformance — create, place and read agree", () => {
             const b = bundle("place", path.join(sandbox.dir, "b"));
             let conceptId: string;
             try {
-              conceptId = adapter.place(b, { type, name });
+              conceptId = adapter.place(b, { type, name }).conceptId;
             } catch (error) {
               expect(error, `${adapter.id} ${type} "${name}"`).toBeInstanceOf(UsageError);
               expect(() => adapter.create(b, { type, name, content: "x" }), `${adapter.id} ${type} "${name}"`).toThrow(
@@ -650,16 +650,20 @@ describe("conformance — create, place and read agree", () => {
         [azureKeyVaultAdapter, "vault"],
       ] as const) {
         const b: Bundle = { id: "managed", root: "/not/a/directory", location };
-        // A keyring entry is read by what a listing (the index's) recorded of it.
-        adapter.list(b);
-        expect(() => adapter.create(b, { type: "secret", name: "t", content: "v2" }), adapter.id).toThrow(
+        // A keyring entry is read by what a listing (the index's) recorded of it, which the facade hands back.
+        const { locator } = adapter.list(b).assets.find((asset) => asset.conceptId === "secrets/t")?.entry ?? {};
+        expect(() => adapter.create(b, { type: "secret", name: "t", content: "v2" }, { locator }), adapter.id).toThrow(
           /over an existing secret/,
         );
-        expect(adapter.read(b, "secrets/t")?.entry.content(), adapter.id).toBe("v1");
-        adapter.create(b, { type: "secret", name: "t", content: "v2" }, { replace: true });
-        expect(adapter.read(b, "secrets/t")?.entry.content(), adapter.id).toBe("v2");
-        adapter.create(b, { type: "secret", name: "fresh", content: "v3" });
-        expect(adapter.read(b, "secrets/fresh")?.entry.content(), adapter.id).toBe("v3");
+        expect(adapter.read(b, "secrets/t", locator)?.entry.content(), adapter.id).toBe("v1");
+        const replaced = adapter.create(b, { type: "secret", name: "t", content: "v2" }, { replace: true, locator });
+        expect(adapter.read(b, "secrets/t", replaced.entry?.locator ?? locator)?.entry.content(), adapter.id).toBe(
+          "v2",
+        );
+        // A write hands back the entry it wrote: the keyring's item as the service now holds it.
+        const fresh = adapter.create(b, { type: "secret", name: "fresh", content: "v3" });
+        expect(fresh.entry?.key, adapter.id).toBe(adapter === secretToolAdapter ? "secrets/fresh" : undefined);
+        expect(adapter.read(b, "secrets/fresh", fresh.entry?.locator)?.entry.content(), adapter.id).toBe("v3");
       }
     });
   });
@@ -816,7 +820,7 @@ describe("conformance — refusal and not-found sentences have one home", () => 
         fs.mkdirSync(root, { recursive: true });
         const b = bundle("b", root);
         const type = adapter.writes[0] as string;
-        const asked = adapter.place(b, { type, name: "none" });
+        const { conceptId: asked } = adapter.place(b, { type, name: "none" });
         const expected = assetNotFound(`b//${asked}`);
         const changes = [() => adapter.update(b, asked, "x"), () => adapter.delete(b, asked)];
         if (adapter.retires.length > 0) changes.push(() => adapter.retire(b, asked, {}));

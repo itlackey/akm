@@ -196,8 +196,8 @@ describe("akmDistill — selected-root lookup", () => {
   test("never writes salience to another source", async () => {
     const selected = makeStashDir();
     const other = makeStashDir();
-    const selectedFile = path.join(selected, "skills", "duplicate.md");
-    const otherFile = path.join(other, "skills", "duplicate.md");
+    const selectedFile = path.join(selected, "knowledge", "duplicate.md");
+    const otherFile = path.join(other, "knowledge", "duplicate.md");
     const selectedContent = "---\ndescription: Selected source\n---\n\nSelected source body.\n";
     const otherContent = "---\ndescription: Other source\n---\n\nOther source body.\n";
     fs.writeFileSync(selectedFile, selectedContent, "utf8");
@@ -205,18 +205,18 @@ describe("akmDistill — selected-root lookup", () => {
     const lookedUp: string[] = [];
 
     await akmDistill({
-      ref: "skills/duplicate",
+      ref: "knowledge/duplicate",
       stashDir: selected,
       config: configEnabled(selected),
       lookupFn: async (ref) => {
         lookedUp.push(ref);
-        return ref === "skills/duplicate" ? selectedFile : otherFile;
+        return ref === "knowledge/duplicate" ? selectedFile : otherFile;
       },
       readEventsFn: emptyEvents,
       chat: async () => VALID_LESSON,
     });
 
-    expect(lookedUp[0]).toBe("skills/duplicate");
+    expect(lookedUp[0]).toBe("knowledge/duplicate");
     expect(fs.readFileSync(selectedFile, "utf8")).toContain("salience:");
     expect(fs.readFileSync(otherFile, "utf8")).toBe(otherContent);
   });

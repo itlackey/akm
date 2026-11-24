@@ -79,6 +79,8 @@ export interface NewAsset {
   type: string;
   name: string;
   content: string | Buffer;
+  /** What a warning about the asset calls it (the home-path advisory): the caller's own name for it, else its file's name. */
+  label?: string;
   /** Files that belong to the asset (a skill package's resources), by path below the asset's folder. */
   resources?: ReadonlyArray<{ path: string; content: Buffer }>;
 }
@@ -90,15 +92,23 @@ export interface AssetChange {
   changed: string[];
   /** The content the asset holds after the write. Absent after a delete, retire or forget. */
   content?: string | Buffer;
+  /**
+   * The entry the write left, when the adapter has it without reading the store again (a keyring's item as the service
+   * now holds it, with the locator the index records). The facade refreshes the asset's index row from it.
+   */
+  entry?: AssetEntry;
 }
 
-/** Where a create of an asset is kept. */
+/**
+ * Where a create of an asset goes: the one answer of `place`. A directory adapter also says the storage key the create
+ * writes (an asset held under another key is held under another spelling), whether anything is kept there now (an asset,
+ * or an entry no adapter reads as one: a directory) and the file to show for it (display only, §0.2 P13; never stored).
+ */
 export interface AssetPlacement {
-  /** The storage key the create writes. An asset held under another key is held under another spelling. */
-  key: string;
-  /** Whether anything is kept at the key now: an asset, or an entry no adapter reads as one (a directory). */
-  occupied: boolean;
-  /** The file to show for it, when one holds it. */
+  /** The concept id a create gives. */
+  conceptId: string;
+  key?: string;
+  occupied?: boolean;
   file?: string;
 }
 
@@ -166,8 +176,11 @@ export interface BundleAdapter {
    */
   validate(b: Bundle, edits: AssetEdit[], ctx: ValidateContext): Promise<Diagnostic[]>;
 
-  /** The concept id a `create` of `asset` would give, without writing. Refused by a read-only adapter. */
-  place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): string;
+  /**
+   * Where a `create` of `asset` would go, without writing: its concept id and, for an adapter that keeps assets as
+   * files, where. A name that cannot be placed throws, as does a read-only adapter.
+   */
+  place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): AssetPlacement;
   /**
    * Create the asset, in the adapter's own form for its type, or with `verbatim` as exactly `asset.content` (a promoted
    * proposal's bytes are the ones it was reviewed with). Over an existing asset of the same concept it writes the same
@@ -219,12 +232,6 @@ export interface BundleAdapter {
   renderExecutionSource?(b: Bundle, entry: AssetEntry): AdapterRenderedExecutionSource | null;
   /** Install-time probe; ordered by the registry. */
   looksLikeRoot?(root: string): boolean;
-  /**
-   * Where a create of `asset` is kept, when the adapter keeps assets as files: the storage key, whether anything
-   * (an asset or not) is there now, and the file to show for it (display only, `AssetAddress.file`, §0.2 P13; never
-   * stored). Undefined when it keeps no file for it. A name that cannot be placed throws, as `place` does.
-   */
-  placement?(b: Bundle, asset: Pick<NewAsset, "type" | "name">): AssetPlacement | undefined;
   /**
    * The concept id a stored storage key (a bundle-relative path) holds, from the key alone, so it is valid when no
    * file exists. For converters of old stored records only (§8.4: `legacyRefOf`).
