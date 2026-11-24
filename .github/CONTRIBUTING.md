@@ -22,7 +22,8 @@ bun install
 Desktop lives in [desktop/](../desktop/README.md), with its own dependency graph
 and lockfile. After the root install, `bun run desktop:setup` builds and packs
 this checkout's CLI and installs it into Desktop; no private package is needed.
-Run the Desktop README's type, browser and native tests when changing it. The
+Run the Desktop README's type, browser and native tests when changing it: pull requests run only Desktop's check
+and build, and its tests gate releases (the Release workflow's `desktop-tests`). The
 normal CLI build and npm package do not include Desktop or its dependencies.
 
 ### Dependency updates
