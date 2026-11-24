@@ -4,7 +4,25 @@
 
 import fs from "node:fs";
 import path from "node:path";
+// asset-io: base the akm sweep is the akm adapter's own lint, still run from the command so `--fix` can repair as it checks
+import {
+  derivedSiblingPath,
+  MAX_SKILL_GROUP_DEPTH,
+  matchWorkflowPlaceholder,
+  perTypeChecks,
+  perTypeFrontend,
+} from "../../core/adapter/adapters/akm-lint";
+// asset-io: base what a bundle keeps that no adapter lists (a `.yaml` task, a skill folder, `.env` files), as lint always read it
+import {
+  heldFilesBelow,
+  heldFolders,
+  heldText,
+  holdsFile,
+  saveHeldText,
+} from "../../core/adapter/directory/held-files";
 import type { Diagnostic } from "../../core/adapter/types";
+// asset-io: base the type of what those checks return
+import type { FileDiagnostic } from "../../core/adapter/validate-context";
 import {
   documentFormatForStashDir,
   documentStashDirFor,
@@ -16,29 +34,10 @@ import {
 } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
-import { adapterDeclaresTypes, adapterLintsAlone, bundleAdapterId } from "../../core/assets/gate";
-import {
-  assertFileWritable,
-  heldFilesBelow,
-  heldFolders,
-  heldText,
-  holdsFile,
-  saveHeldText,
-} from "../../core/assets/held";
+import { adapterDeclaresTypes, adapterLintsAlone } from "../../core/assets/gate";
 import type { Asset } from "../../core/assets/read";
 import { assetTypesByContent } from "../../core/assets/type";
-import {
-  assetAtStoredKey,
-  derivedSiblingPath,
-  type FileDiagnostic,
-  listBundleAssets,
-  MAX_SKILL_GROUP_DEPTH,
-  matchWorkflowPlaceholder,
-  perTypeChecks,
-  perTypeFrontend,
-  storeFindings,
-  validateBundleAssets,
-} from "../../core/assets/validate";
+import { assetAtStoredKey, listBundleAssets, storeFindings, validateBundleAssets } from "../../core/assets/validate";
 import { writeAssets } from "../../core/assets/write";
 import { bundleSourceAt } from "../../core/bundle-at-dir";
 import { deriveBundleIds } from "../../core/bundle-id";
@@ -130,7 +129,7 @@ export interface AkmLintOptions {
  * walking past it and reporting a clean scan.
  */
 function collectTaskFiles(root: string): string[] {
-  return heldFilesBelow({ path: root }, "tasks", (name) => isTaskFileName(name) || isNearMissTaskFileName(name));
+  return heldFilesBelow(root, "tasks", (name) => isTaskFileName(name) || isNearMissTaskFileName(name));
 }
 
 function isTaskFileName(fileName: string): boolean {
@@ -283,14 +282,14 @@ export function diagnosticToLintIssue({ ref, ...diag }: Diagnostic): LintIssue {
  * files it ignores itself.
  */
 async function adapterFindings(
-  adapterId: string,
+  bundle: LintBundle,
   stashRoot: string,
   keep: ((key: string) => boolean) | undefined,
   sources: SearchSource[],
   cfg: AkmConfig,
   options: AkmLintOptions,
 ): Promise<LintIssue[]> {
-  const found = await validateBundleAssets(lintBundleOf(adapterId, stashRoot, sources), {
+  const found = await validateBundleAssets(bundle, {
     // akm's own resolved registry-cache copies are not the bundle's content.
     keep: (entry) =>
       !isAkmRegistryCachePath(path.join(stashRoot, entry.key)) && (keep === undefined || keep(entry.key)),
@@ -300,7 +299,7 @@ async function adapterFindings(
 }
 
 /** The bundle at `stashRoot` among the configured `sources`, under the id refs name it by (its path when none is configured there). */
-function lintBundleOf(adapterId: string, stashRoot: string, sources: SearchSource[]): LintBundle {
+function lintBundleOf(adapterId: string | undefined, stashRoot: string, sources: SearchSource[]): LintBundle {
   const ids = deriveBundleIds(sources);
   const sourceIndex = sources.findIndex((s) => samePath(s.path, stashRoot));
   return { name: sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot, path: stashRoot, adapterId };
@@ -333,7 +332,7 @@ async function addStoreFindings(
  * `okf` before this change).
  */
 async function lintViaAdapter(
-  adapterId: string,
+  bundle: LintBundle,
   stashRoot: string,
   extraStashRoots: string[],
   sources: SearchSource[],
@@ -349,12 +348,12 @@ async function lintViaAdapter(
   // bundle sets.
   if (options.typeFilter) {
     warn(
-      `Warning: lint --type "${options.typeFilter}" is not supported for the "${adapterId}" adapter — ` +
+      `Warning: lint --type "${options.typeFilter}" is not supported for the "${bundle.adapterId}" adapter — ` +
         "type scoping applies to akm bundles only; the whole bundle was validated.",
     );
   }
 
-  const mapped = await adapterFindings(adapterId, stashRoot, undefined, sources, cfg, options);
+  const mapped = await adapterFindings(bundle, stashRoot, undefined, sources, cfg, options);
 
   // Advisory diagnostics travel in their own channel — never `flagged`, so a
   // `--fail-on-flagged` gate is not tripped by a non-fatal warning. Classified
@@ -371,7 +370,7 @@ async function lintViaAdapter(
   // `validate()` (reusing the same `dangerousEnvKeyDiagnostics` rule) — dedupe
   // by `(file, issue, detail)` so a bundle covered both ways reports each
   // finding once, not twice.
-  if (!adapterLintsAlone(adapterId)) {
+  if (!adapterLintsAlone(bundle)) {
     const seen = new Set(flagged.map(lintIssueDedupeKey));
     for (const issue of runEnvDangerousKeyPass(stashRoot, extraStashRoots, sources, cfg)) {
       const key = lintIssueDedupeKey(issue);
@@ -413,9 +412,7 @@ function runEnvDangerousKeyPass(
     // hand-built `env:<base>` colon grammar is rejected by the ref
     // parser, which dead-ended a user copying the ref off a security finding.
     for (const assetType of ["env", "secret"] as const) {
-      for (const envPath of heldFilesBelow({ path: root }, stashDirFor(assetType) as string, (name) =>
-        name.endsWith(".env"),
-      )) {
+      for (const envPath of heldFilesBelow(root, stashDirFor(assetType) as string, (name) => name.endsWith(".env"))) {
         const conceptId = conceptIdForStashFile(assetType, root, envPath);
         const ref = displayRefForConceptId(conceptId, bundleId, cfg.defaultBundle);
         const relPath = path.relative(root, envPath);
@@ -476,7 +473,7 @@ function isFileDeletion(issue: LintIssue): boolean {
  * golden (`tests/integration/goldens-lint-output.test.ts`).
  */
 export function lintSkillDirectory(stashRoot: string, relDir: string, depth = 1): LintIssue[] {
-  if (holdsFile({ path: stashRoot }, path.join(relDir, "SKILL.md"))) return [];
+  if (holdsFile(stashRoot, path.join(relDir, "SKILL.md"))) return [];
   const children = depth < MAX_SKILL_GROUP_DEPTH ? skillSubfolders(stashRoot, relDir) : [];
   if (children.some((child) => containsSkillManifest(stashRoot, child, depth + 1))) {
     return children.flatMap((child) => lintSkillDirectory(stashRoot, child, depth + 1));
@@ -486,13 +483,13 @@ export function lintSkillDirectory(stashRoot: string, relDir: string, depth = 1)
 
 /** The folders of `relDir` that are not hidden, as bundle-relative paths. */
 function skillSubfolders(stashRoot: string, relDir: string): string[] {
-  return heldFolders({ path: stashRoot }, relDir)
+  return heldFolders(stashRoot, relDir)
     .filter((name) => !name.startsWith("."))
     .map((name) => path.join(relDir, name));
 }
 
 function containsSkillManifest(stashRoot: string, relDir: string, depth: number): boolean {
-  if (holdsFile({ path: stashRoot }, path.join(relDir, "SKILL.md"))) return true;
+  if (holdsFile(stashRoot, path.join(relDir, "SKILL.md"))) return true;
   if (depth >= MAX_SKILL_GROUP_DEPTH) return false;
   return skillSubfolders(stashRoot, relDir).some((child) => containsSkillManifest(stashRoot, child, depth + 1));
 }
@@ -538,7 +535,7 @@ export function lintAssetFile(ctx: LintContext, subdir: string): LintIssue[] {
     body: ctx.body,
     ext: path.extname(ctx.relPath).toLowerCase(),
     rules: { relPath: ctx.relPath, skip: ctx.lintSkip },
-    derivedSiblingExists: holdsFile({ path: ctx.stashRoot }, derivedSiblingPath(ctx.relPath)),
+    derivedSiblingExists: holdsFile(ctx.stashRoot, derivedSiblingPath(ctx.relPath)),
   });
   issues.push(...found.map((finding) => deleteStubWhenFixing(ctx, finding)));
   return issues;
@@ -598,11 +595,8 @@ function sweepFileOf(
       ? writer
         ? {
             modified: () => asset.entry.modified?.() ?? new Date(),
-            write: (raw) => {
-              // A read-only file stays as it is: the save replaces the file, which ignores its mode.
-              assertFileWritable(filePath);
-              writer.update(asset.conceptId, raw, { throughLink: true });
-            },
+            // Saved as it lies: through a link, and a read-only file is refused.
+            write: (raw) => writer.update(asset.conceptId, raw, { throughLink: true }),
             remove: () => void writer.delete(asset.conceptId),
           }
         : {}
@@ -765,7 +759,7 @@ function sweepDirs(cfg: AkmConfig, options: AkmLintOptions): string[] {
  */
 async function addAdapterFindings(
   found: LintFindings,
-  adapterId: string,
+  bundle: LintBundle,
   stashRoot: string,
   sources: SearchSource[],
   cfg: AkmConfig,
@@ -773,7 +767,7 @@ async function addAdapterFindings(
 ): Promise<void> {
   const dirs = new Set(sweepDirs(cfg, options));
   // The keys of the assets the sweep reads, as it reads them (the bundle as it stands after the sweep's fixes).
-  const inventory = inventoryOf(lintBundleOf(adapterId, stashRoot, sources));
+  const inventory = inventoryOf(bundle);
   const inSweepKeys = new Set(
     inventory.assets
       .filter((asset) => {
@@ -789,7 +783,7 @@ async function addAdapterFindings(
   const fixTried = new Set(
     [...found.fixed, ...found.flagged].filter((issue) => issue.fixed !== false).map((i) => `${i.file} ${i.issue}`),
   );
-  for (const issue of await adapterFindings(adapterId, stashRoot, inSweep, sources, cfg, options)) {
+  for (const issue of await adapterFindings(bundle, stashRoot, inSweep, sources, cfg, options)) {
     // A skill directory's check belongs to the skills sweep: `--type knowledge` does not report it.
     if (issue.issue === "missing-skill-md" && !dirs.has("skills")) continue;
     const key = lintIssueDedupeKey(issue);
@@ -809,7 +803,7 @@ async function addAdapterFindings(
  * see {@link lintViaAdapter}'s fallback).
  */
 function lintAkmSweep(
-  adapterId: string,
+  bundle: LintBundle,
   stashRoot: string,
   extraStashRoots: string[],
   cfg: AkmConfig,
@@ -821,7 +815,6 @@ function lintAkmSweep(
   // read-only gate `--fix` does.
   const writes = fix || options.pruneDanglingEdges === true || options.fixMovedRefs === true;
   if (writes) assertFixTargetWritable(stashRoot, sources);
-  const bundle = lintBundleOf(adapterId, stashRoot, sources);
   const sweep = (writer: LintWriter | undefined): LintFindings => {
     const fixed: LintIssue[] = [];
     const flagged: LintIssue[] = [];
@@ -851,7 +844,7 @@ function lintAkmSweep(
       // SkillLinter.lintDirectory). Run once per direct subdirectory before the
       // per-file loop.
       if (subdir === "skills") {
-        for (const name of heldFolders({ path: stashRoot }, "skills")) {
+        for (const name of heldFolders(stashRoot, "skills")) {
           for (const issue of lintSkillDirectory(stashRoot, path.join("skills", name))) {
             // Tristate-safe: only `true` counts as fixed; `false` and "failed"
             // are both flagged.
@@ -988,11 +981,11 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
   let subdir: string | undefined;
   if (root) {
     const sources = resolveSourceEntries(root, cfg);
-    const { adapterId } = bundleSourceAt(root, cfg);
+    const bundle = lintBundleOf(bundleSourceAt(root, cfg).adapterId, root, sources);
     const relPath = path.relative(realRoot as string, absFile);
-    if (!adapterDeclaresTypes(adapterId)) {
+    if (!adapterDeclaresTypes(bundle)) {
       const result = await lintViaAdapter(
-        adapterId,
+        bundle,
         root,
         // asset-io: bundle-root root probe
         sources.map((s) => s.path).filter((p) => p !== root && fs.existsSync(p)),
@@ -1215,12 +1208,16 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   // The primary stash is the defaultBundle's path.
   const stashRoot = options.dir ?? primaryBundlePath(cfg) ?? resolveStashDir();
   const sources = resolveSourceEntries(stashRoot, cfg);
-  const adapterId = bundleAdapterId(sources.find((source) => samePath(source.path, stashRoot)) ?? {});
+  const bundle = lintBundleOf(
+    sources.find((source) => samePath(source.path, stashRoot))?.adapterId,
+    stashRoot,
+    sources,
+  );
   // asset-io: bundle-root root probe
   const extraStashRoots = sources.map((s) => s.path).filter((p) => p !== stashRoot && fs.existsSync(p));
 
-  if (!adapterDeclaresTypes(adapterId)) {
-    const found = await lintViaAdapter(adapterId, stashRoot, extraStashRoots, sources, cfg, options);
+  if (!adapterDeclaresTypes(bundle)) {
+    const found = await lintViaAdapter(bundle, stashRoot, extraStashRoots, sources, cfg, options);
     found.flagged.push(...trackedSecretIssues(stashRoot));
     await addStoreFindings(found, sources, cfg, options);
     return finishLint(found, cfg, options, stashRoot);
@@ -1240,8 +1237,8 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   const readMoves = options.readMoves ?? readRecordedMoves;
   let moves: ReturnType<ReadMoves> | undefined;
   options = { ...options, readMoves: () => (moves ??= readMoves()) };
-  const found = lintAkmSweep(adapterId, stashRoot, extraStashRoots, cfg, sources, options);
-  await addAdapterFindings(found, adapterId, stashRoot, sources, cfg, options);
+  const found = lintAkmSweep(bundle, stashRoot, extraStashRoots, cfg, sources, options);
+  await addAdapterFindings(found, bundle, stashRoot, sources, cfg, options);
   found.flagged.push(...trackedSecretIssues(stashRoot));
   await addStoreFindings(found, sources, cfg, options);
   return finishLint(found, cfg, options, stashRoot);

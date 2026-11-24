@@ -215,9 +215,10 @@ export interface BundleAdapter {
     options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any"; locator?: unknown },
   ): AssetChange;
   /**
-   * Replace the content of the asset `conceptId` holds with exactly `content`. With `throughLink`, an asset file reached
-   * through a symbolic link whose target is a file inside the bundle is written where the link leads and the link is kept;
-   * a link to nothing or to a file outside the bundle is still refused.
+   * Replace the content of the asset `conceptId` holds with exactly `content`. With `throughLink`, the file is saved as it
+   * lies: an asset file reached through a symbolic link whose target is a file inside the bundle is written where the link
+   * leads and the link is kept, and a file this process may not write (a read-only one) is refused; a link to nothing or to
+   * a file outside the bundle is still refused.
    */
   update(
     b: Bundle,

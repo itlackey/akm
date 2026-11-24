@@ -417,6 +417,8 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const held = entry.file as string;
     // Through a link that leads to a file inside the bundle the write goes where it leads; any other link is refused below.
     const file = options.throughLink ? (linkTargetInside(rootOf(b), held) ?? held) : held;
+    // A file saved as it lies keeps a read-only mode too: the atomic replace would ignore it, so ask with the error a write of it gives.
+    if (options.throughLink) fs.closeSync(fs.openSync(held, "r+"));
     this.writeFile(b, this.typeOf(entry.key), file, content);
     return { conceptId: canonical, changed: [file], content };
   }

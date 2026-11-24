@@ -60,12 +60,10 @@ import { taskSourceErrorDetail } from "../../../tasks/source-v3";
 import { checkWorkflowPlan, compileWorkflowSource } from "../../../workflows/compile";
 import { type RuleScope, ruleApplies } from "../../asset/lint-text";
 import { conceptIdForStashFile } from "../../asset/resolve-ref";
+import { KNOWN_CATEGORIES } from "../../asset/type-keys";
 import { isAkmRegistryCachePath, scanEnvKeyNames } from "../../common";
 import type { Bundle } from "../types";
 import type { FileDiagnostic, FileValidateContext } from "../validate-context";
-
-/** Recommended `category` values for facts — `commands/lint/fact-linter.ts:9`. */
-export const KNOWN_CATEGORIES = new Set(["personal", "team", "project", "convention", "meta"]);
 
 /** Placeholder markers a workflow stub carries — `commands/lint/workflow-linter.ts:10`. */
 const PLACEHOLDER_STRINGS = ["Describe what this workflow accomplishes", "Example Workflow"];

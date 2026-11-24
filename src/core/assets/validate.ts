@@ -17,17 +17,6 @@ import { deriveBundleIds } from "../bundle-id";
 import { type Asset, assetOf } from "./asset";
 import { assetBundleOf } from "./bundle";
 
-/** The akm adapter's own per-type checks, which `akm lint --fix` runs on the text it holds while it repairs it. */
-export {
-  derivedSiblingPath,
-  KNOWN_CATEGORIES,
-  MAX_SKILL_GROUP_DEPTH,
-  matchWorkflowPlaceholder,
-  perTypeChecks,
-  perTypeFrontend,
-} from "../adapter/adapters/akm-lint";
-export type { FileDiagnostic } from "../adapter/validate-context";
-
 /**
  * What the bundle's adapter reports for the assets it lists, each checked as an `update` in the adapter's listing
  * order; `keep` narrows them by their entries. This is `akm lint`'s scan of a bundle as it stands.

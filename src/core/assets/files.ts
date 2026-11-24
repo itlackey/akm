@@ -18,7 +18,6 @@ import { readFrom } from "./asset";
 import { bundleFor } from "./bundle";
 import { embedPendingWrites, forgetIndexedAsset, refreshIndexedAsset } from "./index-rows";
 
-export { buildFileContext } from "../adapter/directory/file-context";
 export { isProtectedPlace, managedFolderOf, placeTypeOf, protectedTypeOf } from "../adapter/directory/place-rules";
 export { isFileOrFileSymlink } from "../adapter/directory/walker";
 

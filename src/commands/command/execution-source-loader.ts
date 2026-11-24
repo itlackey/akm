@@ -5,11 +5,11 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
-import { type Bundle, type FileContext, rootOf } from "../../core/adapter/types";
+// asset-io: base the file the index row names, read as the row's adapter indexed it (not the facade's winner for the ref)
+import { buildFileContext } from "../../core/adapter/directory/file-context";
+import { type Bundle, rootOf } from "../../core/adapter/types";
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { buildFileContext } from "../../core/assets/files";
-import { bundleAdapterId, executionAdapter } from "../../core/assets/gate";
+import { renderIndexedExecutionSource } from "../../core/assets/gate";
 import { isContainedResolvedPath, isWithin } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { bundlesToSourceEntries } from "../../core/config/config-sources";
@@ -30,9 +30,7 @@ export type ExecutionSourceLookup = (ref: BundleRef) => Promise<IndexEntry | nul
 export interface LoadAdapterExecutionSourceOptions {
   readonly config?: AkmConfig;
   readonly lookup?: ExecutionSourceLookup;
-  readonly adapterFor?: (id: string) => Pick<BundleAdapter, "renderExecutionSource"> | undefined;
-  /** Guarded execution projection may inject a retained-byte file context. */
-  readonly fileContext?: (stashRoot: string, file: string) => FileContext;
+  readonly render?: typeof renderIndexedExecutionSource;
 }
 
 async function defaultLookup(ref: BundleRef): Promise<IndexEntry | null> {
@@ -88,7 +86,7 @@ function implicitBundleForEntry(entry: IndexEntry, config: AkmConfig): Bundle | 
     const source = sources[index];
     if (!source) continue;
     const canonicalRoot = realDirectory(rootOf(installation), `Canonical implicit source root for ${entry.bundleId}`);
-    const adapterId = bundleAdapterId(source);
+    const { adapterId } = source;
     if (adapterId !== entry.adapterId) {
       warnOnce(
         `execution-source-adapter-drift:${entry.itemRef}`,
@@ -240,22 +238,9 @@ export async function loadAdapterExecutionSource(
     );
   }
   const bundle = bundleForEntry(entry, config, realRoot);
-  const adapter = (options.adapterFor ?? executionAdapter)(entry.adapterId);
-  if (!adapter) {
-    throw new ConfigError(
-      `Execution source adapter ${JSON.stringify(entry.adapterId)} is not registered.`,
-      "INVALID_CONFIG_FILE",
-    );
-  }
-  if (!adapter.renderExecutionSource) {
-    throw new UsageError(
-      `Bundle adapter ${JSON.stringify(entry.adapterId)} does not support command or persona execution.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-
-  const fileContext = (options.fileContext ?? buildFileContext)(entry.stashDir, entry.filePath);
-  const rendered = adapter.renderExecutionSource(bundle, fileContext);
+  // asset-io: exec the indexed file akm runs
+  const fileContext = buildFileContext(entry.stashDir, entry.filePath);
+  const rendered = (options.render ?? renderIndexedExecutionSource)(entry, bundle, fileContext);
   if (!rendered || rendered.kind !== expectedKind) {
     throw new ConfigError(
       `Bundle adapter ${JSON.stringify(entry.adapterId)} did not render ${JSON.stringify(entry.itemRef)} as a ${expectedKind}.`,
