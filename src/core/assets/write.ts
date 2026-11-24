@@ -10,7 +10,14 @@
 
 import path from "node:path";
 import { withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
-import type { AssetChange, AssetPlacement, NewAsset, Retirement, RetireNote } from "../adapter/bundle-adapter";
+import type {
+  AssetChange,
+  AssetPlacement,
+  NewAsset,
+  PackageFile,
+  Retirement,
+  RetireNote,
+} from "../adapter/bundle-adapter";
 import { stashDirFor } from "../asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { parsePlacementRef } from "../asset/resolve-ref";
@@ -79,15 +86,30 @@ export interface AssetWriter {
   address(ref: string): AssetAddress;
   /**
    * `exclusive`: refuse an existing asset. `verbatim`: keep `content` exactly, not in the adapter's form for the type.
-   * `replaceLink`: an asset file that is a symbolic link to a file inside the bundle is replaced by a regular file.
+   * `replaceLink`: an asset file that is a symbolic link to a file inside the bundle is replaced by a regular file;
+   * `"any"`: a link to anywhere (or to nothing) is replaced, and what it led to is not written (clone, as base).
    */
-  create(asset: NewAsset, options?: { exclusive?: boolean; verbatim?: boolean; replaceLink?: boolean }): WriteResult;
+  create(
+    asset: NewAsset,
+    options?: { exclusive?: boolean; verbatim?: boolean; replaceLink?: boolean | "any" },
+  ): WriteResult;
   update(
     conceptId: string,
     content: string | Buffer,
     options?: { revision?: string; throughLink?: boolean },
   ): WriteResult;
+  /** A package entry deletes its whole package, non-asset files included. */
   delete(conceptId: string, options?: { revision?: string }): WriteResult;
+  /**
+   * Make the package of `asset` an exact mirror of `files` (§0.2 P12): non-asset files included, existing files
+   * overwritten, files `files` lacks removed, bytes and modes kept, nothing changed when it fails. An existing package
+   * is refused unless `replace`. The result is the package entry's.
+   */
+  mirrorPackage(
+    asset: Pick<NewAsset, "type" | "name">,
+    files: readonly PackageFile[],
+    options?: { replace?: boolean },
+  ): WriteResult;
   retire(conceptId: string, note: RetireNote, options?: { revision?: string }): WriteResult & { handle: string };
   retired(): Retirement[];
   restore(handle: string, fallback?: string | Buffer): WriteResult;
@@ -267,6 +289,13 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     delete(conceptId, options) {
       existing(conceptId, options);
       return result(held.delete(conceptId), false);
+    },
+    mirrorPackage(asset, files, options) {
+      gate(source, config);
+      held.assertWrites(asset.type);
+      const [entry, ...others] = held.mirrorPackage(asset, files, { replace: options?.replace });
+      for (const change of others) result(change);
+      return result(entry as AssetChange);
     },
     retire(conceptId, note, options) {
       existing(conceptId, { ...options, retire: true });

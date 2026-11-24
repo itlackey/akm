@@ -20,6 +20,7 @@ import type {
   BundleAsset,
   BundleListing,
   NewAsset,
+  PackageFile,
   Retirement,
   RetireNote,
 } from "../adapter/bundle-adapter";
@@ -133,7 +134,10 @@ export class AssetBundle {
   identifyKey(key: string): string | null {
     return this.#adapter.identifyKey?.(this.#bundle, key) ?? null;
   }
-  create(asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean }): AssetChange {
+  create(
+    asset: NewAsset,
+    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any" },
+  ): AssetChange {
     const locator = this.isStore ? this.#locator(this.place(asset).conceptId) : undefined;
     return this.#adapter.create(this.#bundle, asset, { ...options, ...(locator !== undefined ? { locator } : {}) });
   }
@@ -147,6 +151,18 @@ export class AssetBundle {
   delete(conceptId: string): AssetChange {
     const locator = this.#locator(conceptId);
     return this.#adapter.delete(this.#bundle, conceptId, locator !== undefined ? { locator } : {});
+  }
+  /** Every file of the package a package entry holds, non-assets included. */
+  packageFiles(conceptId: string): PackageFile[] {
+    return this.#adapter.packageFiles(this.#bundle, conceptId);
+  }
+  /** Make the package of `asset` an exact mirror of `files`; one change per asset added, changed or removed, the entry's first. */
+  mirrorPackage(
+    asset: Pick<NewAsset, "type" | "name">,
+    files: readonly PackageFile[],
+    options?: { replace?: boolean },
+  ): AssetChange[] {
+    return this.#adapter.mirrorPackage(this.#bundle, asset, files, options);
   }
   retire(conceptId: string, note: RetireNote): AssetChange & { handle: string } {
     return this.#adapter.retire(this.#bundle, conceptId, note);

@@ -135,6 +135,10 @@ export function buildFileContext(stashRoot: string, absPath: string): FileContex
     modified(): Date {
       return this.stat().mtime;
     },
+
+    mode(): number {
+      return this.stat().mode & 0o777;
+    },
   };
 }
 

@@ -108,22 +108,6 @@
       "akm": 1
     }
   },
-  "src/commands/sources/source-clone.ts": {
-    "asset-io": {
-      "copyFileSync": 1,
-      "cpSync": 1,
-      "lstatSync": 1,
-      "readFileSync": 2,
-      "readdirSync": 2,
-      "renameSync": 2,
-      "rmSync": 5,
-      "statSync": 1,
-      "writeFileSync": 2
-    },
-    "entry-file": {
-      "entry.file": 2
-    }
-  },
   "src/core/asset/llm-wiki-root.ts": {
     "asset-io": {
       "existsSync": 1,

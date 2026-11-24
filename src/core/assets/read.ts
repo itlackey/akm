@@ -12,7 +12,7 @@
 import { createHash } from "node:crypto";
 import { readUsableIndex } from "../../indexer/index-readiness";
 import type { SearchSource } from "../../indexer/search/search-source";
-import type { AssetEntry, BundleListing } from "../adapter/bundle-adapter";
+import type { AssetEntry, BundleListing, PackageFile } from "../adapter/bundle-adapter";
 import type { IndexDocument } from "../adapter/types";
 import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { compareCodePoints } from "../common";
@@ -105,6 +105,24 @@ export function requireAsset(ref: string): Asset {
  */
 export function readAsset(bundle: string, conceptId: string): Asset | undefined {
   return readFrom(bundleFor(bundle), conceptId);
+}
+
+/** The asset the file at `key` (its path inside `bundle`) holds, as its adapter reads it; undefined when that file holds none. */
+export function assetAtKey(bundle: string, key: string): Asset | undefined {
+  const held = bundleFor(bundle);
+  const conceptId = held.identifyKey(key);
+  return conceptId === null ? undefined : readExact(held, conceptId);
+}
+
+/**
+ * Every file of the package whose entry is the file at `key` (its path inside `bundle`), non-assets included, with
+ * bytes and mode (§0.2 P12). The folder is read by content even where a listing does not reach it (a link).
+ */
+export function packageFilesAt(bundle: string, key: string): PackageFile[] {
+  const held = bundleFor(bundle);
+  const conceptId = held.identifyKey(key);
+  if (conceptId === null) throw assetNotFound(`${bundle}//${key}`);
+  return held.packageFiles(conceptId);
 }
 
 /**

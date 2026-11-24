@@ -45,6 +45,7 @@ import type {
   BundleAsset,
   BundleListing,
   NewAsset,
+  PackageFile,
   Retirement,
   RetireNote,
 } from "./bundle-adapter";
@@ -375,7 +376,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   create(
     b: Bundle,
     asset: NewAsset,
-    options: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean } = {},
+    options: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any" } = {},
   ): AssetChange {
     if (!this.writes.includes(asset.type)) {
       throw new Error(
@@ -395,7 +396,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const content = options.verbatim ? asset.content : this.serialize(asset.type, file, asset.content, asset.label);
     const changed = asset.resources?.length
       ? this.writePackage(b, asset, entry, content, asset.resources)
-      : this.writeFile(b, asset.type, file, content, options.replaceLink);
+      : this.writeFile(b, asset.type, file, content, options.replaceLink, options.verbatim ? asset.mode : undefined);
     return { conceptId, changed, content: asset.content };
   }
 
@@ -408,12 +409,132 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return { conceptId: canonical, changed: [file], content };
   }
 
+  /** Deleting a package's entry deletes the package: its folder, resources and all (§8.3). */
   delete(b: Bundle, conceptId: string): AssetChange {
     const { conceptId: canonical, entry } = this.existing(b, conceptId);
     const file = entry.file as string;
     assertWritableFile(rootOf(b), b.id, file);
-    fs.rmSync(file);
-    return { conceptId: canonical, changed: [file] };
+    const dir = this.packageDir(buildFileContext(rootOf(b), file));
+    // A package at the bundle's root is not the bundle's to remove: only its entry goes.
+    if (dir === undefined || !isWithin(dir, rootOf(b)) || path.resolve(dir) === path.resolve(rootOf(b))) {
+      fs.rmSync(file);
+      return { conceptId: canonical, changed: [file] };
+    }
+    const files = filesBelow(dir);
+    fs.rmSync(dir, { recursive: true });
+    return { conceptId: canonical, changed: files };
+  }
+
+  /**
+   * The package a package entry holds. Found through its spellings when the walk does not reach it (a skill folder that
+   * is a link), because a clone reads the package a ref resolved to, by content.
+   */
+  packageFiles(b: Bundle, conceptId: string): PackageFile[] {
+    const root = rootOf(b);
+    const file =
+      this.read(b, conceptId)?.entry.file ??
+      this.spellings(conceptId)
+        .filter((relPath) => this.identify(relPath) !== null)
+        .map((relPath) => path.join(root, relPath))
+        .find((candidate) => fs.statSync(candidate, { throwIfNoEntry: false })?.isFile());
+    const dir = file === undefined ? undefined : this.packageDir(buildFileContext(root, file));
+    if (dir === undefined) throw new UsageError(`"${b.id}//${conceptId}" is not a package entry.`);
+    const relative = (member: string): string => path.relative(dir, member).split(path.sep).join("/");
+    const links = directoryLinksBelow(dir).map((link) => ({
+      path: relative(link),
+      bytes: Buffer.alloc(0),
+      mode: 0,
+      link: path.resolve(path.dirname(link), fs.readlinkSync(link)),
+    }));
+    return [
+      ...filesBelow(dir).map((member) => ({
+        path: relative(member),
+        bytes: fs.readFileSync(member),
+        mode: fs.statSync(member).mode & 0o777,
+      })),
+      ...links,
+    ].sort((left, right) => compareCodePoints(left.path, right.path));
+  }
+
+  mirrorPackage(
+    b: Bundle,
+    asset: Pick<NewAsset, "type" | "name">,
+    files: readonly PackageFile[],
+    options: { replace?: boolean } = {},
+  ): AssetChange[] {
+    if (!this.writes.includes(asset.type)) {
+      throw new Error(
+        `Adapter "${this.id}" does not write ${asset.type} assets in bundle "${b.id}"; the asset facade checks \`writes\` first.`,
+      );
+    }
+    const { conceptId, file: placed } = this.place(b, asset);
+    const entry = buildFileContext(rootOf(b), placed as string);
+    const dir = this.packageDir(entry);
+    if (dir === undefined) {
+      throw new UsageError(`Bundle "${b.id}" (adapter "${this.id}") does not keep ${asset.type} assets as packages.`);
+    }
+    const entryPath = path.relative(dir, entry.absPath).split(path.sep).join("/");
+    if (!files.some((file) => file.path === entryPath)) {
+      throw new UsageError(`The ${asset.type} package has no ${entryPath}, the file that makes it a ${asset.type}.`);
+    }
+    for (const file of files) {
+      if (!within(path.join(dir, file.path), dir) || path.isAbsolute(file.path)) {
+        throw new UsageError(`File path "${file.path}" leaves the ${asset.type} package.`, "PATH_ESCAPE_VIOLATION");
+      }
+    }
+    const staging = `${dir}.tmp-${randomUUID()}`;
+    // The folders above the package may not be links; the package folder itself may be one, which is replaced as an entry.
+    assertWritableFile(rootOf(b), b.id, staging, { replaceLink: true });
+    const existing = fs.lstatSync(dir, { throwIfNoEntry: false });
+    if (existing && !options.replace) {
+      throw new UsageError(
+        `Asset already exists in bundle "${b.id}": ${dir}. Use --force to overwrite.`,
+        "RESOURCE_ALREADY_EXISTS",
+      );
+    }
+    const before = existing?.isDirectory() ? filesBelow(dir) : [];
+    const backup = `${dir}.old-${randomUUID()}`;
+    try {
+      for (const file of files) {
+        const target = path.join(staging, file.path);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        if (file.link !== undefined) {
+          fs.symlinkSync(file.link, target, "dir");
+          continue;
+        }
+        fs.writeFileSync(target, file.bytes);
+        fs.chmodSync(target, file.mode);
+      }
+      if (existing) fs.renameSync(dir, backup);
+      try {
+        fs.renameSync(staging, dir);
+      } catch (error) {
+        if (existing) fs.renameSync(backup, dir);
+        throw error;
+      }
+    } catch (error) {
+      fs.rmSync(staging, { recursive: true, force: true });
+      throw error;
+    }
+    if (existing) fs.rmSync(backup, { recursive: true, force: true });
+    // The entry's change lists every file of the package; another asset the old or the new package held is its own change.
+    const after = filesBelow(dir);
+    const entryFile = files.find((file) => file.path === entryPath) as PackageFile;
+    const changes = new Map<string, AssetChange>([[conceptId, { conceptId, changed: [], content: entryFile.bytes }]]);
+    for (const file of new Set([...before, ...after])) {
+      const held = this.identify(this.relPathOf(b, file));
+      const key = held !== null && held !== conceptId ? held : conceptId;
+      const change = changes.get(key) ?? { conceptId: key, changed: [] };
+      change.changed.push(file);
+      changes.set(key, change);
+    }
+    // Each asset the package now holds is handed back as its entry, as a write does; one it no longer holds has none.
+    for (const change of changes.values()) {
+      const kept = this.read(b, change.conceptId);
+      if (kept) change.entry = kept.entry;
+    }
+    const first = changes.get(conceptId) as AssetChange;
+    return [first, ...[...changes.values()].filter((change) => change !== first)];
   }
 
   retire(b: Bundle, conceptId: string, note: RetireNote): AssetChange & { handle: string } {
@@ -499,11 +620,18 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   }
 
   /** The bytes and file mode a write gives a file. */
-  private writeFile(b: Bundle, type: string, file: string, bytes: string | Buffer, replaceLink = false): string[] {
+  private writeFile(
+    b: Bundle,
+    type: string,
+    file: string,
+    bytes: string | Buffer,
+    replaceLink: boolean | "any" = false,
+    mode?: number,
+  ): string[] {
     assertWritableFile(rootOf(b), b.id, file, { replaceLink });
     fs.mkdirSync(path.dirname(file), { recursive: true });
     // Atomic: a crash or a full disk never leaves a half-written asset where a good one was.
-    writeFileAtomic(file, bytes, this.fileMode(type) ?? existingFileMode(file));
+    writeFileAtomic(file, bytes, mode ?? this.fileMode(type) ?? existingFileMode(file));
     return [file];
   }
 
@@ -683,6 +811,19 @@ function filesBelow(dir: string): string[] {
   return files;
 }
 
+/** The links to directories under `dir` (not followed, as the walk does), at any depth. */
+function directoryLinksBelow(dir: string): string[] {
+  const links: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) links.push(...directoryLinksBelow(entryPath));
+    else if (entry.isSymbolicLink() && fs.statSync(entryPath, { throwIfNoEntry: false })?.isDirectory()) {
+      links.push(entryPath);
+    }
+  }
+  return links;
+}
+
 /** The files of the package in `dir` besides its entry, by path below `dir`. */
 function packageResources(dir: string, entryFile: string): AssetResource[] {
   return filesBelow(dir)
@@ -706,7 +847,7 @@ export function assertWritableFile(
   root: string,
   bundle: string,
   file: string,
-  options: { replaceLink?: boolean } = {},
+  options: { replaceLink?: boolean | "any" } = {},
 ): void {
   const lexicalRoot = path.resolve(root);
   // A path under another spelling of the root (a symlinked spelling of the library) is inside it.
@@ -727,8 +868,11 @@ export function assertWritableFile(
     const stat = fs.lstatSync(current, { throwIfNoEntry: false });
     if (!stat) break;
     if (stat.isSymbolicLink()) {
-      if (options.replaceLink && linksInside(current, realRoot, index === segments.length - 1)) {
-        if (index === segments.length - 1) break;
+      const last = index === segments.length - 1;
+      // `"any"`: the file itself may be a link to anywhere (or to nothing): it is replaced, never written through.
+      if (options.replaceLink === "any" && last) break;
+      if (options.replaceLink && linksInside(current, realRoot, last)) {
+        if (last) break;
         continue;
       }
       throw new UsageError(`Write path contains a symbolic link below source "${bundle}": ${relative}`);

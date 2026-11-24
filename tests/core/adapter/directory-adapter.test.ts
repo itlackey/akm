@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
 import { okfAdapter } from "../../../src/core/adapter/adapters/okf-adapter";
+import type { PackageFile } from "../../../src/core/adapter/bundle-adapter";
 import type { Bundle } from "../../../src/core/adapter/types";
 import { sandboxStashDir } from "../../_helpers/sandbox";
 
@@ -122,16 +123,16 @@ describe("DirectoryAdapterBase", () => {
     expect(first.changed).toContain(path.join(dir, "SKILL.md"));
     expect(fs.readFileSync(path.join(dir, "scripts", "run.sh"), "utf8")).toBe("echo old\n");
 
-    // The adapter refuses to create over an asset: the facade takes a package out whole first.
-    akmAdapter.delete(bundle, "skills/demo");
+    // The adapter refuses to create over an asset: the facade takes a package out whole first (a delete cascades).
+    const deleted = akmAdapter.delete(bundle, "skills/demo");
+    expect(deleted.changed).toContain(path.join(dir, "scripts", "run.sh"));
+    expect(fs.existsSync(dir)).toBe(false);
     const second = akmAdapter.create(bundle, {
       ...skill,
       resources: [{ path: "notes.txt", content: Buffer.from("new") }],
     });
     expect(fs.existsSync(path.join(dir, "scripts"))).toBe(false);
     expect(fs.readFileSync(path.join(dir, "notes.txt"), "utf8")).toBe("new");
-    // The old files are in `changed` too, so a commit boundary records their removal.
-    expect(second.changed).toContain(path.join(dir, "scripts", "run.sh"));
     expect(second.changed).toContain(path.join(dir, "notes.txt"));
     expect(fs.readdirSync(path.join(bundle.root, "skills")).filter((name) => name.includes(".tmp-"))).toEqual([]);
 
@@ -173,5 +174,124 @@ describe("DirectoryAdapterBase", () => {
     akmAdapter.create(bundle, { type: "knowledge", name: "idea", content: "x\n" });
     expect(akmAdapter.read(bundle, "knowledge/idea")?.conceptId).toBe("knowledge/idea");
     expect(akmAdapter.read(bundle, "knowledge/.hidden/idea")).toBeUndefined();
+  });
+
+  describe("packages (§0.2 P12)", () => {
+    const entry = (bytes: string): PackageFile => ({ path: "SKILL.md", bytes: Buffer.from(bytes), mode: 0o644 });
+    const dir = () => path.join(bundle.root, "skills", "demo");
+    const skill = { type: "skill", name: "demo" };
+
+    test("packageFiles lists every file of the package, non-assets and dot files included, with bytes and mode", () => {
+      akmAdapter.mirrorPackage(bundle, skill, [
+        entry("---\nname: demo\n---\nbody\n"),
+        { path: "scripts/run.sh", bytes: Buffer.from("#!/bin/sh\n"), mode: 0o755 },
+        { path: ".env.example", bytes: Buffer.from("A=1\n"), mode: 0o644 },
+        { path: "data/blob.bin", bytes: Buffer.from([0, 255, 1]), mode: 0o644 },
+      ]);
+      const files = akmAdapter.packageFiles(bundle, "skills/demo");
+      expect(files.map((file) => file.path)).toEqual([".env.example", "SKILL.md", "data/blob.bin", "scripts/run.sh"]);
+      expect(files.find((file) => file.path === "scripts/run.sh")?.mode).toBe(0o755);
+      expect([...(files.find((file) => file.path === "data/blob.bin")?.bytes ?? [])]).toEqual([0, 255, 1]);
+    });
+
+    test("mirrorPackage keeps bytes exactly (Markdown included) and an executable script's mode", () => {
+      const markdown = "---\nname: demo\n---\r\nno trailing newline";
+      akmAdapter.mirrorPackage(bundle, skill, [
+        entry(markdown),
+        { path: "notes.md", bytes: Buffer.from("# Notes\r\n  \n"), mode: 0o644 },
+        { path: "scripts/run.sh", bytes: Buffer.from("#!/bin/sh\n"), mode: 0o755 },
+      ]);
+      expect(fs.readFileSync(path.join(dir(), "SKILL.md"), "utf8")).toBe(markdown);
+      expect(fs.readFileSync(path.join(dir(), "notes.md"), "utf8")).toBe("# Notes\r\n  \n");
+      expect(fs.statSync(path.join(dir(), "scripts", "run.sh")).mode & 0o777).toBe(0o755);
+    });
+
+    test("an existing package is refused without replace, with the sentence naming it", () => {
+      akmAdapter.mirrorPackage(bundle, skill, [entry("one\n")]);
+      expect(() => akmAdapter.mirrorPackage(bundle, skill, [entry("two\n")])).toThrow(
+        `Asset already exists in bundle "stash": ${dir()}. Use --force to overwrite.`,
+      );
+      expect(fs.readFileSync(path.join(dir(), "SKILL.md"), "utf8")).toBe("one\n");
+    });
+
+    test("replace overwrites existing files and removes the target's files the source lacks, assets or not", () => {
+      akmAdapter.mirrorPackage(bundle, skill, [
+        entry("old\n"),
+        { path: "stale.txt", bytes: Buffer.from("x"), mode: 0o644 },
+        { path: "deep/stale.md", bytes: Buffer.from("x"), mode: 0o644 },
+        { path: "kept.txt", bytes: Buffer.from("old"), mode: 0o644 },
+      ]);
+      const changes = akmAdapter.mirrorPackage(
+        bundle,
+        skill,
+        [entry("new\n"), { path: "kept.txt", bytes: Buffer.from("new"), mode: 0o644 }],
+        { replace: true },
+      );
+      expect(fs.readdirSync(dir()).sort()).toEqual(["SKILL.md", "kept.txt"]);
+      expect(fs.readFileSync(path.join(dir(), "kept.txt"), "utf8")).toBe("new");
+      // The entry's change comes first and lists the old files too, so a commit boundary records their removal.
+      expect(changes[0]?.conceptId).toBe("skills/demo");
+      expect(changes[0]?.changed).toContain(path.join(dir(), "stale.txt"));
+      // A file the akm adapter reads as an asset of its own is that asset's change.
+      expect(changes.flatMap((change) => change.changed)).toContain(path.join(dir(), "deep", "stale.md"));
+      expect(changes[0]?.changed).toContain(path.join(dir(), "kept.txt"));
+    });
+
+    test("a failure leaves the target as it was and no staging folder behind", () => {
+      akmAdapter.mirrorPackage(bundle, skill, [
+        entry("old\n"),
+        { path: "a.txt", bytes: Buffer.from("a"), mode: 0o644 },
+      ]);
+      // A file that is a folder in the same package cannot be staged.
+      const broken = [
+        entry("new\n"),
+        { path: "x", bytes: Buffer.from("1"), mode: 0o644 },
+        { path: "x/y", bytes: Buffer.from("2"), mode: 0o644 },
+      ];
+      expect(() => akmAdapter.mirrorPackage(bundle, skill, broken, { replace: true })).toThrow();
+      expect(fs.readFileSync(path.join(dir(), "SKILL.md"), "utf8")).toBe("old\n");
+      expect(fs.readFileSync(path.join(dir(), "a.txt"), "utf8")).toBe("a");
+      expect(fs.readdirSync(path.join(bundle.root, "skills"))).toEqual(["demo"]);
+    });
+
+    test("a package without its entry, or with a path that leaves it, is refused before anything is written", () => {
+      expect(() =>
+        akmAdapter.mirrorPackage(bundle, skill, [{ path: "a.txt", bytes: Buffer.from("a"), mode: 0o644 }]),
+      ).toThrow(/no SKILL.md/);
+      expect(() =>
+        akmAdapter.mirrorPackage(bundle, skill, [
+          entry("x\n"),
+          { path: "../escape.txt", bytes: Buffer.from("a"), mode: 0o644 },
+        ]),
+      ).toThrow(/leaves the skill package/);
+      expect(fs.existsSync(dir())).toBe(false);
+    });
+
+    test("a link to a directory is carried as a link, never followed", () => {
+      akmAdapter.mirrorPackage(bundle, skill, [entry("x\n")]);
+      fs.mkdirSync(path.join(dir(), "refs"));
+      fs.symlinkSync("..", path.join(dir(), "refs", "up"), "dir");
+      const files = akmAdapter.packageFiles(bundle, "skills/demo");
+      expect(files.find((file) => file.path === "refs/up")?.link).toBe(dir());
+      akmAdapter.mirrorPackage(bundle, skill, files, { replace: true });
+      expect(fs.lstatSync(path.join(dir(), "refs", "up")).isSymbolicLink()).toBe(true);
+      expect(fs.readdirSync(dir()).sort()).toEqual(["SKILL.md", "refs"]);
+    });
+
+    test("a verbatim create keeps the mode it is given", () => {
+      akmAdapter.create(bundle, { type: "script", name: "run.sh", content: "echo\n", mode: 0o755 }, { verbatim: true });
+      expect(fs.statSync(path.join(bundle.root, "scripts", "run.sh")).mode & 0o777).toBe(0o755);
+    });
+
+    test("deleting a package entry deletes the package, resources and all", () => {
+      akmAdapter.mirrorPackage(bundle, skill, [
+        entry("x\n"),
+        { path: "scripts/run.sh", bytes: Buffer.from("echo\n"), mode: 0o755 },
+      ]);
+      const deleted = akmAdapter.delete(bundle, "skills/demo");
+      expect(deleted.changed.sort()).toEqual([path.join(dir(), "SKILL.md"), path.join(dir(), "scripts", "run.sh")]);
+      expect(fs.existsSync(dir())).toBe(false);
+      expect(akmAdapter.read(bundle, "skills/demo")).toBeUndefined();
+    });
   });
 });

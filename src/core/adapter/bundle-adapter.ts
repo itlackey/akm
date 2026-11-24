@@ -38,6 +38,8 @@ export interface AssetEntry {
   readonly locator?: unknown;
   /** When the asset last changed, when the adapter knows (a directory: the file's mtime). Callers never stat `file`. */
   modified?(): Date;
+  /** The permission bits of the file that holds the asset, when the adapter keeps one (a directory). */
+  mode?(): number;
   /** The content as text, read once, when first asked. */
   content(): string;
   /** The content as bytes, read once, when first asked. */
@@ -81,8 +83,20 @@ export interface NewAsset {
   content: string | Buffer;
   /** What a warning about the asset calls it (the home-path advisory): the caller's own name for it, else its file's name. */
   label?: string;
+  /** The permission bits of the file, honoured for a verbatim create by an adapter that keeps files; else its own. */
+  mode?: number;
   /** Files that belong to the asset (a skill package's resources), by path below the asset's folder. */
   resources?: ReadonlyArray<{ path: string; content: Buffer }>;
+}
+
+/** One file of a package directory, non-asset files included. `path` is posix and inside the package; never persisted. */
+export interface PackageFile {
+  path: string;
+  bytes: Buffer;
+  /** Permission bits. */
+  mode: number;
+  /** A link to a directory, which the package carries as the link (absolute target) and never follows; `bytes` is empty. */
+  link?: string;
 }
 
 /** What a write did. */
@@ -191,7 +205,7 @@ export interface BundleAdapter {
   create(
     b: Bundle,
     asset: NewAsset,
-    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean; locator?: unknown },
+    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any"; locator?: unknown },
   ): AssetChange;
   /**
    * Replace the content of the asset `conceptId` holds with exactly `content`. With `throughLink`, an asset file reached
@@ -206,6 +220,23 @@ export interface BundleAdapter {
   ): AssetChange;
   /** Take the asset out of the bundle. `locator` (here, on `update` and on a replacing `create`): as on `read`. */
   delete(b: Bundle, conceptId: string, options?: { locator?: unknown }): AssetChange;
+  /**
+   * Every file under the directory of a package entry (a skill), non-assets included, with bytes and mode. Refused
+   * when the adapter keeps no packages.
+   */
+  packageFiles(b: Bundle, conceptId: string): PackageFile[];
+  /**
+   * Make the package `asset` places an exact mirror of `files`: overwrite what exists, add, and delete what `files`
+   * lacks; bytes and modes kept; staged and renamed into place, so a failure leaves the target as it was. An existing
+   * package is refused unless `replace`. One change per asset it added, changed or removed; the entry's change comes
+   * first and lists every file of the package, non-assets included.
+   */
+  mirrorPackage(
+    b: Bundle,
+    asset: Pick<NewAsset, "type" | "name">,
+    files: readonly PackageFile[],
+    options?: { replace?: boolean },
+  ): AssetChange[];
 
   /**
    * Take the asset out of the bundle recoverably, keeping `note` with it. The handle in the result names the

@@ -121,6 +121,12 @@ const stubAdapter: BundleAdapter = {
   delete(): never {
     throw new Error("read-only");
   },
+  packageFiles(): never {
+    throw new Error("read-only");
+  },
+  mirrorPackage(): never {
+    throw new Error("read-only");
+  },
   retire(): never {
     throw new Error("read-only");
   },

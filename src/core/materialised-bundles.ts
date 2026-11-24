@@ -5,8 +5,9 @@
 /**
  * The directories a command was handed that no configured bundle is at (§4.3). `materialiseBundleDir`
  * (`bundle-at-dir.ts`) is the only function that adds one; this module only holds them, for `bundleFor` and the
- * lookup. A configured bundle, the implicit working bundle and `AKM_BUNDLE_DIR` are never here: config and the sources
- * it resolves to are read first, so nothing here shadows them.
+ * lookup. The implicit working bundle and `AKM_BUNDLE_DIR` are never here, and a configured bundle only while the
+ * configured sources cannot be resolved as a set: config and the sources it resolves to are read first, so nothing here
+ * shadows them.
  */
 
 import fs from "node:fs";
