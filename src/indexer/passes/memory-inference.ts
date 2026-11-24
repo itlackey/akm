@@ -59,7 +59,7 @@ import { concurrentMap } from "../../core/concurrent";
 import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { beginWriteProvenance, type WriteProvenanceJournal } from "../../core/write-provenance";
-import { writeTargetAt } from "../../core/write-source";
+import { resolveWritable, writeTargetAt } from "../../core/write-source";
 import { type NoticeSink, noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -480,11 +480,19 @@ async function runMemoryInferencePassBody(
     return completeResult();
   }
 
+  // One decision, before any model call: the bundle derived memories are written to, resolved as the write resolves
+  // it. A bundle that takes no writes skips the pass, so its pending memories wait instead of each paying a model call
+  // for a write that is then refused.
+  const target = writeTargetAt(primary.path, config);
+  if (!resolveWritable(target.config)) {
+    warn(`memory inference: skipped — bundle "${target.source.name}" is not writable, so its pending memories wait`);
+    return completeResult();
+  }
+
   const inCandidates = (ref: string) => !options.candidateRefs || options.candidateRefs.has(ref);
   const scan = scanMemories(primary.path);
-  // A read-only default bundle keeps its children as they are; the
-  // deterministic scope rewrite runs before, and apart from, any model work.
-  if (primary.writable !== false && !signal?.aborted) {
+  // The deterministic scope rewrite runs before, and apart from, any model work.
+  if (!signal?.aborted) {
     result.scopeSynced = syncDerivedChildScopes(
       primary.path,
       scan.scopeDrift.filter((drift) => inCandidates(drift.parentRef)),

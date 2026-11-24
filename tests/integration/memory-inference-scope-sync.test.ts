@@ -34,17 +34,17 @@ beforeEach(() => {
 });
 afterEach(() => storage.cleanup());
 
-function config() {
+function config(writable?: boolean) {
   return {
     semanticSearchMode: "off" as const,
-    bundles: { stash: { path: storage.stashDir } },
+    bundles: { stash: { path: storage.stashDir, ...(writable === undefined ? {} : { writable }) } },
     defaultBundle: "stash",
     connections: { memory: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "scripted" } } },
     index: { connection: "memory" },
   };
 }
-function run(sources: SearchSource[] = [{ path: storage.stashDir, isDefault: true, writable: true }]) {
-  return runMemoryInferencePass({ config: config(), sources });
+function run(sources: SearchSource[] = [{ path: storage.stashDir, isDefault: true, writable: true }], cfg = config()) {
+  return runMemoryInferencePass({ config: cfg, sources });
 }
 function memoryFile(name: string, root = storage.stashDir): string {
   return path.join(root, "memories", `${name}.md`);
@@ -210,7 +210,7 @@ test("a read-only bundle is skipped without error", async () => {
   writeParent({ scope_user: "alice" });
   const child = writeChild({});
   const bytes = fs.readFileSync(child, "utf8");
-  const readOnly = await run([{ path: storage.stashDir, isDefault: true, writable: false }]);
+  const readOnly = await run([{ path: storage.stashDir, isDefault: true, writable: false }], config(false));
   expect(readOnly).toMatchObject({ scopeSynced: 0, writtenPaths: [] });
   expect(fs.readFileSync(child, "utf8")).toBe(bytes);
 
