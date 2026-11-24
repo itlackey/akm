@@ -113,7 +113,6 @@ async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateConte
 export class WebsiteSnapshotAdapter extends DirectoryAdapterBase {
   readonly id = "website-snapshot";
   readonly version = "0.10.0";
-  override readonly extensions = [".md"];
 
   /** Every Markdown page under `stash/knowledge/` is a page of the snapshot (the fetcher always writes its `sourceUrl`). */
   protected identify(relPath: string): string | null {

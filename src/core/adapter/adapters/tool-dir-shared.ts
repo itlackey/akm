@@ -264,7 +264,6 @@ export function renderToolDirExecutionSource(
 export abstract class ToolDirAdapterBase extends DirectoryAdapterBase {
   readonly id: string;
   readonly version = "0.9.0";
-  override readonly extensions = [".md"];
 
   constructor(private readonly layout: ToolDirLayout) {
     super();

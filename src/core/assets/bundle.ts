@@ -36,7 +36,7 @@ import { type BundleSource, materialisedBundle, materialisedBundles } from "../m
 export class AssetBundle {
   /** The id refs use. */
   readonly name: string;
-  /** The directory its assets are read from (a store's synthetic root), and a store's `location`: for the index and for display only. */
+  /** The directory its assets are read from (a store has none: its source's key), and a store's `location`: for the index and for display only. */
   readonly root: string;
   readonly location?: string;
   /** The adapter that reads it, as recorded in config (found once where an old entry without one is resolved). */
@@ -137,19 +137,13 @@ export class AssetBundle {
   identifyKey(key: string): string | null {
     return this.#adapter.identifyKey?.(this.#bundle, key) ?? null;
   }
-  create(
-    asset: NewAsset,
-    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any" },
-  ): AssetChange {
+  create(asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean }): AssetChange {
     const locator = this.isStore ? this.#locator(this.place(asset).conceptId) : undefined;
     return this.#adapter.create(this.#bundle, asset, { ...options, ...(locator !== undefined ? { locator } : {}) });
   }
-  update(conceptId: string, content: string | Buffer, options?: { throughLink?: boolean }): AssetChange {
+  update(conceptId: string, content: string | Buffer): AssetChange {
     const locator = this.#locator(conceptId);
-    return this.#adapter.update(this.#bundle, conceptId, content, {
-      ...options,
-      ...(locator !== undefined ? { locator } : {}),
-    });
+    return this.#adapter.update(this.#bundle, conceptId, content, locator !== undefined ? { locator } : {});
   }
   delete(conceptId: string): AssetChange[] {
     const locator = this.#locator(conceptId);

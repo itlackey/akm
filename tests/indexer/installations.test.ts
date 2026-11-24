@@ -15,7 +15,8 @@
 
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
-import { bundleAdapterId, detectBundleAdapter } from "../../src/core/assets/gate";
+import { bundleAdapterId } from "../../src/core/adapter/detect-adapter";
+import { detectBundleAdapter } from "../../src/core/assets/gate";
 import { slugForRegistryId } from "../../src/core/bundle-id";
 import {
   deriveBundleId,

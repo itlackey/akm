@@ -107,7 +107,6 @@ export class DotenvAdapter extends AkmFormatAdapterBase {
   readonly id = "dotenv";
   readonly version = "0.9.0";
   override readonly writes = ["env", "secret"];
-  override readonly extensions = [".env"];
 
   protected identify(relPath: string): string | null {
     const type = classify(relPath);

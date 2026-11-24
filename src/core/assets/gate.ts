@@ -4,9 +4,10 @@
 
 /** What a bundle's adapter writes, for callers that decide before they write. `bundle.ts` itself stays inside the facade. */
 
+import type { AdapterRenderedExecutionSource } from "../../execution/source";
 import { akmAdapter } from "../adapter/adapters/akm-adapter";
-import type { BundleAdapter } from "../adapter/bundle-adapter";
-import { detectAdapterId } from "../adapter/detect-adapter";
+import type { AssetEntry } from "../adapter/bundle-adapter";
+import { bundleAdapterId, detectAdapterId } from "../adapter/detect-adapter";
 import {
   adapterForId,
   adapterIds,
@@ -14,7 +15,8 @@ import {
   getAdapters,
   requireAdapter,
 } from "../adapter/registry";
-import type { UsageErrorCode } from "../errors";
+import type { Bundle } from "../adapter/types";
+import { ConfigError, UsageError, type UsageErrorCode } from "../errors";
 import { assetBundleOf, bundleFor } from "./bundle";
 
 export { activeSources } from "./bundle";
@@ -27,19 +29,28 @@ export function assertAdapterWrites(bundle: string, type?: string): void {
   bundleFor(bundle).assertWrites(type);
 }
 
-/** Whether the adapter with the registry id `adapterId` writes assets of `type`: for a caller that holds the id, not a bundle. */
-export function adapterIdWrites(adapterId: string, type: string): boolean {
-  return adapterForId(adapterId)?.writes.includes(type) === true;
+/** A bundle as a source or config record names it: its adapter is the one it records (`akm` when it records none). */
+interface BundleRecord {
+  adapterId?: string;
 }
 
-/** Whether the bundle's adapter writes assets of `type`: it holds them as its own, not as files it reads. */
-export function adapterWrites(bundle: string, type: string): boolean {
-  return bundleFor(bundle).writes(type);
+/**
+ * Whether the bundle's adapter writes assets of `type`: it holds them as its own, not as files it reads. `bundle` is a
+ * configured bundle's id, or the record of a source a caller holds (an adapter akm does not have writes nothing).
+ */
+export function adapterWrites(bundle: string | BundleRecord, type: string): boolean {
+  if (typeof bundle === "string") return bundleFor(bundle).writes(type);
+  return adapterForId(bundleAdapterId(bundle))?.writes.includes(type) === true;
 }
 
 /** What the bundle's adapter puts before an asset's name in the concept id a create of `type` gives (`tasks/`), or "". */
 export function placedPrefixOf(bundle: string, type: string): string {
   return bundleFor(bundle).prefixOf(type);
+}
+
+/** The id of the adapter that reads the bundle, for a message that names it. */
+export function adapterNameOf(bundle: string): string {
+  return bundleFor(bundle).adapterId;
 }
 
 /** Refuse with a message naming the bundle and its adapter: `Bundle "x" uses adapter "y", which <what>.` */
@@ -75,16 +86,16 @@ export function knownAdapterIds(): string[] {
 }
 
 /**
- * Whether the folders of the adapter's bundles declare the types of what they hold (an akm bundle's `memories/`):
+ * Whether the folders of the bundle's adapter declare the types of what they hold (an akm bundle's `memories/`):
  * `akm lint` sweeps such a bundle folder by folder, and its `--type` names a folder.
  */
-export function adapterDeclaresTypes(adapterId: string): boolean {
-  return adapterForId(adapterId)?.declaredType !== undefined;
+export function adapterDeclaresTypes(bundle: BundleRecord): boolean {
+  return adapterForId(bundleAdapterId(bundle))?.declaredType !== undefined;
 }
 
-/** Whether the adapter's own checks are the whole `akm lint` of a primary bundle it holds: no cross-bundle sweep runs. */
-export function adapterLintsAlone(adapterId: string): boolean {
-  return adapterForId(adapterId)?.lintsAlone === true;
+/** Whether the bundle's adapter's own checks are the whole `akm lint` of a primary bundle: no cross-bundle sweep runs. */
+export function adapterLintsAlone(bundle: BundleRecord): boolean {
+  return adapterForId(bundleAdapterId(bundle))?.lintsAlone === true;
 }
 
 /** Whether some adapter's install-time probe claims `root` as the root of a bundle of its format. A probe that throws does not claim it. */
@@ -120,10 +131,29 @@ export function clearAdapterCaches(): void {
   clearRegistryCaches();
 }
 
-export { bundleAdapterId } from "../adapter/detect-adapter";
-export { assertWritableFile } from "../adapter/directory-adapter";
-
-/** What `akm run` asks of the adapter `adapterId`: to render a command or persona. Undefined: akm has no such adapter. */
-export function executionAdapter(adapterId: string): Pick<BundleAdapter, "renderExecutionSource"> | undefined {
-  return adapterForId(adapterId);
+/**
+ * The command or persona `entry` holds, as the adapter that indexed it renders it for `akm run`: `row.adapterId` is the
+ * adapter the index row records, so a bundle whose config names another one since is rendered as it was indexed. Null:
+ * the adapter does not render the entry as either. Refused for an adapter akm does not have, and for one that renders
+ * no command or persona.
+ */
+export function renderIndexedExecutionSource(
+  row: { adapterId: string },
+  bundle: Bundle,
+  entry: AssetEntry,
+): AdapterRenderedExecutionSource | null {
+  const adapter = adapterForId(row.adapterId);
+  if (!adapter) {
+    throw new ConfigError(
+      `Execution source adapter ${JSON.stringify(row.adapterId)} is not registered.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  if (!adapter.renderExecutionSource) {
+    throw new UsageError(
+      `Bundle adapter ${JSON.stringify(row.adapterId)} does not support command or persona execution.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  return adapter.renderExecutionSource(bundle, entry);
 }

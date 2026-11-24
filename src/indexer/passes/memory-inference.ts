@@ -51,7 +51,7 @@ import {
   replaceFrontmatterBlocks,
 } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
-import { adapterIdWrites, bundleAdapterId } from "../../core/assets/gate";
+import { adapterWrites } from "../../core/assets/gate";
 import { readAsset } from "../../core/assets/read";
 import { writeAssets } from "../../core/assets/write";
 import { bestEffort } from "../../core/best-effort";
@@ -476,7 +476,7 @@ async function runMemoryInferencePassBody(
     warn("memory inference: skipped — no default bundle among the sources, so there is no write target");
     return completeResult();
   }
-  if (!adapterIdWrites(bundleAdapterId(primary), "memory")) {
+  if (!adapterWrites(primary, "memory")) {
     warn(`memory inference: skipped — the default bundle at ${primary.path} is not an akm bundle`);
     return completeResult();
   }

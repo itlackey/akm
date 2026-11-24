@@ -19,6 +19,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+// asset-io: base a script file no adapter lists (its extension is unknown), shown as plain text as show always did
+import { buildFileContext } from "../../core/adapter/directory/file-context";
 import type { MatchResult } from "../../core/adapter/types";
 import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../../core/asset/asset-placement";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
@@ -31,8 +33,7 @@ import {
 } from "../../core/asset/markdown-fragments";
 import { displayDefaultBundle, displayRef, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
-import { buildFileContext } from "../../core/assets/files";
-import { adapterDeclaresTypes, bundleAdapterId } from "../../core/assets/gate";
+import { adapterDeclaresTypes } from "../../core/assets/gate";
 import { fileContextOf, findAsset } from "../../core/assets/read";
 import { presentationOf } from "../../core/assets/type";
 import { asNonEmptyString, isContainedResolvedPath, toPosix } from "../../core/common";
@@ -634,7 +635,7 @@ function findUnrecognizedScriptSource(
 
   for (const source of sources) {
     try {
-      if (!adapterDeclaresTypes(bundleAdapterId(source))) continue;
+      if (!adapterDeclaresTypes(source)) continue;
       const sourceRoot = path.resolve(source.path);
       // A script's ref is its path, so the candidate is the ref itself.
       const candidate = path.resolve(sourceRoot, conceptId);

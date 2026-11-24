@@ -81,10 +81,6 @@ function describe(file: FileContext, conceptId: string): IndexMetadata {
 export class GenericFilesAdapter extends DirectoryAdapterBase {
   readonly id = "generic-files";
   readonly version = "0.10.0";
-  // Non-exhaustive HINT: generic-files recognizes ANY file — recognize() is the
-  // source of truth (empty extension list would drop the extension-strip hint).
-  override readonly extensions = [".md", ".txt"];
-
   protected identify(relPath: string): string | null {
     return conceptIdOf(relPath);
   }

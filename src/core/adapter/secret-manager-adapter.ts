@@ -17,6 +17,7 @@ import { spawnSync } from "node:child_process";
 import { parseBundleRef } from "../asset/asset-ref";
 import { compareCodePoints } from "../common";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
+import { presentationFor } from "../type-presentation";
 import { hashContent } from "./adapters/shared";
 import type {
   AssetChange,
@@ -148,6 +149,11 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   }
   /** Refuse a name the store cannot hold, before anything is asked of it. */
   protected requireStorable(_name: string): void {}
+
+  /** How `akm show` renders a secret: the type's own renderer. */
+  rendererFor(type: string): string | undefined {
+    return presentationFor(type).renderer;
+  }
 
   /** The stores read so far this command, by location: a listing is one request, and a write drops it. */
   private readonly stores = new Map<string, Store>();

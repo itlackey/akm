@@ -6,15 +6,13 @@
  * What a directory bundle keeps at a stored key, asked by a check that resolves a path it was handed (lint's reachability rules
  * for a ref). The keys are the ones a placement spelling gives a ref (`memories/x.md`, `skills/x/SKILL.md`), which may
  * name a file no adapter lists as an asset (a loose `.md` of no type); `findAsset` would say no to that, and `missing-ref`
- * has always said yes. So these answer from what the bundle keeps, not from what its adapter recognizes.
+ * has always said yes. So these answer from what the bundle keeps, not from what its adapter recognizes. `akm lint` and
+ * its base checks import this module directly, under the `base` exemption, so the lint counts each of them.
  */
 
 import fs from "node:fs";
 import path from "node:path";
-import { archivedOriginalPaths, MEMORY_ARCHIVE_REL } from "../directory-archive";
-
-/** Where a directory bundle keeps its retirements, relative to its root (`akm health` reports the folder's size). */
-export { MEMORY_ARCHIVE_REL };
+import { archivedOriginalPaths } from "../directory-archive";
 
 /** Whether the bundle rooted at `root` keeps a file at the bundle-relative `key`. */
 export function holdsFile(root: string, key: string): boolean {

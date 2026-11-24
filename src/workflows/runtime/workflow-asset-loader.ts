@@ -4,9 +4,11 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 // asset-io: deprecated
-import { adapterWrites, bundleAdapterId, refuseByAdapter } from "../../core/assets/gate";
+// asset-io: deprecated workflow code keeps asking which adapter a bundle has
+import { bundleAdapterId } from "../../core/adapter/detect-adapter";
+import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { adapterWrites, refuseByAdapter } from "../../core/assets/gate";
 import { lookupAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import { loadConfig } from "../../core/config/config";

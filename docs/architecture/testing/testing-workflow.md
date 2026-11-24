@@ -22,8 +22,9 @@ covers the automated test workflow and test-authoring guidance.
 
 `bun run check` runs lint, the typecheck and the unit target; it is what CI's `check` job runs on every pull
 request. The integration target runs only before a release: the Release workflow (`.github/workflows/release.yml`)
-runs it as a gate on the commit that ships, a prerelease and a stable alike. Run it yourself before pushing a
-change it covers.
+runs it as a gate on the commit that ships, a prerelease and a stable alike, and so do its `node-smoke` and
+`upgrade-rehearsal` jobs, which run integration tests of their own. Pull requests run only the three architecture
+checks (`bun run test:architecture`). Run the integration target yourself before pushing a change it covers.
 
 - `bun run test:unit` (`scripts/test-unit.sh`) runs every `*.test.ts` under
   `tests/` except `tests/integration/`. That includes the top-level
@@ -167,6 +168,8 @@ bun scripts/integration-timings.ts update /tmp/shards/shard-*.xml
 `update` takes the reported time for every file the reports name, keeps the
 record of any other file, and drops files that no longer exist. A local run works
 the same way: `TEST_INTEGRATION_LOGDIR=/tmp/shards bun run test:integration`.
+The committed file comes from local runs; once a Release run has uploaded an
+`integration-shards` artifact, regenerate it from that run's reports.
 
 ### The preload
 
@@ -454,13 +457,15 @@ For a local release gate without Docker, use:
 
 That script checks the packaged artifact: bin targets, the migrator and package
 acceptance. Lint, the typecheck and the unit suite are `bun run check`, the
-integration suite is `bun run test:integration`; the upgrade rehearsal runs in CI.
+integration suite is `bun run test:integration`; the Node fallback smoke and the
+upgrade rehearsal run in the Release workflow.
 
-The Release workflow runs the integration suite and Gated CI (real embeddings,
-Docker, and the Linux/macOS/Windows schedulers) on the commit it publishes,
-a prerelease and a stable alike, and requires CI to have passed on that commit;
-see the [maintainer release checklist](../../maintainers/release-checklist.md).
-Neither runs anywhere else in CI.
+The Release workflow runs the integration suite, the Node fallback smoke, the
+upgrade rehearsals and Gated CI (real embeddings, Docker, and the
+Linux/macOS/Windows schedulers) on the commit it publishes, a prerelease and a
+stable alike, and requires CI to have passed on that commit; see the
+[maintainer release checklist](../../maintainers/release-checklist.md). None of
+them runs anywhere else in CI.
 
 ## Upgrade Regression Coverage
 
@@ -517,17 +522,17 @@ overrides:
 - `AKM_UPGRADE_FROM=<version>` — pin the `previous` origin instead of resolving
   the highest published stable version below the candidate's `package.json`
   version.
-- `AKM_UPGRADE_REHEARSAL_ORIGIN=<origin>` — run only one origin (CI runs each
-  origin as its own job).
+- `AKM_UPGRADE_REHEARSAL_ORIGIN=<origin>` — run only one origin (the Release
+  workflow runs each origin as its own job).
 - `AKM_CANDIDATE_TARBALL=<path>` — use an already-packed candidate tarball
   instead of running `npm pack` on the working tree (which requires
   `dist/cli.js` — run `bun run build` first).
 
 Fetched previous-release tarballs are cached under
 `${TMPDIR:-/tmp}/akm-upgrade-rehearsal/previous-release/<version>/` so repeat
-runs do not re-hit the network. It is wired into CI as the `upgrade-rehearsal`
-job (`.github/workflows/ci.yml`), which runs on a release pull request (a pull
-request into `main`), the gate a stable release merges through.
+runs do not re-hit the network. It runs as the Release workflow's
+`upgrade-rehearsal` job (`.github/workflows/release.yml`), one job per origin,
+on the commit that ships: a prerelease and a stable alike.
 
 ## Quality Measures
 

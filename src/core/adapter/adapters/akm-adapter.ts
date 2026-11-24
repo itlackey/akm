@@ -439,36 +439,6 @@ export class AkmAdapter extends AkmFormatAdapterBase {
   // when the search text is unchanged.
   readonly version = "0.10.1";
   override readonly writes = placementTypes();
-  // Recognized-extension HINT, derived from what the matchers accept:
-  // `.md` (Markdown types + workflow peer), `.yml` (task and workflow YAML),
-  // `.yaml` (task near-miss diagnostics), `.env` (env files), and the 16
-  // SCRIPT_EXTENSIONS. This is a
-  // NON-EXHAUSTIVE hint for the akm adapter: recognition is directory-driven
-  // via `recognize()` (e.g. a bare `secrets/<anything>` file with no extension
-  // is a `secret`), so `recognize()` — not this list — is the source of truth.
-  override readonly extensions = [
-    ".md",
-    ".yaml",
-    ".yml",
-    ".env",
-    ".sh",
-    ".ts",
-    ".js",
-    ".mjs",
-    ".ps1",
-    ".cmd",
-    ".bat",
-    ".py",
-    ".rb",
-    ".go",
-    ".pl",
-    ".php",
-    ".lua",
-    ".r",
-    ".swift",
-    ".kt",
-    ".kts",
-  ];
 
   contentType(b: Bundle, entry: AssetEntry): string | undefined {
     return classifyAkmFile(entry.key, fileContextOfEntry(rootOf(b), entry))?.match.type;
@@ -479,7 +449,7 @@ export class AkmAdapter extends AkmFormatAdapterBase {
   }
 
   /** An akm asset is matched live, on the bytes the file has now. */
-  rendererFor(): string | undefined {
+  override rendererFor(): string | undefined {
     return undefined;
   }
 

@@ -185,9 +185,9 @@ export interface BundleAdapter {
   declaredType?(key: string): string | undefined;
   /**
    * How `akm show` renders an asset of `type` the adapter does not present itself (`ownsPresentation`): the renderer's
-   * name, or undefined to match the entry live, as the next index would type it. Absent: the type's own renderer.
+   * name, or undefined to match the entry live, as the next index would type it. Both bases answer the type's own renderer.
    */
-  rendererFor?(type: string): string | undefined;
+  rendererFor(type: string): string | undefined;
   /**
    * Native validation of pending `edits`, each an asset by its concept id (`akm lint` checks every asset as an
    * `update`). It never writes. A directory adapter checks the bundle's snapshot with the edits overlaid; a store
@@ -205,26 +205,20 @@ export interface BundleAdapter {
   /**
    * Create the asset, in the adapter's own form for its type, or with `verbatim` as exactly `asset.content` (a promoted
    * proposal's bytes are the ones it was reviewed with). Over an existing asset of the same concept it writes the same
-   * bytes only with `replace`; without it the create is refused. With `replaceLink`, an asset file that is a symbolic
-   * link to a file inside the bundle is replaced by a regular file (the link's target is left as it is); a link to
-   * nothing or to a file outside the bundle is still refused.
+   * bytes only with `replace`; without it the create is refused. An asset file that is a symbolic link to a file inside
+   * the bundle is replaced by a regular file (the link's target is left as it is); any other link is refused.
    */
   create(
     b: Bundle,
     asset: NewAsset,
-    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any"; locator?: unknown },
+    options?: { replace?: boolean; verbatim?: boolean; locator?: unknown },
   ): AssetChange;
   /**
-   * Replace the content of the asset `conceptId` holds with exactly `content`. With `throughLink`, an asset file reached
-   * through a symbolic link whose target is a file inside the bundle is written where the link leads and the link is kept;
-   * a link to nothing or to a file outside the bundle is still refused.
+   * Replace the content of the asset `conceptId` holds with exactly `content`. An asset file reached through a symbolic
+   * link whose target is a file inside the bundle is written where the link leads and the link is kept; any other link
+   * is refused.
    */
-  update(
-    b: Bundle,
-    conceptId: string,
-    content: string | Buffer,
-    options?: { throughLink?: boolean; locator?: unknown },
-  ): AssetChange;
+  update(b: Bundle, conceptId: string, content: string | Buffer, options?: { locator?: unknown }): AssetChange;
   /**
    * Take the asset out of the bundle: one change per asset it removed, a package entry's first (a package goes whole).
    * `locator` (here, on `update` and on a replacing `create`): as on `read`.

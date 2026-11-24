@@ -23,7 +23,6 @@ import { warnWorkflowUse } from "../../cli/deprecations";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
-import { bundleAdapterId } from "../../core/assets/gate";
 import { listAssets } from "../../core/assets/read";
 import { addressOf, writeAssets } from "../../core/assets/write";
 import { isWithin, resolveStashDir } from "../../core/common";
@@ -250,7 +249,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     const writtenPath =
       writeAssets(bundle.resolved, { purpose: "task-add" }, (w) => {
         const { file } = w.address(`tasks/${id}`);
-        w.create({ type: "task", name: id, content: yaml }, { exclusive: !input.force, replaceLink: true });
+        w.create({ type: "task", name: id, content: yaml }, { exclusive: !input.force });
         return file;
       }) ?? assetPath;
     (deps.commitBoundary ?? commitWriteTargetBoundary)(bundle.resolved, `Update tasks/${id}`);
@@ -1143,7 +1142,7 @@ export function resolveTaskReadBundle(
         kind: source.type ?? "filesystem",
         name: selector,
         path: source.path,
-        adapterId: bundleAdapterId(source),
+        ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
       },
     };
   }

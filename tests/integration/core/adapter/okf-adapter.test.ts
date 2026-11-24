@@ -75,9 +75,8 @@ function makeValidateContext(overrides: Partial<FileValidateContext> = {}): File
 // ── adapter metadata ─────────────────────────────────────────────────────────
 
 describe("okf adapter — metadata", () => {
-  test("id / extensions per §5", () => {
+  test("id per §5", () => {
     expect(okfAdapter.id).toBe("okf");
-    expect(okfAdapter.extensions).toEqual([".md"]);
   });
 });
 

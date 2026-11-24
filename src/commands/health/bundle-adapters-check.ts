@@ -8,7 +8,7 @@
  * schema accepts any adapter id, so this is where a typo (`agent_skills`) is reported before the bundle is next read.
  */
 
-import { type AdapterSkip, adapterSkipMessage, adapterSkipOf } from "../../core/assets/adapter-skips";
+import { type AdapterSkip, adapterSkipMessage, adapterSkipOf } from "../../core/adapter/adapter-skips";
 import { assertKnownAdapter } from "../../core/assets/gate";
 import { deriveBundleIds } from "../../core/bundle-id";
 import { toErrorMessage } from "../../core/common";

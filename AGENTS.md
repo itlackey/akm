@@ -36,7 +36,7 @@ The failure to avoid is treating something other than the user's stated intent a
 
 ## Commands
 - `bun install`; `bun run build`.
-- Before committing: `bun run lint:fix`, `bunx tsc --noEmit`, the focused tests (`bun test tests/<file>.test.ts`), `bun run check:changed`. CI runs `bun run check` (lint, types, the unit suite); the integration suite (`bun run test:integration`) runs only at release, as a gate in `.github/workflows/release.yml`, except three architecture checks (`bun run test:architecture`), which CI runs on every pull request with an FTA complexity report (`bun run report:complexity`, report only).
+- Before committing: `bun run lint:fix`, `bunx tsc --noEmit`, the focused tests (`bun test tests/<file>.test.ts`), `bun run check:changed`. CI runs `bun run check` (lint, types, the unit suite); the integration suite (`bun run test:integration`, with the Node fallback smoke and the upgrade rehearsals) runs only at release, as gates in `.github/workflows/release.yml`, except three architecture checks (`bun run test:architecture`), which CI runs on every pull request with an FTA complexity report (`bun run report:complexity`, report only).
 - Run the working tree as `bun src/cli.ts …`. A bare `akm` is the installed copy, using the real config and bundles.
 
 ## Branches

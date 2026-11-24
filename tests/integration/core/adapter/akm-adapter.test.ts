@@ -64,13 +64,6 @@ describe("akm adapter — metadata (§7)", () => {
   test("id", () => {
     expect(akmAdapter.id).toBe("akm");
   });
-
-  test("extensions cover the matcher-accepted set (`.md`, `.yaml`/`.yml`, `.env`, script exts)", () => {
-    const exts = new Set(akmAdapter.extensions);
-    for (const e of [".md", ".yaml", ".yml", ".env", ".sh", ".ts", ".mjs", ".py", ".kts"]) {
-      expect(exts.has(e), `extensions missing ${e}`).toBe(true);
-    }
-  });
 });
 
 // ── 1. recognition parity (byte-for-byte vs the Chunk-0b golden) ─────────────
