@@ -8,14 +8,16 @@
  * shadowed by a materialised directory.
  */
 
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { bundleFor } from "../../../src/core/assets/bundle";
-import { findAsset, listAssets } from "../../../src/core/assets/read";
-import { addressOf } from "../../../src/core/assets/write";
+import { bundleFor, lookupBundles } from "../../../src/core/assets/bundle";
+import { findAsset, listAssets, lookupAsset, readAsset } from "../../../src/core/assets/read";
+import { addressOf, writeAssets } from "../../../src/core/assets/write";
 import { materialiseBundleDir } from "../../../src/core/bundle-at-dir";
-import { saveConfig } from "../../../src/core/config/config";
+import { loadConfig, saveConfig } from "../../../src/core/config/config";
+import { getConfigPath } from "../../../src/core/paths";
+import { writeTargetAt } from "../../../src/core/write-source";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { taskScopeOf } from "../../../src/tasks/task-ref";
 import { withFakeSecretStores } from "../../_helpers/fake-secret-stores";
@@ -139,4 +141,54 @@ test("a task source naming a configured bundle never replaces it: its adapter an
       expect(findAsset("keyring//secrets/gh_token")?.entry.content()).toBe("ghp-value");
     },
   );
+});
+
+describe("config takes precedence over a materialised directory, through a config reload in one process", () => {
+  /** A directory materialised while no config names it, read through every path the facade has. */
+  const materialised = (): { dir: string; id: string } => {
+    const sandbox = makeSandboxDir("akm-mat-reload-");
+    cleanups.push(sandbox.cleanup);
+    // Named apart from the working bundle (`stash`), whose id a materialised directory may otherwise share.
+    const dir = path.join(sandbox.dir, "loose");
+    fs.mkdirSync(path.join(dir, "knowledge"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "knowledge", "note.md"), "---\ndescription: n\n---\n\n# n\n", "utf8");
+    const id = materialiseBundleDir(dir);
+    expect(id).toBe("loose");
+    expect(bundleFor(id).root).toBe(dir);
+    expect(lookupBundles().map((bundle) => bundle.name)).toContain(id);
+    expect(readAsset(id, "knowledge/note")).toBeDefined();
+    return { dir, id };
+  };
+  /** Edit the config file outside akm, as a user or Desktop does while the process keeps running. */
+  const reloadWith = (config: Record<string, unknown>) => {
+    fs.writeFileSync(getConfigPath(), JSON.stringify({ semanticSearchMode: "off", ...config }));
+    loadConfig();
+  };
+  const unreachable = (dir: string, id: string) => {
+    expect(() => bundleFor(id)).toThrow();
+    expect(lookupBundles().map((bundle) => bundle.root)).not.toContain(dir);
+    expect(lookupBundles().map((bundle) => bundle.name)).not.toContain(id);
+    expect(findAsset(`${id}//knowledge/note`)).toBeUndefined();
+    expect(lookupAsset("knowledge/note")).toBeUndefined();
+    expect(() => readAsset(id, "knowledge/note")).toThrow();
+    expect(() =>
+      writeAssets(writeTargetAt(dir), { purpose: "test" }, (w) =>
+        w.create({ type: "knowledge", name: "other", content: "x" }),
+      ),
+    ).toThrow(/disabled/);
+    expect(fs.existsSync(path.join(dir, "knowledge", "other.md"))).toBe(false);
+  };
+
+  test("a bundle configured disabled under the directory's id", () => {
+    const { dir, id } = materialised();
+    reloadWith({ bundles: { [id]: { path: dir, enabled: false } } });
+    unreachable(dir, id);
+  });
+
+  test("a bundle configured disabled at the directory's path, under another id", () => {
+    const { dir, id } = materialised();
+    reloadWith({ bundles: { archived: { path: dir, enabled: false } } });
+    unreachable(dir, id);
+    expect(() => bundleFor("archived")).toThrow();
+  });
 });

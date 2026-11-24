@@ -43,7 +43,7 @@ import { importKnowledgeCommand } from "../../../src/commands/sources/stash-cli"
 import { parseBundleRef } from "../../../src/core/asset/asset-ref";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import { type AssetWriter, writeAssets } from "../../../src/core/assets/write";
-import { writeTargetAt } from "../../../src/core/bundle-at-dir";
+import { writeTargetAt } from "../../../src/core/write-source";
 import { runCliCapture } from "../../_helpers/cli";
 import { durableItemRef } from "../../_helpers/durable-ref";
 import {

@@ -25,7 +25,7 @@ import { adapterWrites } from "../../core/assets/gate";
 import { readAsset } from "../../core/assets/read";
 import { embedPendingWrites } from "../../core/assets/type";
 import { addressOf, writeAssets } from "../../core/assets/write";
-import { materialiseBundleDir, writeTargetAt } from "../../core/bundle-at-dir";
+import { materialiseBundleDir } from "../../core/bundle-at-dir";
 import { bundleIdForDir } from "../../core/bundle-id";
 import { isHttpUrl, isWithin, resolveStashDir, safeRealpath, samePath, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -38,6 +38,7 @@ import {
   formatRefForMessage,
   type ResolvedWriteTarget,
   resolveWriteTarget,
+  writeTargetAt,
 } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { deriveInstallations } from "../../indexer/installations";

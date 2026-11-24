@@ -25,7 +25,7 @@ import { type Asset, findAsset, lookupAsset, readAsset } from "../../core/assets
 import { assetType, indexedPathOf } from "../../core/assets/type";
 import { addressOf, conceptIdAtFile, writeAssets } from "../../core/assets/write";
 import { authoringRulesForType } from "../../core/authoring-rules";
-import { materialiseBundleDir, writeTargetAt } from "../../core/bundle-at-dir";
+import { materialiseBundleDir } from "../../core/bundle-at-dir";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
@@ -38,7 +38,7 @@ import { getDbPath } from "../../core/paths";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { withStateDb } from "../../core/state-db";
 import { warn, warnVerbose } from "../../core/warn";
-import { resolveWriteTarget } from "../../core/write-source";
+import { resolveWriteTarget, writeTargetAt } from "../../core/write-source";
 import { type NoticeSet, noticeSet } from "../../execution/notices";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
 import {

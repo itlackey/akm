@@ -49,7 +49,7 @@ import { assertAdapterWrites, detectBundleAdapter } from "./assets/gate";
 import { materialiseBundleDir } from "./bundle-at-dir";
 import { existingFileMode, isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
-import { bundleAtDir, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
+import { bundleAtDir, loadConfig, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
 import { ConfigError, UsageError } from "./errors";
 import { sanitizeCommitMessage } from "./git-message";
 import { getStoreSourceKey } from "./paths";
@@ -188,30 +188,19 @@ export function resolveWorkingStashTarget(
   akmConfig: AkmConfig,
   options: { requireWritable?: boolean } = {},
 ): ResolvedWriteTarget {
-  const allConfiguredSources = resolveConfiguredSources(akmConfig);
   const configuredSources = resolveActiveConfiguredSources(akmConfig);
   const requireWritable = options.requireWritable !== false;
   if (process.env.AKM_BUNDLE_DIR?.trim()) {
     const stashDir = resolveStashDir();
     const configuredBundleId = bundleAtDir(akmConfig, stashDir);
-    const configured = configuredSources.find((source) => source.name === configuredBundleId);
-    if (configured) {
-      const target = adaptConfiguredSource(configured);
-      if (requireWritable && !resolveWritable(target.config)) {
-        throw new ConfigError(`Bundle "${configured.name}" is not writable.`, "INVALID_CONFIG_FILE");
-      }
-      return { ...target, selector: undefined };
-    }
-    if (allConfiguredSources.some((source) => source.name === configuredBundleId)) {
+    if (configuredBundleId !== undefined && !configuredSources.some((source) => source.name === configuredBundleId)) {
       throw new ConfigError("The AKM_BUNDLE_DIR source is disabled in config.", "INVALID_CONFIG_FILE");
     }
-    const adapterId = detectBundleAdapter(stashDir);
-    // The directory is a bundle no config entry names: the facade takes it by the id it is materialised under.
-    const bundleId = materialiseBundleDir(stashDir, akmConfig, { adapterId });
-    return {
-      source: { kind: "filesystem", name: bundleId, path: stashDir, adapterId },
-      config: { type: "filesystem", name: bundleId, path: stashDir, writable: true },
-    };
+    const target = writeTargetAt(stashDir, akmConfig);
+    if (requireWritable && !resolveWritable(target.config)) {
+      throw new ConfigError(`Bundle "${target.source.name}" is not writable.`, "INVALID_CONFIG_FILE");
+    }
+    return { ...target, selector: undefined };
   }
   const defaultBundleSource = akmConfig.defaultBundle
     ? configuredSources.find((source) => source.name === akmConfig.defaultBundle)
@@ -228,6 +217,23 @@ export function resolveWorkingStashTarget(
     );
   }
   return { ...target, selector: undefined };
+}
+
+/**
+ * The write target of the directory `dir` a command holds (the working stash, a `--dir`, a root a stored record names).
+ * A directory a configured bundle holds is that bundle's target, as {@link resolveWriteTarget} resolves it: its
+ * permission, its kind and its publication are config's, and a disabled one is refused. Any other directory is
+ * materialised and takes writes as a plain filesystem bundle with the adapter its root's probe finds.
+ */
+export function writeTargetAt(dir: string, config: AkmConfig = loadConfig()): ResolvedWriteTarget {
+  const configured = bundleAtDir(config, dir);
+  if (configured !== undefined) return resolveWriteTarget(config, configured, { requireWritable: false });
+  const adapterId = detectBundleAdapter(dir);
+  const name = materialiseBundleDir(dir, config, { adapterId });
+  return {
+    source: { kind: "filesystem", name, path: dir, adapterId },
+    config: { type: "filesystem", name, path: dir, writable: true },
+  };
 }
 
 /**

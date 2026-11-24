@@ -12,12 +12,11 @@
  */
 
 import path from "node:path";
-import { activeSources, detectBundleAdapter } from "./assets/gate";
+import { detectBundleAdapter } from "./assets/gate";
 import { bundleIdForDir } from "./bundle-id";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { bundleAtDir } from "./config/config-sources";
 import { holdMaterialised, materialisedBundles, materialisedIdOf, materialisedIdTaken } from "./materialised-bundles";
-import type { ResolvedWriteTarget } from "./write-source";
 
 /** The key rows for the bundle at `dir` are filed under: its id, else (no configured bundle) the directory's own path. */
 export function bundleKeyForDir(config: AkmConfig, dir: string): string {
@@ -46,8 +45,7 @@ export function bundleSourceAt(
  * directory addressable by an id; a command calls it where it holds a directory it was handed, once per directory (a
  * repeat answers the same id). Config is read first and never shadowed:
  *  - `as.name` (a name a stored record gave the directory) naming a configured bundle is that bundle;
- *  - a configured bundle at `dir` is that bundle; when the configured sources cannot be resolved as a set (no working
- *    directory), it is also held at `dir`, so the facade can address it where the command has it;
+ *  - a configured bundle at `dir`, enabled or not, is that bundle;
  *  - any other directory (a `--dir`, the implicit working bundle, `AKM_BUNDLE_DIR`) is materialised, in memory only,
  *    under `as.name`, else `bundleIdForDir`: its basename slug, or `<slug>-<8-hex of the path>` when a configured
  *    bundle or another directory that is still there has that id. A materialised directory takes the id of the implicit
@@ -59,48 +57,15 @@ export function materialiseBundleDir(
   as: { name?: string; adapterId?: string } = {},
 ): string {
   const configuredNames = Object.keys(config.bundles ?? {});
-  const configured =
-    as.name !== undefined ? (as.name in (config.bundles ?? {}) ? as.name : undefined) : bundleAtDir(config, dir);
-  if (configured !== undefined) {
-    if (!configuredSourcesResolve(config)) {
-      const adapterId = as.adapterId ?? config.bundles?.[configured]?.adapter ?? detectBundleAdapter(dir);
-      holdMaterialised({ name: configured, path: dir, adapterId });
-    }
-    return configured;
-  }
-  const existing = materialisedIdOf(dir);
+  const configured = as.name !== undefined && configuredNames.includes(as.name) ? as.name : bundleAtDir(config, dir);
+  if (configured !== undefined) return configured;
+  const existing = materialisedIdOf(dir, config);
   if (existing !== undefined) return existing;
-  const taken = new Set([...configuredNames, ...materialisedBundles().map((held) => held.name)]);
+  const taken = new Set([...configuredNames, ...materialisedBundles(config).map((held) => held.name)]);
   let id = as.name ?? bundleIdForDir(dir, taken);
-  if (materialisedIdTaken(id, dir)) id = bundleIdForDir(dir, new Set([...taken, id]));
-  holdMaterialised({ name: id, path: dir, adapterId: as.adapterId ?? detectBundleAdapter(dir) });
+  if (materialisedIdTaken(id, dir, config)) id = bundleIdForDir(dir, new Set([...taken, id]));
+  holdMaterialised({ name: id, path: dir, adapterId: as.adapterId ?? detectBundleAdapter(dir) }, config);
   return id;
-}
-
-function configuredSourcesResolve(config: AkmConfig): boolean {
-  try {
-    activeSources(config);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The write target of the directory `dir` a command holds (the working stash, a `--dir`, a root a stored record names): the
- * bundle at it, materialised when no config names it, taking writes as a plain filesystem bundle with its adapter.
- */
-export function writeTargetAt(
-  dir: string,
-  config: AkmConfig = loadConfig(),
-  as: { name?: string; adapterId?: string } = {},
-): ResolvedWriteTarget {
-  const name = materialiseBundleDir(dir, config, as);
-  const adapterId = as.adapterId ?? config.bundles?.[name]?.adapter ?? detectBundleAdapter(dir);
-  return {
-    source: { kind: "filesystem", name, path: dir, adapterId },
-    config: { type: "filesystem", name, path: dir, writable: true },
-  };
 }
 
 /**

@@ -10,9 +10,8 @@ import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { readAsset } from "../../../core/assets/read";
 import { indexedPathOf } from "../../../core/assets/type";
 import { type AssetWriter, conceptIdAtFile, writeAssets } from "../../../core/assets/write";
-import { materialiseBundleDir, writeTargetAt } from "../../../core/bundle-at-dir";
+import { materialiseBundleDir } from "../../../core/bundle-at-dir";
 import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
-import { loadConfig } from "../../../core/config/config";
 import { assetNotFound } from "../../../core/errors";
 import type {
   ArchivedMemoryCleanupRecord,
@@ -26,6 +25,7 @@ import type {
 } from "../../../core/improve-types";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { beginWriteProvenance, recordWrittenPath } from "../../../core/write-provenance";
+import { resolveWritable, writeTargetAt } from "../../../core/write-source";
 import { listMemories } from "../../../indexer/passes/memory-inference";
 import { contentHash } from "../content-hash";
 import { isDerivedMemory, memoryIdentityRef, parseMemoryName, resolveParentRef } from "./derived-ref";
@@ -720,10 +720,9 @@ export interface ArchivePurgeResult {
  * the retirement itself (#652).
  */
 export function purgeGracedArchive(stashDir: string, now: Date = new Date()): ArchivePurgeResult {
-  const config = loadConfig();
-  const target = writeTargetAt(stashDir, config);
-  // A stash the user marked `writable: false` is left as it is (F28).
-  if (config.bundles?.[target.source.name]?.writable === false) return { purgedDirs: 0, purgedFiles: 0 };
+  const target = writeTargetAt(stashDir);
+  // A stash config does not let akm write is left as it is (F28).
+  if (!resolveWritable(target.config)) return { purgedDirs: 0, purgedFiles: 0 };
   const before = new Date(now.getTime() - RETIRE_GRACE_MS);
   const journal = beginWriteProvenance();
   try {

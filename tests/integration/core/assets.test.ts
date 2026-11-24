@@ -763,6 +763,37 @@ describe("writeAssets", () => {
     );
   });
 
+  test("a change to the outdated type-folder spelling of a ref is made to the asset a read of it finds", () => {
+    const body = "---\ndescription: r\n---\nfirst\n";
+    const stash = bundleOf("stash", { "reports/x.md": body });
+    const target = targetOf(stash);
+    const write = <T>(run: (w: facadeWrite.AssetWriter) => T): T => writeAssets(target, { purpose: "test" }, run);
+    const file = path.join(stash.path, "reports", "x.md");
+    const outdated = "knowledge/reports/x";
+    const twin = path.join(stash.path, "knowledge");
+
+    expect(write((w) => w.read(outdated)?.conceptId)).toBe("reports/x");
+    // The revision is the resolved asset's: a stale one is refused and nothing is written anywhere.
+    expect(() => write((w) => w.update(outdated, "next\n", { revision: assetRevision("stale\n") }))).toThrow(
+      'Asset "stash//reports/x" changed since it was read; the change was not applied.',
+    );
+    expect(fs.readFileSync(file, "utf8")).toBe(body);
+    expect(
+      write((w) => w.update(outdated, "---\ndescription: r\n---\nsecond\n", { revision: assetRevision(body) })),
+    ).toMatchObject({ ref: "stash//reports/x" });
+    expect(fs.readFileSync(file, "utf8")).toContain("second");
+
+    const [retired] = write((w) => w.retire(outdated, { reason: "test" }));
+    expect(retired).toEqual({ ref: "stash//reports/x", handle: expect.any(String) });
+    expect(fs.existsSync(file)).toBe(false);
+    write((w) => w.restore((retired as { handle: string }).handle));
+    expect(fs.readFileSync(file, "utf8")).toContain("second");
+
+    expect(write((w) => w.delete(outdated))).toEqual({ ref: "stash//reports/x" });
+    expect(fs.existsSync(file)).toBe(false);
+    expect(fs.existsSync(twin)).toBe(false);
+  });
+
   test("the address of an existing asset and of a new one", () => {
     const stash = bundleOf("stash", { "reports/r.md": "# r\n" });
     writeAssets(targetOf(stash), { purpose: "test" }, (w) => {

@@ -241,7 +241,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
       ...(change.content !== undefined ? { content: change.content } : {}),
     };
   };
-  /** The asset a change applies to, after the gates every change to an existing asset passes. */
+  /** The asset a change applies to, whatever spelling named it, after the gates every change to an existing asset passes. */
   const existing = (conceptId: string, options?: { revision?: string; retire?: boolean }): Asset => {
     gate(source, config);
     const asset = readFrom(held, conceptId);
@@ -251,7 +251,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     if (options?.retire) held.assertRetires(type);
     if (options?.revision !== undefined && assetRevision(asset.entry.bytes()) !== options.revision) {
       throw new UsageError(
-        `Asset "${source.name}//${conceptId}" changed since it was read; the change was not applied.`,
+        `Asset "${asset.ref}" changed since it was read; the change was not applied.`,
         "ASSET_CONTENT_CHANGED",
       );
     }
@@ -278,13 +278,11 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
       );
     },
     update(conceptId, content, options) {
-      existing(conceptId, options);
-      return result(held.update(conceptId, content));
+      return result(held.update(existing(conceptId, options).conceptId, content));
     },
     delete(conceptId, options) {
-      existing(conceptId, options);
       // A package's delete is one change per asset it held, the entry's first: every row of them leaves the index.
-      const [entry, ...members] = held.delete(conceptId);
+      const [entry, ...members] = held.delete(existing(conceptId, options).conceptId);
       for (const member of members) result(member, false);
       return result(entry as AssetChange, false);
     },
@@ -296,8 +294,9 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
       return result(entry as AssetChange);
     },
     retire(conceptId, note, options) {
-      existing(conceptId, { ...options, retire: true });
-      return held.retire(conceptId, note).map((change) => ({ ref: result(change, false).ref, handle: change.handle }));
+      return held
+        .retire(existing(conceptId, { ...options, retire: true }).conceptId, note)
+        .map((change) => ({ ref: result(change, false).ref, handle: change.handle }));
     },
     retired: () => held.retired(),
     restore(handle, fallback) {
