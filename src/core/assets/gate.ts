@@ -131,8 +131,6 @@ export function clearAdapterCaches(): void {
   clearRegistryCaches();
 }
 
-export { assertWritableFile } from "../adapter/directory-adapter";
-
 /**
  * The command or persona `entry` holds, as the adapter that indexed it renders it for `akm run`: `row.adapterId` is the
  * adapter the index row records, so a bundle whose config names another one since is rendered as it was indexed. Null:

@@ -44,7 +44,8 @@ import {
 import { listIgnoredExactPaths } from "../sources/providers/git-stash";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName } from "./asset/resolve-ref";
-import { assertAdapterWrites, assertWritableFile, detectBundleAdapter } from "./assets/gate";
+import { assertWritableFile } from "./assets/files";
+import { assertAdapterWrites, detectBundleAdapter } from "./assets/gate";
 import { materialiseBundleDir } from "./bundle-at-dir";
 import { existingFileMode, isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
