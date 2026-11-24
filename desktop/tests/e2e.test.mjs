@@ -8,7 +8,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { akm, go, launchFixture, open, pick } from "./support.mjs";
+import { akm, answered, go, launchFixture, open, pick } from "./support.mjs";
 
 // Wiring only: each section shows what its operations return, reaches them, and shows a refusal. What the operations
 // decide (revisions, leases, staleness, write targets) is akm's and is tested there.
@@ -81,12 +81,18 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     const draft = `${await editor().inputValue()}\nHuman edit from the desktop.\n`;
     await editor().fill(draft);
     await writeFile(server.documentPath, `${server.content}\nConcurrent edit from another client.\n`);
-    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    await Promise.all([
+      answered(page, "/api/desktop/file/save"),
+      page.getByRole("button", { name: "Save changes", exact: true }).click(),
+    ]);
     await expect(page.getByRole("heading", { name: "A newer version exists" })).toBeVisible();
     assert.equal(await editor().inputValue(), draft);
     await expect(page.locator(".conflict")).toContainText("Concurrent edit from another client.");
     await editor().fill(`${draft}\nConcurrent edit from another client.\n`);
-    await page.getByRole("button", { name: "Save reviewed version", exact: true }).click();
+    await Promise.all([
+      answered(page, "/api/desktop/file/save"),
+      page.getByRole("button", { name: "Save reviewed version", exact: true }).click(),
+    ]);
     await expect(page.locator(".document-body")).toContainText("Human edit from the desktop.");
     assert.match(await readFile(server.documentPath, "utf8"), /Concurrent edit from another client/);
   });
@@ -104,9 +110,15 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     await page.goto(`${server.origin}/library/files?bundle=personal&path=knowledge`);
     await page.getByRole("button", { name: "New knowledge", exact: true }).click();
     await page.getByRole("textbox", { name: "Name of the new knowledge", exact: true }).fill("desktop-created");
-    await page.getByRole("button", { name: "Create", exact: true }).click();
+    await Promise.all([
+      answered(page, "/api/documents/create-file"),
+      page.getByRole("button", { name: "Create", exact: true }).click(),
+    ]);
     await editor().fill("# Desktop created\n\nA synthetic note written by the UI through AKM.\n");
-    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    await Promise.all([
+      answered(page, "/api/desktop/file/save"),
+      page.getByRole("button", { name: "Save changes", exact: true }).click(),
+    ]);
     await expect(page.getByRole("status").filter({ hasText: "Changes saved." })).toBeVisible();
     assert.match(
       await readFile(path.join(server.root, "personal/knowledge/desktop-created.md"), "utf8"),
@@ -117,7 +129,10 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
       await page.getByRole("button", { name: "Copy to…", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Copy restore-laptop.md" });
       await dialog.getByRole("treeitem", { name: "shared", exact: true }).click();
-      await dialog.getByRole("button", { name: "Copy here", exact: true }).click();
+      await Promise.all([
+        answered(page, "/api/desktop/files/copy"),
+        dialog.getByRole("button", { name: "Copy here", exact: true }).click(),
+      ]);
       return dialog;
     };
     await page.goto(`${server.origin}/library/asset?ref=${encodeURIComponent(server.refs.document)}`);
@@ -169,7 +184,10 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     );
     await expect(page.getByRole("textbox", { name: "Details" })).toHaveValue(/verify the evidence/);
     await expect(page.getByRole("heading", { name: "review example", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Confirm reject", exact: true }).click();
+    await Promise.all([
+      answered(page, /^\/api\/proposals\/[^/]+\/reject$/),
+      page.getByRole("button", { name: "Confirm reject", exact: true }).click(),
+    ]);
     // The next proposal opens by itself, and the Last line (no toast, no Dismiss step) says what was rejected, with Reopen….
     await expect(page.getByRole("heading", { name: "review example", exact: true })).toHaveCount(0);
     await expect(
@@ -183,7 +201,10 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
       .click();
     await page.screenshot({ path: path.join(screenshots, "review-desktop.png"), fullPage: true });
     await page.getByRole("button", { name: "Accept…", exact: true }).click();
-    await page.getByRole("button", { name: "Confirm accept", exact: true }).click();
+    await Promise.all([
+      answered(page, /^\/api\/proposals\/[^/]+\/accept$/),
+      page.getByRole("button", { name: "Confirm accept", exact: true }).click(),
+    ]);
     await expect(
       page.getByRole("region", { name: "Proposal detail" }).getByText(/^Last: Accepted “recovery checklist”/),
     ).toBeVisible();

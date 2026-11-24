@@ -7,7 +7,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test, { after } from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { akm, go, launchFixture } from "./support.mjs";
+import { akm, answered, go, launchFixture } from "./support.mjs";
 
 export const lesson =
   "---\ndescription: Restore in order\nwhen_to_use: Before restoring a laptop\ntags: [backup, restore]\ncustom_key: kept as written\nupdated: 2026-11-01\n---\n# Restore order\n\nRestore the disk first.\n";
@@ -162,7 +162,10 @@ test("the editor's properties are fields: change, add and remove a key through a
   await expect(box).toHaveValue(/description: Restore a laptop in order\n/);
   await expect(box).toHaveValue(/owner: ops\n---\n/);
   await expect(box).not.toHaveValue(/custom_key/);
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/file/save"),
+    page.getByRole("button", { name: "Save changes" }).click(),
+  ]);
   await expect(page.getByRole("status").filter({ hasText: "Changes saved." })).toBeVisible();
   assert.equal(
     await fs.readFile(lessonPath(app), "utf8"),
@@ -213,7 +216,10 @@ test("save checks: findings are listed with their lines and jump to them; one th
   ).body.data.findings[0];
   await box.fill(noUpdated);
   await expect(checks.getByRole("listitem")).toContainText(finding.detail);
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/file/save"),
+    page.getByRole("button", { name: "Save changes" }).click(),
+  ]);
   await expect(page.getByRole("status").filter({ hasText: "Changes saved." })).toBeVisible();
   const original = await fs.readFile(lessonPath(app), "utf8");
   assert.equal(original, noUpdated, "a finding that leaves the asset readable does not block the save");
@@ -245,7 +251,10 @@ test("save checks: findings are listed with their lines and jump to them; one th
     "the cursor is on the line akm names",
   );
   await page.getByRole("button", { name: "Save changes" }).click();
-  await page.getByRole("alert").filter({ hasText: "Not saved." }).getByRole("button", { name: "Save anyway" }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/file/save"),
+    page.getByRole("alert").filter({ hasText: "Not saved." }).getByRole("button", { name: "Save anyway" }).click(),
+  ]);
   await expect(page.getByRole("status").filter({ hasText: "Changes saved." })).toBeVisible();
   assert.match(await fs.readFile(lessonPath(app), "utf8"), /tags: \[backup, restore\n/);
   // The page says why akm cannot read the frontmatter: akm's own reason.
@@ -285,7 +294,10 @@ test("a workflow that would not compile stops the save; saved anyway it drops ou
   assert.match(reason, /^Workflow has errors/);
   await expect(page.getByRole("alert").filter({ hasText: "Not saved." })).toContainText(reason.split("\n")[1]);
   assert.equal(await fs.readFile(file, "utf8"), before);
-  await page.getByRole("button", { name: "Save anyway" }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/file/save"),
+    page.getByRole("button", { name: "Save anyway" }).click(),
+  ]);
   await expect(page.getByRole("status").filter({ hasText: "Not indexed" })).toContainText(reason.split("\n")[1]);
   assert.equal(await fs.readFile(file, "utf8"), broken);
 });
@@ -302,7 +314,10 @@ test("a text akm cannot check is saved, and the page says it could not check", a
   await page
     .getByRole("textbox", { name: /^Markdown (body|source)/ })
     .fill("---\ndescription: Review a change\n---\n# Review\n\nLook closely.\n");
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await Promise.all([
+    answered(page, "/api/desktop/file/save"),
+    page.getByRole("button", { name: "Save changes" }).click(),
+  ]);
   await expect(page.getByRole("status").filter({ hasText: "Changes saved." })).toBeVisible();
   assert.match(await fs.readFile(path.join(app.root, "claude/commands/review.md"), "utf8"), /Look closely/);
 });

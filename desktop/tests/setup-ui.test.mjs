@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect } from "@playwright/test";
-import { akm, launchFixture } from "./support.mjs";
+import { akm, answered, launchFixture } from "./support.mjs";
 
 const ENGINE = JSON.parse(await readFile(new URL("../.core/package.json", import.meta.url), "utf8")).version;
 const PLUGIN = "0.10.261020";
@@ -50,12 +50,8 @@ const crontab = (root) => `#!/bin/sh
 case "$1" in -l) [ -f "${path.join(root, "crontab.txt")}" ] && /bin/cat "${path.join(root, "crontab.txt")}" || exit 1;; -) /bin/cat > "${path.join(root, "crontab.txt")}";; esac
 `;
 const table = async (server) => readFile(path.join(server.root, "crontab.txt"), "utf8").catch(() => "");
-/**
- * The agents step's receipt is drawn from akm's answer to /api/setup/apply, which runs akm's CLI (`akm setup`, and
- * `akm task add` when learning turns on) and so can take longer than an assertion's wait on a loaded machine: a test
- * waits for that answer before it reads the receipt.
- */
-const applied = (page) => page.waitForResponse((response) => response.url().endsWith("/api/setup/apply"));
+/** The agents step's receipt is drawn from akm's answer to /api/setup/apply, which runs `akm setup` (and `akm task add`). */
+const applied = (page) => answered(page, "/api/setup/apply");
 const savedConfig = async (server) =>
   JSON.parse(await readFile(path.join(server.env.AKM_CONFIG_DIR, "config.json"), "utf8"));
 

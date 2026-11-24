@@ -85,7 +85,9 @@ export async function createFixture({
   const require = createRequire(packageRoot ? path.join(packageRoot, "package.json") : import.meta.url);
   const launcher = path.join(path.dirname(require.resolve("akm-cli/package.json")), "dist", "cli-node.mjs");
   const cleanup = async () => {
-    if (!process.env.AKM_DESKTOP_KEEP_FIXTURES) await rm(root, { recursive: true, force: true });
+    // A process the server started can outlive its shutdown by a moment and write into the fixture (an akm run records
+    // its usage in data/metrics.db as it exits), so removing the directory is retried rather than failing.
+    if (!process.env.AKM_DESKTOP_KEEP_FIXTURES) await rm(root, { recursive: true, force: true, maxRetries: 10 });
   };
   if (empty) {
     delete env.AKM_BUNDLE_DIR;

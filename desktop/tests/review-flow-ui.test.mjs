@@ -7,7 +7,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { launchFixture, open } from "./support.mjs";
+import { answered, launchFixture, open } from "./support.mjs";
 
 // Keyboard focus after each way a decision can end: it never falls back to <body>.
 test("Review: focus stays on a control after a failed write, Undo, Reopen, batch report and finished", {
@@ -39,7 +39,7 @@ test("Review: focus stays on a control after a failed write, Undo, Reopen, batch
   await expect(button("Confirm accept")).toBeFocused();
 
   // Accept, then Undo… from the Last line (a decision raises no toast); Cancel returns to the shelf's Revert…, not to <body>.
-  await button("Confirm accept").click();
+  await Promise.all([answered(page, /^\/api\/proposals\/[^/]+\/accept$/), button("Confirm accept").click()]);
   const last = page.getByRole("region", { name: "Proposal detail" }).locator(".last");
   await expect(last).toContainText("Last: Accepted “restore laptop”");
   await expect(page.locator("[data-toast]")).toHaveCount(0);
@@ -49,7 +49,7 @@ test("Review: focus stays on a control after a failed write, Undo, Reopen, batch
   await expect(button("Revert…")).toBeFocused();
 
   await button("Revert…").click();
-  await button("Confirm revert").click();
+  await Promise.all([answered(page, /^\/api\/proposals\/[^/]+\/revert$/), button("Confirm revert").click()]);
   await expect(last).toContainText("Last: Reverted “restore laptop”");
   await expect(page.locator("[data-toast]")).toHaveCount(0);
 
@@ -57,11 +57,11 @@ test("Review: focus stays on a control after a failed write, Undo, Reopen, batch
   await page.getByRole("region", { name: "Proposals" }).getByRole("link").filter({ hasText: "review example" }).click();
   await button("Reject…").click();
   await page.getByRole("radio", { name: "Wrong" }).check({ force: true });
-  await button("Confirm reject").click();
+  await Promise.all([answered(page, /^\/api\/proposals\/[^/]+\/reject$/), button("Confirm reject").click()]);
   await expect(last).toContainText("Last: Rejected “review example”");
   await last.getByRole("button", { name: "Reopen…" }).click();
   await expect(button("Confirm reopen")).toBeFocused();
-  await button("Confirm reopen").click();
+  await Promise.all([answered(page, /^\/api\/proposals\/[^/]+\/reopen$/), button("Confirm reopen").click()]);
   await expect(last).toContainText("Last: Reopened “review example”");
   await expect.poll(active).not.toBe("BODY");
   assert.notEqual(await active(), "BODY");
@@ -119,7 +119,7 @@ test("Review: Refresh confirms politely and keeps focus; a toast clears the deci
 
   await open(page, server, `/review/${server.proposals.stale}`);
   await button("Accept…").click();
-  await button("Confirm accept").click();
+  await Promise.all([answered(page, /^\/api\/proposals\/[^/]+\/accept$/), button("Confirm accept").click()]);
   // A single decision is reported by the Last line alone.
   await expect(page.locator(".last")).toContainText("Last: Accepted");
   await expect(page.locator("[data-toast]")).toHaveCount(0);
@@ -153,7 +153,7 @@ test("Review: Refresh confirms politely and keeps focus; a toast clears the deci
     .first()
     .check();
   await button("Accept selected…").click();
-  await button("Confirm accept 1").click();
+  await Promise.all([answered(page, "/api/proposals/accept"), button("Confirm accept 1").click()]);
   await expect(page.locator(".toast")).toContainText("Accepted 1 proposals");
   await expect
     .poll(

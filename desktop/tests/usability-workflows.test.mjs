@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect } from "@playwright/test";
-import { go, launchFixture, tabStops } from "./support.mjs";
+import { answered, go, launchFixture, tabStops } from "./support.mjs";
 
 test("reviewed human workflows prevent dead ends and preserve focus and source", { timeout: 180000 }, async (t) => {
   const app = await launchFixture({ proposals: true, metrics: true });
@@ -58,7 +58,10 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
       await workspace.getByRole("button", { name: "Copy to…", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Copy restore-laptop.md" });
       await expect(dialog.getByRole("tree", { name: "Folders" })).toBeVisible();
-      await dialog.getByRole("button", { name: "Copy here", exact: true }).click();
+      await Promise.all([
+        answered(page, "/api/desktop/files/copy"),
+        dialog.getByRole("button", { name: "Copy here", exact: true }).click(),
+      ]);
       await expect(dialog.getByRole("alert")).toBeVisible();
       assert.equal(await readFile(app.documentPath, "utf8"), original);
       await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -439,7 +442,7 @@ test("Files by keyboard: rename, move, new folder, properties and commit are rea
     const field = page.getByRole("textbox", { name: "New name for review-example.md" });
     await expect(field).toBeFocused();
     await field.fill("review-note.md");
-    await page.keyboard.press("Enter");
+    await Promise.all([answered(page, "/api/desktop/files/move"), page.keyboard.press("Enter")]);
     await expect(
       page.getByRole("status").filter({ hasText: "Renamed review-example.md to review-note.md." }),
     ).toBeAttached();
@@ -457,7 +460,7 @@ test("Files by keyboard: rename, move, new folder, properties and commit are rea
     await dialog.getByRole("treeitem", { name: "archive" }).focus();
     await page.keyboard.press("Enter");
     await dialog.getByRole("button", { name: "Move here" }).focus();
-    await page.keyboard.press("Enter");
+    await Promise.all([answered(page, "/api/desktop/files/move"), page.keyboard.press("Enter")]);
     await expect(
       page.getByRole("status").filter({ hasText: "Moved review-note.md to knowledge/archive." }),
     ).toBeAttached();
@@ -467,12 +470,12 @@ test("Files by keyboard: rename, move, new folder, properties and commit are rea
     const folder = page.getByRole("textbox", { name: "Name of the new folder" });
     await expect(folder).toBeFocused();
     await folder.fill("drafts");
-    await page.keyboard.press("Enter");
+    await Promise.all([answered(page, "/api/desktop/files/folder"), page.keyboard.press("Enter")]);
     await expect(page.getByRole("row", { name: /^drafts/ })).toBeVisible();
     // Commit announces what it did.
     const header = page.getByRole("region", { name: "Git for personal" });
     await header.getByRole("button", { name: "Commit" }).focus();
-    await page.keyboard.press("Enter");
+    await Promise.all([answered(page, "/api/bundles/commit"), page.keyboard.press("Enter")]);
     await expect(header.getByRole("status")).toContainText("Committed");
     await accessible("files after the operations");
     // Properties: the fields and the Text switch are reachable by keyboard; a change is applied through akm.
