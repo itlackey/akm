@@ -25,7 +25,7 @@ import {
   hasMarkdownFragmentContent,
   setMarkdownFragmentContent,
 } from "../../indexer/passes/metadata";
-import { makeBundleRef } from "../asset/asset-ref";
+import { heldAssetRef } from "../asset/asset-ref";
 import {
   compareCodePoints,
   existingFileMode,
@@ -224,7 +224,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const metadata = this.describe(b, file, conceptId);
     const document: IndexDocument = {
       ...metadata,
-      ref: `${b.id}//${conceptId}`,
+      ref: heldAssetRef(b.id, conceptId),
       bundle: b.id,
       conceptId,
       adapterId: this.id,
@@ -273,7 +273,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const found = await this.checkChanges(b, changes, createFileValidateContext({ ...base, changes }));
     return found.map((diagnostic) => ({
       ...diagnostic,
-      ref: makeBundleRef(b.id, this.identify(diagnostic.file) ?? diagnostic.file),
+      ref: heldAssetRef(b.id, this.identify(diagnostic.file) ?? diagnostic.file),
     }));
   }
 
