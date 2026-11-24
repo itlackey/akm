@@ -110,7 +110,11 @@ export interface AssetWriter {
     files: readonly PackageFile[],
     options?: { replace?: boolean },
   ): WriteResult;
-  retire(conceptId: string, note: RetireNote, options?: { revision?: string }): WriteResult & { handle: string };
+  /**
+   * Take the asset out recoverably, keeping `note` with it: one retirement per asset, a package entry's first and then
+   * every other asset of its package. A handle is the adapter's: pass it back to `restore` and `forget`, never parse it.
+   */
+  retire(conceptId: string, note: RetireNote, options?: { revision?: string }): Array<{ ref: string; handle: string }>;
   retired(): Retirement[];
   restore(handle: string, fallback?: string | Buffer): WriteResult;
   forget(handle: string): void;
@@ -299,8 +303,7 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     },
     retire(conceptId, note, options) {
       existing(conceptId, { ...options, retire: true });
-      const change = held.retire(conceptId, note);
-      return { ...result(change, false), handle: change.handle };
+      return held.retire(conceptId, note).map((change) => ({ ref: result(change, false).ref, handle: change.handle }));
     },
     retired: () => held.retired(),
     restore(handle, fallback) {

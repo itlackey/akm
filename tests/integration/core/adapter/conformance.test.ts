@@ -822,7 +822,7 @@ describe("conformance — refusal and not-found sentences have one home", () => 
         const type = adapter.writes[0] as string;
         const { conceptId: asked } = adapter.place(b, { type, name: "none" });
         const expected = assetNotFound(`b//${asked}`);
-        const changes = [() => adapter.update(b, asked, "x"), () => adapter.delete(b, asked)];
+        const changes: Array<() => unknown> = [() => adapter.update(b, asked, "x"), () => adapter.delete(b, asked)];
         if (adapter.retires.length > 0) changes.push(() => adapter.retire(b, asked, {}));
         for (const change of changes) expect(change, adapter.id).toThrow(expected.message);
         const target = {

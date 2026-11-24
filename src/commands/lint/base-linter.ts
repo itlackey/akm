@@ -255,7 +255,7 @@ function refPathCandidates(refType: string, typeDir: string, refName: string): s
  * resolves once archived.
  *
  * Originally memory-only (#884: only `.derived` memories were ever pruned).
- * `archiveCleanupCandidate` also archives any memory, knowledge or lesson file (a consolidate pair-pass `retire` proposal, or an
+ * `retireCleanupCandidate` also archives any memory, knowledge or lesson file (a consolidate pair-pass `retire` proposal, or an
  * accepted promotion's source memory), so this must check every type, not
  * just `memory` — otherwise an xref to a retired knowledge or lesson asset
  * reports `missing-ref` even though it resolves fine through the tombstone.

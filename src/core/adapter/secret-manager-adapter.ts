@@ -339,7 +339,7 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     throw new Error(`Adapter "${this.id}" keeps no packages; the asset facade checks \`writes\` first.`);
   }
 
-  retire(_b: Bundle, _conceptId: string, _note: RetireNote): AssetChange & { handle: string } {
+  retire(_b: Bundle, _conceptId: string, _note: RetireNote): Array<AssetChange & { handle: string }> {
     return this.refuseRetire();
   }
 

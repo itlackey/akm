@@ -325,6 +325,27 @@ describe("a retire recorded with files and directories", () => {
     expect(getProposal(stash, RETIRED_ID).status).toBe("reverted");
   });
 
+  test("an archive directory recorded with `\\` separators (an akm on Windows) is read as the same handle, and reverts", async () => {
+    const db = openStateDatabase(getStateDbPath());
+    try {
+      const row = db.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(RETIRED_ID) as {
+        metadata_json: string;
+      };
+      const meta = JSON.parse(row.metadata_json) as Record<string, unknown>;
+      meta.retiredArchive = { dirs: [ARCHIVE.replaceAll("/", "\\")] };
+      db.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(meta), RETIRED_ID);
+    } finally {
+      db.close();
+    }
+    expect(getProposal(stash, RETIRED_ID).retiredArchive).toEqual({
+      retired: [{ ref: "work//memories/old-note", handle: ARCHIVE }],
+    });
+    const { akmProposalRevert } = await import("../../../src/commands/proposal/proposal");
+    await akmProposalRevert({ stashDir: stash, id: RETIRED_ID });
+    expect(fs.readFileSync(path.join(stash, "memories/old-note.md"), "utf8")).toBe(OLD);
+    expect(fs.existsSync(path.join(stash, ARCHIVE))).toBe(false);
+  });
+
   test("accepting the one caught mid-accept finishes it and stores the current record", async () => {
     const accepted = await akmProposalAccept({ stashDir: stash, id: MID_ID });
     expect(accepted.proposal.status).toBe("accepted");

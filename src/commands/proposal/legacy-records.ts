@@ -8,7 +8,8 @@
  * A record named files: `changes[].path/after`, `proposedTarget.root`, `acceptedTarget.root/path`,
  * `retireAcceptIntent.assetPath` and `retiredArchive.dirs` (§0.2 P5). It names assets by ref and retirements by handle
  * now: `changes[].ref/content`, `proposedTarget.source`, `acceptedTarget.bundle/ref`, `retiredArchive.retired[]`
- * (`{ ref, handle }`; a handle is the directory the old record named, kept as written). The proposals
+ * (`{ ref, handle }`; a handle is the directory the old record named, with `/` separators as a retirement's handle has
+ * them: a record written on Windows named it with `\`). The proposals
  * repository reads an old record through {@link convertLegacyProposalMetadata} and says so once per command; `akm
  * migrate apply` writes the converted record back (`proposal-records`). The state opener never rewrites one.
  *
@@ -21,6 +22,7 @@
 
 import path from "node:path";
 import { legacyRefOf } from "../../core/assets/write";
+import { toPosix } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { bundleAtDir } from "../../core/config/config-sources";
 import { rethrowIfTestIsolationError } from "../../core/errors";
@@ -149,7 +151,9 @@ export function convertLegacyProposalMetadata(meta: Meta, proposalRef: string): 
   if (isRecord(archive) && Array.isArray(archive.dirs)) {
     const ref =
       isRecord(out.acceptedTarget) && typeof out.acceptedTarget.ref === "string" ? out.acceptedTarget.ref : proposalRef;
-    out.retiredArchive = { retired: archive.dirs.map((handle) => ({ ref, handle })) };
+    out.retiredArchive = {
+      retired: archive.dirs.map((dir) => ({ ref, handle: typeof dir === "string" ? toPosix(dir) : dir })),
+    };
   }
   return { meta: out, legacy: true };
 }

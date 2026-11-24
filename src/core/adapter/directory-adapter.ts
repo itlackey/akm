@@ -80,6 +80,9 @@ import {
   type FileValidateContext,
 } from "./validate-context";
 
+/** An asset a directory bundle keeps in a file. */
+type FileAsset = BundleAsset & { entry: AssetEntry & { file: string } };
+
 export abstract class DirectoryAdapterBase implements BundleAdapter {
   abstract readonly id: string;
   /** Feeds incrementality and fingerprints. */
@@ -537,19 +540,47 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return [first, ...[...changes.values()].filter((change) => change !== first)];
   }
 
-  retire(b: Bundle, conceptId: string, note: RetireNote): AssetChange & { handle: string } {
-    const { conceptId: canonical, entry } = this.existing(b, conceptId);
-    this.requireRetires(b, this.typeOf(entry.key));
-    const file = entry.file as string;
-    assertWritableFile(rootOf(b), b.id, file);
-    assertWritableFile(rootOf(b), b.id, path.join(rootOf(b), MEMORY_ARCHIVE_REL, "retirement"));
-    const written = archiveFile(rootOf(b), file, {
-      ref: note.ref ?? canonical,
-      archivedAt: new Date().toISOString(),
-      note,
-      bundle: b.id,
+  /**
+   * Retiring a package's entry retires every asset of its package with it, each its own retirement (§8.3); the
+   * package's files that are no asset stay where they are. The entry is retired last, so a retirement a crash
+   * interrupted is finished by retiring the entry again; its change comes first.
+   */
+  retire(b: Bundle, conceptId: string, note: RetireNote): Array<AssetChange & { handle: string }> {
+    const root = rootOf(b);
+    const entry = this.existing(b, conceptId);
+    const assets = [...this.packageMembers(b, entry), entry];
+    for (const asset of assets) {
+      this.requireRetires(b, this.typeOf(asset.entry.key));
+      assertWritableFile(root, b.id, asset.entry.file);
+    }
+    assertWritableFile(root, b.id, path.join(root, MEMORY_ARCHIVE_REL, "retirement"));
+    const archivedAt = note.archivedAt ?? new Date().toISOString();
+    const changes = assets.map((asset) => {
+      const written = archiveFile(root, asset.entry.file, {
+        ref: note.ref ?? entry.conceptId,
+        archivedAt,
+        note,
+        bundle: b.id,
+      });
+      return { conceptId: asset.conceptId, changed: written.changed, handle: written.handle };
     });
-    return { conceptId: canonical, changed: written.changed, handle: written.handle };
+    return [changes.pop() as AssetChange & { handle: string }, ...changes];
+  }
+
+  /** The assets of the package whose entry is `entry`, other than the entry, by concept id; none for an asset that is no package entry. */
+  private packageMembers(b: Bundle, entry: FileAsset): FileAsset[] {
+    const root = rootOf(b);
+    const dir = this.packageDir(buildFileContext(root, entry.entry.file));
+    // A package at the bundle's root is not the bundle's to retire: only its entry goes.
+    if (dir === undefined || !isWithin(dir, root) || path.resolve(dir) === path.resolve(root)) return [];
+    return filesBelow(dir)
+      .flatMap((file) => {
+        const conceptId = this.identify(this.relPathOf(b, file));
+        if (conceptId === null || conceptId === entry.conceptId) return [];
+        const found = this.read(b, conceptId);
+        return found?.entry.file === file ? [found as FileAsset] : [];
+      })
+      .sort((left, right) => compareCodePoints(left.conceptId, right.conceptId));
   }
 
   retired(b: Bundle): Retirement[] {
@@ -578,7 +609,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
 
   expireRetired(b: Bundle, before: Date): { changed: string[] } {
     this.requireRetiring(b);
-    return { changed: expireArchive(rootOf(b), before).changed };
+    return { changed: expireArchive(rootOf(b), before) };
   }
 
   // ── Internals ───────────────────────────────────────────────────────────────
@@ -613,10 +644,10 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return buildFileContext(rootOf(b), file).relPath;
   }
 
-  private existing(b: Bundle, conceptId: string): BundleAsset & { entry: AssetEntry & { file: string } } {
+  private existing(b: Bundle, conceptId: string): FileAsset {
     const found = this.read(b, conceptId);
     if (!found?.entry.file) throw assetNotFound(`${b.id}//${conceptId}`);
-    return found as BundleAsset & { entry: AssetEntry & { file: string } };
+    return found as FileAsset;
   }
 
   /** The bytes and file mode a write gives a file. */

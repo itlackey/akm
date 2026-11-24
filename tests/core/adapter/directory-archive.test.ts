@@ -15,6 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
 import { okfAdapter } from "../../../src/core/adapter/adapters/okf-adapter";
+import type { RetireNote } from "../../../src/core/adapter/bundle-adapter";
 import { MEMORY_ARCHIVE_REL, resetArchiveCache } from "../../../src/core/adapter/directory-archive";
 import type { Bundle } from "../../../src/core/adapter/types";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
@@ -33,6 +34,16 @@ beforeEach(() => {
 });
 afterEach(() => sandbox.cleanup());
 
+const CONCEPT_FILE = "memories/old-note.md";
+
+/** The one retirement a retire of an asset that is no package entry makes. */
+function retireOne(b: Bundle, conceptId: string, note: RetireNote): { handle: string } {
+  const [only, ...others] = akmAdapter.retire(b, conceptId, note);
+  expect(others).toEqual([]);
+  if (!only) throw new Error("no retirement");
+  return only;
+}
+
 /** What the adapter wrote for `# old`: it adds frontmatter, so tests compare against this, not the input. */
 let written: string;
 
@@ -48,7 +59,9 @@ function createMemory(): string {
 describe("DirectoryArchive through the akm adapter", () => {
   test("retire writes the tombstone, then moves the file, and returns the handle", () => {
     const file = createMemory();
-    const retired = akmAdapter.retire(bundle, CONCEPT, NOTE);
+    const [retired, ...others] = akmAdapter.retire(bundle, CONCEPT, NOTE);
+    if (!retired) throw new Error("no retirement");
+    expect(others).toEqual([]);
 
     expect(fs.existsSync(file)).toBe(false);
     expect(retired.handle.startsWith(`${MEMORY_ARCHIVE_REL}/`)).toBe(true);
@@ -71,7 +84,7 @@ describe("DirectoryArchive through the akm adapter", () => {
 
   test("a retirement is named by concept ids: a ref into the bundle loses its `bundle//`, another bundle's stays (N11)", () => {
     createMemory();
-    const { handle } = akmAdapter.retire(bundle, CONCEPT, {
+    const { handle } = retireOne(bundle, CONCEPT, {
       ...NOTE,
       ref: "stash//memories/old-note",
       parentRef: "stash//memories/parent",
@@ -98,7 +111,7 @@ describe("DirectoryArchive through the akm adapter", () => {
 
   test("a retirement with no ref names its archive by the concept id and records none", () => {
     createMemory();
-    const { handle } = akmAdapter.retire(bundle, CONCEPT, { reason: "duplicate" });
+    const { handle } = retireOne(bundle, CONCEPT, { reason: "duplicate" });
     expect(handle).toMatch(/-memories-old-note$/);
     expect(akmAdapter.retired(bundle)[0]?.note).not.toHaveProperty("ref");
   });
@@ -168,20 +181,27 @@ describe("DirectoryArchive through the akm adapter", () => {
     expect(fs.existsSync(file)).toBe(true);
     const [only] = akmAdapter.retired(bundle);
     expect(only?.restorable).toBe(false);
-    expect(akmAdapter.restore(bundle, (only as NonNullable<typeof only>).handle).changed).toEqual([]);
+    const handle = (only as NonNullable<typeof only>).handle;
+    // The files of the restoration, for the commit boundary; nothing on disk changes.
+    expect(akmAdapter.restore(bundle, handle).changed).toEqual([
+      file,
+      path.join(bundle.root, handle, "memories", "old-note.md"),
+    ]);
     expect(fs.readFileSync(file, "utf8")).toBe(written);
   });
 
   test("restore moves the file back and keeps the record until forget", () => {
     const file = createMemory();
-    const { handle } = akmAdapter.retire(bundle, CONCEPT, NOTE);
+    const { handle } = retireOne(bundle, CONCEPT, NOTE);
 
     const restored = akmAdapter.restore(bundle, handle);
     expect(restored.conceptId).toBe(CONCEPT);
     expect(restored.changed).toContain(file);
     expect(fs.readFileSync(file, "utf8")).toBe(written);
     expect(akmAdapter.retired(bundle).map((r) => r.handle)).toEqual([handle]);
-    expect(akmAdapter.restore(bundle, handle).changed).toEqual([]); // again: already restored
+    // Again: already restored, and nothing changes on disk; the restoration's files are named for the commit boundary.
+    expect(akmAdapter.restore(bundle, handle).changed).toEqual([file, path.join(bundle.root, handle, CONCEPT_FILE)]);
+    expect(fs.readFileSync(file, "utf8")).toBe(written);
 
     akmAdapter.forget(bundle, handle);
     expect(akmAdapter.retired(bundle)).toEqual([]);
@@ -192,7 +212,7 @@ describe("DirectoryArchive through the akm adapter", () => {
 
   test("restore refuses to overwrite a file created since the retirement", () => {
     createMemory();
-    const { handle } = akmAdapter.retire(bundle, CONCEPT, NOTE);
+    const { handle } = retireOne(bundle, CONCEPT, NOTE);
     const file = createMemory(); // same name, new content
     expect(() => akmAdapter.restore(bundle, handle)).toThrow(/already exists \(created since retirement\)/);
     expect(fs.readFileSync(file, "utf8")).toBe(written);
@@ -200,13 +220,62 @@ describe("DirectoryArchive through the akm adapter", () => {
 
   test("restore writes the fallback when the archived copy is gone, and refuses without one", () => {
     const file = createMemory();
-    const { handle } = akmAdapter.retire(bundle, CONCEPT, NOTE);
+    const { handle } = retireOne(bundle, CONCEPT, NOTE);
     fs.rmSync(path.join(bundle.root, handle, "memories"), { recursive: true });
     expect(akmAdapter.retired(bundle)[0]?.restorable).toBe(false);
 
     expect(() => akmAdapter.restore(bundle, handle)).toThrow(/nothing to restore it from/);
     expect(akmAdapter.restore(bundle, handle, "# from the proposal\n").changed).toEqual([file]);
     expect(fs.readFileSync(file, "utf8")).toBe("# from the proposal\n");
+  });
+
+  test("retiring a package's entry retires every asset of the package, the entry first; restore brings each back (A12)", () => {
+    const skill = path.join(bundle.root, "skills", "deploy");
+    fs.mkdirSync(path.join(skill, "references"), { recursive: true });
+    fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: deploy\ndescription: Deploy\n---\nSteps.\n");
+    fs.writeFileSync(path.join(skill, "references", "guide.md"), "# Guide\n");
+    fs.writeFileSync(path.join(skill, "notes.txt"), "not an asset\n");
+
+    const retired = akmAdapter.retire(bundle, "skills/deploy", { reason: "duplicate" });
+    expect(retired.map((r) => r.conceptId)).toEqual(["skills/deploy", "skills/deploy/references/guide"]);
+    expect(new Set(retired.map((r) => r.handle)).size).toBe(2);
+    expect(fs.existsSync(path.join(skill, "SKILL.md"))).toBe(false);
+    expect(fs.existsSync(path.join(skill, "references", "guide.md"))).toBe(false);
+    expect(fs.readFileSync(path.join(skill, "notes.txt"), "utf8")).toBe("not an asset\n");
+    expect(
+      akmAdapter
+        .retired(bundle)
+        .map((r) => r.conceptId)
+        .sort(),
+    ).toEqual(["skills/deploy", "skills/deploy/references/guide"]);
+
+    for (const { handle } of retired) akmAdapter.restore(bundle, handle);
+    expect(fs.readFileSync(path.join(skill, "SKILL.md"), "utf8")).toContain("Steps.");
+    expect(fs.readFileSync(path.join(skill, "references", "guide.md"), "utf8")).toBe("# Guide\n");
+  });
+
+  test("a package retirement a crash interrupted is finished by retiring its entry again", () => {
+    const skill = path.join(bundle.root, "skills", "deploy");
+    fs.mkdirSync(path.join(skill, "references"), { recursive: true });
+    fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: deploy\ndescription: Deploy\n---\nSteps.\n");
+    fs.writeFileSync(path.join(skill, "references", "guide.md"), "# Guide\n");
+    const rename = fs.renameSync;
+    const crash = spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      if (String(from).endsWith("SKILL.md")) throw new Error("crash");
+      return rename(from, to);
+    });
+    try {
+      expect(() => akmAdapter.retire(bundle, "skills/deploy", { reason: "duplicate" })).toThrow("crash");
+    } finally {
+      crash.mockRestore();
+    }
+    expect(fs.existsSync(path.join(skill, "references", "guide.md"))).toBe(false);
+    expect(fs.existsSync(path.join(skill, "SKILL.md"))).toBe(true);
+
+    expect(akmAdapter.retire(bundle, "skills/deploy", { reason: "duplicate" }).map((r) => r.conceptId)).toEqual([
+      "skills/deploy",
+    ]);
+    expect(fs.existsSync(path.join(skill, "SKILL.md"))).toBe(false);
   });
 
   test("a handle outside the archive is refused", () => {
@@ -216,7 +285,7 @@ describe("DirectoryArchive through the akm adapter", () => {
 
   test("expireRetired changes nothing in a bundle without git", () => {
     const file = createMemory();
-    const { handle } = akmAdapter.retire(bundle, CONCEPT, NOTE);
+    const { handle } = retireOne(bundle, CONCEPT, NOTE);
     expect(akmAdapter.expireRetired(bundle, new Date()).changed).toEqual([]);
     expect(fs.existsSync(path.join(bundle.root, handle, "memories", "old-note.md"))).toBe(true);
     expect(fs.existsSync(file)).toBe(false);
@@ -229,7 +298,7 @@ describe("DirectoryArchive through the akm adapter", () => {
 
     test("expireRetired deletes the committed archived file and keeps the tombstone", () => {
       createMemory();
-      const { handle } = akmAdapter.retire(bundle, CONCEPT, NOTE);
+      const { handle } = retireOne(bundle, CONCEPT, NOTE);
       git(bundle.root, ["add", "-A"]);
       git(bundle.root, ["commit", "-q", "-m", "retire"]);
 
@@ -243,7 +312,7 @@ describe("DirectoryArchive through the akm adapter", () => {
 
     test("expireRetired skips a retirement that is not past the cutoff, or has a dirty or untracked file", () => {
       createMemory();
-      const { handle } = akmAdapter.retire(bundle, CONCEPT, NOTE);
+      const { handle } = retireOne(bundle, CONCEPT, NOTE);
       const archived = path.join(bundle.root, handle, "memories", "old-note.md");
 
       // Untracked: not committed yet.

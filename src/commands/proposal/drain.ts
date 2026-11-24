@@ -193,7 +193,7 @@ async function acceptProposal(
         ...(opts.target ? { target: opts.target } : {}),
         gateDecision,
       });
-      readFreshProposalTarget(proposal, preflight.assetPath, preflight.stampedContent);
+      readFreshProposalTarget(proposal, preflight.target.source.name, preflight.ref, preflight.stampedContent);
     }
     return "promoted";
   } catch (err) {

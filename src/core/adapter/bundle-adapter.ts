@@ -132,6 +132,8 @@ export interface RetireNote {
   readonly ref?: string;
   /** When it was retired (ISO 8601): `expireRetired` measures its age from it. */
   readonly retiredAt?: string;
+  /** When the retirement was made (ISO 8601; default: now). */
+  readonly archivedAt?: string;
   readonly [key: string]: unknown;
 }
 
@@ -239,10 +241,11 @@ export interface BundleAdapter {
   ): AssetChange[];
 
   /**
-   * Take the asset out of the bundle recoverably, keeping `note` with it. The handle in the result names the
-   * retirement. Refused for a type not in `retires`.
+   * Take the asset out of the bundle recoverably, keeping `note` with it. The handle in each result names a
+   * retirement: one per asset, a package entry's first, then every other asset of its package. Refused for a type not
+   * in `retires`.
    */
-  retire(b: Bundle, conceptId: string, note: RetireNote): AssetChange & { handle: string };
+  retire(b: Bundle, conceptId: string, note: RetireNote): Array<AssetChange & { handle: string }>;
   /** The bundle's retirements. */
   retired(b: Bundle): Retirement[];
   /**

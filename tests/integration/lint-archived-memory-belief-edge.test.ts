@@ -27,8 +27,8 @@ import { analyzeMemoryCleanup, applyMemoryCleanup } from "../../src/commands/imp
 import { akmLint } from "../../src/commands/lint";
 import { akmProposalAccept } from "../../src/commands/proposal/proposal";
 import { createRetireProposal } from "../../src/commands/proposal/repository";
+import { resetArchiveCache } from "../../src/core/adapter/directory-archive";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
-import { resetMemoryArchiveCache } from "../../src/core/asset/memory-archive";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -56,7 +56,7 @@ function seedPrunableDuplicate(stashDir: string): string {
 /** Run the real prune. Returns the stash-relative original paths that were archived (from each tombstone). */
 function prune(stashDir: string): string[] {
   const applied = applyMemoryCleanup(stashDir, analyzeMemoryCleanup(stashDir));
-  resetMemoryArchiveCache(); // the sweep below must see the archive this call just wrote
+  resetArchiveCache(); // the sweep below must see the archive this call just wrote
   return applied.archived.map(
     (record) =>
       parseFrontmatter(fs.readFileSync(path.join(stashDir, record.handle, "cleanup.md"), "utf8")).data
@@ -68,10 +68,10 @@ describe("belief edges to a pruned memory resolve through the archive tombstone 
   let storage: IsolatedAkmStorage;
   beforeEach(() => {
     storage = withIsolatedAkmStorage();
-    resetMemoryArchiveCache();
+    resetArchiveCache();
   });
   afterEach(() => {
-    resetMemoryArchiveCache();
+    resetArchiveCache();
     storage.cleanup();
   });
 
@@ -147,7 +147,7 @@ describe("belief edges to a pruned memory resolve through the archive tombstone 
     // live file; the stale tombstone must not make a later real deletion
     // invisible either, so re-deleting still resolves (via the tombstone).
     writeMemory(stashDir, "deploy-duplicate.derived", "description: back again\n");
-    resetMemoryArchiveCache();
+    resetArchiveCache();
     const after = await akmLint({ dir: stashDir, config: makeConfig(stashDir) });
     expect(after.flagged.filter((f) => f.issue === "missing-ref")).toEqual([]);
   });
@@ -162,7 +162,7 @@ describe("belief edges to a pruned memory resolve through the archive tombstone 
     for (const dir of fs.readdirSync(archiveRoot)) {
       fs.writeFileSync(path.join(archiveRoot, dir, "cleanup.md"), "not: [valid\nfrontmatter\n");
     }
-    resetMemoryArchiveCache();
+    resetArchiveCache();
 
     const after = await akmLint({ dir: stashDir, config: makeConfig(stashDir) });
     expect(after.flagged.filter((f) => f.issue === "missing-ref").length).toBe(1);
@@ -181,10 +181,10 @@ describe("a retire proposal's archived KNOWLEDGE asset also resolves through the
   let storage: IsolatedAkmStorage;
   beforeEach(() => {
     storage = withIsolatedAkmStorage();
-    resetMemoryArchiveCache();
+    resetArchiveCache();
   });
   afterEach(() => {
-    resetMemoryArchiveCache();
+    resetArchiveCache();
     storage.cleanup();
   });
 
@@ -221,7 +221,7 @@ describe("a retire proposal's archived KNOWLEDGE asset also resolves through the
       },
     });
     await akmProposalAccept({ stashDir, id: proposal.id, config });
-    resetMemoryArchiveCache(); // the lint sweep below must see the archive accept just wrote
+    resetArchiveCache(); // the lint sweep below must see the archive accept just wrote
 
     expect(fs.existsSync(path.join(stashDir, "knowledge", "old-guide.md"))).toBe(false);
 

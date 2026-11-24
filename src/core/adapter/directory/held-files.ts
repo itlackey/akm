@@ -11,7 +11,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { archivedOriginalPaths } from "../directory-archive";
+import { archivedOriginalPaths, MEMORY_ARCHIVE_REL } from "../directory-archive";
+
+/** Where a directory bundle keeps its retirements, relative to its root (`akm health` reports the folder's size). */
+export { MEMORY_ARCHIVE_REL };
 
 /** Whether the bundle rooted at `root` keeps a file at the bundle-relative `key`. */
 export function holdsFile(root: string, key: string): boolean {

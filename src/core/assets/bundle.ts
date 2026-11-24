@@ -164,7 +164,7 @@ export class AssetBundle {
   ): AssetChange[] {
     return this.#adapter.mirrorPackage(this.#bundle, asset, files, options);
   }
-  retire(conceptId: string, note: RetireNote): AssetChange & { handle: string } {
+  retire(conceptId: string, note: RetireNote): Array<AssetChange & { handle: string }> {
     return this.#adapter.retire(this.#bundle, conceptId, note);
   }
   retired(): Retirement[] {

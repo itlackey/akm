@@ -192,7 +192,7 @@ export interface ProposalGateDecision {
 
 /**
  * A consolidate pair-pass retire proposal's metadata `ref` is the retired asset (same as `Proposal.ref`);
- * `reason` is the tombstone vocabulary `archiveCleanupCandidate` writes,
+ * `reason` is the tombstone vocabulary `retireCleanupCandidate` writes,
  * derived from `judgeLabel` (`supersedes` → `superseded`, the other two
  * labels unchanged).
  */
@@ -273,9 +273,9 @@ export interface RetiredArchiveRecord {
  * as `backupContent`. A crashed accept resumes from this record instead of
  * re-deriving it from whatever the archive happens to contain. It names no
  * file: the asset is the proposal's ref, and the twin, if any, is a pure
- * function of the asset's file and its type (`derivedTwinPath`), whose
- * archiving by an earlier, crashed attempt is exactly what the tombstone scan
- * (`alreadyArchivedOriginalPaths`) independently finds.
+ * function of the asset's concept id and its type (`derivedTwinOf`), whose
+ * retirement by an earlier, crashed attempt is exactly what the bundle's
+ * retirements under the proposal's id independently show.
  */
 export interface RetireAcceptIntent {
   backupContent: string;

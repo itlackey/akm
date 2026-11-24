@@ -6,19 +6,19 @@
  * alpha.9: `archiveCleanupCandidate` generalized to cover any memory,
  * knowledge or lesson file (not only `.derived` memories), for `akm proposal
  * accept` on a consolidate pair-pass `retire` proposal or an O1 promotion
- * retirement — plus `derivedTwinPath`, which locates the `.derived` twin
+ * retirement — plus `derivedTwinOf`, which names the `.derived` twin
  * those callers take along. Memory cleanup's own family-prune usage must
  * stay byte-identical (its `previousBeliefState` inference, its tombstone
  * shape without the new fields).
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import {
   archiveCleanupCandidate,
-  derivedTwinPath,
+  derivedTwinOf,
   purgeGracedArchive,
   RETIRE_GRACE_DAYS,
 } from "../../../../src/commands/improve/memory/memory-improve";
@@ -81,7 +81,7 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
       proposalId: "proposal-1",
       successorRefs: ["memories/new-note"],
     };
-    const { record, written } = archiveCleanupCandidate(stashDir, candidate, filePath);
+    const record = archiveCleanupCandidate(stashDir, candidate, filePath);
 
     expect(fs.existsSync(filePath)).toBe(false);
     expect(record.reason).toBe("duplicate");
@@ -94,8 +94,7 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
     expect(record.previousBeliefState).toBe("superseded");
     expect(record.parentRef).toBeUndefined();
 
-    const tombstone = fs.readFileSync(written.auditPath, "utf8");
-    expect(record.handle).toBe(path.relative(stashDir, written.archiveDir));
+    const tombstone = fs.readFileSync(path.join(stashDir, record.handle, "cleanup.md"), "utf8");
     expect(tombstone).toContain("proposalId: proposal-1");
     expect(tombstone).toContain("successorRefs:");
     expect(tombstone).toContain("retiredAt:");
@@ -105,7 +104,7 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
   test("a retire candidate with no beliefState in frontmatter defaults to active, same as memory cleanup's resolver", () => {
     const stashDir = sandbox();
     const filePath = writeAsset(stashDir, "knowledge/dup.md", "description: a duplicate knowledge asset");
-    const { record } = archiveCleanupCandidate(
+    const record = archiveCleanupCandidate(
       stashDir,
       { ref: "knowledge/dup", reason: "subsumed", proposalId: "p2", successorRefs: ["knowledge/keeper"] },
       filePath,
@@ -125,7 +124,7 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
       reason: "superseded-derived",
       survivorRef: "memory:child.derived.v2",
     };
-    const { record, written } = archiveCleanupCandidate(stashDir, candidate, filePath);
+    const record = archiveCleanupCandidate(stashDir, candidate, filePath);
     expect(record.previousBeliefState).toBe("superseded");
     expect(record.parentRef).toBe("memories/child");
     expect(record.survivorRef).toBe("memory:child.derived.v2");
@@ -133,7 +132,7 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
     expect(record.successorRefs).toBeUndefined();
     expect(record.retiredAt).toBeUndefined();
 
-    const tombstone = fs.readFileSync(written.auditPath, "utf8");
+    const tombstone = fs.readFileSync(path.join(stashDir, record.handle, "cleanup.md"), "utf8");
     expect(tombstone).not.toContain("proposalId:");
     expect(tombstone).not.toContain("successorRefs:");
     expect(tombstone).not.toContain("retiredAt:");
@@ -143,13 +142,20 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
     const stashDir = sandbox();
     const filePath = writeAsset(stashDir, "memories/old-note.md", "description: an old note");
     const candidate: MemoryPruneCandidate = { ref: "memories/old-note", reason: "duplicate" };
-    // Removed out from under it: the rename this call makes will fail
-    // (ENOENT), simulating a crash right where the rename would happen.
-    // Under the OLD ordering (move, then write the tombstone) this failure
-    // would leave no trace at all. Under the fixed ordering, the tombstone
-    // is already on disk by the time the rename is even attempted.
-    fs.rmSync(filePath);
-    expect(() => archiveCleanupCandidate(stashDir, candidate, filePath)).toThrow();
+    // The rename this call makes fails, simulating a crash right where the
+    // rename would happen. Under the OLD ordering (move, then write the
+    // tombstone) this failure would leave no trace at all. Under the fixed
+    // ordering, the tombstone is already on disk by the time the rename is
+    // even attempted.
+    const rename = spyOn(fs, "renameSync").mockImplementationOnce(() => {
+      throw new Error("crash");
+    });
+    try {
+      expect(() => archiveCleanupCandidate(stashDir, candidate, filePath)).toThrow("crash");
+    } finally {
+      rename.mockRestore();
+    }
+    expect(fs.existsSync(filePath)).toBe(true);
 
     const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
     const dirs = fs.readdirSync(archiveRoot);
@@ -158,27 +164,62 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
   });
 });
 
-describe("derivedTwinPath", () => {
-  test("finds the <name>.derived.md sibling when it exists", () => {
-    const stashDir = sandbox();
-    const parentPath = writeAsset(stashDir, "memories/foo.md", "description: parent");
-    const twinPath = writeAsset(stashDir, "memories/foo.derived.md", "description: derived child");
-    expect(derivedTwinPath(parentPath, "memory")).toBe(twinPath);
-  });
-
-  test("returns undefined when no twin exists on disk", () => {
-    const stashDir = sandbox();
-    const parentPath = writeAsset(stashDir, "memories/lonely.md", "description: no child");
-    expect(derivedTwinPath(parentPath, "memory")).toBeUndefined();
+describe("derivedTwinOf", () => {
+  test("names the <name>.derived sibling of a memory", () => {
+    expect(derivedTwinOf("memories/foo", "memory")).toBe("memories/foo.derived");
   });
 
   test("returns undefined for a non-memory type, and for an already-derived memory", () => {
-    const stashDir = sandbox();
-    const knowledgePath = writeAsset(stashDir, "knowledge/guide.md", "description: guide");
-    expect(derivedTwinPath(knowledgePath, "knowledge")).toBeUndefined();
+    expect(derivedTwinOf("knowledge/guide", "knowledge")).toBeUndefined();
+    expect(derivedTwinOf("memories/bar.derived", "memory")).toBeUndefined();
+  });
+});
 
-    const derivedPath = writeAsset(stashDir, "memories/bar.derived.md", "description: already derived");
-    expect(derivedTwinPath(derivedPath, "memory")).toBeUndefined();
+describe("the tombstone a retirement writes", () => {
+  test("keeps the key order and bytes the base wrote: note fields, originalPath, archivedPath, then proposalId, retiredAt, successorRefs (P18)", () => {
+    const stashDir = sandbox();
+    const filePath = writeAsset(stashDir, "memories/old-note.md", "beliefState: superseded\ndescription: old");
+    const record = archiveCleanupCandidate(
+      stashDir,
+      {
+        ref: "memories/old-note",
+        parentRef: "memories/parent",
+        reason: "duplicate",
+        survivorRef: "memories/survivor",
+        proposalId: "p-1",
+        successorRefs: ["memories/new-note", "memories/other"],
+      },
+      filePath,
+    );
+    const at = record.archivedAt;
+    const dir = `${at.replace(/[:.]/g, "-")}-memories-old-note`;
+    expect(record.handle).toBe(`.akm/memory-cleanup/archive/${dir}`);
+    // What 1f2e58c9's `archiveCleanupCandidate` wrote for the same candidate, byte for byte.
+    expect(fs.readFileSync(path.join(stashDir, record.handle, "cleanup.md"), "utf8")).toBe(
+      [
+        "---",
+        "schemaVersion: 1",
+        "kind: memory-cleanup-archive",
+        `archivedAt: ${at}`,
+        "beliefState: archived",
+        "previousBeliefState: superseded",
+        "ref: memories/old-note",
+        "parentRef: memories/parent",
+        "reason: duplicate",
+        "survivorRef: memories/survivor",
+        "originalPath: memories/old-note.md",
+        `archivedPath: .akm/memory-cleanup/archive/${dir}/memories/old-note.md`,
+        "proposalId: p-1",
+        `retiredAt: ${at}`,
+        "successorRefs:",
+        "  - memories/new-note",
+        "  - memories/other",
+        "---",
+        "",
+        "Archived derived memory for recoverable cleanup.",
+        "",
+      ].join("\n"),
+    );
   });
 });
 
@@ -192,7 +233,7 @@ describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)
       proposalId: `p-${ref}`,
       successorRefs: ["memories/keeper"],
     };
-    const { record } = archiveCleanupCandidate(stashDir, candidate, filePath);
+    const record = archiveCleanupCandidate(stashDir, candidate, filePath);
     if (!record.retiredAt) throw new Error("expected a retiredAt on a retire-shaped archive record");
     return record.retiredAt;
   }

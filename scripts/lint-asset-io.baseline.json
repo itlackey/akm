@@ -46,14 +46,9 @@
     }
   },
   "src/commands/improve/memory/memory-improve.ts": {
-    "adapter-import": {
-      "src/core/adapter/directory-archive": 1
-    },
     "asset-io": {
-      "appendFileSync": 1,
-      "existsSync": 2,
-      "readFileSync": 2,
-      "statSync": 2
+      "existsSync": 1,
+      "readFileSync": 1
     }
   },
   "src/commands/improve/retrieval-scope.ts": {
@@ -65,17 +60,6 @@
     "adapter-id": {
       "akm": 2,
       "okf": 1
-    }
-  },
-  "src/commands/proposal/repository.ts": {
-    "asset-io": {
-      "existsSync": 18,
-      "readFileSync": 18,
-      "readdirSync": 1,
-      "renameSync": 3,
-      "rmSync": 3,
-      "statSync": 1,
-      "writeFileSync": 1
     }
   },
   "src/commands/read/related.ts": {
@@ -112,11 +96,6 @@
     "asset-io": {
       "existsSync": 1,
       "statSync": 1
-    }
-  },
-  "src/core/asset/memory-archive.ts": {
-    "adapter-import": {
-      "src/core/adapter/directory-archive": 1
     }
   },
   "src/core/asset/stale-path.ts": {

@@ -5,12 +5,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { walkMarkdownFiles } from "../../../core/adapter/directory/walker";
-import { type ArchiveWrite, archiveFile, expireArchive } from "../../../core/adapter/directory-archive";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
 import { editFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
 import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { readAsset } from "../../../core/assets/read";
-import { conceptIdAtFile, writeAssets } from "../../../core/assets/write";
+import { type AssetWriter, conceptIdAtFile, writeAssets } from "../../../core/assets/write";
 import { materialiseBundleDir, writeTargetAt } from "../../../core/bundle-at-dir";
 import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
 import { assetNotFound } from "../../../core/errors";
@@ -26,7 +25,7 @@ import type {
 } from "../../../core/improve-types";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { warn } from "../../../core/warn";
-import { recordWrittenPath } from "../../../core/write-provenance";
+import { beginWriteProvenance, recordWrittenPath } from "../../../core/write-provenance";
 import { contentHash } from "../content-hash";
 import { isDerivedMemory, memoryIdentityRef, parseMemoryName, resolveParentRef } from "./derived-ref";
 
@@ -268,7 +267,7 @@ export function applyMemoryCleanup(stashDir: string, plan: MemoryCleanupPlan): M
     const filePath = fileByRef.get(candidate.ref);
     if (!filePath) continue;
     try {
-      archived.push(archiveCleanupCandidate(stashDir, candidate, filePath).record);
+      archived.push(archiveCleanupCandidate(stashDir, candidate, filePath));
     } catch (error) {
       warnings.push(formatApplyWarning("archive", candidate.ref, error));
     }
@@ -288,12 +287,13 @@ export function applyMemoryCleanup(stashDir: string, plan: MemoryCleanupPlan): M
       if (!held) throw assetNotFound(candidate.ref);
       const fm = parseFrontmatter(held.entry.content());
       const createdAtStr = fm.data.createdAt as string | undefined;
+      const modified = (): Date => held.entry.modified?.() ?? new Date();
       let referenceDate: Date;
       if (createdAtStr) {
         const parsed = new Date(createdAtStr);
-        referenceDate = Number.isNaN(parsed.getTime()) ? new Date(fs.statSync(candidate.filePath).mtimeMs) : parsed;
+        referenceDate = Number.isNaN(parsed.getTime()) ? modified() : parsed;
       } else {
-        referenceDate = new Date(fs.statSync(candidate.filePath).mtimeMs);
+        referenceDate = modified();
       }
       const resolvedBody = resolveRelativeDates(fm.content ?? "", referenceDate);
       if (resolvedBody === (fm.content ?? "")) continue; // no change
@@ -572,19 +572,18 @@ function stronglyConnectedComponents(
 }
 
 /**
- * The `.derived` twin of a non-derived memory file, if one exists on disk:
- * `<name>.derived.md` beside it, the naming convention
+ * The concept id the `.derived` twin of a non-derived memory would have:
+ * `<name>.derived` beside it, the naming convention
  * `indexer/passes/memory-inference.ts`'s `derivedChildPath` writes.
- * `undefined` for a knowledge or lesson ref (no such twin exists), or for a
+ * `undefined` for a knowledge or lesson (no such twin exists), or for a
  * memory that is already itself `.derived` (it has no further twin).
  *
  * Used by `akm proposal accept` to take a retired or promoted
  * memory's derived child along when it archives the memory.
  */
-export function derivedTwinPath(filePath: string, refType: string): string | undefined {
-  if (refType !== "memory" || filePath.endsWith(`${DERIVED_SUFFIX}.md`)) return undefined;
-  const twin = `${filePath.slice(0, -3)}${DERIVED_SUFFIX}.md`;
-  return fs.existsSync(twin) ? twin : undefined;
+export function derivedTwinOf(conceptId: string, type: string): string | undefined {
+  if (type !== "memory" || conceptId.endsWith(DERIVED_SUFFIX)) return undefined;
+  return `${conceptId}${DERIVED_SUFFIX}`;
 }
 
 /**
@@ -609,74 +608,79 @@ function isRetireCandidate(candidate: MemoryPruneCandidate): boolean {
  */
 function resolvePreviousBeliefState(
   candidate: MemoryPruneCandidate,
-  filePath: string,
+  content: () => string,
 ): Exclude<MemoryBeliefState, "archived"> {
   if (!isRetireCandidate(candidate)) return priorBeliefStateForArchive(candidate);
   try {
-    return resolveBeliefState(parseFrontmatter(fs.readFileSync(filePath, "utf8")).data);
+    return resolveBeliefState(parseFrontmatter(content()).data);
   } catch {
     return "active";
   }
 }
 
 /**
- * Move `filePath` into the recoverable cleanup archive
- * (`.akm/memory-cleanup/archive/<stamp>-<ref>/`) with a `cleanup.md`
- * tombstone, journaling both ends (`recordWrittenPath`) so a LATER sync
- * commits the move — `akm sync`, or the batched auto-sync an `akm improve`
- * run does at its own end (`docs/architecture/improvement.md`, "Auto-sync").
- * This call does not itself commit anything: a standalone `akm proposal
- * accept` (the only way a retire proposal is ever accepted — triage never
- * auto-accepts one) leaves the move journaled but uncommitted until
- * something later reads that journal, unless the write target's `kind` is
- * `"git"`, in which case the caller's own `commitWriteTargetBoundary` commits
- * (and maybe pushes) immediately as part of the SAME accept.
- *
- * Covers any memory, knowledge or lesson file in a
- * writable bundle — not only `.derived` memories — so `akm proposal accept`
- * can archive a consolidate pair-pass `retire` proposal's target, or (O1) an
- * accepted promotion's source memory, through the same one encoding memory
- * cleanup already used (D27: never two coexisting encodings). A
- * retire-proposal candidate (one carrying `proposalId`) additionally stamps
- * `proposalId`, `successorRefs` and `retiredAt` on the tombstone.
- *
- * The record names the retirement by `handle` (its archive directory); `written` is what the move touched, for a
- * caller that journals, commits or undoes it. Given the `bundle` the refs may be qualified with, a ref into it is
- * written to the tombstone and the directory name as its concept id (§0.2 N11).
+ * Retire the memory, knowledge or lesson file `filePath` of the bundle at
+ * `stashDir` into the recoverable cleanup archive: {@link retireCleanupCandidate}
+ * in a write session of its own.
  */
 export function archiveCleanupCandidate(
   stashDir: string,
   candidate: MemoryPruneCandidate,
   filePath: string,
-  bundle?: string,
-): { record: ArchivedMemoryCleanupRecord; written: ArchiveWrite } {
+): ArchivedMemoryCleanupRecord {
+  const target = writeTargetAt(stashDir);
+  const conceptId = conceptIdAtFile(target.source.name, filePath);
+  if (conceptId === undefined) throw assetNotFound(candidate.ref);
+  return writeAssets(target, { purpose: "memory-cleanup" }, (w) => retireCleanupCandidate(w, conceptId, candidate))
+    .record;
+}
+
+/**
+ * Retire the asset `conceptId` into the bundle's recoverable cleanup archive,
+ * with a tombstone the bundle's adapter keeps. Every file it touched is
+ * journaled (`recordWrittenPath`) so a LATER sync commits the retirement —
+ * `akm sync`, or the batched auto-sync an `akm improve` run does at its own
+ * end (`docs/architecture/improvement.md`, "Auto-sync"). This call does not
+ * itself commit anything: a standalone `akm proposal accept` (the only way a
+ * retire proposal is ever accepted — triage never auto-accepts one) commits
+ * the accept's own paths.
+ *
+ * Covers any memory, knowledge or lesson asset in a writable bundle — not
+ * only `.derived` memories — so `akm proposal accept` can archive a
+ * consolidate pair-pass `retire` proposal's target, or (O1) an accepted
+ * promotion's source memory, through the same one encoding memory cleanup
+ * already used (D27: never two coexisting encodings). A retire-proposal
+ * candidate (one carrying `proposalId`) additionally stamps `proposalId`,
+ * `successorRefs` and `retiredAt` on the tombstone.
+ *
+ * The record names the retirement by `handle`; `retired` is every retirement
+ * the call made (a package's entry first), for a caller that records or undoes them.
+ */
+export function retireCleanupCandidate(
+  w: AssetWriter,
+  conceptId: string,
+  candidate: MemoryPruneCandidate,
+): { record: ArchivedMemoryCleanupRecord; retired: Array<{ ref: string; handle: string }> } {
   const archivedAt = new Date().toISOString();
-  const previousBeliefState = resolvePreviousBeliefState(candidate, filePath);
+  const previousBeliefState = resolvePreviousBeliefState(candidate, () => w.read(conceptId)?.entry.content() ?? "");
   const retiring = isRetireCandidate(candidate);
-  const written = archiveFile(stashDir, filePath, {
-    ref: candidate.ref,
+  const retired = w.retire(conceptId, {
     archivedAt,
-    ...(bundle !== undefined ? { bundle } : {}),
-    note: {
-      beliefState: "archived",
-      previousBeliefState,
-      ref: candidate.ref,
-      ...(candidate.parentRef ? { parentRef: candidate.parentRef } : {}),
-      reason: candidate.reason,
-      ...(candidate.survivorRef ? { survivorRef: candidate.survivorRef } : {}),
-      ...(retiring ? { proposalId: candidate.proposalId, retiredAt: archivedAt } : {}),
-      ...(retiring && candidate.successorRefs && candidate.successorRefs.length > 0
-        ? { successorRefs: candidate.successorRefs }
-        : {}),
-    },
+    beliefState: "archived",
+    previousBeliefState,
+    ref: candidate.ref,
+    ...(candidate.parentRef ? { parentRef: candidate.parentRef } : {}),
+    reason: candidate.reason,
+    ...(candidate.survivorRef ? { survivorRef: candidate.survivorRef } : {}),
+    ...(retiring ? { proposalId: candidate.proposalId, retiredAt: archivedAt } : {}),
+    ...(retiring && candidate.successorRefs && candidate.successorRefs.length > 0
+      ? { successorRefs: candidate.successorRefs }
+      : {}),
   });
-  // #652: an archive is a delete + a create. Every file it touched is journaled, so the
-  // sync stages the removal of the original alongside the archived copy and the tombstone.
-  for (const file of written.changed) recordWrittenPath(file);
 
   const record: ArchivedMemoryCleanupRecord = {
     ref: candidate.ref,
-    handle: written.handle,
+    handle: (retired[0] as { handle: string }).handle,
     ...(candidate.parentRef ? { parentRef: candidate.parentRef } : {}),
     reason: candidate.reason,
     beliefState: "archived",
@@ -688,7 +692,7 @@ export function archiveCleanupCandidate(
       ? { successorRefs: candidate.successorRefs }
       : {}),
   };
-  return { record, written };
+  return { record, retired };
 }
 
 /**
@@ -708,17 +712,27 @@ export interface ArchivePurgeResult {
 }
 
 /**
- * The purge sweep: deterministic, no LLM, run once at improve-run start. Deletes the archived asset bytes of
- * every retirement more than {@link RETIRE_GRACE_DAYS} past its tombstone's
- * `retiredAt`, when git holds them (`expireArchive`, in
- * `core/adapter/directory-archive.ts`, has the safety rules). Every deleted
- * path is journaled (`recordWrittenPath`) so the end-of-run sync commits the
- * removal, the same way it commits the archive move itself (#652).
+ * The purge sweep: deterministic, no LLM, run once at improve-run start. Expires the retired content of every
+ * retirement more than {@link RETIRE_GRACE_DAYS} past its `retiredAt`, when the bundle's adapter can recover it
+ * elsewhere (a directory bundle: when git holds it; `expireArchive`, in `core/adapter/directory-archive.ts`, has the
+ * safety rules). Every deleted path is journaled so the end-of-run sync commits the removal, the same way it commits
+ * the retirement itself (#652).
  */
 export function purgeGracedArchive(stashDir: string, now: Date = new Date()): ArchivePurgeResult {
-  const { purgedDirs, changed } = expireArchive(stashDir, new Date(now.getTime() - RETIRE_GRACE_MS));
-  for (const file of changed) recordWrittenPath(file);
-  return { purgedDirs, purgedFiles: changed.length };
+  const journal = beginWriteProvenance();
+  try {
+    const purgedDirs = writeAssets(writeTargetAt(stashDir), { purpose: "memory-cleanup" }, (w) => {
+      const restorable = (): Set<string> =>
+        new Set(w.retired().flatMap((retirement) => (retirement.restorable ? [retirement.handle] : [])));
+      const before = restorable();
+      w.expireRetired(new Date(now.getTime() - RETIRE_GRACE_MS));
+      const after = restorable();
+      return [...before].filter((handle) => !after.has(handle)).length;
+    });
+    return { purgedDirs, purgedFiles: journal.writtenPaths().length };
+  } finally {
+    journal.end();
+  }
 }
 
 function persistBeliefStateTransition(
@@ -778,6 +792,7 @@ function appendBeliefStateTransitionLog(stashDir: string, transitions: MemoryBel
       } satisfies MemoryBeliefTransitionLogRecord),
     )
     .join("\n");
+  // asset-io: state the belief-transition log, akm's record of what cleanup did (not an asset)
   fs.appendFileSync(logPath, `${lines}\n`, "utf8");
   recordWrittenPath(logPath);
   return logPath;

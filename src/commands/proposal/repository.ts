@@ -26,13 +26,12 @@ import {
   parseFrontmatter,
   replaceFrontmatterBlocks,
 } from "../../core/asset/frontmatter";
-import { MEMORY_ARCHIVE_REL } from "../../core/asset/memory-archive";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { stalePathRoots } from "../../core/asset/stale-path";
 import { indexFiles } from "../../core/assets/files";
 import { assertAdapterWrites } from "../../core/assets/gate";
-import { currentConceptId, qualifyRef, readAsset } from "../../core/assets/read";
-import { type AssetAddress, addressOf, legacyRefOf, writeAssets } from "../../core/assets/write";
+import { type Asset, currentConceptId, qualifyRef, readAsset } from "../../core/assets/read";
+import { type AssetAddress, addressOf, writeAssets } from "../../core/assets/write";
 import { materialiseBundleDir, stateBundleId } from "../../core/bundle-at-dir";
 import { bundleIdForDir } from "../../core/bundle-id";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
@@ -43,9 +42,8 @@ import type { MemoryPruneCandidate } from "../../core/improve-types";
 import { canonicalBundleIdForTarget, resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getStateDbPath, openStateReadSnapshot, withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
-import { recordWrittenPath } from "../../core/write-provenance";
+import { beginWriteProvenance } from "../../core/write-provenance";
 import {
-  assertWritePathsInsideSource,
   type CommitOutcome,
   commitAcceptedPaths,
   commitWriteTargetBoundary,
@@ -83,7 +81,7 @@ import { withSchedulerLock } from "../../tasks/scheduler-lock";
 import { pkgVersion } from "../../version";
 import { contentHash } from "../improve/content-hash";
 import { writeSupersededEdge } from "../improve/memory/memory-belief";
-import { archiveCleanupCandidate, derivedTwinPath } from "../improve/memory/memory-improve";
+import { derivedTwinOf, retireCleanupCandidate } from "../improve/memory/memory-improve";
 import { runBaseChecks } from "../lint/base-linter";
 import type { LintIssue, LintIssueType } from "../lint/types";
 import { akmTasksDisable, akmTasksEnable, inspectTaskSchedulerBindings } from "../tasks/tasks";
@@ -1185,21 +1183,6 @@ export function rejectProposalDurably(
   return rejected;
 }
 
-/** Write `content` atomically (temp file + rename), keeping an existing file's mode. */
-function writeProposalAssetFile(assetPath: string, content: string): void {
-  fs.mkdirSync(path.dirname(assetPath), { recursive: true });
-  const mode = fs.existsSync(assetPath) ? fs.statSync(assetPath).mode & 0o777 : 0o644;
-  const tempPath = path.join(path.dirname(assetPath), `.akm-proposal-${process.pid}-${randomUUID()}.tmp`);
-  fs.writeFileSync(tempPath, content, { encoding: "utf8", mode });
-  try {
-    fs.renameSync(tempPath, assetPath);
-  } catch (error) {
-    fs.rmSync(tempPath, { force: true });
-    throw error;
-  }
-  recordWrittenPath(assetPath);
-}
-
 /** Index the files just written or moved; the next `akm index` catches up when this cannot. */
 async function indexWrittenProposalAssets(target: ResolvedWriteTarget, assetPaths: string[]): Promise<void> {
   const label = assetPaths.join(", ");
@@ -1492,22 +1475,22 @@ export function preflightProposalPromotion(
   let stampedContent = markdown
     ? stampProposalProvenance(repairedContent, prepared, options.gateDecision, ctx, nowIso(ctx))
     : repairedContent;
-  if (markdown && fs.existsSync(assetPath)) {
+  const live = markdown && ref.exists ? readAsset(target.source.name, ref.conceptId) : undefined;
+  if (live) {
     // Keep the live target's bookkeeping frontmatter the proposal doesn't set
     // (STALE, R20) — dropping `inferenceProcessed` would re-run inference.
     try {
-      stampedContent = carryForwardBookkeepingFrontmatter(stampedContent, fs.readFileSync(assetPath, "utf8"));
+      stampedContent = carryForwardBookkeepingFrontmatter(stampedContent, live.entry.content());
     } catch {
       // best-effort; the freshness check is the real staleness gate
     }
   }
   if (prepared.promotionSource) {
-    const sourcePath = resolveAssetFilePathSafe(target.source, prepared.promotionSource);
+    const source = currentAsset(target.source, prepared.promotionSource);
     if (
-      sourcePath &&
-      fs.existsSync(sourcePath) &&
+      source &&
       !sameScope(
-        scopeFromFrontmatter(parseFrontmatter(fs.readFileSync(sourcePath, "utf8")).data),
+        scopeFromFrontmatter(parseFrontmatter(source.entry.content()).data),
         scopeFromFrontmatter(parseFrontmatter(stampedContent).data),
       )
     ) {
@@ -1534,10 +1517,11 @@ export function preflightProposalPromotion(
  */
 export function readFreshProposalTarget(
   proposal: Proposal,
-  assetPath: string,
+  bundle: string,
+  address: AssetAddress,
   stampedContent: string,
 ): Buffer | undefined {
-  const current = fs.existsSync(assetPath) ? fs.readFileSync(assetPath) : undefined;
+  const current = address.exists ? readAsset(bundle, address.conceptId)?.entry.bytes() : undefined;
   if (proposal.beforeHash !== undefined) {
     const fresh =
       current !== undefined &&
@@ -1562,19 +1546,15 @@ export function readFreshProposalTarget(
 }
 
 /**
- * The file of the asset an accepted/reverted proposal recorded (display: where its ref is kept, or would be when it
- * is gone, a retired asset), provided `target` is the bundle it was accepted into.
+ * The ref an accepted/reverted proposal recorded and the file it is kept in (display only: where its ref is kept, or
+ * would be when it is gone, a retired asset), provided `target` is the bundle it was accepted into.
  */
-function acceptedAssetPath(proposal: Proposal, target: ResolvedWriteTarget): string {
+function acceptedAsset(proposal: Proposal, target: ResolvedWriteTarget): { ref: string; assetPath: string } {
   const accepted = proposal.acceptedTarget;
   if (accepted?.bundle !== target.source.name) {
     throw new UsageError(`proposal ${proposal.id} is bound to a different accepted target`, "INVALID_FLAG_VALUE");
   }
-  // A retired asset is gone, and no file says where it was: its concept names it.
-  return (
-    resolveAssetFilePathSafe(target.source, accepted.ref) ??
-    path.join(target.source.path, parseBundleRef(accepted.ref).conceptId)
-  );
+  return { ref: accepted.ref, assetPath: resolveAssetFilePathSafe(target.source, accepted.ref) ?? accepted.ref };
 }
 
 function requireAcceptedTarget(proposal: Proposal): NonNullable<Proposal["acceptedTarget"]> {
@@ -1669,17 +1649,19 @@ export function commitCollectedAccepts(collector: AcceptCommitCollector, label: 
  */
 function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Proposal, paths: string[]): void {
   if (!accepted.promotionSource) return;
+  // Every file the retirement touches goes into the accept's commit.
+  const journal = beginWriteProvenance();
   try {
     const sourceRef = addressOf(mutationTarget.source.name, accepted.promotionSource);
-    const sourcePath = sourceRef.exists ? sourceRef.file : undefined;
-    if (!sourcePath || !fs.existsSync(sourcePath)) return;
+    const source = sourceRef.exists ? readAsset(mutationTarget.source.name, sourceRef.conceptId) : undefined;
+    if (!source) return;
     if (!accepted.promotionSourceHash) {
       warn(
         `[proposal] O1: ${accepted.id} has no recorded source hash (minted by an older release) — leaving its source ${accepted.promotionSource} unarchived.`,
       );
       return;
     }
-    const sourceContent = fs.readFileSync(sourcePath, "utf8");
+    const sourceContent = source.entry.content();
     if (
       !sameScope(
         scopeFromFrontmatter(parseFrontmatter(sourceContent).data),
@@ -1702,33 +1684,26 @@ function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Pr
       proposalId: accepted.id,
       successorRefs: [accepted.ref],
     };
-    const archivedSource = archiveCleanupCandidate(
-      mutationTarget.source.path,
-      candidate,
-      sourcePath,
-      mutationTarget.source.name,
-    );
-    paths.push(...archivedSource.written.changed);
-    const twin = derivedTwinPath(sourcePath, sourceRef.type);
-    if (
-      twin &&
-      sameScope(
-        scopeFromFrontmatter(parseFrontmatter(fs.readFileSync(twin, "utf8")).data),
-        scopeFromFrontmatter(parseFrontmatter(sourceContent).data),
-      )
-    ) {
-      const archivedTwin = archiveCleanupCandidate(
-        mutationTarget.source.path,
-        candidate,
-        twin,
-        mutationTarget.source.name,
-      );
-      paths.push(...archivedTwin.written.changed);
-    }
+    writeAssets(mutationTarget, { purpose: "proposal-accept" }, (w) => {
+      retireCleanupCandidate(w, source.conceptId, candidate);
+      const twinId = derivedTwinOf(source.conceptId, sourceRef.type);
+      const twin = twinId === undefined ? undefined : w.read(twinId);
+      if (
+        twin &&
+        sameScope(
+          scopeFromFrontmatter(parseFrontmatter(twin.entry.content()).data),
+          scopeFromFrontmatter(parseFrontmatter(sourceContent).data),
+        )
+      ) {
+        retireCleanupCandidate(w, twin.conceptId, candidate);
+      }
+    });
   } catch (error) {
     warn(
       `[proposal] O1: failed to retire promotion source ${accepted.promotionSource} for ${accepted.id}: ${error instanceof Error ? error.message : String(error)}`,
     );
+  } finally {
+    paths.push(...journal.end());
   }
 }
 
@@ -1753,8 +1728,9 @@ async function promoteProposalWithLease(
   if (proposal.status === "accepted") {
     // Accepting again is a no-op, provided the published bytes are still there.
     const recorded = requireAcceptedTarget(proposal);
-    const assetPath = acceptedAssetPath(proposal, target);
-    if (!fs.existsSync(assetPath) || contentHash(fs.readFileSync(assetPath)) !== recorded.contentHash) {
+    const { assetPath } = acceptedAsset(proposal, target);
+    const current = readAsset(target.source.name, parseBundleRef(recorded.ref).conceptId);
+    if (!current || contentHash(current.entry.bytes()) !== recorded.contentHash) {
       throw new UsageError(`Accepted proposal ${id} does not match the current asset content.`, "INVALID_FLAG_VALUE");
     }
     return { proposal, assetPath, ref: proposal.ref };
@@ -1771,7 +1747,7 @@ async function promoteProposalWithLease(
   const plannedPath = address?.file;
   if (!address || !plannedPath)
     throw new UsageError(`Cannot resolve proposal target ${proposal.ref}.`, "INVALID_PROPOSAL");
-  const backup = readFreshProposalTarget(proposal, plannedPath, preflight.stampedContent);
+  const backup = readFreshProposalTarget(proposal, mutationTarget.source.name, address, preflight.stampedContent);
   assertAdapterWrites(mutationTarget.source.name, address.type);
   const refIdentity = proposalRefIdentity(preflight.proposal.ref);
   const proposalForMutation: Proposal =
@@ -1812,47 +1788,6 @@ async function promoteProposalWithLease(
     retirePromotionSource(mutationTarget, accepted, paths);
   const commit = commitAccept(options.commitCollector, mutationTarget, accepted, paths);
   return { proposal: accepted, assetPath, ref: accepted.ref, ...(commit ? { commit } : {}) };
-}
-
-/**
- * Every archive dir a tombstone under `.akm/memory-cleanup/archive/` claims
- * for `proposalId` — the primary asset's, and its `.derived` twin's if one
- * was archived alongside it. Used to detect what a resumed retire accept
- * has already moved.
- */
-function findRetireArchiveDirsByProposalId(stashRoot: string, proposalId: string): string[] | undefined {
-  const archiveRoot = path.join(stashRoot, ".akm", "memory-cleanup", "archive");
-  let entries: string[];
-  try {
-    entries = fs.readdirSync(archiveRoot);
-  } catch {
-    return undefined;
-  }
-  const dirs: string[] = [];
-  for (const name of entries) {
-    let data: Record<string, unknown>;
-    try {
-      data = parseFrontmatter(fs.readFileSync(path.join(archiveRoot, name, "cleanup.md"), "utf8")).data;
-    } catch {
-      continue;
-    }
-    if (data.proposalId === proposalId) dirs.push(path.relative(stashRoot, path.join(archiveRoot, name)));
-  }
-  return dirs.length > 0 ? dirs : undefined;
-}
-
-/** The absolute original paths a set of archive dirs' own tombstones claim — for resume detection. */
-function alreadyArchivedOriginalPaths(stashRoot: string, dirs: string[]): Set<string> {
-  const paths = new Set<string>();
-  for (const dirRel of dirs) {
-    try {
-      const data = parseFrontmatter(fs.readFileSync(path.join(stashRoot, dirRel, "cleanup.md"), "utf8")).data;
-      if (typeof data.originalPath === "string") paths.add(path.resolve(stashRoot, data.originalPath));
-    } catch {
-      // An unreadable tombstone just is not counted "already done" — the move below re-attempts that file.
-    }
-  }
-  return paths;
 }
 
 /**
@@ -1973,8 +1908,7 @@ function assertRetirementStillFresh(
   targetSource: WriteTargetSource,
   retiredCurrentBytes: Buffer,
 ): void {
-  const successorPath = resolveAssetFilePathSafe(targetSource, retirement.successorRef);
-  const successorBytes = successorPath && fs.existsSync(successorPath) ? fs.readFileSync(successorPath) : undefined;
+  const successorBytes = currentAsset(targetSource, retirement.successorRef)?.entry.bytes();
   const judgedScope = retirement.judgedScope;
   if (!judgedScope || typeof judgedScope !== "object" || Array.isArray(judgedScope)) {
     throw new UsageError(
@@ -2008,11 +1942,11 @@ function assertRetirementStillFresh(
 /**
  * Accept a `retire` proposal: no
  * new content is written. It is a
- * three-phase, resume-safe sequence: (1) record intent — `backupContent`
- * and the exact files about to move — on the still-pending proposal; (2)
- * move each file into the recoverable cleanup archive
- * (`archiveCleanupCandidate`), skipping any the tombstone scan shows a prior,
- * crashed attempt already moved; (3) finalize via
+ * three-phase, resume-safe sequence: (1) record intent — `backupContent` —
+ * on the still-pending proposal; (2) retire the asset and its `.derived` twin
+ * into the recoverable cleanup archive (`retireCleanupCandidate`), skipping any
+ * a retirement under this proposal's id shows a prior, crashed attempt already
+ * retired; (3) finalize via
  * {@link persistRetireAcceptance}. A `supersedes` judgement writes the
  * supersede edge on the retired (older) side AFTER intent is recorded —
  * recording it first means a crash before the edge
@@ -2041,17 +1975,17 @@ async function retireProposalWithLease(
   if (proposal.status === "accepted") {
     // Accepting again is a no-op, provided the target is still gone (retired) and its archive is still there.
     requireAcceptedTarget(proposal);
-    const assetPath = acceptedAssetPath(proposal, target);
+    const accepted = acceptedAsset(proposal, target);
     const archive = proposal.retiredArchive;
-    const archivedStill =
-      archive?.retired.every(({ handle }) => fs.existsSync(path.join(target.source.path, handle))) === true;
-    if (fs.existsSync(assetPath) || !archivedStill) {
+    const held = new Set(retirementsOf(target).map((retirement) => retirement.handle));
+    const archivedStill = archive?.retired.every(({ handle }) => held.has(handle)) === true;
+    if (readAsset(target.source.name, parseBundleRef(accepted.ref).conceptId) || !archivedStill) {
       throw new UsageError(
         `Accepted retire proposal ${proposal.id} no longer matches its archive.`,
         "INVALID_FLAG_VALUE",
       );
     }
-    return { proposal, assetPath, ref: proposal.ref };
+    return { proposal, assetPath: accepted.assetPath, ref: proposal.ref };
   }
   if (proposal.status !== "pending") {
     throw new UsageError(
@@ -2068,13 +2002,14 @@ async function retireProposalWithLease(
   let scheduler: Awaited<ReturnType<typeof disableRetiredTask>>;
   if (!intent) {
     // Fresh accept — no recorded intent yet, so the target must still be there.
-    if (!fs.existsSync(assetPath)) {
+    const current = readAsset(target.source.name, ref.conceptId);
+    if (!current) {
       throw new UsageError(
         `Retire proposal ${proposal.id} target (${proposal.ref}) no longer exists — it may already have been retired, promoted away, or removed by another proposal.`,
         "PROPOSAL_STALE",
       );
     }
-    const currentBytes = fs.readFileSync(assetPath);
+    const currentBytes = current.entry.bytes();
     const retirement = proposal.retirement;
     // B2 (this is the durable half of the chain guard; the same-run half is
     // `retiredThisRun` in pair-pass.ts). A human retirement has no judged pair, so
@@ -2110,7 +2045,7 @@ async function retireProposalWithLease(
     }
   } else {
     assertAdapterWrites(target.source.name, ref.type);
-    assertRetiringTaskUnchanged(ref, assetPath, intent, proposal);
+    assertRetiringTaskUnchanged(target.source.name, ref, intent, proposal);
     // Revalidate the survivor even after a partial archive. The recorded original
     // is the judged retired side when its file has already moved.
     if (working.retirement) {
@@ -2119,80 +2054,74 @@ async function retireProposalWithLease(
         proposal.ref,
         working.retirement,
         target.source,
-        fs.existsSync(assetPath) ? fs.readFileSync(assetPath) : Buffer.from(intent.backupContent),
+        readAsset(target.source.name, ref.conceptId)?.entry.bytes() ?? Buffer.from(intent.backupContent),
       );
     }
     scheduler = await disableRetiredTask(ref, target.source.name);
   }
 
-  // The twin path is re-derived, not carried on the
-  // intent — it is a pure function of assetPath and the ref's type, and the
-  // tombstone scan below (`alreadyDone`) already finds one archived earlier,
-  // so storing it was redundant persisted state.
-  const twinPath = derivedTwinPath(assetPath, ref.type);
-  let mutationTarget: ResolvedWriteTarget;
+  // The twin is re-derived, not carried on the intent — it is a pure function
+  // of the ref and its type, and the retirements under this proposal's id
+  // (`alreadyDone` below) already show one retired earlier.
+  const twinId = derivedTwinOf(ref.conceptId, ref.type);
+  const backupContent = intent.backupContent;
   let commit: ReturnType<typeof commitAccept>;
   let accepted: Proposal;
   try {
     // Native reconciliation awaits external work; a direct file edit can happen outside AKM's mutation lease.
-    assertRetiringTaskUnchanged(ref, assetPath, intent, proposal);
+    assertRetiringTaskUnchanged(target.source.name, ref, intent, proposal);
 
-    // Phase 2: move, idempotently — a resumed call skips whichever file a
-    // tombstone under this proposal's own id already claims. A failure undoes this
-    // call's own moves, so a refused accept leaves no asset half-retired.
-    mutationTarget = prepareWriteTargetForMutation(target);
-    assertWritePathsInsideSource(mutationTarget.source, [
-      assetPath,
-      path.join(mutationTarget.source.path, MEMORY_ARCHIVE_REL, "archive-check"),
-    ]);
-    const already = findRetireArchiveDirsByProposalId(mutationTarget.source.path, proposal.id) ?? [];
-    const alreadyDone = alreadyArchivedOriginalPaths(mutationTarget.source.path, already);
-    const handles = [...already];
-    const paths: string[] = [];
-    const moved: Array<{ original: string; written: ReturnType<typeof archiveCleanupCandidate>["written"] }> = [];
-    const candidate: MemoryPruneCandidate = {
-      ref: proposal.ref,
-      reason: working.retirement?.reason ?? "manual",
-      proposalId: proposal.id,
-      ...(working.retirement?.successorRef ? { successorRefs: [working.retirement.successorRef] } : {}),
-    };
-    const moveToArchive = (original: string) => {
-      const { written } = archiveCleanupCandidate(
-        mutationTarget.source.path,
-        candidate,
-        original,
-        mutationTarget.source.name,
-      );
-      moved.push({ original, written });
-      handles.push(written.handle);
-      paths.push(...written.changed);
-    };
+    // Phase 2: retire, idempotently — a resumed call skips whichever asset a
+    // retirement under this proposal's own id already holds. A failure undoes this
+    // call's own retirements, so a refused accept leaves no asset half-retired.
+    const mutationTarget = prepareWriteTargetForMutation(target);
+    const journal = beginWriteProvenance();
+    let handles: string[];
     try {
-      if (!alreadyDone.has(path.resolve(assetPath)) && fs.existsSync(assetPath)) moveToArchive(assetPath);
-      if (
-        twinPath &&
-        !alreadyDone.has(path.resolve(twinPath)) &&
-        fs.existsSync(twinPath) &&
-        sameScope(
-          scopeFromFrontmatter(parseFrontmatter(fs.readFileSync(twinPath, "utf8")).data),
-          scopeFromFrontmatter(parseFrontmatter(intent.backupContent).data),
-        )
-      )
-        moveToArchive(twinPath);
-    } catch (error) {
-      for (const { original, written } of moved.reverse()) {
-        // A failed undo must not hide the failure that caused it; the tombstone stays to explain the file.
+      handles = writeAssets(mutationTarget, { purpose: "proposal-retire" }, (w) => {
+        const already = w.retired().filter((retirement) => retirement.note.proposalId === proposal.id);
+        const alreadyDone = new Set(already.map((retirement) => retirement.conceptId));
+        const made: string[] = [];
+        const candidate: MemoryPruneCandidate = {
+          ref: proposal.ref,
+          reason: working.retirement?.reason ?? "manual",
+          proposalId: proposal.id,
+          ...(working.retirement?.successorRef ? { successorRefs: [working.retirement.successorRef] } : {}),
+        };
+        const retire = (conceptId: string) => {
+          for (const { handle } of retireCleanupCandidate(w, conceptId, candidate).retired) made.push(handle);
+        };
         try {
-          fs.renameSync(written.archivedPath, original);
-          fs.rmSync(written.archiveDir, { recursive: true, force: true });
-        } catch (undoError) {
-          warn(
-            `[retire] could not put ${original} back from ${written.archivedPath}: ${undoError instanceof Error ? undoError.message : String(undoError)}`,
-          );
+          if (!alreadyDone.has(ref.conceptId) && w.read(ref.conceptId)) retire(ref.conceptId);
+          const twin = twinId === undefined || alreadyDone.has(twinId) ? undefined : w.read(twinId);
+          if (
+            twin &&
+            sameScope(
+              scopeFromFrontmatter(parseFrontmatter(twin.entry.content()).data),
+              scopeFromFrontmatter(parseFrontmatter(backupContent).data),
+            )
+          )
+            retire(twin.conceptId);
+        } catch (error) {
+          for (const handle of made.reverse()) {
+            // A failed undo must not hide the failure that caused it; the retirement stays to explain the asset.
+            try {
+              w.restore(handle);
+              w.forget(handle);
+            } catch (undoError) {
+              warn(
+                `[retire] could not put ${proposal.ref} back from ${handle}: ${undoError instanceof Error ? undoError.message : String(undoError)}`,
+              );
+            }
+          }
+          throw error;
         }
-      }
-      throw error;
+        return [...already.map((retirement) => retirement.handle), ...made];
+      });
+    } finally {
+      journal.end();
     }
+    const paths = journal.writtenPaths();
     commit = paths.length > 0 ? commitAccept(options.commitCollector, mutationTarget, proposal, paths) : undefined;
 
     if (handles.length === 0) {
@@ -2215,9 +2144,9 @@ async function retireProposalWithLease(
         targetName: mutationTarget.source.name,
         ref: makeBundleRef(mutationTarget.source.name, ref.conceptId),
         assetPath,
-        contentHash: contentHash(intent.backupContent),
+        contentHash: contentHash(backupContent),
         handles,
-        backupContent: intent.backupContent,
+        backupContent,
         ...(options.gateDecision ? { gateDecision: options.gateDecision } : {}),
         ...(options.decidedBy ? { decidedBy: options.decidedBy } : {}),
         ...(options.eventMetadata ? { eventMetadata: options.eventMetadata } : {}),
@@ -2229,8 +2158,6 @@ async function retireProposalWithLease(
     await scheduler.restore();
     throw error;
   }
-  // The moved files left the index's view; drop their rows now, not at the next `akm index`.
-  await indexWrittenProposalAssets(mutationTarget, twinPath ? [assetPath, twinPath] : [assetPath]);
   return {
     proposal: accepted,
     assetPath,
@@ -2241,13 +2168,14 @@ async function retireProposalWithLease(
 }
 
 function assertRetiringTaskUnchanged(
+  bundle: string,
   ref: AssetAddress,
-  assetPath: string,
   intent: RetireAcceptIntent,
   proposal: Proposal,
 ): void {
   // The intent holds the bytes this retirement was validated against; `beforeHash` is absent on some proposals.
-  if (ref.type === "task" && fs.existsSync(assetPath) && fs.readFileSync(assetPath, "utf8") !== intent.backupContent) {
+  const current = ref.type === "task" ? readAsset(bundle, ref.conceptId) : undefined;
+  if (current && current.entry.content() !== intent.backupContent) {
     throw new UsageError(
       `Retire proposal ${proposal.id} target (${proposal.ref}) changed since retirement started.`,
       "PROPOSAL_STALE",
@@ -2340,27 +2268,24 @@ export async function revertProposal(
 }
 
 /**
- * Revert an accepted `retire` proposal: move the archived
- * file(s) — the retired asset, and its `.derived` twin when one was archived
- * alongside it — back to where they lived, then overwrite the primary with
- * the exact pre-retire bytes `backupContent` recorded at accept —
- * byte-exact, so it also undoes any supersede edge accept wrote without
- * touching one a person had already written, and without appending a
- * trailing newline the original never had. Each archive dir is located from
- * `retiredArchive.retired` (set at accept time) and its own `cleanup.md`
- * tombstone names the exact paths to restore — no re-scan of every
- * tombstone in the archive.
+ * Revert an accepted `retire` proposal: restore its retirements — the
+ * retired asset, and its `.derived` twin when one was retired alongside it —
+ * then overwrite the primary with the exact pre-retire bytes `backupContent`
+ * recorded at accept — byte-exact, so it also undoes any supersede edge
+ * accept wrote without touching one a person had already written, and
+ * without appending a trailing newline the original never had. Each
+ * retirement is the one `retiredArchive.retired` names by handle (set at
+ * accept time).
  *
- * Every archive dir is resolved and
- * validated before any of them are moved, AND that validation tells "not
- * yet moved" apart from "already moved by an earlier, crashed attempt of
- * our own" (original present, archived copy gone) rather than treating the
- * latter as a conflict — so a retry of a crashed revert resumes instead of
- * erroring on its own prior work. The archive dirs (tombstones) are removed
- * only after the "reverted" decision is durably recorded, not interleaved
- * with the moves — a crash between moving a file and recording the
- * decision would otherwise delete that file's tombstone first, leaving an
- * "accepted" proposal a retry could neither finish nor re-validate.
+ * Every retirement is found and validated before any of them is restored,
+ * AND that validation tells "not yet restored" apart from "already restored
+ * by an earlier, crashed attempt of our own" (asset present, retired copy
+ * gone) rather than treating the latter as a conflict — so a retry of a
+ * crashed revert resumes instead of erroring on its own prior work. The
+ * retirements are forgotten only after the "reverted" decision is durably
+ * recorded, not interleaved with the restores — a crash between restoring an
+ * asset and recording the decision would otherwise drop its retirement first,
+ * leaving an "accepted" proposal a retry could neither finish nor re-validate.
  */
 async function unretireProposalWithLease(
   stashDir: string,
@@ -2377,7 +2302,7 @@ async function unretireProposalWithLease(
   }
   const recorded = requireAcceptedTarget(proposal);
   const boundTarget = resolveRecordedProposalTarget(config, proposal.id, { source: recorded.bundle }, options.target);
-  const assetPath = acceptedAssetPath(proposal, boundTarget);
+  const { assetPath } = acceptedAsset(proposal, boundTarget);
   if (proposal.status === "reverted") {
     return { proposal, assetPath, ref: proposal.ref };
   }
@@ -2390,125 +2315,112 @@ async function unretireProposalWithLease(
     );
   }
   const target = prepareWriteTargetForMutation(boundTarget);
-  /** Whether a tombstone's original file is the asset the proposal retired (not its `.derived` twin). */
-  const isPrimary = (originalRel: string): boolean => legacyRefOf(target.source.name, originalRel) === recorded.ref;
+  const bundle = target.source.name;
+  /** Where the asset `ref` is kept, as base named it in a refusal: its file in the bundle (display only). */
+  const shown = (ref: string): string => {
+    const file = resolveAssetFilePathSafe(target.source, ref);
+    return file === undefined ? ref : path.relative(target.source.path, file).split(path.sep).join("/");
+  };
   interface PendingRestore {
-    dirAbs: string;
-    auditPath: string;
-    originalAbs: string;
-    archivedAbs: string;
+    handle: string;
+    conceptId: string;
     primary: boolean;
-    /** Already moved back by an earlier, crashed attempt of our own — resume, do not re-move or error. */
-    alreadyDone: boolean;
     /** The archived copy was purged: nothing to move, the primary is rewritten from `backupContent`. */
     fromBackup: boolean;
   }
-  const pending: PendingRestore[] = [];
-  for (const { handle: dirRel } of archive.retired) {
-    const dirAbs = path.join(target.source.path, dirRel);
-    const auditPath = path.join(dirAbs, "cleanup.md");
-    let tombstoneData: Record<string, unknown>;
-    try {
-      tombstoneData = parseFrontmatter(fs.readFileSync(auditPath, "utf8")).data;
-    } catch (error) {
-      throw new UsageError(
-        `Archive for proposal ${proposal.id} is missing its tombstone (${dirRel}); cannot revert: ${error instanceof Error ? error.message : String(error)}`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    const originalRel = typeof tombstoneData.originalPath === "string" ? tombstoneData.originalPath : undefined;
-    const archivedRel = typeof tombstoneData.archivedPath === "string" ? tombstoneData.archivedPath : undefined;
-    if (!originalRel || !archivedRel) {
-      throw new UsageError(
-        `Archive tombstone for proposal ${proposal.id} (${dirRel}) is malformed.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    const originalAbs = path.join(target.source.path, originalRel);
-    const archivedAbs = path.join(target.source.path, archivedRel);
-    const originalExists = fs.existsSync(originalAbs);
-    const archivedExists = fs.existsSync(archivedAbs);
-    if (originalExists && archivedExists) {
-      throw new UsageError(
-        `Cannot revert proposal ${proposal.id}: ${originalRel} already exists (created since retirement); refusing to overwrite it.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    // The graced purge deletes the archived bytes once git holds them, but the
-    // proposal keeps the primary's exact pre-retire bytes (`backupContent`),
-    // so the primary can still be restored from those.
-    const primary = isPrimary(originalRel);
-    const fromBackup = !originalExists && !archivedExists && proposal.backupContent !== undefined && primary;
-    if (!originalExists && !archivedExists && !fromBackup) {
-      throw new UsageError(
-        `Cannot revert proposal ${proposal.id}: archived copy ${archivedRel} is missing.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    // "original present, archived copy
-    // missing" is not necessarily our own earlier, crashed revert — once a
-    // purge can delete an archived copy on its own, a LATER, unrelated file
-    // can occupy this same path (a new memory reusing a retired one's name),
-    // and the write step below would overwrite it with the retired asset's
-    // pre-retire bytes. Only the primary has a recorded pre-retire hash
-    // (`retirement.retiredContentHash`, or `beforeHash` for a person's retirement) to tell the two apart; resume only
-    // when it matches the file actually sitting there, otherwise refuse
-    // exactly as the conflict case above does.
-    if (originalExists && !archivedExists && primary) {
-      // A retirement with no judged pair (a person's) has only the `beforeHash` it was minted against.
-      let matches = false;
-      try {
-        const bytes = fs.readFileSync(originalAbs);
-        const retirement = proposal.retirement;
-        matches = retirement
-          ? contentHash(bytes, "body") === retirement.retiredContentHash
-          : matchesBeforeHash(proposal, bytes);
-      } catch {
-        matches = false;
+  // Every file the restores and the primary's rewrite touch goes into the revert's commit.
+  const journal = beginWriteProvenance();
+  let pending: PendingRestore[];
+  try {
+    pending = writeAssets(target, { purpose: "proposal-revert" }, (w) => {
+      const retirements = new Map(w.retired().map((retirement) => [retirement.handle, retirement]));
+      const found: PendingRestore[] = [];
+      for (const { handle } of archive.retired) {
+        const retirement = retirements.get(handle);
+        if (!retirement) {
+          throw new UsageError(
+            `Archive for proposal ${proposal.id} is missing its tombstone (${handle}); cannot revert.`,
+            "INVALID_FLAG_VALUE",
+          );
+        }
+        const ref = makeBundleRef(bundle, retirement.conceptId);
+        const current = w.read(retirement.conceptId);
+        const originalExists = current !== undefined;
+        const archivedExists = retirement.restorable;
+        if (originalExists && archivedExists) {
+          throw new UsageError(
+            `Cannot revert proposal ${proposal.id}: ${shown(ref)} already exists (created since retirement); refusing to overwrite it.`,
+            "INVALID_FLAG_VALUE",
+          );
+        }
+        // The graced purge deletes the archived bytes once git holds them, but the
+        // proposal keeps the primary's exact pre-retire bytes (`backupContent`),
+        // so the primary can still be restored from those.
+        const primary = ref === recorded.ref;
+        const fromBackup = !originalExists && !archivedExists && proposal.backupContent !== undefined && primary;
+        if (!originalExists && !archivedExists && !fromBackup) {
+          throw new UsageError(
+            `Cannot revert proposal ${proposal.id}: archived copy of ${shown(ref)} (${handle}) is missing.`,
+            "INVALID_FLAG_VALUE",
+          );
+        }
+        // "asset present, retired copy
+        // missing" is not necessarily our own earlier, crashed revert — once a
+        // purge can delete an archived copy on its own, a LATER, unrelated file
+        // can occupy this same path (a new memory reusing a retired one's name),
+        // and the restore below would overwrite it with the retired asset's
+        // pre-retire bytes. Only the primary has a recorded pre-retire hash
+        // (`retirement.retiredContentHash`, or `beforeHash` for a person's retirement) to tell the two apart; resume only
+        // when it matches the asset actually there, otherwise refuse
+        // exactly as the conflict case above does.
+        if (current && !archivedExists && primary) {
+          // A retirement with no judged pair (a person's) has only the `beforeHash` it was minted against.
+          let matches = false;
+          try {
+            const bytes = current.entry.bytes();
+            const judged = proposal.retirement;
+            matches = judged
+              ? contentHash(bytes, "body") === judged.retiredContentHash
+              : matchesBeforeHash(proposal, bytes);
+          } catch {
+            matches = false;
+          }
+          if (!matches) {
+            throw new UsageError(
+              `Cannot revert proposal ${proposal.id}: ${shown(ref)} exists but its content does not match what was retired (its path may have been reused since); refusing to overwrite it.`,
+              "INVALID_FLAG_VALUE",
+            );
+          }
+        }
+        found.push({ handle, conceptId: retirement.conceptId, primary, fromBackup });
       }
-      if (!matches) {
-        throw new UsageError(
-          `Cannot revert proposal ${proposal.id}: ${originalRel} exists but its content does not match what was retired (its path may have been reused since); refusing to overwrite it.`,
-          "INVALID_FLAG_VALUE",
-        );
+      for (const p of found) w.restore(p.handle, p.fromBackup ? proposal.backupContent : undefined);
+      // Overwrite the primary with the EXACT pre-retire bytes recorded
+      // at accept (`backupContent`) — no appended trailing newline either, so
+      // YAML comments, key order, a pre-existing human `supersededBy` edge, and
+      // even the exact absence of a final newline all survive the round trip.
+      // The archived copy just restored may carry a `supersededBy` edge THIS
+      // accept wrote (a `supersedes` judgement); restoring the recorded original
+      // bytes already removes exactly that edge, so no separate
+      // removeSupersededEdge mutation runs here — one that could not tell "the
+      // edge accept wrote" from "an edge a person had already written" apart,
+      // and would delete either.
+      // Skipped when the restored bytes already decode to `backupContent`: that leaves a
+      // non-UTF-8 asset byte-exact, since `backupContent` is only its lossy text. After the
+      // grace purge (`fromBackup`) the restore wrote `backupContent` itself; git history keeps the bytes.
+      const restoredPrimary = found.find((p) => p.primary);
+      if (restoredPrimary && proposal.backupContent !== undefined) {
+        if (w.read(restoredPrimary.conceptId)?.entry.content() !== proposal.backupContent) {
+          w.update(restoredPrimary.conceptId, proposal.backupContent);
+        }
       }
-    }
-    pending.push({ dirAbs, auditPath, originalAbs, archivedAbs, primary, alreadyDone: originalExists, fromBackup });
+      return found;
+    });
+  } finally {
+    journal.end();
   }
-  const restoredPaths: string[] = [];
-  let primaryOriginalAbs: string | undefined;
-  for (const p of pending) {
-    if (p.fromBackup) {
-      fs.mkdirSync(path.dirname(p.originalAbs), { recursive: true });
-    } else if (!p.alreadyDone) {
-      fs.mkdirSync(path.dirname(p.originalAbs), { recursive: true });
-      fs.renameSync(p.archivedAbs, p.originalAbs);
-      recordWrittenPath(p.archivedAbs);
-      recordWrittenPath(p.originalAbs);
-    }
-    restoredPaths.push(p.originalAbs, p.archivedAbs, p.auditPath);
-    if (p.primary) primaryOriginalAbs = p.originalAbs;
-  }
-  // Overwrite the primary with the EXACT pre-retire bytes recorded
-  // at accept (`backupContent`) — no appended trailing newline either, so
-  // YAML comments, key order, a pre-existing human `supersededBy` edge, and
-  // even the exact absence of a final newline all survive the round trip.
-  // The archived copy just moved back may carry a `supersededBy` edge THIS
-  // accept wrote (a `supersedes` judgement); restoring the recorded original
-  // bytes already removes exactly that edge, so no separate
-  // removeSupersededEdge mutation runs here — one that could not tell "the
-  // edge accept wrote" from "an edge a person had already written" apart,
-  // and would delete either.
-  // Skipped when the restored bytes already decode to `backupContent`: that leaves a
-  // non-UTF-8 asset byte-exact, since `backupContent` is only its lossy text. After the
-  // grace purge (`fromBackup`) the text is all that is left; git history keeps the bytes.
-  if (primaryOriginalAbs && proposal.backupContent !== undefined) {
-    const restoredFromBackup = pending.some((p) => p.fromBackup && p.originalAbs === primaryOriginalAbs);
-    if (restoredFromBackup || fs.readFileSync(primaryOriginalAbs, "utf8") !== proposal.backupContent) {
-      writeProposalAssetFile(primaryOriginalAbs, proposal.backupContent);
-    }
-  }
-  commitWriteTargetBoundary(target, `Revert ${proposal.ref}`, { paths: restoredPaths });
+  commitWriteTargetBoundary(target, `Revert ${proposal.ref}`, { paths: journal.writtenPaths() });
+  const restoredPath = resolveAssetFilePathSafe(target.source, recorded.ref) ?? assetPath;
   const decidedAt = nowIso(ctx);
   const reverted = withProposalsDb(ctx, (db) =>
     withImmediateTransaction(db, () => {
@@ -2539,20 +2451,18 @@ async function unretireProposalWithLease(
         eventType: "proposal_reverted",
         ts: decidedAt,
         ref: next.ref,
-        metadata: { proposalId: next.id, source: next.source, assetPath: primaryOriginalAbs ?? assetPath },
+        metadata: { proposalId: next.id, source: next.source, assetPath: restoredPath },
         idempotencyKey: `${next.id}:reverted`,
       });
       return next;
     }),
   );
-  // Only now — after the decision is durably recorded — remove the archive
-  // dirs (tombstones). See the function doc comment for why this ordering
-  // matters.
-  for (const p of pending) {
-    fs.rmSync(p.dirAbs, { recursive: true, force: true });
-  }
-  await indexWrittenProposalAssets(target, restoredPaths);
-  return { proposal: reverted, assetPath: primaryOriginalAbs ?? assetPath, ref: proposal.ref };
+  // Only now — after the decision is durably recorded — forget the
+  // retirements. See the function doc comment for why this ordering matters.
+  writeAssets(target, { purpose: "proposal-revert" }, (w) => {
+    for (const p of pending) w.forget(p.handle);
+  });
+  return { proposal: reverted, assetPath: restoredPath, ref: proposal.ref };
 }
 
 async function revertProposalWithLease(
@@ -2580,7 +2490,7 @@ async function revertProposalWithLease(
   }
   const recorded = requireAcceptedTarget(proposal);
   const boundTarget = resolveRecordedProposalTarget(config, id, { source: recorded.bundle }, options.target);
-  const assetPath = acceptedAssetPath(proposal, boundTarget);
+  const { assetPath } = acceptedAsset(proposal, boundTarget);
   if (proposal.status === "reverted" || backupContent === undefined) {
     return { proposal, assetPath, ref: proposal.ref };
   }
@@ -2650,18 +2560,21 @@ function reopenRefusal(config: AkmConfig, proposal: Proposal, queueTarget?: Reso
     return "it was recorded before proposals carried their change envelope, so it cannot go back in the queue.";
   }
   const target = resolveProposalWriteTarget(config, proposal, undefined, queueTarget);
-  const assetPath = resolveAssetFilePathSafe(target.source, proposal.ref);
-  if (!assetPath) return "its target cannot be resolved.";
+  const address = resolveAddressSafe(target.source, proposal.ref);
+  if (!address?.file) return "its target cannot be resolved.";
   if (!isRetireProposal(proposal)) {
-    return staleRefusal(() => void readFreshProposalTarget(proposal, assetPath, proposalContent(proposal)));
+    return staleRefusal(
+      () => void readFreshProposalTarget(proposal, target.source.name, address, proposalContent(proposal)),
+    );
   }
   if (!proposal.retirement) return "it has no retirement metadata.";
-  if (!fs.existsSync(assetPath)) {
+  const current = address.exists ? readAsset(target.source.name, address.conceptId) : undefined;
+  if (!current) {
     return "its retired file no longer exists (already retired, or removed by something else).";
   }
   const { retirement } = proposal;
   return staleRefusal(() =>
-    assertRetirementStillFresh(proposal.id, proposal.ref, retirement, target.source, fs.readFileSync(assetPath)),
+    assertRetirementStillFresh(proposal.id, proposal.ref, retirement, target.source, current.entry.bytes()),
   );
 }
 
@@ -2834,8 +2747,9 @@ export function diffLoadedProposal(
   options: { target?: string; queueTarget?: ResolvedWriteTarget } = {},
 ): ProposalDiff {
   const target = resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget);
-  const targetPath = resolveAssetFilePathSafe(target.source, proposal.ref);
-  const existing = targetPath && fs.existsSync(targetPath) ? fs.readFileSync(targetPath, "utf8") : null;
+  const address = resolveAddressSafe(target.source, proposal.ref);
+  const targetPath = address?.file;
+  const existing = address?.exists ? (readAsset(target.source.name, address.conceptId)?.entry.content() ?? null) : null;
   if (isRetireProposal(proposal)) {
     // A retire proposal's primary change deletes its target rather than
     // writing content (proposalContent() has nothing to read for a delete):
@@ -2884,4 +2798,15 @@ function resolveAddressSafe(source: WriteTargetSource, ref: string): AssetAddres
   } catch {
     return undefined;
   }
+}
+
+/** The asset `ref` names in `source` now; undefined when none holds it, or the ref names none. */
+function currentAsset(source: WriteTargetSource, ref: string): Asset | undefined {
+  const address = resolveAddressSafe(source, ref);
+  return address?.exists ? readAsset(source.name, address.conceptId) : undefined;
+}
+
+/** The retirements of `target`'s bundle, as its adapter lists them. */
+function retirementsOf(target: ResolvedWriteTarget) {
+  return writeAssets(target, { purpose: "proposal-accept" }, (w) => w.retired());
 }

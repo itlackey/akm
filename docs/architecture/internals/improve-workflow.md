@@ -117,7 +117,7 @@ Skip reasons, in check order (`consolidation.skipReasons` in the result):
 
 A skipped memory is recorded in the ledger as `judged_no_action`, except one already promoted this run and `promote_create_failed`.
 
-Accepting a consolidate promotion archives the source memory (and its `.derived` twin) through `archiveCleanupCandidate` with reason `promoted`. This happens in `promoteProposal`, not in `akmConsolidate`; an archive failure warns and does not undo the promotion.
+Accepting a consolidate promotion archives the source memory (and its `.derived` twin) through `retireCleanupCandidate` with reason `promoted`. This happens in `promoteProposal`, not in `akmConsolidate`; an archive failure warns and does not undo the promotion.
 
 **Pair pass** (`consolidate/pair-pass.ts`), alongside the promote pass under the same gate. It proposes retiring duplicate, subsumed, and superseded memories, always review-gated.
 
@@ -130,7 +130,7 @@ Accepting a consolidate promotion archives the source memory (and its `.derived`
 
 **Continuity check** (`consolidate/continuity-check.ts`). Before a retire proposal is queued, up to five of the retired asset's past `search` and `curate` queries are replayed through akm's own search. For each query where the retired asset ranked in the top 10, the successor must too. A failure does not block the proposal; it is recorded as `retirement.continuityRisk`, and a proposal carrying it is excluded from bulk `accept`. A query that threw or fell back to keyword-only ranking is recorded as unverified and also sets `continuityRisk`. See [Retirement continuity](../improvement.md#retirement-continuity).
 
-**Retire proposals** (`akm proposal accept` and `revert`). Accept first checks the successor still exists and both recorded body hashes still match, then moves the retired asset (and its `.derived` twin) into `.akm/memory-cleanup/archive/` through `archiveCleanupCandidate`. A `supersedes` proposal first writes the supersede edge on the older asset. Accept records its intent on the pending proposal before moving anything, so a crashed accept resumes. `revert` restores the archived files and the exact pre-retire bytes recorded as `backupContent`. Review them as their own list: `akm proposal list --generator consolidate-pair`, with bulk `accept` and `reject` taking `--generator consolidate-pair`. `akm proposal reopen <id>` moves a rejected retire proposal back to `pending` unless the retired document or the successor changed, or another pending retire proposal now involves either.
+**Retire proposals** (`akm proposal accept` and `revert`). Accept first checks the successor still exists and both recorded body hashes still match, then moves the retired asset (and its `.derived` twin) into `.akm/memory-cleanup/archive/` through `retireCleanupCandidate`. A `supersedes` proposal first writes the supersede edge on the older asset. Accept records its intent on the pending proposal before moving anything, so a crashed accept resumes. `revert` restores the archived files and the exact pre-retire bytes recorded as `backupContent`. Review them as their own list: `akm proposal list --generator consolidate-pair`, with bulk `accept` and `reject` taking `--generator consolidate-pair`. `akm proposal reopen <id>` moves a rejected retire proposal back to `pending` unless the retired document or the successor changed, or another pending retire proposal now involves either.
 
 ## Proposal queue
 

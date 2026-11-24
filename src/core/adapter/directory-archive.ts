@@ -23,7 +23,7 @@
  * A retirement's `handle` is its archive directory, relative to the bundle's
  * root. The `.akm/memory-cleanup/archive` location is the one the memory-cleanup
  * feature has always used (#884): a tombstone is also how a ref to a retired
- * asset is told apart from a ref to nothing (`core/asset/memory-archive.ts`).
+ * asset is told apart from a ref to nothing (`directory/held-files.ts` `isRetired`).
  */
 
 import fs from "node:fs";
@@ -192,40 +192,30 @@ function archiveDirOf(root: string, handle: string): string {
 }
 
 /** What `archiveFile` did. */
-export interface ArchiveWrite {
+interface ArchiveWrite {
   handle: string;
-  /** The archive directory, absolute. */
-  archiveDir: string;
-  /** Where the file now is, absolute. */
-  archivedPath: string;
-  /** The tombstone, absolute. */
-  auditPath: string;
-  /** The retired file's path in the bundle, relative to the root, POSIX. */
-  originalPath: string;
-  archivedAt: string;
   /** Every file the retirement wrote, moved or removed: the original, the archived copy, the tombstone. */
   changed: string[];
 }
 
 /**
  * Retire `file` (inside `root`): write the tombstone (`note` plus where the file was and went), then move the
- * file under the archive. `ref` names the archive directory; `archivedAt` stamps it and the tombstone. Given the
- * `bundle` the root belongs to, a ref into that bundle is written as its concept id (§0.2 N11); a caller with no
- * qualified refs names none.
+ * file under the archive. `ref` names the archive directory; `archivedAt` stamps it and the tombstone. A ref into
+ * `bundle`, the bundle the root belongs to, is written as its concept id (§0.2 N11).
  */
 export function archiveFile(
   root: string,
   file: string,
-  { ref, archivedAt, note, bundle }: { ref: string; archivedAt: string; note: RetireNote; bundle?: string },
+  { ref, archivedAt, note, bundle }: { ref: string; archivedAt: string; note: RetireNote; bundle: string },
 ): ArchiveWrite {
   const originalPath = toPosix(path.relative(root, file));
-  const local = (value: string) => (bundle === undefined ? value : localRef(bundle, value));
+  const local = (value: string) => localRef(bundle, value);
   const archiveDir = createArchiveDir(root, local(ref), archivedAt);
   const archivedPath = path.join(archiveDir, originalPath);
   fs.mkdirSync(path.dirname(archivedPath), { recursive: true });
 
   const auditPath = path.join(archiveDir, TOMBSTONE_FILENAME);
-  const noteFields = Object.entries(bundle === undefined ? note : mapNoteRefs(note, local));
+  const noteFields = Object.entries(mapNoteRefs(note, local));
   const tombstone = assembleAsset(
     {
       schemaVersion: 1,
@@ -249,22 +239,15 @@ export function archiveFile(
     scans.delete(root);
   }
 
-  return {
-    handle: toPosix(path.relative(root, archiveDir)),
-    archiveDir,
-    archivedPath,
-    auditPath,
-    originalPath,
-    archivedAt,
-    changed: [file, archivedPath, auditPath],
-  };
+  return { handle: toPosix(path.relative(root, archiveDir)), changed: [file, archivedPath, auditPath] };
 }
 
 /**
  * Put a retired file back: rename the archived copy to its original place; when the archived copy has expired,
  * write `fallback` there instead (refused without one). Refuses when both exist, which means something new took
  * the original's place; changes nothing when only the original exists (already restored). The tombstone stays,
- * so a caller can record its decision before `forgetArchive` removes it. Returns the files it changed.
+ * so a caller can record its decision before `forgetArchive` removes it. Returns the files the restoration moved,
+ * also when an earlier, interrupted call moved them, so the caller's commit boundary takes them.
  */
 export function restoreArchive(root: string, tombstone: Tombstone, fallback?: string | Buffer): string[] {
   const { originalPath, archivedPath } = tombstone;
@@ -281,7 +264,7 @@ export function restoreArchive(root: string, tombstone: Tombstone, fallback?: st
   if (originalExists && archivedExists) {
     throw new UsageError(`${originalPath} already exists (created since retirement); refusing to overwrite it.`);
   }
-  if (originalExists) return [];
+  if (originalExists) return [original, archived];
 
   fs.mkdirSync(path.dirname(original), { recursive: true });
   if (archivedExists) {
@@ -305,14 +288,6 @@ export function forgetArchive(root: string, handle: string): string[] {
   fs.rmSync(dir, { recursive: true, force: true });
   scans.delete(root);
   return changed;
-}
-
-/** What `expireArchive` removed. */
-export interface ArchiveExpiry {
-  /** Archive directories whose archived files were removed. */
-  purgedDirs: number;
-  /** Every archived file removed (a retirement may archive more than one, e.g. a `.derived` twin). */
-  changed: string[];
 }
 
 /**
@@ -339,10 +314,10 @@ export interface ArchiveExpiry {
  * and any failure purges nothing and warns once.
  *
  * A family-prune archive carries no `retiredAt` in its tombstone, so it is never a candidate here: this sweep
- * only ever touches retirements.
+ * only ever touches retirements. Returns every archived file removed.
  */
-export function expireArchive(root: string, before: Date): ArchiveExpiry {
-  const none: ArchiveExpiry = { purgedDirs: 0, changed: [] };
+export function expireArchive(root: string, before: Date): string[] {
+  const none: string[] = [];
   if (!isGitBackedStash(root)) return none;
   const archiveRoot = path.join(root, MEMORY_ARCHIVE_REL);
   let entries: fs.Dirent[];
@@ -361,7 +336,6 @@ export function expireArchive(root: string, before: Date): ArchiveExpiry {
   }
   const cutoffMs = before.getTime();
   const changed: string[] = [];
-  let purgedDirs = 0;
   for (const entry of entries) {
     // `Dirent.isDirectory()` reflects `lstat`, so it is false for a symlink even when the symlink points at a
     // directory: a symlinked `archive/<name>` is skipped here, never followed (N1). Everything below only ever
@@ -387,7 +361,6 @@ export function expireArchive(root: string, before: Date): ArchiveExpiry {
     } catch {
       continue;
     }
-    let purgedAnyInThisDir = false;
     for (const child of children) {
       if (child === TOMBSTONE_FILENAME) continue;
       const childPath = path.join(dir, child);
@@ -397,14 +370,12 @@ export function expireArchive(root: string, before: Date): ArchiveExpiry {
       try {
         fs.rmSync(childPath, { recursive: true, force: true });
         changed.push(...filesUnderChild);
-        purgedAnyInThisDir = purgedAnyInThisDir || filesUnderChild.length > 0;
       } catch {
         // Best-effort: a locked or already-gone entry is skipped, not fatal to the run.
       }
     }
-    if (purgedAnyInThisDir) purgedDirs++;
   }
-  return { purgedDirs, changed };
+  return changed;
 }
 
 /** Every file under `target` (itself, if it is a file), for reporting before a recursive delete. */

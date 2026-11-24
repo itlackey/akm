@@ -93,7 +93,9 @@ describe("DirectoryAdapterBase", () => {
 
   test("forget and expireRetired answer with the files they changed, and nothing else", () => {
     akmAdapter.create(bundle, { type: "memory", name: "old", content: "# old\n" });
-    const { handle } = akmAdapter.retire(bundle, "memories/old", { retiredAt: "2020-01-01T00:00:00.000Z" });
+    const { handle } = akmAdapter.retire(bundle, "memories/old", { retiredAt: "2020-01-01T00:00:00.000Z" })[0] as {
+      handle: string;
+    };
     expect(Object.keys(akmAdapter.expireRetired(bundle, new Date()))).toEqual(["changed"]);
     expect(Object.keys(akmAdapter.forget(bundle, handle))).toEqual(["changed"]);
   });

@@ -159,9 +159,20 @@ test("an archive directory that is a symbolic link is refused before anything mo
 });
 
 test("a failed archive of the derived twin puts the primary back", async () => {
-  fs.mkdirSync(file().replace(".md", ".derived.md"));
-  await expect(retireAsset(ref, hash())).rejects.toThrow();
+  const twin = file().replace(".md", ".derived.md");
+  fs.writeFileSync(twin, "---\ndescription: derived\n---\nDerived.\n");
+  const read = fs.readFileSync;
+  const failing = spyOn(fs, "readFileSync").mockImplementation(((target: fs.PathOrFileDescriptor, options) => {
+    if (typeof target === "string" && path.resolve(target) === twin) throw new Error("the twin cannot be read");
+    return read(target, options);
+  }) as typeof fs.readFileSync);
+  try {
+    await expect(retireAsset(ref, hash())).rejects.toThrow("the twin cannot be read");
+  } finally {
+    failing.mockRestore();
+  }
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
+  expect(fs.existsSync(twin)).toBe(true);
   expect(fs.readdirSync(path.join(storage.stashDir, ".akm/memory-cleanup/archive"))).toEqual([]);
   expect(listProposals(storage.stashDir, { includeArchive: true })[0]?.status).toBe("rejected");
 });

@@ -110,7 +110,7 @@ interface BundleAdapter {
   update(b: Bundle, conceptId: string, content: string | Buffer,
     options?: { throughLink?: boolean; locator?: unknown }): AssetChange;
   delete(b: Bundle, conceptId: string, options?: { locator?: unknown }): AssetChange;
-  retire(b: Bundle, conceptId: string, note: RetireNote): AssetChange & { handle: string };
+  retire(b: Bundle, conceptId: string, note: RetireNote): Array<AssetChange & { handle: string }>; // one per asset
   retired(b: Bundle): Retirement[];
   restore(b: Bundle, handle: string, fallback?: string | Buffer): AssetChange;
   forget(b: Bundle, handle: string): { changed: string[] };
@@ -506,7 +506,7 @@ says which of those types it takes out recoverably.
   clean. `retiredAt` in the note is caller-set; its presence makes a retirement
   expirable.
 
-<!-- 10: retire of a package entry returns one change and handle per asset; isRetired(ref) returns with its first caller -->
+<!-- isRetired(ref) returns with its first caller -->
 
 ---
 
@@ -522,7 +522,10 @@ asset with its own ref. The entry also lists the package's other files through
 beside the target and renamed into place, so a failed write leaves the old
 package as it was.
 
-`delete` and `retire` act on the one asset named. <!-- 9, 10: delete and retire of a package entry cascade over every asset under its directory and return one change (and handle) per asset; restore brings each back; clone mirrors the package directory with packageFiles and mirrorPackage -->
+`retire` of a package entry retires every asset under its folder, each its own
+retirement with its own handle (the entry's comes first), and leaves the
+folder's files that are no asset where they are; restoring each handle brings
+the package back. `delete` acts on the one asset named. <!-- 9: delete of a package entry cascades over every asset under its directory and returns one change per asset; clone mirrors the package directory with packageFiles and mirrorPackage -->
 
 ---
 

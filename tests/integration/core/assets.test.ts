@@ -726,12 +726,14 @@ describe("writeAssets", () => {
     expect(() => writeAssets(target, { purpose: "test" }, (w) => w.retire("env/prod", {}))).toThrow(
       'Bundle "stash" uses adapter "akm", which does not support AKM asset writes.',
     );
-    const retired = writeAssets(target, { purpose: "test" }, (w) => {
-      const change = w.retire("memories/m", { reason: "test" });
+    const [retired, ...others] = writeAssets(target, { purpose: "test" }, (w) => {
+      const changes = w.retire("memories/m", { reason: "test" });
       expect(w.retired().map((r) => r.conceptId)).toEqual(["memories/m"]);
-      return change;
+      return changes;
     });
-    expect(retired.handle).toBeTruthy();
+    if (!retired) throw new Error("no retirement");
+    expect(others).toEqual([]);
+    expect(retired).toEqual({ ref: "stash//memories/m", handle: expect.any(String) });
     expect(fs.existsSync(path.join(stash.path, "memories", "m.md"))).toBe(false);
     writeAssets(target, { purpose: "test" }, (w) => w.restore(retired.handle));
     expect(fs.existsSync(path.join(stash.path, "memories", "m.md"))).toBe(true);
