@@ -36,6 +36,7 @@ import {
   matchWorkflowPlaceholder,
   perTypeChecks,
   perTypeFrontend,
+  storeFindings,
   validateBundleAssets,
 } from "../../core/assets/validate";
 import { writeAssets } from "../../core/assets/write";
@@ -306,9 +307,8 @@ function lintBundleOf(adapterId: string, stashRoot: string, sources: SearchSourc
 }
 
 /**
- * What the adapters of the configured keyring and vault bundles report about their stores: the entries they do not
- * list, and the names more than one entry holds. A finding names its asset by ref, since no file holds it. A store that
- * cannot be reached has nothing to check.
+ * What the configured keyring and vault bundles report about their stores (an entry akm cannot list, two entries of one
+ * name). A finding names its asset by ref, since no file holds it.
  */
 async function addStoreFindings(
   found: LintFindings,
@@ -318,23 +318,10 @@ async function addStoreFindings(
 ): Promise<void> {
   // Secrets are the stores' only type: a `--type` for another one leaves them out.
   if (options.stores !== true || (options.typeFilter !== undefined && options.typeFilter !== "secrets")) return;
-  const ids = deriveBundleIds(sources);
-  for (const [index, source] of sources.entries()) {
-    // asset-io: config the configured keyring and vault bundles, whose findings the index recorded
-    if (source.location === undefined || source.adapterId === undefined || source.unresolved) continue;
-    const bundle = ids[index] as string;
-    try {
-      const diagnostics = await validateBundleAssets(
-        { name: bundle, path: source.path, location: source.location, adapterId: source.adapterId },
-        { ctx: { sources, config: cfg, readMoves: options.readMoves ?? readRecordedMoves } },
-      );
-      for (const diagnostic of diagnostics) {
-        const issue = { ...diagnosticToLintIssue(diagnostic), ref: diagnostic.ref };
-        (isAdvisoryLintIssue(issue) ? found.warnings : found.flagged).push(issue);
-      }
-    } catch {
-      // A store that cannot be reached or fails has nothing to check: lint skips it silently, as in hooks and CI.
-    }
+  const ctx = { sources, config: cfg, readMoves: options.readMoves ?? readRecordedMoves };
+  for (const diagnostic of await storeFindings(sources, ctx)) {
+    const issue = { ...diagnosticToLintIssue(diagnostic), ref: diagnostic.ref };
+    (isAdvisoryLintIssue(issue) ? found.warnings : found.flagged).push(issue);
   }
 }
 

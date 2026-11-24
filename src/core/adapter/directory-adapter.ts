@@ -36,6 +36,7 @@ import {
   writeFileAtomic,
 } from "../common";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
+import { presentationFor } from "../type-presentation";
 import type {
   AssetChange,
   AssetEntry,
@@ -355,6 +356,11 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
    */
   place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): AssetPlacement {
     return this.placeAt(b, asset, this.placeFile(b, asset));
+  }
+
+  /** How `akm show` renders an asset of `type`: the type's own renderer. */
+  rendererFor(type: string): string | undefined {
+    return presentationFor(type).renderer;
   }
 
   /** What a create of `type` puts before the name in its concept id: the type's folder (`tasks/`), else nothing. */

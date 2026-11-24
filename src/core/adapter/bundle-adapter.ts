@@ -185,9 +185,9 @@ export interface BundleAdapter {
   declaredType?(key: string): string | undefined;
   /**
    * How `akm show` renders an asset of `type` the adapter does not present itself (`ownsPresentation`): the renderer's
-   * name, or undefined to match the entry live, as the next index would type it. Absent: the type's own renderer.
+   * name, or undefined to match the entry live, as the next index would type it. Both bases answer the type's own renderer.
    */
-  rendererFor?(type: string): string | undefined;
+  rendererFor(type: string): string | undefined;
   /**
    * Native validation of pending `edits`, each an asset by its concept id (`akm lint` checks every asset as an
    * `update`). It never writes. A directory adapter checks the bundle's snapshot with the edits overlaid; a store

@@ -109,6 +109,10 @@ const stubAdapter: BundleAdapter = {
     return [];
   },
 
+  rendererFor(): string | undefined {
+    return undefined;
+  },
+
   place(): never {
     throw new Error("read-only");
   },

@@ -157,7 +157,7 @@ export class AkmWorkflowAdapter extends AkmFormatAdapterBase {
     return "workflow";
   }
 
-  rendererFor(): string {
+  override rendererFor(): string {
     return "workflow-md";
   }
 

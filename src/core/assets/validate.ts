@@ -10,8 +10,10 @@
  * own §0.2 row, and it is async where the accept preflight is not).
  */
 
+import type { SearchSource } from "../../indexer/search/search-source";
 import type { AssetEntry } from "../adapter/bundle-adapter";
 import type { AssetEdit, Diagnostic, ValidateContext } from "../adapter/types";
+import { deriveBundleIds } from "../bundle-id";
 import { type Asset, assetOf } from "./asset";
 import { assetBundleOf } from "./bundle";
 
@@ -40,6 +42,33 @@ export function validateBundleAssets(
     .assets.filter(({ entry }) => options.keep === undefined || options.keep(entry))
     .map(({ conceptId }) => ({ conceptId, op: "update" }));
   return held.validate(edits, options.ctx ?? {});
+}
+
+/**
+ * What the keyrings and vaults among `sources` report about their stores, as the last `akm index` recorded it: the
+ * entries their adapters cannot list, and the names more than one entry holds. A bundle kept in files has none, and a
+ * store that cannot be reached, or fails, has nothing to report.
+ */
+export async function storeFindings(sources: readonly SearchSource[], ctx: ValidateContext): Promise<Diagnostic[]> {
+  const ids = deriveBundleIds([...sources]);
+  const found: Diagnostic[] = [];
+  for (const [index, source] of sources.entries()) {
+    if (source.unresolved) continue;
+    try {
+      const held = assetBundleOf({
+        name: ids[index] as string,
+        path: source.path,
+        ...(source.location !== undefined ? { location: source.location } : {}),
+        ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
+      });
+      if (!held.isStore) continue;
+      const edits = held.list().assets.map(({ conceptId }): AssetEdit => ({ conceptId, op: "update" }));
+      found.push(...(await held.validate(edits, ctx)));
+    } catch {
+      // A store that cannot be reached or fails has nothing to check: lint skips it silently, as in hooks and CI.
+    }
+  }
+  return found;
 }
 
 /** Every asset the bundle's adapter lists, one per concept, in the adapter's listing order. */

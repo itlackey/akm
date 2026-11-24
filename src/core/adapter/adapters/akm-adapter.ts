@@ -479,7 +479,7 @@ export class AkmAdapter extends AkmFormatAdapterBase {
   }
 
   /** An akm asset is matched live, on the bytes the file has now. */
-  rendererFor(): string | undefined {
+  override rendererFor(): string | undefined {
     return undefined;
   }
 
