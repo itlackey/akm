@@ -42,6 +42,7 @@ import { getDbPath } from "../../core/paths";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { withStateDb } from "../../core/state-db";
 import { warn, warnVerbose } from "../../core/warn";
+import { resolveWriteTarget } from "../../core/write-source";
 import { type NoticeSet, noticeSet } from "../../execution/notices";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
 import {
@@ -1313,15 +1314,22 @@ function stampInputSalience(run: DistillRun): void {
     const scored = scoreEncodingSalience({ body: content, type, existingRefVocabulary: run.vocabulary, revisionCount });
     const updated = writeSalienceToFrontmatter(content, scored.score, scored);
     if (updated !== content) {
-      // The mirror is written to the asset the input names, in its own bundle (the journal records it, #652).
-      const target = writeTargetAt(run.stash);
-      // The asset the input names in the stash it was loaded from, else the one its file would hold.
-      const owned = lookupAsset(run.inputRef, { bundle: target.source.name });
-      const conceptId =
-        owned?.bundle === target.source.name ? owned.conceptId : conceptIdAtFile(target.source.name, filePath);
-      if (conceptId === undefined) throw assetNotFound(run.inputRef);
-      writeAssets(target, { purpose: "distill-salience" }, (w) => w.update(conceptId, updated));
-      run.asset.content = updated;
+      try {
+        // The mirror is written to the asset the input names, in the bundle that holds it (the journal records it, #652).
+        const stash = writeTargetAt(run.stash);
+        // The asset the input names, looked for first in the stash it was loaded from, then in every other bundle.
+        const owned = lookupAsset(run.inputRef, { bundle: stash.source.name });
+        const target =
+          owned === undefined || owned.bundle === stash.source.name
+            ? stash
+            : resolveWriteTarget(run.config, owned.bundle, { requireWritable: false });
+        const conceptId = owned?.conceptId ?? conceptIdAtFile(stash.source.name, filePath);
+        if (conceptId === undefined) throw assetNotFound(run.inputRef);
+        writeAssets(target, { purpose: "distill-salience" }, (w) => w.update(conceptId, updated));
+        run.asset.content = updated;
+      } catch {
+        // The salience row below is then the only persistence.
+      }
     }
     try {
       withStateDb((stateDb) =>

@@ -221,6 +221,35 @@ describe("akmDistill — selected-root lookup", () => {
     expect(fs.readFileSync(otherFile, "utf8")).toBe(otherContent);
   });
 
+  test("an input held in another bundle gets its salience mirror and its salience row", async () => {
+    const stash = makeStashDir();
+    const team = makeStashDir();
+    const config = {
+      ...configEnabled(stash),
+      bundles: { stash: { path: stash, writable: true }, team: { path: team, writable: true } },
+    } as AkmConfig;
+    saveConfig(config);
+    const teamFile = path.join(team, "knowledge", "team-only.md");
+    fs.writeFileSync(teamFile, "---\ndescription: Team only\n---\n\nTeam only body.\n", "utf8");
+
+    await akmDistill({
+      ref: "knowledge/team-only",
+      stashDir: stash,
+      config,
+      lookupFn: async () => teamFile,
+      readEventsFn: emptyEvents,
+      chat: async () => VALID_LESSON,
+    });
+
+    expect(fs.readFileSync(teamFile, "utf8")).toContain("salience:");
+    const db = openStateDatabase(getStateDbPath());
+    try {
+      expect(getAssetSalience(db, "knowledge/team-only")?.encoding_salience).toBeGreaterThan(0);
+    } finally {
+      db.close();
+    }
+  });
+
   test("reads feedback using item_ref when planning supplied one", async () => {
     const stash = makeStashDir();
     const itemRef = "team//skills/deploy";

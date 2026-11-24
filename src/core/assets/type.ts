@@ -14,7 +14,7 @@ import path from "node:path";
 import { addIndexOnMissRefs } from "../../indexer/index-on-miss";
 import { openUsableIndex, readUsableIndex } from "../../indexer/index-readiness";
 import { upsertIndexRows, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../../indexer/index-rows";
-import { withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
+import { holdsAssetMutationLease, withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
 import {
   embeddingInputCap,
   generateEmbeddingsForDb,
@@ -110,9 +110,12 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, onMiss: boolean): b
         for (const [asset, document] of documents) {
           const held = bundleHolding(asset);
           // The scan drops a workflow that does not compile, so no ask of it records a row either.
-          if (brokenWorkflowWarning(document, fileContextOfEntry(held.root, asset.entry)) !== null) {
-            // An asset akm just wrote that no longer compiles is indexed as the scan would: not at all, so its old row goes.
+          const dropped = brokenWorkflowWarning(document, fileContextOfEntry(held.root, asset.entry));
+          if (dropped !== null) {
+            // An asset akm just wrote that no longer compiles is indexed as the scan would: not at all, so its old row
+            // goes, with the scan's warning (F19).
             if (!onMiss) {
+              warn(dropped);
               const stale = db.prepare("SELECT id FROM entries WHERE item_ref = ?").all(asset.ref) as Array<{
                 id: number;
               }>;
@@ -183,6 +186,9 @@ const pendingEmbeddings = {
  * never a secret's value.
  */
 export async function embedPendingWrites(): Promise<void> {
+  // A held lease never waits on an embedding call: the queue stays for the caller that releases it (the CLI dispatcher,
+  // the Desktop route wrapper).
+  if (holdsAssetMutationLease()) return;
   for (const [root, refs] of pendingEmbeddings.take()) {
     try {
       if (isPathAbsent(getDbPath())) continue;

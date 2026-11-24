@@ -6,6 +6,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { main } from "../../src/cli";
+import { conceptIdFromTypeName } from "../../src/core/asset/resolve-ref";
+import { writeAssets } from "../../src/core/assets/write";
+import { writeTargetAt } from "../../src/core/bundle-at-dir";
+import { getDbPath } from "../../src/core/paths";
+import { _setWarnSinkForTests } from "../../src/core/warn";
+import { akmIndex } from "../../src/indexer/indexer";
+import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { parseWorkflow } from "../../src/workflows/parser";
 import { parseWorkflowRefInput } from "../../src/workflows/runtime/workflow-asset-loader";
 import { runCliCapture } from "../_helpers/cli";
@@ -16,6 +23,7 @@ import {
   withIsolatedAkmStorage,
   writeWorkflowTestConfig,
 } from "../_helpers/sandbox";
+import { withSeam } from "../_helpers/seams";
 
 let storage: IsolatedAkmStorage;
 const sourceDirs: SandboxedDir[] = [];
@@ -302,5 +310,74 @@ describe("workflow CLI", () => {
     expect(args).toContain("max-retries");
     expect(args).toContain("timeout");
     expect(args).not.toContain("params");
+  });
+});
+
+describe("a workflow written broken leaves the index at once (F19)", () => {
+  const VALID = "---\ntype: workflow\ndescription: Keep\nsteps:\n  - id: first\n---\n\n## first\n\ndo A\n";
+  const BROKEN =
+    "---\ntype: workflow\ndescription: Keep\nsteps:\n  - id: first\n  - id: first\n---\n\n## first\n\ndo A\n";
+
+  function rowFor(file: string): unknown {
+    const db = openExistingDatabase(getDbPath());
+    try {
+      return db.prepare("SELECT 1 FROM entries WHERE file_path = ?").get(file);
+    } finally {
+      closeDatabase(db);
+    }
+  }
+
+  test("the write drops the row with the scan's own `Skipped workflow …` warning", async () => {
+    await createWorkflow("keep", VALID);
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const file = path.join(storage.stashDir, "workflows", "keep.md");
+    expect(rowFor(file)).toBeTruthy();
+
+    const warnings: string[] = [];
+    await withSeam(
+      _setWarnSinkForTests,
+      (level, args) => {
+        if (level === "warn") warnings.push(args.join(" "));
+      },
+      () =>
+        writeAssets(writeTargetAt(storage.stashDir), { purpose: "test" }, (w) =>
+          w.update(conceptIdFromTypeName("workflow", "keep"), BROKEN),
+        ),
+    );
+
+    expect(rowFor(file)).toBeFalsy();
+    const scanned = await withSeam(
+      _setWarnSinkForTests,
+      () => {},
+      () => akmIndex({ stashDir: storage.stashDir, full: true }),
+    );
+    const scanWarning = (scanned.warnings ?? []).find((warning) => warning.startsWith(`Skipped workflow ${file}`));
+    expect(scanWarning).toBeDefined();
+    expect(warnings).toEqual([scanWarning as string]);
+  });
+
+  test("`workflow create --from` still refuses a broken document before anything is written", async () => {
+    await createWorkflow("keep", VALID);
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const file = path.join(storage.stashDir, "workflows", "keep.md");
+    const before = fs.readFileSync(file, "utf8");
+
+    const replaced = await runCliCapture([
+      "workflow",
+      "create",
+      "keep",
+      "--force",
+      "--from",
+      sourceFile("keep", BROKEN),
+    ]);
+    expect(replaced.code).toBe(2);
+    expect(errorEnvelope(replaced.stderr).error).toContain("Duplicate step id");
+    expect(replaced.stderr).not.toContain("Skipped workflow");
+    expect(fs.readFileSync(file, "utf8")).toBe(before);
+    expect(rowFor(file)).toBeTruthy();
+
+    const created = await runCliCapture(["workflow", "create", "fresh", "--from", sourceFile("fresh", BROKEN)]);
+    expect(created.code).toBe(2);
+    expect(fs.existsSync(path.join(storage.stashDir, "workflows", "fresh.md"))).toBe(false);
   });
 });

@@ -15,6 +15,7 @@ import { withAssetMutationLeaseSync } from "../../../src/indexer/index-writer-lo
 import { akmIndex } from "../../../src/indexer/indexer";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
+import { interactive } from "../../../src/workspace/lease";
 import { runCliCapture } from "../../_helpers/cli";
 import {
   type Cleanup,
@@ -100,6 +101,24 @@ test("a facade write embeds nothing under the lease; embedPendingWrites makes th
   embedCalls = 0;
   await embedPendingWrites();
   expect(embedCalls).toBe(0);
+});
+
+test("under a held lease (a Desktop write in `interactive`) the queue is kept; it is embedded once the lease is released", async () => {
+  await interactive("test", async () => {
+    writeAssets(writeTargetAt(stashDir), { purpose: "test" }, (w) =>
+      w.create({ type: "memory", name: "held-note", content: "---\ndescription: held\n---\n\nAbout gasoline.\n" }),
+    );
+    // What a Desktop write path awaits inside `interactive`: no embedding call while the lease is held.
+    await embedPendingWrites();
+  });
+  expect(embedCalls).toBe(0);
+  expect(vectorCount("memories/held-note")).toBe(0);
+
+  // The route wrapper's drain, after the lease is released.
+  await embedPendingWrites();
+  expect(embedCalls).toBeGreaterThan(0);
+  expect(leaseFreeDuringEmbed.every(Boolean)).toBe(true);
+  expect(vectorCount("memories/held-note")).toBe(1);
 });
 
 test("`env create` (a command, through the dispatcher) and a secret write leave rows that carry vectors", async () => {

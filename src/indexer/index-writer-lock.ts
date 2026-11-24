@@ -243,6 +243,11 @@ export function withAssetMutationLeaseSync<T>(purpose: string, run: () => T, opt
   return inherited ? execute() : leaseContext.run(context, execute);
 }
 
+/** Whether this process holds the asset-mutation lease here (inside `withAssetMutationLease` or its sync twin). */
+export function holdsAssetMutationLease(): boolean {
+  return leaseContext.getStore()?.has(getIndexWriterLockPath()) === true;
+}
+
 export function probeAssetMutationLease() {
   return probeLock(getIndexWriterLockPath());
 }
