@@ -1470,7 +1470,8 @@ async function fetchRelatedAssets(query: string, n: number): Promise<RelatedAsse
       .map((h) => {
         let content = "";
         try {
-          if (h.path) content = findAsset(h.ref)?.entry.content() ?? "";
+          // asset-io: base a related asset, read by its search hit's path
+          if (h.path && fs.existsSync(h.path)) content = fs.readFileSync(h.path, "utf8");
         } catch {
           // best-effort
         }

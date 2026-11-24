@@ -57,6 +57,7 @@ fi
 if [ -n "${TEST_INTEGRATION_LOGDIR:-}" ]; then
   logdir="$TEST_INTEGRATION_LOGDIR"
   mkdir -p "$logdir"
+  rm -f "$logdir"/shard-*.xml "$logdir"/shard-*.files "$logdir"/shard-*.log  # a reused directory keeps no earlier run's reports
 else
   logdir="$(mktemp -d "${TMPDIR:-/tmp}/akm-integration-shards.XXXXXX")"
 fi

@@ -214,7 +214,10 @@ The process is enforced by the repository's settings where GitHub allows it.
 `bun scripts/github-settings.ts` applies everything in this section through
 `gh api` (logged in with admin rights; `--dry-run` prints the requests). It
 reads the required checks from the workflow files, so run it again after a CI
-matrix change. `main` stays the default branch.
+matrix change or after a check moves between workflows (the integration suite
+and Gated CI moved from pull requests to the Release workflow: run it once
+before the next release pull request, or `main` still requires checks nothing
+reports). `main` stays the default branch.
 
 **Ruleset `main`** (Settings → Rules → Rulesets; rulesets are the current form
 of branch protection and are available on a public repository under the Free
