@@ -128,6 +128,7 @@ async function akmInitReal(options?: {
 
   for (const sub of stashDirNames()) {
     const subDir = path.join(stashDir, sub);
+    // asset-io: bundle-root the type folders of the new bundle
     if (!fs.existsSync(subDir)) {
       fs.mkdirSync(subDir, { recursive: true, mode: sub === "env" || sub === "secrets" ? 0o700 : undefined });
     }

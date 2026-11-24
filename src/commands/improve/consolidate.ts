@@ -1182,10 +1182,12 @@ function loadMemoriesForSource(
   }
   if (memories.length > 0 || !source) return memories;
   const memoriesDir = path.join(source.sourceRoot, "memories");
+  // asset-io: base the memories walk when the index lists none
   if (fs.existsSync(memoriesDir)) {
     const pending = [memoriesDir];
     while (pending.length > 0) {
       const current = pending.pop() as string;
+      // asset-io: base the memories walk when the index lists none
       for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
         const filePath = path.join(current, entry.name);
         if (entry.isDirectory()) {

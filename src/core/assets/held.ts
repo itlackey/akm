@@ -11,6 +11,8 @@
 
 import * as held from "../adapter/directory/held-files";
 
+export { MEMORY_ARCHIVE_REL } from "../adapter/directory/held-files";
+
 /** The bundle a check asks about: its directory. */
 interface HeldBundle {
   path: string;

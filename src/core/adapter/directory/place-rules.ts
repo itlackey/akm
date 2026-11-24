@@ -12,9 +12,14 @@ import { buildFileContext } from "./file-context";
 import { declaredTypeForPath } from "./matchers";
 import { MANAGED_DIRS } from "./walker";
 
+/** The type akm's own directory rules give a bundle-relative path (`memories/x.md` is a memory); undefined: none. */
+export function placeTypeOf(relative: string): string | undefined {
+  return declaredTypeForPath(buildFileContext("/", path.posix.join("/", relative)));
+}
+
 /** akm's own directory rules on a bundle-relative path: `env` or `secret` when any env/ or secrets/ ancestor makes it a protected file. */
 export function protectedTypeOf(relative: string): "env" | "secret" | undefined {
-  const type = declaredTypeForPath(buildFileContext("/", path.posix.join("/", relative)));
+  const type = placeTypeOf(relative);
   return type === "env" || type === "secret" ? type : undefined;
 }
 

@@ -30,12 +30,80 @@
  * built.
  */
 
+import type fs from "node:fs";
 import type { TocHeading } from "../asset/markdown";
 import type { StalePathFields } from "../asset/stale-path";
 import type { AkmConfig } from "../config/config-types";
 import type { EventEnvelope } from "../events-types";
+import type { AssetEntry } from "./bundle-adapter";
 
 // ── §1.1 — bundle model ─────────────────────────────────────────────────────
+
+/**
+ * A rich context object built once per file during walking.
+ *
+ * Eager fields (absPath, relPath, ext, etc.) are computed up-front from the
+ * path alone. Expensive operations (content, frontmatter, stat) are exposed
+ * as lazy-loading getters that read from disk on first call and cache the
+ * result for subsequent accesses.
+ */
+export interface FileContext extends AssetEntry {
+  /** Absolute path to the file */
+  absPath: string;
+  /** The same file, as an asset entry names it. */
+  file: string;
+  /** Path relative to the stash root (POSIX separators) */
+  relPath: string;
+  /** The same path, as the entry's storage key. */
+  key: string;
+  /** File extension including the dot, e.g. ".ts", ".md" */
+  ext: string;
+  /** File name including extension, e.g. "deploy.sh" */
+  fileName: string;
+  /** Immediate parent directory name, e.g. "azure" */
+  parentDir: string;
+  /** Absolute path to the immediate parent directory */
+  parentDirAbs: string;
+  /**
+   * Directory segments from stash root to the file's parent directory.
+   * For a relPath of "scripts/azure/deploy/run.sh", this would be
+   * ["scripts", "azure", "deploy"].
+   */
+  ancestorDirs: string[];
+  /** Absolute path to the stash root this file belongs to */
+  stashRoot: string;
+
+  /** Reads and caches the file content on first call */
+  content: () => string;
+  /** Reads and caches the file's bytes on first call */
+  bytes: () => Buffer;
+  /** Parses frontmatter from content(); returns data or null if none found */
+  frontmatter: () => Record<string, unknown> | null;
+  /** Returns and caches fs.Stats for the file */
+  stat: () => fs.Stats;
+}
+
+/**
+ * Describes the result of a successful asset match.
+ */
+export interface MatchResult {
+  /**
+   * Classified asset type.
+   * Standard types: "skill", "agent", "knowledge", "command", "script".
+   * Custom types are also allowed.
+   */
+  type: string;
+  /**
+   * Match specificity score. Higher values indicate a more specific (and
+   * therefore higher-priority) match. When two matchers produce the same
+   * specificity, the one registered later wins.
+   */
+  specificity: number;
+  /** Name of the renderer to use for show/search operations */
+  renderer: string;
+  /** Optional pass-through data forwarded to the renderer */
+  meta?: Record<string, unknown>;
+}
 
 /** Stable bundle name (workspace identity); the optional ref prefix. */
 export type BundleId = string;

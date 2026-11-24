@@ -11,10 +11,10 @@
 import path from "node:path";
 import { parseDocument } from "yaml";
 import { lintDocumentText } from "../commands/lint";
-import { protectedTypeOf } from "../core/adapter/directory/place-rules";
 import { normalizeAkmMarkdown } from "../core/asset/akm-markdown";
 import { documentStashDirFor } from "../core/asset/asset-placement";
 import { parseFrontmatterBlock } from "../core/asset/frontmatter";
+import { protectedTypeOf } from "../core/assets/files";
 import { adapterWrites } from "../core/assets/gate";
 import { recognizeContent, typeOfContent } from "../core/assets/type";
 import { loadConfig } from "../core/config/config";

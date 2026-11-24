@@ -16,7 +16,6 @@
  */
 
 import path from "node:path";
-import { resolveAssetPath } from "../../core/adapter/directory/path-resolver";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { lookupAsset } from "../../core/assets/read";
@@ -29,6 +28,7 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { info } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
+import { resolveAssetPath } from "../../indexer/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { ChatMessage, chatCompletion } from "../../llm/client";
 import { callStructured } from "../../llm/structured-call";

@@ -5,17 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { BundleListing } from "../core/adapter/bundle-adapter";
-import { type FileContext, fileContextOfEntry } from "../core/adapter/directory/file-context";
-import {
-  INCOMPLETE_SOURCES_META_KEY,
-  type IncompleteIndexSource,
-  type IndexVerification,
-  type RemovedIndexSource,
-  SEMANTIC_SEARCH_META_KEY,
-  type SemanticSearchRecord,
-} from "../core/adapter/directory/index-context";
-import type { WalkStashFlatResult } from "../core/adapter/directory/walker";
-import type { Bundle } from "../core/adapter/types";
+import type { Bundle, FileContext } from "../core/adapter/types";
 import { type Asset, type BundleScan, lookupAsset, scanBundle } from "../core/assets/read";
 import { indexedPathOf } from "../core/assets/type";
 import { isHttpUrl, safeRealpath, toErrorMessage } from "../core/common";
@@ -102,6 +92,14 @@ import {
   WorkflowSourceIdentityError,
   workflowNameForSourcePath,
 } from "../workflows/source-files";
+import {
+  INCOMPLETE_SOURCES_META_KEY,
+  type IncompleteIndexSource,
+  type IndexVerification,
+  type RemovedIndexSource,
+  SEMANTIC_SEARCH_META_KEY,
+  type SemanticSearchRecord,
+} from "./index-context";
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { clearIndexOnMissRefs, readIndexOnMissRefs } from "./index-on-miss";
 import { deriveEntryProvenance, deriveInstallations, sourceOfBundle } from "./installations";
@@ -1055,9 +1053,12 @@ function listOrKeep(scan: BundleScan): BundleListing {
 }
 
 /** A bundle's listing as the walk's result: every entry a `FileContext` keyed under the bundle's root. */
-function walkResultOf(listing: BundleListing, root: string): WalkStashFlatResult {
+function walkResultOf(
+  listing: BundleListing,
+  scan: BundleScan,
+): { files: FileContext[]; complete: boolean; incompleteReason?: string } {
   return {
-    files: listing.assets.map(({ entry }) => fileContextOfEntry(root, entry)),
+    files: listing.assets.map(({ entry }) => scan.fileContext(entry)),
     complete: listing.complete,
     ...(listing.incompleteReason !== undefined ? { incompleteReason: listing.incompleteReason } : {}),
   };
@@ -1093,18 +1094,18 @@ function buildSourceScanPlans(
     const scan = scanBundle(sourceAdded, bundle.id);
     const listing = listOrKeep(scan);
     // A store's findings (invalid or shadowed names) are recorded for `akm lint`, which never lists the store.
-    if (scan.isStore && listing.complete) {
+    if (!scan.inDirectories && listing.complete) {
       setStoreFindings(db, bundle.id, listing.findings ?? []);
       for (const finding of listing.findings ?? []) warn(`${finding.ref} ${finding.issue}: ${finding.detail}`);
     }
-    const walked = walkResultOf(listing, currentStashDir);
-    const dirGroups = scan.isStore ? new Map<string, FileContext[]>() : groupFileContextsByDir(walked.files);
+    const walked = walkResultOf(listing, scan);
+    const dirGroups = scan.inDirectories ? groupFileContextsByDir(walked.files) : new Map<string, FileContext[]>();
     return {
       currentStashDir,
       bundle,
       scan,
       dirGroups,
-      ...(scan.isStore ? { storeFiles: walked.files } : {}),
+      ...(scan.inDirectories ? {} : { storeFiles: walked.files }),
       removals: [],
       walkComplete: walked.complete,
       ...(walked.incompleteReason ? { incompleteReason: walked.incompleteReason } : {}),
@@ -1144,7 +1145,7 @@ function buildSourceScanPlans(
       }
     }
     for (const plan of plans) {
-      if (!plan.walkComplete || !plan.scan || plan.scan.isStore) continue;
+      if (!plan.walkComplete || !plan.scan?.inDirectories) continue;
       const currentDirs = new Set([...plan.dirGroups.keys()].map((dirPath) => path.resolve(dirPath)));
       for (const removal of sourceSnapshotRemovals(
         db,

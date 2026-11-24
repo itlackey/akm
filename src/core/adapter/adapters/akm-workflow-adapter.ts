@@ -157,6 +157,10 @@ export class AkmWorkflowAdapter extends AkmFormatAdapterBase {
     return "workflow";
   }
 
+  rendererFor(): string {
+    return "workflow-md";
+  }
+
   protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
     return validate(b, changes, ctx);
   }

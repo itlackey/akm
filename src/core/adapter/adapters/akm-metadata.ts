@@ -54,6 +54,8 @@
  * concern, not recognition's.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import type { ParsedBuiltinCommandAction } from "../../../commands/command/builtin-action";
 import type { IndexDocument } from "../../../indexer/passes/metadata";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
@@ -415,4 +417,24 @@ export function applyFoldedMetadata(entry: IndexDocument, folded: FoldedMetadata
   if (folded.toc) entry.toc = folded.toc;
   if (folded.parameters) entry.parameters = folded.parameters;
   if (folded.uses) entry.uses = folded.uses;
+}
+
+/** The name, description and keywords of the `package.json` in `dirPath`, beside a script; null when it has none. */
+export function extractPackageMetadata(
+  dirPath: string,
+): { name?: string; description?: string; keywords?: string[] } | null {
+  const pkgPath = path.join(dirPath, "package.json");
+  if (!fs.existsSync(pkgPath)) return null;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    const result: { name?: string; description?: string; keywords?: string[] } = {};
+    if (typeof pkg.name === "string") result.name = pkg.name;
+    if (typeof pkg.description === "string") result.description = pkg.description;
+    if (Array.isArray(pkg.keywords)) {
+      result.keywords = pkg.keywords.filter((k: unknown): k is string => typeof k === "string");
+    }
+    return Object.keys(result).length > 0 ? result : null;
+  } catch {
+    return null;
+  }
 }

@@ -131,6 +131,7 @@ const envPathCommand = defineJsonCommand({
   },
   async run({ args }) {
     const { asset } = resolveEnvPath(args.ref);
+    // asset-io: display `env path` prints the file
     const absPath = asset.entry.file;
     if (absPath === undefined) throw new UsageError(`"${asset.ref}" is not kept in a file, so it has no path.`);
     // The raw `.env` may contain `X=$(cmd)`, which executes if `source`d.

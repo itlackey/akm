@@ -19,14 +19,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import {
-  buildFileContext,
-  buildRenderContext,
-  type FileContext,
-  fileContextOfEntry,
-  getRenderer,
-  type MatchResult,
-} from "../../core/adapter/directory/file-context";
+import type { MatchResult } from "../../core/adapter/types";
 import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../../core/asset/asset-placement";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
@@ -38,10 +31,11 @@ import {
 } from "../../core/asset/markdown-fragments";
 import { displayDefaultBundle, displayRef, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
-import { bundleAdapterId } from "../../core/assets/gate";
-import { findAsset } from "../../core/assets/read";
+import { buildFileContext } from "../../core/assets/files";
+import { adapterDeclaresTypes, bundleAdapterId } from "../../core/assets/gate";
+import { fileContextOf, findAsset } from "../../core/assets/read";
 import { presentationOf } from "../../core/assets/type";
-import { asNonEmptyString, isContainedResolvedPath } from "../../core/common";
+import { asNonEmptyString, isContainedResolvedPath, toPosix } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import {
   ConfigError,
@@ -74,6 +68,7 @@ import {
 } from "../../indexer/search/search-source";
 import { recentShowCount, recordShowUsage } from "../../indexer/usage/show-usage";
 import type { UsageEventSource } from "../../indexer/usage/usage-events";
+import { buildRenderContext, getRenderer } from "../../output/renderer-registry";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import type { FragmentContextMode, ShowDetailLevel, ShowLinkGroup, ShowResponse } from "../../sources/types";
 import { withIndexDb } from "../../storage/repositories/index-db";
@@ -349,6 +344,7 @@ export async function showLocal(input: {
       warn(
         `Script ref "${makeBundleRef(parsed.bundle, parsed.conceptId)}" has extension "${displayExtension}", which is outside the recognized set used for indexing (${[...SCRIPT_EXTENSIONS].join(", ")}); showing it as plain text.`,
       );
+      // asset-io: user-input the file the ref names, which no adapter lists, shown as plain text
       const fileCtx = buildFileContext(unrecognized.sourceRoot, unrecognized.path);
       const renderer = await getRenderer("script-source");
       if (renderer) {
@@ -387,7 +383,7 @@ export async function showLocal(input: {
     );
   }
 
-  const fileCtx = fileContextOfEntry(sourceStashDir, owned.entry);
+  const fileCtx = fileContextOf(owned, sourceStashDir);
   const presentedName = indexedEntry.name;
   const opaqueFragmentSelector = parsed.fragment?.startsWith("akm-fragment-") === true;
   // Friendly heading selectors retain the source-live exact response contract.
@@ -638,16 +634,19 @@ function findUnrecognizedScriptSource(
 
   for (const source of sources) {
     try {
-      if (bundleAdapterId(source) !== "akm") continue;
+      if (!adapterDeclaresTypes(bundleAdapterId(source))) continue;
       const sourceRoot = path.resolve(source.path);
       // A script's ref is its path, so the candidate is the ref itself.
       const candidate = path.resolve(sourceRoot, conceptId);
       if (!isContainedResolvedPath(candidate, sourceRoot)) continue;
       // Only a file in a scripts directory is a script whose extension is the problem.
-      if (!buildFileContext(sourceRoot, candidate).ancestorDirs.includes(stashDirFor("script") ?? "scripts")) continue;
+      const folders = toPosix(path.relative(sourceRoot, path.dirname(candidate))).split("/");
+      if (!folders.includes(stashDirFor("script") ?? "scripts")) continue;
+      // asset-io: user-input the file the ref names, which no adapter lists, for the not-found hint
       const authoredStat = fs.lstatSync(candidate);
       if (!authoredStat.isFile() && !authoredStat.isSymbolicLink()) continue;
       const realCandidate = fs.realpathSync(candidate);
+      // asset-io: user-input the same file
       if (!fs.statSync(realCandidate).isFile()) continue;
       const name = deriveCanonicalAssetNameFromStashRoot("script", sourceRoot, candidate) ?? conceptId;
       return { extension, name, path: realCandidate, sourceRoot: fs.realpathSync(sourceRoot) };

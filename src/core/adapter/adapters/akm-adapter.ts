@@ -53,7 +53,6 @@ import type { AdapterRenderedExecutionSource } from "../../../execution/source";
 import {
   applyPostContributorFields,
   applyPreContributorFields,
-  extractPackageMetadata,
   getMarkdownFragmentContent,
   hasMarkdownFragmentContent,
   setMarkdownFragmentContent,
@@ -71,6 +70,7 @@ import { parseFrontmatter } from "../../asset/frontmatter";
 import type { AssetEntry } from "../bundle-adapter";
 import { buildFileContext, type FileContext, fileContextOfEntry, type MatchResult } from "../directory/file-context";
 import type { PathFileContext } from "../directory/matchers";
+import { placeTypeOf } from "../directory/place-rules";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import type { FileChange } from "../file-change";
 import { recognizeMatch, recognizeMatchByPath } from "../recognize-match";
@@ -78,7 +78,7 @@ import { type Bundle, type IndexDocument, type IndexMetadata, rootOf } from "../
 import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { AkmFormatAdapterBase } from "./akm-format";
 import { derivedSiblingPath, perTypeDiagnostics, skillDirectoryDiagnostics, type TypeCheckInput } from "./akm-lint";
-import { applyFoldedMetadata, foldRecognizedMetadata } from "./akm-metadata";
+import { applyFoldedMetadata, extractPackageMetadata, foldRecognizedMetadata } from "./akm-metadata";
 import { createBaseChecker, hashContent, type ParsedForValidate, parseForValidate, RESERVED_FILES } from "./shared";
 
 // `recognizeMatch` + the builtin matcher list moved to the cycle-free leaf
@@ -472,6 +472,15 @@ export class AkmAdapter extends AkmFormatAdapterBase {
 
   contentType(b: Bundle, entry: AssetEntry): string | undefined {
     return classifyAkmFile(entry.key, fileContextOfEntry(rootOf(b), entry))?.match.type;
+  }
+
+  declaredType(key: string): string | undefined {
+    return placeTypeOf(key);
+  }
+
+  /** An akm asset is matched live, on the bytes the file has now. */
+  rendererFor(): string | undefined {
+    return undefined;
   }
 
   protected identify(relPath: string): string | null {

@@ -23,7 +23,7 @@ import { probeLlmEndpoint } from "../llm/client";
 import { type Database, openDatabase } from "../storage/database";
 import { insertEvent } from "../storage/repositories/events-repository";
 import { getExtractOutcomeCountsSince } from "../storage/repositories/extract-sessions-repository";
-import { getAllEntries } from "../storage/repositories/index-entries-repository";
+import { getAllEntries, itemRefLookup } from "../storage/repositories/index-entries-repository";
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
 import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 import { getStateDbFreelistInfo, runStateDbIntegrityCheck } from "../storage/state-db-integrity";
@@ -541,7 +541,7 @@ function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult 
  */
 function detectIndexStateGenerationMismatch(stateDb: Database): HealthCheckResult | undefined {
   const read = readHealthIndex((indexDb): HealthCheckResult | undefined => {
-    const byId = indexDb.prepare<{ item_ref: string | null }>("SELECT item_ref FROM entries WHERE id = ?");
+    const itemRefOf = itemRefLookup(indexDb);
     const rows = stateDb
       .prepare<{ entry_id: number; entry_ref: string }>(
         "SELECT DISTINCT entry_id, entry_ref FROM usage_events " +
@@ -551,7 +551,7 @@ function detectIndexStateGenerationMismatch(stateDb: Database): HealthCheckResul
     let mismatches = 0;
     const sample: Array<{ entryId: number; entryRef: string; indexedRef: string | null }> = [];
     for (const row of rows) {
-      const indexedRef = byId.get(row.entry_id)?.item_ref ?? null;
+      const indexedRef = itemRefOf(row.entry_id) ?? null;
       if (indexedRef === row.entry_ref) continue;
       mismatches += 1;
       if (sample.length < 5) sample.push({ entryId: row.entry_id, entryRef: row.entry_ref, indexedRef });

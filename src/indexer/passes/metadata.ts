@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { extractPackageMetadata } from "../../core/adapter/adapters/akm-metadata";
 import type { buildFileContext } from "../../core/adapter/directory/file-context";
 // The durable indexed-entry shape is `IndexDocument`. Its body
 // — and the sub-shapes it references — live in `core/adapter/types.ts` so
@@ -684,15 +685,7 @@ export function applyProvenanceFrontmatter(entry: IndexDocument, fmData: Record<
  * Supports both JSDoc-style (`/** ... * /`) and hash-style (`# @param ...`)
  * comments. Optionally captures `{type}` annotations.
  */
-export function extractScriptParameters(filePath: string, content?: string): AssetParameter[] | undefined {
-  if (content === undefined) {
-    try {
-      content = fs.readFileSync(filePath, "utf8");
-    } catch {
-      return undefined;
-    }
-  }
-
+export function extractScriptParameters(content: string): AssetParameter[] | undefined {
   const lines = content.split(/\r?\n/).slice(0, 50);
   const params: AssetParameter[] = [];
 
@@ -839,6 +832,7 @@ const COMMENT_TAGS: ReadonlyArray<readonly [RegExp, (metadata: CommentMetadata, 
 export function extractCommentMetadata(filePath: string, content?: string): CommentMetadata | undefined {
   if (content === undefined) {
     try {
+      // asset-io: base a script's header, read by path for `akm show` and search hints
       content = fs.readFileSync(filePath, "utf8");
     } catch {
       return undefined;
@@ -1355,6 +1349,7 @@ export function hasMarkdownFragmentContent(entry: IndexDocument): boolean {
  */
 export function withFileSize(entry: IndexDocument, filePath: string): IndexDocument {
   try {
+    // asset-io: disk-usage the indexed file's size
     const sized = { ...entry, fileSize: fs.statSync(filePath).size };
     if (hasMarkdownFragmentContent(entry)) setMarkdownFragmentContent(sized, getMarkdownFragmentContent(entry));
     return sized;
@@ -1464,7 +1459,7 @@ export function applyPreContributorFields(
   // or any other metadata that could embed a value into the entry.
   if (ext !== ".md" && entry.type !== "env" && entry.type !== "secret") {
     const content = ctx.content();
-    const scriptParams = extractScriptParameters(file, content);
+    const scriptParams = extractScriptParameters(content);
     if (scriptParams) entry.parameters = scriptParams;
     applyCommentMetadata(entry, extractCommentMetadata(file, content));
   }
@@ -1570,14 +1565,7 @@ function buildAliases(name: string, tags: string[]): string[] {
   return Array.from(aliases);
 }
 
-export function extractDescriptionFromComments(filePath: string): string | null {
-  let content: string;
-  try {
-    content = fs.readFileSync(filePath, "utf8");
-  } catch {
-    return null;
-  }
-
+export function extractDescriptionFromComments(content: string): string | null {
   const lines = content.split(/\r?\n/).slice(0, 50);
 
   // Try JSDoc-style block comment: /** ... */
@@ -1612,25 +1600,6 @@ export function extractDescriptionFromComments(filePath: string): string | null 
   if (hashLines.length > 0) return hashLines.join(" ");
 
   return null;
-}
-
-export function extractPackageMetadata(
-  dirPath: string,
-): { name?: string; description?: string; keywords?: string[] } | null {
-  const pkgPath = path.join(dirPath, "package.json");
-  if (!fs.existsSync(pkgPath)) return null;
-  try {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-    const result: { name?: string; description?: string; keywords?: string[] } = {};
-    if (typeof pkg.name === "string") result.name = pkg.name;
-    if (typeof pkg.description === "string") result.description = pkg.description;
-    if (Array.isArray(pkg.keywords)) {
-      result.keywords = pkg.keywords.filter((k: unknown): k is string => typeof k === "string");
-    }
-    return Object.keys(result).length > 0 ? result : null;
-  } catch {
-    return null;
-  }
 }
 
 export function fileNameToDescription(fileName: string): string {

@@ -3,15 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `scripts/lint-asset-io.ts` counts the code that reads or writes assets outside the adapter layer and holds it to a
- * checked-in baseline that can only shrink. It must pass on the real tree, find each kind of violation in a
- * fixture, fail on a violation the baseline lacks, and fail on a baseline entry that no longer occurs.
+ * `scripts/lint-asset-io.ts` finds the code that reads or writes assets outside the adapter layer; any finding fails
+ * the build. It must pass on the real tree and find each kind of violation in a fixture.
  */
 
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { compare, countsOf, REASONS, scan } from "../../../scripts/lint-asset-io";
+import { REASONS, scan } from "../../../scripts/lint-asset-io";
 import { makeSandboxDir } from "../../_helpers/sandbox";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "../../..");
@@ -37,7 +36,7 @@ function violationsOf(rules: string[], files: Record<string, string>) {
 }
 
 describe("lint-asset-io", () => {
-  test("passes on the real source tree: it matches its baseline exactly", () => {
+  test("passes on the real source tree: it has no violation", () => {
     const result = Bun.spawnSync([process.execPath, path.join(REPO_ROOT, "scripts", "lint-asset-io.ts")], {
       cwd: REPO_ROOT,
       stdout: "pipe",
@@ -196,7 +195,7 @@ describe("lint-asset-io", () => {
     expect(
       violationsIn({
         "src/feature/names.ts":
-          'export const a = [harness === "akm", p.platform === "okf", path.basename(f) === "akm", cfg.binary !== "akm", bin === "okf", command.toLowerCase() === "akm"];\n',
+          'export const a = [harness === "akm", harnessId === "okf", p.platform === "okf", path.basename(f) === "akm", cfg.binary !== "akm", bin === "okf", command.toLowerCase() === "akm"];\n',
         "src/feature/flagged.ts":
           'export const a = [id === "akm", x.adapter === "okf", constructor === "akm", fn() === "akm"];\n',
       }).sort(),
@@ -297,8 +296,12 @@ describe("lint-asset-io", () => {
           'export const a = { isStore: true, location: loc, ...{ location } }; // x.isStore, a.location === b\nexport const b = ["isStore", "a.location === b", window.location.href, entry.location ?? "", entry.locationKey === 1, isStoreLike(x)];\nconst isStore = 1;\nexport const c = { isStore };\n',
         "src/core/adapter/x.ts": "export const a = [s.isStore, s.location === undefined];\n",
         "src/core/assets/x.ts": "export const a = [s.isStore, s.location === undefined];\n",
+        "src/feature/config.ts":
+          "// asset-io: config\nexport const a = cfg.location !== undefined;\nexport const b = [s.isStore, s.location === undefined]; // asset-io: state\n",
       }).sort(),
     ).toEqual([
+      "src/feature/config.ts store-sniff",
+      "src/feature/config.ts store-sniff",
       "src/feature/sniff.ts store-sniff",
       "src/feature/sniff.ts store-sniff",
       "src/feature/sniff.ts store-sniff",
@@ -344,6 +347,7 @@ describe("lint-asset-io", () => {
           "export const a = [entry.file, `${entry.file}`, path.relative(root, entry.file), entry.file ?? '', entry.file.length > 2, entry.files === p];",
           "export const b = { file: entry.file }; // entry.file === p",
           "export const c = [other.file === p, byFile.get(entry.fileName), byFile.get(p, entry.file)];",
+          "export const d = [entry.file === undefined, undefined !== hit.entry.file];",
           "",
         ].join("\n"),
         "src/core/assets/x.ts": "export const a = [entry.file === p, seen.has(entry.file)];\n",
@@ -393,6 +397,8 @@ describe("lint-asset-io", () => {
           .join("\n")}\n`,
         "src/feature/deprecated.ts":
           'import { x } from "../core/adapter/registry"; // asset-io: deprecated\nexport const a = [x === "akm", detectAdapterId(d), entry.file]; // asset-io: deprecated\n',
+        "src/feature/base.ts":
+          'import { x } from "../core/adapter/registry"; // asset-io: base\nexport const a = [x, entry.file]; // asset-io: base\n',
         "src/feature/storage-reason.ts":
           'import { x } from "../core/adapter/registry"; // asset-io: state\nexport const a = [x === "akm", detectAdapterId(d)]; // asset-io: config\n',
       }).sort(),
@@ -400,42 +406,6 @@ describe("lint-asset-io", () => {
       "src/feature/storage-reason.ts adapter-id",
       "src/feature/storage-reason.ts adapter-import",
       "src/feature/storage-reason.ts adapter-probe",
-    ]);
-  });
-
-  test("a baseline that matches passes; a new violation, a traded callee and a stale entry each fail", () => {
-    const found = countsOf([
-      ["src/a.ts", "asset-io", 3, "readFileSync"],
-      ["src/a.ts", "asset-io", 9, "readFileSync"],
-      ["src/b.ts", "adapter-import", 1, "src/core/adapter/registry"],
-      ["src/b.ts", "entry-file", 4, "entry.file"],
-    ]);
-    expect(found).toEqual({
-      "src/a.ts": { "asset-io": { readFileSync: 2 } },
-      "src/b.ts": { "adapter-import": { "src/core/adapter/registry": 1 }, "entry-file": { "entry.file": 1 } },
-    });
-
-    expect(compare(found, found)).toEqual({ added: [], stale: [] });
-
-    // A violation the baseline lacks: a new rule in a known file, one more in a known file.
-    expect(
-      compare(found, { ...found, "src/b.ts": { "adapter-import": found["src/b.ts"]?.["adapter-import"] } }).added,
-    ).toEqual(["src/b.ts: entry-file entry.file 0 -> 1"]);
-    expect(compare(found, { ...found, "src/a.ts": { "asset-io": { readFileSync: 1 } } }).added).toEqual([
-      "src/a.ts: asset-io readFileSync 1 -> 2",
-    ]);
-
-    // Trading one violation for another keeps the file's count and still fails, both ways.
-    const traded = compare(found, { ...found, "src/a.ts": { "asset-io": { readFileSync: 1, existsSync: 1 } } });
-    expect(traded.added).toEqual(["src/a.ts: asset-io readFileSync 1 -> 2"]);
-    expect(traded.stale).toEqual(["src/a.ts: asset-io existsSync 1 -> 0"]);
-
-    // A baseline entry that no longer occurs: a gone file, or a count that shrank.
-    expect(compare(found, { ...found, "src/gone.ts": { "adapter-id": { akm: 1 } } }).stale).toEqual([
-      "src/gone.ts: adapter-id akm 1 -> 0",
-    ]);
-    expect(compare(found, { ...found, "src/a.ts": { "asset-io": { readFileSync: 5 } } }).stale).toEqual([
-      "src/a.ts: asset-io readFileSync 5 -> 2",
     ]);
   });
 });

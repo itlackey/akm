@@ -95,6 +95,7 @@ export function isInRetrievalScope(scope: RetrievalScope | undefined, ref: strin
   if (scope.used.has(conceptId)) return true;
   if (scope.processed.has(conceptId)) return false;
   try {
+    // asset-io: base the modification time of the file a candidate names
     return filePath === undefined || fs.statSync(filePath).mtimeMs >= scope.sinceMs;
   } catch {
     return true;

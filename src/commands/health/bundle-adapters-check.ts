@@ -8,8 +8,8 @@
  * schema accepts any adapter id, so this is where a typo (`agent_skills`) is reported before the bundle is next read.
  */
 
-import { requireAdapter } from "../../core/adapter/registry";
 import { type AdapterSkip, adapterSkipMessage, adapterSkipOf } from "../../core/assets/adapter-skips";
+import { assertKnownAdapter } from "../../core/assets/gate";
 import { deriveBundleIds } from "../../core/bundle-id";
 import { toErrorMessage } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
@@ -34,7 +34,7 @@ export function collectBundleAdaptersCheck(readConfig: () => AkmConfig = loadCon
   try {
     for (const source of resolveConfiguredSources(config)) {
       if (source.adapterId !== undefined)
-        requireAdapter(source.name, source.adapterId, { location: source.source.type === "location" });
+        assertKnownAdapter(source.name, source.adapterId, { location: source.source.type === "location" });
     }
   } catch (error) {
     return {
@@ -62,6 +62,7 @@ export function collectAdapterSkipCheck(readConfig: () => AkmConfig = loadConfig
       const skip = adapterSkipOf({
         name,
         path: source.path,
+        // asset-io: config the bundle's configured location, copied
         ...(source.location !== undefined ? { location: source.location } : {}),
         ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
       });

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { HEALTH_CHECKS } from "../src/commands/health/checks";
 import { type SemanticSearchState, semanticSearchCheck } from "../src/commands/health/semantic-search-check";
-import type { SemanticSearchRecord } from "../src/core/adapter/directory/index-context";
+import type { SemanticSearchRecord } from "../src/indexer/index-context";
 
 // `semantic-search` projects what the last `akm index` recorded (and the index's
 // counts, read at health time) into one check. Driven here with synthetic state.

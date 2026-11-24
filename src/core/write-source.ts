@@ -42,10 +42,9 @@ import {
   saveGitStash,
 } from "../sources/providers/git";
 import { listIgnoredExactPaths } from "../sources/providers/git-stash";
-import { assertWritableFile } from "./adapter/directory-adapter";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName } from "./asset/resolve-ref";
-import { assertAdapterWrites, detectBundleAdapter } from "./assets/gate";
+import { assertAdapterWrites, assertWritableFile, detectBundleAdapter } from "./assets/gate";
 import { materialiseBundleDir } from "./bundle-at-dir";
 import { existingFileMode, isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";

@@ -4,12 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { recognizeMatch } from "../../src/core/adapter/adapters/akm-adapter";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "../../src/core/adapter/adapters/akm-metadata";
-import {
-  buildFileContext,
-  buildRenderContext,
-  getAllRenderers,
-  getRenderer,
-} from "../../src/core/adapter/directory/file-context";
+import { buildFileContext } from "../../src/core/adapter/directory/file-context";
 import {
   directoryMatcher,
   looseMarkdownMatcher,
@@ -19,6 +14,7 @@ import {
 import { walkStashFlat } from "../../src/core/adapter/directory/walker";
 import { recognizeMatchByPath } from "../../src/core/adapter/recognize-match";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
+import { buildRenderContext, getAllRenderers, getRenderer } from "../../src/output/renderer-registry";
 
 // ── Temp directory helpers ──────────────────────────────────────────────────
 

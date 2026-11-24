@@ -17,7 +17,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { SemanticSearchStatus } from "../../core/adapter/directory/index-context";
 import { bundleStorageExists, detectBundleAdapter } from "../../core/assets/gate";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
@@ -34,6 +33,7 @@ import {
   skippedIndexReport,
   withIndexBuildLock,
 } from "../../indexer/index-build";
+import type { SemanticSearchStatus } from "../../indexer/index-context";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import type { IndexOptions, IndexResponse } from "../../indexer/indexer";
 import type { LockfileEntry } from "../../integrations/lockfile";
@@ -138,6 +138,7 @@ function resolveManagedTarget(config: AkmConfig, target: string): ManagedInstall
 function describeBundleSource(entry: BundleConfigEntry): SourceDescriptor {
   if (entry.path) return { kind: "path", locator: entry.path };
   if (entry.git) return { kind: "git", locator: entry.git };
+  // asset-io: config the config entry's kind, described
   if (entry.location !== undefined) return { kind: "location", locator: entry.location };
   if (entry.website) {
     return {
@@ -282,6 +283,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
       byType: bundleCounts.byType,
       status: {
         exists:
+          // asset-io: config a config entry with a location and adapter is probed through its adapter
           configured.location !== undefined && configured.adapter !== undefined
             ? bundleStorageExists({
                 name: key,

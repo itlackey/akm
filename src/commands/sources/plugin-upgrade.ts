@@ -40,7 +40,8 @@ import {
 import { installedChannel } from "./self-update";
 
 const MARKETPLACE = "akm-plugins";
-const PLUGIN_ID = `akm@${MARKETPLACE}`;
+const PLUGIN_NAME = "akm";
+const PLUGIN_ID = `${PLUGIN_NAME}@${MARKETPLACE}`;
 const READ_TIMEOUT_MS = 30_000;
 const REFRESH_TIMEOUT_MS = 120_000;
 const PREFETCH_TIMEOUT_MS = 180_000;
@@ -935,7 +936,7 @@ export function marketplaceTargetVersion(source: string, channel: UpgradeChannel
           }>;
         }
       | undefined;
-    const plugin = catalog?.plugins?.find((p) => p.name === "akm");
+    const plugin = catalog?.plugins?.find((p) => p.name === PLUGIN_NAME);
     const entry = typeof plugin?.source === "object" ? plugin.source : undefined;
     // A `git-subdir` entry (Codex) names its build by tag; one in this same repo can also be read from the repository.
     const tagged = entry?.source === "git-subdir" ? entry.ref?.replace(/^v/, "") : undefined;

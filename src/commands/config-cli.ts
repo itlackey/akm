@@ -2,6 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { isDeepStrictEqual } from "node:util";
+import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
 /**
  * Config CLI commands — `akm config get/set/unset/list`.
  *
@@ -13,9 +15,7 @@
  * settings use their canonical connection, harness and strategy paths; retired aliases are not
  * rewritten at this boundary.
  */
-import { isDeepStrictEqual } from "node:util";
-import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
-import { requireAdapter } from "../core/adapter/registry";
+import { assertKnownAdapter } from "../core/assets/gate";
 import { isRecord } from "../core/common";
 import {
   type AkmConfig,
@@ -58,7 +58,7 @@ export function setConfigValue(config: AkmConfig, key: string, rawValue: string)
     for (const source of resolveConfiguredSources(next)) {
       if (touched !== undefined && source.name !== touched) continue;
       if (source.adapterId !== undefined)
-        requireAdapter(source.name, source.adapterId, { location: source.source.type === "location" });
+        assertKnownAdapter(source.name, source.adapterId, { location: source.source.type === "location" });
     }
   }
   return next;

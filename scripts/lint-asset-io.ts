@@ -13,7 +13,7 @@
  *   adapter-import   an import from `src/core/adapter/**` other than `bundle-adapter` and `types`, the walk
  *                    (`directory/`) included. The adapter layer and the metadata recognition helper
  *                    (`ADAPTER_IMPORT_LAYER`) may import their own adapter modules.
- *   facade-internal  an import of `src/core/assets/bundle` or `asset`: the facade's internals.
+ *   facade-internal  an import of `src/core/assets/bundle`, `asset` or `index-rows`: the facade's internals.
  *   adapter-id       a registry id literal compared with anything (`x === "akm"`, `case "okf"`), `kind === "location"`,
  *                    or `.fileless`: callers ask the asset, never which adapter or storage it has. The compared
  *                    expression's last name may be one of `NON_ADAPTER_NAMES`.
@@ -31,24 +31,19 @@
  *                    outside `src/storage/`, `src/core/assets/` and `src/indexer/`.
  *   entry-file-logic `entry.file` as an operand of a comparison, or as a map/set key (`get set has delete add`, `m[entry.file]`,
  *                    `{ [entry.file]: x }`). A `display` or `exec` exemption does not cover it: display is print/format only.
+ *                    A test against `undefined` is not logic: a file-less asset has no path to show or run (§7.3).
  *
  * A line may carry `// asset-io: <reason>` (same line, or a comment line before it) for access that is not an
  * asset: the reason is one word from REASONS, optionally followed by text. Each rule accepts only the reasons in
- * `reasonsFor`: `entry-file` takes `display` and `exec`; the rules that are not file access take none. `deprecated`
- * (workflow code, removed in 0.11) is accepted everywhere but `facade-export`. A missing or unknown reason is no
- * exemption. The exemptions in use are counted per reason and printed.
+ * `reasonsFor`: `entry-file` takes `display` and `exec`; `store-sniff` takes `config` (a bundle's config entry read as
+ * config: copied, validated, described); the other rules that are not file access take none. `deprecated` (workflow
+ * code, removed in 0.11) is accepted everywhere but `facade-export`; `base` (asset access kept as the base release
+ * does it until the owner rules on it) by `asset-io`, `entry-file` and `adapter-import`. A missing or unknown reason
+ * is no exemption. The exemptions in use are counted per reason and printed.
  *
- * The violations of today are recorded in `lint-asset-io.baseline.json` (count per file, rule and key: the callee for
- * `asset-io` and `adapter-probe`, the module for the import rules, the literal for `adapter-id`, the export name for
- * `facade-export`). The check fails on a violation the baseline lacks and on a baseline entry that no longer occurs,
- * so the baseline only shrinks, cannot trade one violation for another, and stays exact: when a change removes
- * violations, run `bun scripts/lint-asset-io.ts --update`, which rewrites it and refuses to record a new one. Only a
- * change that adds a rule records what the rule finds, with `--update --grow`. The
- * migration is finished when the baseline is empty.
+ * Exit codes: 0 no violation, 1 any violation.
  *
- * Exit codes: 0 matches the baseline, 1 it does not.
- *
- * Usage: bun scripts/lint-asset-io.ts [--update [--grow]]
+ * Usage: bun scripts/lint-asset-io.ts
  */
 
 import fs from "node:fs";
@@ -70,13 +65,10 @@ const RULES = [
   "entry-file-logic",
 ] as const;
 export type Rule = (typeof RULES)[number];
-/** `file -> rule -> key -> count`. */
-export type Counts = Record<string, Partial<Record<Rule, Record<string, number>>>>;
 /** One violation: where, which rule, the line, and what it was (the callee, module, literal or export name). */
 export type Violation = [file: string, rule: Rule, line: number, key: string];
 
 const repoRoot = path.resolve(import.meta.dir, "..");
-const baselinePath = path.join(import.meta.dir, "lint-asset-io.baseline.json");
 
 const SCAN_ROOTS = ["src", "desktop/src/lib/server"];
 const ADAPTER_LAYER = ["src/core/adapter/", "src/core/assets/"];
@@ -88,7 +80,7 @@ const IMPORTABLE_ADAPTER_MODULES = ["src/core/adapter/bundle-adapter", "src/core
 const ENTRIES_SQL_ALLOWED = ["src/storage/", "src/core/assets/", "src/indexer/"];
 /** Registry calls: asset-io flags them outside the layer; the facade is where they belong. */
 const REGISTRY_CALLS = new Set(["adapterForId", "getAdapters"]);
-const FACADE_INTERNAL_MODULES = ["src/core/assets/bundle", "src/core/assets/asset"];
+const FACADE_INTERNAL_MODULES = ["src/core/assets/bundle", "src/core/assets/asset", "src/core/assets/index-rows"];
 
 /** The reasons an exemption may give, each with what it covers. Allowed path prefixes below use the same words. */
 export const REASONS = {
@@ -106,13 +98,16 @@ export const REASONS = {
   "bundle-meta": ".meta/ documents of a directory bundle (not assets)",
   "bundle-root": "checks a configured bundle's root (exists, readable, is a git checkout); reads no asset",
   deprecated: "workflow code (deprecated, removed in 0.11): not migrated, its exemptions go with the feature",
+  base: "asset access kept as the base release does it, where the facade would change what the user sees: for the owner",
 } as const;
 type Reason = keyof typeof REASONS;
 
 /** The reasons a rule accepts. Only file access has the storage reasons; the other rules are not about files. */
 function reasonsFor(rule: Rule): readonly string[] {
   if (rule === "asset-io") return Object.keys(REASONS);
-  if (rule === "entry-file") return ["display", "exec", "deprecated"];
+  if (rule === "entry-file") return ["display", "exec", "base", "deprecated"];
+  if (rule === "adapter-import") return ["base", "deprecated"];
+  if (rule === "store-sniff") return ["config", "deprecated"];
   if (rule === "facade-export" || rule === "entry-file-logic") return [];
   return ["deprecated"];
 }
@@ -120,6 +115,7 @@ function reasonsFor(rule: Rule): readonly string[] {
 /** Names that hold a registry id's spelling without being an adapter (`harness === "akm"` is not an adapter test). */
 const NON_ADAPTER_NAMES: Record<string, string> = {
   harness: "a harness id (claude, opencode, ...)",
+  harnessId: "a harness id (claude, opencode, ...)",
   platform: "an operating-system platform",
   basename: "a file name",
   binary: "an executable's name",
@@ -466,7 +462,8 @@ export function scan(root: string, adapterIds: readonly string[], exemptions: st
           ts.isBinaryExpression(node) &&
           (COMPARISONS.has(node.operatorToken.kind) || ORDERINGS.has(node.operatorToken.kind))
         ) {
-          if (operand.some(isEntryFile)) report(node, "entry-file-logic", "compare");
+          const absence = operand.some((side) => ts.isIdentifier(side) && side.text === "undefined");
+          if (operand.some(isEntryFile) && !absence) report(node, "entry-file-logic", "compare");
           if (
             COMPARISONS.has(node.operatorToken.kind) &&
             operand.some((side) => ts.isPropertyAccessExpression(side) && side.name.text === "location")
@@ -528,77 +525,17 @@ export function scan(root: string, adapterIds: readonly string[], exemptions: st
   return found;
 }
 
-export function countsOf(violations: readonly Violation[]): Counts {
-  const counts: Counts = {};
-  // Sorted first, so the object (and the baseline file written from it) lists files, rules and keys in order.
-  const sorted = [...violations].sort((a, b) => (`${a[0]} ${a[1]} ${a[3]}` < `${b[0]} ${b[1]} ${b[3]}` ? -1 : 1));
-  for (const [file, rule, , key] of sorted) {
-    const rules = counts[file] ?? {};
-    const keys = rules[rule] ?? {};
-    keys[key] = (keys[key] ?? 0) + 1;
-    rules[rule] = keys;
-    counts[file] = rules;
-  }
-  return counts;
-}
-
-/** How `found` differs from `baseline`: what is new, and what the baseline records that no longer occurs. */
-export function compare(found: Counts, baseline: Counts): { added: string[]; stale: string[] } {
-  const added: string[] = [];
-  const stale: string[] = [];
-  for (const file of new Set([...Object.keys(found), ...Object.keys(baseline)])) {
-    for (const rule of RULES) {
-      const now = found[file]?.[rule] ?? {};
-      const recorded = baseline[file]?.[rule] ?? {};
-      for (const key of new Set([...Object.keys(now), ...Object.keys(recorded)])) {
-        const [a, b] = [now[key] ?? 0, recorded[key] ?? 0];
-        if (a > b) added.push(`${file}: ${rule} ${key} ${b} -> ${a}`);
-        if (a < b) stale.push(`${file}: ${rule} ${key} ${b} -> ${a}`);
-      }
-    }
-  }
-  return { added, stale };
-}
-
 if (import.meta.main) {
   const { adapterIds } = await import("../src/core/adapter/registry");
   const exemptions: string[] = [];
   const violations = scan(repoRoot, adapterIds(), exemptions);
-  const found = countsOf(violations);
-  const baseline: Counts = JSON.parse(fs.readFileSync(baselinePath, "utf8"));
-  const { added, stale } = compare(found, baseline);
-
-  if (process.argv.includes("--update")) {
-    if (added.length > 0 && !process.argv.includes("--grow")) {
-      console.error("lint-asset-io: the baseline only shrinks; these are new violations, fix them instead:");
-      for (const line of added) console.error(`  ${line}`);
-      process.exit(1);
-    }
-    fs.writeFileSync(baselinePath, `${JSON.stringify(found, null, 2)}\n`);
-    console.log(`lint-asset-io: baseline updated (${stale.length} entries shrank).`);
-    process.exit(0);
-  }
-
-  if (added.length > 0) {
-    console.error("lint-asset-io: asset I/O outside the adapter layer that the baseline does not allow.");
+  if (violations.length > 0) {
+    console.error("lint-asset-io: asset I/O outside the adapter layer.");
     console.error("Read and write assets through src/core/assets; see scripts/lint-asset-io.ts for the rules.");
-    for (const line of added) console.error(`  ${line}`);
-    for (const [file, rule, line, key] of violations) {
-      if (added.some((entry) => entry.startsWith(`${file}: ${rule} ${key} `))) {
-        console.error(`    ${file}:${line} ${rule} ${key}`);
-      }
-    }
+    for (const [file, rule, line, key] of violations) console.error(`  ${file}:${line} ${rule} ${key}`);
+    process.exit(1);
   }
-  if (stale.length > 0) {
-    console.error(
-      "lint-asset-io: the baseline records violations that are gone. Run `bun scripts/lint-asset-io.ts --update`.",
-    );
-    for (const line of stale) console.error(`  ${line}`);
-  }
-  if (added.length > 0 || stale.length > 0) process.exit(1);
-  console.log(`lint-asset-io: OK - ${violations.length} baseline violation(s), none new.`);
-  for (const rule of RULES) console.log(`  ${rule}: ${violations.filter(([, r]) => r === rule).length}`);
-  console.log(`lint-asset-io: ${exemptions.length} exemption(s)`);
+  console.log(`lint-asset-io: OK - ${exemptions.length} exemption(s)`);
   for (const reason of Object.keys(REASONS))
     console.log(`  ${reason}: ${exemptions.filter((r) => r === reason).length}`);
 }

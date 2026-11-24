@@ -85,6 +85,7 @@ const sameName = <T extends { filePath: string }>(entries: readonly T[], filePat
  * ambiguous is left unpaired (indexed as new). An entry whose file still exists is not a move.
  */
 export function pairMovedFiles(stored: readonly StoredEntry[], fresh: readonly NewEntry[]): MovePairing {
+  // asset-io: state the directory scan pairs moved files (principled exception 6)
   const vanished = stored.filter((entry) => entry.contentHash !== null && !fs.existsSync(entry.filePath));
   const freshByHash = groupBy([...fresh], (entry) => entry.contentHash);
   const pairs: PairedMove[] = [];

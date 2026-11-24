@@ -13,7 +13,8 @@ import { createHash } from "node:crypto";
 import { readUsableIndex } from "../../indexer/index-readiness";
 import type { SearchSource } from "../../indexer/search/search-source";
 import type { AssetEntry, BundleListing, PackageFile } from "../adapter/bundle-adapter";
-import type { IndexDocument } from "../adapter/types";
+import { fileContextOfEntry } from "../adapter/directory/file-context";
+import type { FileContext, IndexDocument } from "../adapter/types";
 import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { compareCodePoints } from "../common";
 import { assetNotFound, ConfigError } from "../errors";
@@ -241,12 +242,14 @@ export interface BundleScan {
   readonly adapterId: string;
   /** `<adapter id>@<adapter version>+`: the prefix of the freshness variant the index records for the bundle's rows. */
   readonly variantPrefix: string;
-  /** Whether the bundle is a store (a keyring, a vault) rather than a directory. */
-  readonly isStore: boolean;
+  /** Whether the bundle's entries are files in directories, which the scan groups and keeps per-directory state for; not a keyring's or a vault's. */
+  readonly inDirectories: boolean;
   /** Every asset the adapter holds, one per concept, with whether the listing is complete. Throws `BUNDLE_UNREACHABLE` for a store it cannot reach. */
   list(): BundleListing;
   /** What the adapter says about one of its entries for the index; null: the adapter abstains on it. */
   recognize(entry: AssetEntry): IndexDocument | null;
+  /** One of its entries as the scan's per-directory pipeline takes it: with the path fields of a file under the bundle's root. */
+  fileContext(entry: AssetEntry): FileContext;
 }
 
 /**
@@ -264,9 +267,10 @@ export function scanBundle(source: SearchSource, bundle: string): BundleScan {
   return {
     adapterId: held.adapterId,
     variantPrefix: held.variantPrefix,
-    isStore: held.isStore,
+    inDirectories: !held.isStore,
     list: () => held.list(),
     recognize: (entry) => held.recognize(entry),
+    fileContext: (entry) => fileContextOfEntry(held.root, entry),
   };
 }
 
@@ -279,6 +283,11 @@ export function currentConceptId(ref: string): string {
   // A stored ref with no bundle (an older record) names its asset by concept id alone: whichever bundle holds it now.
   const candidates = lookupBundles().filter((held) => bundle === undefined || held.name === bundle);
   return findIn(candidates, conceptId)?.conceptId ?? conceptId;
+}
+
+/** The asset as `akm show` renders it: its entry, with the path fields of a file at its key under `root`. */
+export function fileContextOf(asset: Asset, root: string): FileContext {
+  return fileContextOfEntry(root, asset.entry);
 }
 
 /** An asset's revision: the SHA-256 of its content. */
