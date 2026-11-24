@@ -45,6 +45,10 @@ export function makeGitRepo(options: MakeGitRepoOptions = {}): string {
   // A developer or CI runner with `commit.gpgsign = true` in their own git
   // config would otherwise fail every fixture commit here.
   git(dir, ["config", "commit.gpgsign", "false"]);
+  // From git 2.47 a commit ends by starting `git maintenance run --auto` detached: it can still hold
+  // `.git/objects/maintenance.lock` after the commit returns, so a test that then removes or rewrites `.git` races it
+  // (an ENOENT from `rmSync(".git")` on CI). No fixture commit may leave a git process running behind it.
+  git(dir, ["config", "maintenance.auto", "false"]);
   fs.writeFileSync(path.join(dir, "README.md"), "# fixture\n");
   git(dir, ["add", "README.md"]);
   git(dir, ["commit", "-q", "-m", "fixture"]);

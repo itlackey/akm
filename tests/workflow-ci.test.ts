@@ -36,6 +36,15 @@ describe("CI workflow", () => {
     expect(workflow.jobs.check?.steps?.some((step) => step.run === "bun run check")).toBe(true);
   });
 
+  test("runs neither the integration suite nor Gated CI: they gate releases only, from release.yml", () => {
+    const manifest = JSON.parse(fs.readFileSync(path.resolve(import.meta.dir, "../package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    expect(manifest.scripts.check).not.toContain("test:integration");
+    expect(source).not.toContain("test:integration");
+    expect(source).not.toContain("gated-ci.yml");
+  });
+
   test("only a release branch merges to main, and it ships the version it is named for", () => {
     // A pull request into main is a release (docs/maintainers/release-checklist.md). This check runs there only,
     // once the pull request is ready; the ruleset on main requires it, and a skipped `needs` would skip the
@@ -50,12 +59,11 @@ describe("CI workflow", () => {
     expect(run).toContain('[ "$VERSION" != "$' + '{HEAD#release/}" ]');
   });
 
-  test("the platform jobs, the plugins contract and Gated CI follow the release-branch check, so they run on a release pull request only", () => {
-    for (const job of ["desktop-package", "upgrade-rehearsal", "plugins-contract", "gated"]) {
+  test("the platform jobs and the plugins contract follow the release-branch check, so they run on a release pull request only", () => {
+    for (const job of ["desktop-package", "upgrade-rehearsal", "plugins-contract"]) {
       expect(workflow.jobs[job]?.needs, job).toBe("release-branch-only");
       expect(workflow.jobs[job]?.if, job).toBeUndefined();
     }
-    expect(workflow.jobs.gated?.uses).toBe("./.github/workflows/gated-ci.yml");
   });
 
   test("one run per pull request; a dispatch, a call from Release or a skipped draft run cancels nothing", () => {

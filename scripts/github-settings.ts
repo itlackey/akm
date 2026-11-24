@@ -13,8 +13,9 @@
  *   - environment `release` deploys from `main` and `release/*` only;
  *   - the release branches left over from the old process are deleted.
  *
- * The required checks are read from .github/workflows/ci.yml and gated-ci.yml (every job and matrix entry CI runs
- * on a release pull request), so the script is rerun after a matrix change and the ruleset follows. Idempotent.
+ * The required checks are read from .github/workflows/ci.yml (every job and matrix entry CI runs on a release pull
+ * request; Gated CI runs from the Release workflow, not on the pull request), so the script is rerun after a matrix
+ * change and the ruleset follows. Idempotent.
  * Needs `gh` logged in with admin rights on the repository.
  *
  *   bun scripts/github-settings.ts            # apply
@@ -36,13 +37,13 @@ type Job = {
 type Workflow = { jobs: Record<string, Job> };
 
 /** The check names GitHub reports for a workflow's jobs: `name` or the job id, one per matrix entry. */
-function checkNames(workflow: Workflow, prefix = ""): string[] {
+function checkNames(workflow: Workflow): string[] {
   const names: string[] = [];
   for (const [id, job] of Object.entries(workflow.jobs)) {
     if (job.uses) continue;
     const matrix = job.strategy?.matrix;
     if (!matrix) {
-      names.push(prefix + (job.name ?? id));
+      names.push(job.name ?? id);
       continue;
     }
     // One-dimensional matrices, as this repository's are: `include` entries, or one key with a list of values.
@@ -53,7 +54,7 @@ function checkNames(workflow: Workflow, prefix = ""): string[] {
       const name = job.name
         ? job.name.replace(/\$\{\{\s*matrix\.(\w+)\s*\}\}/g, (_, key: string) => String(entry[key]))
         : `${id} (${Object.values(entry).join(", ")})`;
-      names.push(prefix + name);
+      names.push(name);
     }
   }
   return names;
@@ -100,7 +101,7 @@ function main(): void {
   const remote = execFileSync("git", ["remote", "get-url", "origin"], { encoding: "utf8" }).trim();
   const repo = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/.exec(remote)?.[1];
   if (!repo) throw new Error(`origin is not a GitHub repository: ${remote}`);
-  const checks = [...checkNames(readWorkflow("ci.yml")), ...checkNames(readWorkflow("gated-ci.yml"), "gated / ")];
+  const checks = checkNames(readWorkflow("ci.yml"));
   console.log(`${repo}: ${checks.length} required checks on main:\n  ${checks.join("\n  ")}`);
 
   upsertRuleset(repo, {
