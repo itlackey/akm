@@ -41,19 +41,22 @@ describe("release workflow", () => {
     });
   });
 
-  test("runs CI and Gated CI as its own jobs for a prerelease, then one release job, then Desktop and akm-web", () => {
-    expect(Object.keys(workflow.jobs)).toEqual(["ci", "gated", "release", "desktop", "akm-web"]);
+  test("runs the gates as its own jobs, then one release job, then Desktop and akm-web", () => {
+    expect(Object.keys(workflow.jobs)).toEqual(["ci", "integration", "gated", "release", "desktop", "akm-web"]);
     expect(workflow.jobs.ci?.uses).toBe("./.github/workflows/ci.yml");
     expect(workflow.jobs.gated?.uses).toBe("./.github/workflows/gated-ci.yml");
-    expect(workflow.jobs.release?.needs).toEqual(["ci", "gated"]);
+    expect(workflow.jobs.integration?.steps?.some((step) => step.run === "bun run test:integration")).toBe(true);
+    expect(workflow.jobs.release?.needs).toEqual(["ci", "integration", "gated"]);
     expect(workflow.jobs.desktop?.needs).toBe("release");
     expect(workflow.jobs["akm-web"]?.needs).toBe("release");
-    // The merge that makes a stable passed the gates on its pull request: only a dispatch runs them here.
-    for (const gate of ["ci", "gated"]) {
-      expect(workflow.jobs[gate]?.if).toContain("github.event_name == 'workflow_dispatch'");
-      expect(workflow.jobs[gate]?.if).toContain("!inputs.dry_run");
+    // The merge that makes a stable passed CI on its pull request: only a dispatch runs it here.
+    expect(workflow.jobs.ci?.if).toBe("$" + "{{ github.event_name == 'workflow_dispatch' && !inputs.dry_run }}");
+    // The integration suite and Gated CI run nowhere else, so they gate the stable push and the prerelease alike.
+    for (const gate of ["integration", "gated"]) {
+      expect(workflow.jobs[gate]?.if).toBe("$" + "{{ !inputs.dry_run }}");
     }
-    // A skipped gate (a stable, a dry run) lets the release go on; a failed or cancelled one stops it.
+    // A skipped gate (CI for a stable, every gate for a dry run) lets the release go on; a failed or cancelled one
+    // stops it.
     expect(workflow.jobs.release?.if).toContain("!contains(needs.*.result, 'failure')");
     expect(workflow.jobs.release?.if).toContain("!contains(needs.*.result, 'cancelled')");
     // Nothing polls another workflow's run.
