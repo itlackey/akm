@@ -45,6 +45,19 @@ jobs:
           node-version: 22
       - run: bun install --frozen-lockfile
       - run: bun run check
+        env:
+          # Keeps the integration shards' logs and junit reports, uploaded below.
+          TEST_INTEGRATION_LOGDIR: ${{ runner.temp }}/akm-integration-shards
+      # Every run, green or not: the per-file times regenerate tests/integration/.timings.json
+      # (docs/architecture/testing/testing-workflow.md), and a red run's full shard logs show where it failed.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: always()
+        with:
+          name: integration-shards
+          path: ${{ runner.temp }}/akm-integration-shards/shard-*
+          retention-days: 14
+          if-no-files-found: ignore
+          overwrite: true
       - run: bun run build
 
   release-branch-only:

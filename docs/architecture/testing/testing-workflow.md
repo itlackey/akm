@@ -84,8 +84,9 @@ Relevant coverage:
 
 Both `scripts/test-unit.sh` (`bun run test:unit`) and `scripts/test-integration.sh`
 (`bun run test:integration`) shard their target across up to `min(nproc, 8)`
-concurrent `bun test` processes, splitting the file list round-robin — neither
-runner is a single shared process. Within one shard, every file assigned to that
+concurrent `bun test` processes — neither runner is a single shared process. The
+unit runner splits the file list round-robin; the integration runner balances it
+by recorded duration (below). Within one shard, every file assigned to that
 process still runs in **one shared process**: one `process.env`, one
 module-singleton namespace, and (under fake timers) one global clock for every
 file in that shard. A test that mutates shared state without restoring it, or
@@ -139,6 +140,30 @@ tripwire catches leaks):
    `semanticSearchMode: "auto"` and no fake embedder downloads a Hugging Face
    model mid-test; use the deterministic embedder (`AKM_EMBED_DETERMINISTIC`) or
    `"off"`.
+
+### Integration shard timings
+
+`tests/integration/.timings.json` records how many seconds each integration test
+file took in a past run. `scripts/test-integration.sh` hands the files out longest
+first, each to the shard with the least recorded time so far
+(`scripts/integration-timings.ts plan`); a file with no record, such as a new one,
+weighs the median, and ties go by path, so every machine plans the same shards. The
+seconds only rank the files, so times from a local run serve as well as CI's.
+
+Each shard writes a junit report (`shard-N.xml`) and its file list
+(`shard-N.files`) next to its log. CI keeps that directory
+(`TEST_INTEGRATION_LOGDIR`) and uploads it as the `integration-shards` artifact of
+every `check` run. When the shards drift apart (compare the `time` on the
+`<testsuites>` line of each `shard-N.xml`), regenerate the file from one run's reports and commit it:
+
+```sh
+gh run download <run-id> --name integration-shards --dir /tmp/shards
+bun scripts/integration-timings.ts update /tmp/shards/shard-*.xml
+```
+
+`update` takes the reported time for every file the reports name, keeps the
+record of any other file, and drops files that no longer exist. A local run works
+the same way: `TEST_INTEGRATION_LOGDIR=/tmp/shards bun run test:integration`.
 
 ### The preload
 
