@@ -47,6 +47,14 @@ jobs:
           node-version: 22
       - run: bun install --frozen-lockfile
       - run: bun run check
+      # Three integration tests guard module boundaries and stored fields cheaply, so they run on every pull request,
+      # not only at release; the FTA complexity report goes to the job summary and never fails the step.
+      - name: Architecture checks and complexity report
+        run: |
+          status=0
+          bun run test:architecture || status=$?
+          bun run report:complexity || true
+          exit "$status"
       - run: bun run build
 
   release-branch-only:

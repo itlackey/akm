@@ -80,6 +80,8 @@
     "desktop:setup": "cd desktop && bun run prepare:core",
     "build": "rm -rf dist && bun scripts/gen-config-schema.ts && bun run tsc --project ./tsconfig.build.json && bun scripts/copy-assets.ts && bun scripts/fix-esm-extensions.ts",
     "check": "bun run lint && bunx tsc --noEmit && bun run test:unit",
+    "test:architecture": "bun test tests/integration/architecture/persisted-fields.test.ts tests/integration/architecture/stdio-owner.test.ts tests/integration/architecture/secret-resolver-boundary.test.ts",
+    "report:complexity": "bun scripts/fta-report.ts",
     "check:changed": "bun run lint && bunx tsc --noEmit && bun test tests/integration/output-baseline.test.ts tests/integration/registry/registry-search.test.ts tests/integration/show-argv-entrypoint.test.ts tests/output-shapes-unit.test.ts",
     "check:ci": "bash scripts/check-like-ci.sh",
     "sweep:tmp": "bun scripts/sweep-test-tmp.ts",
@@ -119,6 +121,7 @@
     "ajv": "8.20.0",
     "bun-types": "^1.3.13",
     "cmd-shim": "9.0.2",
+    "fta-cli": "3.1.0",
     "typescript": "^5.9.3"
   },
   "optionalDependencies": {
