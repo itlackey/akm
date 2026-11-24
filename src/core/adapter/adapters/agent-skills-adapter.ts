@@ -241,7 +241,6 @@ async function validate(_c: Bundle, changes: FileChange[], ctx: FileValidateCont
 export class AgentSkillsAdapter extends DirectoryAdapterBase {
   readonly id = "agent-skills";
   readonly version = "0.9.0";
-  override readonly extensions = [".md"];
 
   protected identify(relPath: string): string | null {
     return skillPackage(relPath)?.conceptId ?? null;

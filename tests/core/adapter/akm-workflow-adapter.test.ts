@@ -50,9 +50,8 @@ const ctx: FileValidateContext = {
 };
 
 describe("akm-workflow adapter — metadata", () => {
-  test("id / extensions", () => {
+  test("id", () => {
     expect(akmWorkflowAdapter.id).toBe("akm-workflow");
-    expect(akmWorkflowAdapter.extensions).toEqual([".md"]);
   });
 
   test("a non-workflow markdown (README) abstains", () => {

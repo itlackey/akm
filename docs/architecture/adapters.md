@@ -270,8 +270,7 @@ The template methods:
 - `retire`, `retired`, `restore`, `forget` and `expireRetired` delegate to
   `directory-archive.ts` (see [Retire and delete](#retire-and-delete)).
 
-`spellings` is distinct from `extensions`: extensions are non-exhaustive walk
-hints. Spellings preserve canonical directory manifests (for example
+`spellings` preserve canonical directory manifests (for example
 `skills/<name>/SKILL.md`) so lookup, index-backed show and workflow runtime
 share one decision about which file owns a concept.
 

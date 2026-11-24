@@ -94,8 +94,6 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   get retires(): readonly string[] {
     return [];
   }
-  /** Recognized extensions, a hint for the walk. Recognition, not this list, says what an asset is. */
-  readonly extensions: readonly string[] = [];
   /**
    * How the bundle is listed. `"akm"`: the akm-bundle walk (skips dot-directories, `bin/`, `.cache/`; lists
    * git-ignored `env/` and `secrets/` files). `"all-directories"`: every directory except `.git` and `node_modules`.
