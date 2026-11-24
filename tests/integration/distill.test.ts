@@ -42,6 +42,7 @@ import {
   withEnv,
   withIsolatedAkmStorage,
 } from "../_helpers/sandbox";
+import { withSeam } from "../_helpers/seams";
 
 // ── Test scaffolding ────────────────────────────────────────────────────────
 
@@ -245,6 +246,51 @@ describe("akmDistill — selected-root lookup", () => {
     const db = openStateDatabase(getStateDbPath());
     try {
       expect(getAssetSalience(db, "knowledge/team-only")?.encoding_salience).toBeGreaterThan(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an input in a `writable: false` bundle keeps its file; its salience is the state.db row (F20)", async () => {
+    const stash = makeStashDir();
+    const vendor = makeStashDir();
+    const config = {
+      ...configEnabled(stash),
+      bundles: { stash: { path: stash, writable: true }, vendor: { path: vendor, writable: false } },
+    } as AkmConfig;
+    saveConfig(config);
+    const vendorFile = path.join(vendor, "knowledge", "vendor-only.md");
+    const bytes = "---\ndescription: Vendor only\n---\n\nVendor only body.\n";
+    fs.writeFileSync(vendorFile, bytes, "utf8");
+    const warnings: string[] = [];
+
+    const result = await withSeam(
+      _setWarnSinkForTests,
+      (level, args) => {
+        if (level === "warn") warnings.push(args.join(" "));
+      },
+      () =>
+        akmDistill({
+          ref: "knowledge/vendor-only",
+          stashDir: stash,
+          config,
+          lookupFn: async () => vendorFile,
+          readEventsFn: emptyEvents,
+          chat: async () => VALID_LESSON,
+        }),
+    );
+
+    // The skipped mirror is no error and no failed outcome.
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("queued");
+    expect(warnings.filter((warning) => /vendor|salience|writable/i.test(warning))).toEqual([]);
+    expect(fs.readFileSync(vendorFile, "utf8")).toBe(bytes);
+    // Salience is read from state.db (the frontmatter copy is for audit only): the row is there without the mirror.
+    const db = openStateDatabase(getStateDbPath());
+    try {
+      const row = getAssetSalience(db, "knowledge/vendor-only");
+      expect(row?.encoding_source).toBe("content");
+      expect(row?.encoding_salience).toBeGreaterThan(0);
     } finally {
       db.close();
     }
