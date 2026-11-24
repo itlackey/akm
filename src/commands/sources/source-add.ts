@@ -4,8 +4,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { adapterSkipMessage, adapterSkipOf } from "../../core/adapter/adapter-skips";
 import { isBundleSlug } from "../../core/asset/asset-ref";
-import { adapterSkipMessage, adapterSkipOf } from "../../core/assets/adapter-skips";
 import { adapterAddressedBy, assertKnownAdapter, detectBundleAdapter } from "../../core/assets/gate";
 import { slugForRegistryId, validateExplicitBundleName } from "../../core/bundle-id";
 import { isHttpUrl, resolveStashDir } from "../../core/common";

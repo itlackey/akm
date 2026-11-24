@@ -103,12 +103,13 @@ interface BundleAdapter {
   read(b: Bundle, conceptId: string, locator?: unknown): BundleAsset | undefined; // any spelling in, canonical id out
   recognize(b: Bundle, entry: AssetEntry): IndexDocument | null; // the only producer of a type
   validate(b: Bundle, edits: AssetEdit[], ctx: ValidateContext): Promise<Diagnostic[]>;
+  rendererFor(type: string): string | undefined; // how `akm show` renders a type it does not present; undefined: match the entry live
 
   place(b: Bundle, asset: { type; name }): AssetPlacement;       // where a create would go: its concept id, and for files the key
   create(b: Bundle, asset: NewAsset,
-    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any"; locator?: unknown }): AssetChange;
+    options?: { replace?: boolean; verbatim?: boolean; locator?: unknown }): AssetChange;
   update(b: Bundle, conceptId: string, content: string | Buffer,
-    options?: { throughLink?: boolean; locator?: unknown }): AssetChange;
+    options?: { locator?: unknown }): AssetChange;
   delete(b: Bundle, conceptId: string, options?: { locator?: unknown }): AssetChange[]; // one per asset
   retire(b: Bundle, conceptId: string, note: RetireNote): Array<AssetChange & { handle: string }>; // one per asset
   packageFiles(b: Bundle, conceptId: string): PackageFile[];     // every file under a package entry's folder
@@ -125,7 +126,6 @@ interface BundleAdapter {
   looksLikeRoot?(root: string): boolean;       // install-time probe only
   contentType?(b: Bundle, entry: AssetEntry): string | undefined;      // the type the bytes give, without describing
   declaredType?(key: string): string | undefined;                      // the type a key's folder declares (`memories/`)
-  rendererFor?(type: string): string | undefined;                      // how `akm show` renders a type it does not present
   prefixOf?(type: string): string;                                     // what a create puts before a name in the concept id (`tasks/`)
   identifyKey?(b: Bundle, key: string): string | null;                 // converters of old stored records only
 }
@@ -149,7 +149,9 @@ bundle that holds that type. A store that cannot be reached at all is not a
 listing: `list` throws `BUNDLE_UNREACHABLE`.
 
 Every member not marked optional is required. A base class implements the
-members its adapters do not support by refusing. `writes` is per type because
+members its adapters do not support by refusing. Both bases answer `rendererFor`
+with the type's own renderer; `akm` answers undefined (its assets are matched
+live) and `akm-workflow` the workflow renderer. `writes` is per type because
 "a secret is deleted, never archived" is a fact about a type, which the adapter
 owns. `create` writes the adapter's own form of the type, or with `verbatim`
 exactly `asset.content` (a proposal's reviewed bytes); over an existing concept
@@ -263,15 +265,18 @@ The template methods:
   `UsageError` naming the file when the placed file would be no asset
   (`create knowledge "index"`, `create secret "x.lock"`).
 - `create`, `update` and `delete` write atomically (`writeFileAtomic`) and
-  refuse a path that leaves the bundle's root or passes through a symbolic link
-  below it (`assertWritableFile`). `place` is checked first, and an adapter
+  refuse a path that leaves the bundle's root. A create or update follows a
+  symbolic link below it only when the link leads to an existing file or folder
+  inside the bundle; any other link refuses the write. A create replaces such a
+  link with a regular file, an update writes where it leads and keeps it, and a
+  hard link is a regular file. `delete` refuses any link
+  (`assertWritableFile`). `place` is checked first, and an adapter
   whose `writes` lacks the type refuses as an invariant error a user never sees:
   the facade checks `writes` before it calls.
 - `retire`, `retired`, `restore`, `forget` and `expireRetired` delegate to
   `directory-archive.ts` (see [Retire and delete](#retire-and-delete)).
 
-`spellings` is distinct from `extensions`: extensions are non-exhaustive walk
-hints. Spellings preserve canonical directory manifests (for example
+`spellings` preserve canonical directory manifests (for example
 `skills/<name>/SKILL.md`) so lookup, index-backed show and workflow runtime
 share one decision about which file owns a concept.
 
@@ -386,12 +391,20 @@ once, where the bundle is resolved (`detectBundleAdapter`,
 | `read.ts` | `qualifyRef`, `lookupAsset`, `findAsset`, `requireAsset`, `readAsset`, `listAssets`, `packageFilesAt`, `currentConceptId`, `assetRevision` |
 | `type.ts` | `assetType`, `assetTypes`, `assetTypeFresh`, `typeOfContent`, `recognizeContent`, `presentationOf`, `indexAsset`, `embedPendingWrites` |
 | `write.ts` | `writeAssets`, `addressOf`, `fileOfRef`, `legacyRefOf` |
-| `validate.ts` | `validateBundleAssets`: `akm lint`'s scan of a bundle |
-| `gate.ts` | what callers decide before they write or configure: `assertAdapterWrites`, `adapterWrites`, `refuseByAdapter`, `adapterAddressedBy`, `detectBundleAdapter`, `adapterLintsAlone`, `bundleStorageExists`, `clearAdapterCaches` |
-| `files.ts` | `indexFiles`: index rows for files akm did not write through the facade (the Desktop Files view) |
-| `held.ts` | what a directory bundle keeps at a stored key, for `akm lint`'s reachability checks |
-| `adapter-skips.ts` | what a bundle's adapter skips (`akm doctor`, `akm bundle add`) |
+| `validate.ts` | `validateBundleAssets`: `akm lint`'s scan of a bundle; `storeFindings`: what the configured keyrings and vaults report (a bundle kept in files has none) |
+| `gate.ts` | what callers decide before they write or configure, asked of a bundle (its id or its source record), never of an adapter id a caller computed: `assertAdapterWrites`, `adapterWrites`, `refuseByAdapter`, `adapterNameOf` (for a message), `adapterAddressedBy`, `detectBundleAdapter`, `adapterDeclaresTypes`, `adapterLintsAlone`, `bundleStorageExists`, `clearAdapterCaches`; and `renderIndexedExecutionSource`, which renders a command or persona for `akm run` by the adapter its index row records |
+| `files.ts` | `indexFiles`: index rows for files akm did not write through the facade (the Desktop Files view); and, re-exported under `files-view`, the path rules and the plain-file write check the Files view uses |
 | `bundle.ts`, `asset.ts`, `index-rows.ts` | internal: `AssetBundle` (holds its adapter), `Asset`, and the index rows the facade records |
+
+The facade re-exports no adapter module but the contract (`facade-reexport`).
+Code that needs an adapter module's internals imports it itself, under an
+exemption the lint counts: `akm lint` and its base checks read what a bundle
+keeps that no adapter lists (`directory/held-files`) and run the akm adapter's
+own checks (`adapters/akm-lint`) under `base`, as do `akm show`'s
+unknown-extension hint and the execution loader (`directory/file-context`) and
+`akm health`'s archive size (`directory-archive`). `akm doctor` and `akm bundle
+add` import the adapter-skip report (`adapter-skips`), which the lint lists as
+importable.
 
 An **`Asset`** is `{ bundle, conceptId, ref, entry }`: its identity and the
 entry that holds it. It carries no root.
@@ -505,7 +518,9 @@ says which of those types it takes out recoverably.
 - `retire` writes the tombstone `cleanup.md` first, then renames the file to
   `.akm/memory-cleanup/archive/<archivedAt>-<concept id>[-n]/<originalPath>`. A
   crash between the two leaves a tombstone for a move that did not happen, and
-  the file where it was.
+  the file where it was; a resumed `proposal accept` counts a retirement only
+  once its asset is gone, so it forgets such a tombstone and retires the asset
+  again.
 - A retirement's `handle` is its archive directory relative to the root. It is
   opaque to callers: never parsed, joined or treated as a path; output may print
   it as a string.
@@ -585,13 +600,13 @@ These stay outside the facade for good. Each carries a reason in the lint
 ## Enforcement
 
 `scripts/lint-asset-io.ts` runs in `bun run lint`. Over `src/` and
-`desktop/src/lib/server/` it checks twelve rules, outside `src/core/adapter/`
+`desktop/src/lib/server/` it checks thirteen rules, outside `src/core/adapter/`
 and `src/core/assets/` unless the rule says otherwise:
 
 | Rule | Flags |
 | --- | --- |
 | `asset-io` | a call that reads, writes, stats or walks files, or asks the registry for an adapter |
-| `adapter-import` | an import from `src/core/adapter/**` other than `bundle-adapter` and `types`, the walk (`directory/`) included |
+| `adapter-import` | an import from `src/core/adapter/**` other than `bundle-adapter`, `types` and `adapter-skips`, the walk (`directory/`) included |
 | `facade-internal` | an import of `src/core/assets/bundle`, `asset` or `index-rows` |
 | `adapter-id` | a registry id compared with anything, `kind === "location"`, or `.fileless` |
 | `entry-file` | `entry.file`: a path is for display or for a program, never for finding an asset |
@@ -599,6 +614,7 @@ and `src/core/assets/` unless the rule says otherwise:
 | `facade-export` | an export of a public facade module that nothing outside the facade imports |
 | `facade-fs` | inside `src/core/assets/`: a file-access call; the facade reaches storage through adapters only |
 | `facade-adapter-id` | inside `src/core/assets/`: what `adapter-id` flags; adapter-specific behaviour is a contract member |
+| `facade-reexport` | in a public facade module: an `export ... from` an adapter module other than the contract; only `files-view` exempts it |
 | `store-sniff` | a test of whether a bundle is a store: `.isStore`, `addressedBy`, or `.location` compared |
 | `entries-sql` | raw SQL on the `entries` table or `index_meta` outside `src/storage/`, `src/core/assets/` and `src/indexer/` |
 | `entry-file-logic` | `entry.file` compared (a test against `undefined` excepted) or used as a map or set key |
@@ -774,10 +790,11 @@ they actually work:
   (the skill and LLM Wiki exemptions, the bundle's `lint.skip`, an adapter's
   own exclusions). The `akm lint` sweep and every adapter's `validate` call
   them; `createBaseChecker` (`adapters/shared.ts`) is the adapter's way in. It
-  reads refs from disk, the other bundles from `ValidateContext.sources` and the
-  settings from `ValidateContext.config` (the run's own; it reads the config
-  itself only when the context carries none), so a pending change in the context
-  does not satisfy a ref, and it never writes. The per-type checks are one table,
+  reads refs from disk and the settings from `ValidateContext.config` (the run's
+  own; it reads the config itself only when the context carries none). The other
+  bundles are the sources those settings resolve to, found once per `validate`
+  by `DirectoryAdapterBase.validate`; a caller does not pass them. A pending
+  change in the context does not satisfy a ref, and it never writes. The per-type checks are one table,
   `perTypeChecks` (`adapters/akm-lint.ts`), keyed by akm type and read by the
   sweep and by `validate`; the one exception is the skill folder check, which
   has a directory walk for the sweep and `skillDirectoryDiagnostics` for
@@ -804,9 +821,11 @@ they actually work:
 - **`generic-files` is the only adapter with no auto-detection at all.**
   `looksLikeRoot` always returns `false`; a bundle only gets this adapter
   through an explicit `adapter: "generic-files"` override.
-- **A location bundle's rows have no file.** A keyring's or vault's entries are
-  index rows with an empty file path, found by ref. The bundle's source still
-  names a directory, `$CACHE/index/bundles/<bundle>`, where nothing is written.
+- **A location bundle has no directory.** A keyring's or vault's entries are
+  index rows with an empty file path, found by ref, and no directory maps to the
+  bundle (`bundleAtDir`). Its source carries a key in place of a path
+  (`getStoreSourceKey`, `src/core/paths.ts`), because the source lists and the
+  indexer tell sources apart by path; nothing is created there.
 
 ---
 

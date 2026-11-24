@@ -143,7 +143,6 @@ export class AkmWorkflowAdapter extends AkmFormatAdapterBase {
   readonly id = "akm-workflow";
   readonly version = "0.10.0";
   override readonly writes = ["workflow"];
-  override readonly extensions = [".md"];
 
   protected identify(relPath: string): string | null {
     return conceptIdOf(relPath);
@@ -157,7 +156,7 @@ export class AkmWorkflowAdapter extends AkmFormatAdapterBase {
     return "workflow";
   }
 
-  rendererFor(): string {
+  override rendererFor(): string {
     return "workflow-md";
   }
 

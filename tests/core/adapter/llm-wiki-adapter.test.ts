@@ -50,9 +50,8 @@ function docSources(doc: IndexDocument): string[] {
 // ── metadata ─────────────────────────────────────────────────────────────────
 
 describe("llm-wiki adapter — metadata", () => {
-  test("id / extensions", () => {
+  test("id", () => {
     expect(llmWikiAdapter.id).toBe("llm-wiki");
-    expect(llmWikiAdapter.extensions).toEqual([".md"]);
   });
 });
 

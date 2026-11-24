@@ -3,7 +3,7 @@
  *
  * Bundle adapters are the one layer that reads and writes assets. Code outside it works with assets through the
  * facade in `src/core/assets/` and never learns which adapter holds one, where, or under what file name. This script
- * counts what still breaks that, in twelve rules, over `src/` and `desktop/src/lib/server/` (outside
+ * counts what still breaks that, in thirteen rules, over `src/` and `desktop/src/lib/server/` (outside
  * `src/core/adapter/` and `src/core/assets/`, except where a rule says otherwise):
  *
  *   asset-io         a call that reads, writes, stats or walks files, sync or async (`readFileSync`, `fs.promises.stat`,
@@ -25,6 +25,10 @@
  *                    Registry calls (`adapterForId`, `getAdapters`) are the facade's job and are not flagged.
  *   facade-adapter-id (inside `src/core/assets/`) what `adapter-id` flags: the facade does not know which adapter an
  *                    asset has either; adapter-specific behaviour is a contract method.
+ *   facade-reexport  (in a public facade module) an `export ... from` an adapter module other than the contract: the
+ *                    facade answers about assets, and an adapter's internals or file functions passed through under its
+ *                    name are a caller's adapter-import the lint would not count. A caller that needs one imports it
+ *                    itself, under an exemption.
  *   store-sniff      a test of whether a bundle is a store: `.isStore`, `addressedBy`, or `.location` compared
  *                    (`=== undefined` included), outside the adapter layer.
  *   entries-sql      raw SQL on the `entries` table or `index_meta` (`FROM entries`, `INSERT INTO index_meta`, ...)
@@ -36,7 +40,8 @@
  * A line may carry `// asset-io: <reason>` (same line, or a comment line before it) for access that is not an
  * asset: the reason is one word from REASONS, optionally followed by text. Each rule accepts only the reasons in
  * `reasonsFor`: `entry-file` takes `display` and `exec`; `store-sniff` takes `config` (a bundle's config entry read as
- * config: copied, validated, described); the other rules that are not file access take none. `deprecated` (workflow
+ * config: copied, validated, described); `facade-reexport` takes `files-view` (the Files view's path rules); the other
+ * rules that are not file access take none. `deprecated` (workflow
  * code, removed in 0.11) is accepted everywhere but `facade-export`; `base` (asset access kept as the base release
  * does it until the owner rules on it) by `asset-io`, `entry-file` and `adapter-import`. A missing or unknown reason
  * is no exemption. The exemptions in use are counted per reason and printed.
@@ -60,6 +65,7 @@ const RULES = [
   "facade-export",
   "facade-fs",
   "facade-adapter-id",
+  "facade-reexport",
   "store-sniff",
   "entries-sql",
   "entry-file-logic",
@@ -74,8 +80,17 @@ const SCAN_ROOTS = ["src", "desktop/src/lib/server"];
 const ADAPTER_LAYER = ["src/core/adapter/", "src/core/assets/"];
 /** What may import `src/core/adapter/**` modules: the layer, and the recognition helpers in `src/indexer/passes/metadata.ts`. */
 const ADAPTER_IMPORT_LAYER = [...ADAPTER_LAYER, "src/indexer/passes/metadata.ts"];
-/** The adapter modules the rest of the code may import: the contract and the shared value types. The walk is not one. */
-const IMPORTABLE_ADAPTER_MODULES = ["src/core/adapter/bundle-adapter", "src/core/adapter/types"];
+/**
+ * The adapter modules the rest of the code may import: the contract, the shared value types, and the report that compares
+ * two adapters' listings of a directory (`akm doctor`, `akm bundle add`). The walk is not one.
+ */
+const IMPORTABLE_ADAPTER_MODULES = [
+  "src/core/adapter/bundle-adapter",
+  "src/core/adapter/types",
+  "src/core/adapter/adapter-skips",
+];
+/** The adapter modules a public facade module may re-export: the contract and the shared value types. */
+const REEXPORTABLE_ADAPTER_MODULES = ["src/core/adapter/bundle-adapter", "src/core/adapter/types"];
 /** Where raw SQL on the index tables is at home. */
 const ENTRIES_SQL_ALLOWED = ["src/storage/", "src/core/assets/", "src/indexer/"];
 /** Registry calls: asset-io flags them outside the layer; the facade is where they belong. */
@@ -108,6 +123,7 @@ function reasonsFor(rule: Rule): readonly string[] {
   if (rule === "entry-file") return ["display", "exec", "base", "deprecated"];
   if (rule === "adapter-import") return ["base", "deprecated"];
   if (rule === "store-sniff") return ["config", "deprecated"];
+  if (rule === "facade-reexport") return ["files-view"];
   if (rule === "facade-export" || rule === "entry-file-logic") return [];
   return ["deprecated"];
 }
@@ -434,6 +450,14 @@ export function scan(root: string, adapterIds: readonly string[], exemptions: st
           report(node, "adapter-import", target);
         }
         if (!inAdapterLayer && FACADE_INTERNAL_MODULES.includes(target)) report(node, "facade-internal", target);
+        if (
+          ts.isExportDeclaration(node) &&
+          isPublicFacadeModule(file.replace(/\.ts$/, "")) &&
+          target.startsWith("src/core/adapter/") &&
+          !REEXPORTABLE_ADAPTER_MODULES.includes(target)
+        ) {
+          report(node, "facade-reexport", target);
+        }
         if (!inFacade) {
           const clause = ts.isImportDeclaration(node) ? node.importClause : undefined;
           const bindings = clause?.namedBindings;

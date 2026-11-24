@@ -136,9 +136,9 @@ export function assetTypesByContent(assets: readonly Asset[]): Map<Asset, string
 
 /**
  * How `akm show` presents an asset whose index row says `row`: `"projection"` when its adapter presents it itself,
- * else the renderer match. An akm asset is matched live, on the bytes the file has now (so an edit made outside akm is
- * shown as the next index would type it); a workflow bundle's is the workflow renderer; any other adapter's is its
- * type's renderer, and an asset of a type with none is matched live too. `null`: nothing claims the asset.
+ * else the renderer the row's adapter names for the type (`rendererFor`). An adapter that names none has the asset
+ * matched live, on the bytes the file has now (so an edit made outside akm is shown as the next index would type it), as
+ * is a row that records no adapter. `null`: nothing claims the asset.
  */
 export function presentationOf(
   asset: Asset,
@@ -146,10 +146,11 @@ export function presentationOf(
 ): MatchResult | "projection" | null {
   if (row.ownsPresentation === true) return "projection";
   const adapter = row.adapterId === undefined ? undefined : adapterForId(row.adapterId);
+  // A row an adapter akm no longer has wrote is rendered as its type is.
   const renderer =
     row.adapterId === undefined
       ? undefined
-      : adapter?.rendererFor
+      : adapter
         ? adapter.rendererFor(row.type)
         : presentationFor(row.type).renderer;
   if (renderer !== undefined) {

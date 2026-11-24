@@ -87,18 +87,9 @@ export interface AssetWriter {
   address(ref: string): AssetAddress;
   /**
    * `exclusive`: refuse an existing asset. `verbatim`: keep `content` exactly, not in the adapter's form for the type.
-   * `replaceLink`: an asset file that is a symbolic link to a file inside the bundle is replaced by a regular file;
-   * `"any"`: a link to anywhere (or to nothing) is replaced, and what it led to is not written (clone, as base).
    */
-  create(
-    asset: NewAsset,
-    options?: { exclusive?: boolean; verbatim?: boolean; replaceLink?: boolean | "any" },
-  ): WriteResult;
-  update(
-    conceptId: string,
-    content: string | Buffer,
-    options?: { revision?: string; throughLink?: boolean },
-  ): WriteResult;
+  create(asset: NewAsset, options?: { exclusive?: boolean; verbatim?: boolean }): WriteResult;
+  update(conceptId: string, content: string | Buffer, options?: { revision?: string }): WriteResult;
   /** A package entry deletes its whole package, non-asset files included. */
   delete(conceptId: string, options?: { revision?: string }): WriteResult;
   /**
@@ -283,13 +274,12 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
         held.create(asset, {
           replace: !options?.exclusive,
           verbatim: options?.verbatim,
-          replaceLink: options?.replaceLink,
         }),
       );
     },
     update(conceptId, content, options) {
       existing(conceptId, options);
-      return result(held.update(conceptId, content, { throughLink: options?.throughLink }));
+      return result(held.update(conceptId, content));
     },
     delete(conceptId, options) {
       existing(conceptId, options);

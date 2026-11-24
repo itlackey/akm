@@ -375,6 +375,29 @@ describe("lint-asset-io", () => {
     ]);
   });
 
+  test("facade-reexport flags a public facade module passing an adapter module through; the contract and files-view pass", () => {
+    expect(
+      violationsOf(["facade-reexport"], {
+        "src/core/assets/held.ts": 'export { heldText } from "../adapter/directory/held-files";\n',
+        "src/core/assets/validate.ts":
+          'export { perTypeChecks } from "../adapter/adapters/akm-lint";\nexport type { FileDiagnostic } from "../adapter/validate-context";\n',
+        "src/core/assets/gate.ts": 'export { bundleAdapterId } from "../adapter/detect-adapter";\n',
+        "src/core/assets/read.ts":
+          'export type { AssetEntry } from "../adapter/bundle-adapter";\nexport type { Bundle } from "../adapter/types";\nexport type { Asset } from "./asset";\n',
+        "src/core/assets/files.ts":
+          '// asset-io: files-view the Files view\nexport { placeTypeOf } from "../adapter/directory/place-rules";\nexport { isFileOrFileSymlink } from "../adapter/directory/walker"; // asset-io: base\n',
+        "src/core/assets/bundle.ts": 'export { bundleOf } from "../adapter/registry";\n',
+        "src/core/adapter/adapters/x.ts": 'export { heldText } from "../directory/held-files";\n',
+      }).sort(),
+    ).toEqual([
+      "src/core/assets/files.ts facade-reexport",
+      "src/core/assets/gate.ts facade-reexport",
+      "src/core/assets/held.ts facade-reexport",
+      "src/core/assets/validate.ts facade-reexport",
+      "src/core/assets/validate.ts facade-reexport",
+    ]);
+  });
+
   test("an exemption's first word must be in the vocabulary, and a rule accepts only its reasons", () => {
     const reasons = Object.keys(REASONS);
     expect(reasons).toContain("deprecated");

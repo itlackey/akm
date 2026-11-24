@@ -11,7 +11,7 @@
 import { stashDirFor, withoutTypeHead } from "../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
-import { adapterWrites, bundleAdapterId, placedPrefixOf } from "../core/assets/gate";
+import { adapterNameOf, adapterWrites, placedPrefixOf } from "../core/assets/gate";
 import { type Asset, findAsset, listAssets, readAsset, requireAsset } from "../core/assets/read";
 import { assetTypes } from "../core/assets/type";
 import { addressOf } from "../core/assets/write";
@@ -191,7 +191,7 @@ export function resolveTask(source: TaskBundleSource, input: string): { asset: A
 /** The sentence for a task a bundle does not hold, naming the id and the adapter. */
 export function taskNotFound(source: TaskBundleSource, shown: string): NotFoundError {
   return new NotFoundError(
-    `Task ${JSON.stringify(shown)} was not found in the configured ${JSON.stringify(bundleAdapterId(source))} bundle.`,
+    `Task ${JSON.stringify(shown)} was not found in the configured ${JSON.stringify(adapterNameOf(taskBundleId(source)))} bundle.`,
     "ASSET_NOT_FOUND",
   );
 }

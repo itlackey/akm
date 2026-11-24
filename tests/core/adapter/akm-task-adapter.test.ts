@@ -51,11 +51,8 @@ const ctx: FileValidateContext = {
 };
 
 describe("akm-task adapter — metadata", () => {
-  test("id / extensions", () => {
+  test("id", () => {
     expect(akmTaskAdapter.id).toBe("akm-task");
-    // `.yaml` is a COLLECTION hint only (issue #760) so `akm lint` routes the
-    // near-miss spelling into `validate` instead of walking past it.
-    expect(akmTaskAdapter.extensions).toEqual([".yml", ".yaml"]);
   });
 
   test("a README markdown abstains (tasks are YAML)", () => {

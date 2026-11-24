@@ -407,6 +407,53 @@ describe("akm proposal accept on a retire proposal", () => {
       expect(result.proposal.backupContent).toBe(backupContent);
     });
 
+    test("tombstone written but the file never moved — accept retires the asset, and revert puts it back", async () => {
+      const oldPath = writeAsset("memories/old-note.md", "description: an old note");
+      const newPath = writeAsset("memories/new-note.md", "description: a new note");
+      const config = makeConfig(storage.stashDir);
+      const proposal = createRetireProposal(storage.stashDir, {
+        ref: "memories/old-note",
+        source: "consolidate-pair",
+        retirement: retirement({
+          retiredPath: oldPath,
+          retiredRef: "memories/old-note",
+          successorPath: newPath,
+          successorRef: "memories/new-note",
+        }),
+      });
+      const backupContent = fs.readFileSync(oldPath, "utf8");
+      const db = openStateDatabase();
+      try {
+        upsertProposal(db, { ...proposal, retireAcceptIntent: { backupContent } }, stateBundleId(storage.stashDir));
+      } finally {
+        db.close();
+      }
+      // Simulate a crash between the tombstone write and the move: a tombstone under this proposal's id, the file
+      // still at its place.
+      archiveCleanupCandidate(
+        storage.stashDir,
+        {
+          ref: "memories/old-note",
+          reason: "duplicate",
+          proposalId: proposal.id,
+          successorRefs: ["memories/new-note"],
+        },
+        oldPath,
+      );
+      const stale = findArchiveEntry("memories/old-note.md");
+      fs.renameSync(stale.archivedAbs, oldPath);
+
+      const result = await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
+      expect(result.proposal.status).toBe("accepted");
+      expect(fs.existsSync(oldPath)).toBe(false);
+      expect(result.proposal.retiredArchive?.retired).toHaveLength(1);
+      expect(fs.existsSync(stale.dirAbs)).toBe(false);
+
+      const reverted = await akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config });
+      expect(reverted.proposal.status).toBe("reverted");
+      expect(fs.readFileSync(oldPath, "utf8")).toBe(backupContent);
+    });
+
     test("a target gone with no recorded intent still refuses cleanly (not our own crash)", async () => {
       const oldPath = writeAsset("memories/old-note.md", "description: an old note");
       const newPath = writeAsset("memories/new-note.md", "description: a new note");

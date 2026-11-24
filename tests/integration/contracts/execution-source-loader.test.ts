@@ -10,7 +10,6 @@ import {
   type ExecutionSourceLookup,
   loadAdapterExecutionSource,
 } from "../../../src/commands/command/execution-source-loader";
-import { adapterForId } from "../../../src/core/adapter/registry";
 import { slugForPath } from "../../../src/core/bundle-id";
 import type { AkmConfig } from "../../../src/core/config/config-types";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
@@ -344,28 +343,22 @@ describe("adapter-owned execution source loading", () => {
   test("rejects renderer file and hash identity drift", async () => {
     const fixture = installFixture("akm", "command");
     const entry = entryFor(fixture.root, fixture.destination, "akm", fixture.conceptId, "command");
-    const adapter = adapterForId("akm");
-    if (!adapter) throw new Error("missing built-in akm adapter");
-
     await expect(
       loadAdapterExecutionSource("fixture//commands/contract-review", "command", {
         config: fixtureConfig(fixture.root, "akm"),
         lookup: lookupFor(entry),
-        adapterFor: () => ({
-          ...adapter,
-          renderExecutionSource: () =>
-            createAdapterRenderedExecutionSource({
-              kind: "command",
-              content: "forged body",
-              identity: {
-                ref: entry.itemRef,
-                bundle: entry.bundleId,
-                adapter: entry.adapterId,
-                file: "commands/other.md",
-                hash: "b".repeat(64),
-              },
-            }),
-        }),
+        render: () =>
+          createAdapterRenderedExecutionSource({
+            kind: "command",
+            content: "forged body",
+            identity: {
+              ref: entry.itemRef,
+              bundle: entry.bundleId,
+              adapter: entry.adapterId,
+              file: "commands/other.md",
+              hash: "b".repeat(64),
+            },
+          }),
       }),
     ).rejects.toThrow(/identity drift|hash|file/i);
   });

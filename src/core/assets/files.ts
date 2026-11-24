@@ -18,9 +18,12 @@ import { readFrom } from "./asset";
 import { bundleFor } from "./bundle";
 import { embedPendingWrites, forgetIndexedAsset, refreshIndexedAsset } from "./index-rows";
 
-export { buildFileContext } from "../adapter/directory/file-context";
+// asset-io: files-view the path rules the Desktop workspace types and guards a place in a bundle by
 export { isProtectedPlace, managedFolderOf, placeTypeOf, protectedTypeOf } from "../adapter/directory/place-rules";
+// asset-io: files-view whether a path the Files view copies is a file
 export { isFileOrFileSymlink } from "../adapter/directory/walker";
+// asset-io: files-view the containment check of a plain-file write (`write-source.ts`)
+export { assertWritableFile } from "../adapter/directory-adapter";
 
 /**
  * Refresh the existing index for `files` (absolute paths inside the directory bundle `bundle`) written as plain files:

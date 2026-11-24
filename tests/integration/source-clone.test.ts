@@ -358,19 +358,27 @@ describe("akmClone", () => {
     expect(fs.readFileSync(path.join(stashDir, "scripts", "deploy.sh"), "utf8")).toBe("echo updated\n");
   });
 
-  test("force replaces a file destination symlink without writing through it", async () => {
+  test("a file destination symlink that leaves the bundle, or leads to nothing, is refused and left, with or without force", async () => {
     const victim = path.join(createStashDir("akm-clone-symlink-victim-"), "victim.sh");
     const destination = path.join(stashDir, "scripts", "deploy.sh");
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo updated\n");
     writeFile(victim, "echo victim\n");
     fs.symlinkSync(victim, destination);
 
-    const result = await akmClone({ sourceRef: `${searchPathDir}//scripts/deploy.sh`, force: true });
-
-    expect(result.overwritten).toBe(true);
-    expect(fs.lstatSync(destination).isSymbolicLink()).toBe(false);
-    expect(fs.readFileSync(destination, "utf8")).toBe("echo updated\n");
+    await expect(akmClone({ sourceRef: `${searchPathDir}//scripts/deploy.sh`, force: true })).rejects.toThrow(
+      'Write path contains a symbolic link below source "stash": scripts/deploy.sh',
+    );
+    expect(fs.readlinkSync(destination)).toBe(victim);
     expect(fs.readFileSync(victim, "utf8")).toBe("echo victim\n");
+
+    fs.rmSync(destination);
+    fs.symlinkSync("nowhere.sh", destination);
+    for (const force of [false, true]) {
+      await expect(akmClone({ sourceRef: `${searchPathDir}//scripts/deploy.sh`, force })).rejects.toThrow(
+        'Write path contains a symbolic link below source "stash": scripts/deploy.sh',
+      );
+      expect(fs.readlinkSync(destination)).toBe("nowhere.sh");
+    }
   });
 
   test("force replaces a file destination symlink that leads inside the bundle without writing through it", async () => {
@@ -388,7 +396,7 @@ describe("akmClone", () => {
     expect(fs.readFileSync(kept, "utf8")).toBe("echo kept\n");
   });
 
-  test("force replaces a skill destination symlink without removing its target", async () => {
+  test("force over a skill destination symlink that leaves the bundle, or leads to nothing, is refused and left", async () => {
     const victimDir = path.join(createStashDir("akm-clone-skill-symlink-victim-"), "external-review");
     const destination = path.join(stashDir, "skills", "review");
     writeFile(path.join(searchPathDir, "skills", "review", "SKILL.md"), "# Updated\n");
@@ -396,13 +404,34 @@ describe("akmClone", () => {
     writeFile(path.join(victimDir, "keep.md"), "keep\n");
     fs.symlinkSync(victimDir, destination, "dir");
 
+    await expect(akmClone({ sourceRef: `${searchPathDir}//skills/review`, force: true })).rejects.toThrow(
+      'Write path contains a symbolic link below source "stash": skills/review',
+    );
+    expect(fs.readlinkSync(destination)).toBe(victimDir);
+    expect(fs.readFileSync(path.join(victimDir, "SKILL.md"), "utf8")).toBe("# Victim\n");
+    expect(fs.readdirSync(victimDir).sort()).toEqual(["SKILL.md", "keep.md"]);
+
+    fs.rmSync(destination);
+    fs.symlinkSync("nowhere", destination, "dir");
+    await expect(akmClone({ sourceRef: `${searchPathDir}//skills/review`, force: true })).rejects.toThrow(
+      'Write path contains a symbolic link below source "stash": skills/review',
+    );
+    expect(fs.readlinkSync(destination)).toBe("nowhere");
+  });
+
+  test("force replaces a skill destination symlink that leads to a folder inside the bundle, and leaves that folder", async () => {
+    const kept = path.join(stashDir, "skills", "kept");
+    const destination = path.join(stashDir, "skills", "review");
+    writeFile(path.join(searchPathDir, "skills", "review", "SKILL.md"), "# Updated\n");
+    writeFile(path.join(kept, "SKILL.md"), "# Kept\n");
+    fs.symlinkSync("kept", destination, "dir");
+
     const result = await akmClone({ sourceRef: `${searchPathDir}//skills/review`, force: true });
 
     expect(result.overwritten).toBe(true);
     expect(fs.lstatSync(destination).isSymbolicLink()).toBe(false);
     expect(fs.readFileSync(path.join(destination, "SKILL.md"), "utf8")).toEndWith("# Updated\n");
-    expect(fs.readFileSync(path.join(victimDir, "SKILL.md"), "utf8")).toBe("# Victim\n");
-    expect(fs.readFileSync(path.join(victimDir, "keep.md"), "utf8")).toBe("keep\n");
+    expect(fs.readFileSync(path.join(kept, "SKILL.md"), "utf8")).toBe("# Kept\n");
   });
 
   test("clones into a per-type directory that is itself a symlink into a contained location", async () => {

@@ -293,7 +293,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
         } else
           w.create(
             { type: cloneType, name, content, ...(sourceMode !== undefined ? { mode: sourceMode } : {}) },
-            { exclusive: !options.force, verbatim: true, replaceLink: "any" },
+            { exclusive: !options.force, verbatim: true },
           );
       });
       overwritten = held;
