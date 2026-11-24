@@ -5,7 +5,8 @@
 /**
  * `akm lint --fix` saves through the asset layer, and keeps what a plain write did: a file reached through a link that
  * leads inside the bundle is written where the link leads (the link stays), a link that leaves the bundle is refused,
- * and a task `.yaml` near-miss, which is no asset, is saved as it lies.
+ * a hard link is a regular file (a new file is written at its name), and a task `.yaml` near-miss, which is no asset,
+ * is saved as it lies.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -54,6 +55,23 @@ describe("--fix through a link", () => {
     const failed = result.flagged.filter((issue) => issue.file.endsWith("escape.md") && issue.fixed === "failed");
     expect(failed.length).toBeGreaterThan(0);
     expect(fs.readFileSync(outside, "utf8")).toBe(UNSTAMPED);
+  });
+});
+
+describe("--fix on a hard link", () => {
+  test("writes a new file at the name; the other name keeps its bytes", async () => {
+    storage = withIsolatedAkmStorage();
+    const other = put(storage.root, "outside/real.md", UNSTAMPED);
+    fs.mkdirSync(path.join(storage.stashDir, "memories"), { recursive: true });
+    const linked = path.join(storage.stashDir, "memories", "hard.md");
+    fs.linkSync(other, linked);
+
+    const result = await akmLint({ fix: true, dir: storage.stashDir, config: makeConfig(storage.stashDir) });
+
+    expect(result.flagged.filter((issue) => issue.fixed === "failed")).toEqual([]);
+    expect(fs.readFileSync(linked, "utf8")).toMatch(/updated:/);
+    expect(fs.statSync(linked).nlink).toBe(1);
+    expect(fs.readFileSync(other, "utf8")).toBe(UNSTAMPED);
   });
 });
 

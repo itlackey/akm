@@ -106,9 +106,9 @@ interface BundleAdapter {
 
   place(b: Bundle, asset: { type; name }): AssetPlacement;       // where a create would go: its concept id, and for files the key
   create(b: Bundle, asset: NewAsset,
-    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any"; locator?: unknown }): AssetChange;
+    options?: { replace?: boolean; verbatim?: boolean; locator?: unknown }): AssetChange;
   update(b: Bundle, conceptId: string, content: string | Buffer,
-    options?: { throughLink?: boolean; locator?: unknown }): AssetChange;
+    options?: { locator?: unknown }): AssetChange;
   delete(b: Bundle, conceptId: string, options?: { locator?: unknown }): AssetChange[]; // one per asset
   retire(b: Bundle, conceptId: string, note: RetireNote): Array<AssetChange & { handle: string }>; // one per asset
   packageFiles(b: Bundle, conceptId: string): PackageFile[];     // every file under a package entry's folder
@@ -263,8 +263,12 @@ The template methods:
   `UsageError` naming the file when the placed file would be no asset
   (`create knowledge "index"`, `create secret "x.lock"`).
 - `create`, `update` and `delete` write atomically (`writeFileAtomic`) and
-  refuse a path that leaves the bundle's root or passes through a symbolic link
-  below it (`assertWritableFile`). `place` is checked first, and an adapter
+  refuse a path that leaves the bundle's root. A create or update follows a
+  symbolic link below it only when the link leads to an existing file or folder
+  inside the bundle; any other link refuses the write. A create replaces such a
+  link with a regular file, an update writes where it leads and keeps it, and a
+  hard link is a regular file. `delete` refuses any link
+  (`assertWritableFile`). `place` is checked first, and an adapter
   whose `writes` lacks the type refuses as an invariant error a user never sees:
   the facade checks `writes` before it calls.
 - `retire`, `retired`, `restore`, `forget` and `expireRetired` delegate to

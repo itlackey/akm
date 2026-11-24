@@ -375,11 +375,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return { conceptId, key, occupied: fs.existsSync(file), file };
   }
 
-  create(
-    b: Bundle,
-    asset: NewAsset,
-    options: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any" } = {},
-  ): AssetChange {
+  create(b: Bundle, asset: NewAsset, options: { replace?: boolean; verbatim?: boolean } = {}): AssetChange {
     if (!this.writes.includes(asset.type)) {
       throw new Error(
         `Adapter "${this.id}" does not write ${asset.type} assets in bundle "${b.id}"; the asset facade checks \`writes\` first.`,
@@ -395,22 +391,15 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     // A replacing create rewrites the file the concept is read from (`guide.MD`), never a twin beside it.
     const file = held?.entry.file ?? this.placeFile(b, asset);
     const content = options.verbatim ? asset.content : this.serialize(asset.type, file, asset.content, asset.label);
-    const changed = this.writeFile(
-      b,
-      asset.type,
-      file,
-      content,
-      options.replaceLink,
-      options.verbatim ? asset.mode : undefined,
-    );
+    const changed = this.writeFile(b, asset.type, file, content, options.verbatim ? asset.mode : undefined);
     return { conceptId, changed, content: asset.content };
   }
 
-  update(b: Bundle, conceptId: string, content: string | Buffer, options: { throughLink?: boolean } = {}): AssetChange {
+  update(b: Bundle, conceptId: string, content: string | Buffer): AssetChange {
     const { conceptId: canonical, entry } = this.existing(b, conceptId);
     const held = entry.file as string;
     // Through a link that leads to a file inside the bundle the write goes where it leads; any other link is refused below.
-    const file = options.throughLink ? (linkTargetInside(rootOf(b), held) ?? held) : held;
+    const file = linkTargetInside(rootOf(b), held) ?? held;
     this.writeFile(b, this.typeOf(entry.key), file, content);
     return { conceptId: canonical, changed: [file], content };
   }
@@ -497,8 +486,6 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
       }
     }
     const staging = `${dir}.tmp-${randomUUID()}`;
-    // The folders above the package may not be links; the package folder itself may be one, which is replaced as an entry.
-    assertWritableFile(rootOf(b), b.id, staging, { replaceLink: true });
     const existing = fs.lstatSync(dir, { throwIfNoEntry: false });
     if (existing && !options.replace) {
       throw new UsageError(
@@ -506,6 +493,8 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
         "RESOURCE_ALREADY_EXISTS",
       );
     }
+    // A package folder that is a link to a folder inside the bundle is replaced as an entry; any other link is refused.
+    assertLinksLeadInside(rootOf(b), b.id, dir);
     const before = existing?.isDirectory() ? filesBelow(dir) : [];
     const backup = `${dir}.old-${randomUUID()}`;
     try {
@@ -664,15 +653,8 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   }
 
   /** The bytes and file mode a write gives a file. */
-  private writeFile(
-    b: Bundle,
-    type: string,
-    file: string,
-    bytes: string | Buffer,
-    replaceLink: boolean | "any" = false,
-    mode?: number,
-  ): string[] {
-    assertWritableFile(rootOf(b), b.id, file, { replaceLink });
+  private writeFile(b: Bundle, type: string, file: string, bytes: string | Buffer, mode?: number): string[] {
+    assertLinksLeadInside(rootOf(b), b.id, file);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     // Atomic: a crash or a full disk never leaves a half-written asset where a good one was.
     writeFileAtomic(file, bytes, mode ?? this.fileMode(type) ?? existingFileMode(file));
@@ -826,18 +808,25 @@ function directoryLinksBelow(dir: string): string[] {
 // ── Writing helpers ─────────────────────────────────────────────────────────
 
 /**
- * Refuse a write to `file` that leaves the bundle's root, or passes through a
- * symbolic link below it: a write never follows a link out of the bundle.
- * With `replaceLink`, `file` itself may be a link to a file inside the bundle
- * (the write replaces the link and leaves what it pointed at), and a folder
- * above it may be a link to a folder inside the bundle (the write goes through).
+ * Refuse a change to `file` that leaves the bundle's root, or passes through a
+ * symbolic link below it. A delete, retire or restore acts on the entry it names
+ * and follows no link.
  */
-export function assertWritableFile(
-  root: string,
-  bundle: string,
-  file: string,
-  options: { replaceLink?: boolean | "any" } = {},
-): void {
+export function assertWritableFile(root: string, bundle: string, file: string): void {
+  checkWritePath(root, bundle, file, false);
+}
+
+/**
+ * The link rule of every create and update: a link on the path to `file` is followed only when it leads to an existing
+ * folder inside the bundle, or, at `file` itself, to an existing file or folder inside it. Any other link (leaving the
+ * bundle, or leading to nothing) refuses the write. A create then puts a regular file where the link was, and what it
+ * led to is not written; an update writes where the link leads (`linkTargetInside`), and the link stays.
+ */
+function assertLinksLeadInside(root: string, bundle: string, file: string): void {
+  checkWritePath(root, bundle, file, true);
+}
+
+function checkWritePath(root: string, bundle: string, file: string, followInside: boolean): void {
   const lexicalRoot = path.resolve(root);
   // A path under another spelling of the root (a symlinked spelling of the library) is inside it.
   const relative = relativeToRoot(file, lexicalRoot) ?? "..";
@@ -858,9 +847,7 @@ export function assertWritableFile(
     if (!stat) break;
     if (stat.isSymbolicLink()) {
       const last = index === segments.length - 1;
-      // `"any"`: the file itself may be a link to anywhere (or to nothing): it is replaced, never written through.
-      if (options.replaceLink === "any" && last) break;
-      if (options.replaceLink && linksInside(current, realRoot, last)) {
+      if (followInside && linksInside(current, realRoot, last)) {
         if (last) break;
         continue;
       }
@@ -880,11 +867,11 @@ function linkTargetInside(root: string, file: string): string | undefined {
   }
 }
 
-/** Whether the symbolic link `link` points at an existing file (a folder, when not `file`) inside `root`. */
-function linksInside(link: string, root: string, file: boolean): boolean {
+/** Whether the symbolic link `link` points at an existing folder (when `last`, a file or folder) inside `root`. */
+function linksInside(link: string, root: string, last: boolean): boolean {
   try {
     const stat = fs.statSync(link);
-    return (file ? stat.isFile() : stat.isDirectory()) && isWithin(link, root);
+    return ((last && stat.isFile()) || stat.isDirectory()) && isWithin(link, root);
   } catch {
     return false;
   }

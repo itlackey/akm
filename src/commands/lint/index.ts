@@ -614,7 +614,7 @@ function sweepFileOf(
             write: (raw) => {
               // A read-only file stays as it is: the save replaces the file, which ignores its mode.
               assertFileWritable(filePath);
-              writer.update(asset.conceptId, raw, { throughLink: true });
+              writer.update(asset.conceptId, raw);
             },
             remove: () => void writer.delete(asset.conceptId),
           }
@@ -922,14 +922,14 @@ function lintAkmSweep(
  * change is made: a run with nothing to fix (or none asked for) takes none and writes nothing.
  */
 interface LintWriter {
-  update(conceptId: string, content: string, options: { throughLink: boolean }): void;
+  update(conceptId: string, content: string): void;
   delete(conceptId: string): void;
 }
 
 function writerOf(bundle: LintBundle): LintWriter {
   return {
-    update: (conceptId, content, options) =>
-      void writeAssets(fixTarget(bundle), { purpose: "lint-fix" }, (w) => w.update(conceptId, content, options)),
+    update: (conceptId, content) =>
+      void writeAssets(fixTarget(bundle), { purpose: "lint-fix" }, (w) => w.update(conceptId, content)),
     delete: (conceptId) => void writeAssets(fixTarget(bundle), { purpose: "lint-fix" }, (w) => w.delete(conceptId)),
   };
 }

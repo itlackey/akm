@@ -76,7 +76,7 @@ export async function importTaskFile(
     const written =
       writeAssets(prepared, { purpose: "import-task" }, (w) => {
         const { file: kept } = w.address(`tasks/${id}`);
-        w.create({ type: "task", name: id, content: yaml }, { exclusive: !input.force, replaceLink: true });
+        w.create({ type: "task", name: id, content: yaml }, { exclusive: !input.force });
         return kept;
       }) ?? file;
     commitWriteTargetBoundary(prepared, `Import tasks/${id}`);

@@ -137,19 +137,13 @@ export class AssetBundle {
   identifyKey(key: string): string | null {
     return this.#adapter.identifyKey?.(this.#bundle, key) ?? null;
   }
-  create(
-    asset: NewAsset,
-    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any" },
-  ): AssetChange {
+  create(asset: NewAsset, options?: { replace?: boolean; verbatim?: boolean }): AssetChange {
     const locator = this.isStore ? this.#locator(this.place(asset).conceptId) : undefined;
     return this.#adapter.create(this.#bundle, asset, { ...options, ...(locator !== undefined ? { locator } : {}) });
   }
-  update(conceptId: string, content: string | Buffer, options?: { throughLink?: boolean }): AssetChange {
+  update(conceptId: string, content: string | Buffer): AssetChange {
     const locator = this.#locator(conceptId);
-    return this.#adapter.update(this.#bundle, conceptId, content, {
-      ...options,
-      ...(locator !== undefined ? { locator } : {}),
-    });
+    return this.#adapter.update(this.#bundle, conceptId, content, locator !== undefined ? { locator } : {});
   }
   delete(conceptId: string): AssetChange[] {
     const locator = this.#locator(conceptId);
