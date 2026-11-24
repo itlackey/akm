@@ -38,6 +38,8 @@ export type FileDiagnostic = Omit<Diagnostic, "ref" | "file"> & { file: string }
 
 /** What a directory adapter's checks read; see the file header. */
 export interface FileValidateContext extends ValidateContext {
+  /** The configured bundles this run resolves refs against, the validated bundle among them. */
+  readonly sources?: readonly BundleSourceRef[];
   /** A file of the snapshot: the pending content, else the file on disk; null when there is none. */
   readFile(path: string): Promise<string | Uint8Array | null>;
   /** The names directly inside `dir` in the snapshot. */

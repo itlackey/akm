@@ -447,13 +447,10 @@ export interface BundleSourceRef {
 // ── ValidateContext ─────────────────────────────────────────────────────────
 
 /**
- * What the run gives `validate` besides the edits: the settings, the configured bundles and the recorded moves. The
- * base checks (a link to another bundle's asset, a stale absolute path) look at the other bundles' roots, so they read
- * `sources`.
+ * What the run gives `validate` besides the edits: the settings and the recorded moves. The configured bundles a ref
+ * resolves against come from the settings.
  */
 export interface ValidateContext {
-  /** The configured bundles this run resolves refs against, the validated bundle among them. */
-  readonly sources?: readonly BundleSourceRef[];
   /** How the recorded `moved` events are read, when a ref does not resolve; absent when the caller has none to offer. */
   readonly readMoves?: () => readonly EventEnvelope[];
   /** The settings this run was given; the base checks read stale-path roots, `lint.skip` and the configured bundles from them. */

@@ -35,6 +35,7 @@ import {
   toErrorMessage,
   writeFileAtomic,
 } from "../common";
+import { loadConfig } from "../config/config";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
 import type {
   AssetChange,
@@ -254,7 +255,11 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
    * found by {@link holders}, the function `read` uses, over a view of the live tree or of the snapshot.
    */
   async validate(b: Bundle, edits: AssetEdit[], ctx: ValidateContext): Promise<Diagnostic[]> {
-    const base = { root: rootOf(b), sources: ctx.sources, config: ctx.config, readMoves: ctx.readMoves };
+    const config = ctx.config ?? loadConfig();
+    // The configured bundles a ref resolves against, this one among them. Imported here: the sources reach back to the adapters.
+    const { resolveSourceEntries } = await import("../../indexer/search/search-source");
+    const sources = resolveSourceEntries(rootOf(b), config);
+    const base = { root: rootOf(b), sources, config, readMoves: ctx.readMoves };
     const live = liveView(b);
     const changes: FileChange[] = [];
     for (const edit of edits) {

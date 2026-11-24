@@ -774,10 +774,11 @@ they actually work:
   (the skill and LLM Wiki exemptions, the bundle's `lint.skip`, an adapter's
   own exclusions). The `akm lint` sweep and every adapter's `validate` call
   them; `createBaseChecker` (`adapters/shared.ts`) is the adapter's way in. It
-  reads refs from disk, the other bundles from `ValidateContext.sources` and the
-  settings from `ValidateContext.config` (the run's own; it reads the config
-  itself only when the context carries none), so a pending change in the context
-  does not satisfy a ref, and it never writes. The per-type checks are one table,
+  reads refs from disk and the settings from `ValidateContext.config` (the run's
+  own; it reads the config itself only when the context carries none). The other
+  bundles are the sources those settings resolve to, found once per `validate`
+  by `DirectoryAdapterBase.validate`; a caller does not pass them. A pending
+  change in the context does not satisfy a ref, and it never writes. The per-type checks are one table,
   `perTypeChecks` (`adapters/akm-lint.ts`), keyed by akm type and read by the
   sweep and by `validate`; the one exception is the skill folder check, which
   has a directory walk for the sweep and `skillDirectoryDiagnostics` for
