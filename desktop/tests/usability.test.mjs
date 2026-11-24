@@ -15,18 +15,18 @@ import { launchFixture, projectsAndConnections } from "./support.mjs";
 // Each theme is swept at the same time against a workspace of its own: the theme is a saved preference, so two
 // sweeps of one workspace would change each other's.
 test("populated workspace accessibility and reflow across both themes", { timeout: 300000 }, async (t) => {
-  const launch = async () => {
-    const app = await launchFixture({
+  const launch = () =>
+    launchFixture({
       proposals: true,
       metrics: true,
       assetCount: 30,
       git: true,
       configureFixture: projectsAndConnections,
     });
-    t.after(() => app.stop());
-    return app;
-  };
-  const [light, dark] = await Promise.all([launch(), launch()]);
+  const started = [launch(), launch()];
+  // One hook stops both: a hook that fails ends the hooks after it, which would leave the other server running.
+  t.after(() => Promise.all(started.map(async (app) => (await app.catch(() => null))?.stop())));
+  const [light, dark] = await Promise.all(started);
   const browser = await chromium.launch();
   t.after(() => browser.close());
   const output = process.env.AKM_DESKTOP_UX_OUTPUT || path.join(light.root, "usability");
