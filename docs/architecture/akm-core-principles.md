@@ -70,8 +70,7 @@ Assets are read, listed, typed, validated and written only through the asset
 facade, `src/core/assets/`, which calls the bundle's adapter
 (`src/core/adapter/`). A caller never learns which adapter holds an asset,
 where, or under what file name: a new storage mechanism is one adapter class and
-no change elsewhere. Code that predates the facade is recorded in a baseline and
-moves behind it; the baseline only shrinks.
+no change elsewhere. Access outside it fails `bun run lint`.
 Every agent harness registers once in `HARNESS_REGISTRY`
 (`src/integrations/harnesses/index.ts`) and core imports the registry, not
 a harness. Runtime-specific APIs (`bun:sqlite`, `Bun.*`) are reached only
@@ -87,7 +86,7 @@ the drift is invisible until a user hits the one that differs.
 
 Enforced by: `tests/harnesses-registry.test.ts` for the registry;
 `scripts/lint-secret-resolver-boundary.ts` for secret reads;
-`scripts/lint-asset-io.ts` for asset access (a baseline that only shrinks; see
+`scripts/lint-asset-io.ts` for asset access (any violation fails; see
 [Adapters](adapters.md#enforcement));
 `tests/contracts/module-boundaries.test.ts` for the module table;
 `tests/contracts/runtime-port-boundary.test.ts` for akm's own runtime, which
@@ -158,6 +157,7 @@ said "normative" and nothing checked.
 
 Enforced by: `bun run lint` (`scripts/lint-doc-examples.ts`,
 `scripts/lint-shipped-assets.ts`, `scripts/lint-secret-resolver-boundary.ts`,
+`scripts/lint-stdio-owner.ts`, `scripts/lint-lockfile.ts`,
 `scripts/lint-asset-io.ts`),
 `tests/contracts/`, `tests/output-shapes-unit.test.ts`.
 

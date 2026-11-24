@@ -34,9 +34,9 @@ keyring or vault and one of 2 adapters that read it
 | `secret-tool` | Every entry of one Secret Service keyring (KWallet, GNOME Keyring) as type `secret`, named by its label; never a value | None — `location: "<keyring>"` with `adapter: "secret-tool"` | Writable, narrowly — `akm secret set`/`secret remove` only | A dedicated OS keyring as a secrets bundle. Needs `secret-tool` (package `libsecret-tools`) and `busctl` |
 | `azure-key-vault` | Every secret of one Azure Key Vault as type `secret`, under the vault's name for it; never a value | None — `location: "<vault>"` with `adapter: "azure-key-vault"` | Writable, narrowly — `akm secret set`/`secret remove` only | A team's vault as a secrets bundle. Needs the Azure CLI, signed in with `az login` |
 
-**Read-only** here means AKM's own write commands (`akm remember`, `akm
-import`, `proposal accept`, and similar) won't create or edit files in a
-bundle of that format. Reading, searching, and `akm lint` validation work
+**Read-only** here means the format's adapter writes no type (its `writes` is
+empty): AKM's own write commands (`akm remember`, `akm import`, `proposal
+accept`, and similar) refuse a bundle of that format. Reading, searching, and `akm lint` validation work
 against every format in the table above regardless of write support.
 
 For native tool formats such as `claude` and `opencode`, the adapter translates
@@ -68,8 +68,8 @@ You don't migrate a Claude Code project, an OpenCode project, or an OKF
 knowledge base into AKM's own layout to get search, curation, and validation
 over it — AKM meets each format where it already lives. Writing new
 capabilities back into a foreign-format bundle is a separate, narrower
-guarantee; see [Adapters](../architecture/adapters.md) for exactly which
-formats are writable today and why.
+guarantee; see [Adapters](../architecture/adapters.md#capabilities) for
+exactly which types each adapter writes and retires.
 
 ## See also
 
