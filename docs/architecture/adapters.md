@@ -504,7 +504,9 @@ says which of those types it takes out recoverably.
 - `retire` writes the tombstone `cleanup.md` first, then renames the file to
   `.akm/memory-cleanup/archive/<archivedAt>-<concept id>[-n]/<originalPath>`. A
   crash between the two leaves a tombstone for a move that did not happen, and
-  the file where it was.
+  the file where it was; a resumed `proposal accept` counts a retirement only
+  once its asset is gone, so it forgets such a tombstone and retires the asset
+  again.
 - A retirement's `handle` is its archive directory relative to the root. It is
   opaque to callers: never parsed, joined or treated as a path; output may print
   it as a string.
