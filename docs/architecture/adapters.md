@@ -804,9 +804,11 @@ they actually work:
 - **`generic-files` is the only adapter with no auto-detection at all.**
   `looksLikeRoot` always returns `false`; a bundle only gets this adapter
   through an explicit `adapter: "generic-files"` override.
-- **A location bundle's rows have no file.** A keyring's or vault's entries are
-  index rows with an empty file path, found by ref. The bundle's source still
-  names a directory, `$CACHE/index/bundles/<bundle>`, where nothing is written.
+- **A location bundle has no directory.** A keyring's or vault's entries are
+  index rows with an empty file path, found by ref, and no directory maps to the
+  bundle (`bundleAtDir`). Its source carries a key in place of a path
+  (`getStoreSourceKey`, `src/core/paths.ts`), because the source lists and the
+  indexer tell sources apart by path; nothing is created there.
 
 ---
 

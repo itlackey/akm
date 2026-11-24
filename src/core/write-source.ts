@@ -51,7 +51,7 @@ import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/co
 import { bundleAtDir, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
 import { ConfigError, UsageError } from "./errors";
 import { sanitizeCommitMessage } from "./git-message";
-import { getLocationBundleRoot } from "./paths";
+import { getStoreSourceKey } from "./paths";
 import { warn, warnOnce } from "./warn";
 import { recordWrittenPath } from "./write-provenance";
 
@@ -69,7 +69,7 @@ export interface WriteTargetSource {
   readonly repoPath?: string;
   /** Bundle adapter that owns placement and authoring semantics. */
   readonly adapterId?: string;
-  /** A location bundle's `location`: where its adapter finds it. `path` is then the root its entries are indexed under. */
+  /** A location bundle's `location`: where its adapter finds it. `path` is then only its key (`getStoreSourceKey`): it has no directory. */
   readonly location?: string;
 }
 
@@ -245,7 +245,7 @@ function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
       source: {
         kind: "location",
         name: runtime.name,
-        path: safeRealpath(getLocationBundleRoot(runtime.name)),
+        path: safeRealpath(getStoreSourceKey(runtime.name)),
         ...(runtime.adapterId ? { adapterId: runtime.adapterId } : {}),
         location,
       },

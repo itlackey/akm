@@ -36,7 +36,7 @@ import { type BundleSource, materialisedBundle, materialisedBundles } from "../m
 export class AssetBundle {
   /** The id refs use. */
   readonly name: string;
-  /** The directory its assets are read from (a store's synthetic root), and a store's `location`: for the index and for display only. */
+  /** The directory its assets are read from (a store has none: its source's key), and a store's `location`: for the index and for display only. */
   readonly root: string;
   readonly location?: string;
   /** The adapter that reads it, as recorded in config (found once where an old entry without one is resolved). */

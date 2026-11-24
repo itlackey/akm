@@ -11,7 +11,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { lockContentRootFor } from "../../integrations/lockfile";
 import { ConfigError } from "../errors";
-import { getLocationBundleRoot } from "../paths";
 import type { AkmConfig, BundleConfigEntry, ConfiguredSource, SourceConfigEntry, SourceSpec } from "./config-types";
 
 /**
@@ -200,20 +199,19 @@ export function bundleOverlaps(config: AkmConfig): BundleOverlap[] {
 
 /**
  * The configured bundle at the directory `dir`: the one whose content root is `dir` (a directory bundle's `path` and
- * `root`, a git or npm checkout's lock root, a location bundle's synthetic root), compared by real path, the default
- * bundle first and then in configured order. The one root-to-bundle lookup (§4.3); it asks no adapter.
+ * `root`, a git or npm checkout's lock root), compared by real path, the default bundle first and then in configured
+ * order. A location bundle has no directory, so none is at `dir`. The one root-to-bundle lookup (§4.3); it asks no
+ * adapter.
  */
 export function bundleAtDir(config: AkmConfig, dir: string): string | undefined {
   const physical = physicalPath(dir);
   for (const entry of bundlesToSourceEntries(config) ?? []) {
     const bundle = config.bundles?.[entry.name ?? ""];
     const root =
-      entry.type === "location"
-        ? getLocationBundleRoot(entry.name ?? entry.location ?? "")
-        : (lockContentRootFor(entry.name, entry.type) ??
-          (bundle?.path !== undefined && bundle.path.length > 0
-            ? bundlePhysicalContentRoot(bundle.path, bundle.root)
-            : undefined));
+      lockContentRootFor(entry.name, entry.type) ??
+      (bundle?.path !== undefined && bundle.path.length > 0
+        ? bundlePhysicalContentRoot(bundle.path, bundle.root)
+        : undefined);
     if (root !== undefined && physicalPath(root) === physical) return entry.name;
   }
   return undefined;
