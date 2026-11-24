@@ -2080,7 +2080,11 @@ async function retireProposalWithLease(
     let retired: Array<{ ref: string; handle: string }>;
     try {
       retired = writeAssets(mutationTarget, { purpose: "proposal-retire" }, (w) => {
-        const already = w.retired().filter((retirement) => retirement.note.proposalId === proposal.id);
+        const mine = w.retired().filter((retirement) => retirement.note.proposalId === proposal.id);
+        // A retirement is done only once its asset is gone: a crash between the tombstone and the move leaves the
+        // asset in place. Nothing was moved under such a tombstone, so it goes; one holding an archived copy is kept.
+        const already = mine.filter((retirement) => !w.read(retirement.conceptId));
+        for (const left of mine) if (!already.includes(left) && !left.restorable) w.forget(left.handle);
         const alreadyDone = new Set(already.map((retirement) => retirement.conceptId));
         const made: Array<{ ref: string; handle: string }> = [];
         const candidate: MemoryPruneCandidate = {

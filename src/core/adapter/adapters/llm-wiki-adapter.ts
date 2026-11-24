@@ -398,7 +398,6 @@ async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateConte
 export class LlmWikiAdapter extends DirectoryAdapterBase {
   readonly id = "llm-wiki";
   readonly version = "0.9.0";
-  override readonly extensions = [".md"];
 
   protected identify(relPath: string): string | null {
     return wikiConceptIdOf(relPath);

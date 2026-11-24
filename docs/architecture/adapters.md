@@ -107,9 +107,9 @@ interface BundleAdapter {
 
   place(b: Bundle, asset: { type; name }): AssetPlacement;       // where a create would go: its concept id, and for files the key
   create(b: Bundle, asset: NewAsset,
-    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any"; locator?: unknown }): AssetChange;
+    options?: { replace?: boolean; verbatim?: boolean; locator?: unknown }): AssetChange;
   update(b: Bundle, conceptId: string, content: string | Buffer,
-    options?: { throughLink?: boolean; locator?: unknown }): AssetChange; // throughLink: saved as it lies (through a link; a read-only file refused)
+    options?: { locator?: unknown }): AssetChange;
   delete(b: Bundle, conceptId: string, options?: { locator?: unknown }): AssetChange[]; // one per asset
   retire(b: Bundle, conceptId: string, note: RetireNote): Array<AssetChange & { handle: string }>; // one per asset
   packageFiles(b: Bundle, conceptId: string): PackageFile[];     // every file under a package entry's folder
@@ -265,15 +265,18 @@ The template methods:
   `UsageError` naming the file when the placed file would be no asset
   (`create knowledge "index"`, `create secret "x.lock"`).
 - `create`, `update` and `delete` write atomically (`writeFileAtomic`) and
-  refuse a path that leaves the bundle's root or passes through a symbolic link
-  below it (`assertWritableFile`). `place` is checked first, and an adapter
+  refuse a path that leaves the bundle's root. A create or update follows a
+  symbolic link below it only when the link leads to an existing file or folder
+  inside the bundle; any other link refuses the write. A create replaces such a
+  link with a regular file, an update writes where it leads and keeps it, and a
+  hard link is a regular file. `delete` refuses any link
+  (`assertWritableFile`). `place` is checked first, and an adapter
   whose `writes` lacks the type refuses as an invariant error a user never sees:
   the facade checks `writes` before it calls.
 - `retire`, `retired`, `restore`, `forget` and `expireRetired` delegate to
   `directory-archive.ts` (see [Retire and delete](#retire-and-delete)).
 
-`spellings` is distinct from `extensions`: extensions are non-exhaustive walk
-hints. Spellings preserve canonical directory manifests (for example
+`spellings` preserve canonical directory manifests (for example
 `skills/<name>/SKILL.md`) so lookup, index-backed show and workflow runtime
 share one decision about which file owns a concept.
 
@@ -515,7 +518,9 @@ says which of those types it takes out recoverably.
 - `retire` writes the tombstone `cleanup.md` first, then renames the file to
   `.akm/memory-cleanup/archive/<archivedAt>-<concept id>[-n]/<originalPath>`. A
   crash between the two leaves a tombstone for a move that did not happen, and
-  the file where it was.
+  the file where it was; a resumed `proposal accept` counts a retirement only
+  once its asset is gone, so it forgets such a tombstone and retires the asset
+  again.
 - A retirement's `handle` is its archive directory relative to the root. It is
   opaque to callers: never parsed, joined or treated as a path; output may print
   it as a string.
@@ -785,10 +790,11 @@ they actually work:
   (the skill and LLM Wiki exemptions, the bundle's `lint.skip`, an adapter's
   own exclusions). The `akm lint` sweep and every adapter's `validate` call
   them; `createBaseChecker` (`adapters/shared.ts`) is the adapter's way in. It
-  reads refs from disk, the other bundles from `ValidateContext.sources` and the
-  settings from `ValidateContext.config` (the run's own; it reads the config
-  itself only when the context carries none), so a pending change in the context
-  does not satisfy a ref, and it never writes. The per-type checks are one table,
+  reads refs from disk and the settings from `ValidateContext.config` (the run's
+  own; it reads the config itself only when the context carries none). The other
+  bundles are the sources those settings resolve to, found once per `validate`
+  by `DirectoryAdapterBase.validate`; a caller does not pass them. A pending
+  change in the context does not satisfy a ref, and it never writes. The per-type checks are one table,
   `perTypeChecks` (`adapters/akm-lint.ts`), keyed by akm type and read by the
   sweep and by `validate`; the one exception is the skill folder check, which
   has a directory walk for the sweep and `skillDirectoryDiagnostics` for
@@ -815,9 +821,11 @@ they actually work:
 - **`generic-files` is the only adapter with no auto-detection at all.**
   `looksLikeRoot` always returns `false`; a bundle only gets this adapter
   through an explicit `adapter: "generic-files"` override.
-- **A location bundle's rows have no file.** A keyring's or vault's entries are
-  index rows with an empty file path, found by ref. The bundle's source still
-  names a directory, `$CACHE/index/bundles/<bundle>`, where nothing is written.
+- **A location bundle has no directory.** A keyring's or vault's entries are
+  index rows with an empty file path, found by ref, and no directory maps to the
+  bundle (`bundleAtDir`). Its source carries a key in place of a path
+  (`getStoreSourceKey`, `src/core/paths.ts`), because the source lists and the
+  indexer tell sources apart by path; nothing is created there.
 
 ---
 

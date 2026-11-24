@@ -91,8 +91,9 @@ bun run lint:fix   # Biome with --write; read git diff afterwards
 bun run lint       # what CI runs: Biome, the secret-resolver and shipped-assets lints, the doc-example lint, the lockfile lint
 ```
 Every pull request runs the fast gate (`bun run check`: lint, types, the unit
-suite); the integration suite runs only at release, as a gate in the Release
-workflow (see the
+suite) and the three architecture checks (`bun run test:architecture`); the
+integration suite, with the Node fallback smoke and the upgrade rehearsals,
+runs only at release, as gates in the Release workflow (see the
 [release checklist](../docs/maintainers/release-checklist.md)). Push in batches
 that you have verified locally with `bun run check` and the integration tests
 your change touches: each push is a CI run.
@@ -150,9 +151,10 @@ output-related changes.
 
 Maintainers must also follow the
 [release checklist](../docs/maintainers/release-checklist.md). The integration
-suite and the semantic, Docker and native-scheduler gates run as the Release
-workflow's own jobs on the commit that ships: on the push to `main` for a stable
-release, and on the dispatch for a prerelease.
+suite, the Node fallback smoke, the upgrade rehearsals and the semantic, Docker
+and native-scheduler gates run as the Release workflow's own jobs on the commit
+that ships: on the push to `main` for a stable release, and on the dispatch for
+a prerelease.
 
 `akm help migrate <version>` prints a per-release migration note to the
 terminal. Each note lives as its own markdown file under

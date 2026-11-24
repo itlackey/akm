@@ -14,6 +14,7 @@ import {
 } from "../../core/adapter/adapters/akm-lint";
 // asset-io: base what a bundle keeps that no adapter lists (a `.yaml` task, a skill folder, `.env` files), as lint always read it
 import {
+  assertFileWritable,
   heldFilesBelow,
   heldFolders,
   heldText,
@@ -293,7 +294,7 @@ async function adapterFindings(
     // akm's own resolved registry-cache copies are not the bundle's content.
     keep: (entry) =>
       !isAkmRegistryCachePath(path.join(stashRoot, entry.key)) && (keep === undefined || keep(entry.key)),
-    ctx: { sources, config: cfg, readMoves: options.readMoves ?? readRecordedMoves },
+    ctx: { config: cfg, readMoves: options.readMoves ?? readRecordedMoves },
   });
   return found.map(diagnosticToLintIssue);
 }
@@ -317,7 +318,7 @@ async function addStoreFindings(
 ): Promise<void> {
   // Secrets are the stores' only type: a `--type` for another one leaves them out.
   if (options.stores !== true || (options.typeFilter !== undefined && options.typeFilter !== "secrets")) return;
-  const ctx = { sources, config: cfg, readMoves: options.readMoves ?? readRecordedMoves };
+  const ctx = { config: cfg, readMoves: options.readMoves ?? readRecordedMoves };
   for (const diagnostic of await storeFindings(sources, ctx)) {
     const issue = { ...diagnosticToLintIssue(diagnostic), ref: diagnostic.ref };
     (isAdvisoryLintIssue(issue) ? found.warnings : found.flagged).push(issue);
@@ -595,8 +596,11 @@ function sweepFileOf(
       ? writer
         ? {
             modified: () => asset.entry.modified?.() ?? new Date(),
-            // Saved as it lies: through a link, and a read-only file is refused.
-            write: (raw) => writer.update(asset.conceptId, raw, { throughLink: true }),
+            write: (raw) => {
+              // A read-only file stays as it is: the save replaces the file, which ignores its mode.
+              assertFileWritable(filePath);
+              writer.update(asset.conceptId, raw);
+            },
             remove: () => void writer.delete(asset.conceptId),
           }
         : {}
@@ -902,14 +906,14 @@ function lintAkmSweep(
  * change is made: a run with nothing to fix (or none asked for) takes none and writes nothing.
  */
 interface LintWriter {
-  update(conceptId: string, content: string, options: { throughLink: boolean }): void;
+  update(conceptId: string, content: string): void;
   delete(conceptId: string): void;
 }
 
 function writerOf(bundle: LintBundle): LintWriter {
   return {
-    update: (conceptId, content, options) =>
-      void writeAssets(fixTarget(bundle), { purpose: "lint-fix" }, (w) => w.update(conceptId, content, options)),
+    update: (conceptId, content) =>
+      void writeAssets(fixTarget(bundle), { purpose: "lint-fix" }, (w) => w.update(conceptId, content)),
     delete: (conceptId) => void writeAssets(fixTarget(bundle), { purpose: "lint-fix" }, (w) => w.delete(conceptId)),
   };
 }

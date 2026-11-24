@@ -205,27 +205,20 @@ export interface BundleAdapter {
   /**
    * Create the asset, in the adapter's own form for its type, or with `verbatim` as exactly `asset.content` (a promoted
    * proposal's bytes are the ones it was reviewed with). Over an existing asset of the same concept it writes the same
-   * bytes only with `replace`; without it the create is refused. With `replaceLink`, an asset file that is a symbolic
-   * link to a file inside the bundle is replaced by a regular file (the link's target is left as it is); a link to
-   * nothing or to a file outside the bundle is still refused.
+   * bytes only with `replace`; without it the create is refused. An asset file that is a symbolic link to a file inside
+   * the bundle is replaced by a regular file (the link's target is left as it is); any other link is refused.
    */
   create(
     b: Bundle,
     asset: NewAsset,
-    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any"; locator?: unknown },
+    options?: { replace?: boolean; verbatim?: boolean; locator?: unknown },
   ): AssetChange;
   /**
-   * Replace the content of the asset `conceptId` holds with exactly `content`. With `throughLink`, the file is saved as it
-   * lies: an asset file reached through a symbolic link whose target is a file inside the bundle is written where the link
-   * leads and the link is kept, and a file this process may not write (a read-only one) is refused; a link to nothing or to
-   * a file outside the bundle is still refused.
+   * Replace the content of the asset `conceptId` holds with exactly `content`. An asset file reached through a symbolic
+   * link whose target is a file inside the bundle is written where the link leads and the link is kept; any other link
+   * is refused.
    */
-  update(
-    b: Bundle,
-    conceptId: string,
-    content: string | Buffer,
-    options?: { throughLink?: boolean; locator?: unknown },
-  ): AssetChange;
+  update(b: Bundle, conceptId: string, content: string | Buffer, options?: { locator?: unknown }): AssetChange;
   /**
    * Take the asset out of the bundle: one change per asset it removed, a package entry's first (a package goes whole).
    * `locator` (here, on `update` and on a replacing `create`): as on `read`.

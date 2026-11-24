@@ -61,6 +61,14 @@ export function heldText(file: string): string {
   return fs.readFileSync(file, "utf8");
 }
 
+/**
+ * Throws when this process may not write `file` (a read-only file, a folder, a file that is gone), with the error a write
+ * of it gives. A save replaces the file, which ignores its own mode, so a caller that leaves a read-only file as it is asks first.
+ */
+export function assertFileWritable(file: string): void {
+  fs.closeSync(fs.openSync(file, "r+"));
+}
+
 /** Save the text of a file no adapter lists as an asset, as it lies (the file keeps its place and its links). */
 export function saveHeldText(file: string, text: string): void {
   fs.writeFileSync(file, text, "utf8");

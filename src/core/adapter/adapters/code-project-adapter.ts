@@ -198,8 +198,6 @@ function describe(file: FileContext, conceptId: string): IndexMetadata {
 export class CodeProjectAdapter extends DirectoryAdapterBase {
   readonly id = "code-project";
   readonly version = "0.10.0";
-  // The files `validate` checks; the walk and `recognize` decide what is indexed.
-  override readonly extensions = [...MARKDOWN_EXTENSIONS];
   protected override readonly walkMode = "all-directories" as const;
 
   /** An eligible file is its own concept: its path, extension included. */

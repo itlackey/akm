@@ -259,4 +259,48 @@ describe("DirectoryAdapterBase", () => {
       expect(akmAdapter.read(bundle, "skills/demo")).toBeUndefined();
     });
   });
+
+  describe("one link rule for every write", () => {
+    const kn = (rel: string) => path.join(bundle.root, "knowledge", rel);
+    const refusal = /Write path contains a symbolic link below source "stash"/;
+    beforeEach(() => fs.writeFileSync(kn("target.md"), "OLD\n"));
+
+    test("a create replaces a link to a file inside the bundle and refuses one that leaves it or leads to nothing", () => {
+      fs.symlinkSync("target.md", kn("in.md"));
+      akmAdapter.create(bundle, { type: "knowledge", name: "in", content: "NEW\n" }, { replace: true });
+      expect(fs.lstatSync(kn("in.md")).isSymbolicLink()).toBe(false);
+      expect(fs.readFileSync(kn("target.md"), "utf8")).toBe("OLD\n");
+
+      // A file that exists outside the bundle: the running binary.
+      fs.symlinkSync(process.execPath, kn("out.md"));
+      fs.symlinkSync("nowhere.md", kn("dangling.md"));
+      for (const name of ["out", "dangling"]) {
+        expect(() =>
+          akmAdapter.create(bundle, { type: "knowledge", name, content: "NEW\n" }, { replace: true }),
+        ).toThrow(refusal);
+        expect(fs.lstatSync(kn(`${name}.md`)).isSymbolicLink()).toBe(true);
+      }
+    });
+
+    test("an update writes where a link inside the bundle leads and keeps the link; a hard link is a regular file", () => {
+      fs.symlinkSync("target.md", kn("in.md"));
+      akmAdapter.update(bundle, "knowledge/in", "NEW\n");
+      expect(fs.lstatSync(kn("in.md")).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(kn("target.md"), "utf8")).toBe("NEW\n");
+
+      fs.linkSync(kn("target.md"), kn("hard.md"));
+      akmAdapter.update(bundle, "knowledge/hard", "HARD\n");
+      expect(fs.readFileSync(kn("hard.md"), "utf8")).toBe("HARD\n");
+      expect(fs.readFileSync(kn("target.md"), "utf8")).toBe("NEW\n");
+    });
+
+    test("a package whose folder is a link that leaves the bundle or leads to nothing is refused, even with replace", () => {
+      const files = [{ path: "SKILL.md", bytes: Buffer.from("x\n"), mode: 0o644 }];
+      fs.symlinkSync("nowhere", path.join(bundle.root, "skills", "demo"));
+      expect(() => akmAdapter.mirrorPackage(bundle, { type: "skill", name: "demo" }, files, { replace: true })).toThrow(
+        refusal,
+      );
+      expect(fs.readlinkSync(path.join(bundle.root, "skills", "demo"))).toBe("nowhere");
+    });
+  });
 });
