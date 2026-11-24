@@ -2,14 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import path from "node:path";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
-import { findAsset } from "../core/assets/read";
+import { type Asset, findAsset } from "../core/assets/read";
 import { materialiseBundleDir } from "../core/bundle-at-dir";
 import { deriveBundleIds } from "../core/bundle-id";
 import { safeRealpath } from "../core/common";
 import { lookupBundleRef } from "./indexer";
-import { deriveInstallations, sourceOfBundle } from "./installations";
+import { deriveInstallations } from "./installations";
 import { resolveSourceEntries } from "./search/search-source";
 
 export interface ResolveAssetPathOptions {
@@ -28,7 +27,12 @@ async function resolveViaIndex(ref: BundleRef): Promise<string | null> {
   }
 }
 
-function resolveViaDisk(ref: BundleRef, options: ResolveAssetPathOptions): string | null {
+/**
+ * The asset `ref` names on disk: in the first of the sources, in order (the named directory's bundle first), that holds
+ * it; with `honorOrigin: false` the ref's own bundle is not required.
+ */
+export function findAssetOnDisk(ref: string, options: ResolveAssetPathOptions = {}): Asset | undefined {
+  const parsed = parseBundleRef(ref);
   const allSources = resolveSourceEntries(options.stashDir);
   const installations = deriveInstallations(allSources);
   const sources = options.writableBundleIds
@@ -37,17 +41,19 @@ function resolveViaDisk(ref: BundleRef, options: ResolveAssetPathOptions): strin
         return bundleId !== undefined && options.writableBundleIds?.has(bundleId);
       })
     : allSources;
-  const bundle = options.honorOrigin !== false ? ref.bundle : undefined;
-  // The first of the sources, in order (the named directory's bundle first), that holds the ref.
+  const bundle = options.honorOrigin !== false ? parsed.bundle : undefined;
   if (options.stashDir !== undefined) materialiseBundleDir(options.stashDir);
-  const asset = deriveBundleIds([...sources])
+  return deriveBundleIds([...sources])
     .filter((id) => bundle === undefined || id === bundle)
-    .map((id) => findAsset(makeBundleRef(id, ref.conceptId)))
+    .map((id) => findAsset(makeBundleRef(id, parsed.conceptId)))
     .find((found) => found !== undefined);
-  // An asset no file holds answers the path its key would have below its bundle's root, which leads nowhere.
-  if (asset === undefined) return null;
+}
+
+/** The file of the asset `ref` names on disk; null when none holds it, or no file does (a keyring's or vault's). */
+function resolveViaDisk(ref: string, options: ResolveAssetPathOptions): string | null {
   // asset-io: base the file a ref resolves to, which improve and schema repair read
-  return safeRealpath(asset.entry.file ?? path.join(sourceOfBundle(sources, asset.bundle).path, asset.entry.key));
+  const file = findAssetOnDisk(ref, options)?.entry.file;
+  return file === undefined ? null : safeRealpath(file);
 }
 
 export async function resolveAssetPath(ref: string, options: ResolveAssetPathOptions = {}): Promise<string | null> {
@@ -58,5 +64,5 @@ export async function resolveAssetPath(ref: string, options: ResolveAssetPathOpt
     if (indexed) return indexed;
     if (mode === "index-only") return null;
   }
-  return resolveViaDisk(parsed, options);
+  return resolveViaDisk(ref, options);
 }

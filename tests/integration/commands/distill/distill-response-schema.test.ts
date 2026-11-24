@@ -63,7 +63,7 @@ function configEnabled(stashDir: string): AkmConfig {
   };
 }
 
-const noopLookup = async () => null;
+const noopLookup = async () => undefined;
 const emptyEvents = (() => ({ events: [], nextOffset: 0 })) as unknown as typeof readEvents;
 
 beforeEach(() => {

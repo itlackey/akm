@@ -20,7 +20,7 @@ import { getDbPath } from "../../core/paths";
 import { KNOWN_TYPES } from "../../core/recognition-util";
 import { warn } from "../../core/warn";
 import { deriveInstallations, deriveWritableBundleIds } from "../../indexer/installations";
-import { resolveAssetPath } from "../../indexer/path-resolver";
+import { findAssetOnDisk, resolveAssetPath } from "../../indexer/path-resolver";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import type { Database } from "../../storage/database";
 import {
@@ -264,7 +264,7 @@ async function collectEligibleRefsFromIndex(
       }
       const indexed = entriesByItemRef.get(`${resolved.bundle}//${resolved.conceptId}`);
       if (!indexed?.bundleId || !indexed.conceptId || !indexedAsset(indexed.bundleId, indexed.conceptId)) {
-        if (await findAssetFilePath(scope.value, stashDir)) return empty(ready);
+        if (findAssetOnDisk(scope.value, { stashDir })) return empty(ready);
         throw new NotFoundError(`Asset not found in the selected writable source: ${scope.value}`, "ASSET_NOT_FOUND");
       }
       if (!isCandidateBundle(indexed.bundleId)) return empty(ready);

@@ -17,6 +17,7 @@ import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import type { readEvents } from "../../src/core/events";
 import { resolveWriteTarget } from "../../src/core/write-source";
+import { byFile } from "../_helpers/asset-at-file";
 import { writeFakeHarness } from "../_helpers/engine-stubs";
 import { quietQualityGateConfig, reflectReply } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -162,7 +163,7 @@ describe("improve keeps the frontmatter it does not own (#1454)", () => {
       fetchRelatedFn: async () => [
         { ref: "lessons/deploy-retries", type: "lesson", content: existing, path: lessonPath },
       ],
-      lookupFn: async () => memory,
+      lookupFn: byFile(async () => memory),
       readEventsFn: emptyEvents,
       chat: async (_cfg, messages) => {
         const joined = messages.map((m) => m.content).join("\n");
@@ -208,7 +209,7 @@ describe("improve keeps the frontmatter it does not own (#1454)", () => {
       proposalKind: "auto",
       config: distillConfig(stash, false),
       stashDir: stash,
-      lookupFn: async (ref: string) => (ref === "memories/auth-guide" ? memory : knowledgePath),
+      lookupFn: byFile(async (ref: string) => (ref === "memories/auth-guide" ? memory : knowledgePath)),
       readEventsFn: positiveEvents,
       chat: async () =>
         JSON.stringify({ action: "UPDATE", content: "---\ndescription: Auth guide v2\n---\nMerged auth content.\n" }),

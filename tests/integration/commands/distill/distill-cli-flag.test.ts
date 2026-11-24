@@ -144,7 +144,7 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
       config,
       stashDir: stash,
       chat: async () => HAPPY_LESSON,
-      lookupFn: async () => null,
+      lookupFn: async () => undefined,
       readEventsFn: (() => ({ events: [], nextOffset: 0 })) as never,
     });
     expectHappy(result.outcome).toBe("queued");
@@ -175,7 +175,7 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
       config,
       stashDir: stash,
       chat: async () => HAPPY_LESSON,
-      lookupFn: async () => null,
+      lookupFn: async () => undefined,
       readEventsFn: (() => ({ events: [], nextOffset: 0 })) as never,
       sourceRun: "run-abc-123",
     });

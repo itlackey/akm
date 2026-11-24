@@ -302,7 +302,7 @@ test("extractCommentMetadata parses curated header tags from scripts", () => {
     ].join("\n"),
   );
 
-  const metadata = extractCommentMetadata(file);
+  const metadata = extractCommentMetadata(fs.readFileSync(file, "utf8"));
   expect(metadata).toEqual({
     description: "Deploy service to production",
     tags: ["deploy", "production", "ops"],

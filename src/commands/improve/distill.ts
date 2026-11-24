@@ -14,7 +14,6 @@
  * unscoped input stays flat.
  */
 
-import fs from "node:fs";
 import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge-system.md" with { type: "text" };
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
 import { parseBundleRef } from "../../core/asset/asset-ref";
@@ -22,8 +21,8 @@ import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } fr
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
-import { findAsset, lookupAsset, readAsset } from "../../core/assets/read";
-import { assetType } from "../../core/assets/type";
+import { type Asset, findAsset, lookupAsset, readAsset } from "../../core/assets/read";
+import { assetType, indexedPathOf } from "../../core/assets/type";
 import { addressOf, conceptIdAtFile, writeAssets } from "../../core/assets/write";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import { materialiseBundleDir, writeTargetAt } from "../../core/bundle-at-dir";
@@ -49,7 +48,7 @@ import {
   scopeFromFrontmatter,
   stampScope,
 } from "../../indexer/passes/metadata";
-import { resolveAssetPath } from "../../indexer/path-resolver";
+import { findAssetOnDisk } from "../../indexer/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { chatCompletion } from "../../llm/client";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
@@ -123,8 +122,8 @@ export interface AkmDistillOptions {
   eventsCtx?: EventsContext;
   /** Test seam: event reader. */
   readEventsFn?: typeof readEvents;
-  /** Test seam: resolve a ref to its file path (`null` when absent). */
-  lookupFn?: (ref: string) => Promise<string | null>;
+  /** Test seam: the asset a ref names (`undefined` when absent). */
+  lookupFn?: (ref: string) => Promise<Asset | undefined>;
   /** Source-run id stamped on the queued proposal. */
   sourceRun?: string;
   /** Feedback events whose ref is listed never reach the prompt (`bench evolve` gold refs). */
@@ -1255,13 +1254,12 @@ async function promoteToKnowledge(run: DistillRun, plan: PromotionPlan): Promise
 
 /** Read the input asset (best-effort: an unindexed asset distils from feedback alone). */
 async function loadInput(
-  lookup: (ref: string) => Promise<string | null>,
+  lookup: (ref: string) => Promise<Asset | undefined>,
   inputRef: string,
 ): Promise<DistillRun["asset"]> {
   try {
-    const filePath = await lookup(inputRef);
-    // asset-io: base the input asset, read by the path its ref resolves to
-    if (filePath && fs.existsSync(filePath)) return { path: filePath, content: fs.readFileSync(filePath, "utf8") };
+    const found = await lookup(inputRef);
+    if (found) return { path: indexedPathOf(found) || null, content: found.entry.content() };
   } catch {
     // An index miss is not fatal.
   }
@@ -1425,12 +1423,8 @@ async function buildDistillMessages(
   };
 }
 
-async function defaultLookup(ref: string, stashDir: string): Promise<string | null> {
-  return resolveAssetPath(ref, {
-    stashDir,
-    mode: "disk-only",
-    honorOrigin: false,
-  });
+async function defaultLookup(ref: string, stashDir: string): Promise<Asset | undefined> {
+  return findAssetOnDisk(ref, { stashDir, honorOrigin: false });
 }
 
 /** What the library already holds on a subject: lessons and knowledge notes say it, a skill is how to do it. */
@@ -1452,8 +1446,7 @@ async function fetchRelatedAssets(query: string, n: number): Promise<RelatedAsse
       .map((h) => {
         let content = "";
         try {
-          // asset-io: base a related asset, read by its search hit's path
-          if (h.path && fs.existsSync(h.path)) content = fs.readFileSync(h.path, "utf8");
+          content = findAsset(h.itemRef ?? h.ref)?.entry.content() ?? "";
         } catch {
           // best-effort
         }

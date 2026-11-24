@@ -829,16 +829,7 @@ const COMMENT_TAGS: ReadonlyArray<readonly [RegExp, (metadata: CommentMetadata, 
   ],
 ];
 
-export function extractCommentMetadata(filePath: string, content?: string): CommentMetadata | undefined {
-  if (content === undefined) {
-    try {
-      // asset-io: base a script's header, read by path for `akm show` and search hints
-      content = fs.readFileSync(filePath, "utf8");
-    } catch {
-      return undefined;
-    }
-  }
-
+export function extractCommentMetadata(content: string): CommentMetadata | undefined {
   const lines = content.split(/\r?\n/).slice(0, 50);
   const metadata: CommentMetadata = {};
 
@@ -1461,7 +1452,7 @@ export function applyPreContributorFields(
     const content = ctx.content();
     const scriptParams = extractScriptParameters(content);
     if (scriptParams) entry.parameters = scriptParams;
-    applyCommentMetadata(entry, extractCommentMetadata(file, content));
+    applyCommentMetadata(entry, extractCommentMetadata(content));
   }
 }
 
