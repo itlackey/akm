@@ -18,7 +18,6 @@ import fs from "node:fs";
 import path from "node:path";
 import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge-system.md" with { type: "text" };
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
-import { resolveAssetPath } from "../../core/adapter/directory/path-resolver";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
@@ -52,6 +51,7 @@ import {
   scopeFromFrontmatter,
   stampScope,
 } from "../../indexer/passes/metadata";
+import { resolveAssetPath } from "../../indexer/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { chatCompletion } from "../../llm/client";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
@@ -666,6 +666,7 @@ function lessonExists(run: DistillRun, ref: string): boolean {
   const typeDir = stashDirFor(type);
   if (!typeDir) return false;
   try {
+    // asset-io: base a lesson's file, found by path
     return fs.statSync(assetPathForName(type, path.join(run.stash, typeDir), name)).isFile();
   } catch {
     return false;
@@ -885,6 +886,7 @@ async function proposeLessonUpdate(
   for (const asset of related ?? (await run.related(memory.slice(0, 500), RELATED_COUNT))) {
     if (asset.type !== "lesson" || !asset.path || !isWithin(asset.path, run.stash)) continue;
     try {
+      // asset-io: base a related lesson, read by its search hit's path
       const content = fs.readFileSync(asset.path, "utf8");
       // A memory is never merged into a lesson of another scope.
       if (!sameScope(memoryScope, scopeFromFrontmatter(parseFrontmatter(content).data))) continue;
@@ -954,6 +956,7 @@ async function proposeLessonUpdate(
   // The proposal's before-hash is taken at mint: a lesson edited since it was read is not what the writer extended.
   let proposal: Proposal;
   try {
+    // asset-io: base the lesson re-read before its update is proposed
     if (fs.readFileSync(target.path, "utf8") !== target.content) {
       return {
         skipReason: "update_not_written",
@@ -1158,7 +1161,9 @@ async function planPromotion(
   let existing: string | null = null;
   try {
     // The promotion is filed in run.stash, so only that bundle's doc is its destination (#1000).
+    // asset-io: base the knowledge note a promotion would replace, read by path
     if (existingPath && fs.existsSync(existingPath) && isWithin(existingPath, run.stash)) {
+      // asset-io: base the same note
       existing = fs.readFileSync(existingPath, "utf8");
     }
   } catch {
@@ -1273,6 +1278,7 @@ async function loadInput(
 ): Promise<DistillRun["asset"]> {
   try {
     const filePath = await lookup(inputRef);
+    // asset-io: base the input asset, read by the path its ref resolves to
     if (filePath && fs.existsSync(filePath)) return { path: filePath, content: fs.readFileSync(filePath, "utf8") };
   } catch {
     // An index miss is not fatal.
@@ -1464,6 +1470,7 @@ async function fetchRelatedAssets(query: string, n: number): Promise<RelatedAsse
       .map((h) => {
         let content = "";
         try {
+          // asset-io: base a related asset, read by its search hit's path
           if (h.path && fs.existsSync(h.path)) content = fs.readFileSync(h.path, "utf8");
         } catch {
           // best-effort

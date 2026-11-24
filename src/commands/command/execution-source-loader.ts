@@ -6,11 +6,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
-import { buildFileContext, type FileContext } from "../../core/adapter/directory/file-context";
-import { adapterForId } from "../../core/adapter/registry";
-import { type Bundle, rootOf } from "../../core/adapter/types";
+import { type Bundle, type FileContext, rootOf } from "../../core/adapter/types";
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { bundleAdapterId } from "../../core/assets/gate";
+import { buildFileContext } from "../../core/assets/files";
+import { bundleAdapterId, executionAdapter } from "../../core/assets/gate";
 import { isContainedResolvedPath, isWithin } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { bundlesToSourceEntries } from "../../core/config/config-sources";
@@ -31,7 +30,7 @@ export type ExecutionSourceLookup = (ref: BundleRef) => Promise<IndexEntry | nul
 export interface LoadAdapterExecutionSourceOptions {
   readonly config?: AkmConfig;
   readonly lookup?: ExecutionSourceLookup;
-  readonly adapterFor?: (id: string) => BundleAdapter | undefined;
+  readonly adapterFor?: (id: string) => Pick<BundleAdapter, "renderExecutionSource"> | undefined;
   /** Guarded execution projection may inject a retained-byte file context. */
   readonly fileContext?: (stashRoot: string, file: string) => FileContext;
 }
@@ -64,6 +63,7 @@ function realRegularFile(value: string, label: string): string {
   let stat: fs.Stats;
   try {
     real = fs.realpathSync(value);
+    // asset-io: exec the indexed file akm runs
     stat = fs.statSync(real);
   } catch {
     throw new NotFoundError(
@@ -240,7 +240,7 @@ export async function loadAdapterExecutionSource(
     );
   }
   const bundle = bundleForEntry(entry, config, realRoot);
-  const adapter = (options.adapterFor ?? adapterForId)(entry.adapterId);
+  const adapter = (options.adapterFor ?? executionAdapter)(entry.adapterId);
   if (!adapter) {
     throw new ConfigError(
       `Execution source adapter ${JSON.stringify(entry.adapterId)} is not registered.`,

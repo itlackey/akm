@@ -314,6 +314,7 @@ async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateConte
 export class OkfAdapter extends DirectoryAdapterBase {
   readonly id = "okf";
   readonly version = "0.9.0";
+  readonly lintsAlone = true;
   override readonly extensions = [".md"];
   protected override readonly walkMode = "all-directories" as const;
 

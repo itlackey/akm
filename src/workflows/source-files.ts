@@ -12,7 +12,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+// asset-io: deprecated
 import { buildFileContext } from "../core/adapter/directory/file-context";
+// asset-io: deprecated
 import { declaredTypeForPath } from "../core/adapter/directory/matchers";
 import { compareCodePoints, toPosix } from "../core/common";
 import { UsageError, type UsageErrorCode } from "../core/errors";

@@ -3,14 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
-import { lookupBundleRef } from "../../../indexer/indexer";
-import { deriveInstallations, sourceOfBundle } from "../../../indexer/installations";
-import { resolveSourceEntries } from "../../../indexer/search/search-source";
-import { type BundleRef, makeBundleRef, parseBundleRef } from "../../asset/asset-ref";
-import { findAsset } from "../../assets/read";
-import { materialiseBundleDir } from "../../bundle-at-dir";
-import { deriveBundleIds } from "../../bundle-id";
-import { safeRealpath } from "../../common";
+import { type BundleRef, makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
+import { findAsset } from "../core/assets/read";
+import { materialiseBundleDir } from "../core/bundle-at-dir";
+import { deriveBundleIds } from "../core/bundle-id";
+import { safeRealpath } from "../core/common";
+import { lookupBundleRef } from "./indexer";
+import { deriveInstallations, sourceOfBundle } from "./installations";
+import { resolveSourceEntries } from "./search/search-source";
 
 export interface ResolveAssetPathOptions {
   stashDir?: string;
@@ -45,9 +45,9 @@ function resolveViaDisk(ref: BundleRef, options: ResolveAssetPathOptions): strin
     .map((id) => findAsset(makeBundleRef(id, ref.conceptId)))
     .find((found) => found !== undefined);
   // An asset no file holds answers a path that leads nowhere, as it always has (phase 5 moves this caller off paths).
-  return asset
-    ? safeRealpath(asset.entry.file ?? path.join(sourceOfBundle(sources, asset.bundle).path, asset.entry.key))
-    : null;
+  if (asset === undefined) return null;
+  // asset-io: base the file a ref resolves to, which improve and schema repair read
+  return safeRealpath(asset.entry.file ?? path.join(sourceOfBundle(sources, asset.bundle).path, asset.entry.key));
 }
 
 export async function resolveAssetPath(ref: string, options: ResolveAssetPathOptions = {}): Promise<string | null> {

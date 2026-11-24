@@ -50,6 +50,7 @@ export function deriveInstallations(sources: SearchSource[]): Bundle[] {
     // derivation. A non-slug-legal registryId slugs from the path instead.
     id: ids[index] as string,
     root: source.path,
+    // asset-io: config the bundle's configured location, copied
     ...(source.location !== undefined ? { location: source.location } : {}),
   }));
 }

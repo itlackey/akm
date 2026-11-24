@@ -10,7 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isProtectedPlace, managedFolderOf } from "../core/adapter/directory/place-rules";
+import { isProtectedPlace, managedFolderOf } from "../core/assets/files";
 import type { AkmConfig } from "../core/config/config";
 import { inspectWriteTarget } from "../core/write-source";
 import { resolveSourceEntries } from "../indexer/search/search-source";

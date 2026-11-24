@@ -3,16 +3,17 @@
  *
  * Bundle adapters are the one layer that reads and writes assets. Code outside it works with assets through the
  * facade in `src/core/assets/` and never learns which adapter holds one, where, or under what file name. This script
- * counts what still breaks that, in seven rules, over `src/` and `desktop/src/lib/server/` (outside
- * `src/core/adapter/` and `src/core/assets/`):
+ * counts what still breaks that, in twelve rules, over `src/` and `desktop/src/lib/server/` (outside
+ * `src/core/adapter/` and `src/core/assets/`, except where a rule says otherwise):
  *
  *   asset-io         a call that reads, writes, stats or walks files, sync or async (`readFileSync`, `fs.promises.stat`,
  *                    `Bun.write`, `walkStash*`, ...), or asks the registry for an adapter (`adapterForId`), outside the
  *                    allowed paths below. Async fs names are matched by where they come from (an `fs` import), so an
  *                    unrelated `.rename()` is not flagged, and an aliased import is.
- *   adapter-import   an import from `src/core/adapter/**` other than `bundle-adapter` and `types`. The walk and the
- *                    metadata recognition helpers (`ADAPTER_IMPORT_LAYER`) may import their own adapter modules.
- *   facade-internal  an import of `src/core/assets/bundle` or `asset`: the facade's internals.
+ *   adapter-import   an import from `src/core/adapter/**` other than `bundle-adapter` and `types`, the walk
+ *                    (`directory/`) included. The adapter layer and the metadata recognition helper
+ *                    (`ADAPTER_IMPORT_LAYER`) may import their own adapter modules.
+ *   facade-internal  an import of `src/core/assets/bundle`, `asset` or `index-rows`: the facade's internals.
  *   adapter-id       a registry id literal compared with anything (`x === "akm"`, `case "okf"`), `kind === "location"`,
  *                    or `.fileless`: callers ask the asset, never which adapter or storage it has. The compared
  *                    expression's last name may be one of `NON_ADAPTER_NAMES`.
@@ -20,23 +21,29 @@
  *   adapter-probe    a call of `detectAdapterId` / `adapterIdOf`: callers never probe which adapter a directory is.
  *   facade-export    an export of a public facade module (`src/core/assets/*` except the internals) that nothing
  *                    outside the facade imports: a facade export lands with its first caller.
+ *   facade-fs        (inside `src/core/assets/`) a file-access call: the facade reaches storage through adapters only.
+ *                    Registry calls (`adapterForId`, `getAdapters`) are the facade's job and are not flagged.
+ *   facade-adapter-id (inside `src/core/assets/`) what `adapter-id` flags: the facade does not know which adapter an
+ *                    asset has either; adapter-specific behaviour is a contract method.
+ *   store-sniff      a test of whether a bundle is a store: `.isStore`, `addressedBy`, or `.location` compared
+ *                    (`=== undefined` included), outside the adapter layer.
+ *   entries-sql      raw SQL on the `entries` table or `index_meta` (`FROM entries`, `INSERT INTO index_meta`, ...)
+ *                    outside `src/storage/`, `src/core/assets/` and `src/indexer/`.
+ *   entry-file-logic `entry.file` as an operand of a comparison, or as a map/set key (`get set has delete add`, `m[entry.file]`,
+ *                    `{ [entry.file]: x }`). A `display` or `exec` exemption does not cover it: display is print/format only.
+ *                    A test against `undefined` is not logic: a file-less asset has no path to show or run (§7.3).
  *
  * A line may carry `// asset-io: <reason>` (same line, or a comment line before it) for access that is not an
  * asset: the reason is one word from REASONS, optionally followed by text. Each rule accepts only the reasons in
- * `reasonsFor`: `entry-file` takes `display` and `exec`; the rules that are not file access take none. `deprecated`
- * (workflow code, removed in 0.11) is accepted everywhere but `facade-export`. A missing or unknown reason is no
- * exemption. The exemptions in use are counted per reason and printed.
+ * `reasonsFor`: `entry-file` takes `display` and `exec`; `store-sniff` takes `config` (a bundle's config entry read as
+ * config: copied, validated, described); the other rules that are not file access take none. `deprecated` (workflow
+ * code, removed in 0.11) is accepted everywhere but `facade-export`; `base` (asset access kept as the base release
+ * does it until the owner rules on it) by `asset-io`, `entry-file` and `adapter-import`. A missing or unknown reason
+ * is no exemption. The exemptions in use are counted per reason and printed.
  *
- * The violations of today are recorded in `lint-asset-io.baseline.json` (count per file, rule and key: the callee for
- * `asset-io` and `adapter-probe`, the module for the import rules, the literal for `adapter-id`, the export name for
- * `facade-export`). The check fails on a violation the baseline lacks and on a baseline entry that no longer occurs,
- * so the baseline only shrinks, cannot trade one violation for another, and stays exact: when a change removes
- * violations, run `bun scripts/lint-asset-io.ts --update`, which rewrites it and refuses to record a new one. The
- * migration is finished when the baseline is empty.
+ * Exit codes: 0 no violation, 1 any violation.
  *
- * Exit codes: 0 matches the baseline, 1 it does not.
- *
- * Usage: bun scripts/lint-asset-io.ts [--update]
+ * Usage: bun scripts/lint-asset-io.ts
  */
 
 import fs from "node:fs";
@@ -51,30 +58,29 @@ const RULES = [
   "entry-file",
   "adapter-probe",
   "facade-export",
+  "facade-fs",
+  "facade-adapter-id",
+  "store-sniff",
+  "entries-sql",
+  "entry-file-logic",
 ] as const;
 export type Rule = (typeof RULES)[number];
-/** `file -> rule -> key -> count`. */
-export type Counts = Record<string, Partial<Record<Rule, Record<string, number>>>>;
 /** One violation: where, which rule, the line, and what it was (the callee, module, literal or export name). */
 export type Violation = [file: string, rule: Rule, line: number, key: string];
 
 const repoRoot = path.resolve(import.meta.dir, "..");
-const baselinePath = path.join(import.meta.dir, "lint-asset-io.baseline.json");
 
 const SCAN_ROOTS = ["src", "desktop/src/lib/server"];
 const ADAPTER_LAYER = ["src/core/adapter/", "src/core/assets/"];
 /** What may import `src/core/adapter/**` modules: the layer, and the recognition helpers in `src/indexer/passes/metadata.ts`. */
 const ADAPTER_IMPORT_LAYER = [...ADAPTER_LAYER, "src/indexer/passes/metadata.ts"];
-/**
- * The adapter modules the rest of the code may import: the contract and the shared value types, and the directory
- * walk (`directory/`), which phases 5-8b move their callers off.
- */
-const IMPORTABLE_ADAPTER_MODULES = [
-  "src/core/adapter/bundle-adapter",
-  "src/core/adapter/types",
-  "src/core/adapter/directory/",
-];
-const FACADE_INTERNAL_MODULES = ["src/core/assets/bundle", "src/core/assets/asset"];
+/** The adapter modules the rest of the code may import: the contract and the shared value types. The walk is not one. */
+const IMPORTABLE_ADAPTER_MODULES = ["src/core/adapter/bundle-adapter", "src/core/adapter/types"];
+/** Where raw SQL on the index tables is at home. */
+const ENTRIES_SQL_ALLOWED = ["src/storage/", "src/core/assets/", "src/indexer/"];
+/** Registry calls: asset-io flags them outside the layer; the facade is where they belong. */
+const REGISTRY_CALLS = new Set(["adapterForId", "getAdapters"]);
+const FACADE_INTERNAL_MODULES = ["src/core/assets/bundle", "src/core/assets/asset", "src/core/assets/index-rows"];
 
 /** The reasons an exemption may give, each with what it covers. Allowed path prefixes below use the same words. */
 export const REASONS = {
@@ -92,20 +98,24 @@ export const REASONS = {
   "bundle-meta": ".meta/ documents of a directory bundle (not assets)",
   "bundle-root": "checks a configured bundle's root (exists, readable, is a git checkout); reads no asset",
   deprecated: "workflow code (deprecated, removed in 0.11): not migrated, its exemptions go with the feature",
+  base: "asset access kept as the base release does it, where the facade would change what the user sees: for the owner",
 } as const;
 type Reason = keyof typeof REASONS;
 
 /** The reasons a rule accepts. Only file access has the storage reasons; the other rules are not about files. */
 function reasonsFor(rule: Rule): readonly string[] {
   if (rule === "asset-io") return Object.keys(REASONS);
-  if (rule === "entry-file") return ["display", "exec", "deprecated"];
-  if (rule === "facade-export") return [];
+  if (rule === "entry-file") return ["display", "exec", "base", "deprecated"];
+  if (rule === "adapter-import") return ["base", "deprecated"];
+  if (rule === "store-sniff") return ["config", "deprecated"];
+  if (rule === "facade-export" || rule === "entry-file-logic") return [];
   return ["deprecated"];
 }
 
 /** Names that hold a registry id's spelling without being an adapter (`harness === "akm"` is not an adapter test). */
 const NON_ADAPTER_NAMES: Record<string, string> = {
   harness: "a harness id (claude, opencode, ...)",
+  harnessId: "a harness id (claude, opencode, ...)",
   platform: "an operating-system platform",
   basename: "a file name",
   binary: "an executable's name",
@@ -318,6 +328,36 @@ function exportedNames(source: ts.SourceFile): Array<[name: string, line: number
   return out;
 }
 
+/** `entry.file` or `x.entry.file`, through parentheses, `!` and `as`. */
+function isEntryFile(node: ts.Node): boolean {
+  if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node) || ts.isAsExpression(node)) {
+    return isEntryFile(node.expression);
+  }
+  if (!ts.isPropertyAccessExpression(node) || node.name.text !== "file") return false;
+  const target = node.expression;
+  return (
+    (ts.isIdentifier(target) && target.text === "entry") ||
+    (ts.isPropertyAccessExpression(target) && target.name.text === "entry")
+  );
+}
+
+/** The text of a string literal or template (its fixed parts), or undefined for any other node. */
+function stringText(node: ts.Node): string | undefined {
+  if (ts.isStringLiteralLike(node)) return node.text;
+  if (ts.isTemplateExpression(node))
+    return [node.head, ...node.templateSpans.map((span) => span.literal)].map((part) => part.text).join(" ");
+  return undefined;
+}
+
+const SQL_ON_INDEX_TABLE = /\b(?:from|join|into|update|table|exists)\s+(entries|index_meta)\b/i;
+const MAP_KEY_METHODS = new Set(["get", "set", "has", "delete", "add"]);
+const ORDERINGS = new Set([
+  ts.SyntaxKind.LessThanToken,
+  ts.SyntaxKind.LessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanToken,
+  ts.SyntaxKind.GreaterThanEqualsToken,
+]);
+
 const COMPARISONS = new Set([
   ts.SyntaxKind.EqualsEqualsToken,
   ts.SyntaxKind.EqualsEqualsEqualsToken,
@@ -349,6 +389,8 @@ export function scan(root: string, adapterIds: readonly string[], exemptions: st
     const inAdapterLayer = ADAPTER_LAYER.some((prefix) => file.startsWith(prefix));
     const mayImportAdapter = ADAPTER_IMPORT_LAYER.some((prefix) => file.startsWith(prefix));
     const inFacade = file.startsWith("src/core/assets/");
+    const sqlOk = ENTRIES_SQL_ALLOWED.some((prefix) => file.startsWith(prefix));
+    const idRule: Rule = inFacade ? "facade-adapter-id" : "adapter-id";
     const ioOk = ioAllowed(file);
     const fsFrom = fsImports(source);
     const namespaces = new Map<string, string>();
@@ -365,6 +407,10 @@ export function scan(root: string, adapterIds: readonly string[], exemptions: st
       else found.push([file, rule, line + 1, key]);
     };
     const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && inFacade) {
+        const callee = ioKey(node, fsFrom);
+        if (callee && !REGISTRY_CALLS.has(callee)) report(node, "facade-fs", callee);
+      }
       if (ts.isCallExpression(node) && !inAdapterLayer) {
         const probe = probeKey(node);
         if (probe) report(node, "adapter-probe", probe);
@@ -405,7 +451,48 @@ export function scan(root: string, adapterIds: readonly string[], exemptions: st
         const target = namespaces.get(node.expression.text);
         if (target) use(target, node.name.text);
       }
+      if (!sqlOk) {
+        const sql = stringText(node);
+        const table = sql === undefined ? undefined : SQL_ON_INDEX_TABLE.exec(sql)?.[1];
+        if (table) report(node, "entries-sql", table.toLowerCase());
+      }
       if (!inAdapterLayer) {
+        const operand = ts.isBinaryExpression(node) ? [node.left, node.right] : [];
+        if (
+          ts.isBinaryExpression(node) &&
+          (COMPARISONS.has(node.operatorToken.kind) || ORDERINGS.has(node.operatorToken.kind))
+        ) {
+          const absence = operand.some((side) => ts.isIdentifier(side) && side.text === "undefined");
+          if (operand.some(isEntryFile) && !absence) report(node, "entry-file-logic", "compare");
+          if (
+            COMPARISONS.has(node.operatorToken.kind) &&
+            operand.some((side) => ts.isPropertyAccessExpression(side) && side.name.text === "location")
+          ) {
+            report(node, "store-sniff", "location");
+          }
+        }
+        const [firstArgument] = ts.isCallExpression(node) ? node.arguments : [];
+        if (
+          ts.isCallExpression(node) &&
+          ts.isPropertyAccessExpression(node.expression) &&
+          MAP_KEY_METHODS.has(node.expression.name.text) &&
+          firstArgument &&
+          isEntryFile(firstArgument)
+        ) {
+          report(node, "entry-file-logic", "key");
+        }
+        if (ts.isElementAccessExpression(node) && isEntryFile(node.argumentExpression)) {
+          report(node, "entry-file-logic", "key");
+        }
+        if (ts.isComputedPropertyName(node) && isEntryFile(node.expression)) report(node, "entry-file-logic", "key");
+        if (ts.isPropertyAccessExpression(node) && (node.name.text === "isStore" || node.name.text === "addressedBy")) {
+          report(node, "store-sniff", node.name.text);
+        }
+        if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "addressedBy") {
+          report(node, "store-sniff", "addressedBy");
+        }
+      }
+      if (!inAdapterLayer || inFacade) {
         // The string and what it is compared with: a switch case compares with the switch's subject.
         let pair: [ts.Expression, ts.Expression] | undefined;
         if (ts.isBinaryExpression(node) && COMPARISONS.has(node.operatorToken.kind)) {
@@ -416,20 +503,13 @@ export function scan(root: string, adapterIds: readonly string[], exemptions: st
         if (pair && ts.isStringLiteralLike(pair[0])) {
           const [literal, subject] = pair;
           const name = lastName(subject);
-          if (literal.text === "location" && name === "kind") report(node, "adapter-id", "location");
+          if (literal.text === "location" && name === "kind") report(node, idRule, "location");
           else if (ids.has(literal.text) && !(name && Object.hasOwn(NON_ADAPTER_NAMES, name)))
-            report(node, "adapter-id", literal.text);
+            report(node, idRule, literal.text);
         }
         if (ts.isPropertyAccessExpression(node)) {
-          const target = node.expression;
-          if (node.name.text === "fileless") report(node, "adapter-id", ".fileless");
-          if (
-            node.name.text === "file" &&
-            ((ts.isIdentifier(target) && target.text === "entry") ||
-              (ts.isPropertyAccessExpression(target) && target.name.text === "entry"))
-          ) {
-            report(node, "entry-file", "entry.file");
-          }
+          if (node.name.text === "fileless") report(node, idRule, ".fileless");
+          if (!inFacade && isEntryFile(node)) report(node, "entry-file", "entry.file");
         }
       }
       ts.forEachChild(node, visit);
@@ -445,77 +525,17 @@ export function scan(root: string, adapterIds: readonly string[], exemptions: st
   return found;
 }
 
-export function countsOf(violations: readonly Violation[]): Counts {
-  const counts: Counts = {};
-  // Sorted first, so the object (and the baseline file written from it) lists files, rules and keys in order.
-  const sorted = [...violations].sort((a, b) => (`${a[0]} ${a[1]} ${a[3]}` < `${b[0]} ${b[1]} ${b[3]}` ? -1 : 1));
-  for (const [file, rule, , key] of sorted) {
-    const rules = counts[file] ?? {};
-    const keys = rules[rule] ?? {};
-    keys[key] = (keys[key] ?? 0) + 1;
-    rules[rule] = keys;
-    counts[file] = rules;
-  }
-  return counts;
-}
-
-/** How `found` differs from `baseline`: what is new, and what the baseline records that no longer occurs. */
-export function compare(found: Counts, baseline: Counts): { added: string[]; stale: string[] } {
-  const added: string[] = [];
-  const stale: string[] = [];
-  for (const file of new Set([...Object.keys(found), ...Object.keys(baseline)])) {
-    for (const rule of RULES) {
-      const now = found[file]?.[rule] ?? {};
-      const recorded = baseline[file]?.[rule] ?? {};
-      for (const key of new Set([...Object.keys(now), ...Object.keys(recorded)])) {
-        const [a, b] = [now[key] ?? 0, recorded[key] ?? 0];
-        if (a > b) added.push(`${file}: ${rule} ${key} ${b} -> ${a}`);
-        if (a < b) stale.push(`${file}: ${rule} ${key} ${b} -> ${a}`);
-      }
-    }
-  }
-  return { added, stale };
-}
-
 if (import.meta.main) {
   const { adapterIds } = await import("../src/core/adapter/registry");
   const exemptions: string[] = [];
   const violations = scan(repoRoot, adapterIds(), exemptions);
-  const found = countsOf(violations);
-  const baseline: Counts = JSON.parse(fs.readFileSync(baselinePath, "utf8"));
-  const { added, stale } = compare(found, baseline);
-
-  if (process.argv.includes("--update")) {
-    if (added.length > 0) {
-      console.error("lint-asset-io: the baseline only shrinks; these are new violations, fix them instead:");
-      for (const line of added) console.error(`  ${line}`);
-      process.exit(1);
-    }
-    fs.writeFileSync(baselinePath, `${JSON.stringify(found, null, 2)}\n`);
-    console.log(`lint-asset-io: baseline updated (${stale.length} entries shrank).`);
-    process.exit(0);
-  }
-
-  if (added.length > 0) {
-    console.error("lint-asset-io: asset I/O outside the adapter layer that the baseline does not allow.");
+  if (violations.length > 0) {
+    console.error("lint-asset-io: asset I/O outside the adapter layer.");
     console.error("Read and write assets through src/core/assets; see scripts/lint-asset-io.ts for the rules.");
-    for (const line of added) console.error(`  ${line}`);
-    for (const [file, rule, line, key] of violations) {
-      if (added.some((entry) => entry.startsWith(`${file}: ${rule} ${key} `))) {
-        console.error(`    ${file}:${line} ${rule} ${key}`);
-      }
-    }
+    for (const [file, rule, line, key] of violations) console.error(`  ${file}:${line} ${rule} ${key}`);
+    process.exit(1);
   }
-  if (stale.length > 0) {
-    console.error(
-      "lint-asset-io: the baseline records violations that are gone. Run `bun scripts/lint-asset-io.ts --update`.",
-    );
-    for (const line of stale) console.error(`  ${line}`);
-  }
-  if (added.length > 0 || stale.length > 0) process.exit(1);
-  console.log(`lint-asset-io: OK - ${violations.length} baseline violation(s), none new.`);
-  for (const rule of RULES) console.log(`  ${rule}: ${violations.filter(([, r]) => r === rule).length}`);
-  console.log(`lint-asset-io: ${exemptions.length} exemption(s)`);
+  console.log(`lint-asset-io: OK - ${exemptions.length} exemption(s)`);
   for (const reason of Object.keys(REASONS))
     console.log(`  ${reason}: ${exemptions.filter((r) => r === reason).length}`);
 }

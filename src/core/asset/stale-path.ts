@@ -53,6 +53,7 @@ function isUnder(candidate: string, root: string): boolean {
 
 function nearestExistingDirectory(candidate: string): string {
   let dir = path.dirname(candidate);
+  // asset-io: host a path an asset's text names
   while (dir !== path.dirname(dir) && !fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
     dir = path.dirname(dir);
   }
@@ -75,6 +76,7 @@ export function findStalePaths(
     const managed = roots.some((root) => isUnder(candidate, root));
     const ephemeral = !managed && candidate.startsWith("/tmp/");
     if (!managed && !ephemeral) continue;
+    // asset-io: host a path an asset's text names
     if (fs.existsSync(candidate)) continue;
     const portable = isUnder(candidate, bundleRoot)
       ? ` (portable form: $AKM_BUNDLE_DIR${candidate.slice(bundleRoot.length)})`

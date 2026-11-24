@@ -41,6 +41,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
+// asset-io: base the memories walk, as collectDerivedMemories (owner ruling)
 import { walkMarkdownFiles } from "../../core/adapter/directory/walker";
 import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import {
@@ -631,6 +632,7 @@ interface ScopeDrift {
  */
 function scanMemories(stashRoot: string): { pending: MemoryRecord[]; scopeDrift: ScopeDrift[] } {
   const memoriesDir = path.join(stashRoot, "memories");
+  // asset-io: base the memories walk, as collectDerivedMemories (owner ruling)
   if (!fs.existsSync(memoriesDir)) return { pending: [], scopeDrift: [] };
 
   const out: MemoryRecord[] = [];
@@ -643,6 +645,7 @@ function scanMemories(stashRoot: string): { pending: MemoryRecord[]; scopeDrift:
   for (const filePath of walked.files) {
     let raw: string;
     try {
+      // asset-io: base the memories walk, as collectDerivedMemories (owner ruling)
       raw = fs.readFileSync(filePath, "utf8");
     } catch (err) {
       warn(

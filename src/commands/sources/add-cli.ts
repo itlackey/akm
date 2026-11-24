@@ -4,7 +4,7 @@
 
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineJsonCommand, output } from "../../cli/shared";
-import { adapterIds } from "../../core/adapter/registry";
+import { knownAdapterIds } from "../../core/assets/gate";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";
@@ -59,7 +59,7 @@ export const addCommand = defineJsonCommand({
     name: { type: "string", description: "Human-friendly name for the source" },
     adapter: {
       type: "string",
-      description: `Adapter for a local directory, or the adapter that reads a keyring or vault (then the ref is its name): ${adapterIds().join(", ")}`,
+      description: `Adapter for a local directory, or the adapter that reads a keyring or vault (then the ref is its name): ${knownAdapterIds().join(", ")}`,
     },
     writable: {
       type: "boolean",

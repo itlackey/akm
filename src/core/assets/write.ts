@@ -34,8 +34,9 @@ import {
 } from "../write-source";
 import { type Asset, assetOf, readFrom } from "./asset";
 import { type AssetBundle, assetBundleOf, bundleFor } from "./bundle";
+import { forgetIndexedAsset, refreshIndexedAsset } from "./index-rows";
 import { assetRevision } from "./read";
-import { assetType, forgetIndexedAsset, refreshIndexedAsset } from "./type";
+import { assetType } from "./type";
 
 /**
  * The gates every write passes: the bundle takes writes, and it is a kind akm writes (a directory, a git checkout, or a
@@ -43,7 +44,7 @@ import { assetType, forgetIndexedAsset, refreshIndexedAsset } from "./type";
  */
 function gate(source: ResolvedWriteTarget["source"], config: ResolvedWriteTarget["config"]): void {
   ensureWritable(source, config);
-  if (source.kind === "location" || isWriteCapableSourceKind(source.kind)) return;
+  if (source.location !== undefined || isWriteCapableSourceKind(source.kind)) return;
   throw new ConfigError(
     `write-source: unsupported kind "${source.kind}" for source "${source.name}". ` +
       "Writes are only defined for `filesystem` and `git` sources.",

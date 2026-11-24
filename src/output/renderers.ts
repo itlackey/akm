@@ -13,8 +13,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { AssetRenderer, RenderContext } from "../core/adapter/directory/file-context";
-import { registerRenderer } from "../core/adapter/directory/file-context";
 import { refForFile } from "../core/asset/asset-placement";
 import { parseFrontmatter, readFrontmatterDate } from "../core/asset/frontmatter";
 import { displayRef } from "../core/asset/resolve-ref";
@@ -25,6 +23,7 @@ import type { IndexDocument } from "../indexer/passes/metadata";
 import { extractCommentMetadata } from "../indexer/passes/metadata";
 import type { ShowResponse, SourceSearchHit } from "../sources/types";
 import { buildWorkflowAction, workflowMdRenderer } from "../workflows/renderer";
+import { type AssetRenderer, type RenderContext, registerRenderer } from "./renderer-registry";
 
 // ── ExecHints types ──────────────────────────────────────────────────────────
 
@@ -77,6 +76,7 @@ export function detectExecHints(filePath: string, ref: string): ExecHints {
   const dir = path.dirname(filePath);
   try {
     for (const [file, cmd] of Object.entries(SETUP_SIGNALS)) {
+      // asset-io: exec the files beside a script that say how to set it up to run
       if (fs.existsSync(path.join(dir, file))) {
         hints.setup = cmd;
         hints.cwd = dir;

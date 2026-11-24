@@ -4,7 +4,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+// asset-io: base the task commands resolve an asset's file by type folder and name
 import { walkStashFlat } from "../core/adapter/directory/walker";
+// asset-io: base the same
 import { recognizeMatch } from "../core/adapter/recognize-match";
 import {
   assetPathForName,
@@ -49,6 +51,7 @@ function resolveInTypeDir(stashDir: string, typeDir: string, type: string, name:
   if (!isContainedResolvedPath(resolvedTarget, path.resolve(root))) {
     throw new UsageError("Ref resolves outside the stash root.", "PATH_ESCAPE_VIOLATION");
   }
+  // asset-io: base the same
   if (!fs.existsSync(resolvedTarget) || !fs.statSync(resolvedTarget).isFile()) {
     throw new NotFoundError(`Stash asset not found for ref: ${conceptIdFromTypeName(type, name)}`, "ASSET_NOT_FOUND");
   }
@@ -77,6 +80,7 @@ function resolveAndValidateTypeRoot(root: string, type: string, name: string): v
 
 function readTypeRootStat(root: string, type: string, name: string): fs.Stats {
   try {
+    // asset-io: base the same
     return fs.statSync(root);
   } catch (error: unknown) {
     if (hasErrnoCode(error, "ENOENT")) {
@@ -93,6 +97,7 @@ function readTypeRootStat(root: string, type: string, name: string): fs.Stats {
 async function resolveByCanonicalName(stashDir: string, type: string, name: string): Promise<string | undefined> {
   const normalizedName = name.replace(/\\/g, "/");
 
+  // asset-io: base the same
   for (const ctx of walkStashFlat(stashDir)) {
     const match = recognizeMatch(ctx);
     if (!match || match.type !== type) continue;

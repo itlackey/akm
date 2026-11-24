@@ -16,7 +16,11 @@ import { isDataDirUnreadableError } from "../errors";
 import { warn, warnVerbose } from "../warn";
 import { readFrom } from "./asset";
 import { bundleFor } from "./bundle";
-import { embedPendingWrites, forgetIndexedAsset, refreshIndexedAsset } from "./type";
+import { embedPendingWrites, forgetIndexedAsset, refreshIndexedAsset } from "./index-rows";
+
+export { buildFileContext } from "../adapter/directory/file-context";
+export { isProtectedPlace, managedFolderOf, placeTypeOf, protectedTypeOf } from "../adapter/directory/place-rules";
+export { isFileOrFileSymlink } from "../adapter/directory/walker";
 
 /**
  * Refresh the existing index for `files` (absolute paths inside the directory bundle `bundle`) written as plain files:

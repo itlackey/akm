@@ -5,9 +5,11 @@
 /** What a bundle's adapter writes, for callers that decide before they write. `bundle.ts` itself stays inside the facade. */
 
 import { akmAdapter } from "../adapter/adapters/akm-adapter";
+import type { BundleAdapter } from "../adapter/bundle-adapter";
 import { detectAdapterId } from "../adapter/detect-adapter";
 import {
   adapterForId,
+  adapterIds,
   clearAdapterCaches as clearRegistryCaches,
   getAdapters,
   requireAdapter,
@@ -54,9 +56,30 @@ export function detectBundleAdapter(root: string): string {
   return detectAdapterId(root);
 }
 
-/** Refuse an adapter id akm does not have, naming the bundle. */
-export function assertKnownAdapter(bundle: string, adapterId: string): void {
-  requireAdapter(bundle, adapterId);
+/**
+ * Refuse an adapter id akm does not have, naming the bundle. With `address` (whether the bundle is configured with a
+ * `location`), also one the bundle is not addressed the way the adapter needs (`requireAdapter`).
+ */
+export function assertKnownAdapter(bundle: string, adapterId: string, address?: { location: boolean }): void {
+  requireAdapter(bundle, adapterId, address);
+}
+
+/** The id of every adapter akm has, in probe order. */
+export function knownAdapterIds(): string[] {
+  return adapterIds();
+}
+
+/**
+ * Whether the folders of the adapter's bundles declare the types of what they hold (an akm bundle's `memories/`):
+ * `akm lint` sweeps such a bundle folder by folder, and its `--type` names a folder.
+ */
+export function adapterDeclaresTypes(adapterId: string): boolean {
+  return adapterForId(adapterId)?.declaredType !== undefined;
+}
+
+/** Whether the adapter's own checks are the whole `akm lint` of a primary bundle it holds: no cross-bundle sweep runs. */
+export function adapterLintsAlone(adapterId: string): boolean {
+  return adapterForId(adapterId)?.lintsAlone === true;
 }
 
 /** Whether some adapter's install-time probe claims `root` as the root of a bundle of its format. A probe that throws does not claim it. */
@@ -93,3 +116,9 @@ export function clearAdapterCaches(): void {
 }
 
 export { bundleAdapterId } from "../adapter/detect-adapter";
+export { assertWritableFile } from "../adapter/directory-adapter";
+
+/** What `akm run` asks of the adapter `adapterId`: to render a command or persona. Undefined: akm has no such adapter. */
+export function executionAdapter(adapterId: string): Pick<BundleAdapter, "renderExecutionSource"> | undefined {
+  return adapterForId(adapterId);
+}

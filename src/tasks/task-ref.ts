@@ -48,6 +48,7 @@ function taskBundleId(source: TaskBundleSource): string {
   const config = loadConfig();
   const configured = config.bundles?.[source.name];
   const own =
+    // asset-io: config a config entry with a location is held at no directory
     configured !== undefined && (configured.location !== undefined || bundleAtDir(config, source.path) === source.name);
   return materialiseBundleDir(source.path, config, {
     ...(configured === undefined || own ? { name: source.name } : {}),

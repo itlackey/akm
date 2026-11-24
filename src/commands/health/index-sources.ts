@@ -8,7 +8,7 @@
  * Reads the record the indexer wrote to the index, read-only; it scans nothing itself.
  */
 
-import { readIncompleteSources } from "../../core/adapter/directory/index-context";
+import { readIncompleteSources } from "../../indexer/index-context";
 import { readHealthIndex } from "./read-index";
 import type { HealthCheckResult } from "./types";
 

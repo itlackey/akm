@@ -23,11 +23,10 @@ is described in [Architecture: Connections and Harnesses](architecture.md#connec
 > **Stability note.** The adapter set, bundle-recognition rules, and the
 > `bundles` config shape are still evolving — see [STABILITY.md](../../STABILITY.md).
 
-> **Migration in progress.** Moving every asset reader and writer behind the
-> facade is not finished. [Principled exceptions](#principled-exceptions) lists
-> what stays outside it for good; the rest is counted in
-> `scripts/lint-asset-io.baseline.json` and shrinks to empty
-> (see [Enforcement](#enforcement)). <!-- 5-10, 11: callers move behind the facade; the baseline is empty -->
+> **Migration nearly finished.** [Principled exceptions](#principled-exceptions)
+> lists what stays outside the facade for good. Asset access still done as the
+> base release did it, where the facade would change what a user sees, carries
+> `// asset-io: base` until the owner rules on it (see [Enforcement](#enforcement)).
 
 ---
 
@@ -581,11 +580,8 @@ it counts seven rules:
 | `facade-export` | an export of a public facade module that nothing outside the facade imports |
 
 A line may carry `// asset-io: <reason>` for access that is not an asset; the
-reasons and what each covers are in `REASONS` in the script. The violations of
-today are recorded in `scripts/lint-asset-io.baseline.json`. The check fails on
-a violation the baseline lacks and on a baseline entry that no longer occurs, so
-the baseline only shrinks. `bun scripts/lint-asset-io.ts --update` rewrites it
-and refuses to record a new violation. <!-- 11: the baseline is empty and the file is deleted -->
+reasons and what each covers are in `REASONS` in the script. Any violation
+fails the check; there is no baseline.
 
 ---
 

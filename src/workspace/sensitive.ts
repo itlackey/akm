@@ -10,8 +10,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { protectedTypeOf } from "../core/adapter/directory/place-rules";
 import { deriveCanonicalAssetName } from "../core/asset/asset-placement";
+import { protectedTypeOf } from "../core/assets/files";
 import { assetRevision as digest } from "../core/assets/read";
 import {
   findWriteTargetAsset,
@@ -80,6 +80,7 @@ function locate(input: SensitiveSelector) {
   const { type, ref } = selection(input);
   const { asset } = type === "env" ? resolveEnvPath(ref) : resolveSecretPath(ref);
   const bundle = asset.bundle;
+  // asset-io: display the env file's path, shown, and refused when it is a link (as the Files view does)
   const file = asset.entry.file;
   // A secret a manager keeps has no file, and no link to refuse.
   if (file) refuseLinked(file, asset.entry.key);

@@ -27,7 +27,7 @@
  */
 
 import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
-import type { FileContext } from "../../core/adapter/directory/file-context";
+import type { FileContext } from "../../core/adapter/types";
 import { type Bundle, type IndexDocument, rootOf } from "../../core/adapter/types";
 import { compileWorkflowSource } from "../../workflows/compile";
 import { isUsableWorkflowSource, workflowNameForSourcePath } from "../../workflows/source-files";

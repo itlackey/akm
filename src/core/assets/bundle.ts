@@ -8,7 +8,6 @@
  * write target to its adapter: nothing outside `src/core/adapter/` and this module asks the registry for one.
  */
 
-import fs from "node:fs";
 import { readUsableIndex } from "../../indexer/index-readiness";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { getStoreFindings } from "../../storage/repositories/index-meta-repository";
@@ -218,7 +217,7 @@ export function bundleFor(id: string): AssetBundle {
   }
   const source = sources?.[deriveBundleIds([...sources]).indexOf(id)];
   // A configured source is never shadowed; the implicit working bundle (no registry id) yields to a directory a command materialised under its id.
-  if (source && (source.registryId !== undefined || !materialised || !fs.existsSync(materialised.path))) {
+  if (source && (source.registryId !== undefined || !materialised || !assetBundleOf(materialised).exists())) {
     return assetBundleOf(sourceBundle(id, source));
   }
   if (materialised) return assetBundleOf(materialised);

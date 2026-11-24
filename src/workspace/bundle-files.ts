@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { protectedTypeOf } from "../core/adapter/directory/place-rules";
+import { protectedTypeOf } from "../core/assets/files";
 import { isWithin, relativeToRoot, safeRealpath } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";

@@ -357,18 +357,18 @@ export class HostTools {
     const cli = await this.detect("akm", env);
     const bun = { ...(await this.detect("bun", env)), installCommand: bunInstallCommand(this.platform) };
     const harnesses = await Promise.all(
-      harnessIds.map(async (id) => {
-        const harness = await this.detect(id, env);
+      harnessIds.map(async (harnessId) => {
+        const harness = await this.detect(harnessId, env);
         if (!harness.runnable || !harness.path) return harness;
         try {
-          if (id === "claude") {
+          if (harnessId === "claude") {
             const list = json(await this.invoke(harness.path, ["plugin", "list", "--json"], env));
             if (!Array.isArray(list)) throw new Error("Unrecognized plugin inventory.");
             const item = list.find((item: Loose) => item.id === pluginId && (!item.scope || item.scope === "user"));
             harness.plugin = item
               ? { state: item.enabled === false ? "disabled" : "installed", version: item.version }
               : { state: "missing" };
-          } else if (id === "codex") {
+          } else if (harnessId === "codex") {
             const list = json(
               await this.invoke(harness.path, ["plugin", "list", "--marketplace", "akm-plugins", "--json"], env),
             );
@@ -661,19 +661,19 @@ export class HostTools {
         : "Add that directory to your terminal PATH if needed; Desktop already finds it."
     }`;
   }
-  async installPlugin(id: string, channel: string, env: Env, options: StartOptions) {
-    const harness = this.state.harnesses.find((item) => item.id === id);
+  async installPlugin(harnessId: string, channel: string, env: Env, options: StartOptions) {
+    const harness = this.state.harnesses.find((item) => item.id === harnessId);
     if (!harness?.runnable || !harness.path || !this.state.cli?.runnable)
       throw new SoftwareError("Install AKM and the harness first.");
     const harnessPath = harness.path;
     if (harness.plugin?.state !== "missing")
       throw new SoftwareError("The plugin is already present or could not be verified. No change was made.");
     const command = async (args: string[]) => {
-      this.state.command = [id, ...args].join(" ");
+      this.state.command = [harnessId, ...args].join(" ");
       await this.invoke(harnessPath, args, env, 180_000);
     };
     let kept = false;
-    if (id === "claude" || id === "codex") {
+    if (harnessId === "claude" || harnessId === "codex") {
       if (!this.state.bun?.installed)
         throw new SoftwareError("Install Bun first: the AKM hooks use it. No harness configuration was changed.");
       // List first: preserve an existing marketplace's source and release channel.
@@ -684,7 +684,7 @@ export class HostTools {
       // The marketplace's own channel is its ref, which only an explicit channel switch changes: installing from one that
       // is already there uses that channel, so the prerelease choice is not applied until the person agrees.
       if (exists && channel === "next" && !options.consent) {
-        this.state.consent = id;
+        this.state.consent = harnessId;
         throw new SoftwareError(
           "The akm-plugins marketplace is already set up and keeps the channel it follows, so the prerelease choice would not apply to this install. Nothing was changed.",
         );
@@ -695,10 +695,12 @@ export class HostTools {
           "plugin",
           "marketplace",
           "add",
-          `itlackey/akm-plugins${id === "claude" && channel === "next" ? "@next" : ""}`,
-          ...(id === "codex" && channel === "next" ? ["--ref", "next"] : []),
+          `itlackey/akm-plugins${harnessId === "claude" && channel === "next" ? "@next" : ""}`,
+          ...(harnessId === "codex" && channel === "next" ? ["--ref", "next"] : []),
         ]);
-      await command(id === "claude" ? ["plugin", "install", pluginId, "--scope", "user"] : ["plugin", "add", pluginId]);
+      await command(
+        harnessId === "claude" ? ["plugin", "install", pluginId, "--scope", "user"] : ["plugin", "add", pluginId],
+      );
     } else {
       const pkg = harness.major === 2 ? "akm-opencode-v2" : "akm-opencode";
       await command(
@@ -706,11 +708,11 @@ export class HostTools {
       );
     }
     await this.inventory(env);
-    const after = this.state.harnesses.find((item) => item.id === id)?.plugin;
+    const after = this.state.harnesses.find((item) => item.id === harnessId)?.plugin;
     if (!after || !["installed", "configured"].includes(after.state))
       throw new Error("The native installation could not be verified.");
     this.state.receipt =
-      (id === "codex"
+      (harnessId === "codex"
         ? "AKM installed for Codex. Review its hooks in Codex /hooks to enable automatic recall."
         : "AKM plugin installed. Restart the harness to load it.") +
       (kept ? " The existing akm-plugins marketplace was kept; its channel was not changed." : "");

@@ -157,6 +157,7 @@ export function computeDirFingerprint(_dirPath: string, files: string[], indexVa
       // `bigint: true` is the same syscall but reports nanoseconds. Millisecond
       // floats would let an edit made inside the same millisecond as the last
       // run's stat land on an identical digest.
+      // asset-io: state the directory scan's incremental state (principled exception 6)
       const stat = fs.statSync(file, { bigint: true });
       fileMtimeMaxMs = Math.max(fileMtimeMaxMs, Number(stat.mtimeMs));
       entries.push(`${name}\0${stat.size}\0${stat.mtimeNs}\0${stat.ctimeNs}`);
@@ -201,6 +202,7 @@ function getDirStaleReason(
 
   for (const file of currentFiles) {
     try {
+      // asset-io: state the directory scan's incremental state (principled exception 6)
       if (fs.statSync(file).mtimeMs > builtAtMs) return { kind: "mtime-changed", detail: path.basename(file) };
     } catch {
       return { kind: "missing-file", detail: path.basename(file) };

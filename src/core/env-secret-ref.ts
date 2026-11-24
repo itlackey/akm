@@ -58,6 +58,7 @@ export function listEnvsRecursive(
     .filter(({ bundle, conceptId }) => !nested[ids.indexOf(bundle)]?.some((folder) => conceptId.startsWith(folder)))
     .map(({ conceptId, bundle, entry }) => ({
       ref: makeEnvRef(conceptId, bundle, config),
+      // asset-io: display the env file's path in a listing
       ...(entry.file !== undefined ? { path: entry.file } : {}),
       keys: scanEnvKeyNames(entry.content()),
     }));
@@ -67,6 +68,7 @@ export function listEnvsRecursive(
 export function listSecrets(): Array<{ ref: string; path?: string }> {
   return listSecretsInFolder().map(({ conceptId, bundle, entry }) => ({
     ref: makeSecretRef(conceptId, bundle),
+    // asset-io: display the secret file's path in a listing
     ...(entry.file !== undefined ? { path: entry.file } : {}),
   }));
 }

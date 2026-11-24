@@ -12,14 +12,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { renderTaskYaml } from "../commands/tasks/tasks";
-import { buildFileContext } from "../core/adapter/directory/file-context";
-import { declaredTypeForPath } from "../core/adapter/directory/matchers";
 import { assertFlatAssetName, normalizeCreateSubPath } from "../core/asset/asset-create";
 import { documentStashDirFor, stashDirFor } from "../core/asset/asset-placement";
 import { serializeFrontmatter } from "../core/asset/asset-serialize";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
 import { frontmatterKeysFor } from "../core/asset/type-keys";
-import { indexFiles } from "../core/assets/files";
+import { indexFiles, placeTypeOf } from "../core/assets/files";
 import { embedPendingWrites } from "../core/assets/type";
 import { writeAssets } from "../core/assets/write";
 import { isWithin } from "../core/common";
@@ -41,10 +39,6 @@ import { interactive } from "./lease";
 /** The extensions a new file may take, in the order a folder's type is tried when the name gives none. */
 const EXTENSIONS = [".md", ".yml", ".sh"];
 
-// asset-io: files-view the type a folder declares, from the path alone
-const typeAt = (relative: string): string | undefined =>
-  declaredTypeForPath(buildFileContext("/", path.posix.join("/", relative)));
-
 /** The file name a new file gets in `folder` and the type its place declares (null: none). `name` absent asks about the folder alone. */
 export function planNewFile(folder: string, name?: string): { type: string | null; fileName: string | undefined } {
   const candidates =
@@ -54,7 +48,7 @@ export function planNewFile(folder: string, name?: string): { type: string | nul
         ? [name]
         : EXTENSIONS.map((ext) => `${name}${ext}`);
   for (const fileName of candidates) {
-    const type = typeAt(path.posix.join(folder, fileName));
+    const type = placeTypeOf(path.posix.join(folder, fileName));
     if (type !== undefined) return { type, fileName: name === undefined ? undefined : fileName };
   }
   return { type: null, fileName: name };

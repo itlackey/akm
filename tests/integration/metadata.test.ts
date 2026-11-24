@@ -2,12 +2,12 @@ import { afterAll, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { extractPackageMetadata } from "../../src/core/adapter/adapters/akm-metadata";
 import { recognizeStashEntries } from "../../src/core/adapter/directory/recognize-stash-entries";
 import {
   applyCuratedFrontmatter,
   extractCommentMetadata,
   extractDescriptionFromComments,
-  extractPackageMetadata,
   extractTagsFromPath,
   fileNameToDescription,
   type IndexDocument,
@@ -90,7 +90,7 @@ test("extractDescriptionFromComments parses JSDoc block comment", () => {
   const file = path.join(dir, "tool.ts");
   writeFile(file, `/**\n * Generate docker compose stacks\n */\nconsole.log("hi")\n`);
 
-  const desc = extractDescriptionFromComments(file);
+  const desc = extractDescriptionFromComments(fs.readFileSync(file, "utf8"));
   expect(desc).toBe("Generate docker compose stacks");
 });
 
@@ -99,7 +99,7 @@ test("extractDescriptionFromComments parses hash comments after shebang", () => 
   const file = path.join(dir, "tool.sh");
   writeFile(file, `#!/usr/bin/env bash\n# Deploy to production\n# Handles rollback\necho deploy\n`);
 
-  const desc = extractDescriptionFromComments(file);
+  const desc = extractDescriptionFromComments(fs.readFileSync(file, "utf8"));
   expect(desc).toBe("Deploy to production Handles rollback");
 });
 
@@ -108,7 +108,7 @@ test("extractDescriptionFromComments returns null for no comments", () => {
   const file = path.join(dir, "tool.ts");
   writeFile(file, `console.log("no comments")\n`);
 
-  expect(extractDescriptionFromComments(file)).toBeNull();
+  expect(extractDescriptionFromComments(fs.readFileSync(file, "utf8"))).toBeNull();
 });
 
 // ── extractPackageMetadata ──────────────────────────────────────────────────

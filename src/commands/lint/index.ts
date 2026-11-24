@@ -16,7 +16,7 @@ import {
 } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
-import { bundleAdapterId } from "../../core/assets/gate";
+import { adapterDeclaresTypes, adapterLintsAlone, bundleAdapterId } from "../../core/assets/gate";
 import {
   assertFileWritable,
   heldFilesBelow,
@@ -320,6 +320,7 @@ async function addStoreFindings(
   if (options.stores !== true || (options.typeFilter !== undefined && options.typeFilter !== "secrets")) return;
   const ids = deriveBundleIds(sources);
   for (const [index, source] of sources.entries()) {
+    // asset-io: config the configured keyring and vault bundles, whose findings the index recorded
     if (source.location === undefined || source.adapterId === undefined || source.unresolved) continue;
     const bundle = ids[index] as string;
     try {
@@ -383,7 +384,7 @@ async function lintViaAdapter(
   // `validate()` (reusing the same `dangerousEnvKeyDiagnostics` rule) — dedupe
   // by `(file, issue, detail)` so a bundle covered both ways reports each
   // finding once, not twice.
-  if (adapterId !== "okf") {
+  if (!adapterLintsAlone(adapterId)) {
     const seen = new Set(flagged.map(lintIssueDedupeKey));
     for (const issue of runEnvDangerousKeyPass(stashRoot, extraStashRoots, sources, cfg)) {
       const key = lintIssueDedupeKey(issue);
@@ -1002,7 +1003,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
     const sources = resolveSourceEntries(root, cfg);
     const { adapterId } = bundleSourceAt(root, cfg);
     const relPath = path.relative(realRoot as string, absFile);
-    if (adapterId !== "akm") {
+    if (!adapterDeclaresTypes(adapterId)) {
       const result = await lintViaAdapter(
         adapterId,
         root,
@@ -1231,7 +1232,7 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   // asset-io: bundle-root root probe
   const extraStashRoots = sources.map((s) => s.path).filter((p) => p !== stashRoot && fs.existsSync(p));
 
-  if (adapterId !== "akm") {
+  if (!adapterDeclaresTypes(adapterId)) {
     const found = await lintViaAdapter(adapterId, stashRoot, extraStashRoots, sources, cfg, options);
     found.flagged.push(...trackedSecretIssues(stashRoot));
     await addStoreFindings(found, sources, cfg, options);

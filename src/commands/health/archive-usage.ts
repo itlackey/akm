@@ -24,7 +24,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { MEMORY_ARCHIVE_REL } from "../../core/adapter/directory/held-files";
+import { MEMORY_ARCHIVE_REL } from "../../core/assets/held";
 import { toPosix } from "../../core/common";
 import { checkGitPathSafety, isGitBackedStash } from "../../core/git-path-safety";
 import { MAX_WALK_ENTRIES, sizeOfPath } from "./data-dir-usage";

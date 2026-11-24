@@ -158,6 +158,8 @@ export interface BundleAdapter {
   readonly writes: readonly string[];
   /** Types it retires recoverably; a subset of `writes`. Empty: it deletes only. */
   readonly retires: readonly string[];
+  /** Its own checks are the whole `akm lint` of a primary bundle it holds: the cross-bundle sweeps do not run. */
+  readonly lintsAlone?: boolean;
 
   /** Whether the bundle's storage is there. It reads no asset and never prompts. */
   exists(b: Bundle): boolean;
@@ -185,6 +187,16 @@ export interface BundleAdapter {
    * bytes and must change nothing asks this). Absent: the adapter has no cheaper answer; undefined: it types nothing.
    */
   contentType?(b: Bundle, entry: AssetEntry): string | undefined;
+  /**
+   * The type the folder a storage key sits in declares for it (`memories/` declares memory), from the key alone: no
+   * bytes are read. Absent or undefined: the adapter's folders declare none.
+   */
+  declaredType?(key: string): string | undefined;
+  /**
+   * How `akm show` renders an asset of `type` the adapter does not present itself (`ownsPresentation`): the renderer's
+   * name, or undefined to match the entry live, as the next index would type it. Absent: the type's own renderer.
+   */
+  rendererFor?(type: string): string | undefined;
   /**
    * Native validation of pending `edits`, each an asset by its concept id (`akm lint` checks every asset as an
    * `update`). It never writes. A directory adapter checks the bundle's snapshot with the edits overlaid; a store

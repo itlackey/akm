@@ -59,8 +59,9 @@ export function resolveRefToken(
   const asset = resolveRefOwner(ref, from);
   if (asset === undefined) return undefined;
   if (assetType(asset) === "secret") return { kind: "secret", value: secretValueOf(asset) };
+  // asset-io: exec a `${ref}` token is the asset's path, handed to a program
   if (asset.entry.file === undefined) throw new UsageError(`"${asset.ref}" is not kept in a file, so it has no path.`);
-  return { kind: "path", path: asset.entry.file };
+  return { kind: "path", path: asset.entry.file }; // asset-io: exec
 }
 
 export interface ResolveEnvBindingOptions {

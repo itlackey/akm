@@ -170,6 +170,7 @@ async function addLocationSource(
   mutateConfig((config) => {
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
     const existing = Object.entries(bundles).find(
+      // asset-io: config the config entry already naming this location
       ([, bundle]) => bundle.location === location && bundle.adapter === adapter,
     )?.[0];
     if (existing) {

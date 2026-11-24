@@ -183,6 +183,7 @@ export const BundleConfigEntrySchema = z
         message: "git credential must be a $VAR, ${VAR} or ${secrets/<name>} reference",
       });
     }
+    // asset-io: config the config entry, validated
     if (entry.location !== undefined && entry.adapter === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

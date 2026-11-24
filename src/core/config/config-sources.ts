@@ -84,6 +84,7 @@ export function bundleSourceId(config: AkmConfig, bundleId: string): string {
     source = { kind: "website", url: bundle.website.url };
   } else if (bundle.npm !== undefined) {
     source = { kind: "npm", locator: bundle.npm };
+    // asset-io: config the config entry's kind, described
   } else if (bundle.location !== undefined) {
     source = { kind: "location", locator: bundle.location };
   } else {
@@ -184,6 +185,7 @@ export function bundleOverlaps(config: AkmConfig): BundleOverlap[] {
   const overlaps: BundleOverlap[] = [];
   for (const [index, first] of entries.entries()) {
     for (const second of entries.slice(index + 1)) {
+      // asset-io: config two config entries naming one location
       if (first.location !== second.location) continue;
       const bundles = [first.id, second.id] as const;
       const roots = [first.root, second.root] as const;

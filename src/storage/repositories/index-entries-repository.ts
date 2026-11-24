@@ -554,6 +554,12 @@ export function getRefsAndFilesByBundle(db: Database, bundleId: string): Array<{
   return found;
 }
 
+/** A lookup of the ref each entry row holds, by row id: null for a row with no ref, undefined for no row. */
+export function itemRefLookup(db: Database): (id: number) => string | null | undefined {
+  const byId = db.prepare<{ item_ref: string | null }>("SELECT item_ref FROM entries WHERE id = ?");
+  return (id) => byId.get(id)?.item_ref;
+}
+
 /**
  * Re-key every entry row's `bundle_id`/`item_ref` from `oldBundleId` to
  * `newBundleId` in place (`akm bundle rename`, D6). Unlike
