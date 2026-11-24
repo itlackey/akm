@@ -23,16 +23,16 @@
  * comment.
  */
 
-import fs from "node:fs";
 import path from "node:path";
 import consolidateSystemPrompt from "../../assets/prompts/consolidate-system.md" with { type: "text" };
-import { refForFile } from "../../core/asset/asset-placement";
 import { makeBundleRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { listAssets, requireAsset } from "../../core/assets/read";
+import { indexedPathOf } from "../../core/assets/type";
 import { bundleSourceAt, materialiseBundleDir } from "../../core/bundle-at-dir";
+import { isWithin } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-types";
@@ -42,6 +42,7 @@ import { info, warn, warnVerbose } from "../../core/warn";
 import { type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-source";
 import { type NoticeSink, noticeSet } from "../../execution/notices";
 import { deriveInstallations } from "../../indexer/installations";
+import { listMemories } from "../../indexer/passes/memory-inference";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -1152,7 +1153,7 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
   }
 }
 
-/** The target bundle's eligible memories from the index, else walked from disk. */
+/** The target bundle's eligible memories from the index, else as its bundle lists them. */
 function loadMemoriesForSource(
   source: ConsolidationSourceOwner | undefined,
   warnings: string[],
@@ -1181,35 +1182,20 @@ function loadMemoriesForSource(
     if (db) closeDatabase(db);
   }
   if (memories.length > 0 || !source) return memories;
-  const memoriesDir = path.join(source.sourceRoot, "memories");
-  // asset-io: base the memories walk when the index lists none
-  if (fs.existsSync(memoriesDir)) {
-    const pending = [memoriesDir];
-    while (pending.length > 0) {
-      const current = pending.pop() as string;
-      // asset-io: base the memories walk when the index lists none
-      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-        const filePath = path.join(current, entry.name);
-        if (entry.isDirectory()) {
-          if (!source.excludedSourceRoots.has(path.resolve(filePath))) pending.push(filePath);
-          continue;
-        }
-        if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-        const name = path.relative(memoriesDir, filePath).replace(/\.md$/, "").split(path.sep).join("/");
-        if (isConsolidationEligibleMemoryName(name)) {
-          const ref = refForFile("memory", source.sourceRoot, filePath) ?? name;
-          memories.push({
-            name,
-            ref,
-            bundleId: source.bundleId,
-            filePath,
-            description: "",
-            tags: [],
-            stashDir: source.sourceRoot,
-          });
-        }
-      }
-    }
+  // A memory of another bundle nested inside this one is that bundle's.
+  for (const { memory, name } of listMemories(source.bundleId)) {
+    const filePath = indexedPathOf(memory);
+    if (!isConsolidationEligibleMemoryName(name)) continue;
+    if ([...source.excludedSourceRoots].some((root) => isWithin(filePath, root))) continue;
+    memories.push({
+      name,
+      ref: memory.conceptId,
+      bundleId: source.bundleId,
+      filePath,
+      description: "",
+      tags: [],
+      stashDir: source.sourceRoot,
+    });
   }
   if (memories.length > 0) warnings.push("DB not found or empty — loaded memories directly from filesystem.");
   return memories;

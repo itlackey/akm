@@ -294,51 +294,6 @@ function isInsideGitRepo(dir: string): boolean {
   return false;
 }
 
-export interface WalkMarkdownFilesResult {
-  files: string[];
-  /** False when any directory under `root` could not be read (e.g. permission errors). */
-  complete: boolean;
-}
-
-/**
- * Recursively collect every `.md` file under `root`.
- *
- * Used by memory-inference. Mirrors the `complete` tracking of the other
- * walkers in this file: a directory that cannot be read makes the result
- * incomplete instead of silently looking like a clean, empty scan.
- */
-export function walkMarkdownFiles(root: string): WalkMarkdownFilesResult {
-  const files: string[] = [];
-  let complete = true;
-  const stack = [root];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) continue;
-
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(current, { withFileTypes: true });
-    } catch {
-      complete = false;
-      continue;
-    }
-
-    for (const entry of entries) {
-      const full = path.join(current, entry.name);
-      if (entry.isSymbolicLink()) {
-        if (entry.name.toLowerCase().endsWith(".md") && isFileOrFileSymlink(full)) files.push(full);
-        continue;
-      }
-      if (entry.isDirectory()) {
-        stack.push(full);
-      } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
-        files.push(full);
-      }
-    }
-  }
-  return { files, complete };
-}
-
 /** Manual walk for non-git directories. */
 function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): WalkStashFlatResult {
   const results: FileContext[] = [];

@@ -4,12 +4,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
-// asset-io: base collectDerivedMemories walks memories/
-import { walkMarkdownFiles } from "../../../core/adapter/directory/walker";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
 import { editFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
 import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { readAsset } from "../../../core/assets/read";
+import { indexedPathOf } from "../../../core/assets/type";
 import { type AssetWriter, conceptIdAtFile, writeAssets } from "../../../core/assets/write";
 import { materialiseBundleDir, writeTargetAt } from "../../../core/bundle-at-dir";
 import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
@@ -26,8 +25,8 @@ import type {
   RelativeDateCandidate,
 } from "../../../core/improve-types";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
-import { warn } from "../../../core/warn";
 import { beginWriteProvenance, recordWrittenPath } from "../../../core/write-provenance";
+import { listMemories } from "../../../indexer/passes/memory-inference";
 import { contentHash } from "../content-hash";
 import { isDerivedMemory, memoryIdentityRef, parseMemoryName, resolveParentRef } from "./derived-ref";
 
@@ -817,23 +816,11 @@ function priorBeliefStateForArchive(candidate: MemoryPruneCandidate): Exclude<Me
 }
 
 function collectDerivedMemories(stashDir: string, parentRefFilter?: string): DerivedMemoryRecord[] {
-  const memoriesDir = path.join(stashDir, "memories");
-  // asset-io: base collectDerivedMemories
-  if (!fs.existsSync(memoriesDir)) return [];
-
   const records: DerivedMemoryRecord[] = [];
-  const walked = walkMarkdownFiles(memoriesDir);
-  if (!walked.complete) {
-    warn(`memory improve: directory scan under ${memoriesDir} is incomplete — some derived memories may be missing`);
-  }
-  for (const filePath of walked.files) {
-    const name = toMemoryName(memoriesDir, filePath);
-    if (!name) continue;
-
+  for (const { memory, name } of listMemories(materialiseBundleDir(stashDir))) {
     let raw: string;
     try {
-      // asset-io: base collectDerivedMemories
-      raw = fs.readFileSync(filePath, "utf8");
+      raw = memory.entry.content();
     } catch {
       continue;
     }
@@ -854,7 +841,7 @@ function collectDerivedMemories(stashDir: string, parentRefFilter?: string): Der
     records.push({
       ref: `memory:${name}`,
       name,
-      filePath,
+      filePath: indexedPathOf(memory),
       parentRef,
       title,
       description,
@@ -1056,10 +1043,4 @@ function firstNonEmpty(values: Array<string | undefined>): string | undefined {
     if (value && value.trim().length > 0) return value;
   }
   return undefined;
-}
-
-function toMemoryName(memoriesDir: string, filePath: string): string | undefined {
-  const rel = path.relative(memoriesDir, filePath);
-  if (!rel || rel.startsWith("..")) return undefined;
-  return rel.replace(/\\/g, "/").replace(/\.md$/i, "");
 }
