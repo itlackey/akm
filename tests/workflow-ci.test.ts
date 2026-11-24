@@ -27,12 +27,11 @@ describe("CI workflow", () => {
     expect(workflow.on.pull_request).toEqual({ types: ["opened", "synchronize", "reopened", "ready_for_review"] });
   });
 
-  test("the fast gate runs on every pull request except a draft into main: check, the Node smoke, Desktop", () => {
-    for (const job of ["check", "node-smoke", "desktop"]) {
+  test("the fast gate runs on every pull request except a draft into main: check, Desktop", () => {
+    for (const job of ["check", "desktop"]) {
       expect(workflow.jobs[job]?.if, job).toBe(`$` + `{{ !(${DRAFT_RELEASE_PULL_REQUEST}) }}`);
       expect(workflow.jobs[job]?.needs, job).toBeUndefined();
     }
-    expect(source).toContain('node-version: ["22", "24"]');
     expect(workflow.jobs.check?.steps?.some((step) => step.run === "bun run check")).toBe(true);
   });
 
@@ -43,6 +42,12 @@ describe("CI workflow", () => {
     expect(manifest.scripts.check).not.toContain("test:integration");
     expect(source).not.toContain("test:integration");
     expect(source).not.toContain("gated-ci.yml");
+    // The Node fallback smoke and the upgrade rehearsals run integration tests: they are Release jobs too.
+    expect(workflow.jobs["node-smoke"]).toBeUndefined();
+    expect(workflow.jobs["upgrade-rehearsal"]).toBeUndefined();
+    expect(source).not.toContain("test:node-smoke");
+    expect(source).not.toContain("test:node-compat");
+    expect(source).not.toContain("tests/integration/upgrade-rehearsal/");
   });
 
   test("only a release branch merges to main, and it ships the version it is named for", () => {
@@ -60,7 +65,7 @@ describe("CI workflow", () => {
   });
 
   test("the platform jobs and the plugins contract follow the release-branch check, so they run on a release pull request only", () => {
-    for (const job of ["desktop-package", "upgrade-rehearsal", "plugins-contract"]) {
+    for (const job of ["desktop-package", "plugins-contract"]) {
       expect(workflow.jobs[job]?.needs, job).toBe("release-branch-only");
       expect(workflow.jobs[job]?.if, job).toBeUndefined();
     }

@@ -145,11 +145,11 @@ verify_model_surface() {
 	expect "0" '"type": "harness"' "info on a harness" harness info
 }
 
-# Release acceptance for the packaged artifact. Lint, typecheck, the unit and
-# integration suites and the upgrade rehearsal run in CI, and the
-# native-scheduler gates in Gated CI, on the commit that ships: on the release
-# pull request for a stable release, as the Release workflow's own jobs for a
-# prerelease.
+# Release acceptance for the packaged artifact. Lint, typecheck and the unit
+# suite run in CI (on the release pull request for a stable release, as the
+# Release workflow's own `ci` job for a prerelease); the integration suite, the
+# Node fallback smoke, the upgrade rehearsal and Gated CI run as the Release
+# workflow's own jobs on the commit that ships.
 run_step "Workflow Syntax" validate_workflow_syntax
 run_step "Build Package" bun run build
 run_step \

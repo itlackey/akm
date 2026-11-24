@@ -246,7 +246,7 @@ Enforced by: `tests/contracts/api-surface.test.ts` and
 `tests/contracts/workspace-surface.test.ts` (export lists and the hand-written declarations),
 `tests/integration/install/package-exports.test.ts` (the `exports` map),
 `package.json` (`engines.node`), the Node version check in the launchers and
-`src/cli.ts`, and the `node-smoke` job in `.github/workflows/ci.yml` (Node 22
+`src/cli.ts`, and the `node-smoke` job in `.github/workflows/release.yml` (Node 22
 and 24).
 
 ### 10. Agent harnesses are thin, replaceable internals

@@ -70,11 +70,14 @@ No commit is needed: the branch name carries the version. It dispatches the
 Release workflow on the branch (`gh workflow run release.yml --ref
 release/<version> -f stage=<stage>`), which, on the branch's head:
 
-1. runs CI (lint, the typecheck, the unit suite, the build, the Node fallback
-   smoke, Desktop's tests), the integration suite and Gated CI (semantic search
-   with real embeddings, the Docker install matrix, the native schedulers on
-   Linux, macOS and Windows) as its own jobs. The integration suite and Gated CI
-   run nowhere else: they gate releases only;
+1. runs CI (lint, the typecheck, the unit suite, the architecture checks, the
+   build, Desktop's tests), the integration suite, the Node fallback smoke on
+   Node 22 and 24, the upgrade rehearsals from the previous stable and from the
+   oldest supported releases, and Gated CI (semantic search with real
+   embeddings, the Docker install matrix, the native schedulers on Linux, macOS
+   and Windows) as its own jobs. The integration suite, the Node fallback
+   smoke, the upgrade rehearsals and Gated CI run nowhere else: they gate
+   releases only;
 2. runs `tests/release-check.sh --skip-docker`: the packaged artifact's bin
    targets and migrator, and package acceptance;
 3. builds the package and the standalone binaries as `<version>-<stage>.N`,
@@ -115,20 +118,20 @@ On the release branch with everything pushed:
    runs the whole gate once on the release commit.
 
    That pull request runs everything a pull request runs, plus Desktop
-   packaged on all three platforms, the upgrade rehearsals from the previous
-   stable and from the oldest supported releases, and the check that the head
-   is a release branch whose version package.json carries. Fix on the release
-   branch until it is green. Rerun failed jobs on a flake. The integration
-   suite and Gated CI do not run on it: run a prerelease first to see them
-   pass on the branch.
+   packaged on all three platforms and the check that the head is a release
+   branch whose version package.json carries. Fix on the release branch until
+   it is green. Rerun failed jobs on a flake. The integration suite, the Node
+   fallback smoke, the upgrade rehearsals and Gated CI do not run on it: run a
+   prerelease first to see them pass on the branch.
 3. Merge it (a merge commit, so `main` carries the branch's commits). The push
-   to `main` runs the Release workflow: the integration suite and Gated CI on
-   the merged commit, then, once they pass, it publishes `<version>` to npm
-   `latest`, creates the GitHub release with the binaries, the installers and
-   `checksums.txt`, builds and attaches Desktop, and publishes `akm-web`. CI is
-   not run again: the pull request proved this tree, and the ruleset requires
-   the branch to be up to date, so the merge has the same tree. A failed gate
-   stops the release before anything is published.
+   to `main` runs the Release workflow: the integration suite, the Node
+   fallback smoke, the upgrade rehearsals and Gated CI on the merged commit,
+   then, once they pass, it publishes `<version>` to npm `latest`, creates the
+   GitHub release with the binaries, the installers and `checksums.txt`, builds
+   and attaches Desktop, and publishes `akm-web`. CI is not run again: the pull
+   request proved this tree, and the ruleset requires the branch to be up to
+   date, so the merge has the same tree. A failed gate stops the release before
+   anything is published.
 4. Cut the next release branch ([section 1](#1-cut-a-release-branch)).
 
 If Release fails on a flake, rerun the failed jobs: a rerun on the same commit
@@ -214,10 +217,11 @@ The process is enforced by the repository's settings where GitHub allows it.
 `bun scripts/github-settings.ts` applies everything in this section through
 `gh api` (logged in with admin rights; `--dry-run` prints the requests). It
 reads the required checks from the workflow files, so run it again after a CI
-matrix change or after a check moves between workflows (the integration suite
-and Gated CI moved from pull requests to the Release workflow: run it once
-before the next release pull request, or `main` still requires checks nothing
-reports). `main` stays the default branch.
+matrix change or after a check moves between workflows (the integration suite,
+the Node fallback smoke, the upgrade rehearsals and Gated CI moved from pull
+requests to the Release workflow: run it once before the next release pull
+request, or `main` still requires checks nothing reports). `main` stays the
+default branch.
 
 **Ruleset `main`** (Settings → Rules → Rulesets; rulesets are the current form
 of branch protection and are available on a public repository under the Free
@@ -229,10 +233,11 @@ plan). Target branch `main`, enforcement active, no bypass list:
   descends from them.
 - Require status checks to pass, with "Require branches to be up to date
   before merging" on. Require every check a release pull request reports: the
-  CI jobs (`check`, `release-branch-only`, `desktop`, and each `node-smoke`,
-  `desktop-package` and `upgrade-rehearsal` matrix entry, `plugins-contract`).
-  Gated CI is not among them: it runs from the Release workflow, not on the pull
-  request. GitHub lists them by name once the first release pull request has run.
+  CI jobs (`check`, `release-branch-only`, `desktop`, each `desktop-package`
+  matrix entry, `plugins-contract`). The integration suite, `node-smoke`,
+  `upgrade-rehearsal` and Gated CI are not among them: they run from the
+  Release workflow, not on the pull request. GitHub lists them by name once the
+  first release pull request has run.
 
 Rulesets cannot restrict which branch a pull request comes from; the
 `release-branch-only` check does that, and also checks that package.json

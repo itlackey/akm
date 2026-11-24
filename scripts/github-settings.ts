@@ -14,8 +14,9 @@
  *   - the release branches left over from the old process are deleted.
  *
  * The required checks are read from .github/workflows/ci.yml (every job and matrix entry CI runs on a release pull
- * request; Gated CI runs from the Release workflow, not on the pull request), so the script is rerun after a matrix
- * change and the ruleset follows. Idempotent.
+ * request; the integration suite, the Node fallback smoke, the upgrade rehearsals and Gated CI run from the Release
+ * workflow, not on the pull request), so the script is rerun after a matrix change, or after a job moves between
+ * workflows, and the ruleset follows. Idempotent.
  * Needs `gh` logged in with admin rights on the repository.
  *
  *   bun scripts/github-settings.ts            # apply
