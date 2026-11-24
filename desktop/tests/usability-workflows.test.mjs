@@ -124,6 +124,8 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     await expect(snapshot).toHaveText(/Snapshot refreshed/);
     await expect(check).toBeFocused();
     await expect(page.locator(".home-attention")).toBeVisible();
+    // The refresh has ended: a busy page ignores the next press, and a slow machine can still show the last refresh.
+    await expect(page.locator(".home-page")).toHaveAttribute("aria-busy", "false");
     // A retry takes its own button away when it starts, so focus goes to the refresh control, never to the page.
     let failing = true;
     await page.route("**/api/overview?*", (route) => (failing ? route.abort() : route.continue()));

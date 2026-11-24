@@ -5,7 +5,6 @@
  * #13 — UsageError exits 2, ConfigError exits 78, NotFoundError exits 1.
  * #15 — `akm show foo` (malformed ref) throws UsageError/MISSING_REQUIRED_ARGUMENT.
  * #16 — `config set sources <bad>` says "sources" not "stashes".
- * #27 — clone missing asset: user-facing message, no "Stash type root" leakage.
  * #38 — deprecation hints reference real commands.
  */
 
@@ -85,39 +84,6 @@ describe("config-cli setConfigValue sources error message (#16)", () => {
       const msg = (err as UsageError).message;
       expect(msg).toContain("registries.0");
       expect(msg).not.toContain("stashes.0");
-    }
-  });
-});
-
-// ── #27: source-resolve user-facing error messages ───────────────────────────
-
-describe("source-resolve user-facing errors (#27)", () => {
-  test("error message does not contain 'Stash type root'", async () => {
-    // Import the resolver lazily so we don't pull in full DB on every test run.
-    const { resolveAssetPath } = await import("../../../src/sources/resolve");
-    try {
-      await resolveAssetPath("/tmp/nonexistent-stash-dir-xyz", "skill", "missing-skill");
-      throw new Error("should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(NotFoundError);
-      const msg = (err as NotFoundError).message;
-      expect(msg).not.toContain("Stash type root");
-      // Should contain user-facing wording
-      expect(msg).toMatch(/Asset not found for ref|not found for ref|not accessible/i);
-    }
-  });
-
-  test("error hint is set on the not-found error from source-resolve", async () => {
-    const { resolveAssetPath } = await import("../../../src/sources/resolve");
-    try {
-      await resolveAssetPath("/tmp/nonexistent-stash-dir-xyz", "skill", "missing-skill");
-      throw new Error("should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(NotFoundError);
-      const hint = (err as NotFoundError).hint();
-      // Should have an actionable hint
-      expect(hint).toBeDefined();
-      expect(hint).toMatch(/akm list|akm index/i);
     }
   });
 });

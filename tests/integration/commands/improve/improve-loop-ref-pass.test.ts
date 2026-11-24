@@ -380,7 +380,7 @@ describe("processImproveLoopRef — distill half", () => {
           chat: async () => {
             throw new Error("the writer must not be called for a lesson that exists");
           },
-          lookupFn: async () => null,
+          lookupFn: async () => undefined,
         }),
     });
 

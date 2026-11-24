@@ -45,13 +45,13 @@ const SETUP_SIGNALS: Record<string, string> = {
 // ── Comment tag extraction ───────────────────────────────────────────────────
 
 /**
- * Extract `@run`, `@setup`, `@cwd` tags from script file header comments.
+ * Extract `@run`, `@setup`, `@cwd` tags from a script's header comments.
  *
- * Scans the first 50 lines of the file for comment lines containing
+ * Scans the first 50 lines of `content` for comment lines containing
  * `@run <value>`, `@setup <value>`, or `@cwd <value>`.
  */
-export function extractCommentTags(filePath: string): ExecHints {
-  const metadata = extractCommentMetadata(filePath);
+export function extractCommentTags(content: string): ExecHints {
+  const metadata = extractCommentMetadata(content);
   return {
     run: metadata?.run,
     setup: metadata?.setup,
@@ -100,14 +100,19 @@ export function detectExecHints(filePath: string, ref: string): ExecHints {
  * 2. Script file header comments (`@run`/`@setup`/`@cwd`)
  * 3. Auto-detection: `akm run <ref>` and dependency files
  */
-export function resolveExecHints(stashEntry: IndexDocument | undefined, filePath: string, ref: string): ExecHints {
+export function resolveExecHints(
+  stashEntry: IndexDocument | undefined,
+  filePath: string,
+  ref: string,
+  content: string,
+): ExecHints {
   const stashHints: ExecHints = {
     run: stashEntry?.run,
     setup: stashEntry?.setup,
     cwd: stashEntry?.cwd,
   };
 
-  const commentHints = extractCommentTags(filePath);
+  const commentHints = extractCommentTags(content);
   const autoHints = detectExecHints(filePath, ref);
 
   return {
@@ -333,6 +338,7 @@ const scriptSourceRenderer: AssetRenderer = {
         undefined,
         ctx.absPath,
         displayRef({ conceptId, bundleId: ctx.origin }, ctx.defaultBundle),
+        ctx.content(),
       );
 
       if (hints.run) {
@@ -364,7 +370,12 @@ const scriptSourceRenderer: AssetRenderer = {
     if (!SCRIPT_EXTENSIONS.has(ext)) return;
 
     try {
-      const hints = resolveExecHints(undefined, hit.path, hit.ref);
+      const hints = resolveExecHints(
+        undefined,
+        hit.path,
+        hit.ref,
+        findAsset(hit.itemRef ?? hit.ref)?.entry.content() ?? "",
+      );
       hit.run = hints.run;
     } catch (error: unknown) {
       if (!hasErrnoCode(error, "ENOENT")) throw error;

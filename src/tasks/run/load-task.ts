@@ -17,7 +17,7 @@ import { findAsset } from "../../core/assets/read";
 import { bundleSourceAt } from "../../core/bundle-at-dir";
 import { loadConfig } from "../../core/config/config";
 import type { AkmConfig } from "../../core/config/config-types";
-import { NotFoundError, UsageError } from "../../core/errors";
+import { UsageError } from "../../core/errors";
 import { assertBundleNotDisabled } from "../../core/write-source";
 import {
   applyInputDefaults,
@@ -30,7 +30,6 @@ import type { ExecutionJsonObject } from "../../execution/json";
 import { sourceOfBundle } from "../../indexer/installations";
 import type { SearchSource } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
-import { resolveAssetPath } from "../../sources/resolve";
 import type { TaskInvocation } from "../model/invocation";
 import { prepareTaskV3Execution } from "../prepare/prepare";
 import type { PreparedTaskV3Execution } from "../prepare/prepared-execution";
@@ -39,7 +38,14 @@ import { parseTaskSource, taskValueInputs } from "../source/parse-task-source";
 import { projectTaskSourceV4 } from "../source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
 import { validateTaskConceptId } from "../task-id";
-import { resolveTask, taskNameOf, taskNotFound } from "../task-ref";
+import {
+  resolveOwnBundleAsset,
+  resolveTask,
+  taskAssetFile,
+  taskAssetNotFound,
+  taskNameOf,
+  taskNotFound,
+} from "../task-ref";
 import type { PreparedTaskV5 } from "../v5/run";
 import type { RunTaskOptions } from "./task-result";
 
@@ -76,12 +82,7 @@ export function resolveBundleAsset(
   const conceptId = conceptIdFromTypeName(type, name);
   const sources = activeTaskSources(config);
   const asset = findAsset(makeBundleRef(bundle, conceptId));
-  // asset-io: exec the file is handed to the script interpreter
-  const file = asset?.entry.file;
-  if (asset && file !== undefined) {
-    return { file, bundleRoot: sourceOfBundle(sources, asset.bundle).path };
-  }
-  if (asset) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
+  if (asset) return { file: taskAssetFile(asset), bundleRoot: sourceOfBundle(sources, asset.bundle).path };
   if (resolveSourcesForOrigin(bundle, sources).length === 0) {
     assertBundleNotDisabled(config, bundle);
     throw new UsageError(
@@ -89,7 +90,7 @@ export function resolveBundleAsset(
       "INVALID_FLAG_VALUE",
     );
   }
-  throw new NotFoundError(`Task asset ${makeBundleRef(bundle, conceptId)} was not found.`, "ASSET_NOT_FOUND");
+  throw taskAssetNotFound(makeBundleRef(bundle, conceptId));
 }
 
 /** Resolve, parse, and project one task-v3 asset into a frozen, executable projection. */
@@ -188,7 +189,10 @@ export async function loadPreparedTask(
     ...(options.scheduled ? { schedulerContext: scheduledTaskContextEnv() } : {}),
     resolveAsset: async ({ bundle, type, name }) => {
       if (bundle === bundleName) {
-        return { file: await resolveAssetPath(bundleDir, type, name), bundleRoot: bundleDir };
+        return resolveOwnBundleAsset(
+          { name: bundleName, path: bundleDir, adapterId: taskSource.adapterId },
+          { type, name },
+        );
       }
       return resolveBundleAsset(requiresCommandConfig ? config : loadConfig(), { bundle, type, name });
     },

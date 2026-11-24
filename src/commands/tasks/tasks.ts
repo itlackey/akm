@@ -51,7 +51,6 @@ import {
 import { deriveInstallations } from "../../indexer/installations";
 import { retiredEngineSelection } from "../../integrations/agent/resolution";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
-import { resolveAssetPath } from "../../sources/resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
 import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptions } from "../../tasks/backends/types";
@@ -94,6 +93,7 @@ import type { TaskV3SourceDocument } from "../../tasks/source-v3";
 import { normaliseTaskConceptId, normaliseTaskId } from "../../tasks/task-id";
 import {
   isShadowedByYml,
+  resolveOwnBundleAsset,
   resolveTask,
   taskFileOf,
   taskNameOf,
@@ -1098,9 +1098,7 @@ function taskProjectionAssetResolver(
   bundleRoot: string,
 ): NonNullable<PrepareTaskV3ExecutionContext["resolveAsset"]> {
   return async ({ bundle, type, name }) => {
-    if (bundle === bundleName) {
-      return { file: await resolveAssetPath(bundleRoot, type, name), bundleRoot };
-    }
+    if (bundle === bundleName) return resolveOwnBundleAsset({ name: bundleName, path: bundleRoot }, { type, name });
     return resolveBundleAsset(config, { bundle, type, name });
   };
 }

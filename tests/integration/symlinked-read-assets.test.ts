@@ -9,7 +9,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveEnvPath, resolveSecretPath } from "../../src/core/env-secret-ref";
-import { resolveAssetPath } from "../../src/sources/resolve";
+import { resolveOwnBundleAsset } from "../../src/tasks/task-ref";
 import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
@@ -50,9 +50,9 @@ describe("reads follow symlinks that leave their directory", () => {
     expect(fs.readFileSync(resolved.asset.entry.file as string, "utf8")).toBe("A=1\n");
   });
 
-  test("resolveAssetPath resolves a symlinked asset by its authored path", async () => {
+  test("a task's own script that is a symlink resolves by its authored path", () => {
     const { stash } = stashWithLink("scripts", "link.sh", "real.sh", "#!/bin/sh\necho linked");
-    const resolved = await resolveAssetPath(stash, "script", "link.sh");
+    const resolved = resolveOwnBundleAsset({ name: "stash", path: stash }, { type: "script", name: "link.sh" }).file;
     expect(fs.readFileSync(resolved, "utf8")).toBe("#!/bin/sh\necho linked");
     expect(path.basename(resolved)).toBe("link.sh");
   });
@@ -62,9 +62,9 @@ describe("reads follow symlinks that leave their directory", () => {
     disposers.push(stash);
     fs.writeFileSync(path.join(stash.dir, "outside.sh"), "#!/bin/sh\necho escape");
 
-    await expect(resolveAssetPath(stash.dir, "script", "../outside.sh")).rejects.toThrow(
-      "Ref resolves outside the stash root.",
-    );
+    expect(() =>
+      resolveOwnBundleAsset({ name: "stash", path: stash.dir }, { type: "script", name: "../outside.sh" }),
+    ).toThrow(/relative path segments/);
     await withEnv({ AKM_BUNDLE_DIR: stash.dir, AKM_CONFIG_DIR: undefined }, async () => {
       expect(() => resolveSecretPath("secrets/../outside")).toThrow(/relative path segments/);
       expect(() => resolveEnvPath("env/../outside")).toThrow(/relative path segments/);

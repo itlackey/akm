@@ -29,12 +29,11 @@ import {
   materializeInputFlags,
   validateInputs,
 } from "../../execution/input-contract";
-import { resolveAssetPath } from "../../sources/resolve";
 import { scriptProgram } from "../frozen-script";
 import { resolveBundleAsset } from "../run/load-task";
 import { parseTaskSource } from "../source/parse-task-source";
 import { TASK_V5_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
-import { requireAssetIn } from "../task-ref";
+import { requireAssetIn, resolveOwnBundleAsset } from "../task-ref";
 import { readTaskV5Options, type TaskSourceV5Document, type TaskV5Options, type TaskV5RefKind } from "./source";
 
 /** The flags of a start that are checked as the same options are in a task file. */
@@ -170,7 +169,17 @@ export async function locateTaskV5Asset(
   try {
     const placed: { file: string; bundle: TaskV5Bundle } =
       owner === bundle.name
-        ? { file: await resolveAssetPath(bundle.dir, type, name), bundle }
+        ? {
+            file: resolveOwnBundleAsset(
+              {
+                name: bundle.name,
+                path: bundle.dir,
+                ...(bundle.adapterId !== undefined ? { adapterId: bundle.adapterId } : {}),
+              },
+              { type, name },
+            ).file,
+            bundle,
+          }
         : (() => {
             const found = resolveBundleAsset(loadConfig(), { bundle: owner, type, name });
             return { file: found.file, bundle: { name: owner, dir: found.bundleRoot } };

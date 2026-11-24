@@ -12,7 +12,7 @@ const source = fs.readFileSync(path.join(WORKFLOWS_DIR, "ci.yml"), "utf8");
 const workflow = YAML.parse(source) as {
   on: Record<string, unknown>;
   concurrency: { group: string; "cancel-in-progress": boolean };
-  jobs: Record<string, { if?: string; needs?: string; uses?: string; steps?: Array<{ run?: string }> }>;
+  jobs: Record<string, { if?: string; needs?: string; uses?: string; steps?: Array<{ name?: string; run?: string }> }>;
 };
 
 // A draft pull request into main is the release pull request opened early: nothing runs on it until it is ready.
@@ -33,6 +33,27 @@ describe("CI workflow", () => {
       expect(workflow.jobs[job]?.needs, job).toBeUndefined();
     }
     expect(workflow.jobs.check?.steps?.some((step) => step.run === "bun run check")).toBe(true);
+  });
+
+  test("the desktop job runs Desktop's check and build, and none of its tests: they gate releases, from release.yml", () => {
+    const steps = workflow.jobs.desktop?.steps ?? [];
+    expect(steps.some((step) => step.run === "bun run desktop:setup")).toBe(true);
+    const run = steps.find((step) => step.name === "Check and build Desktop")?.run ?? "";
+    expect(run).toContain("npm run check");
+    expect(run).toContain("npm run build");
+    const desktopSource = JSON.stringify(steps);
+    for (const command of [
+      "npm test",
+      "test:e2e",
+      "test:usability",
+      "test:server",
+      "test:web-package",
+      "test:electron",
+    ]) {
+      expect(desktopSource, command).not.toContain(command);
+    }
+    expect(desktopSource).not.toContain("playwright");
+    expect(desktopSource).not.toContain("electron/install.js");
   });
 
   test("runs neither the integration suite nor Gated CI: they gate releases only, from release.yml", () => {

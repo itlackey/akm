@@ -12,7 +12,7 @@ import { stashDirFor, withoutTypeHead } from "../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
 import { adapterNameOf, adapterWrites, placedPrefixOf } from "../core/assets/gate";
-import { type Asset, listAssets, readAsset, requireAsset } from "../core/assets/read";
+import { type Asset, findAsset, listAssets, readAsset, requireAsset } from "../core/assets/read";
 import { assetTypes } from "../core/assets/type";
 import { addressOf } from "../core/assets/write";
 import { materialiseBundleDir } from "../core/bundle-at-dir";
@@ -62,11 +62,42 @@ export function taskFileOf(asset: Asset): string {
   return asset.entry.file ?? asset.ref;
 }
 
+/** `ref` as the facade takes it: a ref to the bundle held at `source` names it by the id the facade holds it under. */
+function heldRef(source: TaskBundleSource, ref: string): string {
+  const parsed = parseBundleRef(ref);
+  return parsed.bundle === source.name ? makeBundleRef(taskBundleId(source), parsed.conceptId, parsed.fragment) : ref;
+}
+
 /** The asset `ref` names in the bundle held at `source`; a `NotFoundError` when it holds none. */
 export function requireAssetIn(source: TaskBundleSource, ref: string): Asset {
-  const bundle = taskBundleId(source);
-  const parsed = parseBundleRef(ref);
-  return requireAsset(parsed.bundle === source.name ? makeBundleRef(bundle, parsed.conceptId, parsed.fragment) : ref);
+  return requireAsset(heldRef(source, ref));
+}
+
+/**
+ * The asset of `type` named `name` that a task names in its own bundle, held at `source`, found as one in another
+ * bundle is (`resolveBundleAsset`): through the asset facade, by ref. Its file is the authored path, not a link's target.
+ */
+export function resolveOwnBundleAsset(
+  source: TaskBundleSource,
+  { type, name }: { type: string; name: string },
+): { file: string; bundleRoot: string } {
+  const ref = makeBundleRef(source.name, conceptIdFromTypeName(type, name));
+  const asset = findAsset(heldRef(source, ref));
+  if (!asset) throw taskAssetNotFound(ref);
+  return { file: taskAssetFile(asset), bundleRoot: source.path };
+}
+
+/** The file a task hands to a program (a script's interpreter); refused for an asset no file holds. */
+export function taskAssetFile(asset: Asset): string {
+  // asset-io: exec the file is handed to the script interpreter
+  const file = asset.entry.file;
+  if (file === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
+  return file;
+}
+
+/** A task asset no bundle holds, named by its ref. */
+export function taskAssetNotFound(ref: string): NotFoundError {
+  return new NotFoundError(`Task asset ${ref} was not found.`, "ASSET_NOT_FOUND");
 }
 
 /** The task assets of `candidates` (a listing made without a type), typed by the index. */

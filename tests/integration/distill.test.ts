@@ -34,6 +34,7 @@ import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../s
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { LlmCallError } from "../../src/llm/client";
 import { listImproveLedgerRows } from "../../src/storage/repositories/improve-ledger-repository";
+import { byFile } from "../_helpers/asset-at-file";
 import { testLlmRunner } from "../_helpers/llm-runner";
 import {
   type Cleanup,
@@ -144,7 +145,7 @@ const JUDGMENT_RUNNER: RunnerSpec = testLlmRunner(
   "judgment",
 );
 
-const noopLookup = async () => null;
+const noopLookup = async () => undefined;
 const emptyEvents = (() => ({ events: [], nextOffset: 0 })) as unknown as typeof readEvents;
 
 function eventsFor(ref: string, signals: Array<"positive" | "negative">) {
@@ -209,10 +210,10 @@ describe("akmDistill — selected-root lookup", () => {
       ref: "knowledge/duplicate",
       stashDir: selected,
       config: configEnabled(selected),
-      lookupFn: async (ref) => {
+      lookupFn: byFile(async (ref) => {
         lookedUp.push(ref);
         return ref === "knowledge/duplicate" ? selectedFile : otherFile;
-      },
+      }),
       readEventsFn: emptyEvents,
       chat: async () => VALID_LESSON,
     });
@@ -237,7 +238,7 @@ describe("akmDistill — selected-root lookup", () => {
       ref: "knowledge/team-only",
       stashDir: stash,
       config,
-      lookupFn: async () => teamFile,
+      lookupFn: byFile(async () => teamFile),
       readEventsFn: emptyEvents,
       chat: async () => VALID_LESSON,
     });
@@ -274,7 +275,7 @@ describe("akmDistill — selected-root lookup", () => {
           ref: "knowledge/vendor-only",
           stashDir: stash,
           config,
-          lookupFn: async () => vendorFile,
+          lookupFn: byFile(async () => vendorFile),
           readEventsFn: emptyEvents,
           chat: async () => VALID_LESSON,
         }),
@@ -488,7 +489,7 @@ describe("akmDistill — rejected proposals tolerate legacy rows with no persist
       ref: "skills/duplicate",
       stashDir: stash,
       config: configEnabled(stash),
-      lookupFn: async () => sourceFile,
+      lookupFn: byFile(async () => sourceFile),
       readEventsFn: emptyEvents,
       chat: async (_config, messages) => {
         receivedPrompt = messages.map((message) => message.content).join("\n");
@@ -536,7 +537,7 @@ describe("akmDistill — rejected proposals exclude stale-target auto-rejects fr
       ref: "skills/dup-stale-vs-ordinary",
       stashDir: stash,
       config: configEnabled(stash),
-      lookupFn: async () => sourceFile,
+      lookupFn: byFile(async () => sourceFile),
       readEventsFn: emptyEvents,
       chat: async (_config, messages) => {
         receivedPrompt = messages.map((message) => message.content).join("\n");
@@ -574,10 +575,10 @@ describe("akmDistill — feature gate", () => {
       chat: async () => {
         throw new Error("chat must not be called when gate is disabled");
       },
-      lookupFn: async () => {
+      lookupFn: byFile(async () => {
         lookups += 1;
         return inputPath;
-      },
+      }),
       readEventsFn: emptyEvents,
     });
     expect(result.outcome).toBe("config_disabled");
@@ -600,7 +601,7 @@ describe("akmDistill — an input at the bundle root (#1432)", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => VALID_LESSON,
-      lookupFn: async () => inputPath,
+      lookupFn: byFile(async () => inputPath),
       readEventsFn: emptyEvents,
     });
     expect(result.proposalRef).toBe("lessons/knowledge-release-lesson");
@@ -973,7 +974,7 @@ describe("akmDistill — queued proposal", () => {
         if (!receivedPrompt) receivedPrompt = messages.map((m) => m.content).join("\n");
         return VALID_LESSON;
       },
-      lookupFn: async () => skillFile,
+      lookupFn: byFile(async () => skillFile),
       readEventsFn: emptyEvents,
     });
     expect(receivedPrompt).toContain("body");
@@ -1007,7 +1008,7 @@ describe("akmDistill — queued proposal", () => {
       chat: async () => {
         throw new Error("chat must not be called for benchmark-scored memory promotion");
       },
-      lookupFn: async () => memoryFile,
+      lookupFn: byFile(async () => memoryFile),
       readEventsFn: eventsFor("memories/deploy-fact", ["positive", "positive"]),
     });
 
@@ -1063,7 +1064,7 @@ describe("akmDistill — queued proposal", () => {
           chatCalls += 1;
           throw new Error("deterministic promotion must not dispatch");
         },
-        lookupFn: async (ref) => (ref === "memories/credential-free-promotion" ? memoryFile : null),
+        lookupFn: byFile(async (ref) => (ref === "memories/credential-free-promotion" ? memoryFile : null)),
         readEventsFn: eventsFor("memories/credential-free-promotion", ["positive", "positive"]),
       }),
     );
@@ -1121,7 +1122,7 @@ describe("akmDistill — queued proposal", () => {
             models.push(connection.model);
             return JSON.stringify({ scores: { reusable: 5, nonRedundancy: 4, grounding: 5 }, reason: "adds new info" });
           },
-          lookupFn: async (ref) => (ref === "memories/judged-promotion" ? memoryFile : null),
+          lookupFn: byFile(async (ref) => (ref === "memories/judged-promotion" ? memoryFile : null)),
           readEventsFn: eventsFor("memories/judged-promotion", ["positive", "positive"]),
         }),
     );
@@ -1335,7 +1336,7 @@ describe("akmDistill — queued proposal", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => VALID_LESSON,
-      lookupFn: async () => memoryFile,
+      lookupFn: byFile(async () => memoryFile),
       readEventsFn: eventsFor("memories/deploy-fact", signals),
     });
 
@@ -1427,7 +1428,7 @@ describe("akmDistill — queued proposal", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => VALID_LESSON,
-      lookupFn: async () => memoryFile,
+      lookupFn: byFile(async () => memoryFile),
       readEventsFn: contradictoryEvents,
     });
 
@@ -1661,11 +1662,11 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
       proposalKind: "auto",
       stashDir: stash,
       config: distillConfig(stash, { qualityGate: { enabled: false } }),
-      lookupFn: async (ref: string) => {
+      lookupFn: byFile(async (ref: string) => {
         if (ref === "memories/auth-guide") return memPath1;
         if (ref.includes("auth-guide")) return existingKnowledgePath;
         return null;
-      },
+      }),
       readEventsFn: eventsFor("memories/auth-guide", ["positive", "positive"]),
       chat: async (_cfg, msgs) => {
         chatCalls.push(msgs[1]?.content ?? "");
@@ -1709,11 +1710,11 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
       proposalKind: "auto",
       stashDir: stash,
       config: distillConfig(stash, { qualityGate: { enabled: false } }),
-      lookupFn: async (ref: string) => {
+      lookupFn: byFile(async (ref: string) => {
         if (ref === "memories/auth-guide2") return memPath2;
         if (ref.includes("auth-guide2")) return existingKnowledgePath;
         return null;
-      },
+      }),
       readEventsFn: eventsFor("memories/auth-guide2", ["positive", "positive"]),
       chat: async () => JSON.stringify({ action: "UPDATE", content: mergedContent }),
     });
@@ -1977,9 +1978,9 @@ describe("akmDistill — pipeline-fix integration", () => {
         },
         // The structural refusal fires BEFORE lookup/readFileSync — proving the
         // secret file is never opened.
-        lookupFn: async () => {
+        lookupFn: byFile(async () => {
           throw new Error("lookup/readFileSync must not run for a secret input");
-        },
+        }),
         readEventsFn: emptyEvents,
       });
       expect(result.ok).toBe(true);
@@ -2106,7 +2107,7 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
         ref: "skills/deploy",
         config,
         stashDir: stash,
-        lookupFn: async () => sourcePath,
+        lookupFn: byFile(async () => sourcePath),
         readEventsFn: emptyEvents,
         chat: async (connection, messages) => {
           observed.push(connection.apiKey);
@@ -2368,7 +2369,7 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
       proposalKind: "auto",
       config,
       stashDir: stash,
-      lookupFn: async (ref) => (ref === "memories/no-judge-promotion" ? memoryFile : null),
+      lookupFn: byFile(async (ref) => (ref === "memories/no-judge-promotion" ? memoryFile : null)),
       readEventsFn: eventsFor("memories/no-judge-promotion", ["positive", "positive"]),
     });
 
@@ -2468,7 +2469,7 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
         ref: fixture.ref,
         config: options.config ?? configJudgeEnabled(fixture.stash),
         stashDir: fixture.stash,
-        lookupFn: async () => fixture.sourcePath,
+        lookupFn: byFile(async () => fixture.sourcePath),
         readEventsFn: fixture.feedbackEvents,
         chat: async (_cfg, messages) => {
           const joined = messages.map((m) => m.content).join("\n");
@@ -2686,7 +2687,7 @@ describe("akmDistill — a lesson already at the target ref", () => {
         called = true;
         return VALID_LESSON;
       },
-      lookupFn: async () => source,
+      lookupFn: byFile(async () => source),
       readEventsFn: emptyEvents,
     });
 
@@ -2730,6 +2731,50 @@ describe("akmDistill — a lesson already at the target ref", () => {
       skipReason: "lesson_exists",
       proposalRef: "lessons/project-a/memory-deploy-lesson",
     });
+  });
+
+  test("a lesson kept under another spelling of its file is the lesson: skipped before the call (F35)", async () => {
+    const stash = makeStashDir();
+    const filePath = path.join(stash, "lessons", "project-a", "memory-deploy-lesson.MD");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, VALID_LESSON);
+
+    const result = await akmDistill({
+      ref: "memories/project-a/deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => {
+        throw new Error("a lesson that exists must not be regenerated");
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "skipped",
+      skipReason: "lesson_exists",
+      proposalRef: "lessons/project-a/memory-deploy-lesson",
+    });
+    expect(fs.readFileSync(filePath, "utf8")).toBe(VALID_LESSON);
+  });
+
+  test("a lesson file the walk does not reach is no lesson: the distill goes on (F35)", async () => {
+    const stash = makeStashDir();
+    writeLesson(stash, "skill-deploy-lesson");
+    fs.writeFileSync(path.join(stash, ".gitignore"), "lessons/\n");
+    expect(Bun.spawnSync(["git", "init", "-q", stash]).exitCode).toBe(0);
+
+    const result = await akmDistill({
+      ref: "skills/deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("queued");
+    expect(listProposals(stash)).toHaveLength(1);
   });
 
   test("a lesson of that name in another bundle is not an overwrite", async () => {
@@ -2901,12 +2946,12 @@ describe("akmDistill — the writer sees what the library already holds", () => 
         user = messages.filter((m) => m.role === "user").at(-1)?.content ?? "";
         return "NONE";
       },
-      lookupFn: async () => {
+      lookupFn: byFile(async () => {
         const file = path.join(stash, "memories", "deploy-log.md");
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, "---\ndescription: Deploy log\n---\n\nThe deploy failed until the VPN was up.\n");
         return file;
-      },
+      }),
       readEventsFn: emptyEvents,
       fetchRelatedFn: async (q, n) => {
         query = q;
@@ -2987,7 +3032,7 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
       config: configJudgeEnabled(fixture.stash),
       stashDir: fixture.stash,
       fetchRelatedFn: async () => fixture.related,
-      lookupFn: async () => path.join(fixture.stash, "memories", "deploy-retries.md"),
+      lookupFn: byFile(async () => path.join(fixture.stash, "memories", "deploy-retries.md")),
       readEventsFn: emptyEvents,
       chat: async (_cfg, messages) => {
         const joined = messages.map((m) => m.content).join("\n");
@@ -3023,6 +3068,39 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     decision: "update",
     ref: "lessons/deploy-retries",
     body,
+  });
+
+  test("a lesson deleted while its update is judged: the lesson changed meanwhile, with no OS error (F35)", async () => {
+    const fixture = setup();
+    let judged = 0;
+    const result = await akmDistill({
+      ref: MEMORY_REF,
+      config: configJudgeEnabled(fixture.stash),
+      stashDir: fixture.stash,
+      fetchRelatedFn: async () => fixture.related,
+      lookupFn: byFile(async () => path.join(fixture.stash, "memories", "deploy-retries.md")),
+      readEventsFn: emptyEvents,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        if (joined.includes("Score this lesson")) {
+          // The second judge call reads the extended lesson; the lesson is deleted while it runs.
+          const scores = judged++ === 0 ? REPEAT : ADDITION_OK;
+          if (judged === 2) fs.rmSync(fixture.lessonPath);
+          return JSON.stringify({ scores, reason: "lessons/deploy-retries already states this rule." });
+        }
+        if (joined.includes("Extend the existing one"))
+          return JSON.stringify(updateWith(`${EXISTING_BODY}\n${NEW_FACT}`));
+        return VALID_LESSON;
+      },
+    });
+
+    expect(judged).toBe(2);
+    expect(result.outcome).toBe("quality_rejected");
+    expect(result.reason).toContain(
+      "An update of lessons/deploy-retries was not proposed: the lesson changed meanwhile.",
+    );
+    expect(result.reason).not.toContain("ENOENT");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
   });
 
   test("the input distill hands the judge validates against the judge's input schema, `path` stripped (#1422)", async () => {
@@ -3242,7 +3320,7 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
       config: configJudgeEnabled(fixture.stash),
       stashDir: fixture.stash,
       fetchRelatedFn: async () => fixture.related,
-      lookupFn: async () => path.join(fixture.stash, "memories", "deploy-retries.md"),
+      lookupFn: byFile(async () => path.join(fixture.stash, "memories", "deploy-retries.md")),
       readEventsFn: emptyEvents,
       chat: async (_cfg, messages) => {
         const joined = messages.map((m) => m.content).join("\n");
@@ -3381,7 +3459,7 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
       config: configJudgeEnabled(fixture.stash),
       stashDir: fixture.stash,
       fetchRelatedFn: async () => fixture.related,
-      lookupFn: async () => path.join(fixture.stash, "memories", "deploy-retries.md"),
+      lookupFn: byFile(async () => path.join(fixture.stash, "memories", "deploy-retries.md")),
       readEventsFn: emptyEvents,
       chat: async (_cfg, messages) => {
         const joined = messages.map((m) => m.content).join("\n");
@@ -3419,7 +3497,7 @@ describe("akmDistill — scope of the output (#1446)", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => written,
-      lookupFn: async () => memoryFile,
+      lookupFn: byFile(async () => memoryFile),
       readEventsFn: emptyEvents,
     });
     expect(result.outcome).toBe("queued");
@@ -3454,7 +3532,7 @@ describe("akmDistill — scope of the output (#1446)", () => {
       chat: async () => {
         throw new Error("deterministic promotion must not dispatch");
       },
-      lookupFn: async () => memoryFile,
+      lookupFn: byFile(async () => memoryFile),
       readEventsFn: eventsFor("memories/deploy-fact", ["positive", "positive"]),
     });
     expect(result.proposalKind).toBe("knowledge");
@@ -3480,7 +3558,7 @@ describe("akmDistill — scope of the output (#1446)", () => {
       config: configAbsentFeature(stash),
       stashDir: stash,
       chat: async () => JSON.stringify({ action: "ADD", content: "---\ndescription: Merged\n---\n\nMerged.\n" }),
-      lookupFn: async (ref) => (ref === "knowledge/deploy-fact" ? docFile : memoryFile),
+      lookupFn: byFile(async (ref) => (ref === "knowledge/deploy-fact" ? docFile : memoryFile)),
       readEventsFn: eventsFor("memories/deploy-fact", ["positive", "positive"]),
     });
     expect(result).toMatchObject({ outcome: "skipped", skipReason: "scope_differs" });

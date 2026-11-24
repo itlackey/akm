@@ -1,13 +1,13 @@
 name: Release
 
 # A stable release is the merge of a release branch into main. The push runs the integration suite (with the Node
-# fallback smoke and the upgrade rehearsals) and Gated CI on the merged commit, then publishes the version committed
-# in package.json to npm `latest` and a GitHub release, and builds Desktop and akm-web from that tarball. The pull
-# request that merged it ran CI, so CI does not run again.
+# fallback smoke and the upgrade rehearsals), Desktop's tests and Gated CI on the merged commit, then publishes the
+# version committed in package.json to npm `latest` and a GitHub release, and builds Desktop and akm-web from that
+# tarball. The pull request that merged it ran CI, so CI does not run again.
 # A prerelease is a dispatch on a release branch, release/<version>, with a stage: CI, the integration suite (with
-# the Node fallback smoke and the upgrade rehearsals) and Gated CI run as jobs of this run on the commit, then
-# <version>-<stage>.N goes to npm `next` and a GitHub prerelease, N counting up from 1. The integration suite and
-# Gated CI run nowhere else: every release passes them here.
+# the Node fallback smoke and the upgrade rehearsals), Desktop's tests and Gated CI run as jobs of this run on the
+# commit, then <version>-<stage>.N goes to npm `next` and a GitHub prerelease, N counting up from 1. The integration
+# suite, Desktop's tests and Gated CI run nowhere else: every release passes them here.
 # docs/maintainers/release-checklist.md describes the branch model.
 on:
   push:
@@ -36,7 +36,7 @@ permissions:
 jobs:
   # The gates. A dry run proves nothing about the packaging by running them. CI runs for a prerelease only: the merge
   # that makes a stable passed it on its pull request. The integration suite (node-smoke and upgrade-rehearsal
-  # included) and Gated CI run for both.
+  # included), Desktop's tests and Gated CI run for both.
   ci:
     if: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run }}
     uses: ./.github/workflows/ci.yml
@@ -145,12 +145,64 @@ jobs:
       - run: bun run build
       - run: AKM_UPGRADE_REHEARSAL=1 AKM_UPGRADE_REHEARSAL_ORIGIN="${{ matrix.origin }}" TMPDIR=/tmp bun test --timeout=900000 tests/integration/upgrade-rehearsal/
 
+  # Desktop's tests (type check, unit, browser, usability, server, package and Electron), on Linux. Pull requests run
+  # only Desktop's check and build. `test:workspace-package` stays in node-smoke.
+  desktop-tests:
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
+        with:
+          # Latest 22.x: Desktop needs 22.18 or later (its tests load TypeScript through Node's type stripping).
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - name: Cache the Electron and Playwright downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/ms-playwright
+          key: desktop-downloads-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
+      - name: Build repository-backed Desktop
+        run: bun run desktop:setup
+      - name: Verify Desktop workflows
+        working-directory: desktop
+        run: |
+          node node_modules/electron/install.js
+          node node_modules/@playwright/test/cli.js install --with-deps chromium
+          npm run check
+          npm run build
+          npm test
+          npm run test:e2e
+          npm run test:usability
+      - name: Verify the web process runs without Electron
+        working-directory: desktop
+        run: npm run test:server
+      - name: Verify the akm-web package installs and runs
+        working-directory: desktop
+        run: npm run test:web-package
+      - name: Verify the Electron shell
+        working-directory: desktop
+        run: |
+          # Ubuntu 24.04 restricts unprivileged user namespaces, which Electron's sandbox needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          xvfb-run -a npm run test:electron
+
   gated:
     if: ${{ !inputs.dry_run }}
     uses: ./.github/workflows/gated-ci.yml
 
   release:
-    needs: [ci, integration, node-smoke, upgrade-rehearsal, gated]
+    needs: [ci, integration, node-smoke, upgrade-rehearsal, desktop-tests, gated]
     # The gates passed, or did not run (CI for a stable; every gate for a dry run). A failed or cancelled gate stops
     # here.
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}

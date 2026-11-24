@@ -12,10 +12,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { type AkmConfig, resetConfigCache, saveConfig } from "../../../src/core/config/config";
-import { resolveAssetPath } from "../../../src/sources/resolve";
 import { prepareTaskV3Execution } from "../../../src/tasks/prepare/prepare";
 import { resolveBundleAsset } from "../../../src/tasks/run/load-task";
 import { projectTaskSourceV4 } from "../../../src/tasks/source/project-v4";
+import { resolveOwnBundleAsset } from "../../../src/tasks/task-ref";
 import { makeSandboxDir, type SandboxedDir } from "../../_helpers/sandbox";
 import { parseV4TaskSource } from "../../_helpers/task-source";
 
@@ -59,10 +59,7 @@ describe("a symlinked script keeps its authored interpreter", () => {
         bundleName: "work",
         bundleRoot: bundle,
         config,
-        resolveAsset: async ({ type, name }) => ({
-          file: await resolveAssetPath(bundle, type, name),
-          bundleRoot: bundle,
-        }),
+        resolveAsset: async ({ type, name }) => resolveOwnBundleAsset({ name: "work", path: bundle }, { type, name }),
       });
       expect(prepared).toMatchObject({ kind: "script", extension: ".sh" });
     });

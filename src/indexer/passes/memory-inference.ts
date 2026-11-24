@@ -11,7 +11,7 @@
  * parent memory.
  *
  * Pending predicate (see {@link isPendingMemory}):
- *   - File lives under `<stashRoot>/memories/` and ends in `.md`.
+ *   - A memory the bundle at `<stashRoot>` lists, under its memory folder.
  *   - Frontmatter does NOT have `inferenceProcessed: true` (parent already split).
  *   - Frontmatter does NOT have `inferred: true` (this is itself a child fact).
  *
@@ -38,11 +38,8 @@
  *     explicit narrow exception — see {@link markParentProcessed}.
  */
 
-import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-// asset-io: base the memories walk, as collectDerivedMemories
-import { walkMarkdownFiles } from "../../core/adapter/directory/walker";
 import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import {
   parseFrontmatter,
@@ -52,7 +49,8 @@ import {
 } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { adapterWrites } from "../../core/assets/gate";
-import { readAsset } from "../../core/assets/read";
+import { type Asset, listAssets, readAsset } from "../../core/assets/read";
+import { assetTypesByContent, indexedPathOf } from "../../core/assets/type";
 import { writeAssets } from "../../core/assets/write";
 import { bestEffort } from "../../core/best-effort";
 import { materialiseBundleDir, writeTargetAt } from "../../core/bundle-at-dir";
@@ -606,11 +604,7 @@ export function countPendingMemoriesNeedingDecision(
   return pending.filter((record) => readCachedMemoryDecision(db, record) !== memoryInfer.MEMORY_INFER_NO_CHANGE).length;
 }
 
-/**
- * Walk `<stashRoot>/memories/` (recursively) and return every memory that
- * still needs inference. The directory may not exist on a fresh stash; that
- * is treated as "no pending memories" rather than an error.
- */
+/** Every memory the bundle at `stashRoot` lists that still needs inference; none in a bundle without memories. */
 export function collectPendingMemories(stashRoot: string): MemoryRecord[] {
   return scanMemories(stashRoot).pending;
 }
@@ -627,35 +621,25 @@ interface ScopeDrift {
 }
 
 /**
- * One walk of `<stashRoot>/memories/`: the pending parents, and the existing
- * derived children whose scope has drifted from their parent's.
+ * One listing of the memories of the bundle at `stashRoot`: the pending parents, and the existing derived children
+ * whose scope has drifted from their parent's.
  */
 function scanMemories(stashRoot: string): { pending: MemoryRecord[]; scopeDrift: ScopeDrift[] } {
-  const memoriesDir = path.join(stashRoot, "memories");
-  // asset-io: base the memories walk, as collectDerivedMemories
-  if (!fs.existsSync(memoriesDir)) return { pending: [], scopeDrift: [] };
-
   const out: MemoryRecord[] = [];
   const parentScopes = new Map<string, StashEntryScope>();
   const children: { filePath: string; name: string; data: Record<string, unknown> }[] = [];
-  const walked = walkMarkdownFiles(memoriesDir);
-  if (!walked.complete) {
-    warn(`memory inference: directory scan under ${memoriesDir} is incomplete — some memories may be missing`);
-  }
-  for (const filePath of walked.files) {
+  for (const { memory, name: relName } of listMemories(materialiseBundleDir(stashRoot))) {
+    const filePath = indexedPathOf(memory);
     let raw: string;
     try {
-      // asset-io: base the memories walk, as collectDerivedMemories
-      raw = fs.readFileSync(filePath, "utf8");
+      raw = memory.entry.content();
     } catch (err) {
       warn(
-        `memory inference: failed to read candidate memory ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+        `memory inference: failed to read candidate memory ${memory.ref}: ${err instanceof Error ? err.message : String(err)}`,
       );
       continue;
     }
     const parsed = parseFrontmatter(raw);
-    const relName = toMemoryName(memoriesDir, filePath);
-    if (!relName) continue;
     if (relName.endsWith(".derived")) {
       children.push({ filePath, name: relName, data: parsed.data });
       continue;
@@ -761,12 +745,19 @@ export function isPendingMemory(frontmatter: Record<string, unknown>, filePath?:
   return true;
 }
 
-function toMemoryName(memoriesDir: string, filePath: string): string | undefined {
-  const rel = path.relative(memoriesDir, filePath);
-  if (!rel || rel.startsWith("..")) return undefined;
-  // Strip the `.md` extension; preserve any nested subdirectory layout the
-  // user has organised under memories/.
-  return rel.replace(/\\/g, "/").replace(/\.md$/i, "");
+/**
+ * The memories of the bundle `bundle`, each with its name: its path under the memory folder. One listing, typed by
+ * content, so no index is read or written (a dry run stays read-only) and a file the walk does not reach is none.
+ */
+export function listMemories(bundle: string): Array<{ memory: Asset; name: string }> {
+  const folder = conceptIdFromTypeName("memory", "");
+  const listed = listAssets({ bundle }).flatMap((memory) =>
+    memory.conceptId.startsWith(folder) && memory.conceptId.length > folder.length
+      ? [{ memory, name: memory.conceptId.slice(folder.length) }]
+      : [],
+  );
+  const types = assetTypesByContent(listed.map(({ memory }) => memory));
+  return listed.filter(({ memory }) => types.get(memory) === "memory");
 }
 
 // ── Writing derived memories + marking parent ───────────────────────────────

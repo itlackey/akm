@@ -82,6 +82,7 @@ describe("Node 22 runtime minimum contract", () => {
       "quality.yml#quality",
       "release.yml#akm-web",
       "release.yml#desktop",
+      "release.yml#desktop-tests",
       "release.yml#integration",
       "release.yml#node-smoke",
       "release.yml#release",

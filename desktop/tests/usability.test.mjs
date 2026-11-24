@@ -12,21 +12,42 @@ import { launchFixture, projectsAndConnections } from "./support.mjs";
 
 // Automated floor, not a substitute for independent task/keyboard/visual review.
 // Populated real AKM APIs; all sources and writes are confined to the fixture.
+// Each theme is swept at the same time against a workspace of its own: the theme is a saved preference, so two
+// sweeps of one workspace would change each other's.
 test("populated workspace accessibility and reflow across both themes", { timeout: 300000 }, async (t) => {
-  const app = await launchFixture({
-    proposals: true,
-    metrics: true,
-    assetCount: 30,
-    git: true,
-    configureFixture: projectsAndConnections,
-  });
-  t.after(() => app.stop());
+  const launch = async () => {
+    const app = await launchFixture({
+      proposals: true,
+      metrics: true,
+      assetCount: 30,
+      git: true,
+      configureFixture: projectsAndConnections,
+    });
+    t.after(() => app.stop());
+    return app;
+  };
+  const [light, dark] = await Promise.all([launch(), launch()]);
   const browser = await chromium.launch();
   t.after(() => browser.close());
+  const output = process.env.AKM_DESKTOP_UX_OUTPUT || path.join(light.root, "usability");
+  await mkdir(output, { recursive: true });
+  const sweeps = await Promise.all([sweep(browser, light, "light", output), sweep(browser, dark, "dark", output)]);
+  const observations = sweeps.flatMap((s) => s.observations),
+    failures = sweeps.flatMap((s) => s.failures),
+    errors = sweeps.flatMap((s) => s.errors);
+  await writeFile(
+    path.join(output, "findings.json"),
+    JSON.stringify({ generatedAt: new Date().toISOString(), observations, failures, errors }, null, 2),
+  );
+  console.info(`Usability evidence: ${output}`);
+  assert.deepEqual(errors, [], "No browser runtime errors");
+  assert.deepEqual(failures, [], `Accessibility/reflow failures; see ${output}/findings.json`);
+});
+
+/** Every state at every width in one theme: what was observed, what failed and the page's runtime errors. */
+async function sweep(browser, app, theme, output) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
   const page = await context.newPage();
-  const output = process.env.AKM_DESKTOP_UX_OUTPUT || path.join(app.root, "usability");
-  await mkdir(output, { recursive: true });
   const ref = encodeURIComponent(app.refs.document);
   const states = [
     { id: "home", route: "/", ready: ".home-attention" },
@@ -60,108 +81,97 @@ test("populated workspace accessibility and reflow across both themes", { timeou
     errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(app.url);
-  for (const theme of ["light", "dark"]) {
-    for (const state of states) {
-      await page.goto(`${app.origin}${state.route}`);
-      await expect(page.locator(state.ready).first()).toBeVisible();
-      await page.getByRole("combobox", { name: "Appearance" }).selectOption(theme);
-      await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
-      for (const width of [320, 360, 375, 390, 414, 480, 640, 768, 900, 1024, 1280, 1440]) {
-        await page.setViewportSize({ width, height: 860 });
-        await page.evaluate(
-          () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-        );
-        await page.evaluate(() => window.scrollTo(0, 0));
-        const geometry = await page.evaluate(() => ({
-          width: innerWidth,
-          scrollWidth: document.documentElement.scrollWidth,
-        }));
-        const label = `${state.id}-${theme}-${width}`;
-        if (geometry.scrollWidth > width + 1) failures.push({ state: label, rule: "document-overflow", ...geometry });
-        // Chart text stays inside its drawing: an axis title cut at the left edge is unreadable.
-        const clipped = await page.evaluate(() =>
-          [...document.querySelectorAll("main svg")].flatMap((svg) => {
-            const box = svg.getBoundingClientRect();
-            return [...svg.querySelectorAll("text")]
-              .filter((text) => {
-                const r = text.getBoundingClientRect();
-                return (
-                  r.width > 0 &&
-                  (r.left < box.left - 1 || r.right > box.right + 1 || r.top < box.top - 1 || r.bottom > box.bottom + 1)
-                );
-              })
-              .map((text) => text.textContent);
+  for (const state of states) {
+    await page.goto(`${app.origin}${state.route}`);
+    await expect(page.locator(state.ready).first()).toBeVisible();
+    await page.getByRole("combobox", { name: "Appearance" }).selectOption(theme);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    for (const width of [320, 360, 375, 390, 414, 480, 640, 768, 900, 1024, 1280, 1440]) {
+      await page.setViewportSize({ width, height: 860 });
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await page.evaluate(() => window.scrollTo(0, 0));
+      const geometry = await page.evaluate(() => ({
+        width: innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+      }));
+      const label = `${state.id}-${theme}-${width}`;
+      if (geometry.scrollWidth > width + 1) failures.push({ state: label, rule: "document-overflow", ...geometry });
+      // Chart text stays inside its drawing: an axis title cut at the left edge is unreadable.
+      const clipped = await page.evaluate(() =>
+        [...document.querySelectorAll("main svg")].flatMap((svg) => {
+          const box = svg.getBoundingClientRect();
+          return [...svg.querySelectorAll("text")]
+            .filter((text) => {
+              const r = text.getBoundingClientRect();
+              return (
+                r.width > 0 &&
+                (r.left < box.left - 1 || r.right > box.right + 1 || r.top < box.top - 1 || r.bottom > box.bottom + 1)
+              );
+            })
+            .map((text) => text.textContent);
+        }),
+      );
+      if (clipped.length) failures.push({ state: label, rule: "chart-text-clipped", clipped });
+      // The y-axis title is drawn at the top of the chart and is not read out: the chart's name says it too.
+      if (width === 1280) {
+        const untold = await page.evaluate(() =>
+          [...document.querySelectorAll("main .echarts-view")].flatMap((chart) => {
+            const drawn = [...chart.querySelectorAll("svg text")]
+              .filter((text) => text.textContent.trim() && text.getBoundingClientRect().width > 0)
+              .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+            const title = drawn?.textContent.trim() ?? "";
+            return /[A-Za-z]{3}/.test(title) && !chart.getAttribute("aria-label").includes(title)
+              ? [`${chart.id}: ${title}`]
+              : [];
           }),
         );
-        if (clipped.length) failures.push({ state: label, rule: "chart-text-clipped", clipped });
-        // The y-axis title is drawn at the top of the chart and is not read out: the chart's name says it too.
-        if (width === 1280) {
-          const untold = await page.evaluate(() =>
-            [...document.querySelectorAll("main .echarts-view")].flatMap((chart) => {
-              const drawn = [...chart.querySelectorAll("svg text")]
-                .filter((text) => text.textContent.trim() && text.getBoundingClientRect().width > 0)
-                .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
-              const title = drawn?.textContent.trim() ?? "";
-              return /[A-Za-z]{3}/.test(title) && !chart.getAttribute("aria-label").includes(title)
-                ? [`${chart.id}: ${title}`]
-                : [];
-            }),
-          );
-          if (untold.length) failures.push({ state: label, rule: "chart-axis-title-not-in-name", untold });
-        }
-        // Wide screens: a capped block is centred, section tabs line up with their column, prose keeps a measure.
-        if (width === 1440) {
-          const wide = await page.evaluate(() => {
-            const main = document.querySelector("main").getBoundingClientRect();
-            const rect = (selector) => document.querySelector(selector)?.getBoundingClientRect();
-            const centred = (left, right) => Math.abs(left - main.left - (main.right - right)) <= 48;
-            const findings = [];
-            const [nav, content] = [rect(".configuration-navigation"), rect(".configuration-content")];
-            if (nav && content && !centred(nav.left, content.right))
-              findings.push("configuration workspace is pinned left");
-            const software = rect(".software");
-            if (software && !centred(software.left, software.right)) findings.push("software page is pinned left");
-            const [views, search] = [rect(".library-views"), rect(".search-page")];
-            if (views && search && Math.abs(views.left - search.left) > 1)
-              findings.push(
-                `library tabs start at ${Math.round(views.left)}px, the search column at ${Math.round(search.left)}px`,
-              );
-            for (const block of document.querySelectorAll("main p, main li")) {
-              const w = block.getBoundingClientRect().width;
-              if (!block.querySelector("p, div, ul, table, pre") && block.textContent.trim().length >= 150 && w > 1000)
-                findings.push(`${Math.round(w)}px line: ${block.textContent.trim().slice(0, 60)}`);
-            }
-            return findings;
-          });
-          failures.push(...wide.map((finding) => ({ state: label, rule: "wide-layout", finding })));
-        }
-        let violations = [];
-        if (width === 390 || width === 1280) {
-          const results = await new AxeBuilder({ page })
-            .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
-            .analyze();
-          violations = results.violations.map(({ id, impact, description, nodes }) => ({
-            id,
-            impact,
-            description,
-            nodes: nodes.map(({ target, failureSummary }) => ({ target, failureSummary })),
-          }));
-          failures.push(
-            ...violations.map((violation) => ({ state: label, rule: violation.id, nodes: violation.nodes })),
-          );
-        }
-        if ([390, 900, 1280].includes(width))
-          await page.screenshot({ path: path.join(output, `${label}.png`), animations: "disabled", fullPage: false });
-        observations.push({ state: state.id, theme, width, geometry, violations });
+        if (untold.length) failures.push({ state: label, rule: "chart-axis-title-not-in-name", untold });
       }
-      console.info(`Usability floor: ${state.id}, ${theme}`);
+      // Wide screens: a capped block is centred, section tabs line up with their column, prose keeps a measure.
+      if (width === 1440) {
+        const wide = await page.evaluate(() => {
+          const main = document.querySelector("main").getBoundingClientRect();
+          const rect = (selector) => document.querySelector(selector)?.getBoundingClientRect();
+          const centred = (left, right) => Math.abs(left - main.left - (main.right - right)) <= 48;
+          const findings = [];
+          const [nav, content] = [rect(".configuration-navigation"), rect(".configuration-content")];
+          if (nav && content && !centred(nav.left, content.right))
+            findings.push("configuration workspace is pinned left");
+          const software = rect(".software");
+          if (software && !centred(software.left, software.right)) findings.push("software page is pinned left");
+          const [views, search] = [rect(".library-views"), rect(".search-page")];
+          if (views && search && Math.abs(views.left - search.left) > 1)
+            findings.push(
+              `library tabs start at ${Math.round(views.left)}px, the search column at ${Math.round(search.left)}px`,
+            );
+          for (const block of document.querySelectorAll("main p, main li")) {
+            const w = block.getBoundingClientRect().width;
+            if (!block.querySelector("p, div, ul, table, pre") && block.textContent.trim().length >= 150 && w > 1000)
+              findings.push(`${Math.round(w)}px line: ${block.textContent.trim().slice(0, 60)}`);
+          }
+          return findings;
+        });
+        failures.push(...wide.map((finding) => ({ state: label, rule: "wide-layout", finding })));
+      }
+      let violations = [];
+      if (width === 390 || width === 1280) {
+        const results = await new AxeBuilder({ page })
+          .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
+          .analyze();
+        violations = results.violations.map(({ id, impact, description, nodes }) => ({
+          id,
+          impact,
+          description,
+          nodes: nodes.map(({ target, failureSummary }) => ({ target, failureSummary })),
+        }));
+        failures.push(...violations.map((violation) => ({ state: label, rule: violation.id, nodes: violation.nodes })));
+      }
+      if ([390, 900, 1280].includes(width))
+        await page.screenshot({ path: path.join(output, `${label}.png`), animations: "disabled", fullPage: false });
+      observations.push({ state: state.id, theme, width, geometry, violations });
     }
+    console.info(`Usability floor: ${state.id}, ${theme}`);
   }
-  await writeFile(
-    path.join(output, "findings.json"),
-    JSON.stringify({ generatedAt: new Date().toISOString(), observations, failures, errors }, null, 2),
-  );
-  console.info(`Usability evidence: ${output}`);
-  assert.deepEqual(errors, [], "No browser runtime errors");
-  assert.deepEqual(failures, [], `Accessibility/reflow failures; see ${output}/findings.json`);
-});
+  await context.close();
+  return { observations, failures, errors };
+}

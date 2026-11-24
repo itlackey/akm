@@ -766,7 +766,6 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/commands/targets.ts` | the table of connections, harnesses and the work on them that `akm doctor`, `akm doctor info` and `akm setup` print |
 | `src/sources/provider.ts` | minimal `SourceProvider` interface |
 | `src/sources/providers/` | filesystem / git / website / npm implementations |
-| `src/sources/resolve.ts` | filesystem path resolution for refs |
 | `src/storage/repositories/` | SQL for `index.db`, `state.db`, and `logs.db` (entries, FTS, proposals, task history, workflow runs, …) |
 | `src/indexer/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |
 | `src/core/adapter/directory/` | the directory adapters' walk: walker, matchers, file context, place rules; `scripts/lint-asset-io.ts` flags an import of it from outside the adapter layer and the facade |
