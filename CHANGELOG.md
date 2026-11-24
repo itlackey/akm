@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261131] - 2026-11-24
+
 ### Added
 
 - Bundles kept by a secret manager, Experimental: a bundle can be one keyring of the desktop's Secret Service (adapter `secret-tool`) or one Azure Key Vault (adapter `azure-key-vault`) in place of a directory. Its config entry names the keyring or vault in the new `location` key and the adapter in `adapter`, for example `"keyring": { "adapter": "secret-tool", "location": "akm" }`; `akm bundle add <location> --adapter <id>` writes that entry, and `akm config set bundles.<name>.adapter` and `.location` take either on its own. An adapter that reads a store needs `location` and a directory adapter cannot have one: `akm config set` refuses the change, the bundle is a config error where it is resolved, and `akm doctor` reports it. `akm bundle list` reports `status.exists` of such a bundle from its adapter, where it was always `true`. Every secret there is an entry under `secrets/<name>`: `akm index` indexes it by name (never its value), and `akm search`, `akm show`, `akm secret list`, `--secret <ref>:<VAR>`, a `${ref}` token, `akm secret set`, `akm secret remove` and the Desktop protected-file view treat it as a secret kept as a file. `secret-tool` needs `secret-tool` (package `libsecret-tools`) and `busctl`; `azure-key-vault` needs the Azure CLI signed in. One that akm cannot reach keeps its indexed entries, and a command that needs it fails with `BUNDLE_UNREACHABLE`. See [Environment & Secrets](docs/reference/env-and-secrets.md#secrets-kept-by-a-secret-manager).
