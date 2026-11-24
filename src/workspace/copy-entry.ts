@@ -13,21 +13,15 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  assertNoDestinationSymlinkParent,
-  listTreeFiles,
-  materializeFileLinks,
-  stampCloneOrigin,
-} from "../commands/sources/source-clone";
+import { assertNoDestinationSymlinkParent, stampedOrigin } from "../commands/sources/source-clone";
 import { assertFlatAssetName, normalizeCreateSubPath } from "../core/asset/asset-create";
+import { indexFiles, isFileOrFileSymlink, managedFolderOf, protectedTypeOf } from "../core/assets/files";
 import { isWithin, safeRealpath } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { resolveBundleWriteTarget } from "../core/mutation-target";
 import { assertPlainWritable, commitWriteTargetBoundary, prepareWriteTargetForMutation } from "../core/write-source";
-import { indexWrittenAssets } from "../indexer/index-written-assets";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { managedFolderOf, protectedTypeOf } from "../indexer/walk/place-rules";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAssetRefsForFiles } from "../storage/repositories/index-entries-repository";
 import { folderBlocker, plainWriteBlocker } from "./file-actions";
@@ -103,7 +97,7 @@ export async function copyEntry(input: CopyEntryInput) {
 
   return interactive("ui-file-copy", async () => {
     const resolved = resolveBundleWriteTarget(config, toBundle, { requireWritable: true });
-    const target = prepareWriteTargetForMutation(resolved, { allowedAdapters: [resolved.source.adapterId ?? "akm"] });
+    const target = prepareWriteTargetForMutation(resolved, { plain: true });
     assertPlainWritable(target.source, target.config);
     const root = target.source.path;
     const destination = path.join(root, folder, name);
@@ -136,7 +130,39 @@ export async function copyEntry(input: CopyEntryInput) {
     commitWriteTargetBoundary(target, `Copy ${bundle}//${from} to ${toBundle}//${to}`, {
       paths: files.map((file) => path.relative(commitRoot, file).replaceAll(path.sep, "/")),
     });
-    const indexed = await indexWrittenAssets(root, files, { bundleId: toBundle });
+    const indexed = await indexFiles(toBundle, files);
     return { bundle, from, toBundle, to, indexed };
   });
+}
+
+/** Merge the origin ref into the `sources:` frontmatter of the file at `filePath` ({@link stampedOrigin}). */
+function stampCloneOrigin(filePath: string, originRef: string | undefined): void {
+  if (!originRef) return;
+  const next = stampedOrigin(fs.readFileSync(filePath, "utf8"), originRef);
+  if (next !== undefined) fs.writeFileSync(filePath, next);
+}
+
+/** Replace each file symlink under `root` with a regular file holding its target's bytes. Directory links are left as links. */
+function materializeFileLinks(root: string): void {
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      materializeFileLinks(entryPath);
+    } else if (entry.isSymbolicLink() && isFileOrFileSymlink(entryPath)) {
+      const content = fs.readFileSync(entryPath);
+      const { mode } = fs.statSync(entryPath);
+      fs.rmSync(entryPath);
+      fs.writeFileSync(entryPath, content, { mode });
+    }
+  }
+}
+
+function listTreeFiles(root: string): string[] {
+  const files: string[] = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) files.push(...listTreeFiles(entryPath));
+    else files.push(entryPath);
+  }
+  return files;
 }

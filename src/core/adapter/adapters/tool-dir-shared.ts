@@ -10,7 +10,7 @@
  * `agents/*.md` → `agent`, `skills/<name>/SKILL.md` → `skill` (item = the dir).
  * They differ only in two parameters carried on {@link ToolDirLayout}:
  *   - the instruction basename + its concept id,
- *   - the adapter id + component id.
+ *   - the adapter id.
  *
  * The SKILL.md codec is shared with the `agent-skills` adapter as functions:
  * a skill's conceptId is its DIRECTORY, and its `name` is the
@@ -49,13 +49,15 @@
 
 import path from "node:path";
 import type { AdapterRenderedExecutionSource } from "../../../execution/source";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
-import type { BundleAdapter } from "../bundle-adapter";
+import type { AssetEntry } from "../bundle-adapter";
+import type { FileContext } from "../directory/file-context";
+import { DirectoryAdapterBase } from "../directory-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { FileChange } from "../file-change";
+import { type Bundle, type IndexMetadata, rootOf } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { skillDirectoryDiagnostics } from "./akm-lint";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
@@ -68,8 +70,6 @@ const SKILL_MANIFEST = "SKILL.md";
 /** The per-adapter tool-dir parameters. */
 export interface ToolDirLayout {
   adapterId: string;
-  /** PROVENANCE component id emitted on every doc (".claude" / ".opencode"). */
-  componentId: string;
   /** Root instruction basename (CLAUDE.md / AGENTS.md). */
   instructionFile: string;
   /** conceptId for the root instruction file (CLAUDE / AGENTS). */
@@ -94,7 +94,7 @@ function isReserved(base: string): boolean {
   return RESERVED_FILES.has(base.toLowerCase());
 }
 
-/** Classify one component-root-relative file into a tool-dir `type` + conceptId, or abstain (null). */
+/** Classify one bundle-root-relative file into a tool-dir `type` + conceptId, or abstain (null). */
 function classify(relPath: string, layout: ToolDirLayout): ToolDirClassification | null {
   const posix = toPosix(relPath);
   const segs = posix.split("/").filter((s) => s.length > 0);
@@ -127,10 +127,14 @@ function classify(relPath: string, layout: ToolDirLayout): ToolDirClassification
   return null;
 }
 
-/** recognize() for a tool-dir adapter: derive the open `type`, project the OKF-shaped fields. */
-export function recognizeToolDir(layout: ToolDirLayout, c: BundleComponent, file: FileContext): IndexDocument | null {
-  const cls = classify(file.relPath, layout);
-  if (cls === null) return null;
+/** identify() for a tool-dir adapter: the concept a path holds, from the path alone. */
+export function identifyToolDir(layout: ToolDirLayout, relPath: string): string | null {
+  return classify(relPath, layout)?.conceptId ?? null;
+}
+
+/** describe() for a tool-dir adapter: derive the open `type`, project the OKF-shaped fields. */
+export function describeToolDir(layout: ToolDirLayout, file: FileContext): IndexMetadata {
+  const cls = classify(file.key, layout) as ToolDirClassification;
 
   const raw = file.content();
   const parsed = parseFrontmatter(raw);
@@ -143,14 +147,8 @@ export function recognizeToolDir(layout: ToolDirLayout, c: BundleComponent, file
   const description = nonEmptyString(data.description);
   const tags = readTags(data.tags);
 
-  const doc: IndexDocument = {
-    ref: `${c.id}//${cls.conceptId}`,
-    bundle: c.id,
-    component: layout.componentId,
-    conceptId: cls.conceptId,
-    path: file.absPath,
+  const doc: IndexMetadata = {
     hash: hashContent(raw),
-    adapterId: layout.adapterId,
     type: cls.type,
     name,
     content: body,
@@ -161,23 +159,19 @@ export function recognizeToolDir(layout: ToolDirLayout, c: BundleComponent, file
   return doc;
 }
 
-/** List native read spellings. */
-export function readCandidatesToolDir(layout: ToolDirLayout, c: BundleComponent, conceptId: string) {
+/** The native paths a concept can be kept at. */
+export function spellingsToolDir(layout: ToolDirLayout, conceptId: string): string[] {
   const posix = toPosix(conceptId);
-  if (posix === layout.instructionConceptId) {
-    return [{ path: path.join(c.root, layout.instructionFile), conceptId: posix }];
-  }
+  if (posix === layout.instructionConceptId) return [layout.instructionFile];
 
   const segs = posix.split("/").filter((segment) => segment.length > 0);
   const head = segs[0];
   const rest = segs.slice(1).join("/");
   if (!head || !rest) return [];
   if (layout.skillDirs.has(head)) {
-    return segs.length === 2 ? [{ path: path.join(c.root, head, rest, SKILL_MANIFEST), conceptId: posix }] : [];
+    return segs.length === 2 ? [`${head}/${rest}/${SKILL_MANIFEST}`] : [];
   }
-  if (layout.commandDirs.has(head) || layout.agentDirs.has(head)) {
-    return [{ path: path.join(c.root, head, `${rest}.md`), conceptId: posix }];
-  }
+  if (layout.commandDirs.has(head) || layout.agentDirs.has(head)) return [`${head}/${rest}.md`];
   return [];
 }
 
@@ -187,7 +181,7 @@ function nameOrSignalDiagnostics(
   relPath: string,
   data: Record<string, unknown>,
   body: string,
-): Diagnostic[] {
+): FileDiagnostic[] {
   if (nonEmptyString(data.name) !== undefined || nonEmptyString(data.description) !== undefined) return [];
   // command-shaped body/frontmatter signals: $ARGUMENTS / $1 / an `agent` frontmatter key.
   if (
@@ -209,13 +203,13 @@ function nameOrSignalDiagnostics(
 /** validate() for a tool-dir adapter — see file header for the leniency contract. */
 export async function validateToolDir(
   layout: ToolDirLayout,
-  c: BundleComponent,
+  c: Bundle,
   changes: FileChange[],
-  ctx: ValidateContext,
-): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+  ctx: FileValidateContext,
+): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
   const seenSkillDirs = new Set<string>();
-  const { check } = createBaseChecker(c.root, ctx);
+  const { check } = createBaseChecker(rootOf(c), ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
@@ -244,10 +238,10 @@ export async function validateToolDir(
 /** Translate a native Claude/OpenCode command or agent without exposing raw frontmatter. */
 export function renderToolDirExecutionSource(
   layout: ToolDirLayout,
-  c: BundleComponent,
-  file: FileContext,
+  c: Bundle,
+  file: AssetEntry,
 ): AdapterRenderedExecutionSource | null {
-  const cls = classify(file.relPath, layout);
+  const cls = classify(file.key, layout);
   if (cls?.type !== "command" && cls?.type !== "agent") return null;
   const raw = file.content();
   return renderMarkdownExecutionSource({
@@ -257,7 +251,7 @@ export function renderToolDirExecutionSource(
       ref: `${c.id}//${cls.conceptId}`,
       bundle: c.id,
       adapter: layout.adapterId,
-      file: file.relPath,
+      file: file.key,
     },
     defaults: (data) =>
       executionDefaultsFromFrontmatter(data, {
@@ -266,17 +260,43 @@ export function renderToolDirExecutionSource(
   });
 }
 
-/** Build the concrete `BundleAdapter` from a layout + a `looksLikeRoot` probe (claude/opencode share everything else). */
-export function makeToolDirAdapter(layout: ToolDirLayout, looksLikeRoot: (root: string) => boolean): BundleAdapter {
-  return {
-    id: layout.adapterId,
-    version: "0.9.0",
-    extensions: [".md"],
-    recognize: (c, file) => recognizeToolDir(layout, c, file),
-    renderExecutionSource: (c, file) => renderToolDirExecutionSource(layout, c, file),
-    validate: (c, changes, ctx) => validateToolDir(layout, c, changes, ctx),
-    readCandidates: (c, conceptId) => readCandidatesToolDir(layout, c, conceptId),
-    directoryList: () => [CANONICAL_COMMAND_DIR, CANONICAL_AGENT_DIR, CANONICAL_SKILL_DIR],
-    looksLikeRoot,
-  };
+/** What claude and opencode share: everything but the layout and the install-time probe. */
+export abstract class ToolDirAdapterBase extends DirectoryAdapterBase {
+  readonly id: string;
+  readonly version = "0.9.0";
+  override readonly extensions = [".md"];
+
+  constructor(private readonly layout: ToolDirLayout) {
+    super();
+    this.id = layout.adapterId;
+  }
+
+  protected identify(relPath: string): string | null {
+    return identifyToolDir(this.layout, relPath);
+  }
+
+  protected describe(_b: Bundle, file: FileContext): IndexMetadata {
+    return describeToolDir(this.layout, file);
+  }
+
+  override renderExecutionSource(b: Bundle, entry: AssetEntry): AdapterRenderedExecutionSource | null {
+    return renderToolDirExecutionSource(this.layout, b, entry);
+  }
+
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+    return validateToolDir(this.layout, b, changes, ctx);
+  }
+
+  protected spellings(conceptId: string): string[] {
+    return spellingsToolDir(this.layout, conceptId);
+  }
+
+  override directoryList(): string[] {
+    return [CANONICAL_COMMAND_DIR, CANONICAL_AGENT_DIR, CANONICAL_SKILL_DIR];
+  }
+
+  /** A skill's folder holds its `SKILL.md` and the resources that belong to it. */
+  protected override packageDir(file: FileContext): string | undefined {
+    return file.fileName === SKILL_MANIFEST ? file.parentDirAbs : undefined;
+  }
 }

@@ -15,10 +15,12 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmTaskAdapter } from "../../../src/core/adapter/adapters/akm-task-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
-import type { FileChange } from "../../../src/core/file-change";
+import { buildFileContext, type FileContext } from "../../../src/core/adapter/directory/file-context";
+import type { FileChange } from "../../../src/core/adapter/file-change";
+import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adapter/validate-context";
 import { presentationFor } from "../../../src/core/type-presentation";
-import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/akm-task");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/akm-task");
@@ -28,15 +30,15 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(): BundleComponent {
-  return { id: BUNDLE_ID, adapter: "akm-task", root: FIXTURE_ROOT, writable: true };
+function bundle(): Bundle {
+  return { id: BUNDLE_ID, root: FIXTURE_ROOT };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {
-  return akmTaskAdapter.recognize(component(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
+  return akmTaskAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
-const ctx: ValidateContext = {
+const ctx: FileValidateContext = {
   readFile: async (p) => {
     try {
       return fs.readFileSync(path.join(FIXTURE_ROOT, p), "utf8");
@@ -61,12 +63,12 @@ describe("akm-task adapter — metadata", () => {
   });
 
   test("recognition still gates on .yml — a .yaml file is never indexed as a task", () => {
-    const doc = akmTaskAdapter.recognize(component(), {
+    const misnamed: FileContext = {
       ...buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, "nightly-index.yml")),
       relPath: "misnamed.yaml",
       ext: ".yaml",
-    });
-    expect(doc).toBeNull();
+    };
+    expect(akmTaskAdapter.recognize(bundle(), misnamed)).toBeNull();
   });
 });
 
@@ -79,7 +81,6 @@ describe("akm-task adapter — recognition golden (recognition ≠ validation)",
       expect(doc, `${relPath} must be recognized`).not.toBeNull();
       if (!doc) throw new Error("unreachable");
       expect(doc.adapterId).toBe(expected.adapterId as string);
-      expect(doc.component).toBe(expected.component as string);
       expect(doc.type).toBe(expected.type as string);
       expect(doc.conceptId).toBe(expected.conceptId as string);
       expect(doc.ref).toBe(expected.ref as string);
@@ -105,7 +106,7 @@ describe("akm-task adapter — renderer golden", () => {
 });
 
 describe("akm-task adapter — strict task source validation", () => {
-  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: Diagnostic[] }>;
+  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: FileDiagnostic[] }>;
 
   test("each task validates to exactly the golden's issue codes", async () => {
     const changes: FileChange[] = Object.values(perType).map((e) => ({
@@ -113,7 +114,7 @@ describe("akm-task adapter — strict task source validation", () => {
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await akmTaskAdapter.validate(component(), changes, ctx);
+    const diags = await checkChanges(akmTaskAdapter, bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {
@@ -123,8 +124,9 @@ describe("akm-task adapter — strict task source validation", () => {
 
   test("two-targets.yml is the sole invalid-task-yaml (`uses` plus `run`)", async () => {
     const raw = fs.readFileSync(path.join(FIXTURE_ROOT, "two-targets.yml"), "utf8");
-    const diags = await akmTaskAdapter.validate(
-      component(),
+    const diags = await checkChanges(
+      akmTaskAdapter,
+      bundle(),
       [{ path: "two-targets.yml", op: "update", after: raw }],
       ctx,
     );
@@ -143,7 +145,7 @@ describe("akm-task adapter — strict task source validation", () => {
       ["alias.yml", "version: 4\nrun: &shared echo okay\nname: *shared\n", "anchors"],
     ] as const;
     for (const [file, raw, detail] of cases) {
-      const diagnostics = await akmTaskAdapter.validate(component(), [{ path: file, op: "update", after: raw }], ctx);
+      const diagnostics = await checkChanges(akmTaskAdapter, bundle(), [{ path: file, op: "update", after: raw }], ctx);
       expect(diagnostics).toHaveLength(1);
       expect(diagnostics[0]).toMatchObject({ file, issue: "invalid-task-yaml", fixed: false });
       expect(diagnostics[0]?.detail).toContain(detail);
@@ -152,8 +154,9 @@ describe("akm-task adapter — strict task source validation", () => {
 
   test("keeps `.yaml` as a reported near miss and never validates it as a task", async () => {
     const raw = "version: 4\nrun: echo okay\n";
-    const diagnostics = await akmTaskAdapter.validate(
-      component(),
+    const diagnostics = await checkChanges(
+      akmTaskAdapter,
+      bundle(),
       [{ path: "misnamed.yaml", op: "update", after: raw }],
       ctx,
     );

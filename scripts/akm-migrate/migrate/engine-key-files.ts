@@ -11,11 +11,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isFileOrFileSymlink } from "../../../src/indexer/walk/walker";
+import { isFileOrFileSymlink } from "../../../src/core/adapter/directory/walker";
 import type { EngineKeyChange, EngineKeyFileInput, EngineKeyRole, EngineKeysPlan } from "./engine-key-planner";
 import { replaceFilesWithBackups, type TaskFileRoot, walkRootFiles } from "./task-files";
 
-/** A bundle's component root, with the adapter the runtime reads it with. */
+/** A bundle's content root, with the adapter the runtime reads it with. */
 export interface EngineKeyRoot extends Pick<TaskFileRoot, "bundleId" | "root" | "bundleRoot" | "writable"> {
   readonly adapter: string;
 }
@@ -29,7 +29,7 @@ const TOOL_DIRECTORIES: readonly Place[] = [
 ];
 
 /**
- * Where each adapter keeps the files that can name an engine, under its component root: an `akm` stash in its typed
+ * Where each adapter keeps the files that can name an engine, under its bundle root: an `akm` stash in its typed
  * directories, an `akm-task` or `akm-workflow` bundle anywhere under the root. An adapter not here holds none.
  */
 const LAYOUTS = new Map<string, readonly Place[]>([

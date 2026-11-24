@@ -3,106 +3,280 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `BundleAdapter` interface — one interface, optional capability methods.
+ * The `BundleAdapter` interface: the one layer through which the rest of akm
+ * works with a bundle's assets, whatever keeps them.
  *
- * Member-by-member required/optional status:
+ * An adapter owns the mechanics of its bundles: how assets are listed, read,
+ * described for the index, placed, created, updated, deleted and retired. Everything
+ * outside the adapter calls these members and never asks which adapter it has
+ * or how the bundle is stored. A directory bundle's adapter keeps assets as
+ * files (`directory-adapter.ts` implements the mechanics every directory
+ * adapter shares); a secret manager's adapter keeps them in the manager
+ * (`secret-manager-adapter.ts`).
  *
- *   id, version, extensions .......... REQUIRED (readonly fields)
- *   recognize ......................... REQUIRED
- *   validate .......................... REQUIRED
- *   readCandidates / directoryList / looksLikeRoot ... optional
+ * Every member is required. A base class implements the ones its adapters do
+ * not support by refusing; `writes` says which types an adapter writes, and is
+ * empty for a read-only one; `retires` says which of those it retires
+ * recoverably rather than deletes (never an env file or a secret). `renderExecutionSource` and `looksLikeRoot` are
+ * optional: absence means "no runtime translation" and "never auto-detected".
  *
- * `renderExecutionSource` and `readCandidates` are two independent optional
- * read/runtime facets: `renderExecutionSource` serves the agent/command design,
- * and `readCandidates` makes an adapter's closed-form set of physical
- * spellings for one concept id explicit without changing write placement
- * (#857: this is the ONLY read-candidate surface — it is inverted from the
- * concept id, so it needs no bundle walk). This does not change the indexing or
- * validation contract.
- *
- * The optional authoring, export and memory facet methods are not declared
- * here: no adapter implements them, and their parameter types would be
- * shapeless placeholders. Each facet adds its method + a real type when it is
- * built.
- *
- * `recognize` takes `FileContext` (`src/indexer/walk/file-context.ts`)
- * as-is — a core->indexer layering import, taken
- * `import type` so it is erased at build time and adds no runtime edge.
- * FileContext arguably belongs in core long-term.
- *
- * `FileChange` is reused as-is from `../file-change.ts` (a
- * deliberately dependency-free type) — not re-minted here.
- *
- * No concrete adapter is implemented here — this is the contract only; the
- * live indexer's per-dir `drainDirDocuments` × `adapter.recognize` is the core
- * scan engine.
+ * An asset is addressed by its concept id: the ref without its bundle. An
+ * entry is one asset as its adapter holds it: `key` is the adapter's
+ * storage key, and `content()` reads it once, when asked.
  */
 
 import type { AdapterRenderedExecutionSource } from "../../execution/source";
-// D1-3: type-only import of FileContext from the indexer layer. Erased at
-// build time (no runtime edge); verified to add no import-cycle
-// participant (`bun scripts/lint-import-cycles.ts` — ratchet stays 28,
-// since nothing in `src/` imports FROM `src/core/adapter/` yet, only this
-// WI's test does).
-import type { FileContext } from "../../indexer/walk/file-context";
-import type { FileChange } from "../file-change";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "./types";
+import type { AssetEdit, Bundle, Diagnostic, IndexDocument, ValidateContext } from "./types";
 
-export interface AdapterReadCandidate {
-  path: string;
-  /** Canonical concept identity this authored path may own. */
+/** One entry of a bundle: an asset as its adapter holds it. */
+export interface AssetEntry {
+  /** The adapter's storage key (directory: the POSIX path inside the root; secret manager: `secrets/<name>`). Only the adapter interprets it; the concept id derives from it. */
+  readonly key: string;
+  /** The absolute file that holds the asset, when the adapter keeps it as a file. Display and handing to a program only. */
+  readonly file?: string;
+  /** What the adapter needs to find the asset again in its storage (a keyring entry's object and attributes): a JSON value the index records (`IndexDocument.locator`) and hands back; only the adapter reads it. */
+  readonly locator?: unknown;
+  /** When the asset last changed, when the adapter knows (a directory: the file's mtime). Callers never stat `file`. */
+  modified?(): Date;
+  /** The permission bits of the file that holds the asset, when the adapter keeps one (a directory). */
+  mode?(): number;
+  /** The content as text, read once, when first asked. */
+  content(): string;
+  /** The content as bytes, read once, when first asked. */
+  bytes(): Buffer;
+  /** The YAML frontmatter of `content()`, or null. */
+  frontmatter(): Record<string, unknown> | null;
+}
+
+/** One asset, as its adapter reads it: its identity and the entry that holds it. The type is index metadata (`recognize`). */
+export interface BundleAsset {
   conceptId: string;
+  entry: AssetEntry;
+}
+
+/**
+ * Every asset of a bundle, one per concept. Listing reads no content. A store that cannot be reached at all (a keyring
+ * that is not there or refuses to unlock, a vault that refuses the account) is not a listing: `list` throws
+ * `BUNDLE_UNREACHABLE`.
+ */
+export interface BundleListing {
+  assets: BundleAsset[];
+  /** False when part of the bundle could not be read: the index keeps the rows it had. */
+  complete: boolean;
+  /** When `complete` is false: why. */
+  incompleteReason?: string;
+  /** What is wrong with a store's entries (a secret manager's): `akm index` records and reports it, `akm lint` reads it back. */
+  findings?: Diagnostic[];
+}
+
+/** An asset to create: its type and its name within the type (`env/prod` is type `env`, name `prod`). */
+export interface NewAsset {
+  type: string;
+  name: string;
+  content: string | Buffer;
+  /** What a warning about the asset calls it (the home-path advisory): the caller's own name for it, else its file's name. */
+  label?: string;
+  /** The permission bits of the file, honoured for a verbatim create by an adapter that keeps files; else its own. */
+  mode?: number;
+}
+
+/** One file of a package directory, non-asset files included. `path` is posix and inside the package; never persisted. */
+export interface PackageFile {
+  path: string;
+  bytes: Buffer;
+  /** Permission bits. */
+  mode: number;
+  /** A link to a directory, which the package carries as the link (absolute target) and never follows; `bytes` is empty. */
+  link?: string;
+}
+
+/** What a write did. */
+export interface AssetChange {
+  conceptId: string;
+  /** The files the write changed, for the bundle's commit boundary. Empty when the bundle is not a directory. */
+  changed: string[];
+  /** The content the asset holds after the write. Absent after a delete, retire or forget. */
+  content?: string | Buffer;
+  /**
+   * The entry the write left, when the adapter has it without reading the store again (a keyring's item as the service
+   * now holds it, with the locator the index records). The facade refreshes the asset's index row from it.
+   */
+  entry?: AssetEntry;
+}
+
+/**
+ * Where a create of an asset goes: the one answer of `place`. A directory adapter also says the storage key the create
+ * writes (an asset held under another key is held under another spelling), whether anything is kept there now (an asset,
+ * or an entry no adapter reads as one: a directory) and the file to show for it (display only, §0.2 P13; never stored).
+ */
+export interface AssetPlacement {
+  /** The concept id a create gives. */
+  conceptId: string;
+  key?: string;
+  occupied?: boolean;
+  file?: string;
+}
+
+/** What the caller records with a retirement; kept with it and returned by `retired`. YAML-serializable. */
+export interface RetireNote {
+  /** Names the retirement's archive (default: the asset's concept id). A ref into the bundle is stored without its `bundle//`. */
+  readonly ref?: string;
+  /** When it was retired (ISO 8601): `expireRetired` measures its age from it. */
+  readonly retiredAt?: string;
+  /** When the retirement was made (ISO 8601; default: now). */
+  readonly archivedAt?: string;
+  readonly [key: string]: unknown;
+}
+
+/** A recoverable retirement. */
+export interface Retirement {
+  /** The adapter's stable name for it. Callers pass it back to `restore` and `forget`. */
+  handle: string;
+  /** The concept id the asset had. */
+  conceptId: string;
+  note: RetireNote;
+  /** False once the retired content has expired: `restore` then needs a fallback. */
+  restorable: boolean;
 }
 
 export interface BundleAdapter {
   readonly id: string;
-  /** Feeds incrementality (§4) + fingerprints. */
+  /** Feeds index incrementality and fingerprints. */
   readonly version: string;
-  /** Recognized extensions; longest-match stripping + collision priority. */
-  readonly extensions: readonly string[];
+  /** How config names the adapter's bundles: a directory by `path`/`git`/`website`/`npm`, a store by `location`. */
+  readonly addressedBy: "root" | "location";
+  /** Types it creates, updates and deletes. Empty: read-only. */
+  readonly writes: readonly string[];
+  /** Types it retires recoverably; a subset of `writes`. Empty: it deletes only. */
+  readonly retires: readonly string[];
+  /** Its own checks are the whole `akm lint` of a primary bundle it holds: the cross-bundle sweeps do not run. */
+  readonly lintsAlone?: boolean;
+
+  /** Whether the bundle's storage is there. It reads no asset and never prompts. */
+  exists(b: Bundle): boolean;
   /**
-   * How the core walk enumerates this adapter's bundle. Omitted: the akm-bundle
-   * walk (skips dot-directories, `bin/`, `.cache/`; lists git-ignored `env/` and
-   * `secrets/` files). `"all-directories"`: every directory except `.git` and
-   * `node_modules`, with no special `env/`/`secrets/` listing.
+   * Every asset of the bundle, one per concept. Identity comes from each entry's storage key alone: no content is read.
+   * The indexer describes each with `recognize`. Throws `BUNDLE_UNREACHABLE` when the storage cannot be reached. With
+   * `type`, `complete` speaks for the part of the bundle that holds assets of that type only.
    */
-  readonly walkMode?: "all-directories";
+  list(b: Bundle, type?: string): BundleListing;
+  /**
+   * The asset `conceptId` names, or undefined when the bundle has none (an asset a full listing would not reach is
+   * none). When storage holds the concept under more than one spelling the adapter picks the first by its spelling
+   * order, the same for every caller and without reading content; `validate` reports the rest. `locator`: the entry's
+   * locator as the index recorded it, which the facade hands back to an adapter that lists one; the adapter never reads
+   * the index itself.
+   */
+  read(b: Bundle, conceptId: string, locator?: unknown): BundleAsset | undefined;
+  /**
+   * An entry's metadata for the index, the only place a type is given; null when it is no asset. The concept id is the
+   * one the entry's storage key names. May read content.
+   */
+  recognize(b: Bundle, entry: AssetEntry): IndexDocument | null;
+  /**
+   * The type the entry's bytes give it, as `recognize` would say it, without describing the rest (a check that holds the
+   * bytes and must change nothing asks this). Absent: the adapter has no cheaper answer; undefined: it types nothing.
+   */
+  contentType?(b: Bundle, entry: AssetEntry): string | undefined;
+  /**
+   * The type the folder a storage key sits in declares for it (`memories/` declares memory), from the key alone: no
+   * bytes are read. Absent or undefined: the adapter's folders declare none.
+   */
+  declaredType?(key: string): string | undefined;
+  /**
+   * How `akm show` renders an asset of `type` the adapter does not present itself (`ownsPresentation`): the renderer's
+   * name, or undefined to match the entry live, as the next index would type it. Absent: the type's own renderer.
+   */
+  rendererFor?(type: string): string | undefined;
+  /**
+   * Native validation of pending `edits`, each an asset by its concept id (`akm lint` checks every asset as an
+   * `update`). It never writes. A directory adapter checks the bundle's snapshot with the edits overlaid; a store
+   * with no files has nothing to check. Cross-bundle ref existence is a core base check, not an adapter concern.
+   */
+  validate(b: Bundle, edits: AssetEdit[], ctx: ValidateContext): Promise<Diagnostic[]>;
 
-  // REQUIRED — the single-file recognition primitive; replaces the matcher
-  // stack (matchers.ts:151-305; file-context.ts:242-265).
-  recognize(c: BundleComponent, file: FileContext): IndexDocument | null;
+  /**
+   * Where a `create` of `asset` would go, without writing: its concept id and, for an adapter that keeps assets as
+   * files, where. A name that cannot be placed throws, as does a read-only adapter.
+   */
+  place(b: Bundle, asset: Pick<NewAsset, "type" | "name">): AssetPlacement;
+  /** What a create of `type` puts before the asset's name in its concept id (`tasks/`). Absent: nothing. */
+  prefixOf?(type: string): string;
+  /**
+   * Create the asset, in the adapter's own form for its type, or with `verbatim` as exactly `asset.content` (a promoted
+   * proposal's bytes are the ones it was reviewed with). Over an existing asset of the same concept it writes the same
+   * bytes only with `replace`; without it the create is refused. With `replaceLink`, an asset file that is a symbolic
+   * link to a file inside the bundle is replaced by a regular file (the link's target is left as it is); a link to
+   * nothing or to a file outside the bundle is still refused.
+   */
+  create(
+    b: Bundle,
+    asset: NewAsset,
+    options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean | "any"; locator?: unknown },
+  ): AssetChange;
+  /**
+   * Replace the content of the asset `conceptId` holds with exactly `content`. With `throughLink`, an asset file reached
+   * through a symbolic link whose target is a file inside the bundle is written where the link leads and the link is kept;
+   * a link to nothing or to a file outside the bundle is still refused.
+   */
+  update(
+    b: Bundle,
+    conceptId: string,
+    content: string | Buffer,
+    options?: { throughLink?: boolean; locator?: unknown },
+  ): AssetChange;
+  /**
+   * Take the asset out of the bundle: one change per asset it removed, a package entry's first (a package goes whole).
+   * `locator` (here, on `update` and on a replacing `create`): as on `read`.
+   */
+  delete(b: Bundle, conceptId: string, options?: { locator?: unknown }): AssetChange[];
+  /**
+   * Every file under the directory of a package entry (a skill), non-assets included, with bytes and mode. Refused
+   * when the adapter keeps no packages.
+   */
+  packageFiles(b: Bundle, conceptId: string): PackageFile[];
+  /**
+   * Make the package `asset` places an exact mirror of `files`: overwrite what exists, add, and delete what `files`
+   * lacks; bytes and modes kept; staged and renamed into place, so a failure leaves the target as it was. An existing
+   * package is refused unless `replace`. One change per asset it added, changed or removed; the entry's change comes
+   * first and lists every file of the package, non-assets included.
+   */
+  mirrorPackage(
+    b: Bundle,
+    asset: Pick<NewAsset, "type" | "name">,
+    files: readonly PackageFile[],
+    options?: { replace?: boolean },
+  ): AssetChange[];
 
-  // REQUIRED — native validation (change-transaction pre-commit + lint
-  // --fix); adapter MUST NOT write and MUST NOT read the live filesystem:
-  // ctx serves the run snapshot WITH the pending changes overlaid (one core
-  // overlay implementation), plus a read-only resolveRef for link/xref
-  // existence (normative §12.1). Cross-component ref existence is a CORE
-  // base check, not an adapter concern.
-  validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]>;
+  /**
+   * Take the asset out of the bundle recoverably, keeping `note` with it. The handle in each result names a
+   * retirement: one per asset, a package entry's first, then every other asset of its package. Refused for a type not
+   * in `retires`.
+   */
+  retire(b: Bundle, conceptId: string, note: RetireNote): Array<AssetChange & { handle: string }>;
+  /** The bundle's retirements. */
+  retired(b: Bundle): Retirement[];
+  /**
+   * Put a retired asset back; when its retired content has expired, write `fallback` (refused without one). The
+   * retirement is kept, so a caller can record its decision before `forget` removes it: restoring twice is a no-op.
+   */
+  restore(b: Bundle, handle: string, fallback?: string | Buffer): AssetChange;
+  /** Drop a retirement's record, and with it any retired content that remains. */
+  forget(b: Bundle, handle: string): { changed: string[] };
+  /** Delete the retired content of every retirement recorded before `before`, when the adapter can recover it elsewhere. */
+  expireRetired(b: Bundle, before: Date): { changed: string[] };
 
-  // OPTIONAL — runtime translation for executable agent assets. The adapter
-  // receives the authoritative native file and returns only a branded,
-  // frontmatter-free command/persona source. Core resolution never reads raw
-  // native bytes into a prompt after this boundary.
-  renderExecutionSource?(c: BundleComponent, file: FileContext): AdapterRenderedExecutionSource | null;
-
-  // OPTIONAL — authoritative read placement. Unlike `extensions` (a walk
-  // collection hint), this lists the existing path spellings that may own one canonical concept. Every
-  // candidate carries that canonical identity, so core can arbitrate without
-  // reading authored bytes or inferring identity from the query.
-  readCandidates?(c: BundleComponent, conceptId: string): AdapterReadCandidate[];
-
-  // OPTIONAL — placement / discovery
-  /** Owned dirs; feeds git exact-path staging (git-stash.ts:241). */
-  directoryList?(c: BundleComponent): string[];
-  /** Install-time probe; ordered per §1.2. */
+  /**
+   * Runtime translation for executable agent assets. The adapter receives the authoritative native entry and
+   * returns only a branded, frontmatter-free command/persona source. Core resolution never reads raw native bytes
+   * into a prompt after this boundary.
+   */
+  renderExecutionSource?(b: Bundle, entry: AssetEntry): AdapterRenderedExecutionSource | null;
+  /** Install-time probe; ordered by the registry. */
   looksLikeRoot?(root: string): boolean;
-
-  // NOTE — the OPTIONAL authoring, export, and memory facet methods are
-  // DEFERRED, not declared here: no adapter implements them, and every type they
-  // reference (AuthoringContext/CreateRequest/BundleExport/BindingRequest/
-  // BindingPlan/MemoryRecord/MemorySemanticPlan) is shapeless.
-  // Committing them now would mean 7 meaningless `Record<string, unknown>`
-  // placeholder types on the foundational contract. The owning facet adds its
-  // method + a REAL type shape when it is built.
+  /**
+   * The concept id a stored storage key (a bundle-relative path) holds, from the key alone, so it is valid when no
+   * file exists. For converters of old stored records only (§8.4: `legacyRefOf`).
+   */
+  identifyKey?(b: Bundle, key: string): string | null;
 }

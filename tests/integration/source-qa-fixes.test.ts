@@ -475,7 +475,8 @@ describe("update preserves entry.source for writable installed entries", () => {
         "dimm-city-agent-stash": {
           git: "https://github.com/dimm-city/agent-stash.git",
           registryId: "github:dimm-city/agent-stash",
-          components: { main: { root: ".", adapter: "okf", writable: true } },
+          adapter: "okf",
+          writable: true,
         },
       },
     });
@@ -553,8 +554,8 @@ describe("update preserves entry.source for writable installed entries", () => {
     expect(bundle).toBeDefined();
     // Desired descriptor stays byte-for-byte policy-equivalent; only resolved lock state advances.
     expect(bundle?.git).toBe("https://github.com/dimm-city/agent-stash.git");
-    expect(bundle?.writable).toBeUndefined();
-    expect(bundle?.components).toEqual({ main: { root: ".", adapter: "okf", writable: true } });
+    expect(bundle?.writable).toBe(true);
+    expect(bundle?.adapter).toBe("okf");
     // resolved revision lives in the lock and should be updated
     const lock = readLockfile().find((e) => e.ref === "github:dimm-city/agent-stash");
     expect(lock?.source).toBe("git");
@@ -574,7 +575,8 @@ describe("update preserves entry.source for writable installed entries", () => {
         "dimm-city-agent-stash": {
           git: "https://github.com/dimm-city/agent-stash.git",
           registryId: "github:dimm-city/agent-stash",
-          components: { main: { root: ".", adapter: "okf", writable: true } },
+          adapter: "okf",
+          writable: true,
         },
       },
     });
@@ -610,7 +612,7 @@ describe("update preserves entry.source for writable installed entries", () => {
     }
 
     expect(readLockfile().find((entry) => entry.id === "dimm-city-agent-stash")?.localRoot).toBe(stashRoot);
-    expect(loadConfig().bundles?.["dimm-city-agent-stash"]?.components?.main?.writable).toBe(true);
+    expect(loadConfig().bundles?.["dimm-city-agent-stash"]?.writable).toBe(true);
   });
 });
 
@@ -629,10 +631,11 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
       semanticSearchMode: "off",
       defaultBundle: "primary",
       bundles: {
-        primary: { path: stashDir, components: { main: { root: ".", adapter: "akm", writable: true } } },
+        primary: { path: stashDir, adapter: "akm", writable: true },
         secondary: {
           path: secondaryRoot,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
+          adapter: "akm",
+          writable: true,
         },
       },
     });
@@ -651,7 +654,7 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
       semanticSearchMode: "off",
       defaultBundle: "local-fs",
       bundles: {
-        "local-fs": { path: fsDir, components: { main: { root: ".", adapter: "akm", writable: true } } },
+        "local-fs": { path: fsDir, adapter: "akm", writable: true },
       },
     });
     await akmIndex({ stashDir: fsDir, full: true });
@@ -762,7 +765,7 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
     saveConfig({
       semanticSearchMode: "off",
       bundles: {
-        "local-fs": { path: fsDir, components: { main: { root: ".", adapter: "akm", writable: true } } },
+        "local-fs": { path: fsDir, adapter: "akm", writable: true },
         "docs-site": { website: { url: siteUrl } },
         "mirror-git": { git: "https://github.com/example/mirror-git.git" },
         "left-pad": { npm: "left-pad" },

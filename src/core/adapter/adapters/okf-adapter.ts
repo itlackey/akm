@@ -11,13 +11,13 @@
  *  - recognize: any `.md` NOT named `index.md`/`log.md` (case-insensitive,
  *    reserved) → one concept. `type` = frontmatter `type` when a non-empty
  *    string, else the `knowledge` default. conceptId = the concept's path
- *    within the component root minus `.md`. The OKF field projection:
+ *    within the bundle root minus `.md`. The OKF field projection:
  *    name ← title (fallback: last path segment), description ← description,
  *    tags ← tags, updated ← timestamp. The directory a file sits in NEVER
  *    affects `type`.
  *  - links: BOTH OKF link forms — `/`-rooted bundle-relative and standard
  *    relative — resolve deterministically into target conceptIds, stored on
- *    `IndexDocument.links`. Unresolvable / out-of-component links are dropped
+ *    `IndexDocument.links`. Unresolvable / out-of-bundle links are dropped
  *    (tolerant).
  *  - validate (LENIENT): base checks only; unknown frontmatter never fails;
  *    `missing-type` is INFO; `missing-ref` on OKF links is a non-blocking
@@ -30,21 +30,22 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { isScratchPath } from "../../asset/scratch";
 import { isRecord, toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
-import type { BundleAdapter } from "../bundle-adapter";
-import type {
-  BundleComponent,
-  Diagnostic,
-  IndexDocument,
-  OkfSourceEntry,
-  OkfVerifiedEntry,
-  ValidateContext,
+import type { FileContext } from "../directory/file-context";
+import { DirectoryAdapterBase } from "../directory-adapter";
+import type { FileChange } from "../file-change";
+import {
+  type Bundle,
+  type IndexDocument,
+  type IndexMetadata,
+  type OkfSourceEntry,
+  type OkfVerifiedEntry,
+  rootOf,
 } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
 /** v0.2 frontmatter keys consumed into first-class fields below (§0.1) — excluded from the generic `documentJson` extras fold alongside the v0.1 five, so nothing is duplicated between a first-class field and the opaque extras bag. */
@@ -139,14 +140,14 @@ function isReservedFileName(name: string): boolean {
  * Resolve BOTH OKF link forms found in a concept body into target conceptIds
  * (§9, §5):
  *   - `/`-rooted bundle-relative — `[x](/tables/customers.md)` — resolved from
- *     the component root;
+ *     the bundle root;
  *   - standard relative — `[y](./other.md)`, `[z](../a/b.md)` — resolved
  *     relative to the linking concept's own directory.
- * Both are resolved against the component root, `.md` stripped, to yield a
- * component-root-relative conceptId (matching how `recognize` derives the
+ * Both are resolved against the bundle root, `.md` stripped, to yield a
+ * bundle-root-relative conceptId (matching how `recognize` derives the
  * target file's own conceptId). Deterministic string/path work — no LLM, no
  * I/O. Non-`.md` targets, external schemes (`http:`…), in-page anchors, and any
- * link that escapes the component root are dropped (tolerant, §5). Order of
+ * link that escapes the bundle root are dropped (tolerant, §5). Order of
  * first appearance is preserved; duplicates collapse.
  */
 export function resolveOkfLinks(body: string, fileRelPath: string): string[] {
@@ -172,14 +173,14 @@ export function resolveOkfLinks(body: string, fileRelPath: string): string[] {
 
     let resolved: string;
     if (target.startsWith("/")) {
-      // Bundle/component-root-relative.
+      // Bundle/bundle-root-relative.
       resolved = path.posix.normalize(target.slice(1));
     } else {
       // Standard relative — resolve against the linking concept's directory.
       const base = dir === "." ? "" : dir;
       resolved = path.posix.normalize(path.posix.join(base, target));
     }
-    // Drop anything that escapes the component root.
+    // Drop anything that escapes the bundle root.
     if (resolved.startsWith("../") || resolved === ".." || resolved.startsWith("/")) continue;
     const conceptId = resolved.replace(/\.md$/i, "");
     if (!conceptId || seen.has(conceptId)) continue;
@@ -189,19 +190,20 @@ export function resolveOkfLinks(body: string, fileRelPath: string): string[] {
   return out;
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
-  // `okf` owns `.md` only (extensions: [".md"]). No directory gate anywhere.
-  if (file.ext !== ".md") return null;
-  // Reserved OKF files are recognized (excluded), never indexed as concepts.
-  if (isReservedFileName(file.fileName)) return null;
+/** The concept a path holds: `okf` owns `.md` only, with no directory gate; reserved OKF files are structure, never concepts. */
+function conceptIdOf(relPath: string): string | null {
+  const posix = toPosix(relPath);
+  if (path.posix.extname(posix).toLowerCase() !== ".md" || isReservedFileName(path.posix.basename(posix))) return null;
+  return posix.replace(/\.md$/i, "");
+}
 
-  const conceptId = toPosix(file.relPath).replace(/\.md$/i, "");
+function describe(file: FileContext, conceptId: string): IndexMetadata {
   const raw = file.content();
   const parsed = parseFrontmatter(raw);
   const data = parsed.data;
   const body = parsed.content;
 
-  // §5.1 BINDING: `type` from FRONTMATTER; default `knowledge` when absent.
+  // §5.1 BINDING: `type` from FRONTMATTER; default `knowledge` when absent. It is metadata only: identity is the path.
   const type = nonEmptyString(data.type) ?? "knowledge";
   // §0.1/§3 OKF field projection.
   const lastSegment = conceptId.split("/").pop() ?? conceptId;
@@ -239,16 +241,10 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   // concepts with it is neither rejected nor silently ignored.
   const okfVersion = nonEmptyString(data.okf_version);
 
-  const doc: IndexDocument = {
-    ref: `${c.id}//${conceptId}`,
-    bundle: c.id,
-    component: c.id,
-    conceptId,
-    path: file.absPath,
+  const doc: IndexMetadata = {
     // hash over the full raw file (frontmatter + body) so any edit invalidates
     // incrementality/fingerprints (`types.ts` hash doc comment).
     hash: hashContent(raw),
-    adapterId: "okf",
     ownsPresentation: true,
     type,
     name,
@@ -263,13 +259,16 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   if (staleAfter !== undefined) doc.staleAfter = staleAfter;
   if (okfVersion !== undefined) doc.okfVersion = okfVersion;
   const extras = Object.fromEntries(Object.entries(data).filter(([key]) => !CONSUMED_FRONTMATTER_KEYS.includes(key)));
-  if (Object.keys(extras).length > 0) doc.documentJson = extras;
+  if (Object.keys(extras).length > 0) {
+    doc.documentJson = extras;
+    doc.opaqueExtras = true;
+  }
   return doc;
 }
 
-async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
-  const { check } = createBaseChecker(c.root, ctx);
+async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
+  const { check } = createBaseChecker(rootOf(c), ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
@@ -312,24 +311,33 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
   return diagnostics;
 }
 
-export const okfAdapter: BundleAdapter = {
-  id: "okf",
-  version: "0.9.0",
-  extensions: [".md"],
-  walkMode: "all-directories",
+export class OkfAdapter extends DirectoryAdapterBase {
+  readonly id = "okf";
+  readonly version = "0.9.0";
+  readonly lintsAlone = true;
+  override readonly extensions = [".md"];
+  protected override readonly walkMode = "all-directories" as const;
 
-  recognize,
-  validate,
+  protected identify(relPath: string): string | null {
+    return conceptIdOf(relPath);
+  }
 
-  readCandidates(c: BundleComponent, conceptId: string) {
-    const canonical = conceptId.replace(/\\/g, "/").replace(/\.md$/i, "");
-    return [{ path: path.join(c.root, `${canonical}.md`), conceptId: canonical }];
-  },
+  protected describe(_b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
+    return describe(file, conceptId);
+  }
 
-  /** OKF concepts live anywhere under the component root (§5). */
-  directoryList(_c: BundleComponent): string[] {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+    return validate(b, changes, ctx);
+  }
+
+  protected spellings(conceptId: string): string[] {
+    return [`${toPosix(conceptId).replace(/\.md$/i, "")}.md`];
+  }
+
+  /** OKF concepts live anywhere under the bundle root (§5). */
+  override directoryList(_b: Bundle): string[] {
     return ["."];
-  },
+  }
 
   /**
    * Install-time probe. A root index is sufficient; an index-less root is also
@@ -362,5 +370,7 @@ export const okfAdapter: BundleAdapter = {
       }
     }
     return false;
-  },
-};
+  }
+}
+
+export const okfAdapter = new OkfAdapter();

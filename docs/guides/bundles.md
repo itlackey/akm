@@ -93,11 +93,11 @@ reference, X credential setup, and crawl-option details. Low-level knobs like
 descriptor; see [Configuration](../reference/configuration.md).
 
 **Index only a subdirectory of a git bundle.** Add the repo, point the
-bundle's component `root` at the subdirectory, then update:
+bundle's `root` at the subdirectory, then update:
 
 ```sh
 akm bundle add <url> --name <name>
-akm config set bundles.<name>.components.main.root <subdir>
+akm config set bundles.<name>.root <subdir>
 akm bundle update <name>
 ```
 

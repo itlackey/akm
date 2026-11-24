@@ -34,11 +34,7 @@ const fragmentBody = (marker: string) => `# Alpha\n${marker} alpha body\n\n# Bet
 function putEntry(db: Database, name: string, marker: string): number {
   const entry: IndexDocument = { name, type: "knowledge", content: "ordinary parent projection" };
   setMarkdownFragmentContent(entry, fragmentBody(marker));
-  const provenance = deriveEntryProvenance(
-    { bundleId: "fixture", componentId: "fixture", adapterId: "akm" },
-    "knowledge",
-    name,
-  );
+  const provenance = deriveEntryProvenance({ bundleId: "fixture", adapterId: "akm" }, "knowledge", name);
   upsertEntry(db, `/fixture/knowledge/${name}.md`, entry, provenance);
   return (db.prepare("SELECT id FROM entries WHERE item_ref = ?").get(`fixture//knowledge/${name}`) as { id: number })
     .id;
@@ -67,11 +63,7 @@ describe("FTS rowid maintenance", () => {
         const name = `perf-${index}`;
         const entry: IndexDocument = { name, type: "knowledge", content: `ordinary content ${index}` };
         setMarkdownFragmentContent(entry, fragmentBody(`perfmarker${index}`));
-        const provenance = deriveEntryProvenance(
-          { bundleId: "fixture", componentId: "fixture", adapterId: "akm" },
-          "knowledge",
-          name,
-        );
+        const provenance = deriveEntryProvenance({ bundleId: "fixture", adapterId: "akm" }, "knowledge", name);
         upsertEntry(db, `/fixture/knowledge/${name}.md`, entry, provenance);
       };
 

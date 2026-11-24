@@ -29,7 +29,7 @@ export interface SyncOptions {
   displayRoot?: string;
   /** Leave uncommitted changes to git's own fast-forward protection instead of refusing a dirty worktree. */
   allowLocalChanges?: boolean;
-  /** Configured component roots that must still exist in the fetched revision. */
+  /** Configured roots that must still exist in the fetched revision. */
   writableRequiredRoots?: readonly string[];
   /** Materialize under this cache root instead of the default (`akm bundle update` fetches into staging). */
   cacheRootDir?: string;

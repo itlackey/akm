@@ -33,7 +33,7 @@ lives in `$STATE`, `$CACHE`, or `$DATA`.
 | Path | Contents |
 |---|---|
 | `memory-cleanup/belief-transitions.jsonl` | One line per memory belief-state transition: `appliedAt`, `ref`, `parentRef`, `fromState`, `toState`, `reason`, and `relatedRef`, `relatedRefs` and `currentBeliefRefs` when present. Written by the memory cleanup pass (`appendBeliefStateTransitionLog`). |
-| `memory-cleanup/archive/<stamp>-<ref>/` | A pruned or retired memory moved aside, plus a `cleanup.md` tombstone. Ref resolution reads the tombstones so an edge to a pruned memory reports "archived" instead of "missing" (`src/core/asset/memory-archive.ts`). `akm improve` deletes the archived files of a retirement 30 days after `retiredAt` when the bundle is a git repository and the files are tracked and clean; `cleanup.md` stays. |
+| `memory-cleanup/archive/<stamp>-<concept id>/` | A pruned or retired memory moved aside, plus a `cleanup.md` tombstone. Ref resolution reads the tombstones so an edge to a pruned memory reports "archived" instead of "missing" (`src/core/adapter/directory-archive.ts`). `akm improve` deletes the archived files of a retirement 30 days after `retiredAt` when the bundle is a git repository and the files are tracked and clean; `cleanup.md` stays. |
 
 `<cwd>/.akm/config.json` is not read as configuration.
 
@@ -229,7 +229,7 @@ The proposal queue. A decided proposal stays as a row; archiving changes `status
 | Column | Type | Notes |
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | UUID |
-| `stash_dir` | TEXT NOT NULL | Absolute bundle root; partitions the queue per bundle |
+| `bundle_id` | TEXT NOT NULL | The bundle's id (its config name); partitions the queue per bundle, and follows the bundle when its directory moves |
 | `ref` | TEXT NOT NULL | `bundle//conceptId`, no fragment |
 | `status` | TEXT NOT NULL DEFAULT 'pending' | `pending`, `accepted`, `rejected`, `reverted` |
 | `source` | TEXT NOT NULL | The generator (`PROPOSAL_SOURCES`, `src/commands/proposal/proposal-types.ts`) |
@@ -243,7 +243,16 @@ The proposal queue. A decided proposal stays as a row; archiving changes `status
 `reviewHistory`, `confidence`, `gateDecision`, `feedback`, `backupContent`,
 `acceptedTarget`, `eligibilitySource`, `promotionSource`, `promotionSourceHash`,
 `retirement`, `retiredArchive`, `retireAcceptIntent`. The shapes are validated
-in `validatePresentMetadata`, `src/storage/repositories/proposals-repository.ts`.
+in `validatePresentMetadata`, `src/storage/repositories/proposals-repository.ts`. A record
+names assets by ref, never files: `changes` is `[{ ref, op, content? }]` (the primary
+change's content is the `content` column), `proposedTarget` is `{ source }` (the bundle),
+`acceptedTarget` is `{ bundle, ref, contentHash }`. A record an older akm wrote with
+`changes[].path`, `proposedTarget.root` or `acceptedTarget.root/path` is read as converted
+(`src/commands/proposal/legacy-records.ts`) and rewritten by `akm migrate apply`. A retirement
+is recorded the same way: `retiredArchive` is `{ retired: [{ ref, handle }] }` (a handle is the
+opaque name of the retirement's archive) and `retireAcceptIntent` is `{ backupContent }`; the
+old `retiredArchive.dirs` and `retireAcceptIntent.assetPath` are read as converted and rewritten
+by the same step.
 
 Indexes: `idx_proposals_stash_status`, `idx_proposals_ref_status`,
 `idx_proposals_stash_status_ref_source`.
@@ -297,12 +306,12 @@ index` deletes rows older than 90 days. Indexes on `entry_id`, `event_type`, `en
 
 #### `improve_ledger`
 
-One row per `(stash_dir, ref, source)`: what an improve stage last did with the
+One row per `(bundle_id, ref, source)`: what an improve stage last did with the
 asset and when it may try again.
 
 | Column | Notes |
 |---|---|
-| `stash_dir`, `ref`, `source` | Primary key |
+| `bundle_id`, `ref`, `source` | Primary key |
 | `last_attempt_at` | ISO-8601 |
 | `outcome` | `proposed`, `accepted`, `rejected`, `quality_rejected`, `review_needed`, `expired`, `unchanged`, `failed`, `judged_no_action` |
 | `next_eligible_at` | When the stage may try again; NULL for content-driven decisions |
@@ -316,7 +325,7 @@ Candidate selection in each improve stage reads it before any model call
 
 | Table | Holds |
 |---|---|
-| `improve_runs` | One row per `akm improve` run: `id`, `started_at`, `completed_at`, `stash_dir`, `dry_run`, `strategy`, `scope_mode`, `scope_value`, `guidance`, `ok`, `result_json`, `metrics_json`, `metadata_json`, and `profile` (no longer written). Purged by the retention pass. |
+| `improve_runs` | One row per `akm improve` run: `id`, `started_at`, `completed_at`, `bundle_id`, `dry_run`, `strategy`, `scope_mode`, `scope_value`, `guidance`, `ok`, `result_json`, `metrics_json`, `metadata_json`, and `profile` (no longer written). Purged by the retention pass. |
 | `extract_sessions_seen` | Primary key `(harness, session_id)`; the extractor's record of which sessions it processed and with what outcome. |
 | `asset_salience`, `asset_outcome` | Per-asset improve scoring state, keyed by `asset_ref`. |
 | `body_embeddings` | Cache of memory-body embedding vectors keyed by `content_hash`, with `model_id` (`src/storage/repositories/embeddings-repository.ts`). |
@@ -393,7 +402,8 @@ Subdirectories and file shapes come from `BUILTIN_PLACEMENT_SPECS`,
 | `sessions/<harness>/` | session | `<session-id>.md`; written by the extract pass |
 
 A bundle recognized by the `llm-wiki` adapter (a root with `schema.md` and
-`pages/`) is a wiki; `wikis/<name>/` is the usual place. See
+`pages/`) is a wiki, and a wiki is always a bundle of its own: a `wikis/`
+folder inside an `akm` bundle is ordinary `akm` files. See
 [Classification](classification.md).
 
 ## Locks and sentinels
@@ -406,7 +416,6 @@ A bundle recognized by the `llm-wiki` adapter (a root with `schema.md` and
 | `$STATE/locks/<stash>/improve.lock` | One `akm improve` run per bundle. JSON `{ pid, startedAt, lockId }`. A lock is reclaimed only when its holder PID is dead; it does not expire by age (`src/commands/improve/locks.ts`, `src/core/run-lock.ts`). |
 | `$STATE/locks/scheduler.lock` | Serializes scheduler mutations (`withSchedulerLock`, `src/tasks/scheduler-lock.ts`). |
 | `$DATA/workflow-run-locks/<run-id>.lock` | One engine per workflow run; same PID-liveness reclaim (`workflowRunLockPath`, `src/workflows/exec/run-workflow.ts`). |
-| `$DATA/secret-locks/<sha256>.lock` | Serializes writes to one secret file (`secretLockPath`, `src/commands/env/secret.ts`). |
 
 ## Cache and state directories
 

@@ -47,7 +47,7 @@ function ownerShapedConfig(): Dict {
   return {
     defaultBundle: "primary",
     bundles: {
-      primary: { path: storage.stashDir, writable: true, components: { main: { root: ".", adapter: "akm" } } },
+      primary: { path: storage.stashDir, writable: true, adapter: "akm" },
     },
     engines: {
       default: {

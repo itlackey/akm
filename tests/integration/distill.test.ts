@@ -24,6 +24,7 @@ import {
   isValidWhenToUse,
 } from "../../src/commands/proposal/validators/proposal-quality-validators";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+import { stateBundleId } from "../../src/core/bundle-at-dir";
 import { type AkmConfig, saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import { validateJsonSchemaSubset } from "../../src/core/json-schema";
@@ -41,6 +42,7 @@ import {
   withEnv,
   withIsolatedAkmStorage,
 } from "../_helpers/sandbox";
+import { withSeam } from "../_helpers/seams";
 
 // ── Test scaffolding ────────────────────────────────────────────────────────
 
@@ -59,7 +61,7 @@ function makeStashDir(): string {
 /** The durable `proposals.ref` item_ref (WI-8.5a): `<bundle>//<conceptId>`. */
 function durableRef(stashDir: string, type: string, name: string): string {
   const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
-  return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
+  return deriveEntryProvenance({ bundleId, adapterId: "akm" }, type, name).itemRef;
 }
 
 function distillConfig(stashDir: string, distill: Record<string, unknown>): AkmConfig {
@@ -195,8 +197,8 @@ describe("akmDistill — selected-root lookup", () => {
   test("never writes salience to another source", async () => {
     const selected = makeStashDir();
     const other = makeStashDir();
-    const selectedFile = path.join(selected, "skills", "duplicate.md");
-    const otherFile = path.join(other, "skills", "duplicate.md");
+    const selectedFile = path.join(selected, "knowledge", "duplicate.md");
+    const otherFile = path.join(other, "knowledge", "duplicate.md");
     const selectedContent = "---\ndescription: Selected source\n---\n\nSelected source body.\n";
     const otherContent = "---\ndescription: Other source\n---\n\nOther source body.\n";
     fs.writeFileSync(selectedFile, selectedContent, "utf8");
@@ -204,20 +206,94 @@ describe("akmDistill — selected-root lookup", () => {
     const lookedUp: string[] = [];
 
     await akmDistill({
-      ref: "skills/duplicate",
+      ref: "knowledge/duplicate",
       stashDir: selected,
       config: configEnabled(selected),
       lookupFn: async (ref) => {
         lookedUp.push(ref);
-        return ref === "skills/duplicate" ? selectedFile : otherFile;
+        return ref === "knowledge/duplicate" ? selectedFile : otherFile;
       },
       readEventsFn: emptyEvents,
       chat: async () => VALID_LESSON,
     });
 
-    expect(lookedUp[0]).toBe("skills/duplicate");
+    expect(lookedUp[0]).toBe("knowledge/duplicate");
     expect(fs.readFileSync(selectedFile, "utf8")).toContain("salience:");
     expect(fs.readFileSync(otherFile, "utf8")).toBe(otherContent);
+  });
+
+  test("an input held in another bundle gets its salience mirror and its salience row", async () => {
+    const stash = makeStashDir();
+    const team = makeStashDir();
+    const config = {
+      ...configEnabled(stash),
+      bundles: { stash: { path: stash, writable: true }, team: { path: team, writable: true } },
+    } as AkmConfig;
+    saveConfig(config);
+    const teamFile = path.join(team, "knowledge", "team-only.md");
+    fs.writeFileSync(teamFile, "---\ndescription: Team only\n---\n\nTeam only body.\n", "utf8");
+
+    await akmDistill({
+      ref: "knowledge/team-only",
+      stashDir: stash,
+      config,
+      lookupFn: async () => teamFile,
+      readEventsFn: emptyEvents,
+      chat: async () => VALID_LESSON,
+    });
+
+    expect(fs.readFileSync(teamFile, "utf8")).toContain("salience:");
+    const db = openStateDatabase(getStateDbPath());
+    try {
+      expect(getAssetSalience(db, "knowledge/team-only")?.encoding_salience).toBeGreaterThan(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an input in a `writable: false` bundle keeps its file; its salience is the state.db row (F20)", async () => {
+    const stash = makeStashDir();
+    const vendor = makeStashDir();
+    const config = {
+      ...configEnabled(stash),
+      bundles: { stash: { path: stash, writable: true }, vendor: { path: vendor, writable: false } },
+    } as AkmConfig;
+    saveConfig(config);
+    const vendorFile = path.join(vendor, "knowledge", "vendor-only.md");
+    const bytes = "---\ndescription: Vendor only\n---\n\nVendor only body.\n";
+    fs.writeFileSync(vendorFile, bytes, "utf8");
+    const warnings: string[] = [];
+
+    const result = await withSeam(
+      _setWarnSinkForTests,
+      (level, args) => {
+        if (level === "warn") warnings.push(args.join(" "));
+      },
+      () =>
+        akmDistill({
+          ref: "knowledge/vendor-only",
+          stashDir: stash,
+          config,
+          lookupFn: async () => vendorFile,
+          readEventsFn: emptyEvents,
+          chat: async () => VALID_LESSON,
+        }),
+    );
+
+    // The skipped mirror is no error and no failed outcome.
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("queued");
+    expect(warnings.filter((warning) => /vendor|salience|writable/i.test(warning))).toEqual([]);
+    expect(fs.readFileSync(vendorFile, "utf8")).toBe(bytes);
+    // Salience is read from state.db (the frontmatter copy is for audit only): the row is there without the mirror.
+    const db = openStateDatabase(getStateDbPath());
+    try {
+      const row = getAssetSalience(db, "knowledge/vendor-only");
+      expect(row?.encoding_source).toBe("content");
+      expect(row?.encoding_salience).toBeGreaterThan(0);
+    } finally {
+      db.close();
+    }
   });
 
   test("reads feedback using item_ref when planning supplied one", async () => {
@@ -2153,7 +2229,9 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     expect(proposal?.confidence).toBeCloseTo(4.5 / 5, 9);
     const db = openStateDatabase();
     try {
-      const row = listImproveLedgerRows(db, stash, ["distill"]).find((entry) => entry.ref === "skills/deploy");
+      const row = listImproveLedgerRows(db, stateBundleId(stash), ["distill"]).find(
+        (entry) => entry.ref === "skills/deploy",
+      );
       expect(row).toMatchObject({ outcome: "review_needed", proposalId: proposal?.id });
     } finally {
       db.close();
@@ -2252,7 +2330,9 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
 
     const db = openStateDatabase();
     try {
-      const row = listImproveLedgerRows(db, stash, ["distill"]).find((entry) => entry.ref === "skills/deploy");
+      const row = listImproveLedgerRows(db, stateBundleId(stash), ["distill"]).find(
+        (entry) => entry.ref === "skills/deploy",
+      );
       expect(row).toMatchObject({ outcome: "quality_rejected", detail: "adds nothing new" });
       expect(Date.parse(row?.nextEligibleAt ?? "") - Date.parse(row?.lastAttemptAt ?? "")).toBe(30 * 86_400_000);
     } finally {
@@ -2303,7 +2383,7 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
     expect(proposals[0]?.gateDecision?.judgeReason).toContain("no connection or harness configured");
     const db = openStateDatabase();
     try {
-      const row = listImproveLedgerRows(db, stash, ["distill"]).find(
+      const row = listImproveLedgerRows(db, stateBundleId(stash), ["distill"]).find(
         (entry) => entry.ref === "memories/no-judge-promotion",
       );
       expect(row).toMatchObject({ outcome: "review_needed" });
@@ -2403,7 +2483,9 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
     function ledgerRow(fixture: Fixture) {
       const db = openStateDatabase();
       try {
-        return listImproveLedgerRows(db, fixture.stash, ["distill"]).find((entry) => entry.ref === fixture.ref);
+        return listImproveLedgerRows(db, stateBundleId(fixture.stash), ["distill"]).find(
+          (entry) => entry.ref === fixture.ref,
+        );
       } finally {
         db.close();
       }
@@ -2590,8 +2672,9 @@ describe("akmDistill — a lesson already at the target ref", () => {
   test("is left as it is: skipped with a reason before the call, no proposal, nothing written", async () => {
     const stash = makeStashDir();
     const existing = writeLesson(stash, "skill-deploy-lesson");
-    const source = path.join(stash, "skills", "deploy.md");
-    const sourceContent = "---\ndescription: Deploy safely\n---\n\nCheck deployment prerequisites.\n";
+    const source = path.join(stash, "skills", "deploy", "SKILL.md");
+    const sourceContent = "---\nname: deploy\ndescription: Deploy safely\n---\n\nCheck deployment prerequisites.\n";
+    fs.mkdirSync(path.dirname(source), { recursive: true });
     fs.writeFileSync(source, sourceContent);
     let called = false;
 

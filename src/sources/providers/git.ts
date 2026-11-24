@@ -10,12 +10,13 @@
 // Re-exported here so every consumer (and every `spyOn(gitProvider, …)` test)
 // keeps importing from a single module namespace.
 
+export { isGitBackedStash, listGitChangedPaths } from "../../core/git-path-safety";
+export { runGit } from "../../core/git-run";
 export {
   classifyCloneFailure,
   cloneRepo,
   type GitUpstreamState,
   inspectGitUpstream,
-  runGit,
   syncExistingWritableCheckout,
 } from "./git-install";
 export {
@@ -30,8 +31,6 @@ export {
   _setGitExactCommitHookForTests,
   type GitExactCommitPoint,
   GitStashPushError,
-  isGitBackedStash,
-  listGitChangedPaths,
   listIgnoredExactPaths,
   resolveWritableOverride,
   type SaveGitStashResult,

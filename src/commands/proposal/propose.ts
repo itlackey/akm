@@ -197,7 +197,7 @@ async function dispatchProposalPrompt(
  * event, the fallback ref, and the stored proposal all carry one spelling.
  */
 function proposeItemRef(bundleId: string, type: string, name: string): string {
-  return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
+  return deriveEntryProvenance({ bundleId, adapterId: "akm" }, type, name).itemRef;
 }
 
 /**

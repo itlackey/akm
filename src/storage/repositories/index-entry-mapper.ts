@@ -26,7 +26,7 @@ import type { DbIndexedEntry } from "./index-entry-types";
  * current indexed provenance.
  */
 export const ENTRY_COLUMNS =
-  "id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path, content_hash, document_json";
+  "id, item_ref, bundle_id, concept_id, adapter_id, type, file_path, content_hash, document_json";
 
 /** A raw row selected via {@link ENTRY_COLUMNS}. */
 export type EntryRow = {
@@ -34,7 +34,6 @@ export type EntryRow = {
   /** Canonical durable `<bundle>//<concept-id>` ref. */
   item_ref: string;
   bundle_id: string;
-  component_id: string;
   /** Durable OKF concept id (`item_ref` tail). */
   concept_id: string;
   /** Owning adapter. */
@@ -44,6 +43,16 @@ export type EntryRow = {
   content_hash: string | null;
   document_json: string;
 };
+
+/**
+ * The path a row stores for an asset no file holds: none. A row written before 4f.2 keyed such an asset under a path
+ * inside its bundle's root and marked its document `fileless`; until `akm migrate apply` re-keys it, that row is read
+ * as the row with no file it stands for, so no command notices the difference. Removed in 0.11 with the migration step.
+ */
+export function storedFilePath(filePath: string, document: unknown): string {
+  // asset-io: deprecated a layout-26 row from before 4f.2, read until `akm migrate apply` re-keys it
+  return (document as { fileless?: unknown } | null)?.fileless === true ? "" : filePath;
+}
 
 /**
  * Map one raw `entries` row to a {@link DbIndexedEntry}, parsing `document_json`.
@@ -60,12 +69,11 @@ export function rowToIndexedEntry(row: EntryRow, context: string): DbIndexedEntr
   }
   return {
     id: row.id,
-    filePath: row.file_path,
+    filePath: storedFilePath(row.file_path, entry),
     entry,
     itemRef: row.item_ref,
     conceptId: row.concept_id,
     bundleId: row.bundle_id,
-    componentId: row.component_id,
     adapterId: row.adapter_id,
     type: row.type,
     ...(row.content_hash ? { contentHash: row.content_hash } : {}),

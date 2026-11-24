@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmConsolidate } from "../../../../src/commands/improve/consolidate";
 import { akmImprove } from "../../../../src/commands/improve/improve";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { saveConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
@@ -65,7 +66,7 @@ async function runImprove(
 function consolidateLedgerRows() {
   const db = openStateDatabase();
   try {
-    return listImproveLedgerRows(db, stashDir, ["consolidate"]);
+    return listImproveLedgerRows(db, stateBundleId(stashDir), ["consolidate"]);
   } finally {
     db.close();
   }

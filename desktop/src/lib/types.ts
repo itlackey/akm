@@ -53,7 +53,9 @@ export interface Bundle {
   kind: string;
   itemCount?: number;
   byType?: Record<string, number>;
-  components: Array<{ adapter: string; [key: string]: Json | undefined }>;
+  adapter: string;
+  detected: boolean;
+  root: string;
   /** akm's Git facts for a bundle whose root is a repository; `uncommitted` is what a commit would take now (null: akm could not list it). */
   git?: ({ uncommitted?: number | null; error?: string } & { [key: string]: Json | undefined }) | null;
   settingsSource?: string;

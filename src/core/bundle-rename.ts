@@ -16,7 +16,10 @@
  *
  * Rewritten: the config `bundles` key, `defaultBundle`/`defaultWriteTarget`
  * when they name the old id, every `scheduler.enabled[].ref` with the old
- * `//` prefix, the lockfile entry id, and the index/state rows above.
+ * `//` prefix, the lockfile entry id, and the index/state rows above. State
+ * rows follow a bundle by its name (§0.2 P8), so the proposals, improve runs
+ * and improve ledger rows filed under the old id are re-filed under the new
+ * one (`src/storage/bundle-id-columns.ts` lists the columns).
  *
  * Reported, never rewritten: refs inside bundle CONTENT (xrefs,
  * `supersededBy`, task `uses:`) — rewriting a bundle's own files is
@@ -29,6 +32,7 @@ import fs from "node:fs";
 import type { TasksSyncResult } from "../commands/tasks/tasks";
 import { renameUsageEventRefs } from "../indexer/usage/usage-events";
 import { readLockfile, renameLockEntry } from "../integrations/lockfile";
+import { renameStateBundleId } from "../storage/bundle-id-columns";
 import { renameEventRefs } from "../storage/repositories/events-repository";
 import { renameImproveLedgerRefs } from "../storage/repositories/improve-ledger-repository";
 import {
@@ -36,7 +40,7 @@ import {
   openIndexDatabase,
   openReadonlyExistingDatabase,
 } from "../storage/repositories/index-connection";
-import { getFilePathsByBundle, renameEntriesBundleId } from "../storage/repositories/index-entries-repository";
+import { getRefsAndFilesByBundle, renameEntriesBundleId } from "../storage/repositories/index-entries-repository";
 import { renameAssetOutcomeRefs } from "../storage/repositories/outcome-repository";
 import { countProposalsForBundleRename, renameProposalsBundleRef } from "../storage/repositories/proposals-repository";
 import { renameAssetSalienceRefs } from "../storage/repositories/salience-repository";
@@ -48,6 +52,7 @@ import { countWorkflowRunRefsForRename, renameWorkflowRunRefs } from "../storage
 import { selectBackend } from "../tasks/backends";
 import type { InstalledSchedulerBinding, SchedulerBackend } from "../tasks/backends/types";
 import { bundleRefToString, parseBundleRef } from "./asset/asset-ref";
+import { findAsset } from "./assets/read";
 import { validateExplicitBundleName } from "./bundle-id";
 import type { AkmConfig, BundleConfigEntry } from "./config/config";
 import { loadConfig, mutateConfig } from "./config/config";
@@ -152,15 +157,19 @@ function renameBundleInConfig(config: AkmConfig, oldId: string, newId: string): 
   };
 }
 
-/** Indexed files (already read into `filePaths`) whose content still spells `<oldId>//`, best-effort. */
-function filesStillMentioning(filePaths: string[], oldId: string): string[] {
+/** The indexed assets (the rows already read into `rows`) whose content still spells `<oldId>//`, as the files that hold them, best-effort. */
+function filesStillMentioning(rows: Array<{ ref: string; filePath: string }>, oldId: string): string[] {
   const needle = `${oldId}//`;
   const hits: string[] = [];
-  for (const filePath of filePaths) {
+  for (const row of rows) {
     try {
-      if (fs.readFileSync(filePath, "utf8").includes(needle)) hits.push(filePath);
+      const asset = findAsset(row.ref);
+      if (asset?.entry.content().includes(needle)) {
+        // asset-io: display the indexed files that still mention the old id are listed
+        hits.push(asset.entry.file ?? row.filePath);
+      }
     } catch {
-      // Best-effort: a since-removed or unreadable file is skipped, not fatal —
+      // Best-effort: a since-removed or unreadable asset is skipped, not fatal —
       // this scan is a report, not a correctness requirement.
     }
   }
@@ -213,9 +222,9 @@ async function buildPlan(
   const readIndexDb = openReadonlyExistingDatabase(getDbPath());
   if (readIndexDb) {
     try {
-      const filePaths = getFilePathsByBundle(readIndexDb, oldId);
-      indexEntries = filePaths.length;
-      contentRefs = filesStillMentioning(filePaths, oldId);
+      const rows = getRefsAndFilesByBundle(readIndexDb, oldId);
+      indexEntries = rows.length;
+      contentRefs = filesStillMentioning(rows, oldId);
     } finally {
       closeDatabase(readIndexDb);
     }
@@ -226,6 +235,7 @@ async function buildPlan(
   let taskHistoryRefs = 0;
   let workflowRunRefs = 0;
   let activeWorkflowRuns: BundleRenamePlan["activeWorkflowRuns"] = [];
+  // asset-io: state
   if (fs.existsSync(getStateDbPath())) {
     withStateDb((db) => {
       const counts = countProposalsForBundleRename(db, oldId);
@@ -343,13 +353,16 @@ export async function renameBundle(
     }
   }
 
-  // State: proposals.ref, a pending proposal's proposedTarget.source,
+  // State: the bundle_id of every proposal, improve run and ledger row (they follow the bundle's
+  // name), proposals.ref, a pending proposal's proposedTarget.source,
   // workflow task_history.target_ref, workflow_runs.workflow_ref, and the
   // learned history keyed by item ref: usage_events.entry_ref (search ranking
   // counts feedback by it), events.ref and improve_ledger.ref (improve reads
   // feedback and its own attempts by them), and asset_salience/asset_outcome.asset_ref.
+  // asset-io: state
   if (fs.existsSync(getStateDbPath())) {
     withStateDb((db) => {
+      renameStateBundleId(db, oldId, newId);
       renameProposalsBundleRef(db, oldId, newId);
       renameTaskHistoryTargetRefs(db, oldId, newId);
       renameWorkflowRunRefs(db, oldId, newId);

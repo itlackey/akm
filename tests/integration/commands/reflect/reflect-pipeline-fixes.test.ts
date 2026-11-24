@@ -23,6 +23,7 @@ import { splitFrontmatter } from "../../../../src/commands/improve/reflect-noise
 import { drainProposals } from "../../../../src/commands/proposal/drain";
 import { akmProposalAccept } from "../../../../src/commands/proposal/proposal";
 import { createProposal, listProposals } from "../../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../../src/core/events";
 import { openStateDatabase } from "../../../../src/core/state-db";
@@ -96,7 +97,7 @@ const PATCH = { description: "Runbook for the required AdGuard config and how to
 function reflectLedgerRows() {
   const db = openStateDatabase();
   try {
-    return listImproveLedgerRows(db, makeStashDir(), ["reflect"]);
+    return listImproveLedgerRows(db, stateBundleId(makeStashDir()), ["reflect"]);
   } finally {
     db.close();
   }
@@ -236,15 +237,17 @@ describe("Reflect writes the file an asset is in (#1052, #1432)", () => {
     writeInStash(stash, "skills/demo/references/a.md", NOTE);
     writeInStash(stash, "docs/guide.md", NOTE);
 
-    for (const [ref, file] of [
-      ["skills/demo/references/a", "skills/demo/references/a.md"],
-      ["docs/guide", "docs/guide.md"],
-      ["knowledge/docs/guide", "docs/guide.md"],
+    for (const [ref, concept] of [
+      ["skills/demo/references/a", "skills/demo/references/a"],
+      ["docs/guide", "docs/guide"],
+      ["knowledge/docs/guide", "docs/guide"],
     ] as const) {
       const bin = agent([reflectReply({ description: `${ref}, revised.` })]);
       const result = await akmReflect({ ref, stashDir: stash, config: quietQualityGateConfig(bin) });
       if (!result.ok) throw new Error(`expected ${ref} to be reflected, got: ${result.error}`);
-      expect(result.proposal.changes).toMatchObject([{ path: file, op: "update" }]);
+      expect(result.proposal.changes).toMatchObject([
+        { ref: `${result.proposal.proposedTarget?.source}//${concept}`, op: "update" },
+      ]);
     }
     expect(fs.readdirSync(path.join(stash, "knowledge"), { recursive: true })).toEqual([]);
   });
@@ -254,17 +257,16 @@ describe("Reflect writes the file an asset is in (#1052, #1432)", () => {
     writeInStash(stash, "knowledge/guide.md", NOTE);
     writeInStash(stash, "skills/demo/SKILL.md", "---\nname: demo\ndescription: Demo skill.\n---\n# Demo\n");
 
-    for (const [ref, file] of [
-      ["knowledge/guide", "knowledge/guide.md"],
-      ["skills/demo", "skills/demo/SKILL.md"],
-    ] as const) {
+    for (const ref of ["knowledge/guide", "skills/demo"] as const) {
       const result = await akmReflect({
         ref,
         stashDir: stash,
         config: quietQualityGateConfig(agent([reflectReply({ description: `${ref}, revised.` })])),
       });
       if (!result.ok) throw new Error(`expected ${ref} to be reflected, got: ${result.error}`);
-      expect(result.proposal.changes).toMatchObject([{ path: file, op: "update" }]);
+      expect(result.proposal.changes).toMatchObject([
+        { ref: `${result.proposal.proposedTarget?.source}//${ref}`, op: "update" },
+      ]);
     }
   });
 });

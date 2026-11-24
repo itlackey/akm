@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { akmImprove } from "../../../src/commands/improve/improve";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent } from "../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../src/core/improve-types";
@@ -98,7 +99,7 @@ async function runWithReflectFailure(reason: string): Promise<{ stash: string; m
 function reflectRows(stash: string) {
   const db = openStateDatabase(getStateDbPath());
   try {
-    return listImproveLedgerRows(db, stash, ["reflect"]);
+    return listImproveLedgerRows(db, stateBundleId(stash), ["reflect"]);
   } finally {
     db.close();
   }

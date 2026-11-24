@@ -37,6 +37,7 @@ import { akmAgentDispatch } from "./agent-dispatch";
 
 const EXIT_GENERAL = EXIT_CODES.GENERAL;
 
+// asset-io: user-input stdin
 export function readPromptStdin(read: () => string = () => fs.readFileSync(0, "utf8")): string {
   return read();
 }
@@ -203,6 +204,7 @@ export const lintCommand = defineCommand({
         typeFilter: getStringArg(args, "type"),
         rule: getStringArg(args, "rule"),
         pruneDanglingEdges: getHyphenatedBoolean(args, "prune-dangling-edges"),
+        stores: getStringArg(args, "dir") === undefined && getStringArg(args, "file") === undefined,
       });
       output("lint", result);
       if (args["fail-on-flagged"] && result.summary.flagged > 0) {

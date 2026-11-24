@@ -6,9 +6,8 @@
  * Supporting type family for the `BundleAdapter` interface
  * (`./bundle-adapter.ts`):
  *
- *  - `BundleId` / `ComponentId` / `ItemRef` / `BundleInstallation` /
- *    `BundleComponent` and `IndexDocument` — the full shapes, each documented
- *    at its declaration.
+ *  - `BundleId` / `ItemRef` / `Bundle` and `IndexDocument` — the full
+ *    shapes, each documented at its declaration.
  *
  *  - `ValidateContext` — the read-only context `validate` receives.
  *
@@ -31,38 +30,104 @@
  * built.
  */
 
+import type fs from "node:fs";
 import type { TocHeading } from "../asset/markdown";
 import type { StalePathFields } from "../asset/stale-path";
 import type { AkmConfig } from "../config/config-types";
 import type { EventEnvelope } from "../events-types";
+import type { AssetEntry } from "./bundle-adapter";
 
-// ── §1.1 — bundle / component / installation model ─────────────────────────
+// ── §1.1 — bundle model ─────────────────────────────────────────────────────
+
+/**
+ * A rich context object built once per file during walking.
+ *
+ * Eager fields (absPath, relPath, ext, etc.) are computed up-front from the
+ * path alone. Expensive operations (content, frontmatter, stat) are exposed
+ * as lazy-loading getters that read from disk on first call and cache the
+ * result for subsequent accesses.
+ */
+export interface FileContext extends AssetEntry {
+  /** Absolute path to the file */
+  absPath: string;
+  /** The same file, as an asset entry names it. */
+  file: string;
+  /** Path relative to the stash root (POSIX separators) */
+  relPath: string;
+  /** The same path, as the entry's storage key. */
+  key: string;
+  /** File extension including the dot, e.g. ".ts", ".md" */
+  ext: string;
+  /** File name including extension, e.g. "deploy.sh" */
+  fileName: string;
+  /** Immediate parent directory name, e.g. "azure" */
+  parentDir: string;
+  /** Absolute path to the immediate parent directory */
+  parentDirAbs: string;
+  /**
+   * Directory segments from stash root to the file's parent directory.
+   * For a relPath of "scripts/azure/deploy/run.sh", this would be
+   * ["scripts", "azure", "deploy"].
+   */
+  ancestorDirs: string[];
+  /** Absolute path to the stash root this file belongs to */
+  stashRoot: string;
+
+  /** Reads and caches the file content on first call */
+  content: () => string;
+  /** Reads and caches the file's bytes on first call */
+  bytes: () => Buffer;
+  /** Parses frontmatter from content(); returns data or null if none found */
+  frontmatter: () => Record<string, unknown> | null;
+  /** Returns and caches fs.Stats for the file */
+  stat: () => fs.Stats;
+}
+
+/**
+ * Describes the result of a successful asset match.
+ */
+export interface MatchResult {
+  /**
+   * Classified asset type.
+   * Standard types: "skill", "agent", "knowledge", "command", "script".
+   * Custom types are also allowed.
+   */
+  type: string;
+  /**
+   * Match specificity score. Higher values indicate a more specific (and
+   * therefore higher-priority) match. When two matchers produce the same
+   * specificity, the one registered later wins.
+   */
+  specificity: number;
+  /** Name of the renderer to use for show/search operations */
+  renderer: string;
+  /** Optional pass-through data forwarded to the renderer */
+  meta?: Record<string, unknown>;
+}
 
 /** Stable bundle name (workspace identity); the optional ref prefix. */
 export type BundleId = string;
 
-/** A configured root under one adapter; PROVENANCE, not a ref segment. */
-export type ComponentId = string;
-
 /** `"[<bundle>//]<concept-id>"` — the ref grammar. */
 export type ItemRef = string;
 
-export interface BundleInstallation {
+/** A bundle as its adapter is handed it. */
+export interface Bundle {
+  /** The bundle's id: the prefix of every ref its adapter emits. */
   id: BundleId;
-  /** Resolved git sha / npm version+integrity / snapshot digest. */
-  revision?: string;
-  /** Transport locator, kept OUT of identity (normative §11.2). */
-  source?: string;
-  components: BundleComponent[];
+  /** Absolute content root, for a bundle kept in a directory; absent for a store. Workspace state is NEVER written here. */
+  root?: string;
+  /**
+   * Where the adapter finds a bundle that is not a directory (a keyring's name,
+   * a vault's name): the bundle's configured `location`. It has no `root`.
+   */
+  location?: string;
 }
 
-export interface BundleComponent {
-  id: ComponentId;
-  /** Static adapter id, one per root — no per-file competition. */
-  adapter: string;
-  /** Absolute materialized root; workspace state NEVER written here. */
-  root: string;
-  writable: boolean;
+/** The directory a directory bundle is kept in. A directory adapter is only handed a bundle that has one. */
+export function rootOf(b: Bundle): string {
+  if (b.root === undefined) throw new Error(`Bundle "${b.id}" is not kept in a directory.`);
+  return b.root;
 }
 
 // ── Durable entry sub-shapes ────────────────────────────────────────────────
@@ -128,12 +193,15 @@ export interface IndexDocument {
   /** Fully-qualified "<bundle>//<concept-id>" (canonical stored spelling). */
   ref?: ItemRef;
   bundle?: BundleId;
-  /** PROVENANCE from the bundle's single configured component, not a ref segment. */
-  component?: ComponentId;
   /** OKF concept ID = path within bundle − ext; opaque to the core. */
   conceptId?: string;
-  /** Absolute local path (the read path). */
+  /** Absolute local path (the read path). Absent when no file holds the asset (a secret manager's). */
   path?: string;
+  /**
+   * `hashContent(entry.content())` of the asset's entry: what a directory adapter's `recognize` gives and what
+   * `assetTypeFresh` compares with the file's bytes to know a row is current. A hash of anything else makes every
+   * gate that runs the asset describe it again.
+   */
   hash?: string;
   adapterId?: string;
   /**
@@ -170,6 +238,10 @@ export interface IndexDocument {
   searchHints?: string[];
   intent?: StashIntent;
   filename?: string;
+  /**
+   * The entry's `locator` as its adapter listed it when it was indexed: a JSON value only that adapter reads.
+   */
+  locator?: unknown;
   /**
    * Asset quality marker. Four values are well-known:
    * `"generated"` and `"curated"` are included in default search;
@@ -308,7 +380,20 @@ export interface IndexDocument {
   okfVersion?: string;
   /** Opaque adapter extras ONLY (arbitrary OKF frontmatter keys); not FTS, never parsed by core. */
   documentJson?: unknown;
+  /**
+   * `documentJson` holds the adapter's own keys, none of them a member of this document: the row keeps the bag whole
+   * and does not read it for members (an OKF concept's frontmatter key `usage` is not the member `usage`).
+   */
+  opaqueExtras?: boolean;
 }
+
+/**
+ * What an adapter says about an asset for the index: everything of an {@link IndexDocument} but its identity, which is
+ * the storage key's (`ref`, `bundle`, `conceptId`, `adapterId`, `path`) and which `recognize` sets last.
+ */
+export type IndexMetadata = Omit<IndexDocument, "ref" | "bundle" | "conceptId" | "adapterId" | "path"> & {
+  type: string;
+};
 
 // ── OKF v0.2 trust/provenance/lifecycle family (okf-support.md v0.2 note) ───
 //
@@ -359,39 +444,42 @@ export interface BundleSourceRef {
   registryId?: string;
 }
 
-// ── §12.1 (normative) — ValidateContext ─────────────────────────────────────
+// ── ValidateContext ─────────────────────────────────────────────────────────
 
 /**
- * Not part of the adapter spec's own §2 code block — defined only in the
- * normative spec, `akm-format-neutral-bundle-workspace-spec.md:562-569`.
- * Transcribed verbatim from there.
+ * What the run gives `validate` besides the edits: the settings, the configured bundles and the recorded moves. The
+ * base checks (a link to another bundle's asset, a stale absolute path) look at the other bundles' roots, so they read
+ * `sources`.
  */
 export interface ValidateContext {
   /** The configured bundles this run resolves refs against, the validated bundle among them. */
   readonly sources?: readonly BundleSourceRef[];
   /** How the recorded `moved` events are read, when a ref does not resolve; absent when the caller has none to offer. */
   readonly readMoves?: () => readonly EventEnvelope[];
-  /** The settings this run was given; the base checks read stale-path roots and `lint.skip` from them. */
+  /** The settings this run was given; the base checks read stale-path roots, `lint.skip` and the configured bundles from them. */
   readonly config?: AkmConfig;
-  /**
-   * Reads served from the run's snapshot WITH the pending changes overlaid —
-   * one core overlay implementation, not one per adapter.
-   */
-  readFile(path: string): Promise<string | Uint8Array | null>;
-  list(dir: string): Promise<string[]>;
-  /** Read-only index lookup for link/xref existence checks (not search). */
-  resolveRef(ref: string): Promise<{ exists: boolean; path?: string }>;
 }
 
-// ── Diagnostic — MINTED, no spec shape exists (see file header) ────────────
+/** A pending change `validate` checks: the asset by its concept id, with the content it would hold. */
+export interface AssetEdit {
+  conceptId: string;
+  op: "create" | "update" | "delete";
+  /** The content the asset would hold. Absent for `delete`; absent for an `update` that checks what is stored. */
+  content?: string | Buffer;
+}
+
+// ── Diagnostic ──────────────────────────────────────────────────────────────
 
 /**
- * MINTED per decision D1-1 — no spec document declares `Diagnostic`'s
- * shape. Modeled on `LintIssue` (`src/commands/lint/types.ts:19-25`) with
- * `issue` generalized to an open string (see file header for rationale).
+ * What `validate` reports. Modeled on `LintIssue` (`src/commands/lint/types.ts`) with `issue` generalized to an open
+ * string (see the file header for the rationale). `ref` names the asset; `file` is the display file, absent for an
+ * asset that has none.
  */
 export interface Diagnostic extends Partial<StalePathFields> {
-  file: string;
+  /** The asset the finding is about, `<bundle>//<conceptId>`. */
+  ref: string;
+  /** The file to show for it, when it has one. */
+  file?: string;
   issue: string;
   detail: string;
   /** `true` = fix applied; `false` = not fixable or no fix requested; `"failed"` = fix attempted but threw. */

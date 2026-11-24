@@ -16,6 +16,7 @@ import { collectOpencodeMajorAdvisory } from "../../../src/commands/health/openc
 import type { HealthCheckResult } from "../../../src/commands/health/types";
 import { recordImproveRunResult } from "../../../src/commands/improve/improve-result-file";
 import { createProposal } from "../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import type { ImproveResultEnvelope } from "../../../src/core/improve-result";
 import type { AkmImproveResult } from "../../../src/core/improve-types";
 import { openStateDatabase } from "../../../src/core/state-db";
@@ -221,7 +222,7 @@ describe("a corrupt improve run (B10-36)", () => {
         id: "bad-run",
         startedAt,
         completedAt: startedAt,
-        stashDir: storage.stashDir,
+        bundleId: stateBundleId(storage.stashDir),
         dryRun: false,
         strategy: "default",
         scopeMode: "all",

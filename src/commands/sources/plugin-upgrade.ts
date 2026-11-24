@@ -40,7 +40,8 @@ import {
 import { installedChannel } from "./self-update";
 
 const MARKETPLACE = "akm-plugins";
-const PLUGIN_ID = `akm@${MARKETPLACE}`;
+const PLUGIN_NAME = "akm";
+const PLUGIN_ID = `${PLUGIN_NAME}@${MARKETPLACE}`;
 const READ_TIMEOUT_MS = 30_000;
 const REFRESH_TIMEOUT_MS = 120_000;
 const PREFETCH_TIMEOUT_MS = 180_000;
@@ -179,6 +180,7 @@ function detectClaudeCode(): Detected {
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
     const pluginsRoot =
       process.env.AKM_CLAUDE_PLUGINS_DIR ?? process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
+    // asset-io: install
     const configured = fs.existsSync(path.join(pluginsRoot, "known_marketplaces.json"));
     return {
       entry:
@@ -323,6 +325,7 @@ function upgradeCodex(
 ): PluginUpgradeEntry {
   const before = codexPluginVersion();
   if ("error" in before)
+    // asset-io: install
     return !before.error.missing || fs.existsSync(codexConfigFile())
       ? { ...failed("codex", before.error.error), channel: "unknown" }
       : skipped("codex", "codex is not on PATH");
@@ -414,6 +417,7 @@ export function openCodeConfigSpec(flavor: OpenCodeFlavor): OpenCodeConfigSpec |
     if (!file) continue;
     let text: string;
     try {
+      // asset-io: install
       text = fs.readFileSync(file, "utf8");
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
@@ -449,6 +453,7 @@ export function openCodeConfigSpec(flavor: OpenCodeFlavor): OpenCodeConfigSpec |
 /** Whether OpenCode 2 has ever cached `akm-opencode-v2` on this host. */
 function openCodeV2Cached(): boolean {
   try {
+    // asset-io: install
     return fs
       .readdirSync(path.join(opencodeCacheDir(), OPENCODE_V2.cacheFolder("")))
       .some((name) => name.startsWith(`${OPENCODE_V2.pkg}@`));
@@ -464,6 +469,7 @@ function openCodeV2Cached(): boolean {
  */
 export function detectOpenCodeCache(tag: UpgradeChannel, flavor: OpenCodeFlavor): OpenCodeCache | undefined {
   const dir = path.join(opencodeCacheDir(), flavor.cacheFolder(`${flavor.pkg}@${tag}`));
+  // asset-io: install
   if (!fs.existsSync(dir)) return undefined;
   const nodeModules = flavor.nodeModulesDir(dir);
   return { dir, version: nodeModules && readPackageVersion(path.join(nodeModules, flavor.pkg, "package.json")) };
@@ -494,6 +500,7 @@ export function usesHostCache(pid: string, procRoot = "/proc"): boolean {
     // not readable (another user's process, or no such namespace file): look at the cgroup instead
   }
   try {
+    // asset-io: host process table
     return !CONTAINER_CGROUP.test(fs.readFileSync(`${procRoot}/${pid}/cgroup`, "utf8"));
   } catch {
     return true;
@@ -517,9 +524,11 @@ function openCodeRunning(): boolean | undefined {
   if (!pgrep.missing) return false; // pgrep exits 1 when nothing matched
   if (!linux) return undefined;
   try {
+    // asset-io: host process table
     return fs.readdirSync("/proc").some((pid) => {
       if (!/^\d+$/.test(pid) || Number(pid) === process.pid) return false;
       try {
+        // asset-io: host process table
         const argv = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
         return argv.slice(0, 2).some((arg) => path.basename(arg) === "opencode") && usesHostCache(pid);
       } catch {
@@ -603,6 +612,7 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
       return channelWriteFailure(harness, error, target.currentChannel ?? "unknown");
     }
   }
+  // asset-io: install
   if (flavor.replacesCache && fs.existsSync(cache.dir)) {
     try {
       moveToTrash(cache.dir);
@@ -632,6 +642,7 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
     }
     if (!refresh.ok) return { ...failed(harness, `${refresh.error}${trashed}`), backups };
   } finally {
+    // asset-io: install
     fs.rmSync(workDir, { recursive: true, force: true });
   }
   const after = detectOpenCodeCache(tag, flavor);
@@ -925,7 +936,7 @@ export function marketplaceTargetVersion(source: string, channel: UpgradeChannel
           }>;
         }
       | undefined;
-    const plugin = catalog?.plugins?.find((p) => p.name === "akm");
+    const plugin = catalog?.plugins?.find((p) => p.name === PLUGIN_NAME);
     const entry = typeof plugin?.source === "object" ? plugin.source : undefined;
     // A `git-subdir` entry (Codex) names its build by tag; one in this same repo can also be read from the repository.
     const tagged = entry?.source === "git-subdir" ? entry.ref?.replace(/^v/, "") : undefined;
@@ -954,6 +965,7 @@ export function marketplaceTargetVersion(source: string, channel: UpgradeChannel
       );
     return version;
   } finally {
+    // asset-io: install
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
@@ -970,6 +982,7 @@ export function claudeMarketplace(
   pluginsRoot: string,
   marketplace = MARKETPLACE,
 ): { source: string; ref: string | undefined } {
+  // asset-io: install
   const known = parseJson(fs.readFileSync(path.join(pluginsRoot, "known_marketplaces.json"), "utf8")) as Record<
     string,
     { source: { source: string; repo?: string; url?: string; ref?: string } }
@@ -1059,6 +1072,7 @@ function preflightMarketplaceChannels(
     plans.claude = plan;
   }
   const codex = codexPluginVersion();
+  // asset-io: install
   if ("error" in codex && (!codex.error.missing || fs.existsSync(codexConfigFile())))
     throw new UsageError(`Could not inventory Codex before switching channels: ${codex.error.error}`);
   if (!("error" in codex) && codex.version !== undefined) {

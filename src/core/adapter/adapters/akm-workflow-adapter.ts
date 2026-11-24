@@ -21,23 +21,27 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { NewAsset } from "../bundle-adapter";
+import type { FileContext } from "../directory/file-context";
+import type { FileChange } from "../file-change";
+import { type Bundle, type IndexMetadata, rootOf } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
+import { AkmFormatAdapterBase } from "./akm-format";
 import { perTypeDiagnostics } from "./akm-lint";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, readTags } from "./shared";
 
-/** A native workflow bundle is single-component; its one component is `main`. */
-const COMPONENT_ID = "main";
 /** The authoritative workflow source format. */
 const WORKFLOW_EXTS = new Set([".md"]);
 
-/** Strip the recognized workflow extension from a component-root-relative path → conceptId. */
-function conceptIdOf(relPath: string): string {
-  return toPosix(relPath).replace(/\.(?:md|yml)$/i, "");
+/** The workflow a path holds: every Markdown file but a README is one, wherever it sits. Its concept id is the path without `.md`. */
+function conceptIdOf(relPath: string): string | null {
+  const posix = toPosix(relPath);
+  if (!WORKFLOW_EXTS.has(path.posix.extname(posix).toLowerCase()) || isReservedDocFile(path.posix.basename(posix))) {
+    return null;
+  }
+  return posix.replace(/\.md$/i, "");
 }
 
 /** `README.md` (case-insensitive) is documentation, never the typed asset — mirrors the akm matcher stack's D-R6 reserved-file exclusion (`TYPED_DIR_DOC_FILES`). */
@@ -46,39 +50,19 @@ function isReservedDocFile(fileName: string): boolean {
 }
 
 /**
- * Recognition gate: any `.md` file in this bundle IS a workflow (this
- * adapter's entire domain is workflows), UNLESS its frontmatter declares a
- * DIFFERENT non-empty
- * `type:` (an explicit opt-out, e.g. a README-shaped doc that wants to be
- * something else). No content sniffing.
+ * Any `.md` file in this bundle IS a workflow (this adapter's entire domain is workflows): its type is the path's,
+ * whatever its frontmatter says. A frontmatter `type:` other than `workflow` is reported by `validate`.
  */
-function isWorkflowFile(raw: string): boolean {
-  const data = parseFrontmatter(raw).data;
-  const type = data.type;
-  return type === undefined || type === "workflow";
-}
-
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
-  if (!WORKFLOW_EXTS.has(file.ext)) return null;
-  if (isReservedDocFile(file.fileName)) return null;
+function describe(file: FileContext, conceptId: string): IndexMetadata {
   const raw = file.content();
-  if (file.ext === ".md" && !isWorkflowFile(raw)) return null;
-
-  const conceptId = conceptIdOf(file.relPath);
   const name = conceptId.split("/").pop() ?? conceptId;
   const parsed = parseFrontmatter(raw);
-  const description = file.ext === ".md" ? nonEmptyString(parsed.data.description) : undefined;
-  const body = file.ext === ".md" ? parsed.content : raw;
-  const tags = file.ext === ".md" ? readTags(parsed.data.tags) : undefined;
+  const description = nonEmptyString(parsed.data.description);
+  const body = parsed.content;
+  const tags = readTags(parsed.data.tags);
 
-  const doc: IndexDocument = {
-    ref: `${c.id}//${conceptId}`,
-    bundle: c.id,
-    component: COMPONENT_ID,
-    conceptId,
-    path: file.absPath,
+  const doc: IndexMetadata = {
     hash: hashContent(raw),
-    adapterId: "akm-workflow",
     type: "workflow",
     name,
     content: body,
@@ -88,19 +72,27 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   return doc;
 }
 
-async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
-  const { check, rulesFor } = createBaseChecker(c.root, ctx);
+async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
+  const { check, rulesFor } = createBaseChecker(rootOf(c), ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
     if (typeof raw !== "string") continue;
     const ext = path.extname(change.path).toLowerCase();
-    if (!WORKFLOW_EXTS.has(ext) || isReservedDocFile(path.basename(change.path))) continue;
+    if (conceptIdOf(change.path) === null) continue;
 
     const relPath = toPosix(change.path);
-    if (!isWorkflowFile(raw)) continue;
     const parsed = parseForValidate(raw);
+    const declared = parsed.data.type;
+    if (declared !== undefined && declared !== "workflow") {
+      diagnostics.push({
+        file: relPath,
+        issue: "type-from-content",
+        detail: `Its frontmatter says type "${String(declared)}", but every Markdown file of this bundle is a workflow: the type comes from the path. Move the file out of the bundle, or drop the \`type:\`.`,
+        fixed: false,
+      });
+    }
     diagnostics.push(...check(relPath, parsed));
     diagnostics.push(
       ...perTypeDiagnostics(
@@ -124,9 +116,8 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
 
 /**
  * True when a top-level file in `root` is workflow-shaped (used by
- * looksLikeRoot). Unlike `isWorkflowFile` (which admits an absent `type:` —
- * the lenient default ONCE a source is already known to be this bundle),
- * this requires an EXPLICIT `type: workflow` — the install-time probe is
+ * looksLikeRoot). Once a root is known to be this bundle every `.md` is a
+ * workflow; the probe requires an EXPLICIT `type: workflow` — it is
  * choosing WHICH adapter owns an unconfigured root among several candidates,
  * and an incidental `.md` with no frontmatter type at all
  * (common in an OKF or llm-wiki bundle) must not misclassify that root as
@@ -148,26 +139,50 @@ function hasTopLevelWorkflowFile(root: string, entries: fs.Dirent[]): boolean {
   return false;
 }
 
-export const akmWorkflowAdapter: BundleAdapter = {
-  id: "akm-workflow",
-  version: "0.9.2",
-  extensions: [".md"],
+export class AkmWorkflowAdapter extends AkmFormatAdapterBase {
+  readonly id = "akm-workflow";
+  readonly version = "0.10.0";
+  override readonly writes = ["workflow"];
+  override readonly extensions = [".md"];
 
-  recognize,
-  validate,
+  protected identify(relPath: string): string | null {
+    return conceptIdOf(relPath);
+  }
 
-  readCandidates(c: BundleComponent, conceptId: string) {
-    const posix = toPosix(conceptId);
-    const canonical = posix.replace(/\.md$/i, "");
-    return /\.md$/i.test(posix)
-      ? [{ path: path.join(c.root, posix), conceptId: canonical }]
-      : [{ path: path.join(c.root, `${posix}.md`), conceptId: canonical }];
-  },
+  protected describe(_b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
+    return describe(file, conceptId);
+  }
 
-  /** Workflows live anywhere under the component root. */
-  directoryList(): string[] {
+  protected override typeOf(): string {
+    return "workflow";
+  }
+
+  rendererFor(): string {
+    return "workflow-md";
+  }
+
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+    return validate(b, changes, ctx);
+  }
+
+  /** A standalone workflow bundle keeps its workflows at its root, one Markdown file each. */
+  protected override placeFile(b: Bundle, { name }: Pick<NewAsset, "type" | "name">): string {
+    return path.join(rootOf(b), `${name}.md`);
+  }
+
+  /** At its root: nothing before a workflow's name. */
+  override prefixOf(): string {
+    return "";
+  }
+
+  protected spellings(conceptId: string): string[] {
+    return [`${toPosix(conceptId).replace(/\.md$/i, "")}.md`];
+  }
+
+  /** Workflows live anywhere under the bundle root. */
+  override directoryList(): string[] {
     return ["."];
-  },
+  }
 
   /**
    * Install-time probe (§1.2): a root holding an explicitly typed Markdown
@@ -181,5 +196,7 @@ export const akmWorkflowAdapter: BundleAdapter = {
       return false;
     }
     return hasTopLevelWorkflowFile(root, entries);
-  },
-};
+  }
+}
+
+export const akmWorkflowAdapter = new AkmWorkflowAdapter();

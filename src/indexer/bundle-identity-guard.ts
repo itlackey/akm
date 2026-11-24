@@ -53,6 +53,7 @@ interface IndexedBundlePath {
 
 /** Bundle/path ownership persisted in the index, or `undefined` when unreadable. */
 function indexedBundlePaths(dbPath: string): IndexedBundlePath[] | undefined {
+  // asset-io: state
   if (!fs.existsSync(dbPath)) return undefined;
   let db: ReturnType<typeof openReadonlyExistingDatabase>;
   try {

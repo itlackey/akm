@@ -23,12 +23,14 @@ import { probeLlmEndpoint } from "../llm/client";
 import { type Database, openDatabase } from "../storage/database";
 import { insertEvent } from "../storage/repositories/events-repository";
 import { getExtractOutcomeCountsSince } from "../storage/repositories/extract-sessions-repository";
-import { getAllEntries } from "../storage/repositories/index-entries-repository";
+import { getAllEntries, itemRefLookup } from "../storage/repositories/index-entries-repository";
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
 import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 import { getStateDbFreelistInfo, runStateDbIntegrityCheck } from "../storage/state-db-integrity";
 import { pkgVersion } from "../version";
 import { collectArchiveUsageAdvisory } from "./health/archive-usage";
+import { collectAdapterSkipCheck, collectBundleAdaptersCheck } from "./health/bundle-adapters-check";
+import { collectBundleSharedPathCheck } from "./health/bundle-shared-path-check";
 import {
   HEALTH_CHECKS,
   type HealthCheckContext,
@@ -49,6 +51,7 @@ import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
 import { readHealthIndex } from "./health/read-index";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
 import { readSemanticSearchHealth } from "./health/semantic-search-check";
+import { collectStateUnknownBundleCheck } from "./health/state-unknown-bundle-check";
 import { buildTypeDirectoryAdvisory } from "./health/type-directory-check";
 import {
   type AkmHealthResult,
@@ -434,6 +437,19 @@ function gatherAncillaryAdvisories(
   const workflowFiles = collectWorkflowFilesAdvisory(options.stashDir);
   if (workflowFiles) advisories.push(workflowFiles);
 
+  // What the bundles' configuration does to their content: nested bundles share files, a narrow adapter skips some.
+  const bundleSharedPath = collectBundleSharedPathCheck();
+  if (bundleSharedPath) advisories.push(bundleSharedPath);
+  const adapterSkips = collectAdapterSkipCheck();
+  if (adapterSkips) advisories.push(adapterSkips);
+  // State follows a bundle by its name: rows under a name no bundle has are left behind by a rename done by hand.
+  try {
+    const unknownBundle = collectStateUnknownBundleCheck();
+    if (unknownBundle) advisories.push(unknownBundle);
+  } catch {
+    // Non-fatal.
+  }
+
   try {
     const opencodeMajor = collectOpencodeMajorAdvisory(Boolean(options.probe));
     if (opencodeMajor) advisories.push(opencodeMajor);
@@ -484,7 +500,7 @@ function gatherAncillaryAdvisories(
  */
 function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult | undefined {
   const read = readHealthIndex((indexDb) => {
-    // Directory intent is read only from inside the component root that owns the entry.
+    // Directory intent is read only from inside the bundle root that owns the entry.
     // Both spellings of each root: indexed paths may be realpaths (a symlinked
     // stash, macOS /var -> /private/var) while config holds the configured path.
     const roots = resolveSourceEntries(stashRoot).flatMap((source) => {
@@ -496,6 +512,7 @@ function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult 
       }
     });
     const entries = getAllEntries(indexDb).map((entry) => ({
+      ref: entry.itemRef,
       filePath: entry.filePath,
       type: entry.type,
       adapterId: entry.adapterId,
@@ -524,7 +541,7 @@ function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult 
  */
 function detectIndexStateGenerationMismatch(stateDb: Database): HealthCheckResult | undefined {
   const read = readHealthIndex((indexDb): HealthCheckResult | undefined => {
-    const byId = indexDb.prepare<{ item_ref: string | null }>("SELECT item_ref FROM entries WHERE id = ?");
+    const itemRefOf = itemRefLookup(indexDb);
     const rows = stateDb
       .prepare<{ entry_id: number; entry_ref: string }>(
         "SELECT DISTINCT entry_id, entry_ref FROM usage_events " +
@@ -534,7 +551,7 @@ function detectIndexStateGenerationMismatch(stateDb: Database): HealthCheckResul
     let mismatches = 0;
     const sample: Array<{ entryId: number; entryRef: string; indexedRef: string | null }> = [];
     for (const row of rows) {
-      const indexedRef = byId.get(row.entry_id)?.item_ref ?? null;
+      const indexedRef = itemRefOf(row.entry_id) ?? null;
       if (indexedRef === row.entry_ref) continue;
       mismatches += 1;
       if (sample.length < 5) sample.push({ entryId: row.entry_id, entryRef: row.entry_ref, indexedRef });
@@ -677,6 +694,7 @@ function unreadableStateDbCheck(detail: string): HealthCheckResult {
  * must not apply them). `undefined` when it can be read as it is.
  */
 function readOnlyStateDbUnavailable(stateDbPath: string): HealthCheckResult | undefined {
+  // asset-io: state
   if (!fs.existsSync(stateDbPath)) {
     return {
       name: "state-db-readable",
@@ -807,6 +825,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       unverifiedActiveTasks: taskHistory.unverifiedActiveTasks,
       taskRuns: taskHistory.taskRuns,
       indexSources: collectIndexSourcesCheck(),
+      bundleAdapters: collectBundleAdaptersCheck(),
       worstTaskFailRate: taskHistory.worstTaskFailRate,
       agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       sessionExtractionLedger,

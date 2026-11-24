@@ -5,6 +5,7 @@
 /** What improve proposed for one asset, how it was decided, and how the asset has been used since. */
 
 import { metricsWindow, readUsageRows } from "../commands/metrics/metrics-cli";
+import { stateBundleId } from "../core/bundle-at-dir";
 import { resolveStashDir } from "../core/common";
 import { UsageError } from "../core/errors";
 import { listStateProposals } from "../storage/repositories/proposals-repository";
@@ -19,7 +20,7 @@ export function assetImprove(input: { ref: string }) {
   const window = metricsWindow("90d");
   const state = withReadonlyStateDb(
     (db) => ({
-      proposals: listStateProposals(db, { stashDir: resolveStashDir(), ref, withContent: false }),
+      proposals: listStateProposals(db, { bundleId: stateBundleId(resolveStashDir()), ref, withContent: false }),
       mine: readUsageRows(db, window).filter((row) => row.ref === ref),
     }),
     null,

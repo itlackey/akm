@@ -9,7 +9,6 @@
 
 import type { StashEntryScope } from "../../core/adapter/types";
 import type { AssetRef } from "../../core/asset/resolve-ref";
-import type { FileChange } from "../../core/file-change";
 
 /**
  * The eligibility lane that selected an asset for an improve run, carried on
@@ -73,8 +72,39 @@ export function isAutomatedProposalSource(source: string): source is (typeof AUT
 /** `pending` is the live queue; the rest are archived rows kept for the audit trail. */
 export type ProposalStatus = "pending" | "accepted" | "rejected" | "reverted";
 
+/** What a change does to its asset. */
+export type ProposalChangeOp = "create" | "update" | "delete";
+
+/**
+ * One asset a proposal changes, by ref (`bundle//conceptId`): never the file it is kept in, which only the bundle's
+ * adapter knows. A proposal carries a list of them (multi-asset capable); one core transaction applies a whole batch.
+ */
+export interface ProposalChange {
+  ref: string;
+  op: ProposalChangeOp;
+  /** What the change writes. Absent for `op: "delete"`. */
+  content?: string;
+}
+
+/**
+ * The content of a proposal's PRIMARY change.
+ *
+ * By construction `changes[0].content === payload.content` for a `create` or `update` change; consumers read through
+ * this accessor so the single-content assumption lives in ONE place. A `delete` primary change (a consolidate retire
+ * proposal) writes no content by definition, so it reads as `""` rather than throwing: every generic proposal scan
+ * (dedup-by-body-hash, the triage drain's diff-size filter, the quality validators) can call this on ANY pending
+ * proposal, retire included, without special-casing the op first. Typed structurally so this module stays a leaf.
+ */
+export function proposalContent(p: { changes: ProposalChange[] }): string {
+  const primary = p.changes[0];
+  if (primary?.op === "delete") return "";
+  const content = primary?.content;
+  if (content === undefined) throw new Error("Proposal primary change has no content.");
+  return content;
+}
+
 export interface ProposalPayload {
-  /** The content accept writes — always equal to `changes[0].after`. */
+  /** The content accept writes — always equal to `changes[0].content`. */
   content: string;
   frontmatter?: Record<string, unknown>;
 }
@@ -162,7 +192,7 @@ export interface ProposalGateDecision {
 
 /**
  * A consolidate pair-pass retire proposal's metadata `ref` is the retired asset (same as `Proposal.ref`);
- * `reason` is the tombstone vocabulary `archiveCleanupCandidate` writes,
+ * `reason` is the tombstone vocabulary `retireCleanupCandidate` writes,
  * derived from `judgeLabel` (`supersedes` → `superseded`, the other two
  * labels unchanged).
  */
@@ -228,27 +258,26 @@ export interface RetirementContinuityRisk {
 
 /**
  * Where an archived retire proposal's files ended up (accept-time only, so
- * `akm proposal revert` can find them without re-scanning every tombstone).
- * Stash-relative paths, one per archived file (the retired asset, plus its
- * `.derived` twin when one was archived alongside it).
+ * `akm proposal revert` can find them without re-scanning every tombstone):
+ * one retirement per archived file (the retired asset, plus its `.derived`
+ * twin when one was archived alongside it), each by the `ref` it was retired
+ * under and the opaque `handle` of its archive (§0.2 P7).
  */
 export interface RetiredArchiveRecord {
-  dirs: string[];
+  retired: Array<{ ref: string; handle: string }>;
 }
 
 /**
  * A retire accept's durable intent, recorded on the still-
  * "pending" proposal BEFORE any file is moved: the exact bytes to preserve
  * as `backupContent`. A crashed accept resumes from this record instead of
- * re-deriving it from whatever the archive happens to contain. No `twinPath`:
- * the twin, if any, is a
- * pure function of `assetPath` and the ref's type (`derivedTwinPath`), and
- * whether it was already archived by an earlier, crashed attempt is exactly
- * what the tombstone scan (`alreadyArchivedOriginalPaths`) independently
- * finds — nothing a stored path adds to either.
+ * re-deriving it from whatever the archive happens to contain. It names no
+ * file: the asset is the proposal's ref, and the twin, if any, is a pure
+ * function of the asset's concept id and its type (`derivedTwinOf`), whose
+ * retirement by an earlier, crashed attempt is exactly what the bundle's
+ * retirements under the proposal's id independently show.
  */
 export interface RetireAcceptIntent {
-  assetPath: string;
   backupContent: string;
 }
 
@@ -263,14 +292,13 @@ export interface Proposal {
   createdAt: string;
   updatedAt: string;
   payload: ProposalPayload;
-  /** The file mutations; a single-content proposal has one whose `after` is `payload.content`. */
-  changes: FileChange[];
+  /** The assets it changes; a single-content proposal has one whose `content` is `payload.content`. */
+  changes: ProposalChange[];
   /**
-   * The bundle and root bound at mint, so a later accept cannot follow a
-   * changed default write target. Absent on rows from before it existed; those
-   * re-resolve from `ref`.
+   * The bundle bound at mint, so a later accept cannot follow a changed default write target. Absent on rows from
+   * before it existed; those re-resolve from `ref`.
    */
-  proposedTarget?: { source: string; root: string };
+  proposedTarget?: { source: string };
   /** SHA-256 of the target as of mint (absent for a create). */
   beforeHash?: string;
   /**
@@ -295,8 +323,8 @@ export interface Proposal {
   feedback?: ProposalFeedbackFix;
   /** The target's content before promotion (absent for new assets), for revert. Never shown. */
   backupContent?: string;
-  /** Exactly where the accepted content went; prevents cross-target revert. */
-  acceptedTarget?: { source: string; root: string; path: string; contentHash: string };
+  /** Exactly where the accepted content went (the bundle and the asset's ref), and its hash; prevents cross-target revert. */
+  acceptedTarget?: { bundle: string; ref: string; contentHash: string };
   eligibilitySource?: EligibilitySource;
   /** Consolidate pair-pass retire proposals only: set at mint. */
   retirement?: RetirementMetadata;

@@ -24,6 +24,7 @@ import {
   recordGateDecision,
 } from "../../../src/commands/proposal/repository";
 import { writeSalienceToFrontmatter } from "../../../src/core/asset/frontmatter";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../src/core/config/config";
 import type { EventsContext } from "../../../src/core/events";
 import { openStateDatabase } from "../../../src/core/state-db";
@@ -112,7 +113,7 @@ function seedJudged(
 function ledgerRow(stash: string, ref: string, source: string) {
   const db = openStateDatabase();
   try {
-    return getImproveLedgerRow(db, stash, ref, source);
+    return getImproveLedgerRow(db, stateBundleId(stash), ref, source);
   } finally {
     db.close();
   }
@@ -122,7 +123,7 @@ function proposalFixture(source: string, content: string): Proposal {
   return {
     source,
     payload: { content },
-    changes: [{ path: "lessons/fixture.md", op: "create", after: content }],
+    changes: [{ ref: "stash//lessons/fixture", op: "create", content }],
   } as Proposal;
 }
 

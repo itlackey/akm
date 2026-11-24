@@ -46,8 +46,8 @@ and makes them searchable alongside every other asset.
 ## How akm sees a wiki
 
 The LLM Wiki adapter recognizes a wiki when the bundle is added: a bundle
-component whose root holds a `schema.md` plus a `pages/` directory is mounted
-as an `llm-wiki` component. From there:
+whose root holds a `schema.md` plus a `pages/` directory is mounted
+with the `llm-wiki` adapter. From there:
 
 - `pages/**.md` are indexed as searchable documents; each page's ref is
   `bundle//conceptId`, where the conceptId is the root-relative path
@@ -62,10 +62,12 @@ as an `llm-wiki` component. From there:
 - `xrefs:` frontmatter becomes cross-reference edges; `sources:`
   frontmatter becomes citation edges back to raw files.
 
-A wiki kept inside an ordinary akm bundle (for example `wikis/articles/`,
-with its own `schema.md` and `pages/`) is indexed by the akm adapter: its
-`raw/**.md` files are `wiki-source` too, at their bundle-relative ref
-(`bundle//wikis/articles/raw/<slug>`), and its pages keep their akm type.
+A wiki is always its own bundle: configure it as one (`adapter: llm-wiki`, or let akm detect it from its `schema.md`
+plus `pages/`). A wiki folder inside an ordinary akm bundle (for example `wikis/articles/`) gets no wiki handling from
+the akm adapter: its files are plain akm files, typed by akm's path rules (Markdown there is `knowledge`).
+To have it indexed as a wiki, move the folder out of the akm bundle and add it as a bundle of its own. Do not add the
+folder in place as a nested bundle: bundles whose directories overlap share files, `akm bundle add` refuses it, and
+`akm doctor` warns (`bundle-shared-path`) about a pair that was configured before.
 
 ## Working with a wiki
 

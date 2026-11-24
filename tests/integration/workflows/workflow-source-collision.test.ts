@@ -3,18 +3,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmShowUnified } from "../../../src/commands/read/show";
 import { parseBundleRef } from "../../../src/core/asset/asset-ref";
+import { findAsset, qualifyRef } from "../../../src/core/assets/read";
+import { assetType } from "../../../src/core/assets/type";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
-import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
+import { _resetWarnOnceForTests } from "../../../src/core/warn";
 import { akmIndex, lookupBundleRef } from "../../../src/indexer/indexer";
-import { resolveAdapterConceptOwner } from "../../../src/indexer/lookup/adapter-concept-owner";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { listWorkflowRuns, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../../src/workflows/runtime/workflow-asset-loader";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
-import { withSeam } from "../../_helpers/seams";
 
 type BundleKind = "ordinary" | "standalone";
 
@@ -47,13 +46,8 @@ function configure(kind: BundleKind): CollisionFixture {
     bundles: {
       [bundle]: {
         path: root,
-        components: {
-          main: {
-            root: ".",
-            adapter: kind === "ordinary" ? "akm" : "akm-workflow",
-            writable: true,
-          },
-        },
+        adapter: kind === "ordinary" ? "akm" : "akm-workflow",
+        writable: true,
       },
     },
   });
@@ -112,16 +106,16 @@ describe("workflow source canonical-ref collisions", () => {
     const fixture = configure(kind);
     const sourcePath = path.join(fixture.ownedDir, `collision${extension}`);
     fs.writeFileSync(sourcePath, source(`sole-${kind}-${extension.slice(1).toLowerCase()}`));
-    const adapterId = kind === "ordinary" ? "akm" : "akm-workflow";
     const canonicalConceptId = kind === "ordinary" ? "workflows/collision" : "collision";
 
     for (const ref of fixture.aliases) {
-      const owner = resolveAdapterConceptOwner(fixture.root, adapterId, parseBundleRef(ref).conceptId);
+      const owner = findAsset(qualifyRef(ref));
       expect(owner, ref).toMatchObject({
-        path: sourcePath,
         conceptId: canonicalConceptId,
-        workflowSource: { path: sourcePath, canonicalName: canonicalConceptId },
+        entry: { file: sourcePath },
       });
+      // The type is the index's; with no index it is what the adapter says of the asset, and nothing is built.
+      expect(assetType(owner as NonNullable<typeof owner>), ref).toBe("workflow");
       await expect(loadWorkflowAsset(ref), ref).resolves.toMatchObject({
         ref: fixture.canonicalRef,
         path: sourcePath,
@@ -141,7 +135,7 @@ describe("workflow source canonical-ref collisions", () => {
     expect(fs.existsSync(getDbPath())).toBe(false);
   });
 
-  test("ordinary load rejects a workflow source colliding with another file that inverts to the same ref", async () => {
+  test("ordinary load takes the workflow source over another file that inverts to the same ref", async () => {
     const fixture = configure("ordinary");
     const canonicalPath = path.join(fixture.ownedDir, "collision.md");
     const peerPath = path.join(fixture.ownedDir, "collision", "SKILL.md");
@@ -149,11 +143,8 @@ describe("workflow source canonical-ref collisions", () => {
     fs.writeFileSync(canonicalPath, markdownWorkflow("canonical"));
     fs.writeFileSync(peerPath, "---\ndescription: peer skill\n---\n# Peer\n");
 
-    await expect(loadWorkflowAsset(`${fixture.canonicalRef}.MD`)).rejects.toMatchObject({
-      code: "RESOURCE_ALREADY_EXISTS",
-      message: expect.stringMatching(/multiple physical owners.*collision\.md.*collision\/SKILL\.md/is),
-    });
-    expect(fs.existsSync(getDbPath())).toBe(false);
+    // `place` gives the workflow's own spelling, so it wins; the peer is ignored (and `akm lint` says so).
+    await expect(loadWorkflowAsset(`${fixture.canonicalRef}.MD`)).resolves.toMatchObject({ path: canonicalPath });
   });
 
   test("a .yml sibling is not a workflow source: the .md loads and runs, with no collision", async () => {
@@ -221,19 +212,10 @@ describe("workflow source canonical-ref collisions", () => {
       path: authoredPath,
     });
 
+    // The authored path says what the file is; a link to another format is no workflow source.
     fs.unlinkSync(authoredPath);
     fs.symlinkSync(path.basename(yamlTarget), authoredPath);
-    const warnings: string[] = [];
-    await withSeam(
-      _setWarnSinkForTests,
-      (level, args) => {
-        if (level === "warn") warnings.push(args.map(String).join(" "));
-      },
-      async () => {
-        await expect(loadWorkflowAsset(fixture.canonicalRef)).rejects.toBeInstanceOf(Error);
-      },
-    );
-    expect(warnings.some((w) => /collision\.md.*target\.yml.*different extension/is.test(w))).toBe(true);
+    await expect(loadWorkflowAsset(fixture.canonicalRef)).rejects.toMatchObject({ code: "WORKFLOW_SOURCE_INVALID" });
     expect(fs.existsSync(getDbPath())).toBe(false);
     expect(indexSnapshot()).toBe(0);
     expect((await listWorkflowRuns()).runs).toHaveLength(0);
@@ -253,11 +235,13 @@ describe("workflow source canonical-ref collisions", () => {
       bundles: {
         primary: {
           path: storage.stashDir,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
+          adapter: "akm",
+          writable: true,
         },
         secondary: {
           path: secondaryRoot,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
+          adapter: "akm",
+          writable: true,
         },
       },
     });

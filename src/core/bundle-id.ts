@@ -16,6 +16,15 @@ export function slugForPath(sourcePath: string): string {
 }
 
 /**
+ * The id of a directory no config entry names: its basename slug, or `slug-<8 hex of the resolved path>` when a
+ * configured name already has that slug. A pure function of the path and the configured names.
+ */
+export function bundleIdForDir(dir: string, configuredNames: ReadonlySet<string>): string {
+  const slug = slugForPath(dir);
+  return configuredNames.has(slug) ? `${slug}-${shortHash(path.resolve(dir))}` : slug;
+}
+
+/**
  * Bundle slug from the package/repo name a registry install id names
  * (`npm:@scope/pkg` → `pkg`, `github:owner/repo` → `repo`,
  * `git:https://host/owner/repo` → `repo`); empty when it names none.

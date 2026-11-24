@@ -26,11 +26,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import consolidateSystemPrompt from "../../assets/prompts/consolidate-system.md" with { type: "text" };
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { refForFile } from "../../core/asset/asset-placement";
+import { makeBundleRef } from "../../core/asset/asset-ref";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { listAssets, requireAsset } from "../../core/assets/read";
+import { bundleSourceAt, materialiseBundleDir } from "../../core/bundle-at-dir";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-types";
@@ -61,6 +63,7 @@ import { runConsolidatePairPass } from "./consolidate/pair-pass";
 import { sanitizeMergedContent } from "./consolidate/sanitize";
 import { contentHash } from "./content-hash";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
+import { indexedAsset, indexedContent, indexedModifiedMs } from "./indexed-asset";
 import { isContentDrivenRow, isLedgerBlocked, ledgerKey, loadLedgerSnapshot, recordLedgerAttempt } from "./ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "./retrieval-scope";
 import { callStage, mintProposal, stageRunner } from "./stage";
@@ -69,6 +72,8 @@ export interface MemoryEntry {
   name: string;
   /** Its ref: the index's conceptId, the path inside the bundle. */
   ref: string;
+  /** The id of the bundle that holds it; absent: the first bundle that holds the ref. */
+  bundleId?: string;
   filePath: string;
   description: string;
   tags: string[];
@@ -324,31 +329,23 @@ function loadRejectedPromotionBodyHashes(stashDir: string, proposalsCtx?: Propos
 }
 
 /**
- * Body hashes of the live knowledge assets, read from disk (the index may lag
- * a just-written asset), so an accepted promotion is not proposed again.
+ * Body hashes of the live knowledge assets, read from the bundle (the index may lag
+ * a just-written asset), so an accepted promotion is not proposed again. The knowledge assets are the ones
+ * under `knowledge/`: the type is the folder's, so listing does not open the index (a dry run leaves it alone).
  */
 export function loadExistingKnowledgeBodyHashes(targetRoot: string): Set<string> {
   const hashes = new Set<string>();
-  const visit = (dir: string): void => {
-    let entries: fs.Dirent[];
+  const bundle = resolveConsolidationSourceOwner({}, targetRoot)?.bundleId;
+  if (bundle === undefined) return hashes;
+  materialiseBundleDir(targetRoot, undefined, { name: bundle });
+  for (const asset of listAssets({ bundle })) {
+    if (!asset.conceptId.startsWith("knowledge/")) continue;
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
+      hashes.add(contentHash(asset.entry.content(), "body"));
     } catch {
-      return;
+      // An unreadable asset is no duplicate evidence.
     }
-    for (const entry of entries) {
-      const entryPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) visit(entryPath);
-      else if (entry.isFile() && entry.name.endsWith(".md")) {
-        try {
-          hashes.add(contentHash(fs.readFileSync(entryPath, "utf8"), "body"));
-        } catch {
-          // An unreadable asset is no duplicate evidence.
-        }
-      }
-    }
-  };
-  visit(path.join(targetRoot, "knowledge"));
+  }
   return hashes;
 }
 
@@ -381,7 +378,7 @@ export function makeConsolidateResult(
   };
 }
 
-function resolveConsolidationWriteTarget(opts: AkmConsolidateOptions, config: AkmConfig): ResolvedWriteTarget {
+export function resolveConsolidationWriteTarget(opts: AkmConsolidateOptions, config: AkmConfig): ResolvedWriteTarget {
   if (opts.writeTarget) {
     const root = path.resolve(opts.writeTarget.source.path);
     return {
@@ -389,15 +386,16 @@ function resolveConsolidationWriteTarget(opts: AkmConsolidateOptions, config: Ak
       source: {
         ...opts.writeTarget.source,
         path: root,
-        adapterId: opts.writeTarget.source.adapterId ?? detectAdapterId(root),
+        adapterId: opts.writeTarget.source.adapterId ?? bundleSourceAt(root, config).adapterId,
       },
     };
   }
   if (!opts.target && opts.stashDir) {
     const root = path.resolve(opts.stashDir);
+    const bundle = bundleSourceAt(root, config);
     return {
-      source: { kind: "filesystem", name: "stash", path: root, adapterId: detectAdapterId(root) },
-      config: { type: "filesystem", name: "stash", path: root, writable: true },
+      source: { kind: "filesystem", name: bundle.name, path: root, adapterId: bundle.adapterId },
+      config: { type: "filesystem", name: bundle.name, path: root, writable: true },
     };
   }
   const target = resolveWriteTarget(config, opts.target);
@@ -509,8 +507,10 @@ function resolveConsolidationSourceOwner(
     const targetIndex = sources.findIndex((source) => path.resolve(source.path) === targetRoot);
     const target = deriveInstallations(sources)[targetIndex];
     if (!target) return undefined;
+    // The directory is a bundle the facade takes by its id, which config may not name (an override directory).
+    const bundleId = materialiseBundleDir(stashDir, opts.config, { name: target.id });
     return {
-      bundleId: target.id,
+      bundleId,
       sourceRoot: targetRoot,
       excludedSourceRoots: new Set(
         sources
@@ -524,13 +524,12 @@ function resolveConsolidationSourceOwner(
   }
 }
 
-const mtimeMsOf = (memory: MemoryEntry): number => {
-  try {
-    return fs.statSync(memory.filePath).mtimeMs;
-  } catch {
-    return 0;
-  }
-};
+/** The memory's text, read through its bundle; throws when no bundle holds it any more. */
+function requireMemoryContent(memory: MemoryEntry): string {
+  return requireAsset(makeBundleRef(memory.bundleId, memory.ref)).entry.content();
+}
+
+const mtimeMsOf = (memory: MemoryEntry): number => indexedModifiedMs(memory.bundleId, memory.ref) ?? 0;
 
 /**
  * The exact pool the live pass consumes, with no embedding, model call or
@@ -547,13 +546,13 @@ export function inspectConsolidationPool(
 ): ConsolidationPoolSnapshot {
   const readOnly = access?.readOnly === true;
   let memories = loadMemoriesForSource(resolveConsolidationSourceOwner(opts, stashDir), warnings, readOnly);
-  const staleCount = memories.filter((memory) => !fs.existsSync(memory.filePath)).length;
+  const staleCount = memories.filter((memory) => !indexedAsset(memory.bundleId, memory.ref)).length;
   if (staleCount > 0) {
     warnings.push(
       `Pre-flight: filtered ${staleCount} stale DB entr${staleCount === 1 ? "y" : "ies"} (file absent on disk) from memory pool before chunking.`,
     );
   }
-  memories = memories.filter((memory) => fs.existsSync(memory.filePath));
+  memories = memories.filter((memory) => indexedAsset(memory.bundleId, memory.ref));
   const poolSize = memories.length;
   // A memory judged within its revisit window comes back once it is edited. A
   // promotion that was accepted or rejected holds its memory until the body
@@ -567,18 +566,14 @@ export function inspectConsolidationPool(
       if (isContentDrivenRow(row)) {
         let bodyHash: string | undefined;
         try {
-          bodyHash = contentHash(fs.readFileSync(memory.filePath, "utf8"), "body");
+          bodyHash = contentHash(requireMemoryContent(memory), "body");
         } catch {
           bodyHash = undefined;
         }
         return row.contentHash !== bodyHash;
       }
-      let changedAt: string | undefined;
-      try {
-        changedAt = fs.statSync(memory.filePath).mtime.toISOString();
-      } catch {
-        changedAt = undefined;
-      }
+      const changedMs = indexedModifiedMs(memory.bundleId, memory.ref);
+      const changedAt = changedMs === undefined ? undefined : new Date(changedMs).toISOString();
       return !isLedgerBlocked(row, nowIso, changedAt);
     });
   }
@@ -587,7 +582,7 @@ export function inspectConsolidationPool(
   if (rejectedBodies.size > 0) {
     memories = memories.filter((memory) => {
       try {
-        return !rejectedBodies.has(contentHash(fs.readFileSync(memory.filePath, "utf8"), "body"));
+        return !rejectedBodies.has(contentHash(requireMemoryContent(memory), "body"));
       } catch {
         return true;
       }
@@ -609,12 +604,8 @@ export function inspectConsolidationPool(
   let prefilteredAlreadyPromoted = 0;
   if (existingKnowledgeBodyHashes.size > 0) {
     memories = memories.filter((memory) => {
-      let raw: string;
-      try {
-        raw = fs.readFileSync(memory.filePath, "utf8");
-      } catch {
-        return true;
-      }
+      const raw = indexedContent(memory.bundleId, memory.ref);
+      if (raw === undefined) return true;
       const duplicate = existingKnowledgeBodyHashes.has(contentHash(raw, "body"));
       if (duplicate) prefilteredAlreadyPromoted++;
       return !duplicate;
@@ -971,7 +962,7 @@ export interface PromoteContext {
 function bodyHashOf(memory: MemoryEntry | undefined): { contentHash?: string } {
   if (!memory) return {};
   try {
-    return { contentHash: contentHash(fs.readFileSync(memory.filePath, "utf8"), "body") };
+    return { contentHash: contentHash(requireMemoryContent(memory), "body") };
   } catch {
     return {};
   }
@@ -1034,7 +1025,6 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
     .replace(/^-|-$/g, "")
     .toLowerCase();
   const knowledgeRef = conceptIdFromTypeName("knowledge", slug);
-  const parsedKnowledgeRef = parsePlacementRef(knowledgeRef);
   if (knowledgeRef !== op.knowledgeRef)
     warnings.push(`Normalized generated ref "${op.knowledgeRef}" → "${knowledgeRef}"`);
   const pending = listProposals(stashDir, { status: "pending" });
@@ -1045,12 +1035,12 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
       `Skipping promote: pending proposal already exists for ${knowledgeRef}`,
     );
   }
-  if (fs.existsSync(path.join(target.source.path, "knowledge", `${parsedKnowledgeRef.name}.md`))) {
+  if (indexedAsset(entry.bundleId, knowledgeRef)) {
     return skip("promote_already_exists", `Skipping promote: ${knowledgeRef} already exists in source`);
   }
   let memoryContent: string;
   try {
-    memoryContent = fs.readFileSync(entry.filePath, "utf8");
+    memoryContent = requireMemoryContent(entry);
   } catch (e) {
     return skip("promote_read_failed", `Promote: could not read ${op.ref}: ${String(e)}`);
   }
@@ -1175,10 +1165,11 @@ function loadMemoriesForSource(
     if (!db) throw new Error("index unavailable");
     memories = getAllEntries(db, "memory")
       .filter((e) => source !== undefined && e.bundleId === source.bundleId)
-      .filter((e) => isConsolidationEligibleMemoryName(e.entry.name) && fs.existsSync(e.filePath))
+      .filter((e) => isConsolidationEligibleMemoryName(e.entry.name) && indexedAsset(e.bundleId, e.conceptId))
       .map((e) => ({
         name: e.entry.name,
         ref: e.conceptId,
+        bundleId: e.bundleId,
         filePath: e.filePath,
         description: e.entry.description ?? "",
         tags: e.entry.tags ?? [],
@@ -1191,10 +1182,12 @@ function loadMemoriesForSource(
   }
   if (memories.length > 0 || !source) return memories;
   const memoriesDir = path.join(source.sourceRoot, "memories");
+  // asset-io: base the memories walk when the index lists none
   if (fs.existsSync(memoriesDir)) {
     const pending = [memoriesDir];
     while (pending.length > 0) {
       const current = pending.pop() as string;
+      // asset-io: base the memories walk when the index lists none
       for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
         const filePath = path.join(current, entry.name);
         if (entry.isDirectory()) {
@@ -1205,7 +1198,15 @@ function loadMemoriesForSource(
         const name = path.relative(memoriesDir, filePath).replace(/\.md$/, "").split(path.sep).join("/");
         if (isConsolidationEligibleMemoryName(name)) {
           const ref = refForFile("memory", source.sourceRoot, filePath) ?? name;
-          memories.push({ name, ref, filePath, description: "", tags: [], stashDir: source.sourceRoot });
+          memories.push({
+            name,
+            ref,
+            bundleId: source.bundleId,
+            filePath,
+            description: "",
+            tags: [],
+            stashDir: source.sourceRoot,
+          });
         }
       }
     }

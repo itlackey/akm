@@ -122,9 +122,10 @@ describe("config schema drift pins", () => {
     const bundles = props.bundles as { type?: string; additionalProperties?: { properties?: Record<string, unknown> } };
     expect(bundles.type).toBe("object");
     const entryProps = Object.keys(bundles.additionalProperties?.properties ?? {});
-    for (const key of ["path", "git", "website", "npm", "writable", "registryId", "components"]) {
+    for (const key of ["path", "git", "website", "npm", "writable", "registryId", "adapter", "root"]) {
       expect(entryProps).toContain(key);
     }
+    expect(entryProps).not.toContain("components");
     expect(props.defaultBundle).toEqual({ type: "string", minLength: 1 });
     expect(props.writable).toBeUndefined();
     // `bindings` (Tier B) is never part of the accepted config surface.

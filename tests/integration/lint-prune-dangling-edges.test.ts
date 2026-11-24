@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmLint } from "../../src/commands/lint";
-import { resetMemoryArchiveCache } from "../../src/core/asset/memory-archive";
+import { resetArchiveCache } from "../../src/core/adapter/directory-archive";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -33,10 +33,10 @@ describe("akm lint --prune-dangling-edges (#884)", () => {
   let storage: IsolatedAkmStorage;
   beforeEach(() => {
     storage = withIsolatedAkmStorage();
-    resetMemoryArchiveCache();
+    resetArchiveCache();
   });
   afterEach(() => {
-    resetMemoryArchiveCache();
+    resetArchiveCache();
     storage.cleanup();
   });
 
@@ -122,7 +122,7 @@ describe("akm lint --prune-dangling-edges (#884)", () => {
       "---\nkind: memory-cleanup-archive\nref: memory:pruned\noriginalPath: memories/pruned.md\n---\n\nArchived.\n",
     );
     writeMemory(stashDir, "holder", "description: h\ncontradictedBy:\n  - memories/pruned\n");
-    resetMemoryArchiveCache();
+    resetArchiveCache();
 
     const result = await akmLint({ dir: stashDir, pruneDanglingEdges: true, config: makeConfig(stashDir) });
 

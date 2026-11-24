@@ -75,11 +75,7 @@ describe("canonical entry mutation", () => {
         description: "uniquefoundationmarker",
         filename: "atomic-publish.md",
       };
-      const provenance = deriveEntryProvenance(
-        { bundleId: "primary", componentId: "primary", adapterId: "akm" },
-        entry.type,
-        entry.name,
-      );
+      const provenance = deriveEntryProvenance({ bundleId: "primary", adapterId: "akm" }, entry.type, entry.name);
 
       upsertEntry(db, "/primary/knowledge/atomic-publish.md", entry, provenance);
 
@@ -101,11 +97,7 @@ describe("canonical entry mutation", () => {
         description: "rollbackfoundationmarker",
         filename: "atomic-rollback.md",
       };
-      const provenance = deriveEntryProvenance(
-        { bundleId: "primary", componentId: "primary", adapterId: "akm" },
-        entry.type,
-        entry.name,
-      );
+      const provenance = deriveEntryProvenance({ bundleId: "primary", adapterId: "akm" }, entry.type, entry.name);
       db.exec("DROP TABLE entries_fts");
 
       expect(() => upsertEntry(db, "/primary/knowledge/atomic-rollback.md", entry, provenance)).toThrow();
@@ -124,11 +116,7 @@ describe("canonical entry mutation", () => {
         description: "nestedrollbackmarker",
         filename: "nested-atomic-rollback.md",
       };
-      const provenance = deriveEntryProvenance(
-        { bundleId: "primary", componentId: "primary", adapterId: "akm" },
-        entry.type,
-        entry.name,
-      );
+      const provenance = deriveEntryProvenance({ bundleId: "primary", adapterId: "akm" }, entry.type, entry.name);
       db.exec("DROP TABLE entries_fts");
 
       db.transaction(() => {

@@ -8,7 +8,6 @@
  * the asset-mutation lease, and fails fast when another akm process holds the lease.
  */
 import { createHash } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
 import { akmProposalAccept } from "../commands/proposal/proposal";
 import { createRetireProposal, recordGateDecision, rejectProposalDurably } from "../commands/proposal/repository";
@@ -16,15 +15,18 @@ import { writeMarkdownAsset } from "../commands/read/knowledge";
 import { akmShowUnified } from "../commands/read/show";
 import { akmClone, type CloneResponse } from "../commands/sources/source-clone";
 import { assertFlatAssetName, normalizeCreateSubPath } from "../core/asset/asset-create";
-import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
+import { stashDirFor } from "../core/asset/asset-placement";
 import { parseBundleRef } from "../core/asset/asset-ref";
+import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
+import { assertAdapterWrites } from "../core/assets/gate";
+import { findAsset } from "../core/assets/read";
+import { addressOf } from "../core/assets/write";
 import { resolveStashDir, toErrorMessage } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { resolveBundleWriteTarget } from "../core/mutation-target";
 import { warn } from "../core/warn";
-import { assertAkmAssetWrite } from "../core/write-source";
 import { NO_INDEX_MESSAGE, readUsableIndex } from "../indexer/index-readiness";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
 import { retireBlocker } from "./file-actions";
@@ -54,7 +56,7 @@ async function resolveWritableIndexedAsset(ref: string) {
   if (canonical === null) throw new UsageError(NO_INDEX_MESSAGE, "MISSING_REQUIRED_ARGUMENT", "akm index");
   if (!canonical) throw new UsageError("Only indexed documents can be edited.");
   const target = resolveBundleWriteTarget(loadConfig(), parseBundleRef(canonical).bundle!);
-  assertAkmAssetWrite(target.source);
+  assertAdapterWrites(target.source.name);
   return { canonical, target, path: shown.path, type: shown.type, name: shown.name };
 }
 
@@ -83,12 +85,15 @@ async function loadSource(ref: string): Promise<{
   // anywhere else cannot be saved through them.
   const typeDir = stashDirFor(found.type);
   if (!typeDir) throw new UsageError("Only indexed documents can be edited.");
-  const expectedPath = assetPathForName(found.type, path.join(found.target.source.path, typeDir), found.name);
-  if (path.resolve(expectedPath) !== path.resolve(found.path))
+  // The document is the one asset the target's adapter places under that type and name.
+  const asset = findAsset(found.canonical);
+  const placed = addressOf(found.target.source.name, conceptIdFromTypeName(found.type, found.name));
+  // The writers keep a document at the file they place it in: one held in another spelling of it cannot be saved.
+  if (asset === undefined || asset.conceptId !== placed.conceptId || placed.heldElsewhere === true)
     throw new UsageError(
       "The indexed source no longer matches the writable document target. Refresh the index before editing.",
     );
-  const raw = fs.readFileSync(found.path);
+  const raw = asset.entry.bytes();
   const content = raw.toString("utf8");
   if (!Buffer.from(content, "utf8").equals(raw))
     throw new UsageError("This source is not valid UTF-8; edit it outside the UI.");
@@ -197,7 +202,7 @@ export async function retire(input: { ref: string; revision: string }) {
       proposalId: result.proposal.id,
       ref: canonical,
       bundle: target.source.name,
-      archiveDirs: result.proposal.retiredArchive?.dirs ?? [],
+      archiveDirs: result.proposal.retiredArchive?.retired.map(({ handle }) => handle) ?? [],
       warnings: result.warnings ?? [],
     };
   });

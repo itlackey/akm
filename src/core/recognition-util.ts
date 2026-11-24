@@ -124,9 +124,8 @@ export function isKnownType(type: string): type is KnownType {
  *
  *   - `vault` — removed in favor of `env`/`secret`; carries its own
  *     migration-hint `UsageError` in `asset-ref.ts` (checked before this
- *     set) and interacts with the dangerous-env-key lint
- *     (`commands/lint/env-key-rules.ts`) — vaults must never be silently
- *     re-admitted as an ordinary indexed/ref-able type.
+ *     set), and must never be silently re-admitted as an ordinary
+ *     indexed/ref-able type.
  *   - `tool` — retired outright, no replacement.
  *
  * Consulted by the ref parser and `metadata.ts`'s

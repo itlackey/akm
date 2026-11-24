@@ -24,8 +24,9 @@ import { parseFrontmatter } from "../../asset/frontmatter";
 import type { RuleScope } from "../../asset/lint-text";
 import { toPosix } from "../../common";
 import { loadConfig } from "../../config/config";
-import type { FileChange } from "../../file-change";
-import type { BundleComponent, Diagnostic, ValidateContext } from "../types";
+import type { FileChange } from "../file-change";
+import { type Bundle, rootOf } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 
 // ── Small pure helpers, reused across the concrete adapters ──────────────────
 
@@ -73,25 +74,24 @@ const noMoves = (): [] => [];
 /** The base checks of one bundle's files. */
 export interface BaseChecker {
   /** What `runBaseChecks` reports for one file; `skip` is the rules this adapter leaves out for it, on top of the bundle's `lint.skip`. */
-  check(relPath: string, parsed: ParsedForValidate, skip?: readonly string[]): Diagnostic[];
+  check(relPath: string, parsed: ParsedForValidate, skip?: readonly string[]): FileDiagnostic[];
   /** What decides whether a rule applies to the file, for the rules an adapter runs itself (see `ruleApplies`). */
   rulesFor(relPath: string, skip?: readonly string[]): RuleScope;
 }
 
-/** The base checks for the files of the bundle at `componentRoot`, among the bundles and with the settings `ctx` names (the settings are read once, here, only when `ctx` carries none). The scope (other bundles, moved refs, stale-path roots, LLM Wikis) is read once. */
-export function createBaseChecker(componentRoot: string, ctx: ValidateContext): BaseChecker {
-  const scope = lintScope(componentRoot, ctx.config ?? loadConfig(), ctx.sources ?? [], ctx.readMoves ?? noMoves);
+/** The base checks for the files of the bundle at `bundleRoot`, among the bundles and with the settings `ctx` names (the settings are read once, here, only when `ctx` carries none). The scope (other bundles, moved refs, stale-path roots) is read once. */
+export function createBaseChecker(bundleRoot: string, ctx: FileValidateContext): BaseChecker {
+  const scope = lintScope(bundleRoot, ctx.config ?? loadConfig(), ctx.sources ?? [], ctx.readMoves ?? noMoves);
   const rulesFor = (relPath: string, skip: readonly string[] = []): RuleScope => ({
     relPath,
-    llmWiki: scope.inLlmWiki(relPath),
     skip: [...skip, ...scope.bundleSkip(relPath)],
   });
   return {
     rulesFor,
     check: (relPath, parsed, skip) => {
-      const { llmWiki, skip: lintSkip } = rulesFor(relPath, skip);
+      const { skip: lintSkip } = rulesFor(relPath, skip);
       return runBaseChecks({
-        filePath: path.join(componentRoot, relPath),
+        filePath: path.join(bundleRoot, relPath),
         relPath,
         raw: parsed.raw,
         data: parsed.data,
@@ -104,7 +104,6 @@ export function createBaseChecker(componentRoot: string, ctx: ValidateContext): 
         extraStashRoots: scope.extraStashRoots,
         bundleRoots: scope.bundleRoots,
         moves: scope.moves,
-        llmWiki,
         lintSkip,
       });
     },
@@ -118,12 +117,12 @@ export function createBaseChecker(componentRoot: string, ctx: ValidateContext): 
  * {@link createBaseChecker} directly instead.
  */
 export async function validateChangesWithBaseChecks(
-  c: BundleComponent,
+  c: Bundle,
   changes: FileChange[],
-  ctx: ValidateContext,
-): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
-  const { check } = createBaseChecker(c.root, ctx);
+  ctx: FileValidateContext,
+): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
+  const { check } = createBaseChecker(rootOf(c), ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));

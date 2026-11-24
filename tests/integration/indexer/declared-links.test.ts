@@ -20,11 +20,11 @@ import { akmShowUnified } from "../../../src/commands/read/show";
 import { assembleInfo } from "../../../src/commands/sources/info";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getConfigPath, getDbPath } from "../../../src/core/paths";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { rekeyEntryInPlace, renameEntriesBundleId } from "../../../src/storage/repositories/index-entries-repository";
 import { assets } from "../../../src/workspace";
+import { indexWrittenAssets } from "../../_helpers/index-written-files";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -143,8 +143,8 @@ describe("declared links", () => {
         semanticSearchMode: "off",
         defaultBundle: "stash",
         bundles: {
-          stash: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } },
-          portable: { path: portable, components: { main: { root: ".", adapter } } },
+          stash: { path: storage.stashDir, adapter: "akm" },
+          portable: { path: portable, adapter },
         },
       });
       const source = "portable//pages/zeppelin-rollout";
@@ -218,7 +218,7 @@ describe("declared links", () => {
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "stash",
-      bundles: { stash: { path: storage.stashDir, components: { main: { root: ".", adapter: "okf" } } } },
+      bundles: { stash: { path: storage.stashDir, adapter: "okf" } },
     });
     write("pages/start.md", "---\ntype: concept\ndescription: Start\n---\n\n`[Example](./example.md)`\n");
     write("pages/example.md", "---\ntype: concept\ndescription: Example\n---\n\nExample.\n");

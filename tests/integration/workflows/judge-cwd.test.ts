@@ -74,13 +74,13 @@ describe("resolveJudgeCwd", () => {
   });
 
   test("an error that is not a miss is reported as itself, not as an unresolved bundle", () => {
-    const dir = path.join(storage.stashDir, "workflows");
+    // A ref that finds an asset which is no workflow: refused as what it is.
+    const dir = path.join(storage.stashDir, "skills", "pkg");
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, "dup.md"), GATED);
-    fs.writeFileSync(path.join(dir, "dup.MD"), GATED);
+    fs.writeFileSync(path.join(dir, "SKILL.md"), "---\nname: pkg\ndescription: pkg\n---\n");
     let thrown: unknown;
     try {
-      resolveRunBundleRoot("workflows/dup");
+      resolveRunBundleRoot("skills/pkg");
     } catch (err) {
       thrown = err;
     }

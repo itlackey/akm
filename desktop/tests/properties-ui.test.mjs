@@ -28,7 +28,7 @@ export async function kinds(fixture) {
   json.bundles.claude = {
     path: path.join(fixture.root, "claude"),
     writable: true,
-    components: { main: { root: ".", adapter: "claude" } },
+    adapter: "claude",
   };
   await fs.writeFile(config, JSON.stringify(json));
   await put("claude/commands/review.md", "---\ndescription: Review a change\n---\n# Review\n\nLook at the diff.\n");

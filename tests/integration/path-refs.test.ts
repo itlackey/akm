@@ -3,19 +3,21 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveRefToken } from "../../src/commands/env/env-binding";
 import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
+import { buildFileContext } from "../../src/core/adapter/directory/file-context";
 import {
   assetPathCandidatesForName,
   filesForRef,
   placementTypes,
   refForFile,
 } from "../../src/core/asset/asset-placement";
-import { loadConfig, resetConfigCache } from "../../src/core/config/config";
+import type { Asset } from "../../src/core/assets/asset";
+import { findAsset, qualifyRef } from "../../src/core/assets/read";
+import { assetType } from "../../src/core/assets/type";
+import { resetConfigCache } from "../../src/core/config/config";
 import { isInstalledBundle, resolveEnvPath, resolveRefOwner } from "../../src/core/env-secret-ref";
 import { substituteRefTokens } from "../../src/core/ref-token";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
-import { resolveAdapterConceptOwner, resolveConceptOwner } from "../../src/indexer/lookup/adapter-concept-owner";
-import { resolveSourceEntries } from "../../src/indexer/search/search-source";
-import { buildFileContext } from "../../src/indexer/walk/file-context";
+import { configureBundles } from "../_helpers/bundle-config";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 import { withSeam } from "../_helpers/seams";
 
@@ -35,7 +37,7 @@ function write(rel: string, content = "x\n"): string {
   return file;
 }
 
-const component = () => ({ id: "akm", adapter: "akm", root: storage.stashDir, writable: false });
+const bundle = () => ({ id: "akm", adapter: "akm", root: storage.stashDir, writable: false });
 
 describe("the placement pair: a file's ref and the files a ref can name", () => {
   // One sample file per placement type, in its type folder and out of it.
@@ -87,9 +89,7 @@ describe("the placement pair: a file's ref and the files a ref can name", () => 
 describe("recognition gives a file its path as its ref", () => {
   test("a file under its type folder keeps its ref", () => {
     const file = write("knowledge/auth.md", "# Auth\n");
-    expect(akmAdapter.recognize(component(), buildFileContext(storage.stashDir, file))?.conceptId).toBe(
-      "knowledge/auth",
-    );
+    expect(akmAdapter.recognize(bundle(), buildFileContext(storage.stashDir, file))?.conceptId).toBe("knowledge/auth");
   });
 
   test.each([
@@ -98,11 +98,15 @@ describe("recognition gives a file its path as its ref", () => {
     ["reports/data.js", "reports/data.js"],
   ])("%s is %s", (rel, ref) => {
     const file = write(rel, "# Doc\n");
-    const document = akmAdapter.recognize(component(), buildFileContext(storage.stashDir, file));
+    const document = akmAdapter.recognize(bundle(), buildFileContext(storage.stashDir, file));
     expect(document?.conceptId).toBe(ref);
     expect(document?.ref).toBe(`akm//${ref}`);
     // The ref inverts to the file.
-    expect(resolveAdapterConceptOwner(storage.stashDir, "akm", ref)?.path).toBe(file);
+    expect(
+      findAsset(
+        qualifyRef(ref, { bundle: configureBundles([{ path: storage.stashDir, adapterId: "akm" }])[0] as string }),
+      )?.entry.file,
+    ).toBe(file);
   });
 });
 
@@ -111,7 +115,6 @@ describe("the old, type-folder-prefixed spelling of a loose file's ref", () => {
     const file = write("reports/x.md", "# Report\n");
     writeSandboxConfig({ semanticSearchMode: "off" });
     resetConfigCache();
-    const sources = resolveSourceEntries(undefined, loadConfig());
     const warnings: string[] = [];
     await withSeam(
       _setWarnSinkForTests,
@@ -119,13 +122,13 @@ describe("the old, type-folder-prefixed spelling of a loose file's ref", () => {
         if (level === "warn") warnings.push(args.map(String).join(" "));
       },
       async () => {
-        const current = resolveConceptOwner({ conceptId: "reports/x" }, sources);
-        expect(current?.owner.path).toBe(file);
+        const current = findAsset(qualifyRef("reports/x"));
+        expect(current?.entry.file).toBe(file);
         expect(warnings).toEqual([]);
-        const old = resolveConceptOwner({ conceptId: "knowledge/reports/x" }, sources);
-        expect(old?.owner.path).toBe(file);
-        expect(old?.owner.conceptId).toBe("reports/x");
-        resolveConceptOwner({ conceptId: "knowledge/reports/x" }, sources);
+        const old = findAsset(qualifyRef("knowledge/reports/x"));
+        expect(old?.entry.file).toBe(file);
+        expect(old?.conceptId).toBe("reports/x");
+        findAsset(qualifyRef("knowledge/reports/x"));
       },
     );
     expect(warnings).toHaveLength(1);
@@ -136,8 +139,7 @@ describe("the old, type-folder-prefixed spelling of a loose file's ref", () => {
     write("reports/x.md", "# Report\n");
     writeSandboxConfig({ semanticSearchMode: "off" });
     resetConfigCache();
-    const sources = resolveSourceEntries(undefined, loadConfig());
-    expect(resolveConceptOwner({ conceptId: "knowledge/reports/missing" }, sources)).toBeUndefined();
+    expect(findAsset(qualifyRef("knowledge/reports/missing"))).toBeUndefined();
   });
 });
 
@@ -157,7 +159,7 @@ describe("env and secrets outside their folder", () => {
     expect(isInstalledBundle("team")).toBe(true);
 
     const owner = resolveRefOwner("team//projects/x/secrets/key.pem");
-    expect(owner?.type).toBe("secret");
+    expect(assetType(owner as Asset)).toBe("secret");
     expect(resolveRefToken("team//projects/x/secrets/key.pem")).toEqual({ kind: "secret", value: "s3cr3t-value" });
 
     const { values, missing, secretValues } = substituteRefTokens(
@@ -183,7 +185,7 @@ describe("env and secrets outside their folder", () => {
     const file = write("notes/token.md", "# not a secret\n");
     configure();
     expect(resolveRefToken("team//notes/token")).toEqual({ kind: "path", path: file });
-    expect(resolveRefOwner("team//notes/token")?.type).not.toBe("secret");
+    expect(assetType(resolveRefOwner("team//notes/token") as Asset)).not.toBe("secret");
   });
 
   test("an env outside env/ resolves by its owning file; a secret ref is refused as an env", () => {
@@ -191,8 +193,8 @@ describe("env and secrets outside their folder", () => {
     write("secrets/token", "tok\n");
     configure();
     const found = resolveEnvPath("team//team/env/staging");
-    expect(found.absPath).toBe(loose);
-    expect(found.conceptId).toBe("team/env/staging");
+    expect(found.asset.entry.file).toBe(loose);
+    expect(found.written).toBe("team/env/staging");
     expect(() => resolveEnvPath("secrets/token")).toThrow(/Expected an env ref/);
   });
 });

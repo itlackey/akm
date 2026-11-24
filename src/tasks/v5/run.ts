@@ -28,6 +28,7 @@ import {
 import { buildChildEnv } from "../../commands/env/child-env";
 import { ensureWorkingFolder, resolveInjectionRefs, runProgram } from "../../commands/env/injection";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import type { Asset } from "../../core/assets/read";
 import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, TransientError, UsageError } from "../../core/errors";
 import { type LockOwnership, releaseLock } from "../../core/file-lock";
@@ -163,12 +164,15 @@ function writeRecord(record: RunRecord): void {
   const file = runRecordPath(record.taskId, record.runId);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const pending = `${file}.${process.pid}.tmp`;
+  // asset-io: state run record
   fs.writeFileSync(pending, JSON.stringify(record));
+  // asset-io: state run record
   fs.renameSync(pending, file);
 }
 
 function readRecord(taskId: string, runId: string): RunRecord | undefined {
   try {
+    // asset-io: state run record
     return JSON.parse(fs.readFileSync(runRecordPath(taskId, runId), "utf8")) as RunRecord;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
@@ -178,7 +182,9 @@ function readRecord(taskId: string, runId: string): RunRecord | undefined {
 
 /** A run that will not be resumed: the folder akm made for it and for the runs it started, and what is kept of it. */
 function discard(record: RunRecord): void {
+  // asset-io: scratch run folder akm made
   if (record.madeDir) fs.rmSync(record.dir, { recursive: true, force: true });
+  // asset-io: state run record
   fs.rmSync(runRecordPath(record.taskId, record.runId), { force: true });
   for (const child of Object.values(record.children)) {
     const kept = readRecord(child.task, child.run);
@@ -242,10 +248,13 @@ function stepInputs(
   return resolveInputs(child, flags, literals);
 }
 
-function parseDocument(file: string): TaskSourceV5Document {
-  const parsed = parseTaskSource({ yaml: fs.readFileSync(file, "utf8"), filePath: file });
+function parseDocument(found: { file: string; asset: Asset }): TaskSourceV5Document {
+  const parsed = parseTaskSource({ yaml: found.asset.entry.content(), filePath: found.file });
   if (parsed.version === 4) {
-    throw new UsageError(`${file} is a version 4 task, and a version 5 task does not run one.`, "TASK_SOURCE_INVALID");
+    throw new UsageError(
+      `${found.file} is a version 4 task, and a version 5 task does not run one.`,
+      "TASK_SOURCE_INVALID",
+    );
   }
   return parsed.v5;
 }
@@ -663,7 +672,7 @@ async function runProcessStep(
       ? scriptProgram(
           step.run as string,
           (await locateTaskV5Asset(record.bundle, step.run as string, "scripts", `${record.ref} step ${step.name}`))
-            .file,
+            .asset,
           (step.args ?? []).map((item) => asText(argument(item, record.state))),
         )
       : {
@@ -672,6 +681,7 @@ async function runProcessStep(
         };
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-task-state-"));
   const statePath = path.join(stateDir, "state.json");
+  // asset-io: scratch run folder akm made
   fs.writeFileSync(statePath, JSON.stringify(record.state, null, 2));
   try {
     const result = await runProgram({
@@ -705,6 +715,7 @@ async function runProcessStep(
     if (incomplete) return { ok: false, reason: incomplete };
     return { ok: true, value: stdout };
   } finally {
+    // asset-io: scratch run folder akm made
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
 }
@@ -822,7 +833,7 @@ async function runTaskStep(
 ): Promise<Done> {
   const ref = step.run as string;
   const found = await locateTaskV5Asset(record.bundle, ref, "tasks", `${record.ref} step ${step.name}`);
-  const child = parseDocument(found.file);
+  const child = parseDocument(found);
   const taskId = taskIdOf(ref);
   const limit = limitOf(until, document, step);
   const lock =
@@ -918,7 +929,7 @@ async function collectSecrets(
   const found = await locateTaskV5Asset(bundle, ref, "tasks", ref);
   if (seen.has(found.file)) return;
   seen.add(found.file);
-  const document = parseDocument(found.file);
+  const document = parseDocument(found);
   for (const step of document.steps) {
     if (step.kind === "tasks") await collectSecrets(context, step.run as string, found.bundle, flags, seen);
     else for (const value of environmentOf(context, flags, document, step).secretValues) context.secrets.add(value);

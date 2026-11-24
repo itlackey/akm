@@ -31,7 +31,7 @@ function createProposal(stashDir: string, input: CreateProposalInput) {
 /** The durable `proposals.ref` item_ref (WI-8.5a): `<bundle>//<conceptId>`. */
 function durableRef(stashDir: string, type: string, name: string): string {
   const bundleId = bundleIdFor(stashDir);
-  return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
+  return deriveEntryProvenance({ bundleId, adapterId: "akm" }, type, name).itemRef;
 }
 
 const tempDirs: string[] = [];

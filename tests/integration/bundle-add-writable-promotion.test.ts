@@ -73,7 +73,7 @@ function installed() {
 }
 
 function isWritable(bundle: ReturnType<typeof installed>["bundle"]): boolean {
-  return (Object.values(bundle?.components ?? {})[0]?.writable ?? bundle?.writable) === true;
+  return bundle?.writable === true;
 }
 
 async function promote() {
@@ -98,7 +98,7 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
     expect(git(["-C", root, "remote", "get-url", "origin"]).trim()).toBe(REMOTE_URL);
   }, 60_000);
 
-  test("promotion keeps component selection, bundle order and credential, and drops the old snapshot", async () => {
+  test("promotion keeps root and adapter, bundle order and credential, and drops the old snapshot", async () => {
     expect((await add()).code).toBe(0);
     const snapshot = installed().lock?.localRoot as string;
     const otherDir = makeSandboxDir("akm-1296-other");
@@ -111,7 +111,9 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
         shared: {
           ...shared,
           credential: CREDENTIAL_REF,
-          components: { notes: { root: "knowledge", adapter: "akm", writable: false } },
+          root: "knowledge",
+          adapter: "akm",
+          writable: false,
         },
         other: { path: otherDir.dir },
       },
@@ -128,7 +130,7 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
     const bundles = loadConfig().bundles ?? {};
     expect(Object.keys(bundles)).toEqual(["shared", "other"]);
     expect(bundles.shared?.credential).toBe(CREDENTIAL_REF);
-    expect(bundles.shared?.components).toEqual({ notes: { root: "knowledge", adapter: "akm", writable: true } });
+    expect(bundles.shared).toMatchObject({ root: "knowledge", adapter: "akm", writable: true });
     const root = installed().lock?.localRoot as string;
     expect(fs.existsSync(path.join(root, ".git"))).toBe(true);
     expect(fs.existsSync(snapshot)).toBe(false);

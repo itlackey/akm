@@ -54,6 +54,7 @@ export const STATE_MIGRATION_SAFETY_BY_ID: Readonly<Record<string, StateMigratio
   "028-improve-ledger": "historical-destructive",
   "029-improve-ledger-content-hash": "additive",
   "030-usage-events-created-at-index": "additive",
+  "031-bundle-id-columns": "historical-destructive",
 });
 
 export const STATE_MIGRATIONS: readonly Migration[] = [
@@ -1332,6 +1333,43 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
     id: "030-usage-events-created-at-index",
     up: `
       CREATE INDEX IF NOT EXISTS idx_usage_events_created_at ON usage_events(datetime(created_at));
+    `,
+  },
+
+  // ── Migration 031 — rows are keyed by bundle id ───────────────────────────
+  //
+  // `proposals`, `improve_runs` and `improve_ledger` named the bundle a row
+  // belongs to by its absolute root (`stash_dir`). They name it by the bundle's
+  // id now (`bundle_id`, the config name), so a row follows the bundle when its
+  // directory moves. Every value is copied as it was, a root; the state opener
+  // rewrites each root to its bundle's id once it has the config in hand
+  // (`convertPathBundleIds`, src/core/state-db.ts), because a migration cannot
+  // read config. The column is renamed in place, which keeps the rows, the
+  // ledger's primary key and the indexes; the two indexes are recreated under
+  // names that say what they hold.
+  //
+  // A state.db this migration has run on cannot be read by an akm that
+  // predates it (§0.2 A14, docs/architecture/persisted-data-compat.md), so it
+  // is classified as a rebuild the operator may want to undo:
+  // `openStateDatabase` copies an existing state.db to
+  // `state.db.pre-031-bundle-id-columns.bak` first.
+  {
+    id: "031-bundle-id-columns",
+    up: `
+      DROP INDEX IF EXISTS idx_proposals_stash_status;
+      DROP INDEX IF EXISTS idx_proposals_stash_status_ref_source;
+      DROP INDEX IF EXISTS idx_improve_runs_stash_scope;
+
+      ALTER TABLE proposals RENAME COLUMN stash_dir TO bundle_id;
+      ALTER TABLE improve_runs RENAME COLUMN stash_dir TO bundle_id;
+      ALTER TABLE improve_ledger RENAME COLUMN stash_dir TO bundle_id;
+
+      CREATE INDEX IF NOT EXISTS idx_proposals_bundle_status
+        ON proposals(bundle_id, status);
+      CREATE INDEX IF NOT EXISTS idx_proposals_bundle_status_ref_source
+        ON proposals(bundle_id, status, ref, source);
+      CREATE INDEX IF NOT EXISTS idx_improve_runs_bundle_scope
+        ON improve_runs(bundle_id, scope_mode);
     `,
   },
 ];

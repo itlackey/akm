@@ -18,7 +18,7 @@ import {
   type TypeDirectoryEntry,
 } from "../../../src/commands/health/type-directory-check";
 
-/** An indexed entry of the `akm` adapter living under the synthetic `/stash` component root. */
+/** An indexed entry of the `akm` adapter living under the synthetic `/stash` bundle root. */
 function entry(rel: string, type: string, adapterId = "akm"): TypeDirectoryEntry {
   return { filePath: `/stash/${rel}`, type, root: "/stash", adapterId };
 }
@@ -144,7 +144,7 @@ describe("collectTypeDirectoryDisagreements classifier parity (#1288)", () => {
     expect(collectTypeDirectoryDisagreements(entries, () => "")).toEqual([]);
   });
 
-  test("ancestor directories outside the component root do not establish type intent", () => {
+  test("ancestor directories outside the bundle root do not establish type intent", () => {
     const outside: TypeDirectoryEntry = {
       filePath: "/stash/memories/vendor/pkg/doc.md",
       type: "knowledge",
@@ -156,7 +156,7 @@ describe("collectTypeDirectoryDisagreements classifier parity (#1288)", () => {
     expect(collectTypeDirectoryDisagreements([unrelated], () => "")).toEqual([]);
   });
 
-  test("an entry with no resolvable component root establishes no type intent", () => {
+  test("an entry with no resolvable bundle root establishes no type intent", () => {
     const rootless: TypeDirectoryEntry = {
       filePath: `${process.cwd()}/memories/note.md`,
       type: "command",
@@ -258,7 +258,7 @@ describe("skill-directory intent (#1301)", () => {
     expect(result[0]).toMatchObject({ expected: "knowledge", resolved: "skill", winner: "unknown" });
   });
 
-  test("skills outside the component root do not override its directory intent", () => {
+  test("skills outside the bundle root do not override its directory intent", () => {
     const result = collectTypeDirectoryDisagreements(
       [{ ...entry("skills/knowledge/SKILL.md", "skill"), root: "/stash/skills" }],
       () => "# A document\n",
@@ -267,7 +267,7 @@ describe("skill-directory intent (#1301)", () => {
     expect(result[0]).toMatchObject({ expected: "knowledge", resolved: "skill" });
   });
 
-  test("other adapters and paths outside the component retain their own semantics", () => {
+  test("other adapters and paths outside the bundle retain their own semantics", () => {
     expect(
       collectTypeDirectoryDisagreements(
         [

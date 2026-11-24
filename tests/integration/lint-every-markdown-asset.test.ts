@@ -116,7 +116,7 @@ describe("lint reaches every Markdown asset of an akm bundle", () => {
   });
 });
 
-describe("an LLM wiki's files are not authored akm assets", () => {
+describe("a wiki folder of an akm bundle is ordinary akm files: a wiki is a bundle of its own", () => {
   function wiki(): void {
     put("wikis/notes/schema.md", "# Wiki schema\n");
     put(
@@ -131,14 +131,19 @@ describe("an LLM wiki's files are not authored akm assets", () => {
     put("loose.md");
   }
 
-  test("a page and a raw snapshot without updated, name or type are not flagged, a loose file still is", async () => {
+  test("a page and a raw snapshot without updated are flagged like any akm file, and a page whose body runs $ARGUMENTS is a command", async () => {
     wiki();
 
-    expect(await flaggedFiles()).toEqual(["loose.md"]);
-    expect(await flaggedFiles(undefined, "missing-name-or-type")).toEqual([]);
+    expect(await flaggedFiles()).toEqual([
+      "loose.md",
+      "wikis/notes/pages/page.md",
+      "wikis/notes/pages/runs.md",
+      "wikis/notes/raw/snap.md",
+    ]);
+    expect(await flaggedFiles(undefined, "missing-name-or-type")).toEqual(["wikis/notes/pages/runs.md"]);
   });
 
-  test("every other check still runs on wiki files", async () => {
+  test("every other check runs on wiki files too", async () => {
     wiki();
     put("wikis/notes/pages/colon.md", "---\ndescription: Colon: in it\n---\n\nSee /tmp/akm-5-gone/current.md\n");
 

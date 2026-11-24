@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { qualifyRef } from "../../core/assets/read";
 import { rethrowIfTestIsolationError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
 import { withStateDbTelemetry } from "../../core/state-db";
@@ -110,7 +111,9 @@ export function recordShowUsage(
   try {
     withIndexDb(
       (db) => {
-        const entryId = filePath ? getEntryIdByFilePath(db, filePath) : findEntryIdByRef(db, eventRef);
+        const entryId = filePath
+          ? getEntryIdByFilePath(db, filePath)
+          : findEntryIdByRef(db, parsed.bundle === undefined ? qualifyRef(eventRef) : eventRef);
         if (entryId === undefined) return;
         const entryRef = getItemRefById(db, entryId);
         if (!entryRef) return;

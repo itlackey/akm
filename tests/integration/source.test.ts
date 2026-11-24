@@ -117,7 +117,7 @@ describe("source commands and resolution", () => {
       await akmIndex({ stashDir: primaryStashDir, full: true });
 
       const result = await akmSearch({ query: "job", type: "script" });
-      const searchPathHit = result.hits.filter(isLocalHit).find((hit) => hit.path.includes(searchPathDir));
+      const searchPathHit = result.hits.filter(isLocalHit).find((hit) => hit.path?.includes(searchPathDir));
 
       expect(searchPathHit).toBeDefined();
       expect(searchPathHit?.run).toBe("akm run extra//scripts/group/nested/job.js");

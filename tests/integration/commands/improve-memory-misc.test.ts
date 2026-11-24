@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmImprove } from "../../../src/commands/improve/improve";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../src/core/improve-types";
@@ -115,7 +116,7 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
     const db = openStateDatabase();
     try {
       recordImproveLedger(db, {
-        stashDir,
+        bundleId: stateBundleId(stashDir),
         ref: durableRef("memories/auth-tips-2"),
         source: "reflect",
         outcome: "unchanged",
@@ -242,7 +243,7 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
     const db = openStateDatabase();
     try {
       recordImproveLedger(db, {
-        stashDir,
+        bundleId: stateBundleId(stashDir),
         ref: durableRef("memories/auth-tips"),
         source: "distill",
         outcome: "rejected",
@@ -363,6 +364,26 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     expect(proposals.length).toBe(1);
     expect(proposals[0]?.ref).toBe(durableRef("memories/auth-guide"));
     expect(proposals[0]?.payload.content).toContain("Authentication guide");
+  });
+
+  test("runSchemaRepairPass skips a file no bundle holds", async () => {
+    const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
+    const stashDir = makeTempDir("akm-schema-repair-unheld-");
+    const strayFile = path.join(stashDir, "stray", "outside.md");
+    fs.mkdirSync(path.dirname(strayFile), { recursive: true });
+    fs.writeFileSync(strayFile, "---\n---\nStray content.\n", "utf8");
+    configureStash(stashDir);
+
+    const result = await runSchemaRepairPass([{ ref: "memories/not-held", reason: "missing description" }], {
+      startMs: Date.now(),
+      budgetMs: 30_000,
+      stashDir,
+      llmRunner: testLlmRunner({ endpoint: "http://localhost/v1/chat", model: "test" }),
+      findFilePath: async () => strayFile,
+      chatFn: async () => JSON.stringify({ description: "x" }),
+    });
+
+    expect(result.repairs).toEqual([expect.objectContaining({ ref: "memories/not-held", outcome: "skipped" })]);
   });
 
   test("a queued schema repair carries a schema-repair run token (B10-31)", async () => {

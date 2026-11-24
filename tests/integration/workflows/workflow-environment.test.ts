@@ -13,7 +13,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import type { AkmConfig } from "../../../src/core/config/config";
+import { type AkmConfig, resetConfigCache, saveConfig } from "../../../src/core/config/config";
 import { freezeEnvironment } from "../../../src/workflows/freeze/environment";
 import type { ResolutionContext } from "../../../src/workflows/freeze/step-values";
 import type { FrozenWorkflowEnvironmentBinding } from "../../../src/workflows/plan";
@@ -64,6 +64,9 @@ function freezeRefs(
       throw new Error("no child workflow in this fixture");
     },
   };
+  // The facade reads the config the process loads: make the fixture's the config.
+  saveConfig(context.config);
+  resetConfigCache();
   return freezeEnvironment(
     { id: "run", unit: { env: refs }, source: { path: "workflows/env.md", start: 1, end: 1 } },
     undefined,

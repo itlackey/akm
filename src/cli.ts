@@ -130,6 +130,8 @@ import { feedbackCommand } from "./commands/feedback-cli";
 import { akmHealth } from "./commands/health";
 import { doctorMetricsCommand } from "./commands/metrics/usage-cli";
 import { akmTasksDoctor } from "./commands/tasks/tasks";
+import { clearAdapterCaches } from "./core/assets/gate";
+import { embedPendingWrites } from "./core/assets/type";
 import { closestMatch } from "./core/closest-match";
 import { explainedByReaderGone, isTerminal, stdout } from "./core/stdio";
 import "./commands/health/renderers";
@@ -1360,6 +1362,8 @@ export function requestsHelp(invocation: ParsedInvocation): boolean {
 }
 
 async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
+  // What an adapter read of a keyring or vault lives for one command: a run in this process after another reads afresh.
+  clearAdapterCaches();
   // Resolve output mode once at startup from the invocation's own tokens and persisted
   // config. All subsequent output() calls read from this in-memory singleton.
   // `initOutputMode` can throw a UsageError when --format/--detail values are
@@ -1431,6 +1435,7 @@ async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
     if (invocation.userArgs.length > 0) return;
     if (!isTerminal(2)) return;
     try {
+      // asset-io: config
       if (fs.existsSync(getConfigPath())) return;
     } catch {
       // If we can't resolve the config path, assume non-fresh and stay silent.
@@ -1509,6 +1514,8 @@ async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
     emitJsonError(error);
   } finally {
     disposeLlmUsageSink();
+    // The vectors of the rows this command's writes recorded (fail-open); a write that awaits its own has none left.
+    await embedPendingWrites();
   }
 }
 

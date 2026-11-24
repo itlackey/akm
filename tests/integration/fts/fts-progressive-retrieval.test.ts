@@ -3,10 +3,10 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { recognizeStashEntries } from "../../../src/core/adapter/directory/recognize-stash-entries";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import type { IndexDocument } from "../../../src/indexer/passes/metadata";
 import { MARKDOWN_CONTENT_MAX_CHARS, projectMarkdownContent } from "../../../src/indexer/passes/metadata";
-import { recognizeStashEntries } from "../../../src/indexer/scan/drain-dir";
 import { buildSearchFields, buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database as AkmDatabase } from "../../../src/storage/database";
 import { searchFts } from "../../../src/storage/repositories/index-fts-repository";
@@ -26,7 +26,6 @@ function makeDb(): AkmDatabase {
       type TEXT NOT NULL,
       item_ref TEXT NOT NULL UNIQUE,
       bundle_id TEXT NOT NULL,
-      component_id TEXT NOT NULL,
       concept_id TEXT NOT NULL,
       adapter_id TEXT NOT NULL,
       document_json TEXT NOT NULL,
@@ -52,16 +51,15 @@ function insert(db: AkmDatabase, name: string, entry: IndexDocument): void {
   const inserted = db
     .prepare<{ id: number }>(`
       INSERT INTO entries (
-        file_path, type, item_ref, bundle_id, component_id, concept_id,
+        file_path, type, item_ref, bundle_id, concept_id,
         adapter_id, document_json, search_text
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       RETURNING id
     `)
     .get(
       `/fixture/${conceptId}.md`,
       entry.type,
       `fixture//${conceptId}`,
-      "fixture",
       "fixture",
       conceptId,
       "akm",

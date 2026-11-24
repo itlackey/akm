@@ -96,11 +96,7 @@ function insertTestEntry(
 ): number {
   const type = opts?.type ?? "script";
   const entry = makeEntry({ name: key, type, description: opts?.description ?? `Description for ${key}` });
-  const provenance = deriveEntryProvenance(
-    { bundleId: "test-bundle", componentId: "test-bundle", adapterId: "akm" },
-    type,
-    key,
-  );
+  const provenance = deriveEntryProvenance({ bundleId: "test-bundle", adapterId: "akm" }, type, key);
   const dirPath = opts?.dirPath ?? "/test/dir";
   return upsertEntry(db, opts?.filePath ?? path.join(dirPath, `${key}.ts`), entry, provenance);
 }
@@ -188,7 +184,7 @@ describe("Entry CRUD", () => {
     try {
       const type = "script";
       const name = "my-tool";
-      const prov = deriveEntryProvenance({ bundleId: "team-kb", componentId: "team-kb", adapterId: "akm" }, type, name);
+      const prov = deriveEntryProvenance({ bundleId: "team-kb", adapterId: "akm" }, type, name);
       const entry = makeEntry({ name, type, description: "original" });
       upsertEntry(db, "/s/dir/my-tool.ts", entry, prov);
       // Re-upsert the SAME item_ref (same identity) with an updated payload.
@@ -207,7 +203,7 @@ describe("Entry CRUD", () => {
     }
   });
 
-  test("a short ref matching one conceptId across two bundles resolves deterministically (primary/lowest-id wins)", () => {
+  test("one conceptId in two bundles is two rows, each found by its exact ref; a short ref is refused", () => {
     // Two sources carry the SAME conceptId (`scripts/my-tool`) under different
     // bundle slugs → two `//scripts/my-tool`-suffixed item_refs. The short-ref
     // suffix match must pick a STABLE winner, not whichever row SQLite visits
@@ -219,22 +215,14 @@ describe("Entry CRUD", () => {
       const name = "my-tool";
       // Insert the primary bundle FIRST (it gets the lower id, mirroring a
       // precedence-ordered index walk).
-      const primaryProv = deriveEntryProvenance(
-        { bundleId: "primary-kb", componentId: "primary-kb", adapterId: "akm" },
-        type,
-        name,
-      );
+      const primaryProv = deriveEntryProvenance({ bundleId: "primary-kb", adapterId: "akm" }, type, name);
       const primaryId = upsertEntry(
         db,
         "/p/dir/my-tool.ts",
         makeEntry({ name, type, description: "primary" }),
         primaryProv,
       );
-      const secondaryProv = deriveEntryProvenance(
-        { bundleId: "zzz-source", componentId: "zzz-source", adapterId: "akm" },
-        type,
-        name,
-      );
+      const secondaryProv = deriveEntryProvenance({ bundleId: "zzz-source", adapterId: "akm" }, type, name);
       const secondaryId = upsertEntry(
         db,
         "/z/dir/my-tool.ts",
@@ -244,10 +232,9 @@ describe("Entry CRUD", () => {
       expect(getEntryCount(db)).toBe(2);
       expect(primaryId).toBeLessThan(secondaryId);
 
-      // Short ref → lowest-id (primary) row, and the same answer every call.
-      expect(findEntryIdByRef(db, "scripts/my-tool")).toBe(primaryId);
-      expect(findEntryIdByRef(db, "scripts/my-tool")).toBe(primaryId);
-      // Bundle-qualified refs still address each row exactly.
+      // A short ref is not matched by suffix: it is qualified first (`qualifyRef`).
+      expect(() => findEntryIdByRef(db, "scripts/my-tool")).toThrow(/qualified ref/);
+      // Bundle-qualified refs address each row exactly.
       expect(findEntryIdByRef(db, "primary-kb//scripts/my-tool")).toBe(primaryId);
       expect(findEntryIdByRef(db, "zzz-source//scripts/my-tool")).toBe(secondaryId);
     } finally {
@@ -762,11 +749,7 @@ describe("entry-owned FTS projection", () => {
   }
 
   function upsertFtsEntry(db: Database, key: string, entry: IndexDocument): number {
-    const provenance = deriveEntryProvenance(
-      { bundleId: "stash", componentId: "stash", adapterId: "akm" },
-      entry.type,
-      key,
-    );
+    const provenance = deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, entry.type, key);
     return upsertEntry(db, `/d/${key}.md`, entry, provenance);
   }
 
@@ -819,7 +802,7 @@ describe("entries-by-path reads (getEntryIdByFilePath / getEntryFilePathById)", 
   function seedAt(db: Database, key: string, filePath: string, stashDir: string, type: IndexDocument["type"]): number {
     const entry = { description: `Description for ${key}`, type, name: key } as unknown as IndexDocument;
     const bundleId = path.basename(stashDir) || "root";
-    const provenance = deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, key);
+    const provenance = deriveEntryProvenance({ bundleId, adapterId: "akm" }, type, key);
     return upsertEntry(db, filePath, entry, provenance);
   }
 

@@ -4,17 +4,18 @@
 
 /**
  * `akm index` names each configured source it could not scan and why, reports a skipped `--clean` as skipped, and
- * records the list in the index for `akm doctor`. The adapter-skip warning names the bundle's config key and is
- * printed once per change of what is skipped.
+ * records the list in the index for `akm doctor`. The adapter-skip warning moved to `akm doctor` and `akm bundle add`.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { genericFilesAdapter } from "../../src/core/adapter/adapters/generic-files-adapter";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
+import { _setWarnSinkForTests } from "../../src/core/warn";
+import { readIncompleteSources } from "../../src/indexer/index-context";
 import { akmIndex } from "../../src/indexer/indexer";
-import { readIncompleteSources } from "../../src/indexer/walk/index-context";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -24,7 +25,7 @@ let dir: string;
 
 type IndexOutput = {
   scanComplete: boolean;
-  incompleteSources: Array<{ bundle: string; component: string; path: string; reason: string }>;
+  incompleteSources: Array<{ bundle: string; path: string; reason: string }>;
   clean?: { skipped?: { reason: string; sources: unknown[] }; checked?: number };
 };
 
@@ -68,7 +69,7 @@ describe("a configured source that cannot be scanned", () => {
     const second = await index();
     expect(second.out.scanComplete).toBe(false);
     expect(second.out.incompleteSources).toHaveLength(1);
-    expect(second.out.incompleteSources[0]).toMatchObject({ bundle: "notes", component: "main", path: dir });
+    expect(second.out.incompleteSources[0]).toMatchObject({ bundle: "notes", path: dir });
     expect(second.out.incompleteSources[0]?.reason).toContain("ENOENT");
     expect(recordedIncompleteSources()).toEqual(second.out.incompleteSources);
 
@@ -94,7 +95,9 @@ describe("an unresolved source", () => {
       bundles: {
         escaping: {
           path: dir,
-          components: { main: { root: "../team-notes-sibling", adapter: "akm", writable: false } },
+          adapter: "akm",
+          root: "../team-notes-sibling",
+          writable: false,
         },
         unmaterialized: { git: "git://127.0.0.1:1/none.git" },
       },
@@ -164,53 +167,99 @@ describe("a recorded but never-installed npm bundle on other commands", () => {
   }, 60_000);
 });
 
-describe("the adapter-skip warning", () => {
-  function narrowAdapter(): void {
+describe("the adapter-skip warning (§0.2 N18)", () => {
+  test("`akm index` no longer prints it, whatever the bundle's adapter skips", async () => {
+    expect((await runCliCapture(["bundle", "add", dir, "--name", "notes"])).code).toBe(0);
     const config = loadConfig();
     const entry = config.bundles?.notes;
     if (!entry) throw new Error("bundle missing");
     saveConfig({
       ...config,
-      bundles: {
-        ...config.bundles,
-        notes: { ...entry, components: { main: { root: ".", adapter: "agent-skills", writable: false } } },
-      },
+      bundles: { ...config.bundles, notes: { ...entry, adapter: "agent-skills", writable: false } },
     });
+
+    expect((await index("--full")).stderr).not.toContain("adapter skipped");
+  }, 60_000);
+});
+
+describe("a directory bundle whose listing fails keeps its rows; one that lists nothing loses them (F18)", () => {
+  /** The rows the index holds for `bundle`, by ref. */
+  function rowsOf(bundle: string): string[] {
+    const db = openReadonlyExistingDatabase(getDbPath());
+    if (!db) throw new Error("no index");
+    try {
+      return (
+        db.prepare("SELECT item_ref FROM entries WHERE bundle_id = ? ORDER BY item_ref").all(bundle) as Array<{
+          item_ref: string;
+        }>
+      ).map((row) => row.item_ref);
+    } finally {
+      closeDatabase(db);
+    }
   }
 
-  test("names the bundle and its config key, and is repeated only when the skipped set changes", async () => {
-    expect((await runCliCapture(["bundle", "add", dir, "--name", "notes"])).code).toBe(0);
-    narrowAdapter();
+  /** Run `akm index` in process, with what it warned. */
+  async function indexWarning(): Promise<{ result: Awaited<ReturnType<typeof akmIndex>>; warnings: string }> {
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      return { result: await akmIndex({ stashDir: storage.stashDir }), warnings: warnings.join("\n") };
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+  }
 
-    const first = await index("--full");
-    expect(first.stderr).toContain('bundle "notes"');
-    expect(first.stderr).toContain('bundles.notes.components.main.adapter to "akm"');
-    expect(first.stderr).not.toContain("components.<name>");
+  beforeEach(() => {
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { notes: { path: dir, adapter: "generic-files", writable: false } },
+    });
+  });
 
-    const again = await index("--full");
-    expect(again.stderr).not.toContain("adapter skipped");
-
-    fs.writeFileSync(path.join(dir, "knowledge", "second.md"), "---\ndescription: second\n---\n\n# Second\n");
-    const changed = await index("--full");
-    expect(changed.stderr).toContain("skipped 2 files");
+  test("a listing that fails outright warns, naming the bundle and the cause as for a keyring or vault", async () => {
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const before = rowsOf("notes");
+    expect(before.length).toBeGreaterThan(0);
+    const failing = spyOn(genericFilesAdapter, "list").mockImplementation(() => {
+      throw new Error("the disk went away");
+    });
+    try {
+      const { result, warnings } = await indexWarning();
+      expect(warnings).toContain(
+        '[index] source "notes" was not scanned completely; preserving its last-known-good rows. the disk went away',
+      );
+      expect(result.scanComplete).toBe(false);
+      expect(result.incompleteSources).toEqual([
+        expect.objectContaining({ bundle: "notes", reason: "the disk went away" }),
+      ]);
+    } finally {
+      failing.mockRestore();
+    }
+    expect(rowsOf("notes")).toEqual(before);
   }, 60_000);
 
-  test("a removed bundle takes its record with it, so a re-added bundle is warned about again", async () => {
-    expect((await runCliCapture(["bundle", "add", dir, "--name", "notes"])).code).toBe(0);
-    narrowAdapter();
-    expect((await index("--full")).stderr).toContain("adapter skipped");
+  test("a bundle root that is missing is reported and keeps its rows, as before", async () => {
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const before = rowsOf("notes");
+    fs.renameSync(dir, `${dir}.gone`);
+    const { result, warnings } = await indexWarning();
+    expect(warnings).toMatch(
+      /\[index\] source "notes" was not scanned completely; preserving its last-known-good rows\. ENOENT/,
+    );
+    expect(result.scanComplete).toBe(false);
+    expect(result.incompleteSources).toEqual([expect.objectContaining({ bundle: "notes", path: dir })]);
+    expect(rowsOf("notes")).toEqual(before);
+  }, 60_000);
 
-    expect((await runCliCapture(["bundle", "remove", "notes", "--yes"])).code).toBe(0);
-    await index("--full");
-    const config = loadConfig();
-    saveConfig({
-      ...config,
-      bundles: {
-        ...config.bundles,
-        notes: { path: dir, components: { main: { root: ".", adapter: "agent-skills", writable: false } } },
-      },
-    });
-
-    expect((await index("--full")).stderr).toContain("adapter skipped");
+  test("a listing that succeeds with nothing in it removes the bundle's rows", async () => {
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    expect(rowsOf("notes").length).toBeGreaterThan(0);
+    fs.rmSync(path.join(dir, "knowledge"), { recursive: true });
+    const { result, warnings } = await indexWarning();
+    expect(warnings).not.toContain("was not scanned completely");
+    expect(result.scanComplete).toBe(true);
+    expect(rowsOf("notes")).toEqual([]);
   }, 60_000);
 });

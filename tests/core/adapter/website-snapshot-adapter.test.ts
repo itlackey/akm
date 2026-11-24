@@ -24,9 +24,11 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { websiteSnapshotAdapter } from "../../../src/core/adapter/adapters/website-snapshot-adapter";
-import type { BundleComponent, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
+import { buildFileContext } from "../../../src/core/adapter/directory/file-context";
+import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
+import type { FileValidateContext } from "../../../src/core/adapter/validate-context";
 import { presentationFor } from "../../../src/core/type-presentation";
-import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/website-snapshot");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/website-snapshot");
@@ -36,19 +38,16 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(): BundleComponent {
+function bundle(): Bundle {
   // Read-only snapshot (Mode A): writable false.
-  return { id: BUNDLE_ID, adapter: "website-snapshot", root: FIXTURE_ROOT, writable: false };
+  return { id: BUNDLE_ID, root: FIXTURE_ROOT };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {
-  return websiteSnapshotAdapter.recognize(
-    component(),
-    buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)),
-  );
+  return websiteSnapshotAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
-const ctx: ValidateContext = {
+const ctx: FileValidateContext = {
   readFile: async (p) => {
     try {
       return fs.readFileSync(path.join(FIXTURE_ROOT, p), "utf8");
@@ -83,7 +82,6 @@ describe("website-snapshot adapter — recognition golden (gated re-type)", () =
       expect(doc, `${relPath} must be recognized`).not.toBeNull();
       if (!doc) throw new Error("unreachable");
       expect(doc.adapterId).toBe(expected.adapterId as string);
-      expect(doc.component).toBe(expected.component as string);
       expect(doc.type).toBe(expected.type as string);
       expect(doc.conceptId).toBe(expected.conceptId as string);
       expect(doc.ref).toBe(expected.ref as string);
@@ -120,8 +118,9 @@ describe("website-snapshot adapter — lint golden (base checks only; read-only 
   test("every snapshot page validates clean ([])", async () => {
     for (const entry of Object.values(perType)) {
       const raw = fs.readFileSync(path.join(FIXTURE_ROOT, entry.relPath), "utf8");
-      const diags = await websiteSnapshotAdapter.validate(
-        component(),
+      const diags = await checkChanges(
+        websiteSnapshotAdapter,
+        bundle(),
         [{ path: entry.relPath, op: "update", after: raw }],
         ctx,
       );

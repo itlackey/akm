@@ -107,9 +107,9 @@ written are in [Core Principles](akm-core-principles.md).
 
 ## Asset Types
 
-The `akm` adapter's fourteen built-in asset types (`skill`, `command`,
+The `akm` adapter's fifteen built-in asset types (`skill`, `command`,
 `agent`, `knowledge`, `instruction`, `workflow`, `script`, `memory`,
-`lesson`, `fact`, `env`, `secret`, `task`, `session`) each map to a
+`lesson`, `fact`, `rule`, `env`, `secret`, `task`, `session`) each map to a
 canonical source directory through `src/core/asset/asset-placement.ts`'s
 `PLACEMENT_SPECS` map. See
 [Bundle Types](../reference/bundle-types.md) for the full table.
@@ -146,8 +146,14 @@ interface SourceProvider {
 ```
 
 Providers do **not** implement `search`, `show`, `canShow`, or any read method.
-The indexer walks `path()`, classifies files, and answers all queries from the
-local FTS5 index.
+The indexer lists each bundle through its adapter (for a directory bundle, a
+walk of `path()`), and answers all queries from the local FTS5 index.
+
+A bundle can also be kept by a secret manager rather than a directory: its
+config entry carries `location` (a keyring's or a vault's name) in place of
+`path`, `git`, `website` or `npm`, and names the adapter that reads it. It has
+no provider; its adapter lists, reads and writes it. See
+[Adapters](adapters.md#adapters-of-a-secret-manager).
 
 File semantics are owned by the selected bundle adapter (see
 [Adapters](adapters.md)). OKF is the first-class least-common-denominator for
@@ -350,17 +356,19 @@ kind for display (`targetKind: target.source.kind`) is not branching and stays
 in the command layer.
 
 ```ts
-writeAssetToSource(source, config, ref, content)
-deleteAssetFromSource(source, config, ref)
+writeAssets(target, { purpose, message? }, (w) => w.create(asset) | w.update(conceptId, content) | w.delete(conceptId))
+                                                     // src/core/assets/write.ts: under the lease; with `message`, committed at the boundary
 ```
 
 The flow:
 
-1. Refuse if the source is not `writable`, is not a `filesystem` or `git`
-   source, or belongs to a bundle whose adapter is not on the write allowlist
-   (see [Adapters](adapters.md#write-allowlists)).
-2. Atomic filesystem write to `path.join(source.path, …)` with no commit. A git
-   target records the path for the boundary commit.
+1. Refuse if the source is not `writable`, or its bundle's adapter does not
+   write the asset's type (see [Adapters](adapters.md#write)).
+2. The bundle's adapter makes the write (`create`, `update`, `delete` or
+   `retire`): a directory adapter places the asset and writes it atomically
+   inside the bundle's root, with no commit. The files it changed are recorded
+   for the boundary commit of a git target, and the asset's index row is
+   refreshed or dropped.
 
 Git-backed targets are committed in a single batch at the operation boundary via
 `commitWriteTargetBoundary(target, message, { push })`, which delegates to
@@ -373,7 +381,7 @@ not `false`. `options.pushOnCommit` is not supported: config load reports it
 (`src/core/config/schema/sources-bundles.ts`).
 
 `writable` is a config flag, not an interface concern. Defaults: `true` for
-`filesystem`, `false` for everything else. `writable: true` on `website` or
+`filesystem` and `location`, `false` for everything else. `writable: true` on `website` or
 `npm` is rejected at config load — `sync()` would clobber edits on the next
 refresh.
 
@@ -740,7 +748,8 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/cli/` | citty composition helpers |
 | `src/core/asset/asset-placement.ts` | asset type registry and canonical source directories (`PLACEMENT_SPECS`) |
 | `src/core/asset/asset-ref.ts` | asset ref parsing and normalization (`parseBundleRef`) |
-| `src/core/adapter/` | the `BundleAdapter` contract and the built-in adapters (see [Adapters](adapters.md)) |
+| `src/core/adapter/` | the `BundleAdapter` contract, the two bases (`DirectoryAdapterBase`, `SecretManagerAdapterBase`), the registry and the built-in adapters (see [Adapters](adapters.md)) |
+| `src/core/assets/` | the asset facade: the only way code outside `src/core/adapter/` finds, lists, types, validates, reads and writes assets, whichever adapter holds them (`read.ts`, `type.ts`, `write.ts`, `validate.ts`, `gate.ts`). `scripts/lint-asset-io.ts` fails `bun run lint` on asset I/O anywhere else (see [Adapters](adapters.md#the-facade-srccoreassets)) |
 | `src/core/config/config.ts` | config loading, validation, env resolution; the default connection and harness |
 | `src/core/config/credentials.ts` | `credentials.json` and the dispatch-time resolution of a connection's key (`$VAR`, else the stored entry) |
 | `src/core/config/convert-engines.ts` | the one conversion of the older `engines` / `defaults` form to `connections` / `harnesses`, called by the loader and by `akm migrate apply` |
@@ -760,7 +769,7 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/sources/resolve.ts` | filesystem path resolution for refs |
 | `src/storage/repositories/` | SQL for `index.db`, `state.db`, and `logs.db` (entries, FTS, proposals, task history, workflow runs, …) |
 | `src/indexer/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |
-| `src/indexer/walk/` | walker, matchers, path/file/index context — the walk phase |
+| `src/core/adapter/directory/` | the directory adapters' walk: walker, matchers, file context, place rules; `scripts/lint-asset-io.ts` flags an import of it from outside the adapter layer and the facade |
 | `src/indexer/db/` | `llm-cache` — the persistence phase (entries/embeddings persistence lives in `src/storage/repositories/`) |
 | `src/indexer/search/` | `db-search`, `fts-query`, ranking, search-fields, search-source, enrichers — the search phase |
 | `src/indexer/passes/` | memory-inference, dir-staleness, metadata — LLM/metadata passes |

@@ -42,6 +42,8 @@ import { rememberCommand } from "../../../src/commands/read/remember-cli";
 import { importKnowledgeCommand } from "../../../src/commands/sources/stash-cli";
 import { parseBundleRef } from "../../../src/core/asset/asset-ref";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import { type AssetWriter, writeAssets } from "../../../src/core/assets/write";
+import { writeTargetAt } from "../../../src/core/bundle-at-dir";
 import { runCliCapture } from "../../_helpers/cli";
 import { durableItemRef } from "../../_helpers/durable-ref";
 import {
@@ -705,13 +707,24 @@ describe("writeSupersededEdge in memory-belief", () => {
   async function loadWriteSupersededEdge(): Promise<(filePath: string, supersededByRef: string) => void> {
     const mod = (await import("../../../src/commands/improve/memory/memory-belief")) as Record<string, unknown>;
     expect(typeof mod.writeSupersededEdge).toBe("function");
-    return mod.writeSupersededEdge as (filePath: string, supersededByRef: string) => void;
+    const edge = mod.writeSupersededEdge as (w: AssetWriter, conceptId: string, supersededByRef: string) => void;
+    // The memory at `<dir>/memories/<name>.md` is the asset `memories/<name>` of the bundle at `<dir>`.
+    return (filePath, supersededByRef) =>
+      writeAssets(writeTargetAt(path.dirname(path.dirname(filePath))), { purpose: "test" }, (w) =>
+        edge(w, `memories/${path.basename(filePath, ".md")}`, supersededByRef),
+      );
+  }
+
+  /** The file of a memory named `old` in a fresh bundle directory. */
+  function oldMemory(dir: string): string {
+    fs.mkdirSync(path.join(dir, "memories"), { recursive: true });
+    return path.join(dir, "memories", "old.md");
   }
 
   test("sets beliefState: superseded + supersededBy while preserving other keys and the body", async () => {
     const writeSupersededEdge = await loadWriteSupersededEdge();
     const dir = makeDir("akm-superseded-edge");
-    const filePath = path.join(dir, "old.md");
+    const filePath = oldMemory(dir);
     fs.writeFileSync(
       filePath,
       [
@@ -741,7 +754,7 @@ describe("writeSupersededEdge in memory-belief", () => {
   test("idempotent: a repeat call with the same ref leaves the file byte-identical", async () => {
     const writeSupersededEdge = await loadWriteSupersededEdge();
     const dir = makeDir("akm-superseded-edge");
-    const filePath = path.join(dir, "old.md");
+    const filePath = oldMemory(dir);
     fs.writeFileSync(filePath, "Plain incumbent body.\n", "utf8");
 
     writeSupersededEdge(filePath, "stash//memories/new-note");
@@ -753,7 +766,7 @@ describe("writeSupersededEdge in memory-belief", () => {
   test("sorted-set-appends refs across multiple corrections", async () => {
     const writeSupersededEdge = await loadWriteSupersededEdge();
     const dir = makeDir("akm-superseded-edge");
-    const filePath = path.join(dir, "old.md");
+    const filePath = oldMemory(dir);
     fs.writeFileSync(filePath, "Twice-corrected body.\n", "utf8");
 
     writeSupersededEdge(filePath, "stash//memories/zeta-fix");
@@ -770,7 +783,7 @@ describe("writeSupersededEdge in memory-belief", () => {
     // to a list, mirroring mergeXrefsIntoContent.
     const writeSupersededEdge = await loadWriteSupersededEdge();
     const dir = makeDir("akm-superseded-edge");
-    const filePath = path.join(dir, "old.md");
+    const filePath = oldMemory(dir);
     fs.writeFileSync(
       filePath,
       ["---", "supersededBy: stash//memories/first-fix", "beliefState: superseded", "---", "", "Body.", ""].join("\n"),
@@ -790,7 +803,7 @@ describe("writeSupersededEdge in memory-belief", () => {
     const writeSupersededEdge = await loadWriteSupersededEdge();
     for (const state of ["contradicted", "archived"] as const) {
       const dir = makeDir("akm-superseded-edge-state");
-      const filePath = path.join(dir, "old.md");
+      const filePath = oldMemory(dir);
       fs.writeFileSync(
         filePath,
         [

@@ -2,8 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { resolveSecretPath } from "../../core/env-secret-ref";
-import { readValue } from "../../core/secret-value";
+import { readSecret } from "../../core/env-secret-ref";
 import type { SecretResolver } from "../provider";
 
 /**
@@ -23,8 +22,7 @@ import type { SecretResolver } from "../provider";
  */
 export function resolveSecretFromStore(ref: string): string | null {
   try {
-    const { absPath } = resolveSecretPath(ref);
-    return readValue(absPath) || null;
+    return readSecret(ref).value || null;
   } catch {
     return null;
   }

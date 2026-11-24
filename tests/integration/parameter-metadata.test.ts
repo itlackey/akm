@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { recognizeStashEntries } from "../../src/core/adapter/directory/recognize-stash-entries";
 import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { extractCommandParameters } from "../../src/indexer/passes/metadata";
-import { recognizeStashEntries } from "../../src/indexer/scan/drain-dir";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getAllEntries } from "../../src/storage/repositories/index-entries-repository";

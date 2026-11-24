@@ -34,7 +34,7 @@ beforeEach(async () => {
   writeMarkdownFiles(contentDir, 2, "seed");
   saveConfig({
     semanticSearchMode: "off",
-    bundles: { [ID]: { npm: ID, components: { main: { root: ".", adapter: "akm", writable: false } } } },
+    bundles: { [ID]: { npm: ID, adapter: "akm", writable: false } },
   });
   seedLockEntries([
     {

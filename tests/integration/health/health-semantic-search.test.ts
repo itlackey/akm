@@ -36,7 +36,7 @@ async function indexAndCheck(
   writeSandboxConfig({
     ...config,
     defaultBundle: "fixture",
-    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+    bundles: { fixture: { path: storage.stashDir, adapter: "akm" } },
   });
   for (const name of ["alpha", "beta"]) {
     const file = path.join(storage.stashDir, "knowledge", `${name}.md`);

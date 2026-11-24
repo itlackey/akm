@@ -119,7 +119,7 @@ describe("workflow frontend pass", () => {
 });
 
 describe("akm lint sweep routing", () => {
-  test("the workflow frontend runs exactly once per workflow file", async () => {
+  test("the workflow frontend runs once per workflow file by the sweep and once by the adapter's validate", async () => {
     const stashDir = makeWorkflowStash({
       "clean.md": WARNS,
       "broken.md": ERRORS,
@@ -129,7 +129,8 @@ describe("akm lint sweep routing", () => {
 
     await akmLint({ dir: stashDir, typeFilter: "workflows" });
 
-    expect(parseSpy.mock.calls).toHaveLength(3);
+    // Once by the sweep and once by the akm adapter's own `validate`, which `akm lint` now runs as well.
+    expect(parseSpy.mock.calls).toHaveLength(2 * 3);
     parseSpy.mockRestore();
   });
 

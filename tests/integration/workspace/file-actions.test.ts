@@ -11,11 +11,11 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { resetConfigCache } from "../../../src/core/config/config";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
-import { assets, documents } from "../../../src/workspace";
+import { assets, documents, indexFiles } from "../../../src/workspace";
 import type { FileActions } from "../../../src/workspace/file-actions";
 import { makeConfig } from "../../_helpers/factories";
+import { indexWrittenAssets } from "../../_helpers/index-written-files";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -38,9 +38,9 @@ beforeEach(() => {
     ...makeConfig(storage.stashDir),
     semanticSearchMode: "off",
     bundles: {
-      stash: { path: storage.stashDir, writable: true, components: { main: { root: ".", adapter: "akm" } } },
-      locked: { path: locked, writable: false, components: { main: { root: ".", adapter: "akm" } } },
-      claude: { path: claude, writable: true, components: { main: { root: ".", adapter: "claude" } } },
+      stash: { path: storage.stashDir, writable: true, adapter: "akm" },
+      locked: { path: locked, writable: false, adapter: "akm" },
+      claude: { path: claude, writable: true, adapter: "claude" },
     },
   });
   resetConfigCache();
@@ -227,6 +227,10 @@ describe("a bundle akm does not write", () => {
 
     const found = (await assets.search({ q: "zirconmarker" })) as { hits: Array<{ ref?: string; path?: string }> };
     expect(found.hits.length).toBeGreaterThan(0);
+  });
+
+  test("indexFiles fails open: an unknown bundle gives false, not a rejection", async () => {
+    expect(await indexFiles("no-such-bundle", [path.join(claude, "x.md")])).toBe(false);
   });
 });
 

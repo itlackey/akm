@@ -13,18 +13,17 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { listKeys as listVaultKeys } from "../commands/env/env";
 import { refForFile } from "../core/asset/asset-placement";
 import { parseFrontmatter, readFrontmatterDate } from "../core/asset/frontmatter";
 import { displayRef } from "../core/asset/resolve-ref";
-import { asNonEmptyString, hasErrnoCode } from "../core/common";
+import { findAsset } from "../core/assets/read";
+import { asNonEmptyString, hasErrnoCode, scanEnvKeyNames } from "../core/common";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import type { IndexDocument } from "../indexer/passes/metadata";
 import { extractCommentMetadata } from "../indexer/passes/metadata";
-import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
-import { registerRenderer } from "../indexer/walk/file-context";
 import type { ShowResponse, SourceSearchHit } from "../sources/types";
 import { buildWorkflowAction, workflowMdRenderer } from "../workflows/renderer";
+import { type AssetRenderer, type RenderContext, registerRenderer } from "./renderer-registry";
 
 // ── ExecHints types ──────────────────────────────────────────────────────────
 
@@ -77,6 +76,7 @@ export function detectExecHints(filePath: string, ref: string): ExecHints {
   const dir = path.dirname(filePath);
   try {
     for (const [file, cmd] of Object.entries(SETUP_SIGNALS)) {
+      // asset-io: exec the files beside a script that say how to set it up to run
       if (fs.existsSync(path.join(dir, file))) {
         hints.setup = cmd;
         hints.cwd = dir;
@@ -359,6 +359,7 @@ const scriptSourceRenderer: AssetRenderer = {
   },
 
   enrichSearchHit(hit: SourceSearchHit, _stashDir: string): void {
+    if (hit.path === undefined) return;
     const ext = path.extname(hit.path).toLowerCase();
     if (!SCRIPT_EXTENSIONS.has(ext)) return;
 
@@ -383,7 +384,7 @@ const envFileRenderer: AssetRenderer = {
 
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
-    const { keys } = listVaultKeys(ctx.absPath);
+    const keys = scanEnvKeyNames(ctx.content());
     return {
       type: "env",
       name,
@@ -395,7 +396,9 @@ const envFileRenderer: AssetRenderer = {
   },
 
   enrichSearchHit(hit: SourceSearchHit, _stashDir: string): void {
-    const { keys } = listVaultKeys(hit.path);
+    if (hit.path === undefined) return;
+    const asset = findAsset(hit.itemRef ?? hit.ref);
+    const keys = asset ? scanEnvKeyNames(asset.entry.content()) : [];
     if (keys.length > 0) hit.keys = keys;
   },
 };

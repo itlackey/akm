@@ -27,8 +27,9 @@
  * a generating stage routed to a person is left for that person.
  */
 
-import fs from "node:fs";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { addressOf } from "../../core/assets/write";
+import { materialiseBundleDir } from "../../core/bundle-at-dir";
 import type { AkmConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { appendEvent, type EventsContext } from "../../core/events";
@@ -36,7 +37,6 @@ import { escapeJsonStringControls, stripCodeFences, stripThinkBlocks } from "../
 import { info, warn } from "../../core/warn";
 import { type Notice, noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { resolveWriteAddress } from "../../indexer/lookup/adapter-concept-owner";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
@@ -50,6 +50,7 @@ import {
   wordShingles,
 } from "../improve/consolidate/coverage";
 import { resolveImproveExecution } from "../improve/execution";
+import { assetInStash } from "../improve/indexed-asset";
 import { errMessage } from "../improve/stage";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
 import { isRetireProposal, PAIR_PASS_GATE, type ProposalDecider, STALE_TARGET_GATE_REASON } from "./proposal-types";
@@ -192,7 +193,7 @@ async function acceptProposal(
         ...(opts.target ? { target: opts.target } : {}),
         gateDecision,
       });
-      readFreshProposalTarget(proposal, preflight.assetPath, preflight.stampedContent);
+      readFreshProposalTarget(proposal, preflight.target.source.name, preflight.ref, preflight.stampedContent);
     }
     return "promoted";
   } catch (err) {
@@ -584,10 +585,11 @@ function promotionNeighbours(
 ): ReturnType<typeof nearestKnowledgeNotes> {
   if (!isPromotionProposal(proposal) || proposal.promotionSource === undefined) return [];
   try {
-    const memoryPath = resolveWriteAddress(stashDir, proposal.promotionSource).path;
+    const memoryPath = addressOf(materialiseBundleDir(stashDir), proposal.promotionSource).file;
     if (!memoryPath) return [];
+    const source = assetInStash(stashDir, proposal.promotionSource)?.entry.content();
+    if (source === undefined) return [];
     const existing = nearestKnowledgeNotes(memoryPath);
-    const source = fs.readFileSync(memoryPath, "utf8");
     const shingles = wordShingles(source);
     // Promotions accepted earlier in this drain are not in the index yet; the
     // ones sharing text with this memory join its neighbours (#1085).
@@ -614,8 +616,7 @@ function promotionNeighbours(
 /** The live asset a proposal would overwrite, if any. */
 function readLiveAssetContent(stashDir: string, ref: string): string | undefined {
   try {
-    const assetPath = resolveWriteAddress(stashDir, ref).path;
-    return assetPath && fs.existsSync(assetPath) ? fs.readFileSync(assetPath, "utf8") : undefined;
+    return assetInStash(stashDir, ref)?.entry.content();
   } catch {
     return undefined;
   }

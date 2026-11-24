@@ -38,6 +38,7 @@ import {
   listProposals,
   recordGateDecision,
 } from "../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { NotFoundError, UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
 import { openStateDatabase } from "../../../src/core/state-db";
@@ -108,7 +109,7 @@ async function rejectIt(proposal: Proposal, reason = REJECTION): Promise<Proposa
 function ledgerRow(ref: string, source: string) {
   const db = openStateDatabase();
   try {
-    return getImproveLedgerRow(db, storage.stashDir, ref, source);
+    return getImproveLedgerRow(db, stateBundleId(storage.stashDir), ref, source);
   } finally {
     db.close();
   }
@@ -208,8 +209,8 @@ describe("akm proposal reopen — a rejected retire proposal", () => {
     expect(accepted.proposal.status).toBe("accepted");
     expect(fs.existsSync(retiredPath)).toBe(false);
     const archived = getProposal(stash(), proposal.id);
-    expect(archived.retiredArchive?.dirs).toHaveLength(1);
-    expect(fs.existsSync(path.join(stash(), archived.retiredArchive?.dirs[0] ?? "missing"))).toBe(true);
+    expect(archived.retiredArchive?.retired).toHaveLength(1);
+    expect(fs.existsSync(path.join(stash(), archived.retiredArchive?.retired[0]?.handle ?? "missing"))).toBe(true);
     expect(archived.reviewHistory).toHaveLength(1); // accepting does not erase the reopen
     expect(ledgerRow(proposal.ref, "consolidate-pair")?.outcome).toBe("accepted");
 
@@ -453,11 +454,11 @@ describe("akm proposal reopen — refusals", () => {
     const db = openStateDatabase();
     try {
       db.prepare(
-        `INSERT INTO proposals (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+        `INSERT INTO proposals (id, bundle_id, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
          VALUES (?, ?, ?, 'rejected', 'reflect', ?, ?, ?, NULL, ?)`,
       ).run(
         "legacy-rejected",
-        stash(),
+        stateBundleId(stash()),
         "stash//lessons/legacy",
         "2026-01-01T00:00:00.000Z",
         "2026-01-01T00:00:00.000Z",

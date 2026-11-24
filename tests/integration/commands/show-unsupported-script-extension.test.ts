@@ -21,7 +21,8 @@ beforeEach(() => {
     bundles: {
       primary: {
         path: storage.stashDir,
-        components: { main: { root: ".", adapter: "akm", writable: true } },
+        adapter: "akm",
+        writable: true,
       },
     },
   });
@@ -174,11 +175,13 @@ describe("show unsupported scripts and first-owner arbitration", () => {
       bundles: {
         early: {
           path: early,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
+          adapter: "okf",
+          writable: true,
         },
         later: {
           path: later,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
+          adapter: "akm",
+          writable: true,
         },
       },
     });

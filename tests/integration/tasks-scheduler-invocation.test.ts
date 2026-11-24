@@ -94,6 +94,34 @@ describe("scheduled task invocation", () => {
     expect(parseScheduledInvocationArgv(["/opt/akm", ...tail, "--env", "-env/c"])).toBeUndefined();
   });
 
+  test("builds and recognizes a task row by its ref, and still reads the id form written before 0.11 (A11)", () => {
+    const argv = buildScheduledInvocation(
+      ["/opt/akm"],
+      ["task", "run", "team//tasks/ping", "--scheduled", "--scope", "a"],
+    );
+    expect(argv).toEqual(["/opt/akm", "task", "run", "team//tasks/ping", "--scheduled", "--scope", "a"]);
+    expect(parseScheduledInvocationArgv(argv)).toEqual({
+      binding: ["/opt/akm"],
+      invocation: ["task", "run", "team//tasks/ping", "--scheduled", "--scope", "a"],
+      target: "team",
+    });
+    expect(
+      parseScheduledInvocationArgv(["/opt/akm", "task", "run", "team//sub/deep/ping", "--scheduled"])?.target,
+    ).toBe("team");
+    // The form before 0.11: the id, then the bundle it is in.
+    expect(
+      parseScheduledInvocationArgv(["/opt/akm", "task", "run", "ping", "--bundle", "team", "--scheduled"]),
+    ).toEqual({
+      binding: ["/opt/akm"],
+      invocation: ["task", "run", "ping", "--bundle", "team", "--scheduled"],
+      target: "team",
+    });
+    // A ref that is not canonical, names a fragment or an invalid concept id is no row.
+    for (const subject of ["team//tasks/ping#x", "team//tasks/bad.yml", "team//", "//tasks/ping", "team///ping"]) {
+      expect(parseScheduledInvocationArgv(["/opt/akm", "task", "run", subject, "--scheduled"])).toBeUndefined();
+    }
+  });
+
   test("builds and recognizes the public qualified workflow invocation", () => {
     const argv = buildScheduledInvocation(["/opt/akm"], ["workflow", "run", "team//workflows/release"]);
     expect(argv).toEqual(["/opt/akm", "workflow", "run", "team//workflows/release"]);

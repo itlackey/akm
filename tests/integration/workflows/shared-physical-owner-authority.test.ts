@@ -65,8 +65,8 @@ function configure(early: Fixture, later: Fixture): void {
     semanticSearchMode: "off",
     defaultBundle: "early",
     bundles: {
-      early: { path: early.root, components: { main: { root: ".", adapter: early.adapter, writable: true } } },
-      later: { path: later.root, components: { main: { root: ".", adapter: later.adapter, writable: true } } },
+      early: { path: early.root, adapter: early.adapter, writable: true },
+      later: { path: later.root, adapter: later.adapter, writable: true },
     },
   });
   resetConfigCache();
@@ -134,7 +134,7 @@ describe("shared adapter physical-owner authority", () => {
     "complete",
     "missing",
     "stale",
-  ] as const)("loose AKM smart-Markdown preserves the first owner with a %s row; show serves its file", async (state) => {
+  ] as const)("loose AKM Markdown preserves the first owner with a %s row; show serves its file", async (state) => {
     const early = fixture(`early-loose-command-${state}`, "akm");
     const later = fixture(`later-loose-command-${state}`, "akm-workflow");
     const earlyPath = write(early.root, "same.md", "Use $ARGUMENTS exactly.\n");
@@ -164,7 +164,7 @@ describe("shared adapter physical-owner authority", () => {
 
     const resolution = await lookupBundleRefWithResolution(parseBundleRef("early//collision"));
     expect(resolution.entry).toBeNull();
-    expect(resolution.owner?.path).toBe(workflowPath);
+    expect(resolution.asset?.entry.file).toBe(workflowPath);
   });
 
   test.each([
@@ -193,7 +193,7 @@ describe("shared adapter physical-owner authority", () => {
     await akmIndex({ stashDir: early.root, full: true });
     mutateEntry("early//skills/once", "missing", "");
 
-    const candidateSpy = spyOn(opencodeAdapter, "readCandidates");
+    const candidateSpy = spyOn(opencodeAdapter as unknown as { spellings(): unknown }, "spellings");
     try {
       expect((await showLocal({ ref: "skills/once" })).path).toBe(earlyPath);
       expect(candidateSpy).toHaveBeenCalledTimes(1);
@@ -223,6 +223,7 @@ describe("shared adapter physical-owner authority", () => {
     const stateBefore = stateDbSnapshot();
     let dispatches = 0;
 
+    // The loose file is typed by its path and the index records it: its bytes are never read to tell it from a workflow.
     const readSpy = denyAssetRead(earlyPath);
     try {
       const operation =
@@ -238,7 +239,7 @@ describe("shared adapter physical-owner authority", () => {
                   return { ok: true as const, text: "unexpected" };
                 },
               });
-      await expect(operation).rejects.toThrow(/adapter "akm".*does not support native workflow execution/i);
+      await expect(operation).rejects.toThrow(/not a native workflow/i);
     } finally {
       readSpy.mockRestore();
     }
@@ -303,7 +304,7 @@ describe("shared adapter physical-owner authority", () => {
     expect((await loadWorkflowAsset("skills/pkg/nested")).path).toBe(laterPath);
   });
 
-  test("generic document collisions reject runtime without reads, state, runs, or dispatch", async () => {
+  test("generic document collisions reject runtime without reads, state, runs, or dispatch: the first spelling is no workflow", async () => {
     const early = fixture("early-generic-collision", "generic-files");
     const later = fixture("later-generic-collision", "akm-workflow");
     const markdown = write(early.root, "collision.md", "# markdown owner\n");
@@ -319,8 +320,8 @@ describe("shared adapter physical-owner authority", () => {
     const markdownSpy = denyAssetRead(markdown);
     const textSpy = denyAssetRead(text);
     try {
-      await expect(loadWorkflowAsset("collision")).rejects.toThrow(/multiple physical owners/i);
-      await expect(startWorkflowRun("collision")).rejects.toThrow(/multiple physical owners/i);
+      await expect(loadWorkflowAsset("collision")).rejects.toThrow(/not a native workflow/i);
+      await expect(startWorkflowRun("collision")).rejects.toThrow(/not a native workflow/i);
       await expect(
         runWorkflowSteps({
           target: "collision",
@@ -330,7 +331,7 @@ describe("shared adapter physical-owner authority", () => {
             return { ok: true as const, text: "unexpected" };
           },
         }),
-      ).rejects.toThrow(/multiple physical owners/i);
+      ).rejects.toThrow(/not a native workflow/i);
     } finally {
       markdownSpy.mockRestore();
       textSpy.mockRestore();
@@ -403,12 +404,10 @@ describe("shared adapter physical-owner authority", () => {
 
   test.each([
     ["akm-task", "near", "near.yaml", "schedule: '* * * * *'\nprompt: nope\n"],
-    ["dotenv", "env/prod", "env/prod.env", "TOKEN=hidden\n"],
   ] as const)("path-level abstention in %s falls through consistently", async (adapter, conceptId, relativePath, content) => {
     const early = fixture(`early-abstain-${adapter}`, adapter);
     const later = fixture(`later-abstain-${adapter}`, "akm-workflow");
     write(early.root, relativePath, content);
-    if (adapter === "dotenv") write(early.root, "env/prod.sensitive", "");
     const laterPath = write(later.root, `${conceptId}.md`, getWorkflowTemplate());
     configure(early, later);
     await akmIndex({ stashDir: early.root, full: true });
@@ -416,6 +415,18 @@ describe("shared adapter physical-owner authority", () => {
     expect(await lookupBundleRef(parseBundleRef(conceptId))).toMatchObject({ filePath: laterPath });
     expect((await showLocal({ ref: conceptId })).path).toBe(laterPath);
     expect((await loadWorkflowAsset(conceptId)).path).toBe(laterPath);
+  });
+
+  test("an env file keeps its ref, a leftover `.sensitive` marker beside it ignored: a later bundle's asset does not take it over", async () => {
+    const early = fixture("early-sensitive-dotenv", "dotenv");
+    const later = fixture("later-sensitive-dotenv", "akm-workflow");
+    const envPath = write(early.root, "env/prod.env", "TOKEN=hidden\n");
+    write(early.root, "env/prod.sensitive", "");
+    write(later.root, "env/prod.md", getWorkflowTemplate());
+    configure(early, later);
+    await akmIndex({ stashDir: early.root, full: true });
+
+    expect(await lookupBundleRef(parseBundleRef("env/prod"))).toMatchObject({ filePath: envPath });
   });
 
   test.each([
@@ -435,7 +446,9 @@ describe("shared adapter physical-owner authority", () => {
     const stateBefore = stateDbSnapshot();
     let dispatches = 0;
 
-    const readSpy = denyAssetRead(earlyPath);
+    // An asset with a row is typed from the index and never read. One with no row is indexed first: the read that
+    // describes it for the index is the only one.
+    const readSpy = state === "missing" ? undefined : denyAssetRead(earlyPath);
     try {
       const operation =
         surface === "load"
@@ -450,9 +463,9 @@ describe("shared adapter physical-owner authority", () => {
                   return { ok: true as const, text: "unexpected" };
                 },
               });
-      await expect(operation).rejects.toThrow(/adapter "opencode".*does not support native workflow execution/i);
+      await expect(operation).rejects.toThrow(/not a native workflow/i);
     } finally {
-      readSpy.mockRestore();
+      readSpy?.mockRestore();
     }
     expect(dispatches).toBe(0);
     expect(stateDbSnapshot()).toEqual(stateBefore);

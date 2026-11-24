@@ -5,20 +5,24 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+// asset-io: deprecated
+import { adapterWrites, bundleAdapterId, refuseByAdapter } from "../../core/assets/gate";
+import { lookupAsset } from "../../core/assets/read";
+import { assetType } from "../../core/assets/type";
 import { loadConfig } from "../../core/config/config";
 import { COMPOSITION_INVALID_MULTI_JOB_HINT, NotFoundError, UsageError } from "../../core/errors";
 import { canonicalizeWorkflowName } from "../../core/recognition-util";
-import { resolveConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
+import { sourceOfBundle } from "../../indexer/installations";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { compileWorkflowSource } from "../compile";
 import type { WorkflowPlan } from "../plan";
+import { isUsableWorkflowSource, isWorkflowSource } from "../source-files";
 
 /** A resolved workflow asset, compiled from either authored format into its plan. */
 export type WorkflowAsset = {
   ref: string;
   path: string;
-  adapterId?: string;
   /** Run-level display title: the asset's canonical name (a step is its id; there are no authored titles). */
   title: string;
   /** The compiled, not-yet-frozen plan. */
@@ -53,7 +57,6 @@ export async function canonicalizeWorkflowRefInput(ref: string): Promise<string>
 type ResolvedWorkflowAsset = {
   assetPath: string;
   sourcePath: string;
-  adapterId: string;
   canonicalName: string;
   fullRef: string;
 };
@@ -63,8 +66,9 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   const bundleRef = parseWorkflowRefInput(ref);
 
   const sources = resolveSourceEntries(undefined, loadConfig());
-  const match = resolveConceptOwner(bundleRef, sources);
-  if (!match) {
+  // A ref the user typed (`akm workflow run|plan <ref>`): an outdated spelling warns.
+  const asset = lookupAsset(makeBundleRef(bundleRef.bundle, bundleRef.conceptId, bundleRef.fragment));
+  if (!asset) {
     if (bundleRef.bundle && resolveSourcesForOrigin(bundleRef.bundle, sources).length === 0) {
       throw new UsageError(
         `Bundle "${bundleRef.bundle}" was not found among configured sources.`,
@@ -73,20 +77,35 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
     }
     throw new NotFoundError(`Workflow not found for ref: ${ref}`);
   }
-  const { owner, source, bundleId, adapterId } = match;
-  if ((adapterId !== "akm" && adapterId !== "akm-workflow") || !owner.workflowSource) {
+  const bundleId = asset.bundle;
+  const source = sourceOfBundle(sources, bundleId);
+  // A workflow runs when its bundle's adapter holds workflows as its own: a read-only adapter's workflow is a document.
+  const type = assetType(asset);
+  if (type !== "workflow" || !adapterWrites(bundleId, "workflow")) {
     throw new UsageError(
-      `Bundle "${bundleId}" uses adapter "${adapterId}", which does not support native workflow execution.`,
+      `${asset.ref} is not a native workflow: bundle "${bundleId}" holds it as a ${type} it does not run.`,
       "WORKFLOW_SOURCE_INVALID",
     );
+  }
+  // asset-io: deprecated workflows are not read through the adapters
+  const assetPath = asset.entry.file;
+  if (assetPath === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
+  // A symlink to a file of another extension, or a file no workflow folder owns (a loose `.md` with `type: workflow`),
+  // is no workflow source: it is not run.
+  if (
+    !isUsableWorkflowSource(source.path, assetPath) ||
+    // asset-io: deprecated
+    !isWorkflowSource(source.path, bundleAdapterId(source), assetPath)
+  ) {
+    refuseByAdapter(bundleId, "does not support native workflow execution", "WORKFLOW_SOURCE_INVALID");
   }
 
   // Canonicalize the stored ref: `workflows/foo.md` and `workflows/foo` resolve
   // to the same file, so they MUST share one run identity.
-  const canonicalName = canonicalizeWorkflowName(owner.workflowSource.canonicalName);
+  const canonicalName = canonicalizeWorkflowName(asset.conceptId);
   const fullRef = makeBundleRef(bundleId, canonicalName);
 
-  return { assetPath: owner.path, sourcePath: source.path, adapterId, canonicalName, fullRef };
+  return { assetPath, sourcePath: source.path, canonicalName, fullRef };
 }
 
 /**
@@ -124,8 +143,9 @@ export function resolveRunBundleRoot(ref: string): string {
  * Resolve a workflow ref and compile its authored bytes into a plan.
  */
 export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
-  const { assetPath, adapterId, canonicalName, fullRef } = resolveWorkflowAsset(ref);
+  const { assetPath, canonicalName, fullRef } = resolveWorkflowAsset(ref);
   const title = canonicalName.split("/").pop() || canonicalName;
+  // asset-io: deprecated
   const bytes = fs.readFileSync(assetPath);
   const result = compileWorkflowSource(bytes.toString("utf8"), {
     path: assetPath,
@@ -143,7 +163,6 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   return {
     ref: fullRef,
     path: assetPath,
-    adapterId,
     title,
     plan: result.plan,
     sourceHash: createHash("sha256").update(bytes).digest("hex"),

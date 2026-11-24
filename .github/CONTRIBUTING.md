@@ -90,10 +90,12 @@ what each target holds and where a new test goes.
 bun run lint:fix   # Biome with --write; read git diff afterwards
 bun run lint       # what CI runs: Biome, the secret-resolver and shipped-assets lints, the doc-example lint, the lockfile lint
 ```
-Every pull request runs the fast gate; a pull request into `main` is a release
-and runs the whole one (see the
+Every pull request runs the fast gate (`bun run check`: lint, types, the unit
+suite); the integration suite runs only at release, as a gate in the Release
+workflow (see the
 [release checklist](../docs/maintainers/release-checklist.md)). Push in batches
-that you have verified locally with `bun run check`: each push is a CI run.
+that you have verified locally with `bun run check` and the integration tests
+your change touches: each push is a CI run.
 
 
 ### Building
@@ -140,16 +142,17 @@ of pushing to find out.
 
 This repository has repeatedly seen CI failures caused by output-shape changes
 that updated implementation without updating end-to-end expectations. The fix is
-to treat `bun run check` as the pre-push gate and to use `bun run check:changed`
-while iterating on output-related changes.
+to treat `bun run check` plus the integration tests your change touches as the
+pre-push gate and to use `bun run check:changed` while iterating on
+output-related changes.
 
 ## Shipping a release — migration notes
 
 Maintainers must also follow the
-[release checklist](../docs/maintainers/release-checklist.md). The semantic,
-Docker and native-scheduler gates run on the commit that ships: on the release
-pull request for a stable release, and as the Release workflow's own jobs for a
-prerelease.
+[release checklist](../docs/maintainers/release-checklist.md). The integration
+suite and the semantic, Docker and native-scheduler gates run as the Release
+workflow's own jobs on the commit that ships: on the push to `main` for a stable
+release, and on the dispatch for a prerelease.
 
 `akm help migrate <version>` prints a per-release migration note to the
 terminal. Each note lives as its own markdown file under

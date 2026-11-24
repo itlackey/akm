@@ -19,8 +19,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
-import { recognizeMatch } from "../../core/adapter/recognize-match";
+import type { MatchResult } from "../../core/adapter/types";
 import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../../core/asset/asset-placement";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
@@ -32,7 +31,11 @@ import {
 } from "../../core/asset/markdown-fragments";
 import { displayDefaultBundle, displayRef, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
-import { asNonEmptyString, isContainedResolvedPath } from "../../core/common";
+import { buildFileContext } from "../../core/assets/files";
+import { adapterDeclaresTypes, bundleAdapterId } from "../../core/assets/gate";
+import { fileContextOf, findAsset } from "../../core/assets/read";
+import { presentationOf } from "../../core/assets/type";
+import { asNonEmptyString, isContainedResolvedPath, toPosix } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import {
   ConfigError,
@@ -43,7 +46,6 @@ import {
 } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
-import { presentationFor } from "../../core/type-presentation";
 import { warn, warnOnce } from "../../core/warn";
 import {
   lookupBundleRef,
@@ -59,19 +61,14 @@ import {
 import {
   buildEditHint,
   findSourceForPath,
+  findSourceForRow,
   isEditable,
   resolveSourceEntries,
   type SearchSource,
 } from "../../indexer/search/search-source";
 import { recentShowCount, recordShowUsage } from "../../indexer/usage/show-usage";
 import type { UsageEventSource } from "../../indexer/usage/usage-events";
-import {
-  buildFileContext,
-  buildRenderContext,
-  type FileContext,
-  getRenderer,
-  type MatchResult,
-} from "../../indexer/walk/file-context";
+import { buildRenderContext, getRenderer } from "../../output/renderer-registry";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import type { FragmentContextMode, ShowDetailLevel, ShowLinkGroup, ShowResponse } from "../../sources/types";
 import { withIndexDb } from "../../storage/repositories/index-db";
@@ -322,7 +319,7 @@ export async function showLocal(input: {
 
   const resolution = input.readOnly
     ? await lookupBundleRefWithResolutionReadonly(parsed)
-    : await lookupBundleRefWithResolution(parsed);
+    : await lookupBundleRefWithResolution(parsed, true);
   // The index is not needed to find the asset: an absent, locked, corrupt or
   // still-building index just means no row. Only a refusal that names a remedy
   // (a newer layout, a file akm may not read) surfaces.
@@ -340,13 +337,14 @@ export async function showLocal(input: {
     );
   }
 
-  if (!indexedEntry && !resolution.owner) {
+  if (!indexedEntry && !resolution.asset) {
     const unrecognized = findUnrecognizedScriptSource(parsed.conceptId, searchSources);
     if (unrecognized) {
       const displayExtension = unrecognized.extension || "no extension";
       warn(
         `Script ref "${makeBundleRef(parsed.bundle, parsed.conceptId)}" has extension "${displayExtension}", which is outside the recognized set used for indexing (${[...SCRIPT_EXTENSIONS].join(", ")}); showing it as plain text.`,
       );
+      // asset-io: user-input the file the ref names, which no adapter lists, shown as plain text
       const fileCtx = buildFileContext(unrecognized.sourceRoot, unrecognized.path);
       const renderer = await getRenderer("script-source");
       if (renderer) {
@@ -359,7 +357,7 @@ export async function showLocal(input: {
     }
   }
 
-  if (!indexedEntry || !assetPath) {
+  if (!indexedEntry || assetPath === undefined) {
     throw new NotFoundError(
       `Stash asset not found for ref: ${makeBundleRef(parsed.bundle, parsed.conceptId)}. ` +
         "Check the name with `akm search` or verify the asset exists in your stash.",
@@ -367,13 +365,15 @@ export async function showLocal(input: {
   }
   enforceSensitiveFragmentPolicy(indexedEntry.type, parsed, input.contextMode, input.contextFlag);
 
-  try {
-    fs.accessSync(assetPath, fs.constants.R_OK);
-  } catch (error) {
-    throwIndexedPathNotFound(error, input.ref);
-  }
+  // The entry is the one the bundle's adapter read for the ref; an index row with no entry behind it is stale.
+  const owned = resolution.asset;
+  if (!owned) throwIndexedPathNotFound(Object.assign(new Error("no entry"), { code: "ENOENT" }), input.ref);
 
-  const source = findSourceForPath(assetPath, allSources);
+  // A row no file holds (`""`) belongs to its bundle's source.
+  const source =
+    assetPath === ""
+      ? findSourceForRow({ filePath: "", bundleId: indexedEntry.bundleId }, allSources)
+      : findSourceForPath(assetPath, allSources);
   const sourceStashDir = source?.path ?? allSourceDirs[0];
 
   if (!sourceStashDir) {
@@ -383,7 +383,7 @@ export async function showLocal(input: {
     );
   }
 
-  const fileCtx = buildFileContext(sourceStashDir, assetPath);
+  const fileCtx = fileContextOf(owned, sourceStashDir);
   const presentedName = indexedEntry.name;
   const opaqueFragmentSelector = parsed.fragment?.startsWith("akm-fragment-") === true;
   // Friendly heading selectors retain the source-live exact response contract.
@@ -394,16 +394,25 @@ export async function showLocal(input: {
       ? readIndexedFragment(indexedEntry.itemRef, parsed.fragment, input.readOnly === true)
       : undefined;
   const indexedFragmentContent = opaqueFragmentSelector ? indexedFragment?.content : undefined;
-  const indexedRenderer = rendererForIndexedEntry(indexedEntry, fileCtx);
+  const presentation = presentationOf(owned, {
+    type: indexedEntry.type,
+    adapterId: indexedEntry.adapterId,
+    ownsPresentation: indexedEntry.document?.ownsPresentation === true,
+  });
   let response: ShowResponse;
   let markdown = false;
   try {
-    if (indexedRenderer === null) {
+    if (presentation === "projection") {
       markdown = path.extname(assetPath).toLowerCase() === ".md";
-      response = buildIndexedProjectionResponse(indexedEntry, assetPath, parsed.fragment, indexedFragmentContent);
+      response = buildIndexedProjectionResponse(
+        indexedEntry,
+        assetPath,
+        owned.entry.content(),
+        parsed.fragment,
+        indexedFragmentContent,
+      );
     } else {
-      const match =
-        typeof indexedRenderer === "string" ? indexedMatch(indexedEntry, indexedRenderer) : recognizeMatch(fileCtx);
+      const match = presentation;
       if (!match) {
         throw new UsageError(
           `Could not display asset "${makeBundleRef(parsed.bundle, parsed.conceptId)}" — unsupported file type or unrecognized layout`,
@@ -444,6 +453,17 @@ export async function showLocal(input: {
   }
   response.type = indexedEntry.type;
   response.name = indexedEntry.name;
+  // An asset no file holds has no path to print.
+  // asset-io: display no file holds the asset
+  if (owned.entry.file === undefined) {
+    delete response.path;
+    // Nor is its value "the file contents".
+    if (response.action)
+      response.action = response.action.replace(
+        "the file contents are the value and are never",
+        "its content is the value and is never",
+      );
+  }
   const defaultBundle = displayDefaultBundle(config.defaultBundle, source, indexedEntry.bundleId);
   const canonicalRef = displayRef(
     { conceptId: indexedEntry.conceptId, bundleId: indexedEntry.bundleId },
@@ -489,7 +509,7 @@ export async function showLocal(input: {
     );
   }
   if (response.type === "workflow") response.action = buildWorkflowAction(canonicalRef);
-  const editable = isEditable(assetPath, config, allSources);
+  const editable = assetPath === "" ? source?.writable === true : isEditable(assetPath, config, allSources);
   // Evidence must describe the same revision as the rendered claim: ordinary
   // Markdown show is source-live, while indexed fragment show is a snapshot.
   let evidenceMetadata: IndexDocument | undefined;
@@ -614,16 +634,19 @@ function findUnrecognizedScriptSource(
 
   for (const source of sources) {
     try {
-      if ((source.adapterId ?? detectAdapterId(source.path)) !== "akm") continue;
+      if (!adapterDeclaresTypes(bundleAdapterId(source))) continue;
       const sourceRoot = path.resolve(source.path);
       // A script's ref is its path, so the candidate is the ref itself.
       const candidate = path.resolve(sourceRoot, conceptId);
       if (!isContainedResolvedPath(candidate, sourceRoot)) continue;
       // Only a file in a scripts directory is a script whose extension is the problem.
-      if (!buildFileContext(sourceRoot, candidate).ancestorDirs.includes(stashDirFor("script") ?? "scripts")) continue;
+      const folders = toPosix(path.relative(sourceRoot, path.dirname(candidate))).split("/");
+      if (!folders.includes(stashDirFor("script") ?? "scripts")) continue;
+      // asset-io: user-input the file the ref names, which no adapter lists, for the not-found hint
       const authoredStat = fs.lstatSync(candidate);
       if (!authoredStat.isFile() && !authoredStat.isSymbolicLink()) continue;
       const realCandidate = fs.realpathSync(candidate);
+      // asset-io: user-input the same file
       if (!fs.statSync(realCandidate).isFile()) continue;
       const name = deriveCanonicalAssetNameFromStashRoot("script", sourceRoot, candidate) ?? conceptId;
       return { extension, name, path: realCandidate, sourceRoot: fs.realpathSync(sourceRoot) };
@@ -651,7 +674,9 @@ export async function showByRef(ref: string): Promise<{ filePath: string; body: 
   }
   let body: string;
   try {
-    body = await fs.promises.readFile(entry.filePath, "utf8");
+    const asset = findAsset(entry.itemRef);
+    if (!asset) throw Object.assign(new Error("no entry"), { code: "ENOENT" });
+    body = asset.entry.content();
   } catch (error) {
     throwIndexedPathNotFound(error, ref);
   }
@@ -672,28 +697,10 @@ function throwIndexedPathNotFound(error: unknown, ref: string): never {
 
 type IndexedEntry = NonNullable<Awaited<ReturnType<typeof lookupBundleRef>>>;
 
-/** `null` selects adapter-owned projection; a string selects a core renderer. */
-function rendererForIndexedEntry(entry: IndexedEntry, _file: FileContext): string | null | undefined {
-  if (entry.document?.ownsPresentation === true) return null;
-  switch (entry.adapterId) {
-    case null:
-    case undefined:
-    case "akm":
-      return undefined;
-    case "akm-workflow":
-      return "workflow-md";
-    default:
-      return presentationFor(entry.type).renderer;
-  }
-}
-
-function indexedMatch(entry: IndexedEntry, renderer: string): MatchResult {
-  return { type: entry.type, specificity: Number.MAX_SAFE_INTEGER, renderer, meta: { name: entry.name } };
-}
-
 function buildIndexedProjectionResponse(
   entry: IndexedEntry,
   assetPath: string,
+  raw: string,
   fragment: string | undefined,
   indexedFragmentContent?: string,
 ): ShowResponse {
@@ -703,7 +710,6 @@ function buildIndexedProjectionResponse(
       `Fragment "#${fragment}" was ignored: ${entry.conceptId} is not a Markdown document, so heading fragments do not apply. Showing the whole asset.`,
     );
   }
-  const raw = fs.readFileSync(assetPath, "utf8");
   const parsed = parseFrontmatter(raw);
   const content =
     fragment !== undefined && isMarkdown

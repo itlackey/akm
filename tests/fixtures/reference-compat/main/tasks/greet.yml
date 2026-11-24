@@ -1,0 +1,5 @@
+version: 4
+name: greet
+description: Runs a script in the other bundle
+uses: team//scripts/greet.sh
+schedule: "30 7 * * *"

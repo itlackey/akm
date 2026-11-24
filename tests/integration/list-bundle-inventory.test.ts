@@ -32,7 +32,6 @@ function indexItem(bundleId: string, type: string, conceptId: string): void {
   const provenance: EntryProvenance = {
     itemRef: `${bundleId}//${conceptId}`,
     bundleId,
-    componentId: bundleId,
     conceptId,
     adapterId: "akm",
   };
@@ -50,13 +49,14 @@ async function configureInventory(): Promise<void> {
     bundles: {
       primary: {
         path: storage.stashDir,
+        adapter: "akm",
         writable: true,
-        components: { main: { root: ".", adapter: "akm", writable: true } },
       },
       catalog: {
         git: "https://example.test/catalog.git",
         registryId: "github:example/catalog",
-        components: { docs: { root: "content", adapter: "akm" } },
+        adapter: "akm",
+        root: "content",
       },
     },
     defaultBundle: "primary",
@@ -91,7 +91,7 @@ describe("akm list bundle inventory", () => {
     expect(typeof (main.subCommands as Record<string, unknown>).bundle).toBe("object");
   });
 
-  test("joins desired config, lock state, components, and indexed counts", async () => {
+  test("joins desired config, lock state, adapter, and indexed counts", async () => {
     await configureInventory();
 
     const result = await akmListSources({ stashDir: storage.stashDir });
@@ -103,7 +103,9 @@ describe("akm list bundle inventory", () => {
       kind: "filesystem",
       default: true,
       source: { kind: "path", locator: storage.stashDir },
-      components: [{ name: "main", root: ".", adapter: "akm", writable: true }],
+      adapter: "akm",
+      detected: false,
+      components: [{ name: "main", adapter: "akm", detected: false }],
       lock: null,
       itemCount: 1,
       byType: { skill: 1 },
@@ -113,7 +115,9 @@ describe("akm list bundle inventory", () => {
       default: false,
       source: { kind: "git", locator: "https://example.test/catalog.git" },
       registryId: "github:example/catalog",
-      components: [{ name: "docs", root: "content", adapter: "akm" }],
+      adapter: "akm",
+      detected: false,
+      components: [{ name: "main", root: "content", adapter: "akm", detected: false }],
       lock: {
         source: "git",
         ref: "git:https://example.test/catalog.git",
@@ -147,24 +151,23 @@ describe("akm list bundle inventory", () => {
     expect(output.sources[0]).toHaveProperty("lock");
   });
 
-  // #908/#909: `akm bundle list` must disclose, per component, the EFFECTIVE
+  // #908/#909: `akm bundle list` must disclose, per bundle, the EFFECTIVE
   // adapter and whether it came from auto-detection — before this, an
   // auto-detected adapter was invisible (no "adapter" field at all when no
-  // component was configured), which is how a mixed-layout bundle's silent
+  // bundle was configured), which is how a mixed-layout bundle's silent
   // shadowing (#908) and an invalid adapter's silent fallback (#909) both
   // escaped notice on the one command an operator would check first.
-  test("bundle list reports the effective adapter + detected per component", async () => {
+  test("bundle list reports the effective adapter and detected, and the deprecated components list", async () => {
     const agentSkillsFixture = path.resolve(import.meta.dir, "..", "fixtures", "bundles", "agent-skills");
     writeSandboxConfig({
       semanticSearchMode: "off",
       bundles: {
         primary: {
           path: storage.stashDir,
+          adapter: "akm",
           writable: true,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
         },
-        // No `components` at all — the implicit single component every
-        // bundle gets; its adapter is auto-detected, never persisted here.
+        // No `adapter`: it is auto-detected, never persisted here.
         auto: { path: agentSkillsFixture },
       },
       defaultBundle: "primary",
@@ -174,12 +177,36 @@ describe("akm list bundle inventory", () => {
     const result = await akmListSources({ stashDir: storage.stashDir });
     const byName = new Map(result.sources.map((source) => [source.name, source]));
 
-    // RED on old code: `components` carried no `adapter`/`detected` field at
-    // all for an explicitly-configured component, and was an EMPTY array for
-    // one with no configured component (nothing to auto-detect through).
-    expect(byName.get("primary")?.components).toEqual([
-      { name: "main", root: ".", adapter: "akm", detected: false, writable: true },
-    ]);
+    expect(byName.get("primary")).toMatchObject({ adapter: "akm", detected: false });
+    expect(byName.get("auto")).toMatchObject({ adapter: "agent-skills", detected: true });
+    // Deprecated (removed in 0.11): the one-entry list keeps its 0.10 content, which is what the config's component held.
+    expect(byName.get("primary")?.components).toEqual([{ name: "main", adapter: "akm", detected: false }]);
     expect(byName.get("auto")?.components).toEqual([{ name: "main", adapter: "agent-skills", detected: true }]);
+  });
+  test("bundle list shows a location bundle as a location source, writable by the one default", async () => {
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      bundles: {
+        primary: { path: storage.stashDir, adapter: "akm", writable: true },
+        keyring: { adapter: "secret-tool", location: "akm" },
+        vault: { adapter: "azure-key-vault", location: "team-vault", writable: false },
+      },
+      defaultBundle: "primary",
+    });
+    resetConfigCache();
+
+    const result = await runCliCapture(["bundle", "list", "--format", "json"]);
+    expect(result.code).toBe(0);
+    const byName = new Map((JSON.parse(result.stdout).sources as { name: string }[]).map((s) => [s.name, s]));
+    expect(byName.get("keyring")).toMatchObject({
+      kind: "location",
+      source: { kind: "location", locator: "akm" },
+      adapter: "secret-tool",
+      writable: true,
+    });
+    expect(byName.get("vault")).toMatchObject({
+      source: { kind: "location", locator: "team-vault" },
+      writable: false,
+    });
   });
 });

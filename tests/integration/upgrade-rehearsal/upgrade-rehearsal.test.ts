@@ -246,8 +246,14 @@ for (const origin of ["previous", "0.9.32"] as const) {
       // the on-disk removal the retired-config-key read shim's warning names.
       const configAfterApply = JSON.parse(fs.readFileSync(home.configPath, "utf8")) as {
         experimental?: Record<string, unknown>;
+        bundles?: Record<string, Record<string, unknown>>;
       };
       expect(configAfterApply.experimental?.workflowEngine).toBeUndefined();
+      // The previous release's `akm index` persisted each bundle's adapter under `components.<id>`; the candidate read
+      // it from there, and `migrate apply` lifted it onto the bundle.
+      for (const [name, bundle] of Object.entries(configAfterApply.bundles ?? {})) {
+        expect(bundle, `bundle ${JSON.stringify(name)}`).not.toHaveProperty("components");
+      }
 
       const status = await runLauncher(candidateLauncher, ["migrate", "status"], home.env);
       expect(status.status, status.stderr).toBe(0);
@@ -304,12 +310,13 @@ for (const origin of ["previous", "0.9.32"] as const) {
 
       const bundleList = await runLauncher(candidateLauncher, ["bundle", "list"], home.env);
       expect(bundleList.status, bundleList.stderr).toBe(0);
-      const listed = JSON.parse(bundleList.stdout) as { sources?: { name?: string }[] };
+      const listed = JSON.parse(bundleList.stdout) as { sources?: { name?: string; adapter?: string }[] };
       const names = (listed.sources ?? []).map((source) => source.name);
       for (const expected of Object.values(home.bundles)) {
         expect(names).toContain(expected);
       }
       expect(listed.sources?.length ?? 0).toBe(5);
+      for (const source of listed.sources ?? []) expect(typeof source.adapter, source.name).toBe("string");
 
       // Every listed bundle must be enabled. `bundle list`'s SourceEntry shape
       // carries no `enabled` field of its own (an upgrade must not leave a

@@ -13,6 +13,9 @@
  * older file on its own, naming `akm migrate apply`, which owns the
  * deterministic v2/v3 -> v4 rewrite and removal of v4 source enablement.
  *
+ * Its fixtures are per-format. The cross-cutting guard, that every ref spelling users write in their assets, config
+ * and stored state keeps resolving to the same asset, is `tests/integration/reference-compat.test.ts`.
+ *
  * Every fixture below is a REAL-SHAPED artifact from a prior release — not a
  * synthetic minimal case. When a future schema bump lands, add the OLD shape
  * here BEFORE shipping. If this suite fails, an upgrade break was about to
@@ -101,6 +104,7 @@ import { inspectTaskFilesMigration } from "../../scripts/akm-migrate/task-migrat
 import { akmHealth } from "../../src/commands/health";
 import { createProposal as createProposalImpl } from "../../src/commands/proposal/repository";
 import { akmTasksSync, akmTasksSyncPlan } from "../../src/commands/tasks/tasks";
+import { stateBundleId } from "../../src/core/bundle-at-dir";
 import {
   loadConfig,
   normalizeConfigFile,
@@ -343,11 +347,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
               upgraded,
               "/fixture/stash/knowledge/new-note.md",
               entry,
-              deriveEntryProvenance(
-                { bundleId: "stash", componentId: "stash", adapterId: "akm" },
-                entry.type,
-                entry.name,
-              ),
+              deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, entry.type, entry.name),
             );
             expect(upgraded.prepare("SELECT item_ref FROM entries").all()).toEqual([
               { item_ref: "stash//knowledge/new-note" },
@@ -480,12 +480,12 @@ describe("previous-release corpus — upgrade must not break reads", () => {
         try {
           const insert = db.prepare(
             `INSERT INTO proposals
-             (id, stash_dir, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
+             (id, bundle_id, ref, status, source, created_at, updated_at, content, frontmatter_json, metadata_json)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
           );
           insert.run(
             legacyIds.accepted,
-            path.resolve(stash),
+            stateBundleId(path.resolve(stash)),
             "akm//knowledge/corpus-legacy-accepted",
             "accepted",
             "consolidate",
@@ -496,7 +496,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           );
           insert.run(
             legacyIds.rejected,
-            path.resolve(stash),
+            stateBundleId(path.resolve(stash)),
             "akm//commands/corpus-legacy-rejected",
             "rejected",
             "reflect",
@@ -507,7 +507,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           );
           insert.run(
             legacyIds.acceptedGated,
-            path.resolve(stash),
+            stateBundleId(path.resolve(stash)),
             "akm//knowledge/corpus-legacy-gated",
             "accepted",
             "consolidate",
@@ -526,7 +526,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           const listDb = openStateDatabase();
           try {
             expect(() => {
-              listed = listStateProposals(listDb, { stashDir: path.resolve(stash) });
+              listed = listStateProposals(listDb, { bundleId: stateBundleId(path.resolve(stash)) });
             }).not.toThrow();
           } finally {
             listDb.close();
@@ -658,7 +658,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
 // SECOND bundle for it (auto-named `stash`, promoted to `defaultBundle`) —
 // the real shape a broken prior release wrote to a user's `config.json`.
 // Fixed by matching registration on the resolved content root
-// (`bundleContentRoot`/`bundleKeyForContentRoot` in
+// (`bundleContentRoot`/`bundleAtDir` in
 // `src/core/config/config-sources.ts`) instead of the bare configured
 // `path`. The current architecture rejects aliases at config load because
 // source ownership and grants cannot depend on which id a caller used. This
@@ -1102,7 +1102,7 @@ describe("previous-release corpus — leftover improve.strategies['graph-refresh
 describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () => {
   const OPENPALM_DIR = path.join(FIXTURES_DIR, "openpalm-consumer");
 
-  test("OpenPalm's config.json shape (bundles + one-component-per-bundle) parses without throwing", () => {
+  test("OpenPalm's config.json shape (bundles, in the retired components form) parses without throwing", () => {
     const text = fs.readFileSync(path.join(OPENPALM_DIR, "config.json"), "utf8");
     let config: ReturnType<typeof parseAndValidateConfigText> | undefined;
     expect(() => {
@@ -1110,6 +1110,9 @@ describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () 
     }).not.toThrow();
     expect(config?.defaultBundle).toBe("openpalm");
     expect(config?.bundles?.openpalm?.path).toBe("/srv/openpalm/stash");
+    // The retired `components` form is read as the flat bundle: its adapter and writable are on the bundle.
+    expect(config?.bundles?.openpalm).toMatchObject({ adapter: "akm", writable: true });
+    expect(config?.bundles?.openpalm).not.toHaveProperty("components");
   });
 
   test("OpenPalm's `uses:`/`with:` task source v4 file (builtin command target) parses without throwing", () => {
@@ -1232,10 +1235,10 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
         exec
           .current()
           .split("\n")
-          .find((line) => line.includes(" task run ping ")) ?? "";
+          .find((line) => line.includes(" task run ") && line.includes("//tasks/ping ")) ?? "";
       expect(row.startsWith(`*/15 * * * * AKM_BUNDLE_DIR=${path.resolve(stash.dir)} `)).toBe(true);
       expect(row).toContain(` AKM_CONFIG_DIR=${path.join(process.env.XDG_CONFIG_HOME as string, "akm")} `);
-      expect(row).toContain(` /usr/local/bin/akm task run ping --bundle ${defaultBundle} --scheduled`);
+      expect(row).toContain(` /usr/local/bin/akm task run ${defaultBundle}//tasks/ping --scheduled`);
       expect(exec.current()).not.toContain("--scheduler-context");
     } finally {
       stash.cleanup();

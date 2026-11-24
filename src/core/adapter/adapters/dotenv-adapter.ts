@@ -30,29 +30,26 @@
  */
 
 import fs from "node:fs";
-import type { FileContext } from "../../../indexer/walk/file-context";
-import { assetPathCandidatesForName } from "../../asset/asset-placement";
+import path from "node:path";
+import { assetPathCandidatesForName, isSecretSidecar } from "../../asset/asset-placement";
 import { isScratchPath } from "../../asset/scratch";
 import { scanEnvKeyNames, toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
-import { sensitiveMarkerPath } from "../../sensitive-marker-path";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { FileContext } from "../directory/file-context";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
+import { AkmFormatAdapterBase } from "./akm-format";
 import { dangerousEnvKeyDiagnostics } from "./akm-lint";
 import { hashContent } from "./shared";
 
-/** A dotenv bundle is single-component; its one component is `main`. */
-const COMPONENT_ID = "main";
 /** The `env/` content subdir (KEY=VALUE files). */
 const ENV_DIR = "env";
 /** The `secrets/` content subdir (whole-file secrets). */
 const SECRETS_DIR = "secrets";
-/** Non-secret marker suffixes under `secrets/`. */
-const SECRET_SKIP_SUFFIXES = [".lock", ".sensitive"];
 
 type DotenvType = "env" | "secret";
 
-/** Classify a component-root-relative file as env / secret, or null (abstain). */
+/** Classify a bundle-root-relative file as env / secret, or null (abstain). */
 function classify(relPath: string): DotenvType | null {
   const posix = toPosix(relPath);
   const segs = posix.split("/").filter((s) => s.length > 0);
@@ -63,29 +60,9 @@ function classify(relPath: string): DotenvType | null {
     return base === ".env" || base.endsWith(".env") ? "env" : null;
   }
   if (head === SECRETS_DIR) {
-    return SECRET_SKIP_SUFFIXES.some((s) => base.endsWith(s)) ? null : "secret";
+    return isSecretSidecar(base) ? null : "secret";
   }
   return null;
-}
-
-/**
- * True when `--sensitive` marked this asset, via the sibling marker file that
- * `akm env create --sensitive` / `akm secret create --sensitive` writes:
- * `env/<name>.sensitive` for `env/<name>.env`, `secrets/<name>.sensitive` for
- * `secrets/<name>`.
- *
- * The flag documents itself as excluding the asset from BOTH `env list` output
- * and the search index. Indexing filters are adapter-owned (the walk does not
- * pre-filter), and the akm adapter abstains on the marker; this adapter must
- * do the same, not only skip files whose OWN name ends in `.sensitive`. A dotenv bundle is a
- * legal env/secret write target, so a marked `env/prod.env` there was still
- * indexed with every KEY NAME as a hint and a marked secret still indexed by
- * name, while `env list` / `secret list` correctly hid them. The two surfaces
- * disagreed about a documented promise.
- */
-function hasSensitiveMarker(absPath: string, type: DotenvType): boolean {
-  const marker = sensitiveMarkerPath(absPath, type === "env" ? "env" : "secret");
-  return marker !== absPath && fs.existsSync(marker);
 }
 
 function conceptIdForPath(type: DotenvType, relativePath: string): string {
@@ -95,50 +72,25 @@ function conceptIdForPath(type: DotenvType, relativePath: string): string {
   return stripped.endsWith("/") ? `${stripped}default` : stripped;
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
-  const type = classify(file.relPath);
-  if (type === null) return null;
-  if (hasSensitiveMarker(file.absPath, type)) return null;
-  const posix = toPosix(file.relPath);
+function describe(file: FileContext, conceptId: string): IndexMetadata {
+  const type = classify(file.relPath) as DotenvType;
   const raw = file.content();
 
   if (type === "env") {
     // env: strip `.env`; surface KEY NAMES only (never values/comments/content).
-    const conceptId = conceptIdForPath(type, posix);
     const name = (conceptId.split("/").pop() ?? conceptId) || "default";
     const keys = scanEnvKeyNames(raw);
-    const doc: IndexDocument = {
-      ref: `${c.id}//${conceptId}`,
-      bundle: c.id,
-      component: COMPONENT_ID,
-      conceptId,
-      path: file.absPath,
-      hash: hashContent(raw),
-      adapterId: "dotenv",
-      type: "env",
-      name,
-    };
+    const doc: IndexMetadata = { hash: hashContent(raw), type: "env", name };
     if (keys.length > 0) doc.hints = keys;
     return doc;
   }
 
   // secret: keep the natural path; surface the FILE NAME only — never keys/content.
-  const name = posix.split("/").pop() ?? posix;
-  return {
-    ref: `${c.id}//${posix}`,
-    bundle: c.id,
-    component: COMPONENT_ID,
-    conceptId: posix,
-    path: file.absPath,
-    hash: hashContent(raw),
-    adapterId: "dotenv",
-    type: "secret",
-    name,
-  };
+  return { hash: hashContent(raw), type: "secret", name: conceptId.split("/").pop() ?? conceptId };
 }
 
-async function validate(_c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+async function validate(_c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
@@ -151,37 +103,49 @@ async function validate(_c: BundleComponent, changes: FileChange[], ctx: Validat
   return diagnostics;
 }
 
-export const dotenvAdapter: BundleAdapter = {
-  id: "dotenv",
-  version: "0.9.0",
-  extensions: [".env"],
+export class DotenvAdapter extends AkmFormatAdapterBase {
+  readonly id = "dotenv";
+  readonly version = "0.9.0";
+  override readonly writes = ["env", "secret"];
+  override readonly extensions = [".env"];
 
-  recognize,
-  validate,
+  protected identify(relPath: string): string | null {
+    const type = classify(relPath);
+    return type === null ? null : conceptIdForPath(type, relPath);
+  }
+
+  protected describe(_b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
+    return describe(file, conceptId);
+  }
+
+  protected override typeOf(relPath: string): string {
+    const type = classify(relPath);
+    if (type === null) throw new Error(`"${relPath}" is no env or secret file.`);
+    return type;
+  }
+
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+    return validate(b, changes, ctx);
+  }
 
   /**
-   * Closed-form owner candidates (#857): the ref is the file's path under the
-   * component root (`conceptIdForPath`), so it is inverted for the two types
-   * this adapter recognizes. `assetPathCandidatesForName` expands `env`'s
-   * `.env`/`<name>.env` duality; the sensitive-marker sibling spellings are then
-   * layered on each. `recognize` decides which candidate really owns the ref.
+   * Closed-form spellings (#857): the ref is the file's path under the bundle root (`conceptIdForPath`), so it is
+   * inverted for the two types this adapter holds. `assetPathCandidatesForName` expands `env`'s `.env`/`<name>.env`
+   * duality; `identify` decides which spelling really holds the ref.
    */
-  readCandidates(c: BundleComponent, conceptId: string) {
+  protected spellings(conceptId: string): string[] {
     const posix = toPosix(conceptId);
-    const expanded = (["env", "secret"] as const).flatMap((type) =>
-      assetPathCandidatesForName(type, c.root, posix).flatMap((primary) =>
-        type === "env"
-          ? [primary, sensitiveMarkerPath(primary, "env")]
-          : [primary, sensitiveMarkerPath(primary, "secret"), `${primary}.lock`],
-      ),
-    );
-    return [...new Set(expanded)].map((candidatePath) => ({ path: candidatePath, conceptId: posix }));
-  },
+    // The type the concept's folder names comes first, so the first spelling is the file a create of it writes.
+    const named = posix.startsWith(`${SECRETS_DIR}/`) ? "secret" : "env";
+    const types = named === "secret" ? (["secret", "env"] as const) : (["env", "secret"] as const);
+    const expanded = types.flatMap((type) => assetPathCandidatesForName(type, ".", posix));
+    return [...new Set(expanded.map((candidate) => toPosix(path.normalize(candidate))))];
+  }
 
   /** The dotenv bundle owns its `env/` + `secrets/` dirs. */
-  directoryList(): string[] {
+  override directoryList(): string[] {
     return [ENV_DIR, SECRETS_DIR];
-  },
+  }
 
   /**
    * Install-time probe (§1.2): a root whose ONLY content dirs are `env/` and/or
@@ -201,5 +165,7 @@ export const dotenvAdapter: BundleAdapter = {
     if (dirs.length === 0) return false;
     if (!dirs.every((d) => d === ENV_DIR || d === SECRETS_DIR)) return false;
     return dirs.includes(ENV_DIR) || dirs.includes(SECRETS_DIR);
-  },
-};
+  }
+}
+
+export const dotenvAdapter = new DotenvAdapter();

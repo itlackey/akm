@@ -80,6 +80,8 @@ export interface HealthCheckContext {
   improveOutcomes: ImproveRunOutcomes;
   /** The `index-sources` check, collected once (`index-sources.ts`). */
   indexSources: HealthCheckResult;
+  /** The `bundle-adapters` check, collected once (`bundle-adapters-check.ts`). */
+  bundleAdapters: HealthCheckResult;
   /** The connections, harnesses and work table, collected once (`connections-and-harnesses-check.ts`). */
   connectionsAndHarnesses: HealthCheckResult;
   /** The last index run's semantic-search record and the index's counts, read once (`semantic-search-check.ts`). */
@@ -452,6 +454,11 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     name: "index-sources",
     channel: "hard",
     run: (ctx) => ctx.indexSources,
+  },
+  {
+    name: "bundle-adapters",
+    channel: "hard",
+    run: (ctx) => ctx.bundleAdapters,
   },
   {
     name: "semantic-search",

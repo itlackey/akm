@@ -9,20 +9,10 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { lockContentRootFor } from "../../integrations/lockfile";
 import { ConfigError } from "../errors";
+import { getLocationBundleRoot } from "../paths";
 import type { AkmConfig, BundleConfigEntry, ConfiguredSource, SourceConfigEntry, SourceSpec } from "./config-types";
-
-/** The current one-component-per-bundle configuration entry, if present. */
-export function bundleComponentConfig(
-  bundle: BundleConfigEntry | undefined,
-): { root?: string; adapter?: string; writable?: boolean } | undefined {
-  if (!bundle?.components) return undefined;
-  const components = Object.values(bundle.components);
-  if (components.length !== 1) {
-    throw new ConfigError("A bundle components map must contain exactly one component.", "INVALID_CONFIG_FILE");
-  }
-  return components[0];
-}
 
 /**
  * Convert the current `bundles` map into its ordered provider projection:
@@ -30,14 +20,14 @@ export function bundleComponentConfig(
  * bundle key. Returns `undefined` when no bundles map is configured.
  */
 /**
- * A bundle's true identity: its configured `path` plus its component's
+ * A bundle's true identity: its configured `path` plus its
  * `root` (default `"."`), fully resolved. Two bundle entries whose bare
  * `path` differs (relative vs. absolute, trailing slash, `~` vs. expanded)
  * can still resolve to this same directory — this is the identity akm
  * compares before registering or reconciling a bundle (issue #870).
  */
-export function bundleContentRoot(entryPath: string, componentRoot?: string): string {
-  return path.resolve(entryPath, componentRoot ?? ".");
+export function bundleContentRoot(entryPath: string, root?: string): string {
+  return path.resolve(entryPath, root ?? ".");
 }
 
 /**
@@ -48,8 +38,8 @@ export function bundleContentRoot(entryPath: string, componentRoot?: string): st
  * distinct would make ownership, default-source trust, and scheduler grants
  * depend on syntax instead of the directory the OS will actually read.
  */
-export function bundlePhysicalContentRoot(entryPath: string, componentRoot?: string): string {
-  const resolved = bundleContentRoot(entryPath, componentRoot);
+export function bundlePhysicalContentRoot(entryPath: string, root?: string): string {
+  const resolved = bundleContentRoot(entryPath, root);
   try {
     return fs.realpathSync.native(resolved);
   } catch (cause) {
@@ -75,17 +65,16 @@ export function isBundleEnabled(config: AkmConfig, bundleId: string): boolean {
  * This deliberately excludes mutable policy (`enabled`, `writable`,
  * credentials, adapter selection) and bundle contents. Ordinary updates and
  * adapter auto-detection for the same origin keep their grant; changing the
- * locator or component root does not.
+ * locator or root does not.
  */
 export function bundleSourceId(config: AkmConfig, bundleId: string): string {
   const bundle = config.bundles?.[bundleId];
   if (!bundle) {
     throw new ConfigError(`Bundle ${JSON.stringify(bundleId)} is not configured.`, "INVALID_CONFIG_FILE");
   }
-  const component = bundleComponentConfig(bundle);
   let source: Readonly<Record<string, unknown>>;
   if (bundle.path !== undefined) {
-    source = { kind: "filesystem", locator: bundlePhysicalContentRoot(bundle.path, component?.root) };
+    source = { kind: "filesystem", locator: bundlePhysicalContentRoot(bundle.path, bundle.root) };
   } else if (bundle.git !== undefined) {
     source = { kind: "git", locator: normalizeInstalledGitRef("git", bundle.git) };
   } else if (bundle.website !== undefined) {
@@ -95,6 +84,9 @@ export function bundleSourceId(config: AkmConfig, bundleId: string): string {
     source = { kind: "website", url: bundle.website.url };
   } else if (bundle.npm !== undefined) {
     source = { kind: "npm", locator: bundle.npm };
+    // asset-io: config the config entry's kind, described
+  } else if (bundle.location !== undefined) {
+    source = { kind: "location", locator: bundle.location };
   } else {
     throw new ConfigError(`Bundle ${JSON.stringify(bundleId)} has no source descriptor.`, "INVALID_CONFIG_FILE");
   }
@@ -102,7 +94,7 @@ export function bundleSourceId(config: AkmConfig, bundleId: string): string {
     version: 1,
     source,
     registryId: bundle.registryId ?? null,
-    componentRoot: component?.root ?? ".",
+    root: bundle.root ?? ".",
   });
 }
 
@@ -112,7 +104,7 @@ export function filesystemBundleSourceId(contentRoot: string): string {
     version: 1,
     source: { kind: "filesystem", locator: bundlePhysicalContentRoot(contentRoot) },
     registryId: null,
-    componentRoot: ".",
+    root: ".",
   });
 }
 
@@ -133,13 +125,13 @@ export function primaryBundlePath(config: AkmConfig): string | undefined {
   if (!bundles || !key) return undefined;
   const entry = bundles[key];
   if (!entry || typeof entry.path !== "string" || entry.path.length === 0) return undefined;
-  const componentRoot = bundleComponentConfig(entry)?.root;
+  const root = entry.root;
   const bundleRoot = path.resolve(entry.path);
-  if (!componentRoot || componentRoot === ".") return bundleRoot;
-  const resolved = path.resolve(bundleRoot, componentRoot);
+  if (!root || root === ".") return bundleRoot;
+  const resolved = path.resolve(bundleRoot, root);
   const relative = path.relative(bundleRoot, resolved);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new ConfigError(`Component root "${componentRoot}" escapes bundle "${key}".`, "INVALID_CONFIG_FILE");
+    throw new ConfigError(`Root "${root}" escapes bundle "${key}".`, "INVALID_CONFIG_FILE");
   }
   return resolved;
 }
@@ -155,20 +147,86 @@ export function bundleContentRoots(config: AkmConfig): { id: string; contentRoot
   const out: { id: string; contentRoot: string }[] = [];
   for (const [id, entry] of Object.entries(bundles)) {
     if (typeof entry.path !== "string" || entry.path.length === 0) continue;
-    out.push({ id, contentRoot: bundlePhysicalContentRoot(entry.path, bundleComponentConfig(entry)?.root) });
+    out.push({ id, contentRoot: bundlePhysicalContentRoot(entry.path, entry.root) });
   }
   return out;
 }
 
-/** The bundle id whose resolved content root already matches `resolvedContentRoot`, if any. */
-export function bundleKeyForContentRoot(config: AkmConfig, resolvedContentRoot: string): string | undefined {
-  let physical = path.resolve(resolvedContentRoot);
-  try {
-    physical = fs.realpathSync.native(physical);
-  } catch {
-    // Compare the unresolved absolute locator when the candidate is not yet materialized.
+/** Two configured bundles whose content overlaps: the same directory (or location), or one directory inside the other. */
+export interface BundleOverlap {
+  /** The two bundle ids, in configured order. */
+  readonly bundles: readonly [string, string];
+  /** `same`, or `nested` with `inner` the bundle whose root is inside the other's. */
+  readonly kind: "same" | "nested";
+  readonly inner?: string;
+  /** What each of the two ids resolves to (a real path, or `<adapter>:<location>`), in the same order. */
+  readonly roots: readonly [string, string];
+}
+
+/**
+ * Every pair of bundles that overlap: path bundles by real content root (equal, or one inside the other), location
+ * bundles by adapter and location (equal only: a location is no directory). The one place overlap is decided: config
+ * load refuses equal roots, a config write refuses any new overlap, `akm doctor` reports the nested pairs.
+ */
+export function bundleOverlaps(config: AkmConfig): BundleOverlap[] {
+  const entries = Object.entries(config.bundles ?? {}).flatMap(([id, entry]) => {
+    if (typeof entry.path === "string" && entry.path.length > 0) {
+      return [{ id, root: bundlePhysicalContentRoot(entry.path, entry.root), location: false }];
+    }
+    if (typeof entry.location === "string") {
+      return [{ id, root: `${entry.adapter ?? ""}:${entry.location}`, location: true }];
+    }
+    return [];
+  });
+  const inside = (inner: string, outer: string): boolean => {
+    const relative = path.relative(outer, inner);
+    return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  };
+  const overlaps: BundleOverlap[] = [];
+  for (const [index, first] of entries.entries()) {
+    for (const second of entries.slice(index + 1)) {
+      // asset-io: config two config entries naming one location
+      if (first.location !== second.location) continue;
+      const bundles = [first.id, second.id] as const;
+      const roots = [first.root, second.root] as const;
+      if (first.root === second.root) overlaps.push({ bundles, kind: "same", roots });
+      else if (first.location) continue;
+      else if (inside(first.root, second.root)) overlaps.push({ bundles, kind: "nested", inner: first.id, roots });
+      else if (inside(second.root, first.root)) overlaps.push({ bundles, kind: "nested", inner: second.id, roots });
+    }
   }
-  return bundleContentRoots(config).find((entry) => entry.contentRoot === physical)?.id;
+  return overlaps;
+}
+
+/**
+ * The configured bundle at the directory `dir`: the one whose content root is `dir` (a directory bundle's `path` and
+ * `root`, a git or npm checkout's lock root, a location bundle's synthetic root), compared by real path, the default
+ * bundle first and then in configured order. The one root-to-bundle lookup (§4.3); it asks no adapter.
+ */
+export function bundleAtDir(config: AkmConfig, dir: string): string | undefined {
+  const physical = physicalPath(dir);
+  for (const entry of bundlesToSourceEntries(config) ?? []) {
+    const bundle = config.bundles?.[entry.name ?? ""];
+    const root =
+      entry.type === "location"
+        ? getLocationBundleRoot(entry.name ?? entry.location ?? "")
+        : (lockContentRootFor(entry.name, entry.type) ??
+          (bundle?.path !== undefined && bundle.path.length > 0
+            ? bundlePhysicalContentRoot(bundle.path, bundle.root)
+            : undefined));
+    if (root !== undefined && physicalPath(root) === physical) return entry.name;
+  }
+  return undefined;
+}
+
+function physicalPath(dir: string): string {
+  const resolved = path.resolve(dir);
+  try {
+    return fs.realpathSync.native(resolved);
+  } catch {
+    // Compare the unresolved absolute locator when the directory is not yet materialized.
+    return resolved;
+  }
 }
 
 export function bundlesToSourceEntries(config: AkmConfig): SourceConfigEntry[] | undefined {
@@ -217,6 +275,9 @@ export function bundleEntryToSourceEntry(
   if (typeof bundle.npm === "string" && bundle.npm.length > 0) {
     // Today's npm source carries the package spec in `path` (see parseSourceSpec).
     return { type: "npm", path: bundle.npm, ...base };
+  }
+  if (typeof bundle.location === "string" && bundle.location.length > 0) {
+    return { type: "location", location: bundle.location, ...base };
   }
   return undefined;
 }
@@ -305,6 +366,8 @@ export function parseSourceSpec(entry: SourceConfigEntry): SourceSpec | undefine
         : undefined;
     case "npm":
       return entry.path ? { type: "npm", package: entry.path } : undefined;
+    case "location":
+      return entry.location ? { type: "location", location: entry.location } : undefined;
     default:
       return undefined;
   }
@@ -327,12 +390,11 @@ export function resolveConfiguredSources(config: AkmConfig): ConfiguredSource[] 
   for (const persisted of bundleEntries) {
     const runtime = toConfiguredSource(persisted, persisted.primary === true);
     if (runtime) {
-      const component = bundleComponentConfig(config.bundles?.[persisted.name ?? ""]);
+      const bundle = config.bundles?.[persisted.name ?? ""];
       out.push({
         ...runtime,
-        ...(component?.adapter ? { adapterId: component.adapter } : {}),
-        ...(component?.root ? { componentRoot: component.root } : {}),
-        ...(component?.writable !== undefined ? { writable: component.writable } : {}),
+        ...(bundle?.adapter ? { adapterId: bundle.adapter } : {}),
+        ...(bundle?.root ? { root: bundle.root } : {}),
       });
     }
   }

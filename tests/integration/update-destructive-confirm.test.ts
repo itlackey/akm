@@ -235,7 +235,7 @@ describe("akm bundle update — a moved content directory never prompts (#1096)"
   test("prunes older revisions but keeps the previous one and any another configured bundle references", async () => {
     const { revisions, olderMarker } = await updateWithReferencedOlderRevision((olderDir) => ({
       path: olderDir,
-      components: { main: { root: ".", adapter: "akm" } },
+      adapter: "akm",
     }));
     expect(revisions).toEqual(["0.8.0", "1.0.0", "1.3.0"]);
     expect(fs.readFileSync(olderMarker, "utf8")).toBe("user content");
@@ -272,7 +272,8 @@ describe("akm bundle update — a moved content directory never prompts (#1096)"
           npm: "left-pad",
           enabled: false,
           policy: { channel: "stable" },
-          components: { main: { root: ".", adapter: "akm", writable: false } },
+          adapter: "akm",
+          writable: false,
         },
       },
     });

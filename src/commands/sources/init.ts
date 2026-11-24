@@ -120,6 +120,7 @@ async function akmInitReal(options?: {
   assertInitSandbox(stashDir, dirExplicitlyProvided);
 
   let created = false;
+  // asset-io: bundle-root root probe
   if (!fs.existsSync(stashDir)) {
     fs.mkdirSync(stashDir, { recursive: true });
     created = true;
@@ -127,6 +128,7 @@ async function akmInitReal(options?: {
 
   for (const sub of stashDirNames()) {
     const subDir = path.join(stashDir, sub);
+    // asset-io: bundle-root the type folders of the new bundle
     if (!fs.existsSync(subDir)) {
       fs.mkdirSync(subDir, { recursive: true, mode: sub === "env" || sub === "secrets" ? 0o700 : undefined });
     }
@@ -186,6 +188,7 @@ async function akmInitReal(options?: {
 /** Initialise `dir` as a git repository if it is not already one. */
 function ensureGitRepo(dir: string): void {
   const gitDir = path.join(dir, ".git");
+  // asset-io: bundle-root git checkout probe
   if (fs.existsSync(gitDir)) return;
   // Non-fatal: git may not be available in all environments
   spawnSync("git", ["init", dir], { encoding: "utf8", timeout: 15_000 });

@@ -195,12 +195,10 @@ is there too:
 ## Files and storage
 
 Env files live under `env/` and secrets under `secrets/` in the target bundle,
-with mode 0600. A secret is written under an exclusive per-secret lock held in
-akm's data directory. `akm secret set` reads the value from stdin by default,
+with mode 0600. `akm secret set` reads the value from stdin by default,
 or from `--from-file` (byte-exact, multi-line allowed) or `--from-env <VAR>`,
-so the value is not on the command line. `akm env create --sensitive` adds a
-sibling `.sensitive` marker; an env file or secret with that marker is left
-out of `list` output and the search index, and `run` still works on it.
+so the value is not on the command line. A `.sensitive` marker file left in a
+bundle by an older release is ignored (it is not listed as a secret).
 
 An env file or secret may be a symlink to a file anywhere else, such as a
 container's `/run/secrets/<name>`: `akm env`, `akm secret`, `${secrets/name}`
@@ -225,6 +223,156 @@ secret; values are never indexed. `env list`, `env path`, `env export`,
 `secret list`, `akm exec` and `akm run`'s `--env` and `--secret` read the files
 directly and do not need the index.
 
+## Secrets kept by a secret manager
+
+A bundle can be one keyring of the desktop's Secret Service (KWallet,
+GNOME Keyring) or one Azure Key Vault, in place of a directory. Its config
+entry names the keyring or vault in `location` and the adapter that reads it
+in `adapter`:
+
+```json
+"bundles": {
+  "keyring": { "adapter": "secret-tool", "location": "akm" },
+  "vault": { "adapter": "azure-key-vault", "location": "team-vault" }
+}
+```
+
+Every secret of the keyring or vault is a secret of the bundle, under
+`secrets/<name>`, and is used as a secret kept as a file is:
+
+```sh
+akm index                                             # entries are indexed by name; values never are
+akm secret list                                       # keyring//secrets/gh_token, vault//secrets/deploy-token, ...
+akm show keyring//secrets/gh_token                    # name only
+akm run --secret keyring//secrets/gh_token:GITHUB_TOKEN scripts/release.sh
+printf '%s' "$TOKEN" | akm secret set keyring//secrets/npm_token
+akm secret remove vault//secrets/deploy-token
+```
+
+Add one with `akm bundle add <location> --adapter <id> [--name <bundle>]`
+(`akm bundle add akm --adapter secret-tool`), or write the config entry above. A
+bundle's adapter and its address must fit: a store adapter needs `location` and
+a directory adapter cannot have one, or `akm config set` refuses the change,
+`akm doctor` reports the `bundle-adapters` check as failed, and the commands
+that resolve the bundle fail naming it. `akm bundle list` reports `status.exists`
+from the adapter: whether the keyring or vault is there.
+
+A `${keyring//secrets/gh_token}` token in an env value or a git bundle's
+`credential` reads it the same way, and an unqualified `secrets/<name>` reaches
+such a bundle after the bundles before it in priority.
+
+| | `secret-tool` | `azure-key-vault` |
+| --- | --- | --- |
+| `location` | the keyring's alias, else the keyring whose label it is, else the keyring at `/org/freedesktop/secrets/collection/<location>` | the vault's name |
+| Needs | `secret-tool` (package `libsecret-tools`) and `busctl` (systemd), a running Secret Service, and the keyring to exist | the Azure CLI, signed in with `az login` |
+| A secret's name | the entry's label | the vault's name for the secret: 1 to 127 letters, digits and `-` |
+| Listed | every entry | every enabled secret that no Azure service manages |
+
+- The metadata of a keyring or vault lives in the index, and akm keeps no
+  secret on disk. `akm index` lists the store and records each secret's name;
+  for a keyring entry it also records the entry's object path and the attribute
+  pairs the keyring reports for it. At run time the only thing akm asks the
+  store for is a value, by those recorded pairs: for a keyring one
+  `SearchItems` (to confirm the entry is the only match) and one
+  `secret-tool lookup`, for a vault one `az keyvault secret show` by name. A
+  keyring that has since rewritten an entry's pairs (KWallet does when a wallet
+  is reopened) is refused with `Keyring "<x>" no longer holds "<name>" as
+  indexed: run akm index.` `akm secret set` and `akm secret remove` act on the
+  recorded entry, and refresh its index row. A new keyring entry is stored with
+  the single pair `akm <keyring>/<name>`, which `secret-tool store` requires and
+  nothing else reads.
+- A name that does not read back as the ref `secrets/<name>` (an empty label,
+  one with a `#`, a backslash, a `.` or `..` path segment, a leading or trailing
+  `/`, or trailing white space) is not listed, and `akm index` warns of it and
+  `akm lint` reports it by ref (`invalid-name`). When more than one entry has a name, the one with the
+  lowest object path wins (a vault has one secret per name). `akm index` warns of the others and `akm lint` reports them as
+  `shadowed-spelling`, and reads, replaces and removes act on the winner. `akm
+  lint` without `--dir` or a file reports these from the last `akm index` and
+  never reaches the store; a store that was never indexed has no findings.
+- A keyring or vault that `akm index` cannot list (unreachable, or locked and
+  listing nothing) keeps the entries the index had; the index warns, naming
+  it, and goes on. `akm secret list` reads a keyring's or vault's entries from
+  the index, so it needs no unlock and never reaches the store. A
+  command that needs it fails with `BUNDLE_UNREACHABLE`, naming the client and,
+  when it is not installed, what provides it.
+- Such a bundle is writable unless its entry sets `writable: false`. It takes
+  secrets only: `akm secret set` and `akm secret remove` write it, and every
+  other write command refuses it.
+- **`secret-tool`**: `location` names the collection by its alias, else by its
+  label, else by its object path `/org/freedesktop/secrets/collection/<location>`
+  (how a collection was named before aliases). akm finds the collection once and
+  uses its object path for every request. Every entry of the collection is listed,
+  whoever stored it. `secret-tool` finds an entry by its attributes, so akm
+  reads and replaces a value through the attributes the entry already has; an
+  entry with no attributes is listed but cannot be read until it has one. A
+  lookup is not limited to one collection: when an entry of another carries
+  the same attributes, `secret-tool` may return that one. So before akm reads
+  or replaces an entry it asks the Secret Service which entries those
+  attributes find, and refuses, naming the other entry, unless the entry is the
+  only one. An entry `akm secret set` creates carries the attribute `akm` with
+  the value `<keyring>/<name>`. `secret-tool store` is given the collection's
+  object path, so akm makes no alias. A client that does not answer within
+  60 seconds fails the command with `BUNDLE_UNREACHABLE`.
+  A locked keyring is unlocked by your keyring manager, not by akm: when akm
+  reads, stores or deletes in it, `secret-tool` makes the manager show its own
+  prompt and waits up to two minutes for the answer, and akm prints
+  `Keyring "<x>" is locked: unlock it in the prompt your keyring manager shows.`
+  to stderr first. Listing needs no unlock (it reads the index). Where a locked
+  keyring lists no entries until it is unlocked (a closed KWallet), `akm index`
+  warns, telling you to unlock it and run `akm index` again, and goes on; the
+  entries the index had stay. KWallet may replace an entry's attributes when it is reopened;
+  a read then says to run `akm index`, which records them again. On KWallet
+  (`ksecretd`), a removal can be undone when the wallet is next loaded: the
+  Secret Service stops listing the entry, but the wallet file may keep it, so
+  check KWalletManager after a removal. An unanswered KWallet password dialog
+  blocks every request to KWallet until it is answered or dismissed. The keyring must exist, and `secret-tool` cannot create it: create the wallet or
+  keyring named in `location` in your keyring manager (KWalletManager,
+  Seahorse). A missing one is refused naming the keyrings the service has. A
+  process with no session bus (a scheduled task, a container) cannot reach the
+  Secret Service.
+- **`azure-key-vault`**: `akm secret set` passes the value to `az` in a
+  temporary file only your user can read, removed when `az` returns. `akm
+  secret remove` runs `az keyvault secret delete` and then `az keyvault secret
+  purge`, so the secret is gone. If the vault refuses the purge (no purge
+  permission, or purge protection), the remove still completes and akm says the
+  vault keeps the deleted secret until its retention period ends; until then
+  `akm secret set` of that name fails with a hint to recover or purge it. A
+  purge that meets the delete still going is tried again, up to five times a
+  second apart. A secret that is disabled, or that another Azure service
+  manages, is not listed and not read. Reading one
+  that was disabled after it was listed fails with that message, not as an
+  unreachable vault. A secret name a vault cannot hold (not 1 to 127 letters, digits
+  and `-`) is refused by `akm secret set` before `az` runs.
+- `akm env` commands and the Desktop Files view apply to
+  directory bundles; the Desktop protected-file view shows, edits, creates and
+  deletes these secrets too.
+
+### Unlocking a keyring, and unattended work
+
+**Interactive use: keep akm's secrets in the wallet your login unlocks.** On
+most desktops PAM unlocks one keyring when you log in: GNOME's `login` keyring
+(`libpam-gnome-keyring`) and KWallet's `kdewallet` (`pam_kwallet5`, or
+`ksecretd --pam-login`). It works only when that wallet's password is your
+login password, and on KWallet only for a classic (blowfish) wallet, not a GPG
+one. Point the bundle's `location` at that wallet, and reads need no prompt for
+as long as you are logged in. A dedicated wallet is not unlocked at login: the
+first read after it locks shows the keyring manager's own password prompt, and
+someone has to answer it.
+
+**What a keyring cannot do:** akm run without your desktop session (a
+scheduled akm task, cron, a container, an SSH session) usually cannot reach
+your session's D-Bus at all, so there is no keyring to talk to, locked or not.
+Setting `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/<uid>/bus` in that
+environment reaches it only while you are logged in and the wallet is unlocked;
+otherwise akm fails saying the keyring is locked or cannot be reached. Nobody
+is there to answer a prompt, and an unanswered KWallet dialog blocks every
+KWallet request until it is answered.
+
+**For unattended work** (scheduled tasks, CI, containers, anything that runs
+while you are logged out) **use file-based secrets** (a bundle's `env/` and
+`secrets/` files) **or an Azure Key Vault bundle**, not a desktop keyring.
+Keyring bundles are for interactive use.
+
 ## Write-target resolution
 
 Env and secret mutations (`env create`, `env remove`, `secret set`, `secret remove`) choose their
@@ -238,7 +386,7 @@ sources.
 ## Stability
 
 `env list`, `env path` and `secret list` are Stable. `env export` and `akm exec` are
-Experimental and off until `experimental.exec` is true. `env run` and `secret run` are Deprecated. `env create`, `env remove`, `secret set` and `secret remove` are Experimental. See
+Experimental and off until `experimental.exec` is true. `env run` and `secret run` are Deprecated. `env create`, `env remove`, `secret set` and `secret remove` are Experimental. Bundles kept by a secret manager are Experimental. See
 [STABILITY.md](../../STABILITY.md).
 
 ## See also

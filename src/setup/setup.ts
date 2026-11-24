@@ -406,6 +406,7 @@ async function prepareLocalEmbeddings(config: AkmConfig, noProbe: boolean | unde
  * fails setup. Setup's config write stays the only one: detected adapters are recorded by the next `akm index`.
  */
 async function indexConfiguredLibrary(stashDir: string): Promise<void> {
+  // asset-io: install library directory
   if (!fs.existsSync(stashDir)) return;
   try {
     await buildIndex({ stashDir, persistDetectedAdapters: false });
@@ -1031,11 +1032,13 @@ export async function loadSetupConfigFromFile(
   const expanded = filePath.startsWith("~") ? path.join(homeDir, filePath.slice(1)) : filePath;
   const resolvedPath = path.resolve(cwd, expanded);
 
+  // asset-io: user-input --from-file config
   if (!fs.existsSync(resolvedPath)) {
     throw new ConfigError(`Config file not found: ${resolvedPath}`, "INVALID_CONFIG_FILE");
   }
   let raw: string;
   try {
+    // asset-io: user-input --from-file config
     raw = fs.readFileSync(resolvedPath, "utf8");
   } catch (err) {
     throw new ConfigError(

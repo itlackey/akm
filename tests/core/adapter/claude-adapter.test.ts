@@ -17,10 +17,12 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { claudeAdapter } from "../../../src/core/adapter/adapters/claude-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
-import type { FileChange } from "../../../src/core/file-change";
+import { buildFileContext } from "../../../src/core/adapter/directory/file-context";
+import type { FileChange } from "../../../src/core/adapter/file-change";
+import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adapter/validate-context";
 import { presentationFor } from "../../../src/core/type-presentation";
-import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/claude");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/claude");
@@ -31,15 +33,15 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(): BundleComponent {
-  return { id: BUNDLE_ID, adapter: "claude", root: FIXTURE_ROOT, writable: true };
+function bundle(): Bundle {
+  return { id: BUNDLE_ID, root: FIXTURE_ROOT };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {
-  return claudeAdapter.recognize(component(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
+  return claudeAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
-const ctx: ValidateContext = {
+const ctx: FileValidateContext = {
   readFile: async (p) => {
     try {
       return fs.readFileSync(path.join(FIXTURE_ROOT, p), "utf8");
@@ -71,7 +73,6 @@ describe("claude adapter — recognition golden", () => {
       expect(doc, `${relPath} must be recognized`).not.toBeNull();
       if (!doc) throw new Error("unreachable");
       expect(doc.adapterId).toBe(expected.adapterId as string);
-      expect(doc.component).toBe(expected.component as string);
       expect(doc.bundle).toBe(BUNDLE_ID);
       expect(doc.type).toBe(expected.type as string);
       expect(doc.conceptId).toBe(expected.conceptId as string);
@@ -102,7 +103,7 @@ describe("claude adapter — renderer golden (presentation keyed on the open typ
 });
 
 describe("claude adapter — lint golden (lenient tool-dir validation)", () => {
-  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: Diagnostic[] }>;
+  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: FileDiagnostic[] }>;
 
   test("every recognized fixture file validates to exactly the golden's issue codes", async () => {
     const changes: FileChange[] = Object.values(perType).map((e) => ({
@@ -110,7 +111,7 @@ describe("claude adapter — lint golden (lenient tool-dir validation)", () => {
       op: "update" as const,
       after: fs.readFileSync(path.join(FIXTURE_ROOT, e.relPath), "utf8"),
     }));
-    const diags = await claudeAdapter.validate(component(), changes, ctx);
+    const diags = await checkChanges(claudeAdapter, bundle(), changes, ctx);
     const byFile = new Map<string, string[]>();
     for (const d of diags) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d.issue]);
     for (const entry of Object.values(perType)) {
@@ -119,9 +120,10 @@ describe("claude adapter — lint golden (lenient tool-dir validation)", () => {
   });
 
   test("a skill directory with no SKILL.md emits missing-skill-md (the one coded skill check)", async () => {
-    const emptyCtx: ValidateContext = { ...ctx, readFile: async () => null };
-    const diags = await claudeAdapter.validate(
-      component(),
+    const emptyCtx: FileValidateContext = { ...ctx, readFile: async () => null };
+    const diags = await checkChanges(
+      claudeAdapter,
+      bundle(),
       [{ path: "skills/csv-cleanup/reference.md", op: "update", after: "resource" }],
       emptyCtx,
     );

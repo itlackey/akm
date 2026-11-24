@@ -46,13 +46,14 @@ import { akmTasksEnable } from "../../src/commands/tasks/tasks";
 import { taskDiagnostics } from "../../src/core/adapter/adapters/akm-lint";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "../../src/core/adapter/adapters/akm-metadata";
 import { akmTaskAdapter } from "../../src/core/adapter/adapters/akm-task-adapter";
-import type { BundleComponent } from "../../src/core/adapter/types";
-import { createValidateContext } from "../../src/core/adapter/validate-context";
+import { buildFileContext } from "../../src/core/adapter/directory/file-context";
+import type { Bundle } from "../../src/core/adapter/types";
+import { createFileValidateContext } from "../../src/core/adapter/validate-context";
 import { resetConfigCache } from "../../src/core/config/config";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
-import { buildFileContext } from "../../src/indexer/walk/file-context";
 import { loadPreparedTask } from "../../src/tasks/run/load-task";
 import { compileSchedulerSources } from "../../src/tasks/scheduler-sync";
+import { checkChanges } from "../_helpers/adapter-hooks";
 import { makeProposal, payloadChanges } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
@@ -65,8 +66,8 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content, "utf8");
 }
 
-function component(root: string, adapter: string): BundleComponent {
-  return { id: "fixture", adapter, root, writable: true };
+function bundle(root: string): Bundle {
+  return { id: "fixture", root };
 }
 
 const VALID_V4_TASK = ["version: 4", "run: echo hi", "shell: sh", ""].join("\n");
@@ -94,15 +95,16 @@ describe("taskDiagnostics — akm lint on a version: 4 source (B-36, akm-lint.ts
 
 // ── akm-task-adapter.ts:99,164 — validate() + looksLikeRoot() ──────────────
 
-describe("akmTaskAdapter.validate() — a version: 4 source (akm-task-adapter.ts:99)", () => {
+describe("checkChanges(akmTaskAdapter, ) — a version: 4 source (akm-task-adapter.ts:99)", () => {
   test("a valid version: 4 .yml yields zero diagnostics", async () => {
     const root = tmpDir("akm-task-adapter-v4-valid-");
     writeFile(path.join(root, "nightly.yml"), VALID_V4_TASK);
 
-    const diagnostics = await akmTaskAdapter.validate(
-      component(root, "akm-task"),
+    const diagnostics = await checkChanges(
+      akmTaskAdapter,
+      bundle(root),
       [{ path: "nightly.yml", op: "update" }],
-      createValidateContext({ root }),
+      createFileValidateContext({ root }),
     );
 
     expect(diagnostics).toEqual([]);
@@ -112,10 +114,11 @@ describe("akmTaskAdapter.validate() — a version: 4 source (akm-task-adapter.ts
     const root = tmpDir("akm-task-adapter-v4-invalid-");
     writeFile(path.join(root, "bad.yml"), INVALID_V4_TASK);
 
-    const diagnostics = await akmTaskAdapter.validate(
-      component(root, "akm-task"),
+    const diagnostics = await checkChanges(
+      akmTaskAdapter,
+      bundle(root),
       [{ path: "bad.yml", op: "update" }],
-      createValidateContext({ root }),
+      createFileValidateContext({ root }),
     );
 
     expect(diagnostics.map((d) => d.issue)).toEqual(["invalid-task-yaml"]);
@@ -280,18 +283,20 @@ describe("a version: 5-beta.1 task through the read-only call sites", () => {
     const root = tmpDir("akm-task-adapter-v5-");
     writeFile(path.join(root, "nightly.yml"), VALID_V5_TASK);
     expect(
-      await akmTaskAdapter.validate(
-        component(root, "akm-task"),
+      await checkChanges(
+        akmTaskAdapter,
+        bundle(root),
         [{ path: "nightly.yml", op: "update" }],
-        createValidateContext({ root }),
+        createFileValidateContext({ root }),
       ),
     ).toEqual([]);
     expect(akmTaskAdapter.looksLikeRoot?.(root)).toBe(true);
     writeFile(path.join(root, "bad.yml"), INVALID_V5_TASK);
-    const diagnostics = await akmTaskAdapter.validate(
-      component(root, "akm-task"),
+    const diagnostics = await checkChanges(
+      akmTaskAdapter,
+      bundle(root),
       [{ path: "bad.yml", op: "update" }],
-      createValidateContext({ root }),
+      createFileValidateContext({ root }),
     );
     expect(diagnostics.map((d) => d.issue)).toEqual(["invalid-task-yaml"]);
   });

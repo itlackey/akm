@@ -155,7 +155,7 @@ describe("env run", () => {
     );
     fs.writeFileSync(path.join(primaryDir, "env", "prod.env"), "REL=${team//release}\nSH=${FOO//-/_}\n", "utf8");
     writeSandboxConfig({
-      bundles: { team: { path: teamDir, components: { main: { root: ".", adapter: "akm-workflow" } } } },
+      bundles: { team: { path: teamDir, adapter: "akm-workflow" } },
     });
 
     const { stdout, status } = spawnCli(

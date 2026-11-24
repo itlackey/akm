@@ -19,6 +19,7 @@ import { upsertEmbedding } from "../../src/storage/repositories/index-vec-reposi
 import { createWorkflowAsset, getWorkflowTemplate } from "../../src/workflows/authoring/authoring";
 import { getNextWorkflowStep, listWorkflowRuns } from "../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
+import { checkChanges } from "../_helpers/adapter-hooks";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
@@ -44,13 +45,13 @@ describe("OKF first-class conformance", () => {
       bundles: {
         local: {
           path: storage.stashDir,
+          adapter: "akm",
           writable: true,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
         },
         adversarial: {
           path: okfRoot,
+          adapter: adversarialAdapter,
           writable: true,
-          components: { main: { root: ".", adapter: adversarialAdapter, writable: true } },
         },
         noindex: { path: noIndexRoot, writable: false },
       },
@@ -95,12 +96,14 @@ describe("OKF first-class conformance", () => {
   test("preserves every path identity, open type, normalized field, and generic show behavior", async () => {
     const sources = resolveSourceEntries();
     expect(sources.find((source) => source.registryId === "adversarial")?.adapterId).toBe("okf");
-    expect(sources.find((source) => source.registryId === "noindex")?.adapterId).toBeUndefined();
+    // An entry without `adapter` is detected once when the config is read (design §4.3); only `akm index` persists it.
+    expect(sources.find((source) => source.registryId === "noindex")?.adapterId).toBe("okf");
+    expect(loadConfig().bundles?.noindex?.adapter).toBeUndefined();
 
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
     expect(resolveSourceEntries().find((source) => source.registryId === "noindex")?.adapterId).toBe("okf");
-    expect(loadConfig().bundles?.noindex?.components?.main?.adapter).toBe("okf");
+    expect(loadConfig().bundles?.noindex?.adapter).toBe("okf");
 
     const db = openExistingDatabase(getDbPath());
     try {
@@ -182,7 +185,7 @@ describe("OKF first-class conformance", () => {
     // `[Dangling](/missing.md)` link (seeded above) was ALWAYS a broken OKF
     // link, but the pre-dispatch `akm lint` ran a CLI-only `missing-type`-only
     // re-implementation for OKF bundles that never checked links at all —
-    // `okfAdapter.validate()`'s own `missing-ref` check (`okf-adapter.ts`) was
+    // `checkChanges(okfAdapter, )`'s own `missing-ref` check (`okf-adapter.ts`) was
     // unreachable dead code. `akm lint` now runs the real adapter, so this
     // finding — genuinely present in the fixture the whole time — is reported
     // (non-blocking, per §5's OKF leniency: consumers tolerate broken links).
@@ -229,25 +232,17 @@ describe("OKF first-class conformance", () => {
     });
     expect(parseType(native.path)).toBe("memory");
 
-    const warnings: string[] = [];
-    _resetWarnOnceForTests();
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-    try {
-      const reserved = await writeMarkdownAsset({
+    // A name whose file would be no asset (a reserved one) is refused, and nothing is written (§0.2 N12).
+    await expect(
+      writeMarkdownAsset({
         type: "memory",
         content: "Reserved.",
         name: "index",
         fallbackPrefix: "memory",
         target: "local",
-      });
-      expect(parseType(reserved.path)).toBe("memory");
-      expect(warnings.some((w) => w.includes("index"))).toBe(true);
-    } finally {
-      _setWarnSinkForTests(undefined);
-    }
-    expect(fs.existsSync(path.join(storage.stashDir, "memories", "index.md"))).toBe(true);
+      }),
+    ).rejects.toThrow('Cannot create memory "index" in bundle "local": it would be kept at memories/index.md');
+    expect(fs.existsSync(path.join(storage.stashDir, "memories", "index.md"))).toBe(false);
   });
 
   test("an adapter change invalidates incremental freshness and updates the canonical row in place", async () => {
@@ -358,11 +353,13 @@ describe("OKF first-class conformance", () => {
         bundles: {
           parent: {
             path: storage.stashDir,
-            components: { main: { root: ".", adapter: parentAdapter, writable: true } },
+            adapter: parentAdapter,
+            writable: true,
           },
           nested: {
             path: nestedRoot,
-            components: { main: { root: ".", adapter: "okf", writable: false } },
+            adapter: "okf",
+            writable: false,
           },
         },
       });
@@ -438,11 +435,13 @@ describe("OKF first-class conformance", () => {
         bundles: {
           parent: {
             path: storage.stashDir,
-            components: { main: { root: ".", adapter: parentAdapter, writable: true } },
+            adapter: parentAdapter,
+            writable: true,
           },
           nested: {
             path: nestedRoot,
-            components: { main: { root: ".", adapter: nestedAdapter, writable: false } },
+            adapter: nestedAdapter,
+            writable: false,
           },
         },
       });
@@ -516,9 +515,7 @@ describe("OKF first-class conformance", () => {
       expect(result.clean).toEqual({
         skipped: {
           reason: "incomplete-scan",
-          sources: [
-            { bundle: "adversarial", component: "main", path: okfRoot, reason: expect.stringContaining("ENOENT") },
-          ],
+          sources: [{ bundle: "adversarial", path: okfRoot, reason: expect.stringContaining("ENOENT") }],
         },
       });
     } finally {
@@ -539,7 +536,7 @@ describe("OKF first-class conformance", () => {
     }
   });
 
-  test("an unknown configured adapter cannot wipe a previously indexed component", async () => {
+  test("an unknown configured adapter cannot wipe a previously indexed bundle", async () => {
     await akmIndex({ stashDir: storage.stashDir, full: true });
     writeSandboxConfig({
       semanticSearchMode: "off",
@@ -547,20 +544,22 @@ describe("OKF first-class conformance", () => {
       bundles: {
         local: {
           path: storage.stashDir,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
+          adapter: "akm",
+          writable: true,
         },
         adversarial: {
           path: okfRoot,
-          components: { main: { root: ".", adapter: "no-such-adapter", writable: false } },
+          adapter: "no-such-adapter",
+          writable: false,
         },
       },
     });
     resetConfigCache();
 
-    // #909: an unrecognised adapter is rejected when the config loads, naming
-    // the accepted values -- so the index never starts, never mind wipes.
+    // #909: an unrecognised adapter is rejected before the index changes anything, naming
+    // the accepted values -- so the index never wipes.
     await expect(akmIndex({ stashDir: storage.stashDir, full: true })).rejects.toThrow(
-      /unrecognized adapter "no-such-adapter"; expected one of: .*\bakm\b/,
+      /Bundle "adversarial" names adapter "no-such-adapter", which akm does not have\. Expected one of: .*\bakm\b/,
     );
 
     const db = openExistingDatabase(getDbPath());
@@ -582,7 +581,7 @@ describe("OKF first-class conformance", () => {
 
     expect(result.ok).toBe(true);
     // akm 0.9.0 lint/adapter-dispatch wiring: `akm lint` now runs the OKF
-    // bundle through the real `okfAdapter.validate()` (spec §5) instead of a
+    // bundle through the real `checkChanges(okfAdapter, )` (spec §5) instead of a
     // CLI-only re-implementation — the detail text below is the adapter's own
     // (`okf-adapter.ts`'s `missing-type` message), not a re-recorded
     // duplicate of it. This is the same fix that makes `missing-ref` reachable
@@ -650,10 +649,11 @@ describe("OKF first-class conformance", () => {
       bundles: {
         primary: {
           path: storage.stashDir,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
+          adapter: "okf",
+          writable: true,
         },
-        local: { path: localRoot, components: { main: { root: ".", adapter: "okf", writable: false } } },
-        stash: { path: stashRoot, components: { main: { root: ".", adapter: "okf", writable: false } } },
+        local: { path: localRoot, adapter: "okf", writable: false },
+        stash: { path: stashRoot, adapter: "okf", writable: false },
       },
     });
     resetConfigCache();
@@ -674,9 +674,7 @@ describe("OKF first-class conformance", () => {
   test("OKF concepts cannot be executed as native workflows", async () => {
     write(okfRoot, "workflows/foreign.md", getWorkflowTemplate());
 
-    await expect(loadWorkflowAsset("adversarial//workflows/foreign")).rejects.toThrow(
-      /adapter "okf".*does not support native workflow execution/i,
-    );
+    await expect(loadWorkflowAsset("adversarial//workflows/foreign")).rejects.toThrow(/not a native workflow/i);
   });
 
   test("the native akm-workflow adapter remains executable", async () => {
@@ -696,7 +694,8 @@ describe("OKF first-class conformance", () => {
         local: { path: storage.stashDir },
         native: {
           path: workflowRoot,
-          components: { main: { root: ".", adapter: "akm-workflow", writable: true } },
+          adapter: "akm-workflow",
+          writable: true,
         },
       },
     });
@@ -773,7 +772,8 @@ describe("OKF first-class conformance", () => {
         bundles: {
           native: {
             path: workflowRoot,
-            components: { main: { root: ".", adapter: "akm-workflow", writable: true } },
+            adapter: "akm-workflow",
+            writable: true,
           },
         },
       });
@@ -782,9 +782,8 @@ describe("OKF first-class conformance", () => {
       expect((await loadWorkflowAsset("native//upper")).path).toBe(path.join(workflowRoot, "upper.MD"));
       // A workflow that is a symlink to a file outside the bundle loads (#1237).
       expect((await loadWorkflowAsset("native//linked")).path).toBe(path.join(workflowRoot, "linked.md"));
-      await expect(loadWorkflowAsset("native//duplicate")).rejects.toMatchObject({
-        code: "RESOURCE_ALREADY_EXISTS",
-      });
+      // Two spellings of one workflow: the one `place` gives (`.md`) is the workflow, the other is ignored.
+      expect((await loadWorkflowAsset("native//duplicate")).path).toBe(path.join(workflowRoot, "duplicate.md"));
       // SRC BUG (reported, not fixed — src is frozen for this port):
       // `createWorkflowAsset`'s cross-name-collision guard
       // (`findExistingWorkflowPaths`, pre-unification) was deleted in the
@@ -818,11 +817,13 @@ describe("OKF first-class conformance", () => {
       bundles: {
         local: {
           path: storage.stashDir,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
+          adapter: "akm",
+          writable: true,
         },
         native: {
           path: workflowRoot,
-          components: { main: { root: ".", adapter: "akm-workflow", writable: true } },
+          adapter: "akm-workflow",
+          writable: true,
         },
       },
     });
@@ -843,20 +844,20 @@ describe("OKF first-class conformance", () => {
       bundles: {
         adversarial: {
           path: okfRoot,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
+          adapter: "okf",
+          writable: true,
         },
         local: {
           path: storage.stashDir,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
+          adapter: "akm",
+          writable: true,
         },
       },
     });
 
     await withEnv({ AKM_BUNDLE_DIR: undefined }, async () => {
       resetConfigCache();
-      await expect(loadWorkflowAsset("workflows/same")).rejects.toThrow(
-        /adapter "okf".*does not support native workflow execution/i,
-      );
+      await expect(loadWorkflowAsset("workflows/same")).rejects.toThrow(/not a native workflow/i);
       expect((await loadWorkflowAsset("local//workflows/same")).path).toBe(
         path.join(storage.stashDir, "workflows", "same.md"),
       );
@@ -875,32 +876,32 @@ describe("OKF first-class conformance", () => {
       bundles: {
         adversarial: {
           path: okfRoot,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
+          adapter: "okf",
+          writable: true,
         },
         native: {
           path: workflowRoot,
-          components: { main: { root: ".", adapter: "akm-workflow", writable: true } },
+          adapter: "akm-workflow",
+          writable: true,
         },
       },
     });
     resetConfigCache();
 
-    await expect(loadWorkflowAsset("same")).rejects.toThrow(
-      /adapter "okf".*does not support native workflow execution/i,
-    );
+    await expect(loadWorkflowAsset("same")).rejects.toThrow(/not a native workflow/i);
     expect((await loadWorkflowAsset("native//same")).ref).toBe("native//same");
     expect((await loadWorkflowAsset("index")).ref).toBe("native//index");
   });
 
-  test("workflow authoring rejects a default OKF component before touching disk", async () => {
+  test("workflow authoring rejects a default OKF bundle before touching disk", async () => {
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "adversarial",
       bundles: {
         adversarial: {
           path: okfRoot,
+          adapter: "okf",
           writable: true,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
         },
       },
     });
@@ -931,13 +932,13 @@ describe("OKF first-class conformance", () => {
       bundles: {
         local: {
           path: storage.stashDir,
+          adapter: "akm",
           writable: true,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
         },
         adversarial: {
           path: okfRoot,
+          adapter: "okf",
           writable: true,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
         },
       },
     });
@@ -979,9 +980,10 @@ describe("OKF first-class conformance", () => {
       bundles: {
         vendor: {
           path: okfRoot,
-          components: { main: { root: ".", adapter: "okf", writable: false } },
+          adapter: "okf",
+          writable: false,
         },
-        team: { path: teamRoot, components: { main: { root: ".", adapter: "akm", writable: true } } },
+        team: { path: teamRoot, adapter: "akm", writable: true },
       },
     });
 
@@ -1003,17 +1005,18 @@ describe("OKF first-class conformance", () => {
     expect(fs.existsSync(path.join(teamRoot, "memories", "replacement.md"))).toBe(true);
   });
 
-  test("a nested default component root owns writes, indexing, show, and lint", async () => {
+  test("a nested default bundle root owns writes, indexing, show, and lint", async () => {
     const packageRoot = path.join(storage.root, "nested-package");
-    const componentRoot = path.join(packageRoot, "catalog");
-    fs.mkdirSync(componentRoot, { recursive: true });
+    const contentRoot = path.join(packageRoot, "catalog");
+    fs.mkdirSync(contentRoot, { recursive: true });
     writeSandboxConfig({
       defaultBundle: "nested",
       bundles: {
         nested: {
           path: packageRoot,
+          adapter: "akm",
+          root: "catalog",
           writable: true,
-          components: { main: { root: "catalog", adapter: "akm", writable: true } },
         },
       },
     });
@@ -1022,21 +1025,21 @@ describe("OKF first-class conformance", () => {
       resetConfigCache();
       const written = await writeMarkdownAsset({
         type: "memory",
-        content: "---\nupdated: 2026-07-25\n---\n\nNested component body.",
+        content: "---\nupdated: 2026-07-25\n---\n\nNested bundle body.",
         name: "nested-root",
         fallbackPrefix: "memory",
       });
 
-      expect(written.path).toBe(path.join(componentRoot, "memories", "nested-root.md"));
-      expect(written.stashDir).toBe(componentRoot);
+      expect(written.path).toBe(path.join(contentRoot, "memories", "nested-root.md"));
+      expect(written.stashDir).toBe(contentRoot);
       expect(fs.existsSync(path.join(packageRoot, "memories", "nested-root.md"))).toBe(false);
       expect(resolveSourceEntries()).toEqual([
-        expect.objectContaining({ path: componentRoot, registryId: "nested", adapterId: "akm" }),
+        expect.objectContaining({ path: contentRoot, registryId: "nested", adapterId: "akm" }),
       ]);
 
-      await akmIndex({ stashDir: componentRoot, full: true });
+      await akmIndex({ stashDir: contentRoot, full: true });
       const shown = await showLocal({ ref: "nested//memories/nested-root" });
-      expect(shown.content).toContain("Nested component body.");
+      expect(shown.content).toContain("Nested bundle body.");
       expect((await akmLint()).flagged).toEqual([]);
     });
   });
@@ -1067,13 +1070,13 @@ describe("OKF v0.2 fixture bundle indexes end-to-end alongside the v0.1 fixture"
       bundles: {
         local: {
           path: v2Storage.stashDir,
+          adapter: "akm",
           writable: true,
-          components: { main: { root: ".", adapter: "akm", writable: true } },
         },
         "okf-v2": {
           path: V2_FIXTURE_ROOT,
+          adapter: "okf",
           writable: true,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
         },
       },
     });

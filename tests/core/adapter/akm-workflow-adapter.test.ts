@@ -14,10 +14,12 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmWorkflowAdapter } from "../../../src/core/adapter/adapters/akm-workflow-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../../../src/core/adapter/types";
-import type { FileChange } from "../../../src/core/file-change";
+import { buildFileContext } from "../../../src/core/adapter/directory/file-context";
+import type { FileChange } from "../../../src/core/adapter/file-change";
+import type { Bundle, IndexDocument } from "../../../src/core/adapter/types";
+import type { FileDiagnostic, FileValidateContext } from "../../../src/core/adapter/validate-context";
 import { presentationFor } from "../../../src/core/type-presentation";
-import { buildFileContext } from "../../../src/indexer/walk/file-context";
+import { checkChanges } from "../../_helpers/adapter-hooks";
 
 const FIXTURE_ROOT = path.join(import.meta.dir, "../../fixtures/bundles/akm-workflow");
 const GOLDENS_ROOT = path.join(import.meta.dir, "../../fixtures/format-family-goldens/akm-workflow");
@@ -27,15 +29,15 @@ function loadGolden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDENS_ROOT, `${name}.json`), "utf8"));
 }
 
-function component(): BundleComponent {
-  return { id: BUNDLE_ID, adapter: "akm-workflow", root: FIXTURE_ROOT, writable: true };
+function bundle(): Bundle {
+  return { id: BUNDLE_ID, root: FIXTURE_ROOT };
 }
 
 function recognizeRel(relPath: string): IndexDocument | null {
-  return akmWorkflowAdapter.recognize(component(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
+  return akmWorkflowAdapter.recognize(bundle(), buildFileContext(FIXTURE_ROOT, path.join(FIXTURE_ROOT, relPath)));
 }
 
-const ctx: ValidateContext = {
+const ctx: FileValidateContext = {
   readFile: async (p) => {
     try {
       return fs.readFileSync(path.join(FIXTURE_ROOT, p), "utf8");
@@ -67,7 +69,6 @@ describe("akm-workflow adapter — recognition golden", () => {
       expect(doc, `${relPath} must be recognized`).not.toBeNull();
       if (!doc) throw new Error("unreachable");
       expect(doc.adapterId).toBe(expected.adapterId as string);
-      expect(doc.component).toBe(expected.component as string);
       expect(doc.type).toBe(expected.type as string);
       expect(doc.conceptId).toBe(expected.conceptId as string);
       expect(doc.ref).toBe(expected.ref as string);
@@ -94,7 +95,7 @@ describe("akm-workflow adapter — renderer golden", () => {
 });
 
 describe("akm-workflow adapter — lint golden", () => {
-  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues?: Diagnostic[] }>;
+  const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues?: FileDiagnostic[] }>;
 
   test("the markdown workflow validates clean ([])", async () => {
     const md = perType.workflowMd;
@@ -103,7 +104,7 @@ describe("akm-workflow adapter — lint golden", () => {
       op: "update",
       after: fs.readFileSync(path.join(FIXTURE_ROOT, md!.relPath), "utf8"),
     };
-    const diags = await akmWorkflowAdapter.validate(component(), [change], ctx);
+    const diags = await checkChanges(akmWorkflowAdapter, bundle(), [change], ctx);
     expect(diags.map((d) => d.issue)).toEqual((md!.issues ?? []).map((i) => i.issue));
   });
 });

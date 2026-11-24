@@ -60,6 +60,7 @@ export async function akmRelated(ref: string, scope: RelatedScope = "all") {
           row.itemRef &&
           !["secret", "env", "session"].includes(row.entry.type) &&
           (scope === "all" || row.bundleId === bundle) &&
+          // asset-io: base a neighbour whose indexed file is gone is left out
           fs.existsSync(row.filePath),
       );
       return new Set(applyEntryFilters(rows, filterOptions).map((row) => row.id));

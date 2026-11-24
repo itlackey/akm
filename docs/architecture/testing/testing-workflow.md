@@ -20,7 +20,10 @@ covers the automated test workflow and test-authoring guidance.
 
 ## Test Targets
 
-`bun run check` runs lint and the typecheck, then both targets in sequence.
+`bun run check` runs lint, the typecheck and the unit target; it is what CI's `check` job runs on every pull
+request. The integration target runs only before a release: the Release workflow (`.github/workflows/release.yml`)
+runs it as a gate on the commit that ships, a prerelease and a stable alike. Run it yourself before pushing a
+change it covers.
 
 - `bun run test:unit` (`scripts/test-unit.sh`) runs every `*.test.ts` under
   `tests/` except `tests/integration/`. That includes the top-level
@@ -84,8 +87,9 @@ Relevant coverage:
 
 Both `scripts/test-unit.sh` (`bun run test:unit`) and `scripts/test-integration.sh`
 (`bun run test:integration`) shard their target across up to `min(nproc, 8)`
-concurrent `bun test` processes, splitting the file list round-robin — neither
-runner is a single shared process. Within one shard, every file assigned to that
+concurrent `bun test` processes — neither runner is a single shared process. The
+unit runner splits the file list round-robin; the integration runner balances it
+by recorded duration (below). Within one shard, every file assigned to that
 process still runs in **one shared process**: one `process.env`, one
 module-singleton namespace, and (under fake timers) one global clock for every
 file in that shard. A test that mutates shared state without restoring it, or
@@ -139,6 +143,30 @@ tripwire catches leaks):
    `semanticSearchMode: "auto"` and no fake embedder downloads a Hugging Face
    model mid-test; use the deterministic embedder (`AKM_EMBED_DETERMINISTIC`) or
    `"off"`.
+
+### Integration shard timings
+
+`tests/integration/.timings.json` records how many seconds each integration test
+file took in a past run. `scripts/test-integration.sh` hands the files out longest
+first, each to the shard with the least recorded time so far
+(`scripts/integration-timings.ts plan`); a file with no record, such as a new one,
+weighs the median, and ties go by path, so every machine plans the same shards. The
+seconds only rank the files, so times from a local run serve as well as CI's.
+
+Each shard writes a junit report (`shard-N.xml`) and its file list
+(`shard-N.files`) next to its log. The Release workflow's `integration` job keeps
+that directory (`TEST_INTEGRATION_LOGDIR`) and uploads it as the
+`integration-shards` artifact of every run, green or not. When the shards drift apart (compare the `time` on the
+`<testsuites>` line of each `shard-N.xml`), regenerate the file from one run's reports and commit it:
+
+```sh
+gh run download <run-id> --name integration-shards --dir /tmp/shards
+bun scripts/integration-timings.ts update /tmp/shards/shard-*.xml
+```
+
+`update` takes the reported time for every file the reports name, keeps the
+record of any other file, and drops files that no longer exist. A local run works
+the same way: `TEST_INTEGRATION_LOGDIR=/tmp/shards bun run test:integration`.
 
 ### The preload
 
@@ -237,8 +265,8 @@ otherwise uses the ignored, repo-local `.ci-cache/huggingface` directory. That
 path is outside the preload's disposable test `HOME`, so a second local run
 reuses the model without exposing the developer's normal AKM cache. Gated CI
 sets the same path and restores it from a model/source-identified Actions
-cache. Candidate tags and manual runs are restore-only; only the scheduled
-default-branch run may save a cache entry.
+cache. Prerelease and manual runs are restore-only; only a stable release's run,
+on the default branch, may save a cache entry.
 
 The same gate runs real semantic index/search round-trips on `onnxruntime-node`'s
 binding, asserts the `embeddingRuntime` the index reports, and compares the
@@ -425,14 +453,14 @@ For a local release gate without Docker, use:
 ```
 
 That script checks the packaged artifact: bin targets, the migrator and package
-acceptance. Lint, the typecheck and the test suites are `bun run check`; the
-upgrade rehearsal runs in CI.
+acceptance. Lint, the typecheck and the unit suite are `bun run check`, the
+integration suite is `bun run test:integration`; the upgrade rehearsal runs in CI.
 
-The Release workflow runs Gated CI (real embeddings, Docker, and the
-Linux/macOS/Windows schedulers) on the commit it publishes and requires CI to
-have passed on that commit; see the
-[maintainer release checklist](../../maintainers/release-checklist.md). The
-weekly scheduled run of Gated CI detects default-branch drift.
+The Release workflow runs the integration suite and Gated CI (real embeddings,
+Docker, and the Linux/macOS/Windows schedulers) on the commit it publishes,
+a prerelease and a stable alike, and requires CI to have passed on that commit;
+see the [maintainer release checklist](../../maintainers/release-checklist.md).
+Neither runs anywhere else in CI.
 
 ## Upgrade Regression Coverage
 

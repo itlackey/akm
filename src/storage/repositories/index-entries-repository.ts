@@ -27,7 +27,7 @@ import { buildSearchText } from "../../indexer/search/search-fields";
 import { capEmbeddingText, DEFAULT_MAX_INPUT_TOKENS } from "../../llm/embedders/remote";
 import { sha256Hex } from "../../runtime";
 import type { Database, SqlValue } from "../database";
-import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-mapper";
+import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry, storedFilePath } from "./index-entry-mapper";
 import type { DbIndexedEntry, EntryProvenance, RekeyEntryOptions } from "./index-entry-types";
 import { deleteFtsEntries, replaceFtsEntry } from "./index-fts-repository";
 import { deleteEntryLinks, replaceEntryLinks } from "./index-links-repository";
@@ -98,7 +98,8 @@ export function upsertEntry(
     const result = stmts.upsert.get(
       provenance.itemRef,
       provenance.bundleId,
-      provenance.componentId,
+      // component_id (dropped in 0.11) holds the bundle id.
+      provenance.bundleId,
       provenance.conceptId,
       provenance.adapterId,
       entry.type,
@@ -184,6 +185,7 @@ function getUpsertStmts(db: Database): UpsertStmts {
     // RETURNING id handles ON CONFLICT DO UPDATE correctly — no second
     // SELECT round-trip needed (last_insert_rowid() is unreliable for
     // ON CONFLICT). Use `.get()` so a single row comes back.
+    // Layout 26 keeps `component_id`, the retired name of a bundle's one component; its value is the bundle's id.
     upsert: db.prepare(`
       INSERT INTO entries (
         item_ref, bundle_id, component_id, concept_id, adapter_id, type,
@@ -535,17 +537,27 @@ export function deleteEntriesOutsideLibrary(
   })();
 }
 
-/**
- * The `file_path` of every entry indexed under one bundle — used by
- * `akm bundle rename` (D6) to find bundle CONTENT that still spells the old
- * `<bundle>//` prefix (xrefs, `supersededBy`, task `uses:`), which the rename
- * reports rather than rewrites.
- */
-export function getFilePathsByBundle(db: Database, bundleId: string): string[] {
-  const rows = db.prepare("SELECT DISTINCT file_path FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{
+/** The ref and file of each indexed file of a bundle, one entry per file, in the order of the rows. */
+export function getRefsAndFilesByBundle(db: Database, bundleId: string): Array<{ ref: string; filePath: string }> {
+  const rows = db.prepare("SELECT file_path, item_ref FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{
     file_path: string;
+    item_ref: string;
   }>;
-  return rows.map((row) => row.file_path);
+  const seen = new Set<string>();
+  const found: Array<{ ref: string; filePath: string }> = [];
+  for (const row of rows) {
+    // A row no file holds has no path to share with another.
+    if (row.file_path !== "" && seen.has(row.file_path)) continue;
+    seen.add(row.file_path);
+    found.push({ ref: row.item_ref, filePath: row.file_path });
+  }
+  return found;
+}
+
+/** A lookup of the ref each entry row holds, by row id: null for a row with no ref, undefined for no row. */
+export function itemRefLookup(db: Database): (id: number) => string | null | undefined {
+  const byId = db.prepare<{ item_ref: string | null }>("SELECT item_ref FROM entries WHERE id = ?");
+  return (id) => byId.get(id)?.item_ref;
 }
 
 /**
@@ -589,6 +601,29 @@ export function deleteEntriesByDirExceptRefs(
   return db.transaction(() => {
     const doomed = rowsInDirectory(db, dirPath, bundleId).filter((row) => !keepRefs.has(row.item_ref));
     return deleteEntryRows(db, doomed, options);
+  })();
+}
+
+/**
+ * Prune every row of `bundleId` that is not in `keepRefs`: a bundle that is no directory (a keyring, a vault) is
+ * drained whole, so what its listing no longer holds is what departed.
+ */
+export function deleteEntriesByBundleExceptRefs(
+  db: Database,
+  bundleId: string,
+  keepRefs: ReadonlySet<string>,
+  options: { cleanupUsageEvents?: boolean } = {},
+): DeletedEntry[] {
+  return db.transaction(() => {
+    const rows = db.prepare("SELECT id, item_ref FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{
+      id: number;
+      item_ref: string;
+    }>;
+    return deleteEntryRows(
+      db,
+      rows.filter((row) => !keepRefs.has(row.item_ref)),
+      options,
+    );
   })();
 }
 
@@ -719,90 +754,18 @@ export function getAllEntries(db: Database, entryType?: string, excludeTypes?: s
 }
 
 /**
- * Resolve a single `entries.id` from a new-grammar `[bundle//]conceptId` ref,
- * keying on the canonical stored `item_ref` (ref-grammar decision D-R1/D-R4).
- * The optional `bundleId` scopes the match to one indexed bundle.
+ * Resolve a single `entries.id` from a qualified `bundle//conceptId` ref: the row whose canonical stored `item_ref` is
+ * that ref, exactly (§4.1). An unqualified ref is input sugar, qualified at the boundary by `qualifyRef`
+ * (`src/core/assets/read.ts`); it is refused here, never matched by suffix.
  */
-export function findEntryIdByRef(db: Database, ref: string, bundleId?: string): number | undefined {
-  return findEntryIdByBundleRef(db, ref, bundleId);
-}
-
-/** `name` plus its `.md`-toggled sibling — the markdown ext-keep/strip ambiguity. */
-export function withMdVariants(name: string): string[] {
-  return name.endsWith(".md") ? [name, name.slice(0, -3)] : [name, `${name}.md`];
-}
-
-/** True when `file` is a `.md` file named by the last segment of `conceptId`, up to its `.md`. */
-export function namesMarkdownFile(conceptId: string, file: string): boolean {
-  const last = (conceptId.split("/").pop() ?? "").replace(/\.md$/, "");
-  return path.extname(file) === ".md" && path.basename(file, ".md") === last;
-}
-
-/**
- * Current (`[bundle//]conceptId`) id lookup: match `item_ref` exactly when
- * bundle-qualified or by `//conceptId` suffix when short.
- */
-function findEntryIdByBundleRef(db: Database, ref: string, bundleId?: string): number | undefined {
+export function findEntryIdByRef(db: Database, ref: string): number | undefined {
   const parsed = parseBundleRef(ref);
-  // item_ref is the canonical stored spelling post-flip.
-  const exact = matchIdByItemRef(db, parsed.bundle, parsed.conceptId, bundleId);
-  if (exact !== undefined) return exact;
-  // The `.md` toggle names a markdown file by its own name: `tasks/x.md` is not a spelling of `tasks/x.yml`,
-  // nor `skills/x.md` of `skills/x/SKILL.md`.
-  const [, toggled] = withMdVariants(parsed.conceptId);
-  const id = matchIdByItemRef(db, parsed.bundle, toggled!, bundleId);
-  const file = id === undefined ? undefined : getEntryFilePathById(db, id);
-  return file !== undefined && namesMarkdownFile(parsed.conceptId, file) ? id : undefined;
-}
-
-/**
- * Match a row `id` by `item_ref`: exact `bundle//conceptId` when `bundle` is
- * known, else the `//conceptId` SUFFIX (short ref — any bundle). The suffix
- * uses `substr(...) = ...` (never LIKE) so `_`/`%` in a conceptId are literal,
- * and includes the `//` boundary so a segment split never false-matches.
- *
- * ── Deterministic winner (`ORDER BY id ASC`) ──
- *
- * A SHORT ref can match one concept id across MULTIPLE bundles (e.g. the same
- * `knowledge/guide` in the primary stash and an installed source). The bare
- * `LIMIT 1` this replaced picked whichever row SQLite happened to visit first —
- * a nondeterministic winner when two bundles share a conceptId. We now impose a
- * total order (`ORDER BY id ASC`) so the winner is STABLE across runs.
- *
- * `id ASC` is also the SENSIBLE choice, not just a stable tiebreak: a full index
- * walks its sources in installation-precedence order (`resolveSourceEntries`,
- * primary stash first — the same order `resolveSourcesForOrigin` calls "local"),
- * so the highest-precedence source's rows carry the LOWEST ids. Ascending id
- * therefore prefers the primary/highest-precedence bundle — mirroring what a
- * precedence-ordered scan would pick — while staying a pure config-free leaf
- * (true installation-priority resolution against an injected bundle list is
- * `resolveRef`'s job; this DB helper takes no config handle). The exact-bundle
- * arm is single-row under the UNIQUE `item_ref` index.
- */
-function matchIdByItemRef(
-  db: Database,
-  bundle: string | undefined,
-  conceptId: string,
-  bundleId?: string,
-): number | undefined {
-  const scope = bundleId ? "AND bundle_id = ?" : "";
-  if (bundle !== undefined) {
-    const itemRef = `${bundle}//${conceptId}`;
-    const row = db
-      .prepare(`SELECT id FROM entries WHERE item_ref = ? ${scope} ORDER BY id ASC LIMIT 1`)
-      .get(itemRef, ...(bundleId ? [bundleId] : [])) as { id: number } | undefined;
-    return row?.id;
+  if (parsed.bundle === undefined) {
+    throw new Error(`findEntryIdByRef takes a qualified ref; "${ref}" is not: qualify it with qualifyRef first.`);
   }
-  const suffix = `//${conceptId}`;
-  const row = db
-    .prepare(
-      `SELECT id FROM entries
-       WHERE substr(item_ref, length(item_ref) - length(?) + 1) = ?
-         ${scope}
-       ORDER BY id ASC
-       LIMIT 1`,
-    )
-    .get(suffix, suffix, ...(bundleId ? [bundleId] : [])) as { id: number } | undefined;
+  const row = db.prepare("SELECT id FROM entries WHERE item_ref = ?").get(`${parsed.bundle}//${parsed.conceptId}`) as
+    | { id: number }
+    | undefined;
   return row?.id;
 }
 
@@ -857,22 +820,18 @@ export function getEntryById(
       entry: IndexDocument;
       itemRef: string;
       bundleId: string;
-      componentId: string;
       conceptId: string;
       adapterId: string;
     }
   | undefined {
   const row = db
-    .prepare(
-      "SELECT file_path, document_json, item_ref, bundle_id, component_id, concept_id, adapter_id FROM entries WHERE id = ?",
-    )
+    .prepare("SELECT file_path, document_json, item_ref, bundle_id, concept_id, adapter_id FROM entries WHERE id = ?")
     .get(id) as
     | {
         file_path: string;
         document_json: string;
         item_ref: string;
         bundle_id: string;
-        component_id: string;
         concept_id: string;
         adapter_id: string;
       }
@@ -887,11 +846,10 @@ export function getEntryById(
     return undefined;
   }
   return {
-    filePath: row.file_path,
+    filePath: storedFilePath(row.file_path, entry),
     entry,
     itemRef: row.item_ref,
     bundleId: row.bundle_id,
-    componentId: row.component_id,
     conceptId: row.concept_id,
     adapterId: row.adapter_id,
   };
@@ -1044,17 +1002,13 @@ export function getLiveRefSnapshot(db: Database): LiveRefSnapshot {
 
 /**
  * `getEntryByRef`'s liveness check (bundle-qualified exact match, or bare
- * `//conceptId` suffix match across bundles, each tried with the `.md`
- * toggle {@link withMdVariants} applies) against a prebuilt
+ * `//conceptId` suffix match across bundles, as written) against a prebuilt
  * {@link LiveRefSnapshot} instead of the database — no query per call.
  */
 export function isRefLiveInSnapshot(snapshot: LiveRefSnapshot, ref: string): boolean {
   const parsed = parseBundleRef(ref);
-  const conceptVariants = withMdVariants(parsed.conceptId);
-  if (parsed.bundle !== undefined) {
-    return conceptVariants.some((conceptId) => snapshot.itemRefs.has(`${parsed.bundle}//${conceptId}`));
-  }
-  return conceptVariants.some((conceptId) => snapshot.conceptIds.has(conceptId));
+  if (parsed.bundle !== undefined) return snapshot.itemRefs.has(`${parsed.bundle}//${parsed.conceptId}`);
+  return snapshot.conceptIds.has(parsed.conceptId);
 }
 
 /**

@@ -58,7 +58,7 @@ for (const name of [
   "NotFoundError",
   "ConfigError",
   "TransientError",
-  "indexWrittenAssets",
+  "indexFiles",
   "scrubUrlCredentials",
 ])
   assert.equal(typeof workspace[name], "function", name);
@@ -142,10 +142,7 @@ fs.mkdirSync(path.join(stash, "scripts"), { recursive: true });
 fs.writeFileSync(path.join(stash, "scripts", "tool.sh"), "#!/bin/sh\necho one\n");
 execFileSync(process.execPath, [cli, "index", "--format=json"], { env: process.env, stdio: "pipe" });
 fs.writeFileSync(path.join(stash, "scripts", "tool.sh"), "#!/bin/sh\necho two\n");
-assert.equal(
-  await workspace.indexWrittenAssets(stash, [path.join(stash, "scripts", "tool.sh")], { bundleId: "stash" }),
-  true,
-);
+assert.equal(await workspace.indexFiles("stash", [path.join(stash, "scripts", "tool.sh")]), true);
 assert.equal((await assets.related({ ref: source.ref })).available, false);
 // Env and secret operations: create, describe, stale revision, replace, remove.
 const made = await sensitive.save({ ref: "stash//secrets/smoke", content: "synthetic" });

@@ -236,6 +236,33 @@ describe.skipIf(!posix)("one timeout grammar and one limit", () => {
 });
 
 describe.skipIf(!posix)("a task is identified by its bundle and id", () => {
+  test("a bundle whose adapter holds no tasks does not hold the task: not found, exit 1", () => {
+    const docs = makeSandboxDir("akm-tasks-run-fixes-docs");
+    try {
+      fs.writeFileSync(path.join(docs.dir, "n.md"), "# n\n");
+      writeSandboxConfig({
+        defaultBundle: "stash",
+        bundles: {
+          stash: { path: storage.stashDir, writable: true },
+          docs: { path: docs.dir, adapter: "generic-files" },
+        },
+      });
+      for (const args of [
+        ["task", "run", "nightly", "--bundle", "docs"],
+        ["task", "explain", "docs//nightly"],
+      ]) {
+        const run = akmJson(args);
+        expect(run.status).toBe(1);
+        expect(errorOf(run)).toMatchObject({
+          code: "ASSET_NOT_FOUND",
+          error: expect.stringContaining('was not found in the configured "generic-files" bundle'),
+        });
+      }
+    } finally {
+      docs.cleanup();
+    }
+  });
+
   test("two bundles with the same task name keep their own resume record and history", () => {
     const other = makeSandboxDir("akm-tasks-run-fixes-two");
     try {

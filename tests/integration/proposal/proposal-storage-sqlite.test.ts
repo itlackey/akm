@@ -8,7 +8,7 @@
  *     revert) round-trips through the table;
  *   • concurrent create + list safety under WAL (a second open connection
  *     reads while the command-path connection writes);
- *   • UUID-prefix resolution + stash_dir partitioning against the table.
+ *   • UUID-prefix resolution + bundle_id partitioning against the table.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -32,6 +32,7 @@ import {
   type Proposal,
   resolveProposalId,
 } from "../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { makeConfig } from "../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -90,9 +91,10 @@ function countRows(stashDir: string, status?: string): number {
   const db = openStateDatabase(getStateDbPath());
   try {
     const sql = status
-      ? "SELECT COUNT(*) AS c FROM proposals WHERE stash_dir = ? AND status = ?"
-      : "SELECT COUNT(*) AS c FROM proposals WHERE stash_dir = ?";
-    const row = (status ? db.prepare(sql).get(stashDir, status) : db.prepare(sql).get(stashDir)) as { c: number };
+      ? "SELECT COUNT(*) AS c FROM proposals WHERE bundle_id = ? AND status = ?"
+      : "SELECT COUNT(*) AS c FROM proposals WHERE bundle_id = ?";
+    const bundle = stateBundleId(stashDir);
+    const row = (status ? db.prepare(sql).get(bundle, status) : db.prepare(sql).get(bundle)) as { c: number };
     return row.c;
   } finally {
     db.close();
@@ -258,7 +260,7 @@ describe("state.db is the canonical proposal store", () => {
     expect(fs.existsSync(dbPath)).toBe(true);
   });
 
-  test("stash_dir partitions queues: proposals in one stash are invisible to another", () => {
+  test("bundle_id partitions queues: proposals in one stash are invisible to another", () => {
     const stashA = makeStashDir();
     const stashB = makeStashDir();
     const a = mustCreate(stashA, "lessons/partition");
@@ -343,7 +345,9 @@ describe("concurrent create + list safety (WAL)", () => {
     try {
       for (let i = 0; i < 5; i += 1) {
         mustCreate(stash, `lessons/wal-${i}`);
-        const row = reader.prepare("SELECT COUNT(*) AS c FROM proposals WHERE stash_dir = ?").get(stash) as {
+        const row = reader
+          .prepare("SELECT COUNT(*) AS c FROM proposals WHERE bundle_id = ?")
+          .get(stateBundleId(stash)) as {
           c: number;
         };
         expect(row.c).toBe(i + 1);
@@ -414,8 +418,8 @@ describe("concurrent create + list safety (WAL)", () => {
       const db = openStateDatabase(dbPath);
       try {
         const rows = db
-          .prepare("SELECT proposal_id FROM improve_ledger WHERE stash_dir = ? AND source = 'reflect'")
-          .all(stash) as Array<{ proposal_id: string }>;
+          .prepare("SELECT proposal_id FROM improve_ledger WHERE bundle_id = ? AND source = 'reflect'")
+          .all(stateBundleId(stash)) as Array<{ proposal_id: string }>;
         expect(rows).toHaveLength(1);
         expect(parsed.map((entry) => entry.id)).toContain(rows[0]?.proposal_id);
       } finally {
@@ -493,9 +497,9 @@ describe("listProposals resilience to malformed archive rows (#858/#859)", () =>
         metadata_json: string;
       };
       const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
-      // Present but malformed (missing `root`) — genuine corruption, distinct
+      // Present but malformed (not a bundle name) — genuine corruption, distinct
       // from the field being absent entirely.
-      metadata.proposedTarget = { source: "team" };
+      metadata.proposedTarget = { source: 42 };
       db.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(metadata), corrupt.id);
     } finally {
       db.close();

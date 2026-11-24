@@ -26,7 +26,7 @@ function seedSkill(db: Database, name: string): number {
     db,
     `/s/${name}.md`,
     { name, type: "skill" },
-    deriveEntryProvenance({ bundleId: "s", componentId: "s", adapterId: "akm" }, "skill", name),
+    deriveEntryProvenance({ bundleId: "s", adapterId: "akm" }, "skill", name),
   );
 }
 

@@ -6,6 +6,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { Asset } from "../core/assets/read";
+import { UsageError } from "../core/errors";
 import { type ScriptOrigin, scriptCommand, scriptOrigin } from "./prepare/script-capture";
 
 export interface FrozenScriptSnapshot {
@@ -29,6 +31,7 @@ export function materializeFrozenScript(script: FrozenScriptSnapshot): Materiali
   }
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "akm-task-script-"));
   const file = path.join(directory, `snapshot${script.extension}`);
+  // asset-io: scratch materialized script
   fs.writeFileSync(file, bytes, { mode: 0o700 });
   return Object.freeze({ directory, file });
 }
@@ -43,16 +46,23 @@ export function frozenScriptCommand(
   return scriptCommand({ ref: script.sourceRef, bytes, extension: script.extension }, materializedPath, args);
 }
 
-/** The program and arguments that run the script asset `ref`, found at `file`, with `args` after it: what `akm run <ref>` runs. */
+/**
+ * The program and arguments that run the script `asset`, which `ref` names, with `args` after it: what `akm run <ref>`
+ * runs. The program reads the script from its file, so the asset must be kept in one; its bytes are the asset's own.
+ */
 export function scriptProgram(
   ref: string,
-  file: string,
+  asset: Asset,
   args: readonly string[],
 ): { argv: string[]; script: ScriptOrigin } {
-  const script = { ref, bytes: fs.readFileSync(file), extension: path.extname(file).toLowerCase() };
+  // asset-io: exec the file is handed to the interpreter
+  const file = asset.entry.file;
+  if (file === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
+  const script = { ref, bytes: asset.entry.bytes(), extension: path.extname(file).toLowerCase() };
   return { argv: scriptCommand(script, file, args), script: scriptOrigin(script) };
 }
 
 export function cleanupFrozenScript(materialized: MaterializedFrozenScript): void {
+  // asset-io: scratch materialized script
   fs.rmSync(materialized.directory, { recursive: true, force: true });
 }

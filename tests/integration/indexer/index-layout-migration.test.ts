@@ -478,7 +478,7 @@ describe("index.db layout 24 → 25", () => {
         db,
         path.join(storage.stashDir, "knowledge", `${alpha.name}.md`),
         fixtureDocument(alpha),
-        deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, "knowledge", alpha.name),
+        deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "knowledge", alpha.name),
       );
       expect(getEmbeddingCount(db, FINGERPRINT)).toBe(3);
     } finally {

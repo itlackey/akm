@@ -25,7 +25,6 @@
   } = $props();
   let enabled = $state(true),
     writable = $state(false),
-    components = $state<Record<string, boolean>>({}),
     confirm = $state(false),
     removing = $state(false);
   let heading = $state<HTMLHeadingElement>();
@@ -39,12 +38,6 @@
   $effect.pre(() => {
     enabled = bundle.enabled;
     writable = bundle.writableSetting ?? bundle.kind === "filesystem";
-    components = Object.fromEntries(
-      bundle.components.map((item) => [
-        item.name,
-        item.writable ?? bundle.writableSetting ?? bundle.kind === "filesystem",
-      ]),
-    );
   });
   const counts = $derived(
     Object.entries(bundle.byType ?? {})
@@ -57,17 +50,6 @@
       bundle: bundle.name,
       enabled,
       ...(writableKind ? { writable } : {}),
-      componentWritability: Object.fromEntries(
-        bundle.components
-          .filter(
-            (item) =>
-              writableKind &&
-              item.configured &&
-              !item.name.includes(".") &&
-              components[item.name] !== (item.writable ?? bundle.writableSetting ?? bundle.kind === "filesystem"),
-          )
-          .map((item) => [item.name, components[item.name]]),
-      ),
     });
   }
 </script>
@@ -83,6 +65,11 @@
       <div>
         <h2 tabindex="-1" bind:this={heading}>Manage {bundle.name}</h2>
         <p class="muted">{bundle.path ?? bundle.source?.locator ?? "Source path unavailable"}</p>
+        <p class="muted">
+          Adapter: {bundle.adapter}{bundle.detected ? " (detected)" : ""}{bundle.root === "."
+            ? ""
+            : ` · Root: ${bundle.root}`}
+        </p>
       </div>
       <a href={`/library/search?bundle=${encodeURIComponent(bundle.name)}`} aria-label={`Browse ${bundle.name} assets`}
         >Browse assets <Icon name="arrow-right" size={16} /></a
@@ -110,28 +97,10 @@
             class="switch"
             bind:checked={writable}
             disabled={busy || !writableKind}
-          /> Bundle writable default</label
+          /> Writable</label
         >
-        <p class="muted">Allow supported AKM writes. Individual components can override this default.</p>
+        <p class="muted">Allow supported AKM writes.</p>
       </div>
-      <fieldset>
-        <legend>Component access</legend>{#each bundle.components as component}<div class="component-row">
-            <label class="check-label"
-              ><input
-                type="checkbox"
-                role="switch"
-                class="switch"
-                bind:checked={components[component.name]}
-                disabled={busy || !writableKind || !component.configured || component.name.includes(".")}
-              /><span>{component.name} writable</span></label
-            >
-            <p class="muted">
-              {component.adapter} · {component.root ?? "."} · {component.writable === undefined
-                ? "Inherits bundle default"
-                : "Explicit override"}
-            </p>
-          </div>{/each}{#if !bundle.components.length}<p>No components reported.</p>{/if}
-      </fieldset>
       <div class="manage-save">
         <p class="muted small">{provenance(bundle.settingsSource)}. Saving creates a local override.</p>
         <button disabled={busy}>Save {bundle.name} settings</button>
@@ -383,25 +352,10 @@
     gap: 24px;
     margin: 0;
   }
-  .setting-row p,
-  .component-row p {
+  .setting-row p {
     margin: 8px 0 0;
     font-size: 14px;
     max-width: 65ch;
-  }
-  .bundle-settings fieldset {
-    display: grid;
-    gap: 16px;
-    border: 0;
-    border-top: 1px solid var(--border);
-    padding: 20px 0 0;
-    margin: 0;
-    min-width: 0;
-  }
-  .bundle-settings legend {
-    font-size: 16px;
-    font-weight: 600;
-    padding: 0 12px 0 0;
   }
   .check-label {
     align-items: center;

@@ -1,0 +1,5 @@
+version: 4
+name: team-task
+description: Same-bundle unqualified script ref
+uses: scripts/greet.sh
+schedule: "0 12 * * *"

@@ -16,9 +16,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "../../src/core/adapter/adapters/akm-metadata";
+import { buildFileContext } from "../../src/core/adapter/directory/file-context";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
-import { buildFileContext } from "../../src/indexer/walk/file-context";
 import { runCliCapture } from "../_helpers/cli";
 import { withEnv } from "../_helpers/sandbox";
 

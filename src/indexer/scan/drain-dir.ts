@@ -26,20 +26,26 @@
  * import cycle.
  */
 
-import path from "node:path";
-import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
 import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
-import type { BundleComponent, IndexDocument } from "../../core/adapter/types";
-import { compareCodePoints } from "../../core/common";
-import { canonicalizeWorkflowName } from "../../core/recognition-util";
+import type { FileContext } from "../../core/adapter/types";
+import { type Bundle, type IndexDocument, rootOf } from "../../core/adapter/types";
 import { compileWorkflowSource } from "../../workflows/compile";
-import { resolveWorkflowSourceDomains, workflowNameForSourcePath } from "../../workflows/source-files";
-import { buildMetadataSkipWarning, type StashFile } from "../passes/metadata";
-import { buildFileContext, type FileContext } from "../walk/file-context";
+import { isUsableWorkflowSource, workflowNameForSourcePath } from "../../workflows/source-files";
+import { buildMetadataSkipWarning } from "../passes/metadata";
 import { indexDocumentToStashEntry } from "./doc-to-entry";
 
 /** The markdown-workflow renderer name the `akm` adapter carries on `documentJson.renderer`. */
 const WORKFLOW_MD_RENDERER = "workflow-md";
+
+/**
+ * The durable entry of a recognized document, as the scan, a write-path refresh and the facade's refresh all record
+ * it. An entry no file holds (a secret manager's) has no path; `fileName` is its name.
+ */
+export function indexRowEntry(doc: IndexDocument, fileName: string): IndexDocument {
+  const entry = indexDocumentToStashEntry(doc);
+  if (doc.path === undefined) entry.filename = fileName;
+  return entry;
+}
 
 export interface DrainedDir {
   /** The reconstructed durable entries, broken workflows already dropped. */
@@ -55,10 +61,6 @@ export interface DrainedDir {
    * `item_ref` verbatim (D-R3: identity comes from the owning adapter).
    */
   conceptIdByFile: Map<string, string>;
-  /** Authored paths rejected by workflow source-ownership preflight. */
-  rejectedPaths: Set<string>;
-  /** Adapter-owned canonical concept ids rejected before workflow parsing. */
-  rejectedConceptIds: Set<string>;
 }
 
 /**
@@ -70,77 +72,34 @@ export interface DrainedDir {
  * or an AKM sensitive/infra file) — silently skipped.
  */
 export function drainDirDocuments(
-  adapter: BundleAdapter,
-  component: BundleComponent,
+  adapter: Pick<BundleAdapter, "id" | "recognize">,
+  bundle: Bundle,
   fileContexts: readonly FileContext[],
 ): DrainedDir {
   const entries: IndexDocument[] = [];
   const warnings: string[] = [];
   const hashByFile = new Map<string, string>();
   const conceptIdByFile = new Map<string, string>();
-  const rejectedPaths = new Set<string>();
-  const rejectedConceptIds = new Set<string>();
-  // A full directory drain may contain both peer workflow formats for one
-  // canonical ref.  Ownership arbitration must happen *before* recognition:
-  // otherwise both documents reach the persistence fold and SQLite's final
-  // row is determined by the walk/readdir order.  Resolve exactly the paths
-  // this drain owns, so a full scan retains only the deterministic `.md`
-  // winner while a targeted one-file reindex deliberately keeps its written
-  // source and therefore marks an existing peer row stale for read fallback.
-  const workflowOwnerPathByCanonicalName = new Map(
-    resolveWorkflowSourceDomains(
-      component.root,
-      adapter.id,
-      fileContexts.map((file) => file.absPath),
-    )
-      .filter((resolution) => resolution.source !== undefined)
-      .map((resolution) => [resolution.canonicalName, path.resolve(resolution.source!.path)]),
-  );
-  const invalidWorkflowOwnerNames = new Set<string>();
-  const orderedFileContexts = [...fileContexts].sort((left, right) => {
-    const leftName = workflowNameForSourcePath(component.root, adapter.id, left.absPath);
-    const rightName = workflowNameForSourcePath(component.root, adapter.id, right.absPath);
-    const leftOwner =
-      leftName !== undefined &&
-      workflowOwnerPathByCanonicalName.get(canonicalizeWorkflowName(leftName)) === path.resolve(left.absPath);
-    const rightOwner =
-      rightName !== undefined &&
-      workflowOwnerPathByCanonicalName.get(canonicalizeWorkflowName(rightName)) === path.resolve(right.absPath);
-    if (leftOwner !== rightOwner) return leftOwner ? -1 : 1;
-    return compareCodePoints(left.absPath, right.absPath);
-  });
 
-  for (const file of orderedFileContexts) {
-    if (rejectedPaths.has(file.absPath)) continue;
-
-    const workflowName = workflowNameForSourcePath(component.root, adapter.id, file.absPath);
-    if (workflowName !== undefined) {
-      const canonicalName = canonicalizeWorkflowName(workflowName);
-      const ownerPath = workflowOwnerPathByCanonicalName.get(canonicalName);
-      if (
-        ownerPath !== undefined &&
-        ownerPath !== path.resolve(file.absPath) &&
-        !invalidWorkflowOwnerNames.has(canonicalName)
-      ) {
-        continue;
-      }
-    }
-
-    const doc = adapter.recognize(component, file);
+  for (const file of fileContexts) {
+    const doc = adapter.recognize(bundle, file);
     if (doc === null) continue;
     if (!doc.conceptId) {
       warnings.push(`Skipped ${file.absPath}: adapter "${adapter.id}" returned no conceptId.`);
       continue;
     }
 
-    const entry = indexDocumentToStashEntry(doc);
+    const entry = indexRowEntry(doc, file.fileName);
     // Workflow docs: drop-with-warning if broken; otherwise cache a lossless
     // runtime projection when the current executor can represent the source.
-    const dropWarning = handleWorkflowDoc(doc, file);
+    const dropWarning = brokenWorkflowWarning(doc, file);
     if (dropWarning !== null) {
       warnings.push(dropWarning);
-      if (workflowName !== undefined) invalidWorkflowOwnerNames.add(canonicalizeWorkflowName(workflowName));
       continue;
+    }
+    // A symlinked workflow source of another extension is warned about once, as the scan always has.
+    if (doc.type === "workflow" && workflowNameForSourcePath(rootOf(bundle), adapter.id, file.absPath) !== undefined) {
+      isUsableWorkflowSource(rootOf(bundle), file.absPath);
     }
 
     if (doc.hash !== undefined) hashByFile.set(file.absPath, doc.hash);
@@ -148,41 +107,25 @@ export function drainDirDocuments(
     entries.push(entry);
   }
 
-  return { entries, warnings, hashByFile, conceptIdByFile, rejectedPaths, rejectedConceptIds };
-}
-
-/**
- * `(stashRoot, files) → StashFile` builds a FileContext per file and drains them through the
- * `akm` adapter's `recognize`. Callers that only need the
- * recognized entries (`manifest`'s no-index fallback, the `registry`
- * static-index builder, and the metadata unit tests) use it. It also applies the D-R6 reserved-file exclusion and the AKM sensitive/infra
- * abstention the adapter now enforces itself. Provenance is not persisted by these
- * callers, so the synthetic component id is immaterial.
- */
-export function recognizeStashEntries(stashRoot: string, files: string[]): StashFile {
-  const component: BundleComponent = { id: stashRoot, adapter: "akm", root: stashRoot, writable: false };
-  // No pre-filter: the `akm` adapter's `recognize` claims/abstains per file
-  // (filtering is adapter-owned).
-  const contexts = files.map((file) => buildFileContext(stashRoot, file));
-  const drained = drainDirDocuments(akmAdapter, component, contexts);
-  return drained.warnings.length > 0
-    ? { entries: drained.entries, warnings: drained.warnings }
-    : { entries: drained.entries };
+  return { entries, warnings, hashByFile, conceptIdByFile };
 }
 
 /**
  * If `doc` is a workflow, compile it through source IR: return a
  * `Skipped workflow …` drop warning when it is broken, or return `null` when
- * it compiles. Non-workflow docs return `null` immediately.
+ * it compiles. Non-workflow docs return `null` immediately. A broken workflow is no row of the index, whoever
+ * records the row: the scan, a write, or the first ask of an asset that has none.
  */
-function handleWorkflowDoc(doc: IndexDocument, file: FileContext): string | null {
-  if (
-    doc.type !== "workflow" ||
-    (doc.adapterId !== "akm" && doc.adapterId !== "akm-workflow") ||
-    (docRenderer(doc) !== WORKFLOW_MD_RENDERER && doc.adapterId !== "akm-workflow")
-  ) {
-    return null;
-  }
+export function brokenWorkflowWarning(
+  doc: IndexDocument,
+  file: Pick<FileContext, "content" | "relPath" | "absPath">,
+): string | null {
+  if (doc.type !== "workflow") return null;
+  // asset-io: deprecated workflows are not read through the adapters
+  const workflowBundle = doc.adapterId === "akm-workflow";
+  // asset-io: deprecated workflows are not read through the adapters
+  const akmBundle = doc.adapterId === "akm";
+  if (!workflowBundle && !(akmBundle && docRenderer(doc) === WORKFLOW_MD_RENDERER)) return null;
 
   const result = compileWorkflowSource(file.content(), { path: file.relPath });
   if (!result.ok) return workflowDropWarning(file, result.errors);
@@ -206,7 +149,10 @@ function docRenderer(doc: IndexDocument): string | undefined {
  * threw), then {@link buildMetadataSkipWarning}'s workflow branch. `startsWith
  * "Skipped workflow "` so `isWorkflowSkipWarning` counts it for the summary.
  */
-function workflowDropWarning(file: FileContext, errors: ReadonlyArray<{ line: number; message: string }>): string {
+function workflowDropWarning(
+  file: Pick<FileContext, "relPath" | "absPath">,
+  errors: ReadonlyArray<{ line: number; message: string }>,
+): string {
   const summary = errors.map((e) => `${file.relPath}:${e.line} — ${e.message}`).join("\n");
   return buildMetadataSkipWarning(file.absPath, "workflow", `Workflow has errors:\n${summary}`);
 }

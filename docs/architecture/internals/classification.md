@@ -1,22 +1,27 @@
 # Classification
 
 akm recognizes files through **bundle adapters**. An adapter owns one bundle
-format. Its `recognize()` method inspects one file (path, frontmatter, content)
-and returns an `IndexDocument` (the item's subdirectory-qualified `conceptId`,
-type, renderer, and metadata) or `null` when the adapter does not claim the
-file. The indexer calls it for every file the walker finds (see
-[Indexing](indexing.md)).
+format. Whether a file is an asset, and which one, is a pure function of its
+path: the adapter's `identify(relPath)` gives the `conceptId` (or says the file
+is no asset) and gets no bundle, no file system and no content, so listing or
+finding an asset never reads a file. Its `recognize()` method then describes one
+file for the index: it returns an `IndexDocument` (the `conceptId` from the
+path, plus the type, renderer, and metadata, which may come from the content) or
+`null`. The type is index metadata: every read of a type goes to the index, not
+to the file. The indexer calls `recognize()` for every file the walker finds
+(see [Indexing](indexing.md)).
 
 ## Built-in adapters
 
 `BUILTIN_ADAPTERS` in `src/core/adapter/adapters/index.ts` is a frozen list,
 exposed through `src/core/adapter/registry.ts`. Its order is the install-time
-probe order, and `ADAPTER_ID_TABLE` (`src/core/adapter/adapter-ids.ts`) mirrors
-it. There are eleven:
+probe order, and it is the one list of adapter ids: adding an adapter is one
+class file and one line in it. The registry (`requireAdapter`) rejects an id that is not in the
+list where a bundle names one, and `akm config set` and `akm doctor` check it up front. There are eleven:
 
 | Adapter id | Format | Recognizes |
 | --- | --- | --- |
-| `website-snapshot` | Crawled website snapshot (read-only) | pages under `stash/knowledge/` that carry the `website` tag or a `sourceUrl`, typed `website` |
+| `website-snapshot` | Crawled website snapshot (read-only) | every `.md` page under `stash/knowledge/`, typed `website` |
 | `agent-skills` | Collection of `<name>/SKILL.md` packages | one `skill` per package directory; bundled resources belong to the skill |
 | `claude` | A `.claude/` tool directory | root `CLAUDE.md` (`instruction`), `commands/`, `agents/`, `skills/<name>/SKILL.md`; skips `settings.json` and `.mcp.json` |
 | `opencode` | An `.opencode/` tool directory | root `AGENTS.md` (`instruction`), `commands/`, `agents/`, `skills/<name>/SKILL.md`; skips `opencode.json` |
@@ -29,9 +34,9 @@ it. There are eleven:
 | `generic-files` | Catch-all mount | scripts as `script`, `.md`/`.txt` as `document`, everything else as `file` |
 
 The first adapter whose `looksLikeRoot` probe matches a root claims it, and the
-winner is recorded per component. A root matching no probe falls back to `akm`
+winner is recorded per bundle. A root matching no probe falls back to `akm`
 (`FALLBACK_ADAPTER_ID`, `src/indexer/installations.ts`). `generic-files` is not
-probed. An adapter set in a bundle's config entry (`components.<name>.adapter`,
+probed. An adapter set in a bundle's config entry (`bundles.<name>.adapter`,
 validated against the ids above) wins over probing. The probe order puts
 `claude`, `opencode`, and `dotenv` ahead of `akm`, and `akm` ahead of `okf`,
 because AKM Markdown is an OKF-compatible superset.
@@ -58,23 +63,28 @@ The `akm`, `okf`, `claude`, `opencode` and `generic-files` adapters reserve
 `index.md` and `log.md` at every depth, and neither is an item (`RESERVED_FILES`,
 `src/core/adapter/adapters/shared.ts`). `llm-wiki` reserves `schema.md`,
 `index.md` and `log.md` only at the wiki root. The `akm` adapter also
-skips, using path and `stat` checks (`akmStashAbstains`,
+skips, by path alone (`akmStashAbstains`,
 `src/core/adapter/adapters/akm-adapter.ts`):
 
 - the bundle's root `README.md`;
-- an `env/` `.env` file with a sibling `.sensitive` marker;
-- a `secrets/` file that is a `.sensitive` or `.lock` marker, or that has a sibling `<name>.sensitive` marker;
-- the root-level `schema.md`, `index.md`, and `log.md` of a `wikis/<name>/` directory.
+- a `secrets/` file that is a `.sensitive` or `.lock` sidecar (`.sensitive` is a retired marker, ignored).
+
+A `wikis/` folder inside an `akm` bundle gets no special handling: a wiki is
+always a bundle of its own (adapter `llm-wiki`), and the files of such a folder
+are ordinary akm files.
 
 The walker itself skips VCS internals. It indexes a symlink to a file like any other file and never descends a symlinked directory.
 
 ## How the akm adapter picks a type
 
-The `akm` adapter runs four matchers from `src/indexer/walk/matchers.ts`
+The `akm` adapter runs four matchers from `src/core/adapter/directory/matchers.ts`
 (`extensionMatcher`, `directoryMatcher`, `parentDirHintMatcher`,
 `smartMdMatcher`). `recognizeMatch` (`src/core/adapter/recognize-match.ts`)
 collects their results and picks the highest specificity. On a tie the matcher
-registered later wins, in the order listed.
+registered later wins, in the order listed. Only the type reads the file:
+identity (`identify`, so listing and finding) uses `recognizeMatchByPath`, which
+runs the same matchers with `looseMarkdownMatcher` (any `.md` is knowledge) in
+place of `smartMdMatcher`, so the id of a file never depends on its content.
 
 | Specificity | Signal | Type |
 | --- | --- | --- |
@@ -106,7 +116,12 @@ as `knowledge`. Body placeholders do not override directory declarations:
 code, or fenced examples contain `$ARGUMENTS`. A command belongs under
 `commands/`, or can declare explicit dispatch intent with `agent` frontmatter,
 which still beats a directory hint. Files under `secrets/` are not read for
-frontmatter.
+frontmatter. A `.md` file directly in `skills/` names no skill and is no asset.
+
+When one concept is spelled by more than one file (`skills/x.md` and
+`skills/x/SKILL.md`, or `tasks/x.yml` and `tasks/x.md`), the first spelling in
+the adapter's order is the asset for every reader, and `akm lint` reports the
+ignored files as `shadowed-spelling`.
 
 Classification changes bump the AKM adapter version, which participates in
 directory freshness. The next ordinary `akm index` reclassifies unchanged
@@ -139,7 +154,7 @@ An unknown value warns once and stays searchable.
 | --- | --- | --- |
 | `scripts/deploy.sh` | parent directory (15) | `scripts/deploy.sh` |
 | `skills/review/SKILL.md` | `SKILL.md` (25) | `skills/review` |
-| `commands/release.md` with `agent: coder` | frontmatter (18) | `commands/release` |
+| `commands/release.md` with `agent: coder` | parent directory (15) | `commands/release` |
 | `agents/reviewer.md` | parent directory (15) | `agents/reviewer` |
 | `workflows/release.md` | parent directory (15) | `workflows/release` |
 | `env/prod.env` | parent directory (15) | `env/prod` |

@@ -1,0 +1,386 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * Shared filesystem walker for akm stash directories.
+ *
+ * Provides a single implementation used by both the search fallback
+ * (stash.ts) and the indexer (indexer.ts) to walk type-specific asset
+ * directories and group files by parent directory.
+ */
+
+import { spawnSync as spawnSyncNode } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "../../../runtime";
+import { isRelevantAssetFile } from "../../asset/asset-placement";
+import { isScratchPath } from "../../asset/scratch";
+import { toErrorMessage, toPosix } from "../../common";
+import { buildFileContext, type FileContext } from "./file-context";
+
+/** Directories akm and Git manage inside a bundle: never content, whatever a person or an adapter lists. */
+export const GIT_DIR = ".git";
+export const AKM_DIR = ".akm";
+export const MANAGED_DIRS: readonly string[] = [GIT_DIR, AKM_DIR];
+
+const ALWAYS_SKIP_DIRS = new Set([GIT_DIR, "node_modules"]);
+const AKM_SKIP_DIRS = new Set(["bin", ".cache"]);
+/** Sidecar and git dot-files the walk never lists. */
+const SKIP_FILES = new Set([".stash.json", ".gitignore", ".gitattributes"]);
+
+export interface WalkStashFlatOptions {
+  /**
+   * Let the owning adapter see every directory except VCS internals and
+   * `node_modules`, and treat the tree as ordinary content: the akm-bundle
+   * `env/` and `secrets/` listing below does not apply.
+   */
+  includeAllDirectories?: boolean;
+}
+
+/** Whether the walk does not descend into a directory called `name`. */
+function isSkippedDir(name: string, options: WalkStashFlatOptions): boolean {
+  return (
+    ALWAYS_SKIP_DIRS.has(name) || (!options.includeAllDirectories && (AKM_SKIP_DIRS.has(name) || name.startsWith(".")))
+  );
+}
+
+/**
+ * The walk's own exclusions for a path relative to the source root: skipped directories at any depth,
+ * the sidecar and git dot-files, and the root `.scratch/`. Symlinked directories (never descended) and
+ * `.gitignore` rules are applied by the walks themselves and, for a list of files, by {@link walkedFiles}.
+ */
+function isExcludedPath(relPath: string, options: WalkStashFlatOptions): boolean {
+  if (isScratchPath(relPath)) return true;
+  const parts = relPath.split(/[\\/]+/).filter(Boolean);
+  const name = parts.pop() ?? "";
+  return SKIP_FILES.has(name) || parts.some((part) => isSkippedDir(part, options));
+}
+
+/**
+ * The files of `files` a full walk of `root` would list: the one rule write-through and show-from-files use so
+ * they never return what the index would not hold. Adds to {@link isExcludedPath} the two rules a walk applies
+ * structurally: a directory symlink on the way is never descended, and files `.gitignore` ignores are not listed
+ * (the akm bundle's `env/` and `secrets/` excepted, as in the walk). One `git check-ignore` process covers the list.
+ */
+export function walkedFiles(root: string, files: readonly string[], options: WalkStashFlatOptions = {}): string[] {
+  const resolvedRoot = path.resolve(root);
+  const candidates: Array<{ file: string; relPath: string; checkIgnore: boolean }> = [];
+  for (const file of files) {
+    const relPath = path.relative(resolvedRoot, path.resolve(file));
+    if (relPath === "" || relPath.split(/[\\/]+/)[0] === ".." || path.isAbsolute(relPath)) continue;
+    if (isExcludedPath(relPath, options)) continue;
+    if (underSymlinkedDirectory(resolvedRoot, file)) continue;
+    const top = relPath.split(/[\\/]+/)[0];
+    const keptDespiteIgnore = !options.includeAllDirectories && (top === "env" || top === "secrets");
+    candidates.push({ file, relPath, checkIgnore: !keptDespiteIgnore });
+  }
+  const toCheck = candidates.filter((candidate) => candidate.checkIgnore);
+  if (toCheck.length === 0 || !isInsideGitRepo(resolvedRoot)) return candidates.map((candidate) => candidate.file);
+
+  // The paths go in on stdin, NUL-separated (`-z` needs `--stdin`), so a long list has no argument-size limit.
+  // Exit 0: some ignored. Exit 1: none ignored. Anything else (git missing or failing): the walk would not have used git either.
+  const result = spawnSyncNode("git", ["check-ignore", "-z", "--stdin"], {
+    cwd: resolvedRoot,
+    input: `${toCheck.map((candidate) => candidate.relPath).join("\0")}\0`,
+    encoding: "utf8",
+  });
+  const ignored = new Set<string>(result.status === 0 ? result.stdout.split("\0").filter(Boolean) : []);
+  return candidates.filter((candidate) => !ignored.has(candidate.relPath)).map((candidate) => candidate.file);
+}
+
+/** Whether `file` has a directory symlink between it and `root`; a walk never descends one. */
+function underSymlinkedDirectory(resolvedRoot: string, file: string): boolean {
+  for (let dir = path.dirname(path.resolve(file)); dir !== resolvedRoot; dir = path.dirname(dir)) {
+    try {
+      if (fs.lstatSync(dir).isSymbolicLink()) return true;
+    } catch {
+      return false; // A directory that is gone is not a symlink; a deleted file is still reported so its row can go.
+    }
+  }
+  return false;
+}
+
+/** Whether a full walk of `root` would list `file`. */
+export function isWalkedFile(root: string, file: string, options: WalkStashFlatOptions = {}): boolean {
+  return walkedFiles(root, [file], options).length === 1;
+}
+
+export interface WalkStashFlatResult {
+  files: FileContext[];
+  /** False when any directory or candidate file could not be inspected. */
+  complete: boolean;
+  /** When `complete` is false: the first filesystem error that stopped the walk. */
+  incompleteReason?: string;
+  /** When `complete` is false: every failure, by the POSIX path inside the root it was met at (`""`: the root). */
+  failures?: WalkFailure[];
+}
+
+export interface WalkFailure {
+  path: string;
+  reason: string;
+}
+
+/** The result of a walk that met `failures`. */
+function walkResult(files: FileContext[], failures: WalkFailure[]): WalkStashFlatResult {
+  if (failures.length === 0) return { files, complete: true };
+  return { files, complete: false, incompleteReason: (failures[0] as WalkFailure).reason, failures };
+}
+
+export interface DirectoryGroup {
+  dirPath: string;
+  files: string[];
+}
+
+/**
+ * Walk a type root directory and return files grouped by their parent directory.
+ *
+ * Only files relevant to the given `assetType` are included (e.g. `.md` for
+ * commands, script extensions for scripts, `SKILL.md` for skills).
+ */
+export function walkStash(typeRoot: string, assetType: string): DirectoryGroup[] {
+  if (!fs.existsSync(typeRoot)) return [];
+
+  const groups = new Map<string, string[]>();
+
+  const stack = [typeRoot];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    const entries = fs.readdirSync(current, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name === ".stash.json") continue;
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      } else if (entry.isFile() && isRelevantAssetFile(assetType, entry.name)) {
+        const parentDir = path.dirname(fullPath);
+        const existing = groups.get(parentDir);
+        if (existing) {
+          existing.push(fullPath);
+        } else {
+          groups.set(parentDir, [fullPath]);
+        }
+      }
+    }
+  }
+
+  return Array.from(groups, ([dirPath, files]) => ({ dirPath, files }));
+}
+
+/**
+ * Walk an entire stash root directory and return FileContext objects for every
+ * regular file found.
+ *
+ * Unlike walkStash(), this does NOT filter by asset type or require files to
+ * live under type-specific directories. Matchers decide what each file is.
+ *
+ * If the directory is a git repo, uses `git ls-files` to respect .gitignore,
+ * except that (unless `includeAllDirectories`) git-ignored files under `env/`
+ * and `secrets/` are still walked.
+ * Otherwise falls back to a manual walk that skips .git, node_modules, bin,
+ * .cache, dot-directories, and the legacy metadata sidecar. Both walks skip the
+ * root `.scratch/` directory, even for all-directories adapters.
+ */
+export function walkStashFlat(stashRoot: string, options: WalkStashFlatOptions = {}): FileContext[] {
+  return walkStashFlatWithStatus(stashRoot, options).files;
+}
+
+export function walkStashFlatWithStatus(stashRoot: string, options: WalkStashFlatOptions = {}): WalkStashFlatResult {
+  try {
+    fs.statSync(stashRoot);
+  } catch (error) {
+    return walkResult([], [{ path: "", reason: toErrorMessage(error) }]);
+  }
+
+  // Try git-based walk first (respects .gitignore)
+  const gitResult = walkStashGit(stashRoot, options);
+  if (gitResult) return gitResult;
+
+  // Fallback: manual walk
+  return walkStashManual(stashRoot, options);
+}
+
+/**
+ * Walk using `git ls-files` to respect .gitignore (ignored `env/` and
+ * `secrets/` files excepted, unless `includeAllDirectories`).
+ * Returns null if the directory is not a git repo or git fails.
+ */
+function walkStashGit(stashRoot: string, options: WalkStashFlatOptions): WalkStashFlatResult | null {
+  // Quick check: is this a git repo? Look for .git in this dir or parents.
+  if (!isInsideGitRepo(stashRoot)) return null;
+
+  // Get tracked + untracked (non-ignored) files
+  const result = spawnSync(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."], {
+    cwd: stashRoot,
+  });
+  // result.success is false if the process exited non-zero OR git was not found
+  if (!result.success) return null;
+
+  // `--cached` includes tracked files deleted from the worktree. They are not
+  // scan failures and must not make an otherwise complete snapshot look stale.
+  const deletedResult = spawnSync(["git", "ls-files", "--deleted", "-z", "--", "."], { cwd: stashRoot });
+  if (!deletedResult.success) return null;
+  const deletedStdout = Buffer.isBuffer(deletedResult.stdout)
+    ? deletedResult.stdout.toString("utf8")
+    : String(deletedResult.stdout ?? "");
+  const deletedFiles = new Set(deletedStdout.split("\0").filter(Boolean));
+
+  // `akm bundle create` git-ignores `env/` and `secrets/` so credentials are
+  // never committed, but they are still bundle assets. List the ignored files
+  // under those two directories as well; the adapters index key names only.
+  // Not for an all-directories walk (okf, code-project): in an ordinary
+  // repository those are exactly the files the repository chose to hide.
+  let ignoredStdout = "";
+  if (!options.includeAllDirectories) {
+    const ignoredResult = spawnSync(
+      ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "env/", "secrets/"],
+      { cwd: stashRoot },
+    );
+    if (!ignoredResult.success) return null;
+    ignoredStdout = Buffer.isBuffer(ignoredResult.stdout)
+      ? ignoredResult.stdout.toString("utf8")
+      : String(ignoredResult.stdout ?? "");
+  }
+
+  const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : String(result.stdout ?? "");
+  const files = [...stdout.split("\0"), ...ignoredStdout.split("\0")]
+    .filter((f) => f.length > 0)
+    .filter((f) => !deletedFiles.has(f))
+    .filter((f) => !f.startsWith("..") && !path.isAbsolute(f))
+    .filter((f) => !isExcludedPath(f, options));
+
+  const results: FileContext[] = [];
+  const failures: WalkFailure[] = [];
+  for (const relFile of files) {
+    const absPath = path.join(stashRoot, relFile);
+    try {
+      // A file that is a symlink to a file anywhere is indexed like any other
+      // file: installing a bundle is the trust decision. git lists a symlinked
+      // directory as one entry, so directory symlinks are never descended.
+      const stat = fs.lstatSync(absPath);
+      if (stat.isFile() || (stat.isSymbolicLink() && isFileOrFileSymlink(absPath))) {
+        results.push(buildFileContext(stashRoot, absPath));
+      }
+    } catch (error) {
+      // File may have been deleted since git ls-files ran
+      failures.push({ path: relFile, reason: toErrorMessage(error) });
+    }
+  }
+
+  return walkResult(results, failures);
+}
+
+/**
+ * Check if a directory is inside a git repository by walking up to find .git.
+ * Intentionally walks above stashRoot so that parent repo .gitignore rules
+ * apply when the stash is nested inside a larger git repository.
+ */
+function isInsideGitRepo(dir: string): boolean {
+  let current = path.resolve(dir);
+  const root = path.parse(current).root;
+  while (current !== root) {
+    try {
+      const gitDir = path.join(current, ".git");
+      const stat = fs.statSync(gitDir);
+      if (stat.isDirectory() || stat.isFile()) return true;
+    } catch {
+      // .git doesn't exist at this level, keep climbing
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return false;
+}
+
+export interface WalkMarkdownFilesResult {
+  files: string[];
+  /** False when any directory under `root` could not be read (e.g. permission errors). */
+  complete: boolean;
+}
+
+/**
+ * Recursively collect every `.md` file under `root`.
+ *
+ * Used by memory-inference. Mirrors the `complete` tracking of the other
+ * walkers in this file: a directory that cannot be read makes the result
+ * incomplete instead of silently looking like a clean, empty scan.
+ */
+export function walkMarkdownFiles(root: string): WalkMarkdownFilesResult {
+  const files: string[] = [];
+  let complete = true;
+  const stack = [root];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      complete = false;
+      continue;
+    }
+
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) {
+        if (entry.name.toLowerCase().endsWith(".md") && isFileOrFileSymlink(full)) files.push(full);
+        continue;
+      }
+      if (entry.isDirectory()) {
+        stack.push(full);
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+        files.push(full);
+      }
+    }
+  }
+  return { files, complete };
+}
+
+/** Manual walk for non-git directories. */
+function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): WalkStashFlatResult {
+  const results: FileContext[] = [];
+  const failures: WalkFailure[] = [];
+
+  const stack = [stashRoot];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch (error) {
+      failures.push({ path: toPosix(path.relative(stashRoot, current)), reason: toErrorMessage(error) });
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (isExcludedPath(path.relative(stashRoot, fullPath), options)) continue;
+      if (entry.isSymbolicLink()) {
+        // A file symlink is indexed like any other file; a directory symlink
+        // is never descended (no cycles).
+        if (isFileOrFileSymlink(fullPath)) results.push(buildFileContext(stashRoot, fullPath));
+        continue;
+      }
+      if (entry.isDirectory()) {
+        if (isSkippedDir(entry.name, options)) continue;
+        stack.push(fullPath);
+      } else if (entry.isFile()) {
+        results.push(buildFileContext(stashRoot, fullPath));
+      }
+    }
+  }
+
+  return walkResult(results, failures);
+}
+
+/** True for a regular file, or a symlink whose target is a regular file. */
+export function isFileOrFileSymlink(filePath: string): boolean {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}

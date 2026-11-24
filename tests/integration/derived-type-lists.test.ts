@@ -14,6 +14,8 @@ import path from "node:path";
 import { describeUsage } from "../../src/cli/usage";
 import { generateBashCompletions } from "../../src/commands/completions";
 import { akmLint } from "../../src/commands/lint/index";
+import { buildFileContext } from "../../src/core/adapter/directory/file-context";
+import { declaredTypeForPath } from "../../src/core/adapter/directory/matchers";
 import {
   documentFormatForStashDir,
   documentStashDirFor,
@@ -22,8 +24,6 @@ import {
 } from "../../src/core/asset/asset-placement";
 import { UsageError } from "../../src/core/errors";
 import { KNOWN_TYPES } from "../../src/core/recognition-util";
-import { buildFileContext } from "../../src/indexer/walk/file-context";
-import { declaredTypeForPath } from "../../src/indexer/walk/matchers";
 import { DETAIL_VALUES, OUTPUT_FORMATS } from "../../src/output/context";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";

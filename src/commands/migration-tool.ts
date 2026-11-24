@@ -14,6 +14,7 @@ function migrationEntryPoint(): string | undefined {
     ),
     ...(process.versions.bun ? [fileURLToPath(new URL("../../scripts/akm-migrate.ts", import.meta.url))] : []),
   ];
+  // asset-io: shipped akm-migrate script
   return candidates.find((candidate) => fs.existsSync(candidate));
 }
 

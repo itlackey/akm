@@ -17,14 +17,21 @@
  *   - Resolved values must never be written to stdout or logs by callers.
  */
 
-import { isInstalledBundle, makeEnvRef, resolveEnvPath, resolveRefOwner } from "../../core/env-secret-ref";
+import { unindexedHint } from "../../core/assets/read";
+import { assetType } from "../../core/assets/type";
+import {
+  isInstalledBundle,
+  makeEnvRef,
+  resolveEnvPath,
+  resolveRefOwner,
+  secretValueOf,
+} from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { substituteRefTokens } from "../../core/ref-token";
-import { readValue } from "../../core/secret-value";
 import { stderr } from "../../core/stdio";
 import { warnOnce } from "../../core/warn";
-import { loadEnv } from "./env";
+import { parseEnvText } from "./env";
 
 /** The retired `${secret:NAME}` env-value token (see `resolveEnvBinding`). */
 const LEGACY_SECRET_TOKEN_RE = /\$\{secret:([^}\s]+)\}/g;
@@ -47,12 +54,14 @@ export interface ResolvedEnvBinding {
  */
 export function resolveRefToken(
   ref: string,
+  from?: { bundle: string },
 ): { kind: "secret"; value: string } | { kind: "path"; path: string } | undefined {
-  const owner = resolveRefOwner(ref);
-  if (owner === undefined) return undefined;
-  return owner.type === "secret"
-    ? { kind: "secret", value: readValue(owner.absPath) }
-    : { kind: "path", path: owner.absPath };
+  const asset = resolveRefOwner(ref, from);
+  if (asset === undefined) return undefined;
+  if (assetType(asset) === "secret") return { kind: "secret", value: secretValueOf(asset) };
+  // asset-io: exec a `${ref}` token is the asset's path, handed to a program
+  if (asset.entry.file === undefined) throw new UsageError(`"${asset.ref}" is not kept in a file, so it has no path.`);
+  return { kind: "path", path: asset.entry.file }; // asset-io: exec
 }
 
 export interface ResolveEnvBindingOptions {
@@ -73,10 +82,11 @@ export interface ResolveEnvBindingOptions {
  */
 export function resolveEnvBinding(target: string, options: ResolveEnvBindingOptions = {}): ResolvedEnvBinding {
   const warn = options.warn ?? ((message: string) => stderr().write(`warning: ${message}\n`));
-  const { conceptId, absPath, source, bundleId } = resolveEnvPath(target);
-  const envRef = makeEnvRef(conceptId, source);
+  const { written, asset } = resolveEnvPath(target);
+  const bundleId = asset.bundle;
+  const envRef = makeEnvRef(written, bundleId);
 
-  const allValues = loadEnv(absPath);
+  const allValues = parseEnvText(asset.entry.content());
 
   // Value-safe key filtering (--only / --except operate on key NAMES only).
   let envValues = allValues;
@@ -124,22 +134,29 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
     secretValues,
   } = substituteRefTokens(
     envValues,
-    options.locateOnly ? (ref) => (resolveRefOwner(ref) ? { kind: "path", path: "" } : undefined) : resolveRefToken,
+    // A ref in the env file is looked up in the env's own bundle first, then in the configured order (§0.2 A9).
+    options.locateOnly
+      ? (ref) => (resolveRefOwner(ref, { bundle: bundleId }) ? { kind: "path", path: "" } : undefined)
+      : (ref) => resolveRefToken(ref, { bundle: bundleId }),
     isInstalledBundle,
   );
   if (missing.length > 0) {
     throw new NotFoundError(
       `Env "${envRef}" references asset(s) that no bundle owns: ${missing.join(", ")}. Nothing was injected.`,
       "FILE_NOT_FOUND",
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
-      "Write each `${ref}` as a full akm ref that exists, e.g. `${secrets/name}` or `${team//scripts/run.sh}`.",
+      [
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
+        "Write each `${ref}` as a full akm ref that exists, e.g. `${secrets/name}` or `${team//scripts/run.sh}`.",
+        ...new Set(missing.map(unindexedHint).filter((hint) => hint !== undefined)),
+      ].join(" "),
     );
   }
   envValues = substituted;
   const keys = Object.keys(envValues);
 
-  // Audit trail: keys only, never values.
-  if (!options.locateOnly) appendEvent({ eventType: "env_access", ref: envRef, metadata: { keys } });
+  // Audit trail: keys only, never values; the ref is the asset's, not the spelling the caller wrote.
+  if (!options.locateOnly)
+    appendEvent({ eventType: "env_access", ref: makeEnvRef(asset.conceptId, bundleId), metadata: { keys } });
 
   return { ref: envRef, values: envValues, keys, secretValues };
 }

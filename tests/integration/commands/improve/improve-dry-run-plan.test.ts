@@ -18,6 +18,7 @@ import { computeSafeChunkSize } from "../../../../src/commands/improve/consolida
 import { akmImprove } from "../../../../src/commands/improve/improve";
 import type { ImproveProcessName } from "../../../../src/commands/improve/improve-strategies";
 import { upsertAssetSalience } from "../../../../src/commands/improve/salience";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { saveConfig } from "../../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../../src/core/events";
@@ -126,8 +127,8 @@ const okReflect = (ref: string): AkmReflectResult => ({
     createdAt: "2026-08-19T00:00:00.000Z",
     updatedAt: "2026-08-19T00:00:00.000Z",
     payload: { content: "# proposal" },
-    changes: [{ path: "lessons/proposal.md", after: "# proposal", op: "update" }],
-    proposedTarget: { source: "stash", root: "/tmp/stash" },
+    changes: [{ ref: "stash//lessons/proposal", content: "# proposal", op: "update" }],
+    proposedTarget: { source: "stash" },
   },
   ref,
   engine: "test",
@@ -639,7 +640,7 @@ describe("#800 effective dry-run planner", () => {
       const db = openStateDatabase();
       try {
         recordImproveLedger(db, {
-          stashDir,
+          bundleId: stateBundleId(stashDir),
           ref: `memories/${name}`,
           source: "consolidate",
           outcome: "judged_no_action",

@@ -17,7 +17,8 @@
 
 import { describe, expect, test } from "bun:test";
 import { BUILTIN_ADAPTERS, okfAdapter } from "../../../src/core/adapter/adapters";
-import { adapterForId, getAdapters } from "../../../src/core/adapter/registry";
+import { adapterForId, adapterIds, getAdapters, requireAdapter } from "../../../src/core/adapter/registry";
+import { ConfigError } from "../../../src/core/errors";
 
 /** The frozen §1.2 probe order (array order == probe precedence). */
 const PROBE_ORDER = [
@@ -33,6 +34,8 @@ const PROBE_ORDER = [
   "okf",
   "generic-files",
   "code-project",
+  "secret-tool",
+  "azure-key-vault",
 ];
 
 describe("adapter registry — static frozen map (normative §12.6)", () => {
@@ -40,7 +43,7 @@ describe("adapter registry — static frozen map (normative §12.6)", () => {
     // The registry is live purely from importing it. This is the exact
     // production guarantee that was previously broken (empty registry ⇒ every
     // source fell back to `akm`).
-    expect(getAdapters().length).toBe(12);
+    expect(getAdapters().length).toBe(14);
     expect(getAdapters().map((a) => a.id)).toEqual(PROBE_ORDER);
   });
 
@@ -65,7 +68,28 @@ describe("adapter registry — static frozen map (normative §12.6)", () => {
     const snapshot = getAdapters();
     snapshot.length = 0;
     snapshot.push(okfAdapter);
-    expect(getAdapters().length).toBe(12);
+    expect(getAdapters().length).toBe(14);
     expect(getAdapters().map((a) => a.id)).toEqual(PROBE_ORDER);
+  });
+});
+
+describe("adapter registry — the one list of adapter ids", () => {
+  test("adapterIds lists every built-in id in probe order", () => {
+    expect(adapterIds()).toEqual(PROBE_ORDER);
+  });
+
+  test("requireAdapter returns the adapter, or a ConfigError naming the bundle, the id and the valid ids", () => {
+    expect(requireAdapter("docs", "okf")).toBe(okfAdapter);
+    let thrown: unknown;
+    try {
+      requireAdapter("docs", "agent_skills");
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ConfigError);
+    expect((thrown as ConfigError).code).toBe("INVALID_CONFIG_FILE");
+    expect((thrown as ConfigError).message).toBe(
+      `Bundle "docs" names adapter "agent_skills", which akm does not have. Expected one of: ${PROBE_ORDER.join(", ")}.`,
+    );
   });
 });

@@ -210,9 +210,9 @@ describe("akm improve report (#944)", () => {
       };
       db.prepare(
         `INSERT INTO improve_runs
-           (id, started_at, completed_at, stash_dir, dry_run, strategy, scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
+           (id, started_at, completed_at, bundle_id, dry_run, strategy, scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
          VALUES (?, ?, ?, ?, 0, ?, 'all', NULL, NULL, 1, ?, NULL, '{}')`,
-      ).run(legacyId, startedAt, completedAt, "/legacy/stash", "default", JSON.stringify(legacyResult));
+      ).run(legacyId, startedAt, completedAt, "legacy-stash", "default", JSON.stringify(legacyResult));
       const eventTs = new Date(Date.now() - 4.5 * 60_000).toISOString();
       for (let i = 0; i < 2; i++) {
         db.prepare(`INSERT INTO events (event_type, ts, ref, metadata_json) VALUES ('llm_usage', ?, NULL, ?)`).run(
@@ -304,7 +304,7 @@ describe("akm improve report (#944)", () => {
       const insertRun = (id: string, startedAt: string, completedAt: string, reason: string) => {
         db.prepare(
           `INSERT INTO improve_runs
-             (id, started_at, completed_at, stash_dir, dry_run, strategy, scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
+             (id, started_at, completed_at, bundle_id, dry_run, strategy, scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
            VALUES (?, ?, ?, ?, 0, ?, 'all', NULL, NULL, 1, ?, NULL, '{}')`,
         ).run(
           id,
@@ -379,13 +379,13 @@ describe("akm improve report (#944)", () => {
       };
       db.prepare(
         `INSERT INTO improve_runs
-           (id, started_at, completed_at, stash_dir, dry_run, strategy, scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
+           (id, started_at, completed_at, bundle_id, dry_run, strategy, scope_mode, scope_value, guidance, ok, result_json, metrics_json, metadata_json)
          VALUES (?, ?, ?, ?, 0, ?, 'all', NULL, NULL, 0, ?, NULL, ?)`,
       ).run(
         terminatedId,
         startedAt,
         completedAt,
-        "/legacy/stash",
+        "legacy-stash",
         "default",
         JSON.stringify(terminatedResult),
         JSON.stringify({ terminated: { reason: "SIGTERM", at: completedAt } }),

@@ -13,6 +13,7 @@
  */
 
 import fs from "node:fs";
+import { stateBundleId } from "../../core/bundle-at-dir";
 import { daysToMs } from "../../core/common";
 import { warn } from "../../core/warn";
 import { listUsedEntryRefs, USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
@@ -66,11 +67,11 @@ export function loadRetrievalScope(
       // (selectInitiators reads content_hash directly, never this scope).
       // Proposal rows are untouched: a MINTED retire proposal is real
       // evidence something happened to the asset.
-      for (const row of listImproveLedgerRows(db, stashDir)) {
+      for (const row of listImproveLedgerRows(db, stateBundleId(stashDir))) {
         if (row.source === PAIR_PASS_LEDGER_SOURCE) continue;
         if (!CAPTURE_SOURCES.has(row.source)) processed.add(stripBundle(row.ref));
       }
-      for (const row of listProposalRefSources(db, stashDir)) {
+      for (const row of listProposalRefSources(db, stateBundleId(stashDir))) {
         if (!CAPTURE_SOURCES.has(row.source)) processed.add(stripBundle(row.ref));
       }
     });
@@ -94,6 +95,7 @@ export function isInRetrievalScope(scope: RetrievalScope | undefined, ref: strin
   if (scope.used.has(conceptId)) return true;
   if (scope.processed.has(conceptId)) return false;
   try {
+    // asset-io: base the modification time of the file a candidate names
     return filePath === undefined || fs.statSync(filePath).mtimeMs >= scope.sinceMs;
   } catch {
     return true;

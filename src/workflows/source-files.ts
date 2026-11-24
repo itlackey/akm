@@ -12,12 +12,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
+// asset-io: deprecated
+import { buildFileContext } from "../core/adapter/directory/file-context";
+// asset-io: deprecated
+import { declaredTypeForPath } from "../core/adapter/directory/matchers";
 import { compareCodePoints, toPosix } from "../core/common";
 import { UsageError, type UsageErrorCode } from "../core/errors";
 import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../core/recognition-util";
 import { warnOnce } from "../core/warn";
-import { buildFileContext } from "../indexer/walk/file-context";
-import { declaredTypeForPath } from "../indexer/walk/matchers";
 
 export interface WorkflowSourceFile {
   /** Path with its authored filename/extension spelling. */
@@ -133,7 +135,9 @@ export class WorkflowSourceLinkResolutionError extends WorkflowSourceRejectionEr
  * in the bundle it sits.
  */
 function ownsWorkflowFile(sourceRoot: string, adapterId: string, absPath: string): boolean {
+  // asset-io: deprecated workflows are not read through the adapters
   if (adapterId === "akm-workflow") return true;
+  // asset-io: deprecated
   return adapterId === "akm" && declaredTypeForPath(buildFileContext(sourceRoot, absPath)) === "workflow";
 }
 
@@ -143,6 +147,7 @@ export function workflowNameForSourcePath(
   adapterId: string,
   sourcePath: string,
 ): string | undefined {
+  // asset-io: deprecated workflows are not read through the adapters
   if (adapterId !== "akm" && adapterId !== "akm-workflow") return undefined;
   const relativePath = toPosix(path.relative(path.resolve(sourceRoot), path.resolve(sourcePath)));
   if (!isSafeRelativeName(relativePath)) return undefined;
@@ -151,75 +156,26 @@ export function workflowNameForSourcePath(
   return ownsWorkflowFile(sourceRoot, adapterId, path.resolve(sourcePath)) ? relativePath : undefined;
 }
 
-/**
- * Enumerate every owned source path that maps to `name` under one component.
- * Ownership is decided before parsing so a malformed peer cannot be hidden by
- * a valid source. Results retain authored extension case for diagnostics.
- */
-export function listWorkflowSourceFiles(sourceRoot: string, adapterId: string, name: string): WorkflowSourceFile[] {
-  if (adapterId !== "akm" && adapterId !== "akm-workflow") return [];
-
-  const canonicalName = canonicalizeWorkflowName(normalizeName(name));
-  if (!isSafeRelativeName(canonicalName)) {
-    throw new UsageError("Workflow ref resolves outside the bundle root.", "PATH_ESCAPE_VIOLATION");
-  }
-
-  let realRoot: string;
-  const authoredRoot = path.resolve(sourceRoot);
-  try {
-    realRoot = fs.realpathSync(authoredRoot);
-  } catch {
-    return [];
-  }
-  const parent = path.join(authoredRoot, path.dirname(canonicalName));
-  if (!isWithinResolved(parent, authoredRoot)) {
-    throw new UsageError("Workflow ref resolves outside the bundle root.", "PATH_ESCAPE_VIOLATION");
-  }
-
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(parent, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const basename = path.basename(canonicalName);
-  const candidates: WorkflowSourceCandidate[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-    const extension = path.extname(entry.name);
-    const lowerExtension = extension.toLowerCase();
-    if (!(WORKFLOW_EXTENSIONS as readonly string[]).includes(lowerExtension)) continue;
-    if (entry.name.slice(0, -extension.length) !== basename) continue;
-
-    const candidatePath = path.join(parent, entry.name);
-    if (!ownsWorkflowFile(authoredRoot, adapterId, candidatePath)) continue;
-    candidates.push({
-      path: candidatePath,
-      relativePath: toPosix(path.relative(authoredRoot, candidatePath)),
-      lowerExtension,
-      extensionlessStem: entry.name.slice(0, -extension.length),
-    });
-  }
-
-  candidates.sort((left, right) => compareCodePoints(left.relativePath, right.relativePath));
-  return inspectWorkflowSourceDomain(candidates, canonicalName, realRoot);
+/** Whether `sourcePath` is a workflow source of the bundle: a loose `.md` typed workflow by its content is none. */
+export function isWorkflowSource(sourceRoot: string, adapterId: string, sourcePath: string): boolean {
+  return workflowNameForSourcePath(sourceRoot, adapterId, sourcePath) !== undefined;
 }
 
 /**
  * Resolve a pre-enumerated set of authored workflow candidates in one batch.
  *
- * Callers that already walked a component (for example full lint/index scans)
+ * Callers that already walked a bundle (for example full lint/index scans)
  * must use this surface instead of point-resolving every canonical ref and
  * re-reading the same parent directory once per workflow. Candidate
  * inspection, symlink containment/format rules, nested-suffix rejection, and
- * collision construction remain shared with {@link listWorkflowSourceFiles}.
+ * collision construction are shared by every resolution of a workflow source.
  */
 export function resolveWorkflowSourceDomains(
   sourceRoot: string,
   adapterId: string,
   sourcePaths: readonly string[],
 ): WorkflowSourceDomainResolution[] {
+  // asset-io: deprecated workflows are not read through the adapters
   if (adapterId !== "akm" && adapterId !== "akm-workflow") return [];
 
   const authoredRoot = path.resolve(sourceRoot);
@@ -274,6 +230,36 @@ export function resolveWorkflowSourceDomains(
   return resolutions;
 }
 
+/**
+ * Whether the workflow source `file` of the bundle at `sourceRoot` may run: a symlink may not change the source's
+ * format or lead to no file. A source that may not is warned about once, as the index and lint do.
+ */
+export function isUsableWorkflowSource(sourceRoot: string, file: string): boolean {
+  const authoredRoot = path.resolve(sourceRoot);
+  let realRoot: string;
+  try {
+    realRoot = fs.realpathSync(authoredRoot);
+  } catch {
+    return false;
+  }
+  const authored = path.resolve(file);
+  const extension = path.extname(authored);
+  const inspection = inspectWorkflowSourceCandidate(
+    {
+      path: authored,
+      relativePath: toPosix(path.relative(authoredRoot, authored)),
+      lowerExtension: extension.toLowerCase(),
+      extensionlessStem: path.basename(authored).slice(0, -extension.length),
+    },
+    "",
+    realRoot,
+  );
+  for (const issue of inspection.issues) {
+    warnOnce(`workflow-source-invalid:${issue.sourcePaths.join(",")}`, issue.message);
+  }
+  return inspection.source !== undefined;
+}
+
 function inspectWorkflowSourceDomain(
   candidates: readonly WorkflowSourceCandidate[],
   canonicalName: string,
@@ -319,6 +305,7 @@ function inspectWorkflowSourceCandidate(
 
   let authoredStat: fs.Stats;
   try {
+    // asset-io: deprecated
     authoredStat = fs.lstatSync(candidate.path);
   } catch {
     issues.push(new WorkflowSourceLinkResolutionError(candidate.relativePath));
@@ -344,6 +331,7 @@ function inspectWorkflowSourceCandidate(
     issues.push(new WorkflowSourceLinkIdentityError(candidate.relativePath, targetPath));
   }
   try {
+    // asset-io: deprecated
     if (!fs.statSync(realPath).isFile()) issues.push(new WorkflowSourceLinkResolutionError(candidate.relativePath));
   } catch {
     issues.push(new WorkflowSourceLinkResolutionError(candidate.relativePath));
@@ -359,17 +347,6 @@ function inspectWorkflowSourceCandidate(
       canonicalName,
     },
   };
-}
-
-/** Return the sole owner, throw on a collision, or return undefined when absent. */
-export function resolveUniqueWorkflowSource(
-  sourceRoot: string,
-  adapterId: string,
-  name: string,
-): WorkflowSourceFile | undefined {
-  const sources = listWorkflowSourceFiles(sourceRoot, adapterId, name);
-  const canonicalName = sources[0]?.canonicalName ?? canonicalizeWorkflowName(normalizeName(name));
-  return pickWorkflowSource(canonicalName, sources);
 }
 
 /** Compare an indexed path with the single authoritative on-disk source. */
@@ -396,10 +373,6 @@ export function assertIndexedWorkflowSourceIdentity(
   }
 }
 
-function normalizeName(name: string): string {
-  return name.replaceAll("\\", "/");
-}
-
 function isSafeRelativeName(name: string): boolean {
   return (
     name.length > 0 &&
@@ -408,9 +381,4 @@ function isSafeRelativeName(name: string): boolean {
     !name.startsWith("../") &&
     path.posix.normalize(name) === name
   );
-}
-
-function isWithinResolved(candidate: string, root: string): boolean {
-  const relative = path.relative(root, path.resolve(candidate));
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }

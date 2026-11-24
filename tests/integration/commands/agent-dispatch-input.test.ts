@@ -33,7 +33,7 @@ beforeEach(async () => {
   writeSandboxConfig({
     semanticSearchMode: "off",
     defaultBundle: "fixture",
-    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+    bundles: { fixture: { path: storage.stashDir, adapter: "akm" } },
     harnesses: { claude: { platform: "claude", bin } },
   });
   fs.mkdirSync(path.join(storage.stashDir, "agents"), { recursive: true });

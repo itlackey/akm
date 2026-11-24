@@ -18,7 +18,7 @@ const MARKDOWN_PATH = /\.(?:md|markdown)$/i;
 export function frontmatter(input: { bundle: string; path: string; content: string }) {
   // The reading of a text's frontmatter is the same in any bundle; the type and its keys are an akm bundle's.
   const { bundle, relative, isAkm } = akmBundleFile(input, true);
-  const type = isAkm ? typeOfText(relative, input.content) : null;
+  const type = isAkm ? typeOfText(bundle, relative, input.content) : null;
   const reading = readFrontmatter(input.content);
   const known = type === null ? [] : frontmatterKeysFor(type);
   return {

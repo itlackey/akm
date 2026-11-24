@@ -22,6 +22,7 @@ export function editChannelJson(
   value: unknown,
   content?: string,
 ): ChannelEdit {
+  // asset-io: install harness plugin settings
   const before = content ?? fs.readFileSync(file, "utf8");
   parseJsonc(before);
   const after = applyEdits(
@@ -34,6 +35,7 @@ export function editChannelJson(
 
 export function backupChannelFile(file: string): string {
   const backup = `${file}.akm-channel-${timestampForFilename()}-${process.pid}.bak`;
+  // asset-io: install harness plugin settings
   fs.copyFileSync(file, backup, fs.constants.COPYFILE_EXCL);
   fs.chmodSync(backup, existingFileMode(file) ?? 0o600);
   return backup;
@@ -53,9 +55,11 @@ export function writeChannelEdits(edits: ChannelEdit[]): string[] {
   const backups: string[] = [];
   const writtenFiles: string[] = [];
   try {
+    // asset-io: install harness plugin settings
     const changed = edits.filter(({ file, content }) => fs.readFileSync(file, "utf8") !== content);
     for (const { file } of changed) backups.push(backupChannelFile(file));
     for (const { file, content } of changed) {
+      // asset-io: install harness plugin settings
       writeFileAtomic(file, content, existingFileMode(file));
       writtenFiles.push(file);
     }
@@ -74,6 +78,7 @@ export function claudeChannelEdits(
 ): ChannelEdit[] {
   const ref = channel === "next" ? "next" : undefined;
   const knownFile = path.join(pluginsRoot, "known_marketplaces.json");
+  // asset-io: install harness plugin settings
   const known = parseJsonc(fs.readFileSync(knownFile, "utf8")) as Record<string, { source?: { source?: string } }>;
   const source = known["akm-plugins"]?.source;
   if (!source || !["github", "git"].includes(source.source ?? "")) {
@@ -88,7 +93,9 @@ export function claudeChannelEdits(
     ]),
   ];
   for (const file of new Set(settingsFiles)) {
+    // asset-io: install harness plugin settings
     if (!fs.existsSync(file)) continue;
+    // asset-io: install harness plugin settings
     const settings = parseJsonc(fs.readFileSync(file, "utf8")) as { extraKnownMarketplaces?: Record<string, unknown> };
     if (!settings.extraKnownMarketplaces?.["akm-plugins"]) continue;
     edits.push(editChannelJson(file, ["extraKnownMarketplaces", "akm-plugins", "source", "ref"], ref));
@@ -98,6 +105,7 @@ export function claudeChannelEdits(
 
 /** Read native TOML, including quoted keys and inline tables. */
 export function codexMarketplace(file: string): Record<string, unknown> | undefined {
+  // asset-io: install harness plugin settings
   const config = parseToml(fs.readFileSync(file, "utf8"));
   const marketplaces = config.marketplaces as Record<string, unknown> | undefined;
   const marketplace = marketplaces?.["akm-plugins"];
@@ -106,6 +114,7 @@ export function codexMarketplace(file: string): Record<string, unknown> | undefi
 
 /** Codex's add refuses a changed ref on an existing source; preserve the installed plugin and edit only its ref. */
 export function codexChannelEdit(file: string, channel: UpgradeChannel): ChannelEdit {
+  // asset-io: install harness plugin settings
   const before = fs.readFileSync(file, "utf8");
   const expected = parseToml(before);
   const entry = (expected.marketplaces as Record<string, Record<string, unknown>> | undefined)?.["akm-plugins"];

@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmLint } from "../../src/commands/lint";
-import { resetMemoryArchiveCache } from "../../src/core/asset/memory-archive";
+import { resetArchiveCache } from "../../src/core/adapter/directory-archive";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -33,10 +33,10 @@ describe("akm lint --fix: legacy type:slug xref migration", () => {
   let storage: IsolatedAkmStorage;
   beforeEach(() => {
     storage = withIsolatedAkmStorage();
-    resetMemoryArchiveCache();
+    resetArchiveCache();
   });
   afterEach(() => {
-    resetMemoryArchiveCache();
+    resetArchiveCache();
     storage.cleanup();
   });
 

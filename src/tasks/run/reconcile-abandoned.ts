@@ -49,6 +49,7 @@ function interruptedMetadata(row: TaskHistoryRow): string | undefined {
     JSON.stringify({ ...JSON.parse(row.metadata_json), detail, ...(steps ? { steps } : {}) });
   let record: { steps?: { name: string; status: string; kind?: TaskHistoryStep["kind"] }[] };
   try {
+    // asset-io: state run record
     record = JSON.parse(fs.readFileSync(runRecordPath(row.task_id, meta.run.id), "utf8"));
   } catch {
     return withDetail({

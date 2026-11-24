@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import fs from "node:fs";
 import { type ArgsDef, type CommandDef, parseArgs, runCommand } from "citty";
 import { warnWorkflowUse } from "../cli/deprecations";
 import { createParsedInvocation, findCittyTopLevelCommandIndex, getParsedInvocation } from "../cli/invocation";
@@ -10,14 +9,11 @@ import { parseNonNegativeIntFlag, parseTimeoutValue } from "../cli/parse-args";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, reportChildExit } from "../cli/shared";
 import { assertKnownFlags, type FlagScanCommand, scanRoot } from "../cli/unknown-flags";
 import { setResolvedUsageAssetType } from "../cli/usage";
-import { adapterForId } from "../core/adapter/registry";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
-import { loadConfig } from "../core/config/config";
+import { type Asset, lookupAsset } from "../core/assets/read";
+import { assetTypeFresh } from "../core/assets/type";
 import { AkmError, NotFoundError, UsageError } from "../core/errors";
 import { registerInjectedSecretValues } from "../core/redaction";
-import { resolveConceptOwner } from "../indexer/lookup/adapter-concept-owner";
-import { resolveSourceEntries } from "../indexer/search/search-source";
-import { buildFileContext } from "../indexer/walk/file-context";
 import { scriptProgram } from "../tasks/frozen-script";
 import { parseTaskSource } from "../tasks/source/parse-task-source";
 import { resolveWorkflowRunTarget } from "../workflows/runtime/runs";
@@ -79,8 +75,8 @@ args.ref = {
 
 /** What `akm run <ref>` resolved to. `refIndex` is the ref's position in the tokens after `run`. */
 export type RunTarget =
-  | { kind: "script"; refIndex: number; ref: string; file: string }
-  | { kind: "asset"; refIndex: number; ref: string; type: string; target: string; file: string }
+  | { kind: "script"; refIndex: number; ref: string; file: string; asset: Asset }
+  | { kind: "asset"; refIndex: number; ref: string; type: string; target: string; file: string; asset: Asset }
   | { kind: "run-id"; refIndex: number; ref: string; target: string }
   | { kind: "error"; refIndex: number; error: unknown };
 
@@ -119,26 +115,20 @@ export async function resolveRunTarget(runArgs: readonly string[]): Promise<RunT
       if (bundle !== undefined && bundleRef.bundle !== undefined && bundleRef.bundle !== bundle) {
         throw new UsageError("--bundle conflicts with the bundle in the asset ref.", "INVALID_FLAG_VALUE");
       }
-      const match = resolveConceptOwner(
-        { ...bundleRef, ...(bundle === undefined ? {} : { bundle }) },
-        resolveSourceEntries(undefined, loadConfig()),
-      );
-      if (!match) {
+      const asset = lookupAsset(makeBundleRef(bundle ?? bundleRef.bundle, bundleRef.conceptId));
+      if (!asset) {
         throw new NotFoundError(
           `Asset not found for ref: ${ref}`,
           "ASSET_NOT_FOUND",
           "Use akm search to find an executable asset.",
         );
       }
-      const component = { id: match.bundleId, adapter: match.adapterId, root: match.source.path, writable: false };
-      const document = adapterForId(match.adapterId)?.recognize(
-        component,
-        buildFileContext(match.source.path, match.owner.path),
-      );
-      const type = document?.type ?? "unknown";
-      const file = match.owner.path;
-      if (type === "script") return { kind: "script", refIndex, ref, file };
-      return { kind: "asset", refIndex, ref, type, target: makeBundleRef(match.bundleId, match.owner.conceptId), file };
+      // asset-io: exec the file is handed to the program a script is, and names a task in messages
+      const file = asset.entry.file;
+      if (file === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
+      const type = assetTypeFresh(asset);
+      if (type === "script") return { kind: "script", refIndex, ref, file, asset };
+      return { kind: "asset", refIndex, ref, type, target: asset.ref, file, asset };
     };
     const before = parseArgs(runArgs.slice(0, refIndex), { bundle: args.bundle as ArgsDef[string] }).bundle;
     const located = locate(typeof before === "string" ? before : undefined);
@@ -184,6 +174,7 @@ export const runAssetCommand = defineJsonCommand({
       return;
     }
     const { ref, target } = resolved;
+    const taskAsset = resolved.kind === "asset" ? resolved.asset : undefined;
     const scriptFile = resolved.kind === "asset" ? resolved.file : undefined;
     const type = resolved.kind === "asset" ? resolved.type : "workflow";
     setResolvedUsageAssetType(
@@ -210,8 +201,9 @@ export const runAssetCommand = defineJsonCommand({
     // A version 5 task reads its own start flags (`--env`, `--secret`, `--inherit`, ...) and gives each step its own environment.
     const versionFive =
       type === "task" &&
+      taskAsset !== undefined &&
       scriptFile !== undefined &&
-      parseTaskSource({ yaml: fs.readFileSync(scriptFile, "utf8"), filePath: scriptFile }).version === "5-beta";
+      parseTaskSource({ yaml: taskAsset.entry.content(), filePath: scriptFile }).version === "5-beta";
     const allTokens = [...own, ...rawArgs.slice(own.length)];
     const withoutRunFlags = (tokens: readonly string[]): string[] =>
       versionFive
@@ -265,7 +257,7 @@ async function runScript(
   const injected = resolveInjections(createParsedInvocation(["", "", ...own]));
   const env = childEnvFromFlags(process.env, { clean: flags.clean === true, inherit: flags.inherit });
   Object.assign(env, injected.values);
-  const { argv, script } = scriptProgram(target.ref, target.file, passthrough);
+  const { argv, script } = scriptProgram(target.ref, target.asset, passthrough);
   const result = await runProgram({
     argv,
     script,

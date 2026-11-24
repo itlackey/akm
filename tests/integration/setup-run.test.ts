@@ -581,8 +581,8 @@ describe("runSetupWizard", () => {
     fs.mkdirSync(path.dirname(DEFAULT_CONFIG_PATH), { recursive: true });
     const keptBundle = {
       git: "https://example.test/keep.git",
+      adapter: "akm",
       writable: false,
-      components: { keep: { root: ".", adapter: "akm", writable: false } },
       customMetadata: "preserved",
     };
     fs.writeFileSync(
@@ -629,8 +629,8 @@ describe("runSetupWizard", () => {
     fs.mkdirSync(path.dirname(DEFAULT_CONFIG_PATH), { recursive: true });
     const existingBundle = {
       git: historicalUrl,
+      adapter: "akm",
       writable: false,
-      components: { keep: { root: ".", adapter: "akm", writable: false } },
     };
     fs.writeFileSync(
       DEFAULT_CONFIG_PATH,
@@ -822,7 +822,7 @@ describe("runSetupFromConfig", () => {
       workspace: {
         path: primaryPath,
         writable: false,
-        components: { workspace: { root: ".", adapter: "akm", writable: false } },
+        adapter: "akm",
         customMetadata: "preserved",
       },
       docs: { website: { url: "https://example.test/docs", maxPages: 5 } },

@@ -24,6 +24,7 @@ import { contentHash } from "../../../../src/commands/improve/content-hash";
 import { recordLedgerAttempt } from "../../../../src/commands/improve/ledger";
 import { akmProposalReject } from "../../../../src/commands/proposal/proposal";
 import { createProposal } from "../../../../src/commands/proposal/repository";
+import { stateBundleId } from "../../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { openStateDatabase } from "../../../../src/core/state-db";
 import { getImproveLedgerRow } from "../../../../src/storage/repositories/improve-ledger-repository";
@@ -179,7 +180,7 @@ describe("a memory the model judged and left alone", () => {
   const ledgerRow = (name: string) => {
     const db = openStateDatabase();
     try {
-      return getImproveLedgerRow(db, stash, `memories/${name}`, "consolidate");
+      return getImproveLedgerRow(db, stateBundleId(stash), `memories/${name}`, "consolidate");
     } finally {
       db.close();
     }

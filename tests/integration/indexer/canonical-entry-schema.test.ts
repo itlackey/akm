@@ -56,6 +56,28 @@ describe("canonical derived-index entry schema", () => {
     });
   });
 
+  test("a fresh index is layout 26, so the release before the adapter refactor reads it, and a write fills component_id", () => {
+    withTempIndex((dbPath) => {
+      const db = openIndexDatabase(dbPath);
+      try {
+        expect(DB_VERSION).toBe(26);
+        expect(db.prepare("SELECT value FROM index_meta WHERE key = 'version'").get()).toEqual({ value: "26" });
+        upsertEntry(
+          db,
+          "/stash/knowledge/a.md",
+          { type: "knowledge" as const, name: "a", filename: "a.md" },
+          deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "knowledge", "a"),
+        );
+        expect(db.prepare("SELECT bundle_id, component_id FROM entries").get()).toEqual({
+          bundle_id: "stash",
+          component_id: "stash",
+        });
+      } finally {
+        closeDatabase(db);
+      }
+    });
+  });
+
   test("does not stamp a generation until every required DDL surface succeeds", () => {
     withTempIndex((dbPath) => {
       const partial = openDatabase(dbPath);
@@ -158,11 +180,7 @@ describe("canonical derived-index entry schema", () => {
         description: "kept across the upgrade",
         filename: "layout-21.md",
       };
-      const provenance = deriveEntryProvenance(
-        { bundleId: "primary", componentId: "primary", adapterId: "akm" },
-        entry.type,
-        entry.name,
-      );
+      const provenance = deriveEntryProvenance({ bundleId: "primary", adapterId: "akm" }, entry.type, entry.name);
       const id = upsertEntry(legacy, "/primary/knowledge/layout-21.md", entry, provenance);
       // Layout 21: content-bearing FTS (here left stale and empty), a dirty
       // queue, and no fragment tables.

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `isWalkedFile` (`src/indexer/walk/walker.ts`): the one predicate that says whether a full walk would list a
+ * `isWalkedFile` (`src/core/adapter/directory/walker.ts`): the one predicate that says whether a full walk would list a
  * file. `show` (from files) and write-through use it, so neither returns a file the index would not hold.
  * Each case is also checked against the real walk.
  */
@@ -12,11 +12,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { isWalkedFile, walkedFiles, walkStashFlat } from "../../../src/core/adapter/directory/walker";
 import { saveConfig } from "../../../src/core/config/config";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
-import { isWalkedFile, walkedFiles, walkStashFlat } from "../../../src/indexer/walk/walker";
 import { runCliCapture } from "../../_helpers/cli";
+import { indexWrittenAssets } from "../../_helpers/index-written-files";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -129,7 +129,7 @@ describe("show from files and write-through use it", () => {
     expect(paths).not.toContain(hidden);
   });
 
-  test("show refuses a file-name spelling of an asset, with or without an index row, and serves its concept ID", async () => {
+  test("show serves a file-name spelling of an asset under its concept ID, with or without an index row", async () => {
     write("knowledge/guide.md");
     fs.mkdirSync(path.join(storage.stashDir, "tasks"));
     fs.writeFileSync(path.join(storage.stashDir, "tasks", "nightly.yml"), "name: nightly\n");
@@ -138,7 +138,7 @@ describe("show from files and write-through use it", () => {
       return [ref, result.code, result.code === 0 ? JSON.parse(result.stdout).ref : result.stdout] as const;
     };
     const check = async () => {
-      expect(await shown("tasks/nightly.yml")).toEqual(["tasks/nightly.yml", 1, ""]);
+      expect(await shown("tasks/nightly.yml")).toEqual(["tasks/nightly.yml", 0, "tasks/nightly"]);
       expect(await shown("tasks/nightly")).toEqual(["tasks/nightly", 0, "tasks/nightly"]);
       expect(await shown("knowledge/guide")).toEqual(["knowledge/guide", 0, "knowledge/guide"]);
       expect(await shown("knowledge/guide.md")).toEqual(["knowledge/guide.md", 0, "knowledge/guide"]);

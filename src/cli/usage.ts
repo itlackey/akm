@@ -444,6 +444,7 @@ export function startUsage(
  * stops collection silently (capture is fail-open), so `akm doctor` reports it.
  */
 export function usageStoreProblem(): string | undefined {
+  // asset-io: state usage log
   if (!fs.existsSync(usagePath())) return undefined;
   let db: Database | undefined;
   try {
@@ -492,6 +493,7 @@ export function readUsage(filter: UsageFilter = {}) {
      */
     report: {} as Record<string, Record<string, string>>,
   };
+  // asset-io: state usage log
   if (!fs.existsSync(usagePath())) {
     gaps.push("Usage storage is absent: this is unmeasured, not zero usage.");
     return empty;

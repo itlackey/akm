@@ -1,12 +1,14 @@
 name: CI
 
-# Every pull request, whatever its base branch, runs the fast gate: `check` (lint, types, the unit and integration
-# suites, the build), the Node fallback smoke on both supported Node versions, and Desktop's own tests on Linux.
+# Every pull request, whatever its base branch, runs the fast gate: `check` (lint, types, the unit suite, the
+# build), the Node fallback smoke on both supported Node versions, and Desktop's own tests on Linux.
 # A pull request into `main` is a release, and the only place the platform jobs run: Desktop packaged on all three
-# platforms, the upgrade rehearsals, akm-plugins' contract tests and Gated CI. It must come from a release branch
+# platforms, the upgrade rehearsals and akm-plugins' contract tests. It must come from a release branch
 # (`release-branch-only`).
-# The Release workflow calls this workflow on a prerelease dispatch; a stable needs no run of its own because the
-# pull request that merged it ran everything here. docs/maintainers/release-checklist.md describes the branch model.
+# The integration suite and Gated CI run nowhere here: they gate every release, as jobs of the Release workflow
+# (release.yml), which also calls this workflow on a prerelease dispatch; a stable needs no run of this workflow
+# because the pull request that merged it ran everything here. docs/maintainers/release-checklist.md describes the
+# branch model.
 on:
   workflow_dispatch:
   workflow_call:
@@ -45,6 +47,14 @@ jobs:
           node-version: 22
       - run: bun install --frozen-lockfile
       - run: bun run check
+      # Three integration tests guard module boundaries and stored fields cheaply, so they run on every pull request,
+      # not only at release; the FTA complexity report goes to the job summary and never fails the step.
+      - name: Architecture checks and complexity report
+        run: |
+          status=0
+          bun run test:architecture || status=$?
+          bun run report:complexity || true
+          exit "$status"
       - run: bun run build
 
   release-branch-only:
@@ -254,8 +264,3 @@ jobs:
         working-directory: akm-plugins
         # Name filters, not paths: the files are the plugins' (fake-akm-contract, ref-extraction, ref-resolver-contract).
         run: bun test fake-akm-contract ref-extraction ref-resolver-contract
-
-  gated:
-    # Real embeddings, the Docker install matrix and the native schedulers, on release pull requests only.
-    needs: release-branch-only
-    uses: ./.github/workflows/gated-ci.yml

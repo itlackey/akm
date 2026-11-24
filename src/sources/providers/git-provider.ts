@@ -5,10 +5,10 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
-import { stashDirNames } from "../../core/asset/asset-placement";
+import { akmOwnedDirNames } from "../../core/assets/gate";
 import { resolveSecret, type SourceConfigEntry } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
+import { runGit } from "../../core/git-run";
 import { getRegistryIndexCacheDir } from "../../core/paths";
 import { validateGitUrl } from "../../registry/resolve";
 import { withFreshnessCache } from "../freshness";
@@ -19,7 +19,6 @@ import {
   assertNoLocalWork,
   cloneRepo,
   inspectGitUpstream,
-  runGit,
 } from "./git-install";
 import type { SourceLockData, SyncOptions } from "./install-types";
 import { sanitizeString } from "./provider-utils";
@@ -196,10 +195,8 @@ function hasExtractedRepo(repoDir: string): boolean {
 
   try {
     if (!fs.statSync(repoDir).isDirectory()) return false;
-    // The "any type dir present" test is sourced from the `akm`
-    // adapter's directoryList(), with `stashDirNames()` as the fallback.
-    const ownedDirs =
-      akmAdapter.directoryList?.({ id: "akm", adapter: "akm", root: repoDir, writable: false }) ?? stashDirNames();
+    // The "any type dir present" test is sourced from the `akm` adapter's directories.
+    const ownedDirs = akmOwnedDirNames(repoDir);
     return ownedDirs.some((dirName) => fs.existsSync(path.join(repoDir, dirName)));
   } catch {
     return false;

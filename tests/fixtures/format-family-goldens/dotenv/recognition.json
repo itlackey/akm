@@ -17,7 +17,6 @@
     "env/app.env": {
       "recognized": true,
       "adapterId": "dotenv",
-      "component": "main",
       "type": "env",
       "conceptId": "env/app",
       "ref": "sample-dotenv//env/app",
@@ -28,7 +27,6 @@
     "env/dangerous.env": {
       "recognized": true,
       "adapterId": "dotenv",
-      "component": "main",
       "type": "env",
       "conceptId": "env/dangerous",
       "ref": "sample-dotenv//env/dangerous",
@@ -39,7 +37,6 @@
     "secrets/deploy-key": {
       "recognized": true,
       "adapterId": "dotenv",
-      "component": "main",
       "type": "secret",
       "conceptId": "secrets/deploy-key",
       "ref": "sample-dotenv//secrets/deploy-key",
@@ -50,7 +47,6 @@
     "secrets/ci.env": {
       "recognized": true,
       "adapterId": "dotenv",
-      "component": "main",
       "type": "secret",
       "conceptId": "secrets/ci.env",
       "ref": "sample-dotenv//secrets/ci.env",

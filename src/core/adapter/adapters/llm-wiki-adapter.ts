@@ -71,18 +71,16 @@
 
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../asset/frontmatter";
-import { LLM_WIKI_PAGES_DIR, looksLikeLlmWikiRoot } from "../../asset/llm-wiki-root";
 import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { FileContext } from "../directory/file-context";
+import { DirectoryAdapterBase } from "../directory-adapter";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
+import { LLM_WIKI_PAGES_DIR, looksLikeLlmWikiRoot } from "./llm-wiki-root";
 import { hashContent, nonEmptyString } from "./shared";
-
-/** A wiki is a single-component bundle; its one component is conventionally `main` (recognition golden). */
-const WIKI_COMPONENT_ID = "main";
 
 /** The adapter's own `type` for immutable ingested sources under `raw/` (recognition golden, reading A). */
 const WIKI_SOURCE_TYPE = "wiki-source";
@@ -97,7 +95,7 @@ const RESERVED_ROOT_FILES = new Set(["schema.md", "index.md", "log.md"]);
 const RAW_SUBDIR = "raw";
 
 /** POSIX-normalize separators. */
-/** conceptId = component-root-relative path minus `.md`. */
+/** conceptId = bundle-root-relative path minus `.md`. */
 function conceptIdOf(relPath: string): string {
   return toPosix(relPath).replace(/\.md$/i, "");
 }
@@ -152,14 +150,14 @@ function parseWikiFrontmatter(raw: string): WikiPageFrontmatter {
   return out;
 }
 
-/** True when `relPath` is a RESERVED wiki file at the component root (schema/index/log). */
+/** True when `relPath` is a RESERVED wiki file at the bundle root (schema/index/log). */
 function isReservedRootFile(relPath: string): boolean {
   const posix = toPosix(relPath);
   if (posix.includes("/")) return false; // reserved files are special ONLY at the wiki root
   return RESERVED_ROOT_FILES.has(posix.toLowerCase());
 }
 
-/** First path segment of a component-root-relative POSIX path (or the whole thing when flat). */
+/** First path segment of a bundle-root-relative POSIX path (or the whole thing when flat). */
 function firstSegment(relPath: string): string {
   const posix = toPosix(relPath);
   const slash = posix.indexOf("/");
@@ -180,10 +178,10 @@ function resolveXref(xref: string, bundleId: string): string | null {
 }
 
 /**
- * Resolve a page body's bundle-relative markdown links to component-root-relative
- * conceptIds. `/`-rooted links resolve from the component root; standard relative
+ * Resolve a page body's bundle-relative markdown links to bundle-root-relative
+ * conceptIds. `/`-rooted links resolve from the bundle root; standard relative
  * links resolve against the linking page's own directory. External schemes,
- * anchors, non-`.md` targets, and links escaping the component root are dropped
+ * anchors, non-`.md` targets, and links escaping the bundle root are dropped
  * (tolerant, §9). First-appearance order; duplicates collapse.
  */
 function resolveBodyLinks(body: string, fileRelPath: string): string[] {
@@ -253,35 +251,34 @@ function resolveSources(fm: WikiPageFrontmatter): string[] {
   return out;
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
-  if (file.ext !== ".md") return null;
+/** What a path is in a wiki: a `raw/` source, a `pages/` page, or nothing (reserved root files, a root README, any other folder). */
+function wikiRoleOf(relPath: string): "raw" | "page" | null {
+  const posix = toPosix(relPath);
+  if (path.posix.extname(posix).toLowerCase() !== ".md" || isReservedRootFile(posix)) return null;
+  const head = firstSegment(posix);
+  if (head === RAW_SUBDIR && posix.includes("/")) return "raw";
+  if (head === LLM_WIKI_PAGES_DIR && posix.includes("/")) return "page";
+  return null;
+}
+
+/** The concept a path holds: its path without `.md`, for a `raw/` source or a `pages/` page. */
+function wikiConceptIdOf(relPath: string): string | null {
+  return wikiRoleOf(relPath) === null ? null : conceptIdOf(relPath);
+}
+
+function describe(b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
   const relPath = toPosix(file.relPath);
-
-  // Reserved root files (schema/index/log) are recognized but never indexed.
-  if (isReservedRootFile(relPath)) return null;
-
-  const head = firstSegment(relPath);
-  const isRaw = head === RAW_SUBDIR && relPath.includes("/");
-  const isPage = head === LLM_WIKI_PAGES_DIR && relPath.includes("/");
-  // Only `raw/` sources and `pages/` pages are wiki assets. Everything else
-  // (root README, stray root `.md`, other dirs) is abstained on.
-  if (!isRaw && !isPage) return null;
-
-  const conceptId = conceptIdOf(relPath);
+  const isRaw = wikiRoleOf(relPath) === "raw";
+  const isPage = !isRaw;
   const lastSegment = conceptId.split("/").pop() ?? conceptId;
   const raw = file.content();
   const fm = parseWikiFrontmatter(raw);
   const body = parseFrontmatter(raw).content;
 
-  const doc: IndexDocument = {
-    ref: `${c.id}//${conceptId}`,
-    bundle: c.id,
-    component: WIKI_COMPONENT_ID,
-    conceptId,
-    path: file.absPath,
+  const doc: IndexMetadata = {
     hash: hashContent(raw),
-    adapterId: "llm-wiki",
     ownsPresentation: true,
+    // Metadata only: a page's `pageKind` never changes what it is.
     type: isRaw ? WIKI_SOURCE_TYPE : (fm.pageKind ?? DEFAULT_PAGE_KIND),
     name: lastSegment,
     content: body,
@@ -289,7 +286,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   if (fm.description !== undefined) doc.description = fm.description;
 
   if (isPage) {
-    const links = resolvePageLinks(fm, body, relPath, c.id);
+    const links = resolvePageLinks(fm, body, relPath, b.id);
     if (links.length > 0) doc.links = links;
     const sources = resolveSources(fm);
     // wiki page extras (adapter-owned; plan §4.3 — wikiRole/pageKind + citations).
@@ -311,22 +308,19 @@ interface WikiValidateItem {
   body: string;
 }
 
-async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
   const items: WikiValidateItem[] = [];
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
     if (typeof raw !== "string") continue;
     const relPath = toPosix(change.path);
-    if (isReservedRootFile(relPath)) continue; // reserved files are not concepts — no page checks
-    const head = firstSegment(relPath);
-    const isRaw = head === RAW_SUBDIR && relPath.includes("/");
-    const isPage = head === LLM_WIKI_PAGES_DIR && relPath.includes("/");
-    if (!isRaw && !isPage) continue;
+    const role = wikiRoleOf(relPath); // reserved files and other folders are not concepts — no page checks
+    if (role === null) continue;
     items.push({
       relPath,
       conceptId: conceptIdOf(relPath),
-      kind: isRaw ? "raw" : "page",
+      kind: role,
       fm: parseWikiFrontmatter(raw),
       body: parseFrontmatter(raw).content,
     });
@@ -339,7 +333,7 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
     for (const src of resolveSources(item.fm)) citedRawConceptIds.add(src);
   }
 
-  const diagnostics: Diagnostic[] = [];
+  const diagnostics: FileDiagnostic[] = [];
 
   for (const item of items) {
     if (item.kind === "raw") {
@@ -401,27 +395,39 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
   return diagnostics;
 }
 
-export const llmWikiAdapter: BundleAdapter = {
-  id: "llm-wiki",
-  version: "0.9.0",
-  extensions: [".md"],
+export class LlmWikiAdapter extends DirectoryAdapterBase {
+  readonly id = "llm-wiki";
+  readonly version = "0.9.0";
+  override readonly extensions = [".md"];
 
-  recognize,
-  validate,
+  protected identify(relPath: string): string | null {
+    return wikiConceptIdOf(relPath);
+  }
 
-  readCandidates(c: BundleComponent, conceptId: string) {
-    const canonical = toPosix(conceptId).replace(/\.md$/i, "");
-    return [{ path: path.join(c.root, `${canonical}.md`), conceptId: canonical }];
-  },
+  protected describe(b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
+    return describe(b, file, conceptId);
+  }
 
-  /** The wiki owns its whole root (schema/index/log at root plus pages/ + raw/); one component. */
-  directoryList(_c: BundleComponent): string[] {
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+    return validate(b, changes, ctx);
+  }
+
+  protected spellings(conceptId: string): string[] {
+    return [`${toPosix(conceptId).replace(/\.md$/i, "")}.md`];
+  }
+
+  /** The wiki owns its whole root (schema/index/log at root plus pages/ + raw/). */
+  override directoryList(_b: Bundle): string[] {
     return ["."];
-  },
+  }
 
   /** Install-time probe: a root is an LLM Wiki when it has a root `schema.md` AND a `pages/` directory. */
-  looksLikeRoot: looksLikeLlmWikiRoot,
-};
+  looksLikeRoot(root: string): boolean {
+    return looksLikeLlmWikiRoot(root);
+  }
+}
+
+export const llmWikiAdapter = new LlmWikiAdapter();
 
 // Exported pure helpers for the conformance test.
 export { resolveBodyLinks, resolvePageLinks, resolveSources, resolveXref };

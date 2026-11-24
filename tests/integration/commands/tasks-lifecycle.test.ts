@@ -328,7 +328,7 @@ describe("task lifecycle failure handling", () => {
     expect(result.installed).toEqual(["backup"]);
     expect(result.skipped).toEqual([]);
     expect(installCalls[0]?.logicalSource).toEqual({ kind: "task", ref: "stash//tasks/backup" });
-    expect(installCalls[0]?.invocation).toEqual(["task", "run", "backup", "--bundle", "stash", "--scheduled"]);
+    expect(installCalls[0]?.invocation).toEqual(["task", "run", "stash//tasks/backup", "--scheduled"]);
   });
 
   test("add rejects argv arrays instead of silently joining them", async () => {

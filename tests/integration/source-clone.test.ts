@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmClone } from "../../src/commands/sources/source-clone";
+import { writeAssets } from "../../src/core/assets/write";
 import { saveConfig } from "../../src/core/config/config";
 import { ConfigError, UsageError } from "../../src/core/errors";
 import { getDbPath } from "../../src/core/paths";
@@ -194,8 +195,8 @@ describe("akmClone", () => {
         searchpath: { path: searchPathDir },
         foreign: {
           path: targetDir,
+          adapter: "okf",
           writable: true,
-          components: { main: { root: ".", adapter: "okf", writable: true } },
         },
       },
     });
@@ -267,7 +268,8 @@ describe("akmClone", () => {
     );
 
     expect(fs.readFileSync(result.destination.path, "utf8")).toBe("echo deploy\n");
-    expect(warnings.some((message) => message.includes("targeted index update failed"))).toBe(true);
+    // The clone's write refreshes its row; an index akm cannot read is said by that write (#791).
+    expect(warnings.some((message) => message.includes("will not appear in search until that is fixed"))).toBe(true);
   });
 
   test("rejects an unmaterialized writable Git target before copying", async () => {
@@ -371,6 +373,21 @@ describe("akmClone", () => {
     expect(fs.readFileSync(victim, "utf8")).toBe("echo victim\n");
   });
 
+  test("force replaces a file destination symlink that leads inside the bundle without writing through it", async () => {
+    const kept = path.join(stashDir, "scripts", "kept.sh");
+    const destination = path.join(stashDir, "scripts", "deploy.sh");
+    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo updated\n");
+    writeFile(kept, "echo kept\n");
+    fs.symlinkSync(kept, destination);
+
+    const result = await akmClone({ sourceRef: `${searchPathDir}//scripts/deploy.sh`, force: true });
+
+    expect(result.overwritten).toBe(true);
+    expect(fs.lstatSync(destination).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(destination, "utf8")).toBe("echo updated\n");
+    expect(fs.readFileSync(kept, "utf8")).toBe("echo kept\n");
+  });
+
   test("force replaces a skill destination symlink without removing its target", async () => {
     const victimDir = path.join(createStashDir("akm-clone-skill-symlink-victim-"), "external-review");
     const destination = path.join(stashDir, "skills", "review");
@@ -409,6 +426,102 @@ describe("akmClone", () => {
     fs.symlinkSync(outsideSkills, path.join(stashDir, "skills"), "dir");
 
     await expect(akmClone({ sourceRef: "skills/review" })).rejects.toThrow(/symbolic-link parent/i);
+  });
+
+  test("a skill package is copied whole: non-asset and dot files, binary bytes, an executable script's mode, Markdown bytes", async () => {
+    const source = path.join(searchPathDir, "skills", "pkg");
+    writeFile(path.join(source, "SKILL.md"), "---\ndescription: pkg\n---\n# Pkg\n");
+    writeFile(path.join(source, "references", "guide.md"), "# Guide\r\n  trailing  ");
+    writeFile(path.join(source, ".env.example"), "KEY=1\n");
+    writeFile(path.join(source, "assets", "data.json"), '{"a":1}');
+    fs.mkdirSync(path.join(source, "scripts"), { recursive: true });
+    fs.writeFileSync(path.join(source, "scripts", "run.sh"), "#!/bin/sh\necho hi\n", { mode: 0o755 });
+    fs.chmodSync(path.join(source, "scripts", "run.sh"), 0o755);
+    fs.writeFileSync(path.join(source, "assets", "blob.bin"), Buffer.from([0, 255, 128, 10]));
+
+    const result = await akmClone({ sourceRef: `${searchPathDir}//skills/pkg` });
+
+    const dest = path.join(stashDir, "skills", "pkg");
+    expect(result.destination.path).toBe(path.join(dest, "SKILL.md"));
+    expect(fs.readFileSync(path.join(dest, ".env.example"), "utf8")).toBe("KEY=1\n");
+    expect(fs.readFileSync(path.join(dest, "assets", "data.json"), "utf8")).toBe('{"a":1}');
+    expect([...fs.readFileSync(path.join(dest, "assets", "blob.bin"))]).toEqual([0, 255, 128, 10]);
+    // Markdown that is not the entry is byte for byte what the source holds.
+    expect(fs.readFileSync(path.join(dest, "references", "guide.md"), "utf8")).toBe("# Guide\r\n  trailing  ");
+    expect(fs.statSync(path.join(dest, "scripts", "run.sh")).mode & 0o777).toBe(0o755);
+    expect(fs.readdirSync(path.join(stashDir, "skills")).filter((name) => name.includes(".tmp-"))).toEqual([]);
+  });
+
+  test("a script clone keeps the source's executable mode", async () => {
+    const source = path.join(searchPathDir, "scripts", "run.sh");
+    writeFile(source, "#!/bin/sh\necho hi\n");
+    fs.chmodSync(source, 0o755);
+
+    const result = await akmClone({ sourceRef: `${searchPathDir}//scripts/run.sh` });
+
+    expect(fs.statSync(result.destination.path).mode & 0o777).toBe(0o755);
+    expect(fs.readFileSync(result.destination.path, "utf8")).toBe("#!/bin/sh\necho hi\n");
+  });
+
+  test("a skill clone onto a folder without SKILL.md says it already exists in the working stash", async () => {
+    writeFile(path.join(searchPathDir, "skills", "pkg", "SKILL.md"), "# New\n");
+    writeFile(path.join(stashDir, "skills", "pkg", "mine.txt"), "mine");
+
+    await expect(akmClone({ sourceRef: `${searchPathDir}//skills/pkg` })).rejects.toThrow(
+      `Asset already exists in working stash: ${path.join(stashDir, "skills", "pkg")}. Use --force to overwrite.`,
+    );
+    expect(fs.readFileSync(path.join(stashDir, "skills", "pkg", "mine.txt"), "utf8")).toBe("mine");
+  });
+
+  test("a skill clone without --force leaves the existing package as it was and says it already exists", async () => {
+    writeFile(path.join(searchPathDir, "skills", "pkg", "SKILL.md"), "# New\n");
+    writeFile(path.join(stashDir, "skills", "pkg", "SKILL.md"), "# Old\n");
+    writeFile(path.join(stashDir, "skills", "pkg", "mine.txt"), "mine");
+
+    await expect(akmClone({ sourceRef: `${searchPathDir}//skills/pkg` })).rejects.toThrow(
+      `Asset already exists in working stash: ${path.join(stashDir, "skills", "pkg")}. Use --force to overwrite.`,
+    );
+
+    expect(fs.readFileSync(path.join(stashDir, "skills", "pkg", "SKILL.md"), "utf8")).toBe("# Old\n");
+    expect(fs.readFileSync(path.join(stashDir, "skills", "pkg", "mine.txt"), "utf8")).toBe("mine");
+  });
+
+  test("--force mirrors the package: overwrites its files, removes the target's that the source lacks, whatever they are", async () => {
+    const source = path.join(searchPathDir, "skills", "pkg");
+    writeFile(path.join(source, "SKILL.md"), "# New\n");
+    writeFile(path.join(source, "shared.txt"), "from source");
+    const dest = path.join(stashDir, "skills", "pkg");
+    writeFile(path.join(dest, "SKILL.md"), "# Old\n");
+    writeFile(path.join(dest, "shared.txt"), "from target");
+    writeFile(path.join(dest, "only-here.txt"), "x");
+    writeFile(path.join(dest, "docs", "only-here.md"), "# x\n");
+    writeFile(path.join(dest, ".hidden"), "x");
+
+    const result = await akmClone({ sourceRef: `${searchPathDir}//skills/pkg`, force: true });
+
+    expect(result.overwritten).toBe(true);
+    expect(fs.readdirSync(dest).sort()).toEqual(["SKILL.md", "shared.txt"]);
+    expect(fs.readFileSync(path.join(dest, "shared.txt"), "utf8")).toBe("from source");
+  });
+
+  test("deleting a cloned skill package removes its whole folder", async () => {
+    const source = path.join(searchPathDir, "skills", "pkg");
+    writeFile(path.join(source, "SKILL.md"), "# Pkg\n");
+    writeFile(path.join(source, "scripts", "run.sh"), "echo\n");
+    await akmClone({ sourceRef: `${searchPathDir}//skills/pkg` });
+    const dest = path.join(stashDir, "skills", "pkg");
+    expect(fs.existsSync(path.join(dest, "scripts", "run.sh"))).toBe(true);
+
+    writeAssets(
+      {
+        source: { kind: "filesystem", name: "stash", path: stashDir, adapterId: "akm" },
+        config: { type: "filesystem", path: stashDir, writable: true } as never,
+      },
+      { purpose: "test" },
+      (w) => w.delete("skills/pkg"),
+    );
+
+    expect(fs.existsSync(dest)).toBe(false);
   });
 
   test("force overwrite removes stale files from skill directory", async () => {
@@ -684,7 +797,7 @@ describe("akmClone opaque refs and provenance", () => {
         searchpath: { path: searchPathDir },
         flat: { path: flatSkillsDir },
         site: { path: siteDir },
-        docs: { path: docsDir, components: { main: { root: ".", adapter: "generic-files" } } },
+        docs: { path: docsDir, adapter: "generic-files" },
       },
       defaultBundle: "stash",
     });

@@ -7,7 +7,6 @@ function row(overrides: Partial<EntryRow> = {}): EntryRow {
     id: 1,
     item_ref: "team//knowledge/guide",
     bundle_id: "team",
-    component_id: "team",
     concept_id: "knowledge/guide",
     adapter_id: "akm",
     type: "knowledge",

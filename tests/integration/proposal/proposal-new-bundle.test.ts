@@ -112,7 +112,7 @@ describe("akm proposal new --bundle", () => {
       ref: `other//skills/${NAME}`,
       source: "propose",
       status: "pending",
-      proposedTarget: { source: "other", root: otherDir },
+      proposedTarget: { source: "other" },
     });
 
     const accepted = await runCliCapture([

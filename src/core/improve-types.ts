@@ -102,14 +102,13 @@ export interface DeadUrlCoverage {
 
 export interface ArchivedMemoryCleanupRecord {
   ref: string;
+  /** The retirement's archive, opaque: print it, never parse or join it (§0.2 P7). */
+  handle: string;
   parentRef?: string;
   reason: MemoryPruneReason | RetireArchiveReason;
   beliefState: "archived";
   previousBeliefState: Exclude<MemoryBeliefState, "archived">;
   survivorRef?: string;
-  originalPath: string;
-  archivedPath: string;
-  auditPath: string;
   archivedAt: string;
   /** Retire-proposal path only: the proposal that caused this archive. */
   proposalId?: string;

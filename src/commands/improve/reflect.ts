@@ -14,13 +14,15 @@
  * pre-dispatch refusals still emit both).
  */
 
-import fs from "node:fs";
 import path from "node:path";
-import { parseBundleRef } from "../../core/asset/asset-ref";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { AssetRef } from "../../core/asset/resolve-ref";
+import { lookupAsset } from "../../core/assets/read";
+import { assetType } from "../../core/assets/type";
+import { addressOf } from "../../core/assets/write";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
+import { materialiseBundleDir } from "../../core/bundle-at-dir";
 import { isWithin, resolveStashDir, safeRealpath } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -36,9 +38,6 @@ import type { Parsed } from "../../core/structured";
 import { warnOnce } from "../../core/warn";
 import { type Notice, noticeSet } from "../../execution/notices";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
-import { lookupBundleRef } from "../../indexer/indexer";
-import { resolveOwnedType, resolveWriteAddress, type WriteAddress } from "../../indexer/lookup/adapter-concept-owner";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { AgentFailureReason } from "../../integrations/agent";
 import {
   buildReflectOutputRepairPrompt,
@@ -58,7 +57,6 @@ import type { CreateProposalInput, ProposalsContext } from "../proposal/reposito
 import { isValidDescription } from "../proposal/validators/proposal-quality-validators";
 import { CHARS_PER_TOKEN, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
 import { contentHash } from "./content-hash";
-import { findAssetFilePath } from "./eligibility";
 import { resolveImproveExecution } from "./execution";
 import { recordLedgerAttempt, stateKey } from "./ledger";
 import {
@@ -726,12 +724,9 @@ async function resolveReflectSource(
   // A proposal writes the file that owns the ref in the proposal's own bundle; the type is that of
   // the file that owns it wherever it is (a file in another bundle is `createProposal`'s to refuse, #1000).
   const root = path.resolve(options.target?.root ?? stash);
-  const address = resolveWriteAddress(root, options.ref);
-  const ownedType = resolveOwnedType(parseBundleRef(options.itemRef ?? options.ref), resolveSourceEntries(stash), {
-    mode: "read",
-    includeSensitive: true,
-  });
-  const parsedRef: WriteAddress = { ...address, type: ownedType ?? address.type };
+  const address = addressOf(materialiseBundleDir(root), options.ref);
+  const owned = lookupAsset(options.itemRef ?? options.ref, { bundle: materialiseBundleDir(stash) });
+  const parsedRef: AssetRef = { type: owned ? assetType(owned) : address.type, name: address.name };
   // A secret's content is never read, whatever it looks like.
   if (REFLECT_REFUSED_TYPES.has(parsedRef.type)) {
     return unsupportedTypeFailure(
@@ -745,15 +740,12 @@ async function resolveReflectSource(
   let assetFile: string | undefined;
   if (assetContent === undefined) {
     try {
-      const qualifiedRef = options.itemRef ?? options.ref;
-      const localFilePath = await findAssetFilePath(qualifiedRef, stash);
-      if (localFilePath && fs.existsSync(localFilePath)) {
-        assetFile = localFilePath;
-      } else {
-        const entry = await lookupBundleRef(parseBundleRef(qualifiedRef));
-        if (entry?.filePath && fs.existsSync(entry.filePath)) assetFile = entry.filePath;
+      const held = owned ?? lookupAsset(options.itemRef ?? options.ref, { bundle: materialiseBundleDir(stash) });
+      if (held) {
+        // asset-io: display the layout guard below names the file in its refusal
+        assetFile = held.entry.file;
+        assetContent = held.entry.content();
       }
-      if (assetFile !== undefined) assetContent = fs.readFileSync(assetFile, "utf8");
     } catch {
       // An index miss is not fatal: reflect then has no content to patch.
     }
@@ -765,9 +757,9 @@ async function resolveReflectSource(
     return unsupportedTypeFailure(options.ref, parsedRef.type, "its content is not frontmatter + markdown", emitFailed);
   }
   // A file in another bundle is `createProposal`'s to refuse (#1000); this one is in the proposal's own bundle.
-  if (assetFile !== undefined && address.path !== undefined && isWithin(assetFile, root)) {
-    if (safeRealpath(address.path) !== safeRealpath(assetFile)) {
-      return fileOutsideLayoutFailure(options.ref, assetFile, address.path, emitFailed);
+  if (assetFile !== undefined && address.file !== undefined && isWithin(assetFile, root)) {
+    if (safeRealpath(address.file) !== safeRealpath(assetFile)) {
+      return fileOutsideLayoutFailure(options.ref, assetFile, address.file, emitFailed);
     }
   }
   return { assetContent, parsedRef };

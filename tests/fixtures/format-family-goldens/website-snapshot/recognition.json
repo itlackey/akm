@@ -24,7 +24,6 @@
     "stash/knowledge/example-com/index.md": {
       "recognized": true,
       "adapterId": "website-snapshot",
-      "component": "main",
       "type": "website",
       "conceptId": "example-com/index",
       "ref": "sample-website//example-com/index",
@@ -37,7 +36,6 @@
     "stash/knowledge/example-com/about.md": {
       "recognized": true,
       "adapterId": "website-snapshot",
-      "component": "main",
       "type": "website",
       "conceptId": "example-com/about",
       "ref": "sample-website//example-com/about",

@@ -10,10 +10,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isProtectedPlace, managedFolderOf } from "../core/assets/files";
 import type { AkmConfig } from "../core/config/config";
 import { inspectWriteTarget } from "../core/write-source";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { isProtectedPlace, managedFolderOf } from "../indexer/walk/place-rules";
 
 export type FileAction = "read" | "edit" | "move" | "copy" | "retire" | "delete";
 /** Whether akm accepts the action, and the sentence why not when it does not. */

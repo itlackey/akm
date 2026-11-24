@@ -8,7 +8,7 @@ import { toPosix } from "../common";
 export const SCRATCH_DIR = ".scratch";
 
 /**
- * True when `relPath` (relative to the effective bundle/component root) is the
+ * True when `relPath` (relative to the effective bundle root) is the
  * root `.scratch/` directory or anything beneath it. Root-scoped: a nested
  * `.scratch` is ordinary content. Paths that escape the root are not scratch.
  */

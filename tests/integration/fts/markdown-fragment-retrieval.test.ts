@@ -35,7 +35,7 @@ function put(db: Database, name: string, body: string, description = "ordinary m
     db,
     `/fixture/knowledge/${name}.md`,
     entry,
-    deriveEntryProvenance({ bundleId: "fixture", componentId: "fixture", adapterId: "akm" }, "knowledge", name),
+    deriveEntryProvenance({ bundleId: "fixture", adapterId: "akm" }, "knowledge", name),
   );
 }
 
@@ -89,11 +89,7 @@ describe("Markdown fragment publication (#937)", () => {
         db,
         "/fixture/knowledge/transition.md",
         cleared,
-        deriveEntryProvenance(
-          { bundleId: "fixture", componentId: "fixture", adapterId: "akm" },
-          "knowledge",
-          "transition",
-        ),
+        deriveEntryProvenance({ bundleId: "fixture", adapterId: "akm" }, "knowledge", "transition"),
       );
       expect(rowCount(db, "entry_fragments")).toBe(0);
       expect(searchFts(db, "oldtransitionmarker", 5)).toHaveLength(0);
@@ -104,11 +100,7 @@ describe("Markdown fragment publication (#937)", () => {
         db,
         "/fixture/scripts/plain-script.ts",
         script,
-        deriveEntryProvenance(
-          { bundleId: "fixture", componentId: "fixture", adapterId: "akm" },
-          "script",
-          "plain-script",
-        ),
+        deriveEntryProvenance({ bundleId: "fixture", adapterId: "akm" }, "script", "plain-script"),
       );
       expect(searchFts(db, "nativemarkernonmarkdown", 5)[0]?.itemRef).toBe("fixture//scripts/plain-script");
       expect(rowCount(db, "entry_fragments")).toBe(0);
@@ -128,11 +120,7 @@ describe("Markdown fragment publication (#937)", () => {
         toc: [{ level: 1, text: "Stable", line: 1 }],
         parameters: [{ name: "region", description: "deployment region" }],
       };
-      const provenance = deriveEntryProvenance(
-        { bundleId: "fixture", componentId: "fixture", adapterId: "akm" },
-        "knowledge",
-        "structured",
-      );
+      const provenance = deriveEntryProvenance({ bundleId: "fixture", adapterId: "akm" }, "knowledge", "structured");
       for (let run = 0; run < 2; run++) {
         setMarkdownFragmentContent(entry, projectMarkdownFragmentContent(body));
         upsertEntry(db, "/fixture/knowledge/structured.md", entry, provenance);

@@ -11,7 +11,7 @@
  * the package (`<name>/reference/FORMS.md`) are part of the item, not standalone
  * concepts (item-scoped incrementality). The SKILL.md codec is shared
  * with claude/opencode as functions; this adapter differs in that the
- * package dir sits directly under the component root (no `skills/` prefix) and
+ * package dir sits directly under the bundle root (no `skills/` prefix) and
  * that `validate` enforces the FULL Agent Skills contract.
  *
  * RECOGNITION ≠ VALIDATION: an invalid skill (bad name charset, over-long
@@ -29,7 +29,7 @@
  *   - `missing-skill-md` — a package dir with no SKILL.md (edge case; git cannot
  *     commit an empty dir, so it is covered by a directory-level check, not a
  *     fixture). Implemented by {@link missingManifestDiagnostics}, which scans
- *     the component root through `ValidateContext.list` — the change-set loop
+ *     the bundle root through `FileValidateContext.list` — the change-set loop
  *     cannot reach it, because a change is always a file and a manifest-less
  *     package contributes no SKILL.md change (issue #774).
  *
@@ -44,17 +44,16 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { isScratchPath } from "../../asset/scratch";
 import { toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
+import type { FileContext } from "../directory/file-context";
+import { DirectoryAdapterBase } from "../directory-adapter";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { hashContent, nonEmptyString, readTags } from "./shared";
 
-/** A skills collection is a single-component bundle; its one component is `main`. */
-const COMPONENT_ID = "main";
 /** The skill manifest basename (the item marker). */
 const SKILL_MANIFEST = "SKILL.md";
 /** Agent Skills hard limits. */
@@ -77,10 +76,8 @@ function skillPackage(relPath: string): { conceptId: string; dirName: string } |
   return { conceptId, dirName };
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
-  const pkg = skillPackage(file.relPath);
-  if (pkg === null) return null;
-
+function describe(file: FileContext): IndexMetadata {
+  const pkg = skillPackage(file.relPath) as { dirName: string };
   const raw = file.content();
   const parsed = parseFrontmatter(raw);
   const data = parsed.data;
@@ -91,14 +88,8 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   const description = nonEmptyString(data.description);
   const tags = readTags(data.tags);
 
-  const doc: IndexDocument = {
-    ref: `${c.id}//${pkg.conceptId}`,
-    bundle: c.id,
-    component: COMPONENT_ID,
-    conceptId: pkg.conceptId,
-    path: file.absPath,
+  const doc: IndexMetadata = {
     hash: hashContent(raw),
-    adapterId: "agent-skills",
     type: "skill",
     name,
     content: body,
@@ -109,8 +100,8 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
 }
 
 /** The Agent Skills hard-rule checks for one SKILL.md (name + description). */
-function skillFieldDiagnostics(relPath: string, dirName: string, data: Record<string, unknown>): Diagnostic[] {
-  const diagnostics: Diagnostic[] = [];
+function skillFieldDiagnostics(relPath: string, dirName: string, data: Record<string, unknown>): FileDiagnostic[] {
+  const diagnostics: FileDiagnostic[] = [];
   const name = typeof data.name === "string" ? data.name.normalize("NFKC") : "";
   const lower = name.toLowerCase();
   const reserved = RESERVED_NAME_WORDS.find((w) => lower.includes(w));
@@ -141,7 +132,7 @@ function skillFieldDiagnostics(relPath: string, dirName: string, data: Record<st
 
 /**
  * How deep below a candidate package directory the manifest probe looks. Agent
- * Skills packages sit at the component root (`<name>/SKILL.md`), occasionally
+ * Skills packages sit at the bundle root (`<name>/SKILL.md`), occasionally
  * one group level down (`<group>/<name>/SKILL.md`) — this bound keeps a deep
  * resource tree (a package's `reference/`, `assets/`, …) from turning the lint
  * sweep into a full recursive walk.
@@ -152,10 +143,10 @@ interface ManifestScanResult {
   /** At least one real package root (`SKILL.md`) exists in this subtree. */
   containsManifest: boolean;
   /** Broken package candidates below a grouping directory. */
-  diagnostics: Diagnostic[];
+  diagnostics: FileDiagnostic[];
 }
 
-function missingManifestDiagnostic(dir: string): Diagnostic {
+function missingManifestDiagnostic(dir: string): FileDiagnostic {
   return { file: dir, issue: "missing-skill-md", detail: `no SKILL.md in ${dir}/`, fixed: false };
 }
 
@@ -168,7 +159,7 @@ function missingManifestDiagnostic(dir: string): Diagnostic {
 async function scanPackageCandidate(
   dir: string,
   entries: readonly string[],
-  ctx: ValidateContext,
+  ctx: FileValidateContext,
   depth: number,
 ): Promise<ManifestScanResult> {
   if (entries.includes(SKILL_MANIFEST)) return { containsManifest: true, diagnostics: [] };
@@ -182,7 +173,7 @@ async function scanPackageCandidate(
     const child = `${dir}/${entry}`;
     // `list` on a FILE yields `[]` (the read throws and is swallowed), so an
     // empty listing is the "not a directory worth descending" signal — no
-    // separate stat is available on ValidateContext, and none is needed.
+    // separate stat is available on FileValidateContext, and none is needed.
     const childEntries = await ctx.list(child);
     if (childEntries.length === 0) continue;
     children.push(await scanPackageCandidate(child, childEntries, ctx, depth + 1));
@@ -206,7 +197,7 @@ async function scanPackageCandidate(
  * directory carrying resources but no manifest contributes nothing the
  * change-loop can see, and the check the lint golden's `missingSkillMd` edge
  * case names would be unreachable. This scans the
- * component root through {@link ValidateContext.list} instead, so the case is
+ * bundle root through {@link FileValidateContext.list} instead, so the case is
  * actually reported.
  *
  * A package's own resource dirs (`pdf-processing/reference/`) are part of the
@@ -214,8 +205,8 @@ async function scanPackageCandidate(
  * their children are classified independently so one valid package cannot hide
  * a manifest-less sibling.
  */
-async function missingManifestDiagnostics(ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+async function missingManifestDiagnostics(ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
   for (const name of await ctx.list(".")) {
     if (name.startsWith(".")) continue; // .git, .github, … are not skill packages
     const entries = await ctx.list(name);
@@ -225,8 +216,8 @@ async function missingManifestDiagnostics(ctx: ValidateContext): Promise<Diagnos
   return diagnostics;
 }
 
-async function validate(_c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
+async function validate(_c: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+  const diagnostics: FileDiagnostic[] = [];
   const seenDirs = new Set<string>();
   for (const change of changes) {
     if (change.op === "delete") continue;
@@ -247,17 +238,31 @@ async function validate(_c: BundleComponent, changes: FileChange[], ctx: Validat
   return diagnostics;
 }
 
-export const agentSkillsAdapter: BundleAdapter = {
-  id: "agent-skills",
-  version: "0.9.0",
-  extensions: [".md"],
+export class AgentSkillsAdapter extends DirectoryAdapterBase {
+  readonly id = "agent-skills";
+  readonly version = "0.9.0";
+  override readonly extensions = [".md"];
 
-  recognize,
-  validate,
+  protected identify(relPath: string): string | null {
+    return skillPackage(relPath)?.conceptId ?? null;
+  }
 
-  readCandidates(c: BundleComponent, conceptId: string) {
-    return [{ path: path.join(c.root, conceptId, SKILL_MANIFEST), conceptId }];
-  },
+  protected describe(_b: Bundle, file: FileContext): IndexMetadata {
+    return describe(file);
+  }
+
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+    return validate(b, changes, ctx);
+  }
+
+  /** A skill's folder holds its `SKILL.md` and the resources that belong to it. */
+  protected override packageDir(file: FileContext): string | undefined {
+    return file.fileName === SKILL_MANIFEST ? file.parentDirAbs : undefined;
+  }
+
+  protected spellings(conceptId: string): string[] {
+    return [`${toPosix(conceptId)}/${SKILL_MANIFEST}`];
+  }
 
   /** Install-time probe: a root that directly contains one or more `<name>/SKILL.md` skill packages. */
   looksLikeRoot(root: string): boolean {
@@ -275,5 +280,7 @@ export const agentSkillsAdapter: BundleAdapter = {
         return false;
       }
     });
-  },
-};
+  }
+}
+
+export const agentSkillsAdapter = new AgentSkillsAdapter();

@@ -4,15 +4,17 @@ import os from "node:os";
 import path from "node:path";
 import { recognizeMatch } from "../../src/core/adapter/adapters/akm-adapter";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "../../src/core/adapter/adapters/akm-metadata";
-import type { IndexDocument } from "../../src/indexer/passes/metadata";
+import { buildFileContext } from "../../src/core/adapter/directory/file-context";
 import {
-  buildFileContext,
-  buildRenderContext,
-  getAllRenderers,
-  getRenderer,
-} from "../../src/indexer/walk/file-context";
-import { directoryMatcher, parentDirHintMatcher, smartMdMatcher } from "../../src/indexer/walk/matchers";
-import { walkStashFlat } from "../../src/indexer/walk/walker";
+  directoryMatcher,
+  looseMarkdownMatcher,
+  parentDirHintMatcher,
+  smartMdMatcher,
+} from "../../src/core/adapter/directory/matchers";
+import { walkStashFlat } from "../../src/core/adapter/directory/walker";
+import { recognizeMatchByPath } from "../../src/core/adapter/recognize-match";
+import type { IndexDocument } from "../../src/indexer/passes/metadata";
+import { buildRenderContext, getAllRenderers, getRenderer } from "../../src/output/renderer-registry";
 
 // ── Temp directory helpers ──────────────────────────────────────────────────
 
@@ -336,6 +338,27 @@ describe("recognizeMatch", () => {
     // agent frontmatter is a command signal at 18
     expect(result?.type).toBe("command");
     expect(result?.specificity).toBe(18);
+  });
+
+  test("the path-only matchers never read the file: 'agent' frontmatter and $ARGUMENTS give no command", () => {
+    const root = tmpDir();
+    const filePath = path.join(root, "misc", "build.md");
+    writeFile(
+      filePath,
+      ["---", "agent: build", "description: Build the project", "---", "Build $ARGUMENTS."].join("\n"),
+    );
+    const {
+      content: _content,
+      bytes: _bytes,
+      frontmatter: _frontmatter,
+      stat: _stat,
+      ...pathFields
+    } = buildFileContext(root, filePath);
+
+    // A path context has no content to read, so a type cannot come from it; the content form reads it.
+    expect(looseMarkdownMatcher(pathFields)?.type).toBe("knowledge");
+    expect(recognizeMatchByPath(pathFields)?.type).toBe("knowledge");
+    expect(recognizeMatch(buildFileContext(root, filePath))?.type).toBe("command");
   });
 
   test("smartMdMatcher returns null for non-.md files", () => {

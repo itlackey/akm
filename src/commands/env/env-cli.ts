@@ -19,17 +19,19 @@ import path from "node:path";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output, reportChildExit } from "../../cli/shared";
+import { addressOf } from "../../core/assets/write";
 import { writeFileAtomic } from "../../core/common";
 import {
+  findWriteTargetAsset,
   listEnvsRecursive,
   makeEnvRef,
   resolveEnvPath,
   resolveEnvWriteTarget,
-  sensitiveMarkerPath,
-  withEnvSecretWrite,
+  writeEnvSecret,
 } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { stderr, stdout } from "../../core/stdio";
+import { assertWritePathsInsideSource } from "../../core/write-source";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
 import { runProgram } from "./injection";
@@ -37,8 +39,7 @@ import { runProgram } from "./injection";
 const envListCommand = defineJsonCommand({
   meta: { name: "list", description: "List all env files across all bundles with their key names (no values)" },
   async run() {
-    const { listKeys } = await import("./env.js");
-    output("env-list", { envs: listEnvsRecursive(listKeys) });
+    output("env-list", { envs: listEnvsRecursive() });
   },
 });
 
@@ -60,23 +61,18 @@ const envCreateCommand = defineJsonCommand({
     },
     "from-file": { type: "string", description: "Seed the env file from an existing .env at this path" },
     "from-stdin": { type: "boolean", description: "Seed the env file from stdin", default: false },
-    sensitive: {
-      type: "boolean",
-      description: "Exclude this env file from env list output and the search index",
-      default: false,
-    },
     bundle: {
       type: "string",
       description: "Write destination: a source name (default: defaultWriteTarget)",
     },
   },
   async run({ args }) {
-    const { createEnv, writeEnv } = await import("./env.js");
-    // `create` always targets env/, never the frozen vaults/ copy. `--path` is
-    // the subdirectory; `--bundle` selects the writable destination source.
-    const { name, absPath, target, ref } = resolveEnvWriteTarget(args.name, args.bundle, {
-      subPath: getStringArg(args, "path"),
-    });
+    // `--path` is the subdirectory; `--bundle` selects the writable destination bundle.
+    const resolution = resolveEnvWriteTarget(args.name, args.bundle, { subPath: getStringArg(args, "path") });
+    const { ref } = resolution;
+    const { source } = resolution.target;
+    const held = addressOf(source.name, `${resolution.type}/${resolution.name}`);
+    const exists = held.exists;
 
     const fromFile = args["from-file"];
     const fromStdin = args["from-stdin"] === true;
@@ -87,16 +83,18 @@ const envCreateCommand = defineJsonCommand({
     let content: string | undefined;
     if (fromFile !== undefined || fromStdin) {
       // Ingest path: never silently clobber an existing env file.
-      if (fs.existsSync(absPath)) {
+      if (exists) {
         throw new UsageError(
           `Env "${ref}" already exists. Remove it first (\`akm env remove\`) or edit the file directly.`,
           "RESOURCE_ALREADY_EXISTS",
         );
       }
       if (fromFile !== undefined) {
+        // asset-io: user-input --from-file, --out
         if (!fs.existsSync(fromFile)) {
           throw new NotFoundError(`Source file not found: ${fromFile}`, "FILE_NOT_FOUND");
         }
+        // asset-io: user-input --from-file, --out
         content = fs.readFileSync(fromFile, "utf8");
       } else {
         const buf = await readStdin();
@@ -104,21 +102,19 @@ const envCreateCommand = defineJsonCommand({
       }
     }
 
-    const written = [absPath];
-    const markerPath = sensitiveMarkerPath(absPath, "env");
-    if (args.sensitive) {
-      written.push(markerPath);
+    // Without content, an env kept in the file a create writes is left as it is; one kept under another spelling is refused.
+    if (exists && content === undefined && held.file !== undefined && held.heldElsewhere === true) {
+      throw new UsageError(
+        `Env "${ref}" already exists as ${path.relative(source.path, held.file).split(path.sep).join("/")}. Remove it first (\`akm env remove\`) or edit the file directly.`,
+        "RESOURCE_ALREADY_EXISTS",
+      );
     }
-    withEnvSecretWrite(target, { type: "env", name }, "Update", written, () => {
-      if (content !== undefined) {
-        writeEnv(absPath, content);
-      } else createEnv(absPath);
-      if (args.sensitive) {
-        if (!fs.existsSync(markerPath)) {
-          writeFileAtomic(markerPath, "", 0o600);
-        }
-      }
-    });
+    if (!exists || content !== undefined) {
+      writeEnvSecret(resolution, { op: "create", content: content ?? "", exclusive: true });
+    } else {
+      // Left as it is, but a file the write would have refused (a symbolic link) is refused still.
+      if (held.file !== undefined) assertWritePathsInsideSource(source, [held.file]);
+    }
     output("env-create", { ref });
   },
 });
@@ -134,7 +130,10 @@ const envPathCommand = defineJsonCommand({
     quiet: { type: "boolean", alias: "q", description: "Suppress the unsafe-source warning", default: false },
   },
   async run({ args }) {
-    const { absPath } = resolveEnvPath(args.ref);
+    const { asset } = resolveEnvPath(args.ref);
+    // asset-io: display `env path` prints the file
+    const absPath = asset.entry.file;
+    if (absPath === undefined) throw new UsageError(`"${asset.ref}" is not kept in a file, so it has no path.`);
     // The raw `.env` may contain `X=$(cmd)`, which executes if `source`d.
     // Warning goes to stderr (never contaminates the path on stdout) and is
     // suppressed with --quiet for the legitimate `_FILE` / `--env-file` use.
@@ -184,11 +183,12 @@ const envExportCommand = defineJsonCommand({
         "MISSING_REQUIRED_ARGUMENT",
       );
     }
-    const { conceptId, absPath, source } = resolveEnvPath(args.ref);
+    const { written, asset } = resolveEnvPath(args.ref);
     const { buildShellExportScript } = await import("./env.js");
     const resolvedOut = path.resolve(outPath);
-    writeFileAtomic(resolvedOut, buildShellExportScript(absPath), 0o600);
-    output("env-export", { ref: makeEnvRef(conceptId, source), out: resolvedOut });
+    // asset-io: user-input --from-file, --out
+    writeFileAtomic(resolvedOut, buildShellExportScript(asset.entry.content()), 0o600);
+    output("env-export", { ref: makeEnvRef(written, asset.bundle), out: resolvedOut });
   },
 });
 
@@ -312,7 +312,7 @@ const envRunCommand = defineJsonCommand({
 });
 
 const envRemoveCommand = defineJsonCommand({
-  meta: { name: "remove", description: "Remove an env file (and its .sensitive marker, if any)" },
+  meta: { name: "remove", description: "Remove an env file" },
   args: {
     ref: { type: "positional", description: "Env ref", required: true },
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
@@ -322,7 +322,8 @@ const envRemoveCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const { name, absPath, target, ref } = resolveEnvWriteTarget(args.ref, args.bundle);
+    const resolution = resolveEnvWriteTarget(args.ref, args.bundle);
+    const { ref } = resolution;
     const { confirmDestructive } = await import("../../cli/confirm.js");
     const confirmed = await confirmDestructive(`Remove env "${args.ref}"? This cannot be undone.`, {
       yes: args.yes === true,
@@ -331,18 +332,9 @@ const envRemoveCommand = defineJsonCommand({
       stderr().write("Aborted.\n");
       return;
     }
-    if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Env not found: ${ref}`);
-    }
-    const { removeEnv } = await import("./env.js");
-    const removed = withEnvSecretWrite(
-      target,
-      { type: "env", name },
-      "Remove",
-      [absPath, sensitiveMarkerPath(absPath, "env")],
-      () => removeEnv(absPath),
-    );
-    output("env-remove", { ref, removed });
+    if (!findWriteTargetAsset(resolution)) throw new NotFoundError(`Env not found: ${ref}`);
+    writeEnvSecret(resolution, { op: "delete" });
+    output("env-remove", { ref, removed: true });
   },
 });
 

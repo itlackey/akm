@@ -29,7 +29,11 @@ export interface SettingsBundle {
   writeBlocker: string | null;
   enabled: boolean;
   writableSetting?: boolean;
-  components: Array<{ name: string; adapter: string; root?: string; writable?: boolean; configured: boolean }>;
+  /** The adapter that reads the bundle: the configured one, or the one detected from its content. */
+  adapter: string;
+  detected: boolean;
+  /** The content root inside the bundle; `.` is the bundle itself. */
+  root: string;
   settingsSource: string | null;
   version: string | null;
   exists: boolean;

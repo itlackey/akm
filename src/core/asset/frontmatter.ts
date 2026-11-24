@@ -11,10 +11,8 @@
  */
 
 import { createHash } from "node:crypto";
-import fs from "node:fs";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
-import { asNonEmptyString, existingFileMode, writeFileAtomic } from "../common";
-import { recordWrittenPath } from "../write-provenance";
+import { asNonEmptyString } from "../common";
 import { assembleAsset, assembleAssetFromString, serializeFrontmatter } from "./asset-serialize";
 
 /**
@@ -141,55 +139,38 @@ function parseFrontmatterLenient(frontmatter: string): Record<string, unknown> {
 }
 
 /**
- * Read a file, parse its frontmatter, let `mutator` compute the next
- * frontmatter object, and write the reassembled asset back to disk.
+ * Parse the frontmatter of `raw`, let `mutator` compute the next frontmatter object, and answer the reassembled asset;
+ * `null` when the mutator returned `null` (an idempotent no-op: nothing to write). Pure: the caller writes the text
+ * (`w.update`). `label` names the asset in a refusal.
  *
- * This is the shared read→parse→mutate→write primitive. The `mutator` receives
- * the parsed result and returns either the next frontmatter object (to write)
- * or `null` to skip the write entirely (e.g. for idempotent no-ops). The body
- * content is preserved from the parse.
- *
- * A frontmatter mutation is a METADATA edit, not a content edit: when the file
- * already has a frontmatter block, only that block is replaced and the body
- * bytes are kept verbatim (routing through `assembleAsset` would strip the
- * body's leading blank lines and force a trailing newline, silently reshaping
- * assets whose writer used a different separator style). A file gaining its
- * FIRST frontmatter block goes through the canonical `assembleAsset` shape.
- *
- * @returns `true` if a write occurred, `false` if the mutator returned `null`.
+ * A frontmatter mutation is a METADATA edit, not a content edit: when the asset already has a frontmatter block, only
+ * that block is replaced and the body bytes are kept verbatim (routing through `assembleAsset` would strip the body's
+ * leading blank lines and force a trailing newline, silently reshaping assets whose writer used a different separator
+ * style). An asset gaining its FIRST frontmatter block goes through the canonical `assembleAsset` shape. Malformed
+ * frontmatter is refused: a lenient parse would drop what it could not read.
  */
-export function mutateFrontmatter(
-  filePath: string,
+export function editFrontmatter(
+  raw: string,
   mutator: (parsed: ReturnType<typeof parseFrontmatter>) => Record<string, unknown> | null,
-): boolean {
-  const raw = fs.readFileSync(filePath, "utf8");
+  label = "the asset",
+): string | null {
   const parsed = parseFrontmatter(raw);
   if (parsed.frontmatter?.trim()) {
     let strict: unknown;
     try {
       strict = yamlParse(parsed.frontmatter);
     } catch {
-      throw new Error(`Cannot mutate malformed YAML frontmatter in ${filePath}.`);
+      throw new Error(`Cannot mutate malformed YAML frontmatter in ${label}.`);
     }
     if (strict === null || typeof strict !== "object" || Array.isArray(strict)) {
-      throw new Error(`Cannot mutate non-mapping YAML frontmatter in ${filePath}.`);
+      throw new Error(`Cannot mutate non-mapping YAML frontmatter in ${label}.`);
     }
   }
   const nextFrontmatter = mutator(parsed);
-  if (nextFrontmatter === null) return false;
-  const next =
-    parsed.frontmatter !== null
-      ? `---\n${serializeFrontmatter(nextFrontmatter)}\n---\n${parsed.content}`
-      : assembleAsset(nextFrontmatter, parsed.content);
-  // Atomic, like the canonical asset write: this rewrites a file the user
-  // authored, and a truncate-in-place left a window where a crash or a
-  // concurrent reader saw a half-written or empty asset. The existing mode is
-  // preserved so stamping frontmatter never changes an asset's permissions.
-  writeFileAtomic(filePath, next, existingFileMode(filePath));
-  // #652: in-place frontmatter stamps (belief state, contradiction markers,
-  // salience) are real asset mutations — journal them for the run's sync.
-  recordWrittenPath(filePath);
-  return true;
+  if (nextFrontmatter === null) return null;
+  return parsed.frontmatter !== null
+    ? `---\n${serializeFrontmatter(nextFrontmatter)}\n---\n${parsed.content}`
+    : assembleAsset(nextFrontmatter, parsed.content);
 }
 
 export function parseFrontmatterBlock(

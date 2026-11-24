@@ -34,7 +34,7 @@ function seedResidue(): string {
 }
 
 const bundleAtStash = (extra: Record<string, unknown>) => ({
-  bundles: { owner: { path: storage.stashDir, ...extra, components: { main: { root: ".", adapter: "akm" } } } },
+  bundles: { owner: { path: storage.stashDir, ...extra, adapter: "akm" } },
 });
 
 describe("the residue step and the bundle that owns the stash", () => {

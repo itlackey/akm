@@ -11,7 +11,7 @@
  *   - markdown / plain-text → `document` (conceptId STRIPS the extension);
  *   - everything else → `file` (conceptId keeps the extension).
  * Placement is IDENTITY: `document` appends `.md`, `script`/`file` keep their
- * natural path. Reserved files (`index.md`/`log.md`) are excluded from the
+ * natural path. Of several documents that spell one concept (`x.md`, `x.txt`) the `.md` wins. Reserved files (`index.md`/`log.md`) are excluded from the
  * catch-all so a structural listing is never indexed as a `document`.
  *
  * EXPLICIT-CONFIG ONLY: `generic-files` is never in the auto-probe order —
@@ -24,16 +24,16 @@
  */
 
 import path from "node:path";
-import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import { SCRIPT_EXTENSIONS } from "../../recognition-util";
-import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, IndexDocument } from "../types";
+import type { FileContext } from "../directory/file-context";
+import { DirectoryAdapterBase } from "../directory-adapter";
+import type { FileChange } from "../file-change";
+import type { Bundle, IndexMetadata } from "../types";
+import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { hashContent, nonEmptyString, RESERVED_FILES, readTags, validateChangesWithBaseChecks } from "./shared";
 
-/** A generic-files bundle is single-component; its one component is `main`. */
-const COMPONENT_ID = "main";
 /** Markdown / plain-text extensions classified as `document`. */
 const DOCUMENT_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".text"]);
 
@@ -50,27 +50,22 @@ function classify(ext: string): GenericType {
   return "file";
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
-  const posix = toPosix(file.relPath);
-  const base = posix.split("/").pop() ?? posix;
-  if (isReserved(base)) return null; // D-R6: never index a structural listing
+/** The concept id of a file: a document's path without its extension, any other file's path as it is. A reserved file is none. */
+function conceptIdOf(relPath: string): string | null {
+  const posix = toPosix(relPath);
+  if (isReserved(posix.split("/").pop() ?? posix)) return null; // D-R6: never index a structural listing
+  return classify(path.posix.extname(posix).toLowerCase()) === "document" ? posix.replace(/\.[^./]+$/, "") : posix;
+}
 
+function describe(file: FileContext, conceptId: string): IndexMetadata {
   const type = classify(file.ext);
-  // document strips its extension; script/file keep the natural path.
-  const conceptId = type === "document" ? posix.replace(/\.[^./]+$/, "") : posix;
   const name = conceptId.split("/").pop() ?? conceptId;
   const raw = file.content();
   const parsed = parseFrontmatter(raw);
   const body = parsed.content;
 
-  const doc: IndexDocument = {
-    ref: `${c.id}//${conceptId}`,
-    bundle: c.id,
-    component: COMPONENT_ID,
-    conceptId,
-    path: file.absPath,
+  const doc: IndexMetadata = {
     hash: hashContent(raw),
-    adapterId: "generic-files",
     type,
     name,
     content: body,
@@ -83,30 +78,36 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   return doc;
 }
 
-export const genericFilesAdapter: BundleAdapter = {
-  id: "generic-files",
-  version: "0.9.0",
+export class GenericFilesAdapter extends DirectoryAdapterBase {
+  readonly id = "generic-files";
+  readonly version = "0.10.0";
   // Non-exhaustive HINT: generic-files recognizes ANY file — recognize() is the
   // source of truth (empty extension list would drop the extension-strip hint).
-  extensions: [".md", ".txt"],
+  override readonly extensions = [".md", ".txt"];
 
-  recognize,
-  validate: validateChangesWithBaseChecks,
+  protected identify(relPath: string): string | null {
+    return conceptIdOf(relPath);
+  }
 
-  readCandidates(c: BundleComponent, conceptId: string) {
+  protected describe(_b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
+    return describe(file, conceptId);
+  }
+
+  protected validateFiles(b: Bundle, changes: FileChange[], ctx: FileValidateContext): Promise<FileDiagnostic[]> {
+    return validateChangesWithBaseChecks(b, changes, ctx);
+  }
+
+  /** The file as named, then the document spellings, `.md` first. */
+  protected spellings(conceptId: string): string[] {
     const posix = toPosix(conceptId);
-    const extension = path.extname(posix).toLowerCase();
-    const documentCandidates = [...DOCUMENT_EXTENSIONS].map((candidateExtension) => ({
-      path: path.join(c.root, `${posix}${candidateExtension}`),
-      conceptId: posix,
-    }));
-    return DOCUMENT_EXTENSIONS.has(extension)
-      ? documentCandidates
-      : [{ path: path.join(c.root, posix), conceptId: posix }, ...documentCandidates];
-  },
+    const documents = [...DOCUMENT_EXTENSIONS].map((extension) => `${posix}${extension}`);
+    return DOCUMENT_EXTENSIONS.has(path.posix.extname(posix).toLowerCase()) ? documents : [posix, ...documents];
+  }
 
   /** generic-files is EXPLICIT-CONFIG ONLY — never auto-selected (§1.2), so this never fires. */
-  looksLikeRoot(): boolean {
+  looksLikeRoot(_root: string): boolean {
     return false;
-  },
-};
+  }
+}
+
+export const genericFilesAdapter = new GenericFilesAdapter();
