@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { akm, go, launchFixture } from "./support.mjs";
 
@@ -39,6 +39,16 @@ export async function kinds(fixture) {
 async function session(t, options = {}, viewport = { width: 1280, height: 860 }) {
   const app = await launchFixture({ configureFixture: kinds, ...options });
   t.after(() => app.stop());
+  return browse(t, app, viewport);
+}
+// The tests that only read share one workspace; each starts its own browser.
+let shared;
+after(async () => (await shared?.catch(() => null))?.stop());
+function readingSession(t) {
+  shared ??= launchFixture({ configureFixture: kinds });
+  return shared.then((app) => browse(t, app));
+}
+async function browse(t, app, viewport = { width: 1280, height: 860 }) {
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport });
@@ -52,7 +62,7 @@ const open = (page, bundle, folder, name, ref) =>
   );
 
 test("every kind shows its frontmatter under the title, the keys that find it first, and Source is the whole file", async (t) => {
-  const { app, page } = await session(t);
+  const { app, page } = await readingSession(t);
   await open(page, "personal", "lessons", "restore-order.md", "personal//lessons/restore-order");
   const properties = page.getByRole("region", { name: "Properties" });
   await expect(properties).toContainText("Restore in order");
@@ -77,7 +87,7 @@ test("every kind shows its frontmatter under the title, the keys that find it fi
 });
 
 test("a script reads as code and a task as YAML with its lines", async (t) => {
-  const { page } = await session(t);
+  const { page } = await readingSession(t);
   await open(page, "personal", "scripts", "hello.sh", "personal//scripts/hello.sh");
   await expect(page.locator(".document-body pre")).toContainText("hello from the script");
   await expect(page.getByText("This asset has no body.")).toHaveCount(0);
@@ -298,7 +308,7 @@ test("a text akm cannot check is saved, and the page says it could not check", a
 });
 
 test("an asset with no file in a bundle is read from the text akm returned, from the body start akm gives", async (t) => {
-  const { app, page } = await session(t);
+  const { app, page } = await readingSession(t);
   const ref = "registry//knowledge/remote-guide";
   await page.route("**/api/asset?*", async (route) => {
     const real = await (

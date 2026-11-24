@@ -5,17 +5,27 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { akm, launchFixture, open, runViewIds } from "./support.mjs";
+
+// The tests that only read share a workspace with those seeded the same way; each starts its own browser.
+const shared = new Map();
+function workspace(options) {
+  const key = JSON.stringify(options);
+  if (!shared.has(key)) shared.set(key, launchFixture(options));
+  return shared.get(key);
+}
+after(async () => {
+  for (const started of shared.values()) await (await started.catch(() => null))?.stop();
+});
 
 // The single-run views: an improve run, a task run and a workflow run, each with its outcome, what failed and the
 // recorded error detail; an improve run is not linked to a task run unless akm records the link.
 test("run views show outcomes, failures and error detail, and guess no link between an improve run and a task run", {
   timeout: 240000,
 }, async (t) => {
-  const server = await launchFixture({ metrics: true, runViews: true });
-  t.after(() => server.stop());
+  const server = await workspace({ metrics: true, runViews: true });
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
@@ -136,8 +146,7 @@ test("run views show outcomes, failures and error detail, and guess no link betw
 test("chart tooltips stay inside the window, over a strip chart and at a narrow width", {
   timeout: 120000,
 }, async (t) => {
-  const server = await launchFixture({ metrics: true, runViews: true });
-  t.after(() => server.stop());
+  const server = await workspace({ metrics: true, runViews: true });
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   for (const viewport of [
@@ -239,8 +248,7 @@ test("Repeated search gaps lists only the queries akm marks as repeated", {
 test("Improve impact says where the usage figures start and shows an unkept before side as not recorded", {
   timeout: 240000,
 }, async (t) => {
-  const server = await launchFixture({ metrics: true });
-  t.after(() => server.stop());
+  const server = await workspace({ metrics: true });
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
@@ -277,8 +285,7 @@ test("Improve impact says where the usage figures start and shows an unkept befo
 test("the weekly retrieval chart marks partial weeks and claims no usual range without enough history", {
   timeout: 240000,
 }, async (t) => {
-  const server = await launchFixture({ metrics: true });
-  t.after(() => server.stop());
+  const server = await workspace({ metrics: true });
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
@@ -297,8 +304,7 @@ test("the weekly retrieval chart marks partial weeks and claims no usual range w
 // Replay plays the person's events unless asked for everyone's, and says which it shows: the figures change with the
 // choice, and a curate is counted as a curate, not as a search.
 test("Replay: You and Everyone show different figures under their own labels", { timeout: 240000 }, async (t) => {
-  const server = await launchFixture({ metrics: true });
-  t.after(() => server.stop());
+  const server = await workspace({ metrics: true });
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
