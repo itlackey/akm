@@ -543,7 +543,7 @@ retirement with its own handle (the entry's comes first), and leaves the
 folder's files that are no asset where they are; restoring each handle brings
 the package back. `delete` of a package entry removes its folder, non-asset
 files included, with one change per asset it held, so every one of their index
-rows goes. <!-- 9: clone mirrors the package directory with packageFiles and mirrorPackage -->
+rows goes.
 
 ---
 
