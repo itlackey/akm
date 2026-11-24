@@ -50,6 +50,12 @@ const crontab = (root) => `#!/bin/sh
 case "$1" in -l) [ -f "${path.join(root, "crontab.txt")}" ] && /bin/cat "${path.join(root, "crontab.txt")}" || exit 1;; -) /bin/cat > "${path.join(root, "crontab.txt")}";; esac
 `;
 const table = async (server) => readFile(path.join(server.root, "crontab.txt"), "utf8").catch(() => "");
+/**
+ * The agents step's receipt is drawn from akm's answer to /api/setup/apply, which runs akm's CLI (`akm setup`, and
+ * `akm task add` when learning turns on) and so can take longer than an assertion's wait on a loaded machine: a test
+ * waits for that answer before it reads the receipt.
+ */
+const applied = (page) => page.waitForResponse((response) => response.url().endsWith("/api/setup/apply"));
 const savedConfig = async (server) =>
   JSON.parse(await readFile(path.join(server.env.AKM_CONFIG_DIR, "config.json"), "utf8"));
 
@@ -168,6 +174,7 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   // Started from the keyboard: the results arrive in a live region and focus stays on the button that ran them.
   const installSelected = page.locator('section[aria-labelledby="setup-agents"] .btn-row button');
   await page.getByRole("button", { name: "Install 2 selected" }).focus();
+  const enabling = applied(page);
   await page.keyboard.press("Enter");
   await expect(
     page.locator('[aria-live="polite"]').filter({ hasText: /AKM CLI installed in ~\/.local\/bin/ }),
@@ -175,6 +182,7 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await expect(installSelected).toBeFocused();
   await expect(page.getByText(/AKM CLI installed in ~\/.local\/bin/)).toBeVisible();
   // Enabled, and learning stays off: nothing is scheduled, and the learning switch stays off.
+  await enabling;
   await expect(page.getByText(/1 agent is enabled for akm. Background learning is off./)).toBeVisible();
   const enabledOnly = await savedConfig(server);
   assert.equal(enabledOnly.harnesses.claude.modelWork, undefined);
@@ -216,9 +224,11 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await page.getByLabel(/API key variable/).fill("LAB_KEY");
   await expect(page.getByRole("radio", { name: /akm itself/ })).toBeChecked();
   await shot("setup-04b-learning-akm-itself");
+  const onConnection = applied(page);
   await page.getByRole("button", { name: "Install 2 selected" }).click();
   await expect(page.getByText("AKM plugin installed. Restart the harness to load it.")).toBeVisible();
   // The receipt is what akm reports afterwards, not the ticked boxes.
+  await onConnection;
   await expect(page.getByText(/Background learning is on and runs on akm itself: connection "default"/)).toBeVisible();
   await expect(learning).toBeChecked();
   const onItself = await savedConfig(server);
@@ -232,7 +242,7 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
 
   // Choose the agent instead: improve runs on it, and akm's own words say what it can do there.
   await page.getByRole("radio", { name: "Claude Code" }).check();
-  await page.getByRole("button", { name: "Install 1 selected" }).click();
+  await Promise.all([applied(page), page.getByRole("button", { name: "Install 1 selected" }).click()]);
   await expect(page.getByText(/Background learning is on and runs on Claude Code: harness "claude"/)).toBeVisible();
   await expect(page.getByRole("radio", { name: "Claude Code" })).toBeChecked();
   // No `akm upgrade --check` has run, so the plugin is named but not ticked as up to date.
@@ -252,7 +262,7 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
 
   // Off again: the one switch is written, so nothing runs; the schedule and the connection stay.
   await learning.uncheck();
-  await page.getByRole("button", { name: "Install 1 selected" }).click();
+  await Promise.all([applied(page), page.getByRole("button", { name: "Install 1 selected" }).click()]);
   await expect(page.getByText("Background learning is off.")).toBeVisible();
   const off = await savedConfig(server);
   assert.equal(off.improve.enabled, false);
@@ -262,7 +272,7 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   // And on again removes the switch: nothing is left behind.
   await learning.check();
   await page.getByRole("radio", { name: /akm itself/ }).check();
-  await page.getByRole("button", { name: "Install 1 selected" }).click();
+  await Promise.all([applied(page), page.getByRole("button", { name: "Install 1 selected" }).click()]);
   await expect(page.getByText(/Background learning is on and runs on akm itself/)).toBeVisible();
   assert.equal((await savedConfig(server)).improve.enabled, undefined);
 
