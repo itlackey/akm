@@ -15,16 +15,14 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge-system.md" with { type: "text" };
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
-import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
-import { findAsset, lookupAsset } from "../../core/assets/read";
+import { findAsset, lookupAsset, readAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import { addressOf, conceptIdAtFile, writeAssets } from "../../core/assets/write";
 import { authoringRulesForType } from "../../core/authoring-rules";
@@ -423,7 +421,6 @@ interface DistillRun {
   asset: { path: string | null; content: string | null };
   vocabulary: Set<string>;
   related: (query: string, n: number) => Promise<RelatedAsset[]>;
-  lookup: (ref: string) => Promise<string | null>;
 }
 
 function emitDistill(run: Pick<DistillRun, "ledgerRef" | "eligMeta" | "options">, meta: Record<string, unknown>): void {
@@ -531,7 +528,6 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     asset,
     vocabulary: loadRefVocabulary(),
     related: options.fetchRelatedFn ?? fetchRelatedAssets,
-    lookup,
   };
   const feedbackEvents = readDistillFeedback(run);
   const result = await distill(run, targetKind, kind, outputRef, feedbackEvents);
@@ -660,17 +656,9 @@ function feedbackLines(feedback: BuildPromptInput["feedback"]): string[] {
   return lines;
 }
 
-/** Whether a file already holds the lesson `ref` in the stash the proposal would be filed in. */
+/** Whether the stash the proposal would be filed in holds the lesson `ref`, under any spelling of its file. */
 function lessonExists(run: DistillRun, ref: string): boolean {
-  const { type, name } = parsePlacementRef(ref);
-  const typeDir = stashDirFor(type);
-  if (!typeDir) return false;
-  try {
-    // asset-io: base a lesson's file, found by path
-    return fs.statSync(assetPathForName(type, path.join(run.stash, typeDir), name)).isFile();
-  } catch {
-    return false;
-  }
+  return readAsset(materialiseBundleDir(run.stash), ref) !== undefined;
 }
 
 /** Turn the response into validated content: structured JSON or markdown, then lesson repairs and lint. */
@@ -882,7 +870,7 @@ async function proposeLessonUpdate(
   const said = finding.toLowerCase();
   if (!run.runner || !qualityGateEnabled(run) || !memory) return undefined;
   const memoryScope = inputScope(run);
-  const lessons: Array<UpdateCandidate & { path: string; content: string }> = [];
+  const lessons: Array<UpdateCandidate & { content: string }> = [];
   for (const asset of related ?? (await run.related(memory.slice(0, 500), RELATED_COUNT))) {
     if (asset.type !== "lesson" || !asset.path || !isWithin(asset.path, run.stash)) continue;
     try {
@@ -891,7 +879,7 @@ async function proposeLessonUpdate(
       // A memory is never merged into a lesson of another scope.
       if (!sameScope(memoryScope, scopeFromFrontmatter(parseFrontmatter(content).data))) continue;
       const { conceptId: ref } = parseBundleRef(asset.ref);
-      lessons.push({ ref, path: asset.path, content, body: parseFrontmatter(content).content.trim() });
+      lessons.push({ ref, content, body: parseFrontmatter(content).content.trim() });
     } catch {
       // A lesson that cannot be read cannot be extended.
     }
@@ -956,8 +944,7 @@ async function proposeLessonUpdate(
   // The proposal's before-hash is taken at mint: a lesson edited since it was read is not what the writer extended.
   let proposal: Proposal;
   try {
-    // asset-io: base the lesson re-read before its update is proposed
-    if (fs.readFileSync(target.path, "utf8") !== target.content) {
+    if (readAsset(materialiseBundleDir(run.stash), target.ref)?.entry.content() !== target.content) {
       return {
         skipReason: "update_not_written",
         detail: `An update of ${target.ref} was not proposed: the lesson changed meanwhile.`,
@@ -1157,15 +1144,10 @@ async function planPromotion(
     feedbackEvents,
   });
   if (!assessment.promote || !assessment.content) return null;
-  const existingPath = await run.lookup(assessment.knowledgeRef);
   let existing: string | null = null;
   try {
     // The promotion is filed in run.stash, so only that bundle's doc is its destination (#1000).
-    // asset-io: base the knowledge note a promotion would replace, read by path
-    if (existingPath && fs.existsSync(existingPath) && isWithin(existingPath, run.stash)) {
-      // asset-io: base the same note
-      existing = fs.readFileSync(existingPath, "utf8");
-    }
+    existing = readAsset(materialiseBundleDir(run.stash), assessment.knowledgeRef)?.entry.content() ?? null;
   } catch {
     existing = null;
   }

@@ -2732,6 +2732,50 @@ describe("akmDistill — a lesson already at the target ref", () => {
     });
   });
 
+  test("a lesson kept under another spelling of its file is the lesson: skipped before the call (F35)", async () => {
+    const stash = makeStashDir();
+    const filePath = path.join(stash, "lessons", "project-a", "memory-deploy-lesson.MD");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, VALID_LESSON);
+
+    const result = await akmDistill({
+      ref: "memories/project-a/deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => {
+        throw new Error("a lesson that exists must not be regenerated");
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "skipped",
+      skipReason: "lesson_exists",
+      proposalRef: "lessons/project-a/memory-deploy-lesson",
+    });
+    expect(fs.readFileSync(filePath, "utf8")).toBe(VALID_LESSON);
+  });
+
+  test("a lesson file the walk does not reach is no lesson: the distill goes on (F35)", async () => {
+    const stash = makeStashDir();
+    writeLesson(stash, "skill-deploy-lesson");
+    fs.writeFileSync(path.join(stash, ".gitignore"), "lessons/\n");
+    expect(Bun.spawnSync(["git", "init", "-q", stash]).exitCode).toBe(0);
+
+    const result = await akmDistill({
+      ref: "skills/deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("queued");
+    expect(listProposals(stash)).toHaveLength(1);
+  });
+
   test("a lesson of that name in another bundle is not an overwrite", async () => {
     const stash = makeStashDir();
     const other = makeStashDir();
@@ -3023,6 +3067,39 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     decision: "update",
     ref: "lessons/deploy-retries",
     body,
+  });
+
+  test("a lesson deleted while its update is judged: the lesson changed meanwhile, with no OS error (F35)", async () => {
+    const fixture = setup();
+    let judged = 0;
+    const result = await akmDistill({
+      ref: MEMORY_REF,
+      config: configJudgeEnabled(fixture.stash),
+      stashDir: fixture.stash,
+      fetchRelatedFn: async () => fixture.related,
+      lookupFn: async () => path.join(fixture.stash, "memories", "deploy-retries.md"),
+      readEventsFn: emptyEvents,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        if (joined.includes("Score this lesson")) {
+          // The second judge call reads the extended lesson; the lesson is deleted while it runs.
+          const scores = judged++ === 0 ? REPEAT : ADDITION_OK;
+          if (judged === 2) fs.rmSync(fixture.lessonPath);
+          return JSON.stringify({ scores, reason: "lessons/deploy-retries already states this rule." });
+        }
+        if (joined.includes("Extend the existing one"))
+          return JSON.stringify(updateWith(`${EXISTING_BODY}\n${NEW_FACT}`));
+        return VALID_LESSON;
+      },
+    });
+
+    expect(judged).toBe(2);
+    expect(result.outcome).toBe("quality_rejected");
+    expect(result.reason).toContain(
+      "An update of lessons/deploy-retries was not proposed: the lesson changed meanwhile.",
+    );
+    expect(result.reason).not.toContain("ENOENT");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
   });
 
   test("the input distill hands the judge validates against the judge's input schema, `path` stripped (#1422)", async () => {
