@@ -131,6 +131,15 @@ export function makeBundleRef(bundle: string | undefined, conceptId: string, fra
 }
 
 /**
+ * The ref of an asset an adapter holds: `<bundle>//<conceptId>`, with the concept id its adapter gave. It is formatted,
+ * not checked as input, so a file whose name is no valid concept id (`guide#section.md`) still lists, indexes and lints
+ * under it and never stops a walk of its bundle.
+ */
+export function heldAssetRef(bundle: string, conceptId: string): string {
+  return `${bundle}//${conceptId}`;
+}
+
+/**
  * Serialize a parsed {@link BundleRef} back to its canonical
  * `[bundle//]conceptId[#fragment]` string form — the single formatter for the
  * 0.9.0 grammar (call this instead of hand-building `${bundle}//${conceptId}`).

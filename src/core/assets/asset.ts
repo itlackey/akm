@@ -6,7 +6,7 @@
 
 import type { AssetEntry, BundleAsset } from "../adapter/bundle-adapter";
 import { withoutTypeHead } from "../asset/asset-placement";
-import { makeBundleRef } from "../asset/asset-ref";
+import { heldAssetRef } from "../asset/asset-ref";
 import { warnOnce } from "../warn";
 import type { AssetBundle } from "./bundle";
 
@@ -28,7 +28,7 @@ export function assetOf(bundle: AssetBundle, found: BundleAsset): Asset {
   const asset: Asset = {
     bundle: bundle.name,
     conceptId: found.conceptId,
-    ref: makeBundleRef(bundle.name, found.conceptId),
+    ref: heldAssetRef(bundle.name, found.conceptId),
     entry: found.entry,
   };
   bundleOfAsset.set(asset, bundle);
