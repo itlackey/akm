@@ -12,9 +12,9 @@
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { writeAssets } from "../../core/assets/write";
-import { writeTargetAt } from "../../core/bundle-at-dir";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { redactCredentialPatterns, redactSensitiveText } from "../../core/redaction";
+import { writeTargetAt } from "../../core/write-source";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionData, SessionEvent } from "../../integrations/session-logs/types";
 import { fenceTranscript } from "./extract-prompt";

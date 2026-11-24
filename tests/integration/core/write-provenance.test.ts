@@ -10,13 +10,13 @@ import os from "node:os";
 import path from "node:path";
 import { editFrontmatter, parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import { writeAssets } from "../../../src/core/assets/write";
-import { writeTargetAt } from "../../../src/core/bundle-at-dir";
 import {
   beginWriteProvenance,
   isWriteProvenanceActive,
   recordWrittenPath,
   relativeWrittenPath,
 } from "../../../src/core/write-provenance";
+import { writeTargetAt } from "../../../src/core/write-source";
 
 test("records absolute, deduped, sorted paths while open — and nothing once closed", () => {
   expect(isWriteProvenanceActive()).toBe(false);
