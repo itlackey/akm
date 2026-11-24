@@ -412,20 +412,28 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return { conceptId: canonical, changed: [file], content };
   }
 
-  /** Deleting a package's entry deletes the package: its folder, resources and all (§8.3). */
-  delete(b: Bundle, conceptId: string): AssetChange {
-    const { conceptId: canonical, entry } = this.existing(b, conceptId);
-    const file = entry.file as string;
+  /**
+   * Deleting a package's entry deletes the package: its folder, resources and all (§8.3). One change per asset it
+   * held, the entry's first; the entry's change also lists the folder's files that are no asset.
+   */
+  delete(b: Bundle, conceptId: string): AssetChange[] {
+    const entry = this.existing(b, conceptId);
+    const file = entry.entry.file;
     assertWritableFile(rootOf(b), b.id, file);
     const dir = this.packageDir(buildFileContext(rootOf(b), file));
     // A package at the bundle's root is not the bundle's to remove: only its entry goes.
     if (dir === undefined || !isWithin(dir, rootOf(b)) || path.resolve(dir) === path.resolve(rootOf(b))) {
       fs.rmSync(file);
-      return { conceptId: canonical, changed: [file] };
+      return [{ conceptId: entry.conceptId, changed: [file] }];
     }
+    const members = this.packageMembers(b, entry);
+    const memberFiles = new Set(members.map((member) => member.entry.file));
     const files = filesBelow(dir);
     fs.rmSync(dir, { recursive: true });
-    return { conceptId: canonical, changed: files };
+    return [
+      { conceptId: entry.conceptId, changed: files.filter((member) => !memberFiles.has(member)) },
+      ...members.map((member) => ({ conceptId: member.conceptId, changed: [member.entry.file] })),
+    ];
   }
 
   /**
@@ -583,7 +591,9 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
       .sort((left, right) => compareCodePoints(left.conceptId, right.conceptId));
   }
 
+  /** None when the adapter retires nothing: what its folder's archive holds is not its retirements. */
   retired(b: Bundle): Retirement[] {
+    if (this.retires.length === 0) return [];
     return listTombstones(rootOf(b)).map((tombstone) => ({
       handle: tombstone.handle,
       conceptId: this.retiredConceptId(tombstone),

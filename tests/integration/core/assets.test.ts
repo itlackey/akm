@@ -20,6 +20,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { akmSearch } from "../../../src/commands/read/search";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
 import { buildFileContext, type FileContext } from "../../../src/core/adapter/directory/file-context";
 import type { Asset } from "../../../src/core/assets/asset";
@@ -983,5 +984,42 @@ describe("the directory adapter's writes", () => {
     expect(() => akmAdapter.create(bundle, { type: "knowledge", name: "a", content: "x" })).toThrow(
       /over an existing asset/,
     );
+  });
+});
+
+describe("deleting a package", () => {
+  test("every asset of the package leaves search at once, not at the next index", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({
+        semanticSearchMode: "off",
+        defaultBundle: "main",
+        bundles: { main: { path: storage.stashDir, writable: true } },
+      });
+      resetConfigCache();
+      const skill = path.join(storage.stashDir, "skills", "deploy");
+      fs.mkdirSync(path.join(skill, "references"), { recursive: true });
+      fs.writeFileSync(
+        path.join(skill, "SKILL.md"),
+        "---\nname: deploy\ndescription: quartz deploy\n---\nquartz steps\n",
+      );
+      fs.writeFileSync(path.join(skill, "references", "guide.md"), "# Guide\n\nquartz guide\n");
+      fs.mkdirSync(path.join(storage.stashDir, "knowledge"), { recursive: true });
+      fs.writeFileSync(path.join(storage.stashDir, "knowledge", "other.md"), "# Other\n\nquartz other\n");
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+      const refs = async () =>
+        (await akmSearch({ query: "quartz", skipLogging: true, limit: 20 })).hits
+          .map((hit) => ("ref" in hit ? String(hit.ref) : ""))
+          .sort();
+      expect(await refs()).toEqual(["knowledge/other", "skills/deploy", "skills/deploy/references/guide"]);
+
+      const target = resolveWriteTarget(loadConfig(), "main");
+      writeAssets(target, { purpose: "test" }, (w) => w.delete("skills/deploy"));
+
+      expect(fs.existsSync(skill)).toBe(false);
+      expect(await refs()).toEqual(["knowledge/other"]);
+    } finally {
+      storage.cleanup();
+    }
   });
 });

@@ -1833,8 +1833,8 @@ function persistRetireAcceptance(
     ref: string;
     assetPath: string;
     contentHash: string;
-    /** The archive of each file the retirement moved. */
-    handles: string[];
+    /** Each retirement the accept made, by the ref of the asset it holds. */
+    retired: Array<{ ref: string; handle: string }>;
     backupContent: string;
     gateDecision?: GateDecisionInput;
     decidedBy?: ProposalDecider;
@@ -1858,7 +1858,8 @@ function persistRetireAcceptance(
         acceptedAt: decidedAt,
         review: { outcome: "accepted", decidedAt, ...(info.decidedBy ? { decidedBy: info.decidedBy } : {}) },
         acceptedTarget: { bundle: info.targetName, ref: info.ref, contentHash: info.contentHash },
-        retiredArchive: { retired: info.handles.map((handle) => ({ ref: info.ref, handle })) },
+        // Each retirement is recorded under the proposal's ref, the twin's included, as the reference corpus pins it.
+        retiredArchive: { retired: info.retired.map(({ handle }) => ({ ref: info.ref, handle })) },
         backupContent: info.backupContent,
         ...(info.gateDecision
           ? { gateDecision: { ...info.gateDecision, decidedAt: info.gateDecision.decidedAt ?? decidedAt } }
@@ -2076,12 +2077,12 @@ async function retireProposalWithLease(
     // call's own retirements, so a refused accept leaves no asset half-retired.
     const mutationTarget = prepareWriteTargetForMutation(target);
     const journal = beginWriteProvenance();
-    let handles: string[];
+    let retired: Array<{ ref: string; handle: string }>;
     try {
-      handles = writeAssets(mutationTarget, { purpose: "proposal-retire" }, (w) => {
+      retired = writeAssets(mutationTarget, { purpose: "proposal-retire" }, (w) => {
         const already = w.retired().filter((retirement) => retirement.note.proposalId === proposal.id);
         const alreadyDone = new Set(already.map((retirement) => retirement.conceptId));
-        const made: string[] = [];
+        const made: Array<{ ref: string; handle: string }> = [];
         const candidate: MemoryPruneCandidate = {
           ref: proposal.ref,
           reason: working.retirement?.reason ?? "manual",
@@ -2089,7 +2090,7 @@ async function retireProposalWithLease(
           ...(working.retirement?.successorRef ? { successorRefs: [working.retirement.successorRef] } : {}),
         };
         const retire = (conceptId: string) => {
-          for (const { handle } of retireCleanupCandidate(w, conceptId, candidate).retired) made.push(handle);
+          made.push(...retireCleanupCandidate(w, conceptId, candidate).retired);
         };
         try {
           if (!alreadyDone.has(ref.conceptId) && w.read(ref.conceptId)) retire(ref.conceptId);
@@ -2103,20 +2104,26 @@ async function retireProposalWithLease(
           )
             retire(twin.conceptId);
         } catch (error) {
-          for (const handle of made.reverse()) {
+          for (const { ref: madeRef, handle } of made.reverse()) {
             // A failed undo must not hide the failure that caused it; the retirement stays to explain the asset.
             try {
               w.restore(handle);
               w.forget(handle);
             } catch (undoError) {
               warn(
-                `[retire] could not put ${proposal.ref} back from ${handle}: ${undoError instanceof Error ? undoError.message : String(undoError)}`,
+                `[retire] could not put ${resolveAssetFilePathSafe(mutationTarget.source, madeRef) ?? madeRef} back from ${handle}: ${undoError instanceof Error ? undoError.message : String(undoError)}`,
               );
             }
           }
           throw error;
         }
-        return [...already.map((retirement) => retirement.handle), ...made];
+        return [
+          ...already.map((retirement) => ({
+            ref: makeBundleRef(mutationTarget.source.name, retirement.conceptId),
+            handle: retirement.handle,
+          })),
+          ...made,
+        ];
       });
     } finally {
       journal.end();
@@ -2124,7 +2131,7 @@ async function retireProposalWithLease(
     const paths = journal.writtenPaths();
     commit = paths.length > 0 ? commitAccept(options.commitCollector, mutationTarget, proposal, paths) : undefined;
 
-    if (handles.length === 0) {
+    if (retired.length === 0) {
       // Recorded intent, but neither file is at its original location NOR
       // archived under this proposal's id: something else removed the target
       // between intent and move. Refuse cleanly rather than finalize on
@@ -2145,7 +2152,7 @@ async function retireProposalWithLease(
         ref: makeBundleRef(mutationTarget.source.name, ref.conceptId),
         assetPath,
         contentHash: contentHash(backupContent),
-        handles,
+        retired,
         backupContent,
         ...(options.gateDecision ? { gateDecision: options.gateDecision } : {}),
         ...(options.decidedBy ? { decidedBy: options.decidedBy } : {}),
@@ -2394,7 +2401,10 @@ async function unretireProposalWithLease(
         }
         found.push({ handle, conceptId: retirement.conceptId, primary, fromBackup });
       }
-      for (const p of found) w.restore(p.handle, p.fromBackup ? proposal.backupContent : undefined);
+      // The primary first: a refusal its restore makes (a retirement that does not say where its file went) leaves
+      // every other retirement as it was, whatever order the accept recorded them in.
+      const ordered = [...found.filter((p) => p.primary), ...found.filter((p) => !p.primary)];
+      for (const p of ordered) w.restore(p.handle, p.fromBackup ? proposal.backupContent : undefined);
       // Overwrite the primary with the EXACT pre-retire bytes recorded
       // at accept (`backupContent`) — no appended trailing newline either, so
       // YAML comments, key order, a pre-existing human `supersededBy` edge, and

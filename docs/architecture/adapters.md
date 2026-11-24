@@ -109,7 +109,7 @@ interface BundleAdapter {
     options?: { replace?: boolean; verbatim?: boolean; replaceLink?: boolean; locator?: unknown }): AssetChange;
   update(b: Bundle, conceptId: string, content: string | Buffer,
     options?: { throughLink?: boolean; locator?: unknown }): AssetChange;
-  delete(b: Bundle, conceptId: string, options?: { locator?: unknown }): AssetChange;
+  delete(b: Bundle, conceptId: string, options?: { locator?: unknown }): AssetChange[]; // one per asset
   retire(b: Bundle, conceptId: string, note: RetireNote): Array<AssetChange & { handle: string }>; // one per asset
   retired(b: Bundle): Retirement[];
   restore(b: Bundle, handle: string, fallback?: string | Buffer): AssetChange;
@@ -525,7 +525,9 @@ package as it was.
 `retire` of a package entry retires every asset under its folder, each its own
 retirement with its own handle (the entry's comes first), and leaves the
 folder's files that are no asset where they are; restoring each handle brings
-the package back. `delete` acts on the one asset named. <!-- 9: delete of a package entry cascades over every asset under its directory and returns one change per asset; clone mirrors the package directory with packageFiles and mirrorPackage -->
+the package back. `delete` of a package entry removes its folder, non-asset
+files included, with one change per asset it held, so every one of their index
+rows goes. <!-- 9: clone mirrors the package directory with packageFiles and mirrorPackage -->
 
 ---
 

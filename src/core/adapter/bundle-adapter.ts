@@ -220,8 +220,11 @@ export interface BundleAdapter {
     content: string | Buffer,
     options?: { throughLink?: boolean; locator?: unknown },
   ): AssetChange;
-  /** Take the asset out of the bundle. `locator` (here, on `update` and on a replacing `create`): as on `read`. */
-  delete(b: Bundle, conceptId: string, options?: { locator?: unknown }): AssetChange;
+  /**
+   * Take the asset out of the bundle: one change per asset it removed, a package entry's first (a package goes whole).
+   * `locator` (here, on `update` and on a replacing `create`): as on `read`.
+   */
+  delete(b: Bundle, conceptId: string, options?: { locator?: unknown }): AssetChange[];
   /**
    * Every file under the directory of a package entry (a skill), non-assets included, with bytes and mode. Refused
    * when the adapter keeps no packages.

@@ -13,10 +13,14 @@ import {
 } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { renameBundle } from "../../../src/core/bundle-rename";
 import { saveConfig } from "../../../src/core/config/config";
+import { UsageError } from "../../../src/core/errors";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeLockfile } from "../../../src/integrations/lockfile";
+import { upsertProposal } from "../../../src/storage/repositories/proposals-repository";
 import type { SchedulerBackend } from "../../../src/tasks/backends/types";
 import { assets, documents } from "../../../src/workspace";
 import { git, makeGitRepo } from "../../_helpers/git";
@@ -175,6 +179,36 @@ test("a failed archive of the derived twin puts the primary back", async () => {
   expect(fs.existsSync(twin)).toBe(true);
   expect(fs.readdirSync(path.join(storage.stashDir, ".akm/memory-cleanup/archive"))).toEqual([]);
   expect(listProposals(storage.stashDir, { includeArchive: true })[0]?.status).toBe("rejected");
+});
+
+test("a revert restores the primary before its twin, so a primary that cannot be restored leaves the twin retired (F23)", async () => {
+  const twin = file().replace(".md", ".derived.md");
+  fs.writeFileSync(twin, "---\ndescription: derived\n---\nDerived.\n");
+  const receipt = await retireAsset(ref, hash());
+  expect(fs.existsSync(twin)).toBe(false);
+  // A resumed accept can record the twin's retirement first.
+  const accepted = getProposal(storage.stashDir, receipt.proposalId);
+  const db = openStateDatabase();
+  try {
+    upsertProposal(
+      db,
+      { ...accepted, retiredArchive: { retired: [...(accepted.retiredArchive?.retired ?? [])].reverse() } },
+      stateBundleId(storage.stashDir),
+    );
+  } finally {
+    db.close();
+  }
+  const primaryDir = archived(receipt).find((dir) => tombstone(dir).originalPath === "memories/manual.md") as string;
+  const audit = path.join(primaryDir, "cleanup.md");
+  fs.writeFileSync(audit, fs.readFileSync(audit, "utf8").replace(/^archivedPath: .*\n/m, ""));
+
+  const refused = await revert(receipt).catch((error: unknown) => error);
+  expect(refused).toBeInstanceOf(UsageError);
+  expect((refused as UsageError).code).toBe("INVALID_FLAG_VALUE");
+  expect((refused as UsageError).message).toContain("does not say where its file went");
+  expect(fs.existsSync(twin)).toBe(false);
+  expect(fs.existsSync(file())).toBe(false);
+  expect(getProposal(storage.stashDir, receipt.proposalId).status).toBe("accepted");
 });
 
 test("a revert that crashed after moving the file back resumes; a different file at the path is not overwritten", async () => {

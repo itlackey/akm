@@ -292,7 +292,10 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
     },
     delete(conceptId, options) {
       existing(conceptId, options);
-      return result(held.delete(conceptId), false);
+      // A package's delete is one change per asset it held, the entry's first: every row of them leaves the index.
+      const [entry, ...members] = held.delete(conceptId);
+      for (const member of members) result(member, false);
+      return result(entry as AssetChange, false);
     },
     mirrorPackage(asset, files, options) {
       gate(source, config);

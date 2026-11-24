@@ -22,9 +22,15 @@ import {
   purgeGracedArchive,
   RETIRE_GRACE_DAYS,
 } from "../../../../src/commands/improve/memory/memory-improve";
+import { resetConfigCache } from "../../../../src/core/config/config";
 import type { MemoryPruneCandidate } from "../../../../src/core/improve-types";
 import { _setWarnSinkForTests } from "../../../../src/core/warn";
-import { makeSandboxDir, type SandboxedDir } from "../../../_helpers/sandbox";
+import {
+  makeSandboxDir,
+  type SandboxedDir,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+} from "../../../_helpers/sandbox";
 import { overrideSeam } from "../../../_helpers/seams";
 
 const MS_PER_DAY = 86_400_000;
@@ -250,6 +256,48 @@ describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)
     const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
     const dir = fs.readdirSync(archiveRoot)[0]!;
     expect(fs.existsSync(path.join(archiveRoot, dir, "memories", "old.md"))).toBe(true);
+  });
+
+  test("a stash configured `writable: false` is not purged (F28), and the sweep does not fail", () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      const stashDir = storage.stashDir;
+      initGitRepo(stashDir);
+      archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
+      commitAll(stashDir, "archive retirement");
+      writeSandboxConfig({ defaultBundle: "main", bundles: { main: { path: stashDir, writable: false } } });
+      resetConfigCache();
+      const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
+      const dir = fs.readdirSync(archiveRoot)[0]!;
+
+      expect(purgeGracedArchive(stashDir, daysFromNow(RETIRE_GRACE_DAYS + 1))).toEqual({
+        purgedDirs: 0,
+        purgedFiles: 0,
+      });
+      expect(fs.existsSync(path.join(archiveRoot, dir, "memories", "stale.md"))).toBe(true);
+    } finally {
+      storage.cleanup();
+      resetConfigCache();
+    }
+  });
+
+  test("a stash whose adapter retires nothing has nothing to purge, and the sweep does not fail", () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({
+        defaultBundle: "files",
+        bundles: { files: { path: storage.stashDir, adapter: "generic-files", writable: true } },
+      });
+      resetConfigCache();
+      initGitRepo(storage.stashDir);
+      expect(purgeGracedArchive(storage.stashDir, daysFromNow(RETIRE_GRACE_DAYS + 1))).toEqual({
+        purgedDirs: 0,
+        purgedFiles: 0,
+      });
+    } finally {
+      storage.cleanup();
+      resetConfigCache();
+    }
   });
 
   test("no archive directory at all: a clean no-op", () => {

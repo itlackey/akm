@@ -148,7 +148,7 @@ export class AssetBundle {
       ...(locator !== undefined ? { locator } : {}),
     });
   }
-  delete(conceptId: string): AssetChange {
+  delete(conceptId: string): AssetChange[] {
     const locator = this.#locator(conceptId);
     return this.#adapter.delete(this.#bundle, conceptId, locator !== undefined ? { locator } : {});
   }

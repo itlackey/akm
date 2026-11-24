@@ -313,13 +313,13 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
     return this.change(name, content, stored);
   }
 
-  delete(b: Bundle, conceptId: string, options: { locator?: unknown } = {}): AssetChange {
+  delete(b: Bundle, conceptId: string, options: { locator?: unknown } = {}): AssetChange[] {
     const location = this.locationOf(b);
     const name = requireSecretName(b.id, conceptId);
     const existing = this.findSecret(location, name, options.locator);
     if (!existing) throw assetNotFound(`${b.id}//${conceptId}`);
     this.writing(location, () => this.deleteSecret(location, existing));
-    return this.change(name);
+    return [this.change(name)];
   }
 
   packageFiles(_b: Bundle, _conceptId: string): PackageFile[] {

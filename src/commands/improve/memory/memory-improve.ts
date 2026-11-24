@@ -12,6 +12,7 @@ import { readAsset } from "../../../core/assets/read";
 import { type AssetWriter, conceptIdAtFile, writeAssets } from "../../../core/assets/write";
 import { materialiseBundleDir, writeTargetAt } from "../../../core/bundle-at-dir";
 import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
+import { loadConfig } from "../../../core/config/config";
 import { assetNotFound } from "../../../core/errors";
 import type {
   ArchivedMemoryCleanupRecord,
@@ -719,15 +720,26 @@ export interface ArchivePurgeResult {
  * the retirement itself (#652).
  */
 export function purgeGracedArchive(stashDir: string, now: Date = new Date()): ArchivePurgeResult {
+  const config = loadConfig();
+  const target = writeTargetAt(stashDir, config);
+  // A stash the user marked `writable: false` is left as it is (F28).
+  if (config.bundles?.[target.source.name]?.writable === false) return { purgedDirs: 0, purgedFiles: 0 };
+  const before = new Date(now.getTime() - RETIRE_GRACE_MS);
   const journal = beginWriteProvenance();
   try {
-    const purgedDirs = writeAssets(writeTargetAt(stashDir), { purpose: "memory-cleanup" }, (w) => {
+    const purgedDirs = writeAssets(target, { purpose: "memory-cleanup" }, (w) => {
       const restorable = (): Set<string> =>
         new Set(w.retired().flatMap((retirement) => (retirement.restorable ? [retirement.handle] : [])));
-      const before = restorable();
-      w.expireRetired(new Date(now.getTime() - RETIRE_GRACE_MS));
+      // Nothing past the grace period (an adapter that retires nothing has no retirements): nothing to purge.
+      const due = w.retired().some((retirement) => {
+        const retiredAt = retirement.note.retiredAt;
+        return typeof retiredAt === "string" && Date.parse(retiredAt) < before.getTime();
+      });
+      if (!due) return 0;
+      const restorableBefore = restorable();
+      w.expireRetired(before);
       const after = restorable();
-      return [...before].filter((handle) => !after.has(handle)).length;
+      return [...restorableBefore].filter((handle) => !after.has(handle)).length;
     });
     return { purgedDirs, purgedFiles: journal.writtenPaths().length };
   } finally {

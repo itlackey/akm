@@ -111,7 +111,7 @@ describe("DirectoryAdapterBase", () => {
     expect(read?.entry.content()).toBe("changed\n");
     expect(read?.entry.bytes().toString("utf8")).toBe("changed\n");
 
-    expect(akmAdapter.delete(bundle, "knowledge/idea").changed).toEqual([ideaFile]);
+    expect(akmAdapter.delete(bundle, "knowledge/idea")).toEqual([{ conceptId: "knowledge/idea", changed: [ideaFile] }]);
     expect(akmAdapter.read(bundle, "knowledge/idea")).toBeUndefined();
   });
 
@@ -127,7 +127,7 @@ describe("DirectoryAdapterBase", () => {
 
     // The adapter refuses to create over an asset: the facade takes a package out whole first (a delete cascades).
     const deleted = akmAdapter.delete(bundle, "skills/demo");
-    expect(deleted.changed).toContain(path.join(dir, "scripts", "run.sh"));
+    expect(deleted.flatMap((change) => change.changed)).toContain(path.join(dir, "scripts", "run.sh"));
     expect(fs.existsSync(dir)).toBe(false);
     const second = akmAdapter.create(bundle, {
       ...skill,
@@ -166,7 +166,7 @@ describe("DirectoryAdapterBase", () => {
     expect(akmAdapter.read(bundle, "env/prod")?.conceptId).toBe("env/prod");
 
     // Delete removes the asset's file only: a marker left in the bundle is not the asset's.
-    expect(akmAdapter.delete(bundle, "env/prod").changed).toEqual([file]);
+    expect(akmAdapter.delete(bundle, "env/prod")).toEqual([{ conceptId: "env/prod", changed: [file] }]);
     expect(fs.existsSync(marker)).toBe(true);
   });
 
@@ -290,8 +290,11 @@ describe("DirectoryAdapterBase", () => {
         entry("x\n"),
         { path: "scripts/run.sh", bytes: Buffer.from("echo\n"), mode: 0o755 },
       ]);
-      const deleted = akmAdapter.delete(bundle, "skills/demo");
-      expect(deleted.changed.sort()).toEqual([path.join(dir(), "SKILL.md"), path.join(dir(), "scripts", "run.sh")]);
+      // One change per asset of the package, the entry's first.
+      expect(akmAdapter.delete(bundle, "skills/demo")).toEqual([
+        { conceptId: "skills/demo", changed: [path.join(dir(), "SKILL.md")] },
+        { conceptId: "skills/demo/scripts/run.sh", changed: [path.join(dir(), "scripts", "run.sh")] },
+      ]);
       expect(fs.existsSync(dir())).toBe(false);
       expect(akmAdapter.read(bundle, "skills/demo")).toBeUndefined();
     });
