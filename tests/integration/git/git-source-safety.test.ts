@@ -20,6 +20,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { parsePlacementRef } from "../../../src/core/asset/resolve-ref";
+import { registerAdHocBundle } from "../../../src/core/assets/gate";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { commitWriteTargetBoundary, prepareWriteTargetForMutation } from "../../../src/core/write-source";
 import { saveGitStash } from "../../../src/sources/providers/git";
@@ -283,9 +284,11 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
     git(repoDir, ["commit", "-m", "seed"]);
     fs.mkdirSync(contentDir, { recursive: true });
     git(repoDir, ["checkout", "--detach"]);
+    // A real target comes from `resolveWriteTarget`, whose bundle the adapter gate can look up; register this one the same way.
+    const name = registerAdHocBundle({ name: "team", path: contentDir, adapterId: "akm" });
     const target = {
-      source: { kind: "git", name: "team", path: contentDir, repoPath: repoDir, adapterId: "akm" },
-      config: { type: "git" as const, name: "team", path: contentDir, writable: true },
+      source: { kind: "git" as const, name, path: contentDir, repoPath: repoDir, adapterId: "akm" },
+      config: { type: "git" as const, name, path: contentDir, writable: true },
     };
 
     expect(() => prepareWriteTargetForMutation(target)).toThrow(/detached from a branch/i);

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { registerAdHocBundle } from "../../../src/core/assets/gate";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import { prepareWriteTargetForMutation } from "../../../src/core/write-source";
 import type { ParsedGitRef } from "../../../src/registry/types";
@@ -523,15 +524,17 @@ exec ${JSON.stringify(realGit)} "$@"
       if (level === "warn") warnings.push(args.map(String).join(" "));
     });
     try {
+      // A real target comes from `resolveWriteTarget`, whose bundle the adapter gate can look up; register this one the same way.
+      const name = registerAdHocBundle({ name: "team", path: fixture.contentRoot, adapterId: "akm" });
       const prepared = prepareWriteTargetForMutation({
         source: {
           kind: "git",
-          name: "team",
+          name,
           path: fixture.contentRoot,
           repoPath: fixture.checkout,
           adapterId: "akm",
         },
-        config: { type: "git", name: "team", path: fixture.contentRoot, writable: true },
+        config: { type: "git", name, path: fixture.contentRoot, writable: true },
       });
       expect(prepared.source.path).toBe(fixture.contentRoot);
       expect(warnings.some((w) => w.includes("unpushed commit"))).toBe(true);
