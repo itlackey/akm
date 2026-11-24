@@ -967,8 +967,9 @@ retired `components` map is read as these keys, with a warning, and
 `akm migrate apply` rewrites the file; `akm config set
 bundles.<name>.components.*` is refused, naming `bundles.<name>.adapter`, `root`
 and `writable`. See [Bundle Types](bundle-types.md) for the full adapter list
-and what each one reads and writes.
-<!-- 4e.1: a config entry without `adapter` is resolved once at config load and never probed at call time; the implicit stash and AKM_BUNDLE_DIR become in-memory bundles -->
+and what each one reads and writes. An entry without `adapter` gets the
+adapter detected from its content once, when akm resolves its bundles, and
+`akm bundle add` of a local directory records the adapter it detects.
 
 A bundle entry also carries the lint policy for its own files:
 

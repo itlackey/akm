@@ -289,8 +289,9 @@ such a bundle after the bundles before it in priority.
   `shadowed-spelling`, and reads, replaces and removes act on the winner. `akm
   lint` without `--dir` or a file reports these from the last `akm index` and
   never reaches the store; a store that was never indexed has no findings.
-- A keyring or vault that cannot be reached at `akm index` keeps the entries
-  the index had. `akm secret list` reads a keyring's or vault's entries from
+- A keyring or vault that `akm index` cannot list (unreachable, or locked and
+  listing nothing) keeps the entries the index had; the index warns, naming
+  it, and goes on. `akm secret list` reads a keyring's or vault's entries from
   the index, so it needs no unlock and never reaches the store. A
   command that needs it fails with `BUNDLE_UNREACHABLE`, naming the client and,
   when it is not installed, what provides it.

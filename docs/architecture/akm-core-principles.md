@@ -157,6 +157,7 @@ said "normative" and nothing checked.
 
 Enforced by: `bun run lint` (`scripts/lint-doc-examples.ts`,
 `scripts/lint-shipped-assets.ts`, `scripts/lint-secret-resolver-boundary.ts`,
+`scripts/lint-stdio-owner.ts`, `scripts/lint-lockfile.ts`,
 `scripts/lint-asset-io.ts`),
 `tests/contracts/`, `tests/output-shapes-unit.test.ts`.
 

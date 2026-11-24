@@ -749,7 +749,7 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/core/asset/asset-placement.ts` | asset type registry and canonical source directories (`PLACEMENT_SPECS`) |
 | `src/core/asset/asset-ref.ts` | asset ref parsing and normalization (`parseBundleRef`) |
 | `src/core/adapter/` | the `BundleAdapter` contract, the two bases (`DirectoryAdapterBase`, `SecretManagerAdapterBase`), the registry and the built-in adapters (see [Adapters](adapters.md)) |
-| `src/core/assets/` | the asset facade: the one way code outside `src/core/adapter/` finds, lists, types, validates and writes assets, whichever adapter holds them (`read.ts`, `type.ts`, `write.ts`, `validate.ts`, `gate.ts`). `scripts/lint-asset-io.ts` counts what still bypasses it (see [Adapters](adapters.md#the-facade-srccoreassets)) |
+| `src/core/assets/` | the asset facade: the only way code outside `src/core/adapter/` finds, lists, types, validates, reads and writes assets, whichever adapter holds them (`read.ts`, `type.ts`, `write.ts`, `validate.ts`, `gate.ts`). `scripts/lint-asset-io.ts` fails `bun run lint` on asset I/O anywhere else (see [Adapters](adapters.md#the-facade-srccoreassets)) |
 | `src/core/config/config.ts` | config loading, validation, env resolution; the default connection and harness |
 | `src/core/config/credentials.ts` | `credentials.json` and the dispatch-time resolution of a connection's key (`$VAR`, else the stored entry) |
 | `src/core/config/convert-engines.ts` | the one conversion of the older `engines` / `defaults` form to `connections` / `harnesses`, called by the loader and by `akm migrate apply` |
@@ -769,7 +769,7 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/sources/resolve.ts` | filesystem path resolution for refs |
 | `src/storage/repositories/` | SQL for `index.db`, `state.db`, and `logs.db` (entries, FTS, proposals, task history, workflow runs, …) |
 | `src/indexer/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |
-| `src/core/adapter/directory/` | walker, matchers, path/file/index context — the walk phase |
+| `src/core/adapter/directory/` | the directory adapters' walk: walker, matchers, file context, place rules; `scripts/lint-asset-io.ts` flags an import of it from outside the adapter layer and the facade |
 | `src/indexer/db/` | `llm-cache` — the persistence phase (entries/embeddings persistence lives in `src/storage/repositories/`) |
 | `src/indexer/search/` | `db-search`, `fts-query`, ranking, search-fields, search-source, enrichers — the search phase |
 | `src/indexer/passes/` | memory-inference, dir-staleness, metadata — LLM/metadata passes |
