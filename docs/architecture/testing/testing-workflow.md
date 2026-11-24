@@ -23,7 +23,8 @@ covers the automated test workflow and test-authoring guidance.
 `bun run check` runs lint, the typecheck and the unit target; it is what CI's `check` job runs on every pull
 request. The integration target runs only before a release: the Release workflow (`.github/workflows/release.yml`)
 runs it as a gate on the commit that ships, a prerelease and a stable alike, and so do its `node-smoke` and
-`upgrade-rehearsal` jobs, which run integration tests of their own. Pull requests run only the three architecture
+`upgrade-rehearsal` jobs, which run integration tests of their own. Desktop's tests run there too, as `desktop-tests`;
+pull requests run only Desktop's check and build. Pull requests run only the three architecture
 checks (`bun run test:architecture`). Run the integration target yourself before pushing a change it covers.
 
 - `bun run test:unit` (`scripts/test-unit.sh`) runs every `*.test.ts` under
@@ -461,7 +462,7 @@ integration suite is `bun run test:integration`; the Node fallback smoke and the
 upgrade rehearsal run in the Release workflow.
 
 The Release workflow runs the integration suite, the Node fallback smoke, the
-upgrade rehearsals and Gated CI (real embeddings, Docker, and the
+upgrade rehearsals, Desktop's tests and Gated CI (real embeddings, Docker, and the
 Linux/macOS/Windows schedulers) on the commit it publishes, a prerelease and a
 stable alike, and requires CI to have passed on that commit; see the
 [maintainer release checklist](../../maintainers/release-checklist.md). None of
