@@ -51,6 +51,7 @@ import {
 import { akmCurate } from "../../../src/commands/read/curate";
 import { akmSearch } from "../../../src/commands/read/search";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import { embedPendingWrites } from "../../../src/core/assets/type";
 import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { saveConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
@@ -1709,6 +1710,8 @@ describe("an accepted retirement leaves the search index at once (#1307)", () =>
         await akmIndex({ stashDir: storage.stashDir, full: true });
 
         const refs = async (): Promise<string[]> => {
+          // The CLI makes the vectors of a command's writes when the command ends; a direct call does it here.
+          await embedPendingWrites();
           const searched = (await akmSearch({ query, skipLogging: true, limit: 20 })).hits.map((hit) =>
             "ref" in hit ? String(hit.ref) : "",
           );
