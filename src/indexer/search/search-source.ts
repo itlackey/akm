@@ -10,7 +10,7 @@ import { isWithin, relativeToRoot, resolveStashDir, safeRealpath, toErrorMessage
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import { bundleAtDir, bundlesToSourceEntries, getSources, isBundleEnabled, loadConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
-import { getLocationBundleRoot, getUnresolvedSourcesDir } from "../../core/paths";
+import { getStoreSourceKey, getUnresolvedSourcesDir } from "../../core/paths";
 import { warn } from "../../core/warn";
 import { resolveGitContentRoot, resolveWritable } from "../../core/write-source";
 import { lockContentRootFor } from "../../integrations/lockfile";
@@ -33,7 +33,7 @@ export interface SearchSource {
   adapterId?: string;
   /** Set when the source's provider/path could not be resolved this run: why, and its real directory when it has one. */
   unresolved?: { reason: string; path?: string };
-  /** A location bundle's configured `location`: where its adapter finds it. `path` is then the root its entries are indexed under. */
+  /** A location bundle's configured `location`: where its adapter finds it. `path` is then only its key (`getStoreSourceKey`): it has no directory. */
   location?: string;
 }
 
@@ -221,8 +221,8 @@ export function resolveEntryContent(entry: SourceConfigEntry): { dir: string } |
   // materialized for the first time).
   const localRoot = lockContentRootFor(entry.name, entry.type);
   if (localRoot != null) return { dir: localRoot };
-  // A location bundle has no content directory: its adapter reads it, and its entries are indexed under this root.
-  if (entry.type === "location") return { dir: getLocationBundleRoot(entry.name ?? entry.location ?? "") };
+  // A location bundle has no content directory: its adapter reads it, and its source carries only a key.
+  if (entry.type === "location") return { dir: getStoreSourceKey(entry.name ?? entry.location ?? "") };
 
   const factory = resolveSourceProviderFactory(entry.type);
   if (!factory) return { error: `no source provider is registered for type "${entry.type}"` };

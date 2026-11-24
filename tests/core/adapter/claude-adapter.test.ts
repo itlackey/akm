@@ -54,9 +54,8 @@ const ctx: FileValidateContext = {
 };
 
 describe("claude adapter — metadata", () => {
-  test("id / extensions", () => {
+  test("id", () => {
     expect(claudeAdapter.id).toBe("claude");
-    expect(claudeAdapter.extensions).toEqual([".md"]);
   });
 });
 

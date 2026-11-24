@@ -293,7 +293,7 @@ async function adapterFindings(
     // akm's own resolved registry-cache copies are not the bundle's content.
     keep: (entry) =>
       !isAkmRegistryCachePath(path.join(stashRoot, entry.key)) && (keep === undefined || keep(entry.key)),
-    ctx: { sources, config: cfg, readMoves: options.readMoves ?? readRecordedMoves },
+    ctx: { config: cfg, readMoves: options.readMoves ?? readRecordedMoves },
   });
   return found.map(diagnosticToLintIssue);
 }
@@ -326,7 +326,7 @@ async function addStoreFindings(
     try {
       const diagnostics = await validateBundleAssets(
         { name: bundle, path: source.path, location: source.location, adapterId: source.adapterId },
-        { ctx: { sources, config: cfg, readMoves: options.readMoves ?? readRecordedMoves } },
+        { ctx: { config: cfg, readMoves: options.readMoves ?? readRecordedMoves } },
       );
       for (const diagnostic of diagnostics) {
         const issue = { ...diagnosticToLintIssue(diagnostic), ref: diagnostic.ref };
