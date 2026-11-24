@@ -51,9 +51,11 @@ describe("a file whose name is no concept id", () => {
     expect(status).toBe(0);
     const report = JSON.parse(stdout) as { ok: boolean; flagged: Array<{ file: string; issue: string; ref: string }> };
     expect(report.ok).toBe(true);
-    expect(report.flagged.map(({ file, issue, ref }) => ({ file, issue, ref }))).toEqual([
-      { file: "knowledge/ok.md", issue: "missing-updated", ref: "knowledge/ok" },
+    // Lint reports in walk order, which is the file system's: compare the findings, not their order.
+    const flagged = report.flagged.map(({ file, issue, ref }) => ({ file, issue, ref }));
+    expect(flagged.sort((a, b) => a.file.localeCompare(b.file))).toEqual([
       { file: "knowledge/guide#section.md", issue: "missing-updated", ref: "knowledge/guide#section" },
+      { file: "knowledge/ok.md", issue: "missing-updated", ref: "knowledge/ok" },
     ]);
   });
 

@@ -259,7 +259,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const { resolveSourceEntries } = await import("../../indexer/search/search-source");
     const sources = resolveSourceEntries(rootOf(b), config);
     const base = { root: rootOf(b), sources, config, readMoves: ctx.readMoves };
-    const live = liveView(b);
+    const live = liveView(b, "walk");
     const changes: FileChange[] = [];
     for (const edit of edits) {
       const relPath = this.holders(live, edit.conceptId)?.files[0] ?? this.spellings(edit.conceptId)[0];
@@ -715,8 +715,13 @@ interface FileView {
   isWalked(relPath: string, options: { includeAllDirectories: boolean }): boolean;
 }
 
-/** The bundle's files as they are on disk. */
-function liveView(b: Bundle): FileView {
+/**
+ * The bundle's files as they are on disk. A view lives for one read or check. `"file"` asks git about each file a walk
+ * may reach; `"walk"`, for a check of many assets, walks the bundle once, the first time it is asked, and answers every
+ * file from that walk (one `git check-ignore` per file costs far more than one walk).
+ */
+function liveView(b: Bundle, reached: "file" | "walk" = "file"): FileView {
+  const walks = new Map<boolean, Set<string>>();
   return {
     rootExists() {
       try {
@@ -746,13 +751,21 @@ function liveView(b: Bundle): FileView {
         return false;
       }
     },
-    isWalked: (relPath, options) => isWalkedFile(rootOf(b), path.join(rootOf(b), relPath), options),
+    isWalked(relPath, options) {
+      if (reached === "file") return isWalkedFile(rootOf(b), path.join(rootOf(b), relPath), options);
+      let walked = walks.get(options.includeAllDirectories);
+      if (walked === undefined) {
+        walked = new Set(walkStashFlatWithStatus(rootOf(b), options).files.map((file) => file.relPath));
+        walks.set(options.includeAllDirectories, walked);
+      }
+      return walked.has(relPath);
+    },
   };
 }
 
 /** The bundle's files with the pending overlay laid over them: a file with pending content is there, a deleted one is not. */
 function snapshotView(b: Bundle, overlay: ReadonlyMap<string, string | null>): FileView {
-  const live = liveView(b);
+  const live = liveView(b, "walk");
   const pending = new Map([...overlay].map(([relPath, content]) => [relPath, content !== null]));
   return {
     rootExists: live.rootExists,
@@ -772,16 +785,39 @@ function snapshotView(b: Bundle, overlay: ReadonlyMap<string, string | null>): F
   };
 }
 
+/** Per view, each folder's files by {@link variantKey}, so finding a spelling's case variants is a lookup, not a scan of its folder. */
+const variantIndexes = new WeakMap<FileView, Map<string, Map<string, string[]>>>();
+
+/** Equal for two names of one folder exactly when one is the other with the case of its extension changed ({@link isCaseVariant}). */
+function variantKey(name: string): string {
+  const extension = path.posix.extname(name);
+  return `${path.posix.basename(name, extension)}\0${extension.toLowerCase()}`;
+}
+
 /** `spelling` and the names in its folder that differ from it only in the case of the extension: the exact one first, then by code point. */
 function caseVariants(view: FileView, spelling: string): string[] {
   const extension = path.posix.extname(spelling);
   if (!extension) return [spelling];
   const dir = path.posix.dirname(spelling);
-  const variants = view
-    .list(dir)
-    .map((name) => (dir === "." ? name : `${dir}/${name}`))
-    .filter((relPath) => relPath !== spelling && isCaseVariant(spelling, relPath))
-    .sort(compareCodePoints);
+  let folders = variantIndexes.get(view);
+  if (folders === undefined) {
+    folders = new Map();
+    variantIndexes.set(view, folders);
+  }
+  let index = folders.get(dir);
+  if (index === undefined) {
+    index = new Map();
+    for (const name of view.list(dir)) {
+      const key = variantKey(name);
+      const relPath = dir === "." ? name : `${dir}/${name}`;
+      const bucket = index.get(key);
+      if (bucket) bucket.push(relPath);
+      else index.set(key, [relPath]);
+    }
+    for (const bucket of index.values()) bucket.sort(compareCodePoints);
+    folders.set(dir, index);
+  }
+  const variants = (index.get(variantKey(spelling)) ?? []).filter((relPath) => relPath !== spelling);
   return [spelling, ...variants];
 }
 
