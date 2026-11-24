@@ -24,7 +24,7 @@ import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } fr
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
-import { lookupAsset } from "../../core/assets/read";
+import { findAsset, lookupAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import { addressOf, conceptIdAtFile, writeAssets } from "../../core/assets/write";
 import { authoringRulesForType } from "../../core/authoring-rules";
@@ -886,8 +886,8 @@ async function proposeLessonUpdate(
   for (const asset of related ?? (await run.related(memory.slice(0, 500), RELATED_COUNT))) {
     if (asset.type !== "lesson" || !asset.path || !isWithin(asset.path, run.stash)) continue;
     try {
-      // asset-io: base a related lesson, read by its search hit's path
-      const content = fs.readFileSync(asset.path, "utf8");
+      const content = findAsset(asset.ref)?.entry.content();
+      if (content === undefined) continue;
       // A memory is never merged into a lesson of another scope.
       if (!sameScope(memoryScope, scopeFromFrontmatter(parseFrontmatter(content).data))) continue;
       const { conceptId: ref } = parseBundleRef(asset.ref);
@@ -1470,8 +1470,7 @@ async function fetchRelatedAssets(query: string, n: number): Promise<RelatedAsse
       .map((h) => {
         let content = "";
         try {
-          // asset-io: base a related asset, read by its search hit's path
-          if (h.path && fs.existsSync(h.path)) content = fs.readFileSync(h.path, "utf8");
+          if (h.path) content = findAsset(h.ref)?.entry.content() ?? "";
         } catch {
           // best-effort
         }

@@ -15,7 +15,6 @@ import type { AssetEdit, Diagnostic, ValidateContext } from "../adapter/types";
 import { type Asset, assetOf } from "./asset";
 import { assetBundleOf } from "./bundle";
 
-/** The categories the akm adapter accepts for a fact's `category`: its validators' vocabulary, which the frontmatter forms offer. */
 /** The akm adapter's own per-type checks, which `akm lint --fix` runs on the text it holds while it repairs it. */
 export {
   derivedSiblingPath,
@@ -55,7 +54,7 @@ export function listBundleAssets(bundle: {
 }
 
 /** The asset the bundle holds at the stored `key`, when it holds one there. */
-export function assetAtKey(
+export function assetAtStoredKey(
   bundle: { name: string; path: string; location?: string; adapterId?: string },
   key: string,
 ): Asset | undefined {

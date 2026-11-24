@@ -115,46 +115,6 @@ describe("DirectoryAdapterBase", () => {
     expect(akmAdapter.read(bundle, "knowledge/idea")).toBeUndefined();
   });
 
-  test("create with resources writes the package as one folder and replaces an older one whole", () => {
-    const skill = { type: "skill", name: "demo", content: "---\nname: demo\n---\nbody\n" };
-    const first = akmAdapter.create(bundle, {
-      ...skill,
-      resources: [{ path: "scripts/run.sh", content: Buffer.from("echo old\n") }],
-    });
-    const dir = path.join(bundle.root, "skills", "demo");
-    expect(first.changed).toContain(path.join(dir, "SKILL.md"));
-    expect(fs.readFileSync(path.join(dir, "scripts", "run.sh"), "utf8")).toBe("echo old\n");
-
-    // The adapter refuses to create over an asset: the facade takes a package out whole first (a delete cascades).
-    const deleted = akmAdapter.delete(bundle, "skills/demo");
-    expect(deleted.flatMap((change) => change.changed)).toContain(path.join(dir, "scripts", "run.sh"));
-    expect(fs.existsSync(dir)).toBe(false);
-    const second = akmAdapter.create(bundle, {
-      ...skill,
-      resources: [{ path: "notes.txt", content: Buffer.from("new") }],
-    });
-    expect(fs.existsSync(path.join(dir, "scripts"))).toBe(false);
-    expect(fs.readFileSync(path.join(dir, "notes.txt"), "utf8")).toBe("new");
-    expect(second.changed).toContain(path.join(dir, "notes.txt"));
-    expect(fs.readdirSync(path.join(bundle.root, "skills")).filter((name) => name.includes(".tmp-"))).toEqual([]);
-
-    const read = akmAdapter.read(bundle, "skills/demo");
-    expect(read?.entry.resources?.().map((resource) => resource.path)).toEqual(["notes.txt"]);
-    expect(read?.entry.resources?.()[0]?.bytes().toString("utf8")).toBe("new");
-  });
-
-  test("a resource may not leave its package", () => {
-    expect(() =>
-      akmAdapter.create(bundle, {
-        type: "skill",
-        name: "demo",
-        content: "x\n",
-        resources: [{ path: "../escape.txt", content: Buffer.from("x") }],
-      }),
-    ).toThrow(/leaves the skill package/);
-    expect(fs.existsSync(path.join(bundle.root, "skills", "demo"))).toBe(false);
-  });
-
   test("an env file is private, and a leftover `.sensitive` marker beside it changes nothing", () => {
     const created = akmAdapter.create(bundle, { type: "env", name: "prod", content: "A=1\n" });
     const file = path.join(bundle.root, "env", "prod.env");

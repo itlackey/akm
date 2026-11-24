@@ -46,13 +46,6 @@ export interface AssetEntry {
   bytes(): Buffer;
   /** The YAML frontmatter of `content()`, or null. */
   frontmatter(): Record<string, unknown> | null;
-  /** Files that belong to the asset besides its entry (a skill's resources), by path below the asset's folder. */
-  resources?(): ReadonlyArray<AssetResource>;
-}
-
-export interface AssetResource {
-  readonly path: string;
-  bytes(): Buffer;
 }
 
 /** One asset, as its adapter reads it: its identity and the entry that holds it. The type is index metadata (`recognize`). */
@@ -85,8 +78,6 @@ export interface NewAsset {
   label?: string;
   /** The permission bits of the file, honoured for a verbatim create by an adapter that keeps files; else its own. */
   mode?: number;
-  /** Files that belong to the asset (a skill package's resources), by path below the asset's folder. */
-  resources?: ReadonlyArray<{ path: string; content: Buffer }>;
 }
 
 /** One file of a package directory, non-asset files included. `path` is posix and inside the package; never persisted. */

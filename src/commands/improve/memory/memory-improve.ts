@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-// asset-io: base collectDerivedMemories walks memories/ (owner ruling)
+// asset-io: base collectDerivedMemories walks memories/
 import { walkMarkdownFiles } from "../../../core/adapter/directory/walker";
 import { assembleAsset } from "../../../core/asset/asset-serialize";
 import { editFrontmatter, parseFrontmatter } from "../../../core/asset/frontmatter";
@@ -818,7 +818,7 @@ function priorBeliefStateForArchive(candidate: MemoryPruneCandidate): Exclude<Me
 
 function collectDerivedMemories(stashDir: string, parentRefFilter?: string): DerivedMemoryRecord[] {
   const memoriesDir = path.join(stashDir, "memories");
-  // asset-io: base collectDerivedMemories (owner ruling)
+  // asset-io: base collectDerivedMemories
   if (!fs.existsSync(memoriesDir)) return [];
 
   const records: DerivedMemoryRecord[] = [];
@@ -832,7 +832,7 @@ function collectDerivedMemories(stashDir: string, parentRefFilter?: string): Der
 
     let raw: string;
     try {
-      // asset-io: base collectDerivedMemories (owner ruling)
+      // asset-io: base collectDerivedMemories
       raw = fs.readFileSync(filePath, "utf8");
     } catch {
       continue;

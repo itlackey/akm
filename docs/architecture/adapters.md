@@ -85,7 +85,6 @@ interface AssetEntry {
   content(): string;          // read once, when asked
   bytes(): Buffer;
   frontmatter(): Record<string, unknown> | null;
-  resources?(): ReadonlyArray<{ path: string; bytes(): Buffer }>; // a package's other files
 }
 
 /** One asset per concept; `findings`: what is wrong with a store's entries, which `akm index` records. */

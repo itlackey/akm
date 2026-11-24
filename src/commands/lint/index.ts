@@ -28,7 +28,7 @@ import {
 import type { Asset } from "../../core/assets/read";
 import { assetTypesByContent } from "../../core/assets/type";
 import {
-  assetAtKey,
+  assetAtStoredKey,
   derivedSiblingPath,
   type FileDiagnostic,
   listBundleAssets,
@@ -602,7 +602,7 @@ function sweepFileOf(
   asset: Asset | undefined,
   writer: LintWriter | undefined,
 ): SweepFile {
-  const current = (held: Asset): Asset => (writer ? (assetAtKey(bundle, held.entry.key) ?? held) : held);
+  const current = (held: Asset): Asset => (writer ? (assetAtStoredKey(bundle, held.entry.key) ?? held) : held);
   return {
     filePath,
     relPath: path.relative(bundle.path, filePath),
@@ -1085,7 +1085,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
   };
   if (root && realRoot) {
     const bundle = lintBundleOf(bundleSourceAt(root, cfg).adapterId, root, resolveSourceEntries(root, cfg));
-    const asset = assetAtKey(bundle, path.relative(realRoot, absFile).split(path.sep).join("/"));
+    const asset = assetAtStoredKey(bundle, path.relative(realRoot, absFile).split(path.sep).join("/"));
     const writer = scope.fix || scope.fixMovedRefs ? writerOf(bundle) : undefined;
     lintSweepFile(sweepFileOf({ ...bundle, path: realRoot }, absFile, asset, writer), subdir as string, scope, sinks);
   } else {

@@ -162,9 +162,7 @@ function appendLessonStrength(
     );
   } catch (err) {
     if (mutationStarted) throw err;
-    warn(
-      `[feedback] --applied-to: failed to write ${requestedRef}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    warn(`[feedback] --applied-to: failed to write ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
   return { ref: makeBundleRef(bundleId, conceptId), strength };

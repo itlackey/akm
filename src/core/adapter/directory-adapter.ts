@@ -40,7 +40,6 @@ import type {
   AssetChange,
   AssetEntry,
   AssetPlacement,
-  AssetResource,
   BundleAdapter,
   BundleAsset,
   BundleListing,
@@ -182,7 +181,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return {
       assets: walked.files.flatMap((file) => {
         const conceptId = winners.get(file);
-        return conceptId === undefined ? [] : [{ conceptId, entry: this.entryOf(file) }];
+        return conceptId === undefined ? [] : [{ conceptId, entry: file }];
       }),
       ...this.completeness(b, walked, type),
     };
@@ -246,7 +245,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const held = this.holders(liveView(b), conceptId);
     const first = held?.files[0];
     const file = first === undefined ? undefined : buildFileContext(rootOf(b), path.join(rootOf(b), first));
-    return held && file && { conceptId: held.conceptId, entry: this.entryOf(file) };
+    return held && file && { conceptId: held.conceptId, entry: file };
   }
 
   /**
@@ -346,12 +345,6 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     return rank(left) - rank(right) || compareCodePoints(left, right);
   }
 
-  /** The entry of a file: itself, with the resources of its package when it is one's entry. */
-  private entryOf(file: FileContext): AssetEntry {
-    const dir = this.packageDir(file);
-    return dir === undefined ? file : { ...file, resources: () => packageResources(dir, file.absPath) };
-  }
-
   identifyKey(_b: Bundle, key: string): string | null {
     return this.identify(key);
   }
@@ -395,11 +388,15 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     }
     // A replacing create rewrites the file the concept is read from (`guide.MD`), never a twin beside it.
     const file = held?.entry.file ?? this.placeFile(b, asset);
-    const entry = buildFileContext(rootOf(b), file);
     const content = options.verbatim ? asset.content : this.serialize(asset.type, file, asset.content, asset.label);
-    const changed = asset.resources?.length
-      ? this.writePackage(b, asset, entry, content, asset.resources)
-      : this.writeFile(b, asset.type, file, content, options.replaceLink, options.verbatim ? asset.mode : undefined);
+    const changed = this.writeFile(
+      b,
+      asset.type,
+      file,
+      content,
+      options.replaceLink,
+      options.verbatim ? asset.mode : undefined,
+    );
     return { conceptId, changed, content: asset.content };
   }
 
@@ -675,51 +672,6 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     writeFileAtomic(file, bytes, mode ?? this.fileMode(type) ?? existingFileMode(file));
     return [file];
   }
-
-  /**
-   * Write a package's entry and its resources as one folder, staged beside it and renamed into place, so a failed
-   * write leaves the old package untouched. Returns every file the old and the new package hold.
-   */
-  private writePackage(
-    b: Bundle,
-    asset: NewAsset,
-    entry: FileContext,
-    content: string | Buffer,
-    resources: NonNullable<NewAsset["resources"]>,
-  ): string[] {
-    const dir = this.packageDir(entry);
-    if (dir === undefined) {
-      throw new UsageError(
-        `Bundle "${b.id}" (adapter "${this.id}") does not keep ${asset.type} assets with resources.`,
-      );
-    }
-    assertWritableFile(rootOf(b), b.id, dir);
-    const existing = fs.lstatSync(dir, { throwIfNoEntry: false });
-    const replaced = existing?.isDirectory() ? filesBelow(dir) : [];
-    const staging = `${dir}.tmp-${randomUUID()}`;
-    try {
-      fs.mkdirSync(staging, { recursive: true });
-      const put = (relative: string, bytes: string | Buffer) => {
-        const target = path.join(staging, relative);
-        if (!within(target, staging)) {
-          throw new UsageError(
-            `Resource path "${relative}" leaves the ${asset.type} package.`,
-            "PATH_ESCAPE_VIOLATION",
-          );
-        }
-        fs.mkdirSync(path.dirname(target), { recursive: true });
-        fs.writeFileSync(target, bytes, { mode: this.fileMode(asset.type) });
-      };
-      for (const resource of resources) put(resource.path, resource.content);
-      put(path.relative(dir, entry.absPath), content);
-      if (existing) fs.rmSync(dir, { recursive: true, force: true });
-      fs.renameSync(staging, dir);
-    } catch (error) {
-      fs.rmSync(staging, { recursive: true, force: true });
-      throw error;
-    }
-    return [...new Set([...replaced, ...filesBelow(dir)])];
-  }
 }
 
 // ── Reading helpers ─────────────────────────────────────────────────────────
@@ -863,16 +815,6 @@ function directoryLinksBelow(dir: string): string[] {
     }
   }
   return links;
-}
-
-/** The files of the package in `dir` besides its entry, by path below `dir`. */
-function packageResources(dir: string, entryFile: string): AssetResource[] {
-  return filesBelow(dir)
-    .filter((file) => file !== entryFile)
-    .map((file) => ({
-      path: path.relative(dir, file).split(path.sep).join("/"),
-      bytes: () => fs.readFileSync(file),
-    }));
 }
 
 // ── Writing helpers ─────────────────────────────────────────────────────────

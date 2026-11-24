@@ -448,8 +448,8 @@ export interface BundleSourceRef {
 
 /**
  * What the run gives `validate` besides the edits: the settings, the configured bundles and the recorded moves. The
- * base checks (a link to another bundle's asset, a stale absolute path) still look at the other bundles' roots, so
- * `sources` stays until `read(ref)` and `exists(ref)` replace it in 4e.2, with the refs inside content they serve.
+ * base checks (a link to another bundle's asset, a stale absolute path) look at the other bundles' roots, so they read
+ * `sources`.
  */
 export interface ValidateContext {
   /** The configured bundles this run resolves refs against, the validated bundle among them. */

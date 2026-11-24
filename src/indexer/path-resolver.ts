@@ -44,7 +44,7 @@ function resolveViaDisk(ref: BundleRef, options: ResolveAssetPathOptions): strin
     .filter((id) => bundle === undefined || id === bundle)
     .map((id) => findAsset(makeBundleRef(id, ref.conceptId)))
     .find((found) => found !== undefined);
-  // An asset no file holds answers a path that leads nowhere, as it always has (phase 5 moves this caller off paths).
+  // An asset no file holds answers the path its key would have below its bundle's root, which leads nowhere.
   if (asset === undefined) return null;
   // asset-io: base the file a ref resolves to, which improve and schema repair read
   return safeRealpath(asset.entry.file ?? path.join(sourceOfBundle(sources, asset.bundle).path, asset.entry.key));
