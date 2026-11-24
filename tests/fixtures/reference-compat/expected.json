@@ -7842,6 +7842,9 @@
             }
           }
         },
+        "workflow": {
+          "maxConcurrency": 2
+        },
         "scheduler": {
           "enabled": [
             "main//tasks/nightly",
@@ -9009,6 +9012,9 @@
               }
             }
           }
+        },
+        "workflow": {
+          "maxConcurrency": 2
         },
         "scheduler": {
           "enabled": [
