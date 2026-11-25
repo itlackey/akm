@@ -40,7 +40,7 @@
  * `spawn(command, [entry, ...argv])` runs the real improve command under Bun.
  */
 
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -48,7 +48,9 @@ import { akmImprove } from "../../../../src/commands/improve/improve";
 import { isProcessAlive } from "../../../../src/core/common";
 import { saveConfig } from "../../../../src/core/config/config";
 import { getRunLogDir } from "../../../../src/core/paths";
+import { _setWarnSinkForTests } from "../../../../src/core/warn";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import { overrideSeam } from "../../../_helpers/seams";
 
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
 
@@ -394,15 +396,18 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
 
 describe("akm improve — a slow prepass must not trip the first-response heartbeat (#957 field-G)", () => {
   test("negative case: slow embedding prepass + fast-answering endpoint never prints the heartbeat", async () => {
-    const heartbeatMs = 100;
+    const heartbeatMs = 500;
     writeMemory("note-c");
     const { server: embedServer, responseCount } = slowEmbeddingServer(2 * heartbeatMs);
     const { server: chatServer, requestCount } = fastReflectServer();
-    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const progress: string[] = [];
+    overrideSeam(_setWarnSinkForTests, (level, args) => {
+      if (level === "info") progress.push(args.join(" "));
+    });
     try {
       configureSlowPrepassFastEngine(embedServer.port!, chatServer.port!);
 
-      await akmImprove({ scope: "memories/note-c", strategy: "reflect-only", heartbeatMs });
+      const result = await akmImprove({ scope: "memories/note-c", strategy: "reflect-only", heartbeatMs });
 
       // Confirms this run actually exercised the slow path: the prepass
       // (embedding) alone took longer than the heartbeat's own window, and
@@ -410,12 +415,13 @@ describe("akm improve — a slow prepass must not trip the first-response heartb
       // not a run that skipped indexing or never made a model call.
       expect(responseCount()).toBeGreaterThan(0);
       expect(requestCount()).toBeGreaterThan(0);
+      expect(result.ok).toBe(true);
+      expect(progress).toContain("[improve] post-loop maintenance starting");
       // #957 field-G: the heartbeat used to be armed at run start, so a
       // slow prepass alone (no slow endpoint at all) tripped it. It must stay
       // silent when the model itself never took long.
-      expect(warn.mock.calls.flat().join("\n")).not.toContain("Still waiting for the first model response");
+      expect(progress.join("\n")).not.toContain("Still waiting for the first model response");
     } finally {
-      warn.mockRestore();
       embedServer.stop(true);
       chatServer.stop(true);
     }

@@ -68,6 +68,7 @@ export interface RunExecUnitInput {
   signal?: AbortSignal;
   /** Test seam: injected spawn (defaults to the runtime spawn inside `runManagedSubprocess`). */
   spawnFn?: SpawnFn;
+  /** Test seam: the post-exit drain grace, passed to runManagedSubprocess. */
   drainGraceMs?: number;
   /** Test seam: the platform whose spawn ceilings the context check uses. Defaults to the host's. */
   platform?: string;
