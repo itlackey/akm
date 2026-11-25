@@ -39,10 +39,10 @@ import {
   getMarkdownFragmentContent,
   hasMarkdownFragmentContent,
   MARKDOWN_CONTENT_MAX_CHARS,
-  type StashIntent,
   setMarkdownFragmentContent,
   truncateUnicodeSafe,
-} from "../passes/metadata";
+} from "../passes/markdown-projection";
+import type { StashIntent } from "../passes/metadata";
 
 /**
  * Reconstruct the `IndexDocument` an `IndexDocument` was mapped from. First-class

@@ -18,9 +18,10 @@ import path from "node:path";
 import { resetConfigCache, saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
+import { _setIndexTransactionHookForTests } from "../../../src/indexer/index-persist";
 import { heldRebuildLock } from "../../../src/indexer/index-rebuild-lock";
 import * as indexerModule from "../../../src/indexer/indexer";
-import { _setIndexTransactionHookForTests, akmIndex } from "../../../src/indexer/indexer";
+import { akmIndex } from "../../../src/indexer/indexer";
 import {
   closeDatabase,
   openExistingDatabase,

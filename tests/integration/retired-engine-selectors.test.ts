@@ -13,12 +13,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  loadUserConfig,
-  normalizeConfigFile,
-  resetConfigCache,
-  retiredEngineTargets,
-} from "../../src/core/config/config";
+import { loadUserConfig, normalizeConfigFile, resetConfigCache } from "../../src/core/config/config";
+import { retiredEngineTargets } from "../../src/core/config/config-file-forms";
 import { forgetEngineTargets } from "../../src/core/config/retired-engines";
 import { getConfigPath, getDataDir } from "../../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";

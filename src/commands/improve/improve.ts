@@ -14,7 +14,7 @@ import { parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { indexFiles } from "../../core/assets/files";
 import { akmOwnedDirNames } from "../../core/assets/gate";
-import { materialiseBundleDir } from "../../core/bundle-at-dir";
+import { bundleAt } from "../../core/bundle-at-dir";
 import { type AkmConfig, bundlesToSourceEntries, loadConfig } from "../../core/config/config";
 import { collectCredentialValues } from "../../core/config/credentials";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
@@ -57,9 +57,9 @@ import { withIndexDb } from "../../storage/repositories/index-db";
 import { getEntryCount } from "../../storage/repositories/index-entries-repository";
 import { SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
 import { summarizeLlmUsageRecordsCrossTab } from "../health/llm-usage";
+import { type AcceptCommitCollector, commitCollectedAccepts } from "../proposal/accept";
 import { type DrainResult, drainProposals } from "../proposal/drain";
 import type { EligibilitySource } from "../proposal/proposal-types";
-import { type AcceptCommitCollector, commitCollectedAccepts } from "../proposal/repository";
 import { type AutonomyLane, describeGatedLanes, isAutonomyLaneAllowed } from "./autonomy-gate";
 import { akmDistill } from "./distill";
 import {
@@ -324,7 +324,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // Index triage's own writes incrementally so selection sees them.
       const triageWrittenPaths = journal?.writtenPaths() ?? [];
       if (setup.primaryStashDir && triageWrittenPaths.length > 0) {
-        await indexFiles(materialiseBundleDir(setup.primaryStashDir), triageWrittenPaths);
+        await indexFiles(bundleAt(setup.primaryStashDir), triageWrittenPaths);
       }
     }
 

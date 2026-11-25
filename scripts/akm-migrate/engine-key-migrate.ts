@@ -19,7 +19,8 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
-import { type AkmConfig, loadConfig, resetConfigCache, retiredEngineTargets } from "../../src/core/config/config";
+import { type AkmConfig, loadConfig, resetConfigCache } from "../../src/core/config/config";
+import { retiredEngineTargets } from "../../src/core/config/config-file-forms";
 import { withConfigLock } from "../../src/core/config/config-io";
 import { type EngineTargets, forgetEngineTargets } from "../../src/core/config/retired-engines";
 import { getDataDir } from "../../src/core/paths";

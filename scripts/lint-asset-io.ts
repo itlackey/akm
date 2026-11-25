@@ -3,7 +3,7 @@
  *
  * Bundle adapters are the one layer that reads and writes assets. Code outside it works with assets through the
  * facade in `src/core/assets/` and never learns which adapter holds one, where, or under what file name. This script
- * counts what still breaks that, in thirteen rules, over `src/` and `desktop/src/lib/server/` (outside
+ * counts what still breaks that, in fourteen rules, over `src/` and `desktop/src/lib/server/` (outside
  * `src/core/adapter/` and `src/core/assets/`, except where a rule says otherwise):
  *
  *   asset-io         a call that reads, writes, stats or walks files, sync or async (`readFileSync`, `fs.promises.stat`,
@@ -29,10 +29,14 @@
  *                    facade answers about assets, and an adapter's internals or file functions passed through under its
  *                    name are a caller's adapter-import the lint would not count. A caller that needs one imports it
  *                    itself, under an exemption.
- *   store-sniff      a test of whether a bundle is a store: `.isStore`, `addressedBy`, or `.location` compared
- *                    (`=== undefined` included), outside the adapter layer.
+ *   store-sniff      a test of whether a bundle is a store: `.isStore`, its `BundleScan` spelling `.inDirectories`
+ *                    (the indexer plans its scan by it), `addressedBy`, or `.location` compared (`=== undefined`
+ *                    included), as a property or a destructured name, outside the adapter layer.
  *   entries-sql      raw SQL on the `entries` table or `index_meta` (`FROM entries`, `INSERT INTO index_meta`, ...)
  *                    outside `src/storage/`, `src/core/assets/` and `src/indexer/`.
+ *   upward-import    (inside `src/core/adapter/` and `src/core/assets/`) an import of `src/commands/`, `src/tasks/` or
+ *                    `src/indexer/`: the adapter layer depends on core only. The modules still imported are listed in
+ *                    `UPWARD_ALLOWED`; any other fails.
  *   entry-file-logic `entry.file` as an operand of a comparison, or as a map/set key (`get set has delete add`, `m[entry.file]`,
  *                    `{ [entry.file]: x }`). A `display` or `exec` exemption does not cover it: display is print/format only.
  *                    A test against `undefined` is not logic: a file-less asset has no path to show or run (§7.3).
@@ -69,6 +73,7 @@ const RULES = [
   "store-sniff",
   "entries-sql",
   "entry-file-logic",
+  "upward-import",
 ] as const;
 export type Rule = (typeof RULES)[number];
 /** One violation: where, which rule, the line, and what it was (the callee, module, literal or export name). */
@@ -95,6 +100,26 @@ const REEXPORTABLE_ADAPTER_MODULES = ["src/core/adapter/bundle-adapter", "src/co
 const ENTRIES_SQL_ALLOWED = ["src/storage/", "src/core/assets/", "src/indexer/"];
 /** Registry calls: asset-io flags them outside the layer; the facade is where they belong. */
 const REGISTRY_CALLS = new Set(["adapterForId", "getAdapters"]);
+/** The layers built on the adapter layer, which it must not import... */
+const UPWARD_LAYERS = ["src/commands/", "src/tasks/", "src/indexer/"];
+/** ...but for these modules, still there until what they hold moves down into core. A new one fails; do not add to it. */
+const UPWARD_ALLOWED = [
+  "src/commands/command/builtin-action",
+  "src/indexer/index-on-miss",
+  "src/indexer/index-readiness",
+  "src/indexer/index-rows",
+  "src/indexer/index-writer-lock",
+  "src/indexer/materialize-embeddings",
+  "src/indexer/passes/markdown-projection",
+  "src/indexer/passes/metadata",
+  "src/indexer/scan/drain-dir",
+  "src/indexer/search/search-source",
+  "src/tasks/backends",
+  "src/tasks/schedule-gates",
+  "src/tasks/source-v3",
+  "src/tasks/source/bounded-document",
+  "src/tasks/source/parse-task-source",
+];
 const FACADE_INTERNAL_MODULES = ["src/core/assets/bundle", "src/core/assets/asset", "src/core/assets/index-rows"];
 
 /** The reasons an exemption may give, each with what it covers. Allowed path prefixes below use the same words. */
@@ -449,6 +474,13 @@ export function scan(root: string, adapterIds: readonly string[], exemptions: st
         ) {
           report(node, "adapter-import", target);
         }
+        if (
+          inAdapterLayer &&
+          UPWARD_LAYERS.some((layer) => target.startsWith(layer)) &&
+          !UPWARD_ALLOWED.includes(target)
+        ) {
+          report(node, "upward-import", target);
+        }
         if (!inAdapterLayer && FACADE_INTERNAL_MODULES.includes(target)) report(node, "facade-internal", target);
         if (
           ts.isExportDeclaration(node) &&
@@ -509,8 +541,16 @@ export function scan(root: string, adapterIds: readonly string[], exemptions: st
           report(node, "entry-file-logic", "key");
         }
         if (ts.isComputedPropertyName(node) && isEntryFile(node.expression)) report(node, "entry-file-logic", "key");
-        if (ts.isPropertyAccessExpression(node) && (node.name.text === "isStore" || node.name.text === "addressedBy")) {
+        // The same test under another name: `BundleScan.inDirectories` is `!isStore`. The indexer plans its scan by it.
+        const storeTest = (name: string) =>
+          name === "isStore" ||
+          name === "addressedBy" ||
+          (name === "inDirectories" && !file.startsWith("src/indexer/"));
+        if (ts.isPropertyAccessExpression(node) && storeTest(node.name.text))
           report(node, "store-sniff", node.name.text);
+        if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
+          const name = (node.propertyName ?? node.name).getText(source);
+          if (storeTest(name)) report(node, "store-sniff", name);
         }
         if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "addressedBy") {
           report(node, "store-sniff", "addressedBy");

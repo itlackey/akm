@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261132] - 2026-11-25
+
+### Changed
+
+- Removing an asset that is a symbolic link (`akm env remove`, `akm secret remove`, a removal by `akm lint --fix`) removes the link itself and never what it points at, also when the link leaves the bundle or leads nowhere. Any link used to refuse the removal. Retiring and restoring still refuse a link, because a relative link moved into the archive would lead nowhere.
+- `akm env create <ref>` without content follows the rule a create follows for a link: a link to an existing env file inside the bundle is left as it is (exit 0), and a link that leaves the bundle or leads nowhere is refused (exit 2). Any link used to be refused.
+- `akm proposal revert` of a retirement whose `.derived` twin's archived copy was purged after the grace period restores the main asset from its recorded backup and warns that the twin is gone. It used to refuse with `Cannot revert proposal <id>: archived copy of <file> (<handle>) is missing.`
+
 ## [0.10.261131] - 2026-11-24
 
 ### Added

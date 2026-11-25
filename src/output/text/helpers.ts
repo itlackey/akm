@@ -16,10 +16,6 @@
  */
 
 export {
-  formatAddPlain,
-  formatBundleRenamePlain,
-  formatBundleShowPlain,
-  formatClonePlain,
   formatConfigPlain,
   formatCuratePlain,
   formatEnvCreatePlain,
@@ -30,23 +26,29 @@ export {
   formatEventsPlain,
   formatFeedbackPlain,
   formatImportPlain,
-  formatIndexPlain,
   formatInfoPlain,
-  formatInitPlain,
-  formatListPlain,
-  formatModelsPlain,
-  formatModelsSetPlain,
   formatRegistryAddPlain,
   formatRegistryListPlain,
   formatRegistryRemovePlain,
   formatRememberPlain,
-  formatRemovePlain,
   formatSearchPlain,
   formatSyncPlain,
-  formatUpdatePlain,
-  formatUpgradePlain,
 } from "./command-format";
 export { formatHealthPlain } from "./health-format";
+export {
+  formatAddPlain,
+  formatBundleRenamePlain,
+  formatBundleShowPlain,
+  formatClonePlain,
+  formatIndexPlain,
+  formatInitPlain,
+  formatListPlain,
+  formatModelsPlain,
+  formatModelsSetPlain,
+  formatRemovePlain,
+  formatUpdatePlain,
+  formatUpgradePlain,
+} from "./lifecycle-format";
 export { formatLintPlain } from "./lint-format";
 export {
   formatGateDecisionSummary,

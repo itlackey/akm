@@ -1,0 +1,48 @@
+{
+  "code": 0,
+  "stdout": {
+    "ok": true,
+    "fixed": [
+      {
+        "file": "knowledge/colon.md",
+        "issue": "unquoted-colon",
+        "detail": "description value contains unquoted colon: Note: with an unquoted colon",
+        "fixed": true,
+        "ref": "knowledge/colon"
+      },
+      {
+        "file": "knowledge/colon.md",
+        "issue": "missing-updated",
+        "detail": "stamped updated: 2026-11-02",
+        "fixed": true,
+        "ref": "knowledge/colon"
+      }
+    ],
+    "flagged": [],
+    "warnings": [],
+    "summary": {
+      "fixed": 2,
+      "flagged": 0,
+      "warnings": 0
+    },
+    "byRule": {},
+    "shape": "lint",
+    "schemaVersion": 1
+  },
+  "stderr": "",
+  "files": {
+    "env/dev.env": "NODE_OPTIONS=--require ./x.js\nSAFE=1\n",
+    "knowledge/colon.md": "---\ndescription: \"Note: with an unquoted colon\"\nupdated: 2026-11-02\n---\n\nNo updated field either.\n",
+    "knowledge/ok.md": "---\ndescription: A fine note\nupdated: 2026-11-01\n---\n\nFine.\n",
+    "knowledge/refs.md": "---\ndescription: Refs\nupdated: 2026-11-01\nxrefs:\n  - knowledge/ghost\n  - memories/old\n---\n\nSee [the ghost](knowledge/ghost.md) and [ok](knowledge/ok.md).\n",
+    "memories/holder.md": "---\ndescription: Holds an edge\nupdated: 2026-11-01\ncontradictedBy:\n  - memories/gone\n---\n\nBody.\n",
+    "memories/lost.derived.md": "---\ndescription: Derived with no parent\nupdated: 2026-11-01\ninferred: true\nsource: memories/nowhere\n---\n\nDerived body.\n",
+    "memories/new.md": "---\ndescription: Moved here\nupdated: 2026-11-01\n---\n\nTarget.\n",
+    "scripts/run.sh": "#!/bin/sh\necho hi\n",
+    "skills/good/SKILL.md": "---\nname: good\ndescription: A skill\nupdated: 2026-11-01\n---\n\nSkill.\n",
+    "skills/nopkg/notes.txt": "a skill folder with no SKILL.md\n",
+    "tasks/nightly.yaml": "version: 4\nuses: akm/command\nschedule: \"@daily\"\n",
+    "workflows/broken.md": "---\ntype: workflow\ndescription: Broken\nupdated: 2026-11-01\nsteps:\n  - id: work\n    output:\n      type: strig\n---\n\n## work\n\nDo it.\n",
+    "workflows/good.md": "---\ntype: workflow\ndescription: Good\nupdated: 2026-11-01\nsteps:\n  - id: one\n---\n\n## one\n\nDo it.\n"
+  }
+}

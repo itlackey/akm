@@ -13,15 +13,15 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { akmLint } from "../../src/commands/lint/index";
+import { parsePlacementRef } from "../../src/core/asset/resolve-ref";
+import type { AkmConfig } from "../../src/core/config/config";
 import {
   checkEnvForDangerousKeys,
   DANGEROUS_ENV_KEY_PATTERNS as DANGEROUS_VAULT_KEY_PATTERNS,
   DANGEROUS_ENV_KEYS as DANGEROUS_VAULT_KEYS,
   isDangerousEnvKey as isDangerousVaultKey,
-} from "../../src/commands/lint/env-key-rules";
-import { akmLint } from "../../src/commands/lint/index";
-import { parsePlacementRef } from "../../src/core/asset/resolve-ref";
-import type { AkmConfig } from "../../src/core/config/config";
+} from "../../src/core/lint/env-key-rules";
 
 /** The dangerous-key check of the env file at `envPath`; a file that is not there has no keys. */
 const checkVaultForDangerousKeys = (envPath: string, relPath: string, envRef: string) =>

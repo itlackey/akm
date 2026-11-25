@@ -29,7 +29,19 @@ import type { AssetEdit, Bundle, Diagnostic, IndexDocument, ValidateContext } fr
 import { deriveBundleIds } from "../bundle-id";
 import { type AkmConfig, loadConfig } from "../config/config";
 import { ConfigError, UsageError, type UsageErrorCode } from "../errors";
-import { type BundleSource, materialisedBundle, materialisedBundles } from "../materialised-bundles";
+
+export type BundleSource = { name: string; path: string; location?: string; adapterId?: string };
+
+/**
+ * A bundle as a caller names it to the facade: a configured bundle by its id, else the source of a directory no config
+ * names (a `--dir`, a root a stored record gives, a checkout cloned during a write), which the caller holds.
+ */
+export type BundleAddress = string | BundleSource;
+
+/** The id refs use for `bundle`. */
+export function bundleNameOf(bundle: BundleAddress): string {
+  return typeof bundle === "string" ? bundle : bundle.name;
+}
 
 export class AssetBundle {
   /** The id refs use. */
@@ -195,26 +207,16 @@ export function activeSources(config: AkmConfig): SearchSource[] {
 }
 
 /**
- * The bundle `id` names: a configured bundle (the implicit working bundle and `AKM_BUNDLE_DIR` are among the resolved
- * sources), else a directory a command materialised (`materialiseBundleDir`) that config does not name. Its adapter is
- * the one config records for it. Refused when no bundle has the id, and for a configured bundle that is disabled.
+ * The bundle `bundle` names: a source a caller holds, or a configured bundle by its id (the implicit working bundle and
+ * `AKM_BUNDLE_DIR` are among the resolved sources). Its adapter is the one config records for it. Refused when no
+ * bundle has the id, and for a configured bundle that is disabled.
  */
-export function bundleFor(id: string): AssetBundle {
-  const config = loadConfig();
-  const materialised = materialisedBundle(id, config);
-  let sources: SearchSource[] | undefined;
-  try {
-    sources = activeSources(config);
-  } catch (cause) {
-    // The configured sources need not be resolvable for a directory a command was handed.
-    if (materialised === undefined) throw cause;
-  }
-  const source = sources?.[deriveBundleIds([...sources]).indexOf(id)];
-  // The implicit working bundle (the only source config does not name) yields to a directory materialised under its id.
-  if (source && (!materialised || !assetBundleOf(materialised).exists()))
-    return assetBundleOf(sourceBundle(id, source));
-  if (materialised) return assetBundleOf(materialised);
-  throw new ConfigError(`Bundle "${id}" is not among the configured sources.`, "INVALID_CONFIG_FILE");
+export function bundleFor(bundle: BundleAddress): AssetBundle {
+  if (typeof bundle !== "string") return assetBundleOf(bundle);
+  const sources = activeSources(loadConfig());
+  const source = sources[deriveBundleIds([...sources]).indexOf(bundle)];
+  if (source) return assetBundleOf(sourceBundle(bundle, source));
+  throw new ConfigError(`Bundle "${bundle}" is not among the configured sources.`, "INVALID_CONFIG_FILE");
 }
 
 function sourceBundle(name: string, source: SearchSource): BundleSource {
@@ -237,26 +239,23 @@ export function orderedBundles(): AssetBundle[] {
 }
 
 /**
- * The bundles a lookup looks in: the configured ones, then the directories a command materialised that config does not
- * name. The implicit working bundle yields to a materialised directory that has its id. A listing of every bundle
- * (`orderedBundles`) never includes the materialised ones.
+ * The bundles a lookup looks in: the configured ones, then `held`, a source the caller holds that config does not name.
+ * The implicit working bundle yields to `held` when it has its id. A listing of every bundle (`orderedBundles`) never
+ * includes it.
  */
-export function lookupBundles(): AssetBundle[] {
-  const config = loadConfig();
-  const held = materialisedBundles(config);
+export function lookupBundles(held?: BundleAddress): AssetBundle[] {
+  const extra = typeof held === "object" ? held : undefined;
   let sources: SearchSource[] = [];
   try {
-    sources = activeSources(config);
+    sources = activeSources(loadConfig());
   } catch (error) {
-    // The configured sources can be unresolvable (no working directory) while the directories a command was handed are not.
-    if (held.length === 0) throw error;
+    // The configured sources can be unresolvable (no working directory) while the directory a command was handed is not.
+    if (extra === undefined) throw error;
   }
   const ids = deriveBundleIds(sources);
-  const heldIds = new Set(held.map((source) => source.name));
   const bundles = sources.flatMap((source, index) => {
     const id = ids[index] as string;
-    if (source.unresolved || heldIds.has(id)) return [];
-    return [assetBundleOf(sourceBundle(id, source))];
+    return source.unresolved || id === extra?.name ? [] : [assetBundleOf(sourceBundle(id, source))];
   });
-  return [...bundles, ...held.map((source) => assetBundleOf(source))];
+  return extra ? [...bundles, assetBundleOf(extra)] : bundles;
 }

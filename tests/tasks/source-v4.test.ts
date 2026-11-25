@@ -102,8 +102,8 @@ import {
   TASK_RUN_VALUE_FLAGS,
 } from "../../src/tasks/task-run-reserved-flags";
 import { detectSecretShapedParams } from "../../src/workflows/exec/param-secrets";
-import { PROGRAM_PARAM_NAME_PATTERN } from "../../src/workflows/parser";
 import { WORKFLOW_MAX_SCHEMA_BYTES } from "../../src/workflows/resource-limits";
+import { PROGRAM_PARAM_NAME_PATTERN } from "../../src/workflows/step-fields";
 import { overrideSeam } from "../_helpers/seams";
 
 const { parseTaskSource, peekTaskSourceVersion } = ParseTaskSourceModule;

@@ -18,11 +18,11 @@ import type { FetcherContext } from "../../src/sources/snapshot-fetchers/types";
 import { fetchWebsiteMarkdownSnapshot } from "../../src/sources/snapshot-fetchers/website-ingest";
 import xFetcher, {
   buildXRssUrl,
-  extractPublicXArticle,
   extractXResource,
   extractXUsername,
   type XResource,
 } from "../../src/sources/snapshot-fetchers/x";
+import { extractPublicXArticle } from "../../src/sources/snapshot-fetchers/x-article";
 import { withEnv, withMockedFetch } from "../_helpers/sandbox";
 
 // Hermetic by construction: allowPrivateHosts short-circuits the resolve-then-

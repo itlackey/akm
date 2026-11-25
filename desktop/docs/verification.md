@@ -58,7 +58,7 @@ alone are not a visual review.
 Packaging is proven on Linux x64, macOS arm64 and Windows x64 by CI (`desktop-package` in
 `.github/workflows/ci.yml`, on a release pull request): each builds the installers and `npm run smoke` starts the packaged
 app headless (its own server, answering `/api/desktop` with the embedded version, and serving the
-UI). Pull requests run only Desktop's `npm run check` and `npm run build`; its tests run as the `desktop-tests` gate
+UI). Pull requests run only Desktop's `npm run check` and `npm run build`; its tests run as the `desktop-tests`, `desktop-e2e` and `desktop-usability` gates
 of the Release workflow. The native-window tests (`test:electron`) run on Linux under Xvfb. Signed installers and
 macOS/Windows window tests are not established by these tests. The release workflow can be
 rehearsed without publishing: `gh workflow run release.yml --ref <branch> -f dry_run=true`.

@@ -25,11 +25,12 @@ import { adapterWrites } from "../../core/assets/gate";
 import { readAsset } from "../../core/assets/read";
 import { embedPendingWrites } from "../../core/assets/type";
 import { addressOf, writeAssets } from "../../core/assets/write";
-import { materialiseBundleDir } from "../../core/bundle-at-dir";
+import { bundleAt } from "../../core/bundle-at-dir";
 import { bundleIdForDir } from "../../core/bundle-id";
 import { isHttpUrl, isWithin, resolveStashDir, safeRealpath, samePath, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { refToRelPath, resolveRefPathInStash } from "../../core/lint/base-linter";
 import { resolveBundleWriteTarget, resolveMutationTarget } from "../../core/mutation-target";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { warn } from "../../core/warn";
@@ -49,7 +50,6 @@ import {
   shouldAllowPrivateWebsiteUrlForTests,
 } from "../../sources/snapshot-fetchers/website-ingest";
 import { writeSupersededEdge } from "../improve/memory/memory-belief";
-import { refToRelPath, resolveRefPathInStash } from "../lint/base-linter";
 
 const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
 
@@ -286,7 +286,7 @@ function resolveWriteRefRoots(target?: string, targetFlag?: string): { roots: Wr
         // The demotion of a superseded asset is an update of knowledge or a memory: its bundle's adapter writes them.
         const writesAssets = ((): boolean => {
           try {
-            return adapterWrites(materialiseBundleDir(p), "memory");
+            return adapterWrites(bundleAt(p), "memory");
           } catch {
             return false;
           }
@@ -749,21 +749,20 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
   // and revision checks, the write, the demotions and the boundary commit. The
   // commit pushes inside the lease on purpose: a push from a writer that has
   // released it would race the next writer's commit on the same branch (the
-  // conflicting-commit hazard the lease exists for), and the sync write path
-  // (`withWriteTargetMutation`) draws the same boundary. Indexing is a
+  // conflicting-commit hazard the lease exists for). Indexing is a
   // regenerable cache and runs after release.
   const written = await withAssetMutationLease("markdown-write", async () => {
     // Pre-flight: existence + force semantics. The helper itself overwrites
     // unconditionally; the CLI surfaces a friendlier UsageError before any
     // disk activity when --force is absent.
-    if (addressOf(source.name, conceptIdFromTypeName(options.type, normalizedName)).exists && !options.force) {
+    if (addressOf(source, conceptIdFromTypeName(options.type, normalizedName)).exists && !options.force) {
       throw new UsageError(
         `${options.type === "knowledge" ? "Knowledge" : "Memory"} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
         "RESOURCE_ALREADY_EXISTS",
       );
     }
     if (options.expectedContentHash !== undefined) {
-      const existing = readAsset(source.name, conceptIdFromTypeName(options.type, normalizedName))?.entry.bytes();
+      const existing = readAsset(source, conceptIdFromTypeName(options.type, normalizedName))?.entry.bytes();
       if (!existing || createHash("sha256").update(existing).digest("hex") !== options.expectedContentHash) {
         throw new UsageError(
           "The document changed or was removed after it was loaded. Reload its source before saving.",
@@ -819,7 +818,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
       const oldTarget = samePath(item.stashRoot, source.path) ? target : writeTargetAt(item.stashRoot);
       let oldFrontmatter: string | null = null;
       try {
-        const old = readAsset(oldTarget.source.name, oldConceptId);
+        const old = readAsset(oldTarget.source, oldConceptId);
         if (old) oldFrontmatter = parseFrontmatter(old.entry.content()).frontmatter;
       } catch {
         // Unreadable asset — let writeSupersededEdge surface the real error.
@@ -876,7 +875,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
         // Only point at the canonical organization fact when it actually
         // exists — resolveStashStandards fires for ANY convention/meta fact,
         // and a dead `akm show` pointer is worse than generic wording.
-        hint = readAsset(source.name, "facts/conventions/organization")
+        hint = readAsset(source, "facts/conventions/organization")
           ? `Wrote to the ${options.type} root. This stash has placement conventions — see \`akm show facts/conventions/organization\`.`
           : `Wrote to the ${options.type} root. This stash has placement conventions — see the convention facts under its facts/ directory.`;
       }

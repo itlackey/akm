@@ -1,0 +1,3 @@
+version: 4
+uses: akm/command
+schedule: "@daily"

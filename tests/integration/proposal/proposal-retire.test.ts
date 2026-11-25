@@ -56,6 +56,7 @@ import { stateBundleId } from "../../../src/core/bundle-at-dir";
 import { saveConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
 import { openStateDatabase } from "../../../src/core/state-db";
+import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
 import { upsertProposal } from "../../../src/storage/repositories/proposals-repository";
@@ -983,6 +984,55 @@ describe("akm proposal revert on a retire proposal", () => {
       expect(result.proposal.status).toBe("reverted");
       expect(fs.readFileSync(parentPath, "utf8")).toBe(original);
       expect(fs.existsSync(tombstonePath)).toBe(false); // removed once the revert is recorded
+    });
+
+    test("a REAL purge of a primary and its derived twin still reverts the primary and reports the twin as gone", async () => {
+      const parentPath = writeAsset("memories/parent.md", "description: parent");
+      const original = fs.readFileSync(parentPath, "utf8");
+      const twinPath = writeAsset(
+        "memories/parent.derived.md",
+        "inferred: true\nsource: memories/parent\ndescription: derived child",
+      );
+      const newPath = writeAsset("memories/new-note.md", "description: a new note");
+      const config = makeConfig(storage.stashDir);
+      const proposal = createRetireProposal(storage.stashDir, {
+        ref: "memories/parent",
+        source: "consolidate-pair",
+        retirement: retirement({
+          retiredPath: parentPath,
+          retiredRef: "memories/parent",
+          successorPath: newPath,
+          successorRef: "memories/new-note",
+        }),
+      });
+      await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
+      const twinEntry = findArchiveEntry("memories/parent.derived.md");
+      const retiredAt = parseFrontmatter(fs.readFileSync(path.join(twinEntry.dirAbs, "cleanup.md"), "utf8")).data
+        .retiredAt;
+      expect(typeof retiredAt).toBe("string");
+      initGitRepo();
+      commitAll("commit both archived retirements");
+
+      const pastGrace = new Date(Date.parse(retiredAt as string) + (RETIRE_GRACE_DAYS + 1) * 86_400_000);
+      expect(purgeGracedArchive(storage.stashDir, pastGrace)).toEqual({ purgedDirs: 2, purgedFiles: 2 });
+      expect(fs.existsSync(twinEntry.archivedAbs)).toBe(false);
+
+      const warnings: string[] = [];
+      _setWarnSinkForTests((_level, args) => warnings.push(args.join(" ")));
+      let result: Awaited<ReturnType<typeof akmProposalRevert>>;
+      try {
+        result = await akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config });
+      } finally {
+        _setWarnSinkForTests(undefined);
+      }
+
+      expect(result.proposal.status).toBe("reverted");
+      expect(fs.readFileSync(parentPath, "utf8")).toBe(original);
+      expect(fs.existsSync(twinPath)).toBe(false);
+      expect(fs.existsSync(archiveRootOf()) ? fs.readdirSync(archiveRootOf()) : []).toEqual([]);
+      const warningText = warnings.join("\n");
+      expect(warningText).toContain("memories/parent.derived");
+      expect(warningText).toContain("gone");
     });
   });
 });

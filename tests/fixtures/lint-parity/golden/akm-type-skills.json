@@ -1,0 +1,55 @@
+{
+  "code": 0,
+  "stdout": {
+    "ok": true,
+    "fixed": [],
+    "flagged": [
+      {
+        "file": "skills/nopkg",
+        "issue": "missing-skill-md",
+        "detail": "no SKILL.md in skills/nopkg/",
+        "fixed": false
+      },
+      {
+        "file": "env/dev.env",
+        "issue": "dangerous-env-key",
+        "detail": "Env key `NODE_OPTIONS` can be used to hijack process execution when injected with `--env`. Ref: env/dev. Review this file before running `akm run --env` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on previous line)",
+        "fixed": false,
+        "ref": "env/dev"
+      },
+      {
+        "file": "env/prod.env",
+        "issue": "dangerous-env-key",
+        "detail": "Env key `LD_PRELOAD` can be used to hijack process execution when injected with `--env`. Ref: envb//env/prod. Review this file before running `akm run --env` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on previous line)",
+        "fixed": false,
+        "ref": "env/prod"
+      },
+      {
+        "file": "secrets/token.env",
+        "issue": "dangerous-env-key",
+        "detail": "Env key `PATH` can be used to hijack process execution when injected with `--env`. Ref: envb//secrets/token.env. Review this file before running `akm run --env` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on previous line)",
+        "fixed": false,
+        "ref": "secrets/token.env"
+      }
+    ],
+    "warnings": [],
+    "summary": {
+      "fixed": 0,
+      "flagged": 4,
+      "warnings": 0
+    },
+    "byRule": {
+      "missing-skill-md": {
+        "findings": 1,
+        "assets": 1
+      },
+      "dangerous-env-key": {
+        "findings": 3,
+        "assets": 3
+      }
+    },
+    "shape": "lint",
+    "schemaVersion": 1
+  },
+  "stderr": ""
+}

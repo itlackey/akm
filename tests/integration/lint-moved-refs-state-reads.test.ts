@@ -95,7 +95,7 @@ describe("lint reads the recorded moves only for a ref that did not resolve", ()
     await movedFixture();
     const before = dataFiles();
     let reads = 0;
-    const { readRecordedMoves } = await import("../../src/commands/lint/moved-refs");
+    const { readRecordedMoves } = await import("../../src/core/lint/moved-refs");
 
     const result = await akmLint({
       dir: storage.stashDir,

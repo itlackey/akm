@@ -13,7 +13,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { LintIssue } from "./types";
+import type { LintIssue } from "../../core/lint/types";
 
 /** Injectable git seam: the real one shells out; tests supply a fake. */
 export type GitRunner = (bundleRoot: string, args: string[]) => { ok: boolean; stdout: string };

@@ -182,7 +182,7 @@ describe("a proposal's findings and display paths name the bundle's file", () =>
   });
 
   test("a proposal for a type its bundle's adapter does not write keeps its display path", async () => {
-    const { diffLoadedProposal } = await import("../../../src/commands/proposal/repository");
+    const { diffLoadedProposal } = await import("../../../src/commands/proposal/accept");
     const { loadConfig } = await import("../../../src/core/config/config");
     writeSandboxConfig({
       bundles: {

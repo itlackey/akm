@@ -26,6 +26,7 @@
  */
 
 import type { AdapterRenderedExecutionSource } from "../../execution/source";
+import type { LintFindings, LintRun } from "../lint/types";
 import type { AssetEdit, Bundle, Diagnostic, IndexDocument, ValidateContext } from "./types";
 
 /** One entry of a bundle: an asset as its adapter holds it. */
@@ -149,8 +150,6 @@ export interface BundleAdapter {
   readonly writes: readonly string[];
   /** Types it retires recoverably; a subset of `writes`. Empty: it deletes only. */
   readonly retires: readonly string[];
-  /** Its own checks are the whole `akm lint` of a primary bundle it holds: the cross-bundle sweeps do not run. */
-  readonly lintsAlone?: boolean;
 
   /** Whether the bundle's storage is there. It reads no asset and never prompts. */
   exists(b: Bundle): boolean;
@@ -194,6 +193,13 @@ export interface BundleAdapter {
    * with no files has nothing to check. Cross-bundle ref existence is a core base check, not an adapter concern.
    */
   validate(b: Bundle, edits: AssetEdit[], ctx: ValidateContext): Promise<Diagnostic[]>;
+
+  /**
+   * `akm lint` of the bundle, or of one file of it (`run.file`): what the adapter finds, in the order `akm lint` prints
+   * it. Findings come from `validate`, which never writes; a fix (`--fix`, `--fix-moved-refs`, `--prune-dangling-edges`)
+   * is an asset write through `writeAssets`. Absent: `validate`'s findings plus the cross-bundle `.env` sweep.
+   */
+  lint?(run: LintRun): Promise<LintFindings>;
 
   /**
    * Where a `create` of `asset` would go, without writing: its concept id and, for an adapter that keeps assets as

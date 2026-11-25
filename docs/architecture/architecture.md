@@ -349,9 +349,9 @@ knowledge. That is a convention that code review holds (core principle 2), not
 a lint rule. Where a step is meaningful only for a publication-backed target,
 `write-source.ts` exposes a kind-neutral wrapper that does the work for a git
 target and does nothing otherwise:
-`prepareWriteTargetForMutation`, `commitWriteTargetBoundary`, and
-`withWriteTargetMutation` (write the file, `git add` exactly the recorded
-paths, commit, push with `--force-with-lease` when configured). Recording a
+`prepareWriteTargetForMutation` and `commitWriteTargetBoundary` (`git add`
+exactly the recorded paths, commit, push with `--force-with-lease` when
+configured). Recording a
 kind for display (`targetKind: target.source.kind`) is not branching and stays
 in the command layer.
 

@@ -45,7 +45,7 @@ export async function importTaskFile(
   const target = resolveWriteTarget(config, input.target, { requireWritable: true, flag: "--bundle" });
   const file = assetPathForName("task", path.join(target.source.path, "tasks"), id);
   return withSchedulerLock(async () => {
-    const existed = addressOf(target.source.name, `tasks/${id}`).exists;
+    const existed = addressOf(target.source, `tasks/${id}`).exists;
     if (existed && !input.force) {
       throw new UsageError(`Task "${id}" already exists. Pass --force to overwrite.`, "RESOURCE_ALREADY_EXISTS");
     }

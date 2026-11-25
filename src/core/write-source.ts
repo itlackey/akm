@@ -20,9 +20,7 @@
  *
  * Nothing commits per asset (issue #507). Callers write assets through
  * `writeAssets` (`src/core/assets/write.ts`) and plain files through
- * {@link writeSourceFile}, then fire {@link commitWriteTargetBoundary} once — or
- * wrap a custom mutation in {@link withWriteTargetMutation}, which does both
- * under the asset lease. An
+ * {@link writeSourceFile}, then fire {@link commitWriteTargetBoundary} once. An
  * accepted proposal commits its own paths ({@link commitAcceptedPaths}), on a
  * filesystem stash that is a git repository too. A process that accepts many
  * proposals collects them and commits once at its boundary (#1185).
@@ -30,7 +28,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { withAssetMutationLeaseSync } from "../indexer/index-writer-lock";
 import { lockContentRootFor } from "../integrations/lockfile";
 import {
   GitStashPushError,
@@ -44,9 +41,9 @@ import {
 import { listIgnoredExactPaths } from "../sources/providers/git-stash";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName } from "./asset/resolve-ref";
-import { assertWritableFile } from "./assets/files";
+import { assertLinksLeadInside } from "./assets/files";
 import { assertAdapterWrites, detectBundleAdapter } from "./assets/gate";
-import { materialiseBundleDir } from "./bundle-at-dir";
+import { bundleIdForDir } from "./bundle-id";
 import { existingFileMode, isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
 import { bundleAtDir, loadConfig, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
@@ -223,13 +220,13 @@ export function resolveWorkingStashTarget(
  * The write target of the directory `dir` a command holds (the working stash, a `--dir`, a root a stored record names).
  * A directory a configured bundle holds is that bundle's target, as {@link resolveWriteTarget} resolves it: its
  * permission, its kind and its publication are config's, and a disabled one is refused. Any other directory is
- * materialised and takes writes as a plain filesystem bundle with the adapter its root's probe finds.
+ * a plain filesystem bundle that takes writes, with the adapter its root's probe finds.
  */
 export function writeTargetAt(dir: string, config: AkmConfig = loadConfig()): ResolvedWriteTarget {
   const configured = bundleAtDir(config, dir);
   if (configured !== undefined) return resolveWriteTarget(config, configured, { requireWritable: false });
   const adapterId = detectBundleAdapter(dir);
-  const name = materialiseBundleDir(dir, config, { adapterId });
+  const name = bundleIdForDir(dir, new Set(Object.keys(config.bundles ?? {})));
   return {
     source: { kind: "filesystem", name, path: dir, adapterId },
     config: { type: "filesystem", name, path: dir, writable: true },
@@ -340,7 +337,7 @@ function checkWriteTarget(
   target: ResolvedWriteTarget,
   kind: WriteKind = {},
 ): { target: ResolvedWriteTarget; repoPath?: string } {
-  if (!kind.plain) assertAdapterWrites(target.source.name, kind.assetType);
+  if (!kind.plain) assertAdapterWrites(target.source, kind.assetType);
   if (target.source.kind !== "git") return { target };
 
   const contentRoot = path.resolve(target.source.path);
@@ -422,7 +419,7 @@ export function prepareWriteTargetForMutation(target: ResolvedWriteTarget, kind:
 /** The gates an asset write passes: {@link assertPlainWritable}, and an adapter that writes assets of `type`. */
 export function assertWritableSource(source: WriteTargetSource, config: SourceConfigEntry, type?: string): void {
   assertPlainWritable(source, config);
-  assertAdapterWrites(source.name, type);
+  assertAdapterWrites(source, type);
 }
 
 /** The gates of a plain file write: the source takes writes and is a kind akm writes, whatever its adapter. */
@@ -495,31 +492,12 @@ export function recordWriteTargetPath(source: WriteTargetSource, filePath: strin
 }
 
 /**
- * Refuse a write path outside the source root, or one that passes through a
- * symbolic link below it (a linked directory would redirect the write out of
- * the bundle). The source root itself may be a symlink.
+ * Refuse a write path outside the source root. A symbolic link below it must
+ * lead to an existing file or folder inside the bundle; a link leaving the
+ * bundle or leading nowhere is refused. The source root itself may be a symlink.
  */
 export function assertWritePathsInsideSource(source: WriteTargetSource, filePaths: readonly string[]): void {
-  for (const filePath of filePaths) assertWritableFile(source.path, source.name, filePath);
-}
-
-/**
- * Run `mutate` under the shared asset-mutation lease, then commit exactly
- * `paths` on a git target (a no-op on filesystem targets). Every path must
- * stay inside the source root.
- */
-export function withWriteTargetMutation<T>(
-  target: ResolvedWriteTarget,
-  paths: string[],
-  options: { purpose: string; message: string },
-  mutate: () => T,
-): T {
-  return withAssetMutationLeaseSync(options.purpose, () => {
-    assertWritePathsInsideSource(target.source, paths);
-    const result = mutate();
-    commitWriteTargetBoundary(target, options.message, { paths });
-    return result;
-  });
+  for (const filePath of filePaths) assertLinksLeadInside(source.path, source.name, filePath);
 }
 
 /**

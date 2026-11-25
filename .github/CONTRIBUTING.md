@@ -23,7 +23,7 @@ Desktop lives in [desktop/](../desktop/README.md), with its own dependency graph
 and lockfile. After the root install, `bun run desktop:setup` builds and packs
 this checkout's CLI and installs it into Desktop; no private package is needed.
 Run the Desktop README's type, browser and native tests when changing it: pull requests run only Desktop's check
-and build, and its tests gate releases (the Release workflow's `desktop-tests`). The
+and build, and its tests gate releases (the Release workflow's `desktop-tests`, `desktop-e2e` and `desktop-usability`). The
 normal CLI build and npm package do not include Desktop or its dependencies.
 
 ### Dependency updates
@@ -92,7 +92,9 @@ bun run lint:fix   # Biome with --write; read git diff afterwards
 bun run lint       # what CI runs: Biome, the secret-resolver and shipped-assets lints, the doc-example lint, the lockfile lint
 ```
 Every pull request runs the fast gate (`bun run check`: lint, types, the unit
-suite) and the three architecture checks (`bun run test:architecture`); the
+suite), the three architecture checks (`bun run test:architecture`) and the FTA complexity gate (no file may score over 100,
+and none scoring over 75 may score higher than at the branch the pull request merges into; run it locally with
+`bun run report:complexity --base origin/<release branch>`); the
 integration suite, with the Node fallback smoke and the upgrade rehearsals,
 runs only at release, as gates in the Release workflow (see the
 [release checklist](../docs/maintainers/release-checklist.md)). Push in batches

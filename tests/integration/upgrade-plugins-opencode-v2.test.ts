@@ -7,7 +7,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { openCodeConfigSpec, runUpgrade, type UpgradeRunDependencies } from "../../src/commands/sources/plugin-upgrade";
+import { runUpgrade, type UpgradeRunDependencies } from "../../src/commands/sources/plugin-upgrade";
+import { openCodeConfigSpec } from "../../src/commands/sources/plugin-upgrade-opencode";
 import { OPENCODE_V1, OPENCODE_V2 } from "../../src/integrations/harnesses/opencode/plugin-layout";
 import type { UpgradeCheckResponse, UpgradeResponse } from "../../src/sources/types";
 import { makeSandboxDir, withEnv } from "../_helpers/sandbox";

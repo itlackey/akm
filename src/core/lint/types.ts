@@ -2,8 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { StalePathFields } from "../../core/asset/stale-path";
-import type { MovedRefs } from "./moved-refs";
+import type { SearchSource } from "../../indexer/search/search-source";
+import type { StalePathFields } from "../asset/stale-path";
+import type { AkmConfig } from "../config/config";
+import type { MovedRefs, ReadMoves } from "./moved-refs";
 
 /** Every rule `akm lint` reports; a rule name in `lint.skip` or `--rule` is one of these. */
 export const LINT_RULES = [
@@ -60,7 +62,7 @@ export const LINT_RULES = [
    * `string` — any current or future `BundleAdapter.validate()` may emit a
    * code this closed lint-command union has never heard of. Rather than
    * silently dropping that finding (or throwing at the CLI boundary), the
-   * lint→adapter mapping (`commands/lint/index.ts#diagnosticToLintIssue`)
+   * lint→adapter mapping (`core/lint/diagnostics.ts#diagnosticToLintIssue`)
    * folds an unrecognized code onto this member and preserves the ORIGINAL
    * code in `detail` (prefixed `[<issue>] `) so nothing an adapter reports is
    * ever lost, even though the closed union can't type it precisely.
@@ -75,7 +77,7 @@ export type LintIssueType = (typeof LINT_RULES)[number];
  * into `flagged`, so `--fail-on-flagged` cannot fail a run over one.
  *
  * ONE home for that decision. EVERY routing point consults it — the adapter
- * path (`lint/index.ts#lintViaAdapter`), the sweep's per-file loop, and the
+ * path (`adapters/akm-lint-run.ts`), the sweep's per-file loop, and the
  * sweep's workflow-frontend pass — so a new advisory code cannot be classified
  * correctly in one place and land in `flagged` (exit 1) in another; a finding
  * is never filed by which producer emitted it. A future advisory belongs in
@@ -147,4 +149,62 @@ export interface LintContext {
   write?: (raw: string) => void;
   /** Delete the asset (the fix of a stub; it throws when it cannot be deleted). */
   remove?: () => void;
+}
+
+/** What a lint pass found, before skips, refs and the per-rule summary are applied. */
+export interface LintFindings {
+  fixed: LintIssue[];
+  flagged: LintIssue[];
+  warnings: LintIssue[];
+}
+
+export interface AkmLintOptions {
+  fix?: boolean;
+  /**
+   * #884 opt-in repair: drop belief-channel entries whose target resolves to
+   * neither a live file nor a prune tombstone. Independent of `fix` — see the
+   * flag's rationale in `commands/agent/contribute-cli.ts`.
+   */
+  pruneDanglingEdges?: boolean;
+  /**
+   * Rewrite the links to refs the index recorded as moved, and nothing else (`fix` rewrites them too). Not a command
+   * flag: the workspace's "update links" is this.
+   */
+  fixMovedRefs?: boolean;
+  dir?: string;
+  config?: AkmConfig;
+  typeFilter?: string;
+  /** Only report this rule's findings (listing only: it cannot combine with a fix). */
+  rule?: string;
+  /** Lint this one file instead of a whole bundle (`akm lint <file>`). */
+  file?: string;
+  /**
+   * How the recorded moves are read, asked only when a ref did not resolve. A caller that holds its own connection to
+   * state.db (the improve dry run's snapshot) passes it; otherwise they are read through the ordinary read-only one.
+   */
+  readMoves?: ReadMoves;
+  /**
+   * Also check the keyrings and vaults among the configured bundles through their adapters (a name akm cannot list, two
+   * entries of one name). `akm lint` without `--dir` or a file asks; a store that cannot be reached is skipped.
+   */
+  stores?: boolean;
+}
+
+/** The bundle a lint pass reads: the one the facade holds at `path`. */
+export interface LintBundle {
+  name: string;
+  path: string;
+  adapterId?: string;
+}
+
+/** What `akm lint` asks of a bundle's adapter: lint the bundle (or, with `file`, one file of it) and report what it found. */
+export interface LintRun {
+  bundle: LintBundle;
+  /** The other configured bundles' roots, for the checks that read across bundles. */
+  extraStashRoots: string[];
+  sources: SearchSource[];
+  cfg: AkmConfig;
+  options: AkmLintOptions;
+  /** `akm lint <file>`: the file as the user named it and its real path; only its findings are wanted. */
+  file?: { given: string; real: string };
 }

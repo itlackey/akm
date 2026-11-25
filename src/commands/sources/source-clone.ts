@@ -12,10 +12,11 @@ import { isBundleSlug, makeBundleRef } from "../../core/asset/asset-ref";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, replaceFrontmatterBlocks } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parseQualifiedPlacementRef } from "../../core/asset/resolve-ref";
+import { bundleNameOf } from "../../core/assets/gate";
 import { type Asset, assetAtKey, findAsset, packageFilesAt } from "../../core/assets/read";
 import { assetTypeFresh, embedPendingWrites, indexedPathOf } from "../../core/assets/type";
 import { writeAssets } from "../../core/assets/write";
-import { materialiseBundleDir } from "../../core/bundle-at-dir";
+import { bundleAt } from "../../core/bundle-at-dir";
 import { isWithin, relativeToRoot, safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -236,7 +237,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   if (!sourceSource || !sourceKey) {
     throw new NotFoundError(`Source asset not found for ref: ${options.sourceRef}`, "ASSET_NOT_FOUND");
   }
-  const sourceBundle = materialiseBundleDir(sourceSource.path);
+  const sourceBundle = bundleAt(sourceSource.path);
   const key = sourceKey.split(path.sep).join("/");
   const stampMarkdown = (bytes: Buffer): Buffer => {
     const stamped = stampedOrigin(bytes.toString("utf8"), originRef);
@@ -387,9 +388,9 @@ function lstatIfExists(filePath: string): fs.Stats | undefined {
 
 /** The asset `conceptId` names in the bundle at `source`, and the file that holds it as authored (not a link's target). */
 function heldFile(source: SearchSource, conceptId: string): { asset: Asset; file: string } | undefined {
-  const bundle = materialiseBundleDir(source.path);
-  const ref = makeBundleRef(bundle, conceptId);
-  const asset = findAsset(ref);
+  const bundle = bundleAt(source.path);
+  const ref = makeBundleRef(bundleNameOf(bundle), conceptId);
+  const asset = findAsset(ref, bundle);
   const file = asset ? indexedPathOf(asset) : "";
   return asset && file ? { asset, file } : undefined;
 }

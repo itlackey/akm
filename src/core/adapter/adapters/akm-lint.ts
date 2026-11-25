@@ -42,7 +42,7 @@
  * Imported ONLY by `akm-adapter.ts` (no inbound `src/` edge) → can never join a
  * cycle. It VALUE-imports the one `compileWorkflowSource` frontend and the pure
  * predicate `isDangerousEnvKey`
- * from `commands/lint/env-key-rules` — the predicate is imported, not copied,
+ * from `core/lint/env-key-rules` — the predicate is imported, not copied,
  * precisely so the 40+ security-sensitive dangerous-key names cannot drift from
  * the canonical set; importing it is ratchet-neutral (verified: 18). The small
  * key-scan / suppression-comment logic IS ported (content-based, reads the
@@ -52,7 +52,6 @@
  */
 
 import path from "node:path";
-import { isDangerousEnvKey } from "../../../commands/lint/env-key-rules";
 import { backendNameForPlatform } from "../../../tasks/backends";
 import { assertTaskScheduleCronValid, assertTaskScheduleInputsSatisfyContract } from "../../../tasks/schedule-gates";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
@@ -62,13 +61,14 @@ import { type RuleScope, ruleApplies } from "../../asset/lint-text";
 import { conceptIdForStashFile } from "../../asset/resolve-ref";
 import { KNOWN_CATEGORIES } from "../../asset/type-keys";
 import { isAkmRegistryCachePath, scanEnvKeyNames } from "../../common";
+import { isDangerousEnvKey } from "../../lint/env-key-rules";
 import type { Bundle } from "../types";
 import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 
 /** Placeholder markers a workflow stub carries — `commands/lint/workflow-linter.ts:10`. */
 const PLACEHOLDER_STRINGS = ["Describe what this workflow accomplishes", "Example Workflow"];
 
-/** Inline suppression token — `commands/lint/env-key-rules.ts:138` (not exported there; reproduced verbatim). */
+/** Inline suppression token — `core/lint/env-key-rules.ts:138` (not exported there; reproduced verbatim). */
 const SUPPRESSION_COMMENT = "# akm-lint-ok: dangerous-env-key";
 
 // ── BaseLinter protected-method ports (base-linter.ts:520-551) ───────────────
@@ -430,7 +430,7 @@ function lineOf(err: { line?: number }): { line?: number } {
 /**
  * One workflow frontend finding. The issue code is narrowed to the only two
  * codes this pass emits, so a caller can route the result onto its own closed
- * issue union (`commands/lint/types.ts`'s `LintIssueType`) without a cast.
+ * issue union (`core/lint/types.ts`'s `LintIssueType`) without a cast.
  */
 export type WorkflowFrontendDiagnostic = FileDiagnostic & {
   issue: "invalid-workflow-structure" | "workflow-warning";

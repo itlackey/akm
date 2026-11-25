@@ -5,12 +5,12 @@
 /** What a test that wrote files by hand does to have them indexed: `indexFiles` for the bundle at the stash directory. */
 
 import { indexFiles } from "../../src/core/assets/files";
-import { materialiseBundleDir } from "../../src/core/bundle-at-dir";
+import { bundleAt } from "../../src/core/bundle-at-dir";
 
 export async function indexWrittenAssets(
   stashDir: string,
   files: string[],
   options: { bundleId?: string } = {},
 ): Promise<boolean> {
-  return indexFiles(options.bundleId ?? materialiseBundleDir(stashDir), files);
+  return indexFiles(options.bundleId ?? bundleAt(stashDir), files);
 }

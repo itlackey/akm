@@ -29,7 +29,7 @@
 
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { addressOf } from "../../core/assets/write";
-import { materialiseBundleDir } from "../../core/bundle-at-dir";
+import { bundleAt } from "../../core/bundle-at-dir";
 import type { AkmConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { appendEvent, type EventsContext } from "../../core/events";
@@ -52,18 +52,20 @@ import {
 import { resolveImproveExecution } from "../improve/execution";
 import { assetInStash } from "../improve/indexed-asset";
 import { errMessage } from "../improve/stage";
-import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
-import { isRetireProposal, PAIR_PASS_GATE, type ProposalDecider, STALE_TARGET_GATE_REASON } from "./proposal-types";
 import {
   type AcceptCommitCollector,
   commitCollectedAccepts,
+  preflightProposalPromotion,
+  readFreshProposalTarget,
+} from "./accept";
+import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
+import { isRetireProposal, PAIR_PASS_GATE, type ProposalDecider, STALE_TARGET_GATE_REASON } from "./proposal-types";
+import {
   listProposals,
   listProposalsReadOnly,
   type Proposal,
-  preflightProposalPromotion,
   proposalContent,
   proposalContentHash,
-  readFreshProposalTarget,
   recordGateDecision,
 } from "./repository";
 
@@ -136,7 +138,6 @@ export function isPromotionProposal(proposal: Proposal): boolean {
 /** An empty diff: no non-blank body line outside the frontmatter. */
 export function isEmptyDiff(proposal: Proposal): boolean {
   const content = proposalContent(proposal);
-  if (content.trim().length === 0) return true;
   return !parseFrontmatter(content)
     .content.split("\n")
     .some((line) => line.trim().length > 0);
@@ -193,7 +194,7 @@ async function acceptProposal(
         ...(opts.target ? { target: opts.target } : {}),
         gateDecision,
       });
-      readFreshProposalTarget(proposal, preflight.target.source.name, preflight.ref, preflight.stampedContent);
+      readFreshProposalTarget(proposal, preflight.target.source, preflight.ref, preflight.stampedContent);
     }
     return "promoted";
   } catch (err) {
@@ -585,7 +586,7 @@ function promotionNeighbours(
 ): ReturnType<typeof nearestKnowledgeNotes> {
   if (!isPromotionProposal(proposal) || proposal.promotionSource === undefined) return [];
   try {
-    const memoryPath = addressOf(materialiseBundleDir(stashDir), proposal.promotionSource).file;
+    const memoryPath = addressOf(bundleAt(stashDir), proposal.promotionSource).file;
     if (!memoryPath) return [];
     const source = assetInStash(stashDir, proposal.promotionSource)?.entry.content();
     if (source === undefined) return [];

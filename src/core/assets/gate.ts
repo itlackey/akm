@@ -6,6 +6,8 @@
 
 import type { AdapterRenderedExecutionSource } from "../../execution/source";
 import { akmAdapter } from "../adapter/adapters/akm-adapter";
+import { lintByValidateAndEnvSweep } from "../adapter/adapters/akm-lint-run";
+import { lintAkmFile, lintAkmText } from "../adapter/adapters/akm-sweep";
 import type { AssetEntry } from "../adapter/bundle-adapter";
 import { bundleAdapterId, detectAdapterId } from "../adapter/detect-adapter";
 import {
@@ -16,16 +18,18 @@ import {
   requireAdapter,
 } from "../adapter/registry";
 import type { Bundle } from "../adapter/types";
+import type { AkmConfig } from "../config/config";
 import { ConfigError, UsageError, type UsageErrorCode } from "../errors";
-import { assetBundleOf, bundleFor } from "./bundle";
+import type { AkmLintOptions, LintFindings, LintRun } from "../lint/types";
+import { assetBundleOf, type BundleAddress, bundleFor } from "./bundle";
 
-export { activeSources } from "./bundle";
+export { activeSources, type BundleAddress, bundleNameOf } from "./bundle";
 
 /**
  * Refuse an asset write the bundle's adapter does not make: an adapter that writes nothing, or (with `type`) one
  * that does not write assets of that type.
  */
-export function assertAdapterWrites(bundle: string, type?: string): void {
+export function assertAdapterWrites(bundle: BundleAddress, type?: string): void {
   bundleFor(bundle).assertWrites(type);
 }
 
@@ -44,17 +48,17 @@ export function adapterWrites(bundle: string | BundleRecord, type: string): bool
 }
 
 /** What the bundle's adapter puts before an asset's name in the concept id a create of `type` gives (`tasks/`), or "". */
-export function placedPrefixOf(bundle: string, type: string): string {
+export function placedPrefixOf(bundle: BundleAddress, type: string): string {
   return bundleFor(bundle).prefixOf(type);
 }
 
 /** The id of the adapter that reads the bundle, for a message that names it. */
-export function adapterNameOf(bundle: string): string {
+export function adapterNameOf(bundle: BundleAddress): string {
   return bundleFor(bundle).adapterId;
 }
 
 /** Refuse with a message naming the bundle and its adapter: `Bundle "x" uses adapter "y", which <what>.` */
-export function refuseByAdapter(bundle: string, what: string, code: UsageErrorCode): never {
+export function refuseByAdapter(bundle: BundleAddress, what: string, code: UsageErrorCode): never {
   return bundleFor(bundle).refuse(what, code);
 }
 
@@ -86,16 +90,26 @@ export function knownAdapterIds(): string[] {
 }
 
 /**
- * Whether the folders of the bundle's adapter declare the types of what they hold (an akm bundle's `memories/`):
- * `akm lint` sweeps such a bundle folder by folder, and its `--type` names a folder.
+ * `akm lint` of a bundle, or of one file of it (`run.file`), by its adapter: what the adapter finds, fixes written as
+ * asset writes. An adapter without a `lint` of its own is checked by its `validate` and the cross-bundle `.env` sweep.
  */
-export function adapterDeclaresTypes(bundle: BundleRecord): boolean {
-  return adapterForId(bundleAdapterId(bundle))?.declaredType !== undefined;
+export function lintBundle(run: LintRun): Promise<LintFindings> {
+  const adapter = adapterForId(bundleAdapterId(run.bundle));
+  return adapter?.lint ? adapter.lint(run) : lintByValidateAndEnvSweep(run);
 }
 
-/** Whether the bundle's adapter's own checks are the whole `akm lint` of a primary bundle: no cross-bundle sweep runs. */
-export function adapterLintsAlone(bundle: BundleRecord): boolean {
-  return adapterForId(bundleAdapterId(bundle))?.lintsAlone === true;
+/** `akm lint <file>` for a file no bundle holds: it is read as the akm document type `--type` names. */
+export function lintLooseFile(
+  file: { given: string; real: string },
+  cfg: AkmConfig,
+  options: AkmLintOptions,
+): LintFindings {
+  return lintAkmFile(file, undefined, [], cfg, options);
+}
+
+/** What `akm lint` would find in `content` as the text of the akm asset at `relPath` of the bundle at `root`. Nothing is read from or written to the file. */
+export function lintAssetText(input: Parameters<typeof lintAkmText>[0]): LintFindings {
+  return lintAkmText(input);
 }
 
 /** Whether some adapter's install-time probe claims `root` as the root of a bundle of its format. A probe that throws does not claim it. */

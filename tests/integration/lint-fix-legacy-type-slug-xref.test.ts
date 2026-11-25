@@ -4,7 +4,7 @@
 
 /**
  * `akm lint --fix` migration of the retired `type:slug` xref grammar (see
- * `legacyTypeSlugParts` in `src/commands/lint/base-linter.ts`) to conceptId
+ * `legacyTypeSlugParts` in `src/core/lint/base-linter.ts`) to conceptId
  * form in the frontmatter xref channels (`xrefs:` / `supersededBy:` /
  * `contradictedBy:`).
  *

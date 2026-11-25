@@ -1,0 +1,57 @@
+{
+  "code": 0,
+  "stdout": {
+    "ok": true,
+    "fixed": [],
+    "flagged": [
+      {
+        "file": "workflows/broken.md",
+        "issue": "invalid-workflow-structure",
+        "detail": "Step \"work\" \"output\" is not a valid JSON Schema (at $.type): unknown type \"strig\" (valid types: string, number, integer, boolean, object, array, null).",
+        "fixed": false,
+        "line": 8,
+        "ref": "workflows/broken"
+      },
+      {
+        "file": "env/dev.env",
+        "issue": "dangerous-env-key",
+        "detail": "Env key `NODE_OPTIONS` can be used to hijack process execution when injected with `--env`. Ref: env/dev. Review this file before running `akm run --env` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on previous line)",
+        "fixed": false,
+        "ref": "env/dev"
+      },
+      {
+        "file": "env/prod.env",
+        "issue": "dangerous-env-key",
+        "detail": "Env key `LD_PRELOAD` can be used to hijack process execution when injected with `--env`. Ref: envb//env/prod. Review this file before running `akm run --env` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on previous line)",
+        "fixed": false,
+        "ref": "env/prod"
+      },
+      {
+        "file": "secrets/token.env",
+        "issue": "dangerous-env-key",
+        "detail": "Env key `PATH` can be used to hijack process execution when injected with `--env`. Ref: envb//secrets/token.env. Review this file before running `akm run --env` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on previous line)",
+        "fixed": false,
+        "ref": "secrets/token.env"
+      }
+    ],
+    "warnings": [],
+    "summary": {
+      "fixed": 0,
+      "flagged": 4,
+      "warnings": 0
+    },
+    "byRule": {
+      "invalid-workflow-structure": {
+        "findings": 1,
+        "assets": 1
+      },
+      "dangerous-env-key": {
+        "findings": 3,
+        "assets": 3
+      }
+    },
+    "shape": "lint",
+    "schemaVersion": 1
+  },
+  "stderr": ""
+}

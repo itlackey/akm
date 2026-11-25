@@ -13,7 +13,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { hashSessionContent } from "../../src/commands/improve/extract";
+import { hashSessionContent } from "../../src/commands/improve/extract-sessions";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { runtimeProfile } from "../../src/integrations/agent/profiles";
 import type { ConnectionRunner } from "../../src/integrations/agent/runner";

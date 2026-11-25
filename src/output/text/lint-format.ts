@@ -14,7 +14,7 @@
  * exists to render, reused here rather than duplicated.
  */
 
-import type { LintIssue } from "../../commands/lint/types";
+import type { LintIssue } from "../../core/lint/types";
 import { renderStatusEntries, type StatusEntry } from "./status-list";
 
 /**

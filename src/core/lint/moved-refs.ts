@@ -8,9 +8,9 @@
  * carries the new ref, and `--fix` rewrites it: only a ref with a recorded move is ever rewritten.
  */
 
-import { rewritePathTokens } from "../../core/asset/ref-rewrite";
-import { readEvents } from "../../core/events";
-import type { EventEnvelope } from "../../core/events-types";
+import { rewritePathTokens } from "../asset/ref-rewrite";
+import { readEvents } from "../events";
+import type { EventEnvelope } from "../events-types";
 import { findFenceRegions } from "./markdown-insertion";
 
 /** The ref a moved asset has now, and the link spelled as it is written to name it (a bare link stays bare). */

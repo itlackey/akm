@@ -56,10 +56,13 @@ describe("stale-path: which paths this machine judges, and what a finding tells 
     expect((await stale())[0]).toMatchObject({ path: "/tmp/akm-6-gone/out.json", reason: "ephemeral" });
   });
 
+  // Running as root, /root is the user's own home, which is judged.
+  const rootIsOther = os.homedir().startsWith("/root") ? "" : " and /root/akm-6-gone";
+
   test("paths this machine cannot judge are not checked: /opt, /var, /etc, /root and other users' homes", async () => {
     note(
       "knowledge/a.md",
-      "\nUse /opt/akm-6-gone/tool and /var/akm-6-gone/log and /etc/akm-6-gone.conf and /root/akm-6-gone and /home/akm-6-nobody/x.\n",
+      `\nUse /opt/akm-6-gone/tool and /var/akm-6-gone/log and /etc/akm-6-gone.conf${rootIsOther} and /home/akm-6-nobody/x.\n`,
     );
     expect(await stale()).toEqual([]);
   });

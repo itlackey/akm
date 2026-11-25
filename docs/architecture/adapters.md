@@ -24,10 +24,9 @@ is described in [Architecture: Connections and Harnesses](architecture.md#connec
 > `bundles` config shape are still evolving — see [STABILITY.md](../../STABILITY.md).
 
 > **Migration nearly finished.** [Principled exceptions](#principled-exceptions)
-> lists what stays outside the facade for good. Asset access still done as the
-> base release did it, where the facade would change what a user sees, carries
-> `// asset-io: base`; a later change moves each one with its own approved
-> behaviour change (see [Enforcement](#enforcement)).
+> lists what stays outside the facade for good. Seven reads still done as the
+> base release did them carry `// asset-io: base`, each with its reason; see
+> [The seven `base` exemptions](#the-seven-base-exemptions).
 
 ---
 
@@ -36,8 +35,8 @@ is described in [Architecture: Connections and Harnesses](architecture.md#connec
 ```mermaid
 flowchart TD
   CMD["Commands and the workspace API<br/>index, search, show, run, secret, env, proposal, workflow create, lint, ..."]
-  FAC["Asset facade: src/core/assets/<br/>read (find, list) · type · write · validate · gate"]
-  ADP["BundleAdapter<br/>exists · list · read · recognize · validate · place<br/>create · update · delete · packageFiles · mirrorPackage<br/>retire · retired · restore · forget · expireRetired"]
+  FAC["Asset facade: src/core/assets/<br/>read (find, list) · type · write · validate · gate · files"]
+  ADP["BundleAdapter<br/>exists · list · read · recognize · validate · rendererFor · place<br/>create · update · delete · packageFiles · mirrorPackage<br/>retire · retired · restore · forget · expireRetired<br/>optional: lint · contentType · declaredType · prefixOf<br/>identifyKey · looksLikeRoot · renderExecutionSource"]
   subgraph BASES["Two bases"]
     DIR["DirectoryAdapterBase<br/>12 adapters, with directory-archive.ts for retire"]
     SEC["SecretManagerAdapterBase<br/>secret-tool, azure-key-vault"]
@@ -121,7 +120,7 @@ interface BundleAdapter {
   expireRetired(b: Bundle, before: Date): { changed: string[] };
 
   // Optional.
-  readonly lintsAlone?: boolean;               // its own checks are the whole `akm lint` of a primary bundle
+  lint?(run: LintRun): Promise<LintFindings>;  // `akm lint` of the bundle or of one file; absent: `validate` plus the cross-bundle `.env` sweep
   renderExecutionSource?(b: Bundle, entry: AssetEntry): AdapterRenderedExecutionSource | null;
   looksLikeRoot?(root: string): boolean;       // install-time probe only
   contentType?(b: Bundle, entry: AssetEntry): string | undefined;      // the type the bytes give, without describing
@@ -264,15 +263,18 @@ The template methods:
   whether something is kept there now, and the file to show), and refuses with a
   `UsageError` naming the file when the placed file would be no asset
   (`create knowledge "index"`, `create secret "x.lock"`).
-- `create`, `update` and `delete` write atomically (`writeFileAtomic`) and
-  refuse a path that leaves the bundle's root. A create or update follows a
-  symbolic link below it only when the link leads to an existing file or folder
-  inside the bundle; any other link refuses the write. A create replaces such a
-  link with a regular file, an update writes where it leads and keeps it, and a
-  hard link is a regular file. `delete` refuses any link
-  (`assertWritableFile`). `place` is checked first, and an adapter
-  whose `writes` lacks the type refuses as an invariant error a user never sees:
-  the facade checks `writes` before it calls.
+- `create` and `update` write atomically (`writeFileAtomic`) and refuse a path
+  that leaves the bundle's root. They follow a symbolic link below it only when
+  the link leads to an existing file or folder inside the bundle; any other link
+  refuses the write. A create replaces such a link with a regular file, an update
+  writes where it leads and keeps it, and a hard link is a regular file. `delete`
+  removes a symbolic link itself, never its target, whether the link stays inside
+  the bundle, leaves it or dangles. `retire` and `restore` are the documented
+  exceptions to the shared link rule (`assertWritableFile`): they refuse every
+  symbolic link because moving a relative link into the archive would leave it
+  dangling. `place` is checked first, and an adapter whose `writes` lacks the
+  type refuses as an invariant error a user never sees: the facade checks
+  `writes` before it calls.
 - `retire`, `retired`, `restore`, `forget` and `expireRetired` delegate to
   `directory-archive.ts` (see [Retire and delete](#retire-and-delete)).
 
@@ -392,16 +394,15 @@ once, where the bundle is resolved (`detectBundleAdapter`,
 | `type.ts` | `assetType`, `assetTypes`, `assetTypeFresh`, `typeOfContent`, `recognizeContent`, `presentationOf`, `indexAsset`, `embedPendingWrites` |
 | `write.ts` | `writeAssets`, `addressOf`, `fileOfRef`, `legacyRefOf` |
 | `validate.ts` | `validateBundleAssets`: `akm lint`'s scan of a bundle; `storeFindings`: what the configured keyrings and vaults report (a bundle kept in files has none) |
-| `gate.ts` | what callers decide before they write or configure, asked of a bundle (its id or its source record), never of an adapter id a caller computed: `assertAdapterWrites`, `adapterWrites`, `refuseByAdapter`, `adapterNameOf` (for a message), `adapterAddressedBy`, `detectBundleAdapter`, `adapterDeclaresTypes`, `adapterLintsAlone`, `bundleStorageExists`, `clearAdapterCaches`; and `renderIndexedExecutionSource`, which renders a command or persona for `akm run` by the adapter its index row records |
+| `gate.ts` | what callers decide before they write or configure, asked of a bundle (its id or its source record), never of an adapter id a caller computed: `assertAdapterWrites`, `adapterWrites`, `refuseByAdapter`, `adapterNameOf` (for a message), `adapterAddressedBy`, `detectBundleAdapter`, `lintBundle` (`akm lint` of a bundle by its adapter), `bundleStorageExists`, `clearAdapterCaches`; and `renderIndexedExecutionSource`, which renders a command or persona for `akm run` by the adapter its index row records |
 | `files.ts` | `indexFiles`: index rows for files akm did not write through the facade (the Desktop Files view); and, re-exported under `files-view`, the path rules and the plain-file write check the Files view uses |
 | `bundle.ts`, `asset.ts`, `index-rows.ts` | internal: `AssetBundle` (holds its adapter), `Asset`, and the index rows the facade records |
 
 The facade re-exports no adapter module but the contract (`facade-reexport`).
 Code that needs an adapter module's internals imports it itself, under an
-exemption the lint counts: `akm lint` and its base checks read what a bundle
-keeps that no adapter lists (`directory/held-files`) and run the akm adapter's
-own checks (`adapters/akm-lint`) under `base`, as do `akm show`'s
-unknown-extension hint and the execution loader (`directory/file-context`) and
+exemption the lint counts: the base checks read what a bundle keeps at a ref's
+spelling (`directory/held-files`) under `base`, as do the execution loader
+(`directory/file-context`) and
 `akm health`'s archive size (`directory-archive`). `akm doctor` and `akm bundle
 add` import the adapter-skip report (`adapter-skips`), which the lint lists as
 importable.
@@ -499,6 +500,23 @@ returns.
 `validate` every asset it lists, each as an `update`. This is `akm lint`'s scan
 of a bundle as it stands.
 
+### Lint
+
+`akm lint` has one pipeline. It asks the bundle's adapter for `lint(run)`
+(`lintBundle` in `gate.ts`), then adds the tracked-secret and store findings and
+applies `lint.skip` and `--rule`. An adapter without a `lint` is checked by its
+`validate` plus the cross-bundle `.env` sweep (`adapters/akm-lint-run.ts`); `okf`
+returns its `validate` alone. The `akm` adapter's `lint` is the sweep of its
+document folders (`adapters/akm-sweep.ts`): each file's base and per-type checks,
+the skill folders, the task files (the `.yaml` near-miss included) and the
+workflow frontend, with what its own `validate` adds. `validate` never writes: a
+fix (`--fix`, `--fix-moved-refs`, `--prune-dangling-edges`) is an asset write the
+sweep makes through `writeAssets`, one session per change. `akm lint <file>`
+passes `run.file`, and the adapter reports that file only; a file outside every
+bundle is read as the akm document type `--type` names. Callers never ask which
+adapter a bundle has, or whether its folders declare types
+(`tests/integration/lint-parity.test.ts` pins the output).
+
 ---
 
 ## Retire and delete
@@ -506,7 +524,8 @@ of a bundle as it stands.
 An adapter's `writes` says what it creates, updates and deletes. Its `retires`
 says which of those types it takes out recoverably.
 
-- **Delete** removes the asset. The directory adapters remove the file.
+- **Delete** removes the asset. The directory adapters remove the file; for a
+  symbolic link they remove the link itself and never its target.
 - **Retire** keeps the asset and a record of why. `akm` retires every type it
   writes except `env` and `secret`; `akm-workflow` retires `workflow`; `dotenv`
   and the secret managers retire nothing.
@@ -594,6 +613,28 @@ These stay outside the facade for good. Each carries a reason in the lint
    indexer's private derived state for directory bundles.
 7. **Workflow code** (deprecated, removed in 0.11): keeps its own file access
    with the reason `deprecated`.
+
+### The seven `base` exemptions
+
+Each stays because the facade cannot give the read without a change the owner has
+not approved. Measured on a generated bundle of 2,400 assets in a git repository
+(Bun, this machine): stat of every row's file 7 ms, existence of every file 4.6 ms,
+one facade listing of the bundle 72 ms, one facade find per row 5.8 ms (about 14 s
+at 2,400 rows, from its `git check-ignore` process).
+
+| File | Read | Why it stays |
+| --- | --- | --- |
+| `workspace/graph.ts` | mtime of each indexed file | the facade has no mtime and may not stat (`facade-fs`); a listing is 10x the stats, a find per row far more |
+| `commands/improve/retrieval-scope.ts` | mtime of a candidate's file | same |
+| `commands/read/related.ts` | whether a neighbour's indexed file exists | no existence read for a row's file; a listing costs far more than stats of a few candidates |
+| `commands/read/show.ts` | a script file no adapter lists, shown as plain text | the facade reads through adapters, and none lists it |
+| `commands/command/execution-source-loader.ts` | the file an index row names, read as its row's adapter indexed it | rows can share a ref, so the facade's winner for the ref can be another file; the facade may not build a file context |
+| `commands/health/archive-usage.ts` | size of the folder a directory bundle keeps retirements in | health measures the folder, not the retirements `retired()` lists |
+| `commands/lint/base-linter.ts` | what a bundle keeps at a ref's spelling, a file no adapter lists included | missing-ref counts files no adapter lists |
+
+Moving the first three needs a member on the adapter contract (a stat or a batched
+existence read), which this change does not add. `indexer/path-resolver.ts`'s
+`entry.file` read moved behind `indexedPathOf`.
 
 ---
 
@@ -785,7 +826,7 @@ they actually work:
   item, not candidate packages, and are never considered.
 - **The base checks have one implementation.** `unquoted-colon`,
   `missing-updated`, `stale-path`, `missing-ref` and `redacted-content` are
-  `runBaseChecks` (`src/commands/lint/base-linter.ts`), and `ruleApplies`
+  `runBaseChecks` (`src/core/lint/base-linter.ts`), and `ruleApplies`
   (`src/core/asset/lint-text.ts`) decides whether a rule applies to a file
   (the skill and LLM Wiki exemptions, the bundle's `lint.skip`, an adapter's
   own exclusions). The `akm lint` sweep and every adapter's `validate` call

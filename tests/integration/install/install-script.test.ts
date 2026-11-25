@@ -26,20 +26,36 @@ const usrLocalBinWritable = (() => {
 
 const tempRoots: string[] = [];
 
-function resolveCommand(name: string): string {
-  const result = spawnSync("bash", ["-lc", `command -v ${name}`], { encoding: "utf8" });
-  if (result.status !== 0) {
+/**
+ * The real program for `name`: the first one on `searchPath` that is not a script. A script (a wrapper that calls
+ * `rm` by name) would, once the fake bin leads the PATH, call the fake `rm` that handed back to it, forever.
+ */
+function resolveCommand(name: string, searchPath = process.env.PATH ?? ""): string {
+  const found = searchPath
+    .split(":")
+    .filter(Boolean)
+    .map((dir) => path.join(dir, name))
+    .filter((file) => {
+      try {
+        fs.accessSync(file, fs.constants.X_OK);
+        return fs.statSync(file).isFile();
+      } catch {
+        return false;
+      }
+    });
+  const program = found.find((file) => fs.readFileSync(file).subarray(0, 2).toString() !== "#!") ?? found[0];
+  if (program === undefined) {
     throw new Error(`Unable to resolve command: ${name}`);
   }
-  return result.stdout.trim();
+  return program;
 }
 
 function writeExecutable(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content, { mode: 0o755 });
 }
 
-function addProxy(fakeBin: string, name: string): void {
-  const real = resolveCommand(name);
+function addProxy(fakeBin: string, name: string, searchPath?: string): void {
+  const real = resolveCommand(name, searchPath);
   writeExecutable(`${fakeBin}/${name}`, `#!${BASH_PATH}\nexec ${real} "$@"\n`);
 }
 
@@ -229,6 +245,24 @@ afterEach(() => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   }
+});
+
+describe("the fake commands", () => {
+  test("hand back to the real program, not to a wrapper that calls the fake again", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-install-proxy-"));
+    tempRoots.push(root);
+    const wrappers = path.join(root, "wrappers");
+    const fakeBin = path.join(root, "fakebin");
+    fs.mkdirSync(wrappers);
+    fs.mkdirSync(fakeBin);
+    writeExecutable(path.join(wrappers, "rm"), `#!${BASH_PATH}\nrm "$@"\n`);
+    addProxy(fakeBin, "rm", `${wrappers}:${process.env.PATH}`);
+    const victim = path.join(root, "victim");
+    fs.writeFileSync(victim, "x");
+    const run = spawnSync(path.join(fakeBin, "rm"), [victim], { env: { PATH: fakeBin }, timeout: 5000 });
+    expect(run.status).toBe(0);
+    expect(fs.existsSync(victim)).toBe(false);
+  });
 });
 
 describe("install.sh", () => {

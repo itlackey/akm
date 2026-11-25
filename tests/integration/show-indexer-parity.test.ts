@@ -23,7 +23,7 @@ import { splitMarkdownFragments } from "../../src/core/asset/markdown-fragments"
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { akmIndex, lookupBundleRef } from "../../src/indexer/indexer";
-import { projectMarkdownFragmentContent } from "../../src/indexer/passes/metadata";
+import { projectMarkdownFragmentContent } from "../../src/indexer/passes/markdown-projection";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";

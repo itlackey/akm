@@ -23,8 +23,8 @@ import {
   mutateConfig,
   normalizeConfigFile,
   resetConfigCache,
-  unknownConfigKeyPaths,
 } from "../../src/core/config/config";
+import { unknownConfigKeyPaths } from "../../src/core/config/config-file-forms";
 import { AkmConfigSchema } from "../../src/core/config/config-schema";
 import { convertEngineConfig } from "../../src/core/config/convert-engines";
 import { UsageError } from "../../src/core/errors";

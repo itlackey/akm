@@ -5,7 +5,7 @@ import { recognizeStashEntries } from "../../src/core/adapter/directory/recogniz
 import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
-import { extractCommandParameters } from "../../src/indexer/passes/metadata";
+import { extractCommandParameters } from "../../src/indexer/passes/script-metadata";
 import { buildSearchText } from "../../src/indexer/search/search-fields";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getAllEntries } from "../../src/storage/repositories/index-entries-repository";
@@ -314,7 +314,7 @@ describe("parameter descriptions", () => {
 
 describe("validateStashEntry with parameters", () => {
   test("validateStashEntry preserves valid parameters", async () => {
-    const { validateStashEntry } = await import("../../src/indexer/passes/metadata");
+    const { validateStashEntry } = await import("../../src/indexer/passes/entry-normalize");
 
     const raw = {
       name: "test-cmd",
@@ -339,7 +339,7 @@ describe("validateStashEntry with parameters", () => {
   });
 
   test("validateStashEntry filters invalid parameter objects", async () => {
-    const { validateStashEntry } = await import("../../src/indexer/passes/metadata");
+    const { validateStashEntry } = await import("../../src/indexer/passes/entry-normalize");
 
     const raw = {
       name: "test-cmd",
