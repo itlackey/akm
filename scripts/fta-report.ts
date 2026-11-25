@@ -7,7 +7,7 @@
  * assessment, and the 20 highest-scoring files. CI appends it to the job summary.
  *
  * With a base ref (`--base <ref>`, or `origin/$GITHUB_BASE_REF` on a pull request) it is also a gate: it scores the
- * base's `src/` and exits 1 when any file's score is higher than at the base. A file new since the base is not
+ * base's `src/` and exits 1 when a file's score is higher than at the base and over `RISE_FLOOR` (75). A file new since the base is not
  * compared. Nothing is checked in: the base is scored each run. Without a base it only reports.
  *
  * Usage:  bun scripts/fta-report.ts [--base origin/release/<version>]
@@ -30,7 +30,10 @@ interface Rise {
   now: number;
 }
 
-/** Files whose score is higher than at the base; a file with no base score is skipped. */
+/** Scores up to this are not compared; it comes down once `src/` is simpler, until every file is compared. */
+export const RISE_FLOOR = 75;
+
+/** Files whose score is higher than at the base and over `RISE_FLOOR`; a file with no base score is skipped. */
 export function scoreRises(
   base: Pick<FtaFile, "file_name" | "fta_score">[],
   current: Pick<FtaFile, "file_name" | "fta_score">[],
@@ -39,7 +42,7 @@ export function scoreRises(
   const rises: Rise[] = [];
   for (const f of current) {
     const before = baseScores.get(f.file_name);
-    if (before !== undefined && f.fta_score > before)
+    if (before !== undefined && f.fta_score > before && f.fta_score > RISE_FLOOR)
       rises.push({ file: `src/${f.file_name}`, base: before, now: f.fta_score });
   }
   return rises;
@@ -116,7 +119,7 @@ function main(): void {
   const rises = baseRef ? scoreRises(ftaAtRef(baseRef), files) : [];
   if (rises.length === 0) return;
   const failure = [
-    `## Complexity gate failed: ${rises.length} file${rises.length === 1 ? "" : "s"} scored higher than at \`${baseRef}\``,
+    `## Complexity gate failed: ${rises.length} file${rises.length === 1 ? "" : "s"} scored higher than at \`${baseRef}\` and over ${RISE_FLOOR}`,
     "",
     "| File | Base score | New score |",
     "| --- | ---: | ---: |",
