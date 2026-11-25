@@ -8,7 +8,7 @@
   import { onMount, tick, type Snippet } from "svelte";
   import { afterNavigate, beforeNavigate } from "$app/navigation";
   import { page } from "$app/state";
-  import { api, appHref, appPath } from "../lib/client";
+  import { api, appHref, appPath, setCookieSession } from "../lib/client";
   import { hasStoredDrafts, hasUnsaved } from "../lib/drafts";
   import { navigate } from "../lib/navigation";
   import { pageTitle } from "../lib/page-title";
@@ -128,6 +128,7 @@
       refreshBundles(),
       api<{ session: boolean }>("/session").then((value) => {
         session = value.session;
+        setCookieSession(value.session);
       }),
     ]);
     error = outcomes

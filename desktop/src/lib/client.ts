@@ -29,6 +29,18 @@ export function appHref(path: string): string {
 export function appPath(pathname: string): string {
   return root && pathname.startsWith(`${root}/`) ? pathname.slice(root.length) : pathname;
 }
+// True for a person logged in with a session cookie (the layout asks `GET /api/session`). When that session ends, a 401
+// means the login form is due: one reload shows it. Under the header (Desktop, a proxy) a 401 is only an error.
+let cookieSession = false;
+export function setCookieSession(on: boolean) {
+  cookieSession = on;
+}
+/** A failed response: reloads (once, whatever the number of calls in flight) when the person's session has ended. */
+export function sessionEnded(status: number) {
+  if (status !== 401 || !cookieSession) return;
+  cookieSession = false;
+  location.reload();
+}
 export async function api<T = unknown>(path: string, query: Record<string, string> = {}, body?: unknown): Promise<T> {
   const params = new URLSearchParams(Object.entries(query).filter(([, v]) => v !== ""));
   const response = await fetch(
@@ -42,7 +54,10 @@ export async function api<T = unknown>(path: string, query: Record<string, strin
         },
   );
   const data = await response.json();
-  if (!response.ok) throw new ApiError(data.error ?? "The request failed.", data.code ?? "", response.status);
+  if (!response.ok) {
+    sessionEnded(response.status);
+    throw new ApiError(data.error ?? "The request failed.", data.code ?? "", response.status);
+  }
   return data.ok === true && Object.hasOwn(data, "data") ? data.data : data;
 }
 /** akm says its state database cannot be read: there is none yet, or it needs a migration first. */

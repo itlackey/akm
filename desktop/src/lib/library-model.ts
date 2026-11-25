@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { ApiError, appHref, assetSource, title } from "./client";
+import { ApiError, appHref, assetSource, sessionEnded, title } from "./client";
 import type { FileActions } from "./library-files-model";
 import type { Asset, AssetDetail, AssetSummary, Json } from "./types";
 export interface SearchHit extends AssetSummary {
@@ -84,7 +84,9 @@ export async function libraryRead<T>(path: string, params: Record<string, string
     { signal },
   );
   const envelope = await response.json();
-  if (!response.ok)
+  if (!response.ok) {
+    sessionEnded(response.status);
     throw new ApiError(envelope.error ?? "Could not read AKM data.", envelope.code ?? "", response.status);
+  }
   return (envelope.ok === true && Object.hasOwn(envelope, "data") ? envelope.data : envelope) as T;
 }
