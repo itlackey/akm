@@ -166,7 +166,7 @@ function buildSourceScanPlans(
         removals: [],
         walkComplete: false,
         incompleteReason: source.unresolved.reason,
-        incompletePath: source.unresolved.path,
+        incompletePath: source.unresolved.path ?? "unknown",
       };
     }
     // A bundle that names an adapter akm does not have stops the index before it changes anything.
@@ -331,10 +331,9 @@ export async function scanSourceDirs(
     if (!walkComplete || scan === undefined) {
       for (const dirPath of dirGroups.keys()) seenPaths.add(path.resolve(dirPath));
       const reason = plan.incompleteReason ?? "the scan did not complete";
-      const incompletePath = plan.incompletePath ?? source.path;
       incompleteSources.push({
         bundle: bundle.id,
-        ...(incompletePath === undefined ? {} : { path: incompletePath }),
+        ...(scan?.inDirectories === false ? {} : { path: plan.incompletePath ?? source.path }),
         reason,
       });
       warn(`[index] source "${bundle.id}" was not scanned completely; preserving its last-known-good rows. ${reason}`);

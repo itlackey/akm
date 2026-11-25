@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { realpathSync } from "node:fs";
-import { indexLibraryForSource } from "../../../src/indexer/index-persist";
+import { resolveStashDir } from "../../../src/core/common";
 import { openUsableIndex } from "../../../src/indexer/index-readiness";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { findAssetOnDisk, resolveAssetPath } from "../../../src/indexer/path-resolver";
@@ -48,9 +48,7 @@ describe("a ref no file holds (F36)", () => {
     };
 
     await withFakeSecretStores({ keyrings }, async () => {
-      const library = indexLibraryForSource(
-        working === "stash" ? { bundleId: working, path: storage.stashDir } : { bundleId: working },
-      );
+      const library = resolveStashDir();
       await akmIndex({ stashDir: library, full: true });
       const usable = openUsableIndex({ bundleId: "keyring" }, { readOnly: true });
       expect(usable?.complete).toBe(true);
@@ -59,8 +57,7 @@ describe("a ref no file holds (F36)", () => {
         const { db } = usable;
         expect(getMeta(db, "stashDirs")).toBe(JSON.stringify([realpathSync(storage.stashDir)]));
         expect(getMeta(db, "stashBundles")).toBe(JSON.stringify(["keyring"]));
-        expect(getMeta(db, "stashDir")).toBe(working === "stash" ? realpathSync(storage.stashDir) : undefined);
-        expect(getMeta(db, "stashBundle")).toBe(working === "keyring" ? "keyring" : undefined);
+        expect(getMeta(db, "stashDir")).toBe(realpathSync(storage.stashDir));
       } finally {
         closeDatabase(usable.db);
       }

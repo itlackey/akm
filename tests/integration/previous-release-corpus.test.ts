@@ -107,6 +107,7 @@ import { akmHealth } from "../../src/commands/health";
 import { createProposal as createProposalImpl } from "../../src/commands/proposal/repository";
 import { akmTasksSync, akmTasksSyncPlan } from "../../src/commands/tasks/tasks";
 import { stateBundleId } from "../../src/core/bundle-at-dir";
+import { resolveStashDir } from "../../src/core/common";
 import {
   loadConfig,
   normalizeConfigFile,
@@ -117,9 +118,9 @@ import {
 import { getCacheDir, getConfigPath, getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, resetQuiet, setQuiet } from "../../src/core/warn";
+import { buildIndex } from "../../src/indexer/index-build";
 import { persistDirRecords } from "../../src/indexer/index-persist";
 import { openUsableIndex } from "../../src/indexer/index-readiness";
-import { akmIndex } from "../../src/indexer/indexer";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embeddings";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
@@ -168,7 +169,7 @@ function migrateLegacyTask(filePath: string, yaml: string) {
 }
 
 describe("previous-release corpus — upgrade must not break reads", () => {
-  test("akmIndex stays incremental on a legacy keyring marker and retains the indexed row", async () => {
+  test("indexing stays incremental with a legacy keyring marker and retains the indexed row", async () => {
     const storage = withIsolatedAkmStorage();
     try {
       writeSandboxConfig({
@@ -176,12 +177,13 @@ describe("previous-release corpus — upgrade must not break reads", () => {
         defaultBundle: "keys",
         bundles: { keys: { adapter: "secret-tool", location: "akm" } },
       });
+      const stashDir = resolveStashDir();
       const legacyRoot = path.join(getCacheDir(), "index", "bundles", "keys");
       const db = openIndexDatabase(getDbPath());
       let before: unknown[];
       try {
-        setMeta(db, "stashDir", legacyRoot);
-        setMeta(db, "stashDirs", JSON.stringify([legacyRoot]));
+        setMeta(db, "stashDir", stashDir);
+        setMeta(db, "stashDirs", JSON.stringify([stashDir, legacyRoot]));
         setMeta(db, "builtAt", "2026-11-24T00:00:00.000Z");
         setMeta(db, "sourceOwners", JSON.stringify([{ bundleId: "keys", sourceRoot: legacyRoot }]));
         upsertEntry(
@@ -208,7 +210,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           },
         },
         async () => {
-          expect(await akmIndex({ stashDir: { bundleId: "keys" } })).toMatchObject({
+          expect(await buildIndex({ stashDir })).toMatchObject({
             mode: "incremental",
             totalEntries: 1,
           });
@@ -216,8 +218,9 @@ describe("previous-release corpus — upgrade must not break reads", () => {
       );
       const migrated = openIndexDatabase(getDbPath());
       try {
-        expect(getMeta(migrated, "stashDir")).toBeUndefined();
-        expect(getMeta(migrated, "stashBundle")).toBe("keys");
+        expect(getMeta(migrated, "stashDir")).toBe(fs.realpathSync(stashDir));
+        expect(getMeta(migrated, "stashDirs")).toBe(JSON.stringify([fs.realpathSync(stashDir)]));
+        expect(getMeta(migrated, "stashBundles")).toBe(JSON.stringify(["keys"]));
         expect(migrated.prepare("SELECT id, item_ref FROM entries").all()).toEqual(before);
       } finally {
         closeDatabase(migrated);
@@ -238,7 +241,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
       const builtAt = "2026-11-24T00:00:00.000Z";
       const db = openIndexDatabase(getDbPath());
       try {
-        setMeta(db, "stashDir", keyring);
+        setMeta(db, "stashDir", realDir);
         setMeta(db, "stashDirs", JSON.stringify([keyring, vault, realDir]));
         setMeta(db, "builtAt", builtAt);
         const entry = { type: "secret" as const, name: "deploy", description: "Deploy credential metadata" };
@@ -267,17 +270,16 @@ describe("previous-release corpus — upgrade must not break reads", () => {
         };
 
         assertReadiness();
-        expect(getMeta(db, "stashDir")).toBe(keyring); // A read does not migrate the file.
+        expect(getMeta(db, "stashDirs")).toBe(JSON.stringify([keyring, vault, realDir]));
         persistDirRecords(db, [], [], new Map(), 512, {
-          stashDir: { bundleId: "keys" },
+          stashDir: realDir,
           sourceDirs: [realDir],
           storeBundleIds: ["keys", "vault"],
           unresolvedBundleIds: new Set(),
           variants: new Map(),
         });
-        expect(getMeta(db, "stashDir")).toBeUndefined();
+        expect(getMeta(db, "stashDir")).toBe(fs.realpathSync(realDir));
         expect(getMeta(db, "stashDirs")).toBe(JSON.stringify([realDir]));
-        expect(getMeta(db, "stashBundle")).toBe("keys");
         expect(getMeta(db, "stashBundles")).toBe(JSON.stringify(["keys", "vault"]));
         expect(getMeta(db, "builtAt")).toBe(builtAt);
         expect(db.prepare("SELECT id, item_ref FROM entries").all()).toEqual(before);

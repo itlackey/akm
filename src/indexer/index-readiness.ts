@@ -20,9 +20,10 @@
  * gets {@link incompleteIndexWarning} alongside its results.
  */
 
+import path from "node:path";
 import { ConfigError } from "../core/errors";
 import { classifyPathAccess } from "../core/path-access";
-import { getDbPath } from "../core/paths";
+import { getCacheDir, getDbPath } from "../core/paths";
 import type { Database } from "../storage/database";
 import {
   assertIndexPathReadable,
@@ -67,13 +68,12 @@ export function openSourceIndex(
 
 /** The reader can serve any indexed member, not just the working bundle. */
 function namesLibrary(db: Database, library: IndexLibrary): boolean {
-  if (servesLibrary(getMeta(db, "stashDir"), library, getMeta(db, "stashBundle"))) return true;
-  if (typeof library !== "string") {
-    const stores = JSON.parse(getMeta(db, "stashBundles") ?? "[]") as string[];
-    if (stores.includes(library.bundleId)) return true;
-  }
-  const dirs = JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[];
-  return dirs.some((dir) => servesLibrary(dir, library));
+  const dirs = [getMeta(db, "stashDir"), ...(JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[])];
+  if (typeof library === "string") return dirs.some((dir) => servesLibrary(dir, library));
+  const stores = JSON.parse(getMeta(db, "stashBundles") ?? "[]") as string[];
+  if (stores.includes(library.bundleId)) return true;
+  const legacyDir = path.join(getCacheDir(), "index", "bundles", library.bundleId);
+  return dirs.some((dir) => servesLibrary(dir, legacyDir)) && classifyPathAccess(legacyDir).access === "absent";
 }
 
 /**

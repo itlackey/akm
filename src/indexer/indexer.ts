@@ -77,7 +77,7 @@ import {
   type SemanticSearchRecord,
 } from "./index-context";
 import { reclassifyIndexDbContention } from "./index-db-contention";
-import { canonicalizeStoredPaths, type IndexLibrary, persistDirRecords, servesLibrary } from "./index-persist";
+import { canonicalizeStoredPaths, persistDirRecords, servesLibrary } from "./index-persist";
 import { sourceOfBundle } from "./installations";
 import { entryOnMiss, indexedPathMatchesOwner } from "./lookup/indexed-owner";
 import { type EmbeddingGenerationResult, embeddingInputCap, generateEmbeddingsForDb } from "./materialize-embeddings";
@@ -105,8 +105,7 @@ export interface IndexCleanResult {
 }
 
 export interface IndexResponse {
-  stashDir?: string;
-  bundleId?: string;
+  stashDir: string;
   totalEntries: number;
   generatedMetadata: number;
   indexPath: string;
@@ -164,12 +163,12 @@ export interface IndexProgressEvent {
 
 export interface IndexOptions {
   /**
-   * The working library (a directory or a store's bundle id). Resolved at the command boundary
+   * The stash directory to index. Resolved once at each command boundary
    * and threaded in — the indexer does not read the
    * ambient stash-dir resolver. Every caller (source add, wiki, workflow,
    * setup, improve, tests) already passes it.
    */
-  stashDir: IndexLibrary;
+  stashDir: string;
   full?: boolean;
   /**
    * When true, reconcile entries whose source file no longer exists before
@@ -570,7 +569,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     onProgress: (message) => onProgress({ phase: "preflight", message }),
   });
   const sourceCacheEnd = Date.now();
-  const sources = resolveSourceEntries(typeof stashDir === "string" ? stashDir : null, config);
+  const sources = resolveSourceEntries(stashDir, config);
   const detected = detectAndPersistBundleAdapters(sources, config, mutateConfig, {
     announce: options.implicit !== true,
     persist: options.persistDetectedAdapters !== false,
@@ -593,8 +592,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     // through the same diff-persist path as an incremental one.
     canonicalizeStoredPaths(db);
     const prevBuiltAt = getMeta(db, "builtAt");
-    const isIncremental =
-      !full && servesLibrary(getMeta(db, "stashDir"), stashDir, getMeta(db, "stashBundle")) && !!prevBuiltAt;
+    const isIncremental = !full && servesLibrary(getMeta(db, "stashDir"), stashDir) && !!prevBuiltAt;
     const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
     const mode = isIncremental ? "incremental" : "full";
 
@@ -738,7 +736,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     });
 
     return {
-      ...(typeof stashDir === "string" ? { stashDir } : stashDir),
+      stashDir,
       totalEntries,
       generatedMetadata: generatedCount,
       indexPath: dbPath,

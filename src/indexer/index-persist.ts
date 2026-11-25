@@ -5,8 +5,6 @@
 import path from "node:path";
 import { safeRealpath } from "../core/common";
 import { appendEvent } from "../core/events";
-import { classifyPathAccess } from "../core/path-access";
-import { getCacheDir } from "../core/paths";
 import { warn, warnVerbose } from "../core/warn";
 import type { Database } from "../storage/database";
 import {
@@ -95,21 +93,16 @@ export function indexLibraryForSource(source: { path?: string; bundleId: string 
   return source.path ?? { bundleId: source.bundleId };
 }
 
-/** Match the current marker or the exact cache path older akm used for this store. */
-export function servesLibrary(storedDir: string | undefined, library: IndexLibrary, storedBundleId?: string): boolean {
-  if (typeof library !== "string" && storedBundleId === library.bundleId) return true;
-  if (!storedDir) return false;
-  if (typeof library === "string") return library !== "" && safeRealpath(storedDir) === safeRealpath(library);
-
-  const legacyDir = path.join(getCacheDir(), "index", "bundles", library.bundleId);
-  return safeRealpath(storedDir) === safeRealpath(legacyDir) && classifyPathAccess(legacyDir).access === "absent";
+/** Whether the stored library marker names `stashDir`: the same directory, however either is spelled. */
+export function servesLibrary(stored: string | undefined, stashDir: string): boolean {
+  return stored !== undefined && safeRealpath(stored) === safeRealpath(stashDir);
 }
 
 /**
  * Phase 2 (sync): write all pre-generated scan records inside a single transaction.
  *
  * The same transaction records which library the persisted keyword data is for
- * (`stashDir` / `stashDirs` for directories, `stashBundle` / `stashBundles` for stores). That is the "usable index" marker readers test
+ * (`stashDir` / `stashDirs` for directories, `stashBundles` for stores). That is the "usable index" marker readers test
  * (`index-readiness.ts`), so it commits atomically with the entries and FTS rows
  * it describes, however the rest of the build goes.
  *
@@ -123,7 +116,7 @@ export function persistDirRecords(
   bundleOwners: ReadonlyMap<string, { bundleId: string; adapterId: string }>,
   maxInputTokens: number,
   library: {
-    stashDir: IndexLibrary;
+    stashDir: string;
     sourceDirs: string[];
     storeBundleIds: readonly string[];
     unresolvedBundleIds: ReadonlySet<string>;
@@ -166,24 +159,22 @@ export function persistDirRecords(
   };
 
   const persist = (): void => {
-    const workingStore = typeof library.stashDir === "string" ? undefined : library.stashDir.bundleId;
-    const stores = new Set(library.storeBundleIds);
-    if (workingStore !== undefined) stores.add(workingStore);
     // Entries are about to describe another library: the old watermark is not theirs, and neither are rows outside
     // its directories. They go in this transaction, so the marker never names a library whose index serves another's.
-    if (!servesLibrary(getMeta(db, "stashDir"), library.stashDir, getMeta(db, "stashBundle"))) {
+    if (!servesLibrary(getMeta(db, "stashDir"), library.stashDir)) {
       deleteMeta(db, "builtAt");
       addDeletedEntries(
         deletedEntries,
-        deleteEntriesOutsideLibrary(db, library.sourceDirs, new Set([...library.unresolvedBundleIds, ...stores])),
+        deleteEntriesOutsideLibrary(
+          db,
+          library.sourceDirs,
+          new Set([...library.unresolvedBundleIds, ...library.storeBundleIds]),
+        ),
       );
     }
-    if (typeof library.stashDir === "string") setMeta(db, "stashDir", safeRealpath(library.stashDir));
-    else deleteMeta(db, "stashDir");
-    if (workingStore !== undefined) setMeta(db, "stashBundle", workingStore);
-    else deleteMeta(db, "stashBundle");
+    setMeta(db, "stashDir", safeRealpath(library.stashDir));
     setMeta(db, "stashDirs", JSON.stringify(library.sourceDirs));
-    if (stores.size > 0) setMeta(db, "stashBundles", JSON.stringify([...stores]));
+    if (library.storeBundleIds.length > 0) setMeta(db, "stashBundles", JSON.stringify(library.storeBundleIds));
     else deleteMeta(db, "stashBundles");
     pairing = pairMoves();
     for (const pair of pairing.pairs) {

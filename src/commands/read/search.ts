@@ -194,6 +194,7 @@ export async function akmSearch(input: {
   if (needsLocalSources && allSources.length === 0) {
     const response: SearchResponse = {
       schemaVersion: 1,
+      bundleDir: "",
       source,
       hits: [],
       warnings: ["No bundles configured. Run `akm bundle create` to create your working bundle."],
@@ -203,7 +204,7 @@ export async function akmSearch(input: {
     return response;
   }
   const primary = allSources[0];
-  const bundleDir = allSources.find((source) => source.path !== undefined)?.path;
+  const bundleDir = primary && !primary.unresolved ? primary.path : "";
 
   const filters = normalizeScopeFilters(input.filters);
   const include = normalizeInclude(input.include);
@@ -287,7 +288,7 @@ export async function akmSearch(input: {
     const hasResults = slicedRegistryHits.length > 0;
     const response: SearchResponse = {
       schemaVersion: 1,
-      ...(bundleDir === undefined ? {} : { bundleDir }),
+      bundleDir: "",
       source,
       hits: [],
       registryHits: slicedRegistryHits,
