@@ -10,10 +10,8 @@
    number of its line ([Versions](#versions)). Pull requests name it as their
    base (`gh pr create --base release/<version>`); `main` stays the default
    branch, and a pull request into `main` from anything but a release branch
-   cannot merge. A branch for the next minor can be open at the same time,
-   `release/0.11.261101` beside `release/0.10.261121`. The patch ships first,
-   and the 0.11 branch merges `main` before it can ship (the ruleset requires
-   it), so the patch is in 0.11 too.
+   cannot merge. The 0.11 branch, `release/0.11.0`, is frozen and is not
+   merged with `main`: 0.11 restarts from `main` and reapplies its removals.
 3. All work lands on the release branch by pull request. A feature that needs
    several pull requests lands in slices that are each shippable but inert
    until the last one (internals first, the command or flag wired up last, or
