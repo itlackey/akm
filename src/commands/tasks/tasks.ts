@@ -996,15 +996,14 @@ export async function akmTasksDoctor(
   } catch (err) {
     warnings.push(err instanceof Error ? err.message : String(err));
   }
-  const skipNativeInspection = process.env.BUN_TEST === "1" && !deps.backend;
-  const sched = deps.backend ?? (skipNativeInspection ? undefined : selectBackend());
+  const sched = deps.backend ?? (process.env.BUN_TEST === "1" ? undefined : selectBackend());
   const backend = sched?.name ?? backendNameForPlatform();
   let installed: InstalledSchedulerBinding[] = [];
-  if (skipNativeInspection) {
+  if (!sched) {
     warnings.push("Native scheduler inspection is skipped inside the bun test harness.");
   } else {
     try {
-      installed = await sched!.list();
+      installed = await sched.list();
     } catch (error) {
       warnings.push(
         `Unable to inspect installed ${backend} definitions: ${error instanceof Error ? error.message : String(error)}`,

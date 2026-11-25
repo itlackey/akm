@@ -125,7 +125,6 @@ function fileOfAsset(root: string, asset: Asset): string {
  * source, so the sweep never linted it.
  */
 function documentDirOf(root: string, asset: Asset, type: string | undefined): string | undefined {
-  if (underEnvOrSecrets(asset)) return undefined;
   if (type === "workflow" && !isLintableWorkflow(root, fileOfAsset(root, asset))) return undefined;
   return type === undefined ? undefined : documentStashDirFor(type);
 }
