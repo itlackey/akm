@@ -30,6 +30,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { LintFindings, LintRun } from "../../../commands/lint/types";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { isScratchPath } from "../../asset/scratch";
@@ -314,8 +315,13 @@ async function validate(c: Bundle, changes: FileChange[], ctx: FileValidateConte
 export class OkfAdapter extends DirectoryAdapterBase {
   readonly id = "okf";
   readonly version = "0.9.0";
-  readonly lintsAlone = true;
   protected override readonly walkMode = "all-directories" as const;
+
+  /** An OKF bundle's own checks are its whole `akm lint`: it takes no cross-bundle `.env` sweep. */
+  async lint(run: LintRun): Promise<LintFindings> {
+    // Loaded here: the checks read through the asset facade, which loads the adapters.
+    return (await import("./akm-lint-run")).lintByValidate(run);
+  }
 
   protected identify(relPath: string): string | null {
     return conceptIdOf(relPath);

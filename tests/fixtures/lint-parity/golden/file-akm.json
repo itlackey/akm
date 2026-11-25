@@ -1,0 +1,42 @@
+{
+  "code": 0,
+  "stdout": {
+    "ok": true,
+    "fixed": [],
+    "flagged": [
+      {
+        "file": "knowledge/colon.md",
+        "issue": "unquoted-colon",
+        "detail": "description value contains unquoted colon: Note: with an unquoted colon",
+        "fixed": false,
+        "ref": "knowledge/colon"
+      },
+      {
+        "file": "knowledge/colon.md",
+        "issue": "missing-updated",
+        "detail": "no updated field in frontmatter",
+        "fixed": false,
+        "ref": "knowledge/colon"
+      }
+    ],
+    "warnings": [],
+    "summary": {
+      "fixed": 0,
+      "flagged": 2,
+      "warnings": 0
+    },
+    "byRule": {
+      "unquoted-colon": {
+        "findings": 1,
+        "assets": 1
+      },
+      "missing-updated": {
+        "findings": 1,
+        "assets": 1
+      }
+    },
+    "shape": "lint",
+    "schemaVersion": 1
+  },
+  "stderr": ""
+}

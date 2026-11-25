@@ -1,0 +1,63 @@
+{
+  "code": 0,
+  "stdout": {
+    "ok": true,
+    "fixed": [],
+    "flagged": [
+      {
+        "file": "tasks/nightly.yaml",
+        "issue": "invalid-task-yaml",
+        "detail": "task file uses the .yaml extension; akm recognizes tasks only as .yml, so this file is never indexed or scheduled — rename it to tasks/nightly.yml.",
+        "fixed": false,
+        "ref": "tasks/nightly.yaml"
+      },
+      {
+        "file": "tasks/nightly.yaml",
+        "issue": "invalid-task-yaml",
+        "detail": "Invalid task source v4 at tasks/nightly.yaml:1: with built-in command action with must be an object Fix the task source at the reported path and line, then re-run.",
+        "fixed": false,
+        "ref": "tasks/nightly.yaml"
+      },
+      {
+        "file": "env/dev.env",
+        "issue": "dangerous-env-key",
+        "detail": "Env key `NODE_OPTIONS` can be used to hijack process execution when injected with `--env`. Ref: env/dev. Review this file before running `akm run --env` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on previous line)",
+        "fixed": false,
+        "ref": "env/dev"
+      },
+      {
+        "file": "env/prod.env",
+        "issue": "dangerous-env-key",
+        "detail": "Env key `LD_PRELOAD` can be used to hijack process execution when injected with `--env`. Ref: envb//env/prod. Review this file before running `akm run --env` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on previous line)",
+        "fixed": false,
+        "ref": "env/prod"
+      },
+      {
+        "file": "secrets/token.env",
+        "issue": "dangerous-env-key",
+        "detail": "Env key `PATH` can be used to hijack process execution when injected with `--env`. Ref: envb//secrets/token.env. Review this file before running `akm run --env` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on previous line)",
+        "fixed": false,
+        "ref": "secrets/token.env"
+      }
+    ],
+    "warnings": [],
+    "summary": {
+      "fixed": 0,
+      "flagged": 5,
+      "warnings": 0
+    },
+    "byRule": {
+      "invalid-task-yaml": {
+        "findings": 2,
+        "assets": 1
+      },
+      "dangerous-env-key": {
+        "findings": 3,
+        "assets": 3
+      }
+    },
+    "shape": "lint",
+    "schemaVersion": 1
+  },
+  "stderr": ""
+}

@@ -1,0 +1,30 @@
+{
+  "code": 0,
+  "stdout": {
+    "ok": true,
+    "fixed": [],
+    "flagged": [
+      {
+        "file": "untyped.md",
+        "issue": "missing-type",
+        "detail": "info: no frontmatter `type`; defaults to `knowledge` (OKF leniency, non-blocking)",
+        "fixed": false
+      }
+    ],
+    "warnings": [],
+    "summary": {
+      "fixed": 0,
+      "flagged": 1,
+      "warnings": 0
+    },
+    "byRule": {
+      "missing-type": {
+        "findings": 1,
+        "assets": 1
+      }
+    },
+    "shape": "lint",
+    "schemaVersion": 1
+  },
+  "stderr": ""
+}
