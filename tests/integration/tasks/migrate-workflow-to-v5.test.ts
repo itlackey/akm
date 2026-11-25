@@ -18,6 +18,7 @@ import { applyTaskFilesV5Migration, inspectTaskFilesV5Migration } from "../../..
 import { collectWorkflowFilesAdvisory } from "../../../src/commands/health/workflow-files";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git-provider";
+import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { checkTaskV5 } from "../../../src/tasks/v5/check";
 import { harnessCalls, promptOf, writeFakeHarness } from "../../_helpers/engine-stubs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
@@ -281,7 +282,7 @@ describe("a writable git bundle with no lock entry", () => {
       status: "converted",
       taskFile: path.join(checkout, "tasks", "weekly.yml"),
     });
-    expect(collectWorkflowFilesAdvisory()?.evidence).toMatchObject({ files: [file] });
+    expect((await collectWorkflowFilesAdvisory())?.evidence).toMatchObject({ files: [file] });
   });
 });
 
@@ -406,15 +407,19 @@ describe("a workflow that cannot convert", () => {
 });
 
 describe("akm doctor", () => {
-  test("counts the workflow files left by bundle, says they are removed in 0.11 and what to do with each", () => {
+  test("counts the workflow files left by bundle, says they are removed in 0.11 and what to do with each", async () => {
     const file = workflow("weekly", WEEKLY);
-    const advisory = collectWorkflowFilesAdvisory();
+    const advisory = await collectWorkflowFilesAdvisory();
     expect(advisory).toMatchObject({ name: "workflow-files", status: "warn" });
     expect(advisory?.message).toContain(`1 workflow file(s) remain, in ${storage.stashDir} (1)`);
     expect(advisory?.message).toContain("removed in 0.11");
     expect(advisory?.message).toContain("akm migrate apply <path>");
     expect(advisory?.message).toContain("delete it once the task works");
-    expect(advisory?.evidence).toEqual({ bundles: [{ bundle: storage.stashDir, files: [file] }], files: [file] });
+    expect(advisory?.evidence).toEqual({
+      bundles: [{ bundle: storage.stashDir, files: [file] }],
+      files: [file],
+      blockedRuns: [],
+    });
   });
 
   test("`akm-migrate status` reports the same files and stays current, since apply converts only a named file", async () => {
@@ -425,7 +430,7 @@ describe("akm doctor", () => {
       const plan = JSON.parse(String(log.mock.calls[0]?.[0]));
       expect(plan.status).toBe("current");
       expect(plan.workflowFiles.bundles).toEqual([{ bundle: storage.stashDir, files: [file] }]);
-      expect(plan.workflowFiles.message).toBe(collectWorkflowFilesAdvisory()?.message);
+      expect(plan.workflowFiles.message).toBe((await collectWorkflowFilesAdvisory())?.message);
     } finally {
       log.mockRestore();
     }
@@ -434,19 +439,54 @@ describe("akm doctor", () => {
   test("a workflow whose file is deleted after its task is made is no longer counted", async () => {
     const file = workflow("weekly", WEEKLY);
     await convert(file);
-    expect(collectWorkflowFilesAdvisory()?.evidence).toMatchObject({ files: [file] });
+    expect((await collectWorkflowFilesAdvisory())?.evidence).toMatchObject({ files: [file] });
     fs.rmSync(file);
-    expect(collectWorkflowFilesAdvisory()).toBeUndefined();
+    expect(await collectWorkflowFilesAdvisory()).toBeUndefined();
   });
 
-  test("says nothing when no workflow file is left", () => {
+  test("says nothing when no workflow file is left", async () => {
     put("workflows/README.md", "About workflows.\n");
-    expect(collectWorkflowFilesAdvisory()).toBeUndefined();
+    expect(await collectWorkflowFilesAdvisory()).toBeUndefined();
   });
 
-  test("a bundle that cannot be read is unknown, not empty", () => {
+  async function run(id: string, status: "active" | "blocked"): Promise<void> {
+    await withWorkflowRunsRepo((repo) => {
+      const at = "2026-11-25T00:00:00.000Z";
+      repo.insertRun({
+        id,
+        workflowRef: `workflows/${id}`,
+        workflowTitle: id,
+        paramsJson: "{}",
+        currentStepId: "collect",
+        createdAt: at,
+        updatedAt: at,
+        agentHarness: null,
+        agentSessionId: null,
+      });
+      repo.updateRunState({ status, currentStepId: "collect", updatedAt: at, completedAt: null, runId: id });
+    });
+  }
+
+  test("a blocked workflow run warns, names the run and says how to finish or abandon it before 0.11", async () => {
+    await run("run-stuck", "blocked");
+    const advisory = await collectWorkflowFilesAdvisory();
+    expect(advisory).toMatchObject({ name: "workflow-files", status: "warn" });
+    expect(advisory?.message).toContain("run-stuck (workflows/run-stuck)");
+    expect(advisory?.message).toContain("akm workflow resume <id>");
+    expect(advisory?.message).toContain("akm workflow abandon <id>");
+    expect(advisory?.evidence).toMatchObject({
+      blockedRuns: [{ id: "run-stuck", workflowRef: "workflows/run-stuck" }],
+    });
+  });
+
+  test("an active workflow run is not a warning", async () => {
+    await run("run-going", "active");
+    expect(await collectWorkflowFilesAdvisory()).toBeUndefined();
+  });
+
+  test("a bundle that cannot be read is unknown, not empty", async () => {
     fs.writeFileSync(path.join(storage.configDir, "akm", "config.json"), "{ not json");
     resetConfigCache();
-    expect(collectWorkflowFilesAdvisory()).toMatchObject({ status: "unknown", reason: "blocked" });
+    expect(await collectWorkflowFilesAdvisory()).toMatchObject({ status: "unknown", reason: "blocked" });
   });
 });

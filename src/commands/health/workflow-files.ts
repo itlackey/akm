@@ -4,13 +4,16 @@
 
 /**
  * `workflow-files` advisory for `akm health` / `akm doctor`: workflows are removed in 0.11, so every workflow file
- * left in an enabled, writable bundle is listed with the command that converts it. Silent when none is left; a
- * bundle that cannot be read is reported as unknown, never as none.
+ * left in an enabled, writable bundle is listed with the command that converts it, and every blocked workflow run is
+ * named with the commands that finish or abandon it: 0.11 has no engine to continue one. An active run is not
+ * reported. Silent when there is nothing to report; a bundle or run list that cannot be read is reported as unknown,
+ * never as none.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { listWorkflowRuns } from "../../workflows/runtime/runs";
 import type { HealthCheckResult } from "./types";
 
 /** The workflow files under a bundle root's `workflows` folder, sorted. */
@@ -53,25 +56,42 @@ export function describeRemainingWorkflowFiles(bundles: readonly WorkflowFilesOf
   );
 }
 
-/** The advisory for the workflow files left in the enabled, writable bundles, or `undefined` when there are none. */
-export function collectWorkflowFilesAdvisory(stashDir?: string): HealthCheckResult | undefined {
+/** One line for the blocked runs and how to finish or abandon them before 0.11. */
+function describeBlockedWorkflowRuns(runs: readonly { id: string; workflowRef: string }[]): string {
+  return (
+    `${runs.length} blocked workflow run(s): ${runs.map((run) => `${run.id} (${run.workflowRef})`).join(", ")}. ` +
+    "A run still blocked when you upgrade to 0.11 cannot continue. Finish it with `akm workflow resume <id>` " +
+    "(or `akm workflow run <id>`), or give it up with `akm workflow abandon <id>`, before upgrading."
+  );
+}
+
+/** The advisory for the workflow files and blocked workflow runs left, or `undefined` when there are none. */
+export async function collectWorkflowFilesAdvisory(stashDir?: string): Promise<HealthCheckResult | undefined> {
   const base = { name: "workflow-files", kind: "deterministic", confidence: "high" } as const;
   let bundles: WorkflowFilesOfBundle[];
+  let blocked: { id: string; workflowRef: string }[];
   try {
     bundles = remainingWorkflowFiles(stashDir);
+    blocked = (await listWorkflowRuns()).runs
+      .filter((run) => run.status === "blocked")
+      .map(({ id, workflowRef }) => ({ id, workflowRef }));
   } catch (error) {
     return {
       ...base,
       status: "unknown",
       reason: "blocked",
-      message: `Could not look for workflow files: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Could not look for workflow files or runs: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
-  if (bundles.length === 0) return undefined;
+  if (bundles.length === 0 && blocked.length === 0) return undefined;
+  const message = [
+    ...(bundles.length > 0 ? [describeRemainingWorkflowFiles(bundles)] : []),
+    ...(blocked.length > 0 ? [describeBlockedWorkflowRuns(blocked)] : []),
+  ].join(" ");
   return {
     ...base,
     status: "warn",
-    message: describeRemainingWorkflowFiles(bundles),
-    evidence: { bundles, files: bundles.flatMap((entry) => entry.files) },
+    message,
+    evidence: { bundles, files: bundles.flatMap((entry) => entry.files), blockedRuns: blocked },
   };
 }
