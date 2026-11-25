@@ -35,6 +35,7 @@ const workflow = YAML.parse(source) as {
     pull_request: { branches: string[]; types: string[] };
     workflow_dispatch: { inputs: Record<string, { type: string; default?: unknown; options?: string[] }> };
   };
+  concurrency: { group: string; "cancel-in-progress": string };
   jobs: Record<string, Job>;
 };
 // The gate jobs run for a dispatch (not a dry run), for a release pull request (ready, from a release/* branch), and
@@ -70,6 +71,21 @@ describe("release workflow", () => {
       default: "beta",
       options: ["alpha", "beta", "rc"],
     });
+  });
+
+  test("its concurrency group never matches the group of the CI it calls", () => {
+    // A called workflow evaluates github.workflow and github.run_id as the caller's, so ci.yml's group on a dispatch is
+    // `Release-<run id>`. A Release group of that shape puts both in one group, and GitHub cancels the run as a deadlock.
+    const ciGroup = (
+      YAML.parse(fs.readFileSync(path.resolve(import.meta.dir, "../.github/workflows/ci.yml"), "utf8")) as {
+        concurrency: { group: string };
+      }
+    ).concurrency.group;
+    expect(ciGroup.startsWith("$" + "{{ github.workflow }}-")).toBe(true);
+    expect(workflow.concurrency.group).toBe(
+      "release-workflow-$" + "{{ github.event.pull_request.number || github.run_id }}",
+    );
+    expect(workflow.concurrency["cancel-in-progress"]).toBe("$" + "{{ github.event_name == 'pull_request' }}");
   });
 
   test("runs the gates as its own jobs, then one release job, then Desktop and akm-web", () => {
