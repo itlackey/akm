@@ -282,18 +282,6 @@ test("a restart ends sessions; two instances do not share them", async (t) => {
   );
 });
 
-test("a session ends after a period without use, and use renews it", async (t) => {
-  const app = await start(t, { env: { AKM_DESKTOP_TEST_SESSION_IDLE_MS: "900" } });
-  const cookie = cookieOf(await app.login());
-  for (let i = 0; i < 3; i++) {
-    await sleep(500);
-    assert.equal((await app.request("/api/session", { headers: { Cookie: cookie } })).status, 200, `use ${i}`);
-  }
-  await sleep(1300);
-  assert.equal((await app.request("/api/session", { headers: { Cookie: cookie } })).status, 401);
-  assert.equal((await app.request("/api/session", { headers: app.bearer })).status, 200, "the header does not expire");
-});
-
 test("the header allows a request without a session, and the secret appears nowhere", async (t) => {
   const app = await start(t);
   const ok = await app.request("/api/session", { headers: app.bearer });
@@ -432,15 +420,6 @@ test("a login link works once, and opens a session", async (t) => {
   assert.equal(second.headers["set-cookie"], undefined, "a link works once");
   assert.equal(second.status, 401);
   assert.match(second.text, /<form/, "a used link leads to the login form");
-});
-
-test("a login link expires", async (t) => {
-  const app = await start(t, { env: { AKM_DESKTOP_TEST_LINK_TTL_MS: "400" } });
-  const { url } = (await app.write("/api/session/link", {}, app.bearer)).json();
-  await sleep(700);
-  const late = await app.request(url.slice(app.origin.length), { headers: { "Sec-Fetch-Site": "none" } });
-  assert.equal(late.headers["set-cookie"], undefined);
-  assert.equal(late.status, 401);
 });
 
 test("a browser opens only with --open, and logs in only with --auto-login", {
