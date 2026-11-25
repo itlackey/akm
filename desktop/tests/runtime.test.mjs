@@ -13,6 +13,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createFixture } from "../scripts/fixture.mjs";
+import { withFreePort } from "./support.mjs";
 
 const appRoot = process.env.AKM_DESKTOP_TEST_APP_ROOT ?? fileURLToPath(new URL("..", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -302,29 +303,16 @@ export const handler = (req, res) => res.end('loaded');
   assert.equal(await (await fetch(`${loading.origin}/`)).text(), "loaded");
 });
 
-async function freePort() {
-  const probe = net.createServer();
-  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
-  const { port } = probe.address();
-  await new Promise((resolve) => probe.close(resolve));
-  return port;
-}
-
 /**
- * Starts the server with the flags `argsFor(port)` gives for a free port, then talks to its bind address while claiming
- * the configured host name. `freePort` only finds a port that was free: a server another test file starts may take it
- * before this one binds, and this one then exits with EADDRINUSE. It is started again on another port.
+ * Starts the server with the flags `argsFor(port)` gives for a free port (see `withFreePort`), then talks to its bind
+ * address while claiming the configured host name.
  */
 async function launchWith(t, argsFor) {
   const secret = randomBytes(32).toString("hex");
   const fixture = await createFixture({ packageRoot: appRoot });
   t.after(() => fixture.cleanup());
-  let port;
-  let args;
-  let ready;
-  for (let attempt = 1; !ready; attempt++) {
-    port = await freePort();
-    args = argsFor(port);
+  const { port, args, ready } = await withFreePort(async (port) => {
+    const args = argsFor(port);
     const child = fork(path.join(appRoot, "server/server.mjs"), args, {
       execArgv: [],
       env: { ...fixture.env, AKM_WEB_SECRET: secret },
@@ -333,14 +321,12 @@ async function launchWith(t, argsFor) {
     t.after(() => child.kill());
     let stderr = "";
     child.stderr.on("data", (chunk) => (stderr += chunk));
-    ready = await new Promise((resolve, reject) => {
-      child.once("exit", (code) => {
-        if (stderr.includes("EADDRINUSE") && attempt < 3) resolve(undefined);
-        else reject(new Error(`Server exit ${code}: ${stderr.trim()}`));
-      });
+    const ready = await new Promise((resolve, reject) => {
+      child.once("exit", (code) => reject(new Error(`Server exit ${code}: ${stderr.trim()}`)));
       child.once("message", resolve);
     });
-  }
+    return { port, args, ready };
+  });
   const send = (route, { host = new URL(ready.origin).host, method = "GET", headers = {}, body } = {}) =>
     new Promise((resolve, reject) => {
       const req = http.request(

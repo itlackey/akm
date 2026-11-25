@@ -9,24 +9,15 @@
 import assert from "node:assert/strict";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import http from "node:http";
-import net from "node:net";
 import path from "node:path";
 import test from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { akm, answered, launchFixture } from "./support.mjs";
+import { akm, answered, launchFixture, withFreePort } from "./support.mjs";
 
 const PREFIX = "/akm";
 const FRAME_HOST = "/frame-host.html"; // a page of the proxy's own origin (the "app"), not part of the UI
 
 const FORM = "application/x-www-form-urlencoded";
-
-async function freePort() {
-  const probe = net.createServer();
-  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
-  const { port } = probe.address();
-  await new Promise((resolve) => probe.close(resolve));
-  return port;
-}
 
 /**
  * A prefix-stripping proxy and the server behind it, as a broker serving the UI under `/akm/` would run them. The
@@ -38,6 +29,7 @@ async function freePort() {
 async function startProxied(t, { header = true, ...options } = {}) {
   const requests = [];
   let server;
+  let serverPort;
   const proxy = http.createServer((req, res) => {
     const url = req.url ?? "/";
     requests.push({ method: req.method, url });
@@ -74,20 +66,22 @@ async function startProxied(t, { header = true, ...options } = {}) {
   });
   await new Promise((resolve) => proxy.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${proxy.address().port}`;
-  const serverPort = await freePort();
-  server = await launchFixture({
-    ...options,
-    login: false,
-    configureFixture: async (fixture) => {
-      await options.configureFixture?.(fixture);
-      const file = path.join(fixture.root, "config/config.json");
-      const config = JSON.parse(await readFile(file, "utf8"));
-      config.experimental = {
-        ...config.experimental,
-        web: { port: serverPort, origin, allowedHosts: ["127.0.0.1"], frameParents: [origin] },
-      };
-      await writeFile(file, JSON.stringify(config));
-    },
+  server = await withFreePort((port) => {
+    serverPort = port;
+    return launchFixture({
+      ...options,
+      login: false,
+      configureFixture: async (fixture) => {
+        await options.configureFixture?.(fixture);
+        const file = path.join(fixture.root, "config/config.json");
+        const config = JSON.parse(await readFile(file, "utf8"));
+        config.experimental = {
+          ...config.experimental,
+          web: { port, origin, allowedHosts: ["127.0.0.1"], frameParents: [origin] },
+        };
+        await writeFile(file, JSON.stringify(config));
+      },
+    });
   });
   t.after(() => server.stop());
   t.after(() => new Promise((resolve) => (proxy.closeAllConnections(), proxy.close(resolve))));

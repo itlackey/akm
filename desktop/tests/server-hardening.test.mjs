@@ -10,32 +10,25 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import http from "node:http";
-import net from "node:net";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createFixture } from "../scripts/fixture.mjs";
 import { startServer } from "../server/server.mjs";
+import { withFreePort } from "./support.mjs";
 
 const appRoot = process.env.AKM_DESKTOP_TEST_APP_ROOT ?? fileURLToPath(new URL("..", import.meta.url));
 const server = path.join(appRoot, "server/server.mjs");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function freePort() {
-  const probe = net.createServer();
-  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
-  const { port } = /** @type {net.AddressInfo} */ (probe.address());
-  await new Promise((resolve) => probe.close(resolve));
-  return port;
-}
-
 /** Starts the server on plain Node with `web` as `experimental.web`, and `env` on top of the fixture's. */
-async function start(t, { web, env = {} }) {
+const start = (t, options) => withFreePort((port) => launch(t, port, options));
+
+async function launch(t, port, { web, env = {} }) {
   const fixture = await createFixture({ packageRoot: appRoot, index: false });
   t.after(() => fixture.cleanup());
   const file = path.join(fixture.root, "config/config.json");
   const config = JSON.parse(await readFile(file, "utf8"));
-  const port = await freePort();
   config.experimental = { ...config.experimental, web: { ...web, port } };
   await writeFile(file, JSON.stringify(config));
   const bin = path.join(fixture.root, "fake-bin");
