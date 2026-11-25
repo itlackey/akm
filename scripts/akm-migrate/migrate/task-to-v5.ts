@@ -256,9 +256,8 @@ export function planTaskToV5File(input: TaskToV4FileInput, v4Bytes: Buffer = inp
   }
   const env = envList(document.env, refs);
   if (env.length > 0) out.env = env;
-  if (target.kind === "steps" || target.kind === "run") {
-    if (target.workingDirectory !== undefined) out.cwd = target.workingDirectory;
-  }
+  // A v4 step ran in the bundle root unless `working-directory:` said otherwise; a v5 step runs in the run's own folder.
+  out.cwd = (target.kind === "steps" || target.kind === "run" ? target.workingDirectory : undefined) ?? ".";
   const execution = document.execution;
   if (execution.timeout !== undefined) out.timeout = execution.timeout;
   if (execution.maxRetries !== undefined) out["max-retries"] = execution.maxRetries;
@@ -274,6 +273,9 @@ export function planTaskToV5File(input: TaskToV4FileInput, v4Bytes: Buffer = inp
   if (shell === "bash") {
     notes.push("`shell: bash` is dropped: a version 5 exec: line is run by sh. Change a line that needs bash by hand.");
   }
+  notes.push(
+    "A version 4 step inherited akm's environment; a version 5 step runs in a clean one. A step that read a variable from it needs `inherit:` to pass it on: add it by hand.",
+  );
 
   const converted = new Document(out);
   if (isMap(sourceDocument.contents) && isMap(converted.contents)) {
