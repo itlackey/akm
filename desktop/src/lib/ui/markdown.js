@@ -27,13 +27,16 @@ const TABLE_DELIMITER = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$/;
 /** DOM id of a heading: prefixed so a slug like "app" never collides with the page's own ids. */
 export const headingId = (slug) => `h-${slug}`;
 
+// `context.href` turns an app path into an address the browser can follow (a UI served under a path prefix needs it).
+const place = (context, path) => (context.href ? context.href(path) : path);
+
 function link(text, url, context) {
   if (context.links && Object.hasOwn(context.links, url))
-    return html`<a href="${assetHref(context.links[url])}">${text}</a>`;
+    return html`<a href="${place(context, assetHref(context.links[url]))}">${text}</a>`;
   if (url.startsWith("#")) {
     // A bare "#x" has no element to land on in rendered Markdown; without an asset to anchor to, show text.
     if (!context.ref) return html`${text}`;
-    return html`<a href="${assetHref(context.ref)}&section=${encodeURIComponent(url.slice(1))}">${text}</a>`;
+    return html`<a href="${place(context, `${assetHref(context.ref)}&section=${encodeURIComponent(url.slice(1))}`)}">${text}</a>`;
   }
   if (!SAFE_URL.test(url)) return html`${text}`;
   const external = /^(https?:|mailto:)/i.test(url);
@@ -100,7 +103,7 @@ export function inline(text, context = {}) {
     } else if (m[3] !== undefined) {
       const [ref, label] = m[3].split("|");
       const target = context.bundle && !ref.includes("//") ? `${context.bundle}//${ref.trim()}` : ref.trim();
-      out.push(html`<a href="${assetHref(target)}"><code>${label ?? ref}</code></a>`);
+      out.push(html`<a href="${place(context, assetHref(target))}"><code>${label ?? ref}</code></a>`);
     } else out.push(link(m[4], m[5], context));
     last = m.index + m[0].length;
   }
@@ -120,7 +123,7 @@ const cells = (line) =>
  * Render markdown text to safe HTML. `context` is optional: `ref` and `bundle` anchor `#section` links and
  * bare [[wikilinks]] to the asset, `links` maps raw link targets to indexed refs, and `headings` is the
  * server's heading list ({line, slug}), matched by `line` against `startLine`, the source line of the
- * text's first line (after frontmatter).
+ * text's first line (after frontmatter). `href` maps an app path ("/library/asset?ref=a") to the address of a link.
  */
 export function markdown(source, context = {}) {
   const lines = String(source ?? "")

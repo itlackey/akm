@@ -13,7 +13,7 @@ import net from "node:net";
 import path from "node:path";
 import test from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { answered, launchFixture } from "./support.mjs";
+import { akm, answered, launchFixture } from "./support.mjs";
 
 const PREFIX = "/akm";
 const FRAME_HOST = "/frame-host.html"; // a page of the proxy's own origin (the "app"), not part of the UI
@@ -105,7 +105,17 @@ async function startProxied(t, { header = true, ...options } = {}) {
 // The UI has no streamed request (no SSE, no streamed fetch body; `grep` of `desktop/src` finds none), so there is no
 // streaming case here; the proxy still pipes every response rather than buffering it.
 test("the UI works under a path prefix that the proxy removes", { timeout: 180000 }, async (t) => {
-  const proxy = await startProxied(t, { proposals: true });
+  const proxy = await startProxied(t, {
+    proposals: true,
+    // A document whose body links to another asset three ways: a wikilink, a relative link and a section link.
+    configureFixture: async (fixture) => {
+      await writeFile(
+        path.join(fixture.root, "personal/knowledge/linked.md"),
+        "---\ntitle: Linked page\ndescription: Synthetic page with links\n---\n# Linked page\n\n## Steps\n\nSee [[knowledge/restore-laptop]], [the checklist](restore-laptop.md) and [the steps](#steps).\n",
+      );
+      akm(fixture, ["index"]);
+    },
+  });
   const { server } = proxy;
   const browser = await chromium.launch();
   t.after(() => browser.close());
@@ -207,6 +217,25 @@ test("the UI works under a path prefix that the proxy removes", { timeout: 18000
     await expect(page.locator("a.brand")).toHaveAttribute("href", `${PREFIX}/`);
   });
 
+  await t.test("links inside a document body stay under the prefix", async () => {
+    const linked = `/library/asset?${new URLSearchParams({ ref: "personal//knowledge/linked" })}`;
+    const body = page.locator(".markdown");
+    const hrefs = async () => body.getByRole("link").evaluateAll((links) => links.map((a) => a.getAttribute("href")));
+    await page.goto(at(linked));
+    await expect(body).toContainText("See ");
+    const found = await hrefs();
+    assert.equal(found.length, 3, found.join(" "));
+    for (const href of found) assert.ok(href.startsWith(`${PREFIX}/library/asset?`), href);
+    for (const name of ["knowledge/restore-laptop", "the checklist", "the steps"]) {
+      await page.goto(at(linked));
+      await body.getByRole("link", { name }).click();
+      await expect(page).toHaveURL(new RegExp(`^${proxy.origin}${PREFIX}/library/asset\\?`));
+      await expect(
+        page.getByRole("heading", { name: name === "the steps" ? "Linked page" : "Restore a laptop" }),
+      ).toBeVisible();
+    }
+  });
+
   await t.test("no request left the prefix, and no page error occurred", () => {
     assert.deepEqual(proxy.outside(), []);
     assert.deepEqual(errors, []);
@@ -278,16 +307,36 @@ test("a person logs in through the proxy under the prefix, by the form and by a 
 });
 
 // A root-absolute address in source ignores the prefix. Links, `goto`, `fetch` and `redirect` take app paths through
-// `appHref` (`lib/client.ts`); this fails, naming file and line, if a literal slips past it.
+// `appHref` (`lib/client.ts`); this fails, naming file and line, if a literal slips past it. It reads the Svelte, TypeScript
+// and JavaScript sources, `lib/ui/*.js` (rendered Markdown) included, and looks for a root-absolute literal in a link,
+// image, form action, navigation call, `new URL` or CSS `url()`, and for markup built in `lib/ui` whose `href` does not
+// go through the `place` helper that applies the caller's `href` function. A path held in a variable is not seen here:
+// the browser tests above follow those.
 test("no source file uses a root-absolute address without appHref", async () => {
   const files = (await readdir(new URL("../src", import.meta.url), { recursive: true })).filter(
-    (name) => /\.(svelte|ts)$/.test(name) && !name.startsWith("lib/server") && name !== "hooks.server.ts",
+    (name) =>
+      /\.(svelte|ts|js|css)$/.test(name) &&
+      !name.startsWith("lib/server") &&
+      name !== "hooks.server.ts" &&
+      name !== "lib/ui/echarts.js",
   );
-  const bare = /href="\/(?!\/)|\b(goto|fetch)\(\s*["'`]\/(?!\/)|redirect\(\s*\d+,\s*["'`]\//;
+  const root = String.raw`["'\`]\/(?!\/)`;
+  const bare = new RegExp(
+    [
+      String.raw`\b(href|src|action)=\{?\s*${root}`,
+      String.raw`\b(goto|fetch)\(\s*${root}`,
+      String.raw`redirect\(\s*\d+,\s*${root}`,
+      String.raw`location(\.href\s*=|\.(assign|replace)\()\s*${root}`,
+      String.raw`new URL\(\s*${root}`,
+      String.raw`url\(\s*["']?\/(?!\/)`,
+    ].join("|"),
+  );
+  const unplaced = /href="\$\{(?!place\()(?!url\})/; // lib/ui: `href="${place(context, ...)}"`, or an external `url`
   const found = [];
   for (const name of files)
     (await readFile(new URL(`../src/${name}`, import.meta.url), "utf8")).split("\n").forEach((line, i) => {
-      if (bare.test(line)) found.push(`src/${name}:${i + 1}: ${line.trim()}`);
+      if (bare.test(line) || (name.startsWith("lib/ui/") && unplaced.test(line)))
+        found.push(`src/${name}:${i + 1}: ${line.trim()}`);
     });
   assert.deepEqual(found, []);
 });
