@@ -7,8 +7,9 @@
  * assessment, and the 20 highest-scoring files. CI appends it to the job summary.
  *
  * With a base ref (`--base <ref>`, or `origin/$GITHUB_BASE_REF` on a pull request) it is also a gate: it scores the
- * base's `src/` and exits 1 when a file's score is higher than at the base and over `RISE_FLOOR` (75). A file new since the base is not
- * compared. Nothing is checked in: the base is scored each run. Without a base it only reports.
+ * base's `src/` and exits 1 when a file scores over `SCORE_CAP` (100), or higher than at the base and over `RISE_FLOOR`
+ * (75). A file new since the base is not compared, but is capped. Nothing is checked in: the base is scored each run.
+ * Without a base it only reports.
  *
  * Usage:  bun scripts/fta-report.ts [--base origin/release/<version>]
  */
@@ -26,12 +27,27 @@ interface FtaFile {
 
 interface Rise {
   file: string;
-  base: number;
+  /** Absent for a file new since the base. */
+  base?: number;
   now: number;
 }
 
 /** Scores up to this are not compared; it comes down once `src/` is simpler, until every file is compared. */
 export const RISE_FLOOR = 75;
+
+/** No file may score over this. */
+export const SCORE_CAP = 100;
+
+/** Files scoring over `SCORE_CAP`, with their base score when they had one. */
+export function overCap(
+  base: Pick<FtaFile, "file_name" | "fta_score">[],
+  current: Pick<FtaFile, "file_name" | "fta_score">[],
+): Rise[] {
+  const baseScores = new Map(base.map((f) => [f.file_name, f.fta_score]));
+  return current
+    .filter((f) => f.fta_score > SCORE_CAP)
+    .map((f) => ({ file: `src/${f.file_name}`, base: baseScores.get(f.file_name), now: f.fta_score }));
+}
 
 /** Files whose score is higher than at the base and over `RISE_FLOOR`; a file with no base score is skipped. */
 export function scoreRises(
@@ -116,14 +132,17 @@ function main(): void {
   console.log(report);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${report}\n`);
 
-  const rises = baseRef ? scoreRises(ftaAtRef(baseRef), files) : [];
-  if (rises.length === 0) return;
+  const base = baseRef ? ftaAtRef(baseRef) : undefined;
+  const rises = base ? scoreRises(base, files) : [];
+  const risen = new Set(rises.map((r) => r.file));
+  const failing = base ? [...rises, ...overCap(base, files).filter((r) => !risen.has(r.file))] : [];
+  if (failing.length === 0) return;
   const failure = [
-    `## Complexity gate failed: ${rises.length} file${rises.length === 1 ? "" : "s"} scored higher than at \`${baseRef}\` and over ${RISE_FLOOR}`,
+    `## Complexity gate failed: ${failing.length} file${failing.length === 1 ? "" : "s"} over ${SCORE_CAP}, or higher than at \`${baseRef}\` and over ${RISE_FLOOR}`,
     "",
     "| File | Base score | New score |",
     "| --- | ---: | ---: |",
-    ...rises.map((r) => `| \`${r.file}\` | ${r.base.toFixed(1)} | ${r.now.toFixed(1)} |`),
+    ...failing.map((r) => `| \`${r.file}\` | ${r.base?.toFixed(1) ?? "new"} | ${r.now.toFixed(1)} |`),
     "",
   ].join("\n");
   console.error(failure);

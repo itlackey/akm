@@ -26,7 +26,7 @@ runs it as a gate on a prerelease's commit and on the release pull request into 
 `upgrade-rehearsal` jobs, which run integration tests of their own. Desktop's tests run there too, as `desktop-tests`, `desktop-e2e` and `desktop-usability`;
 pull requests run only Desktop's check and build. Pull requests run only the three architecture
 checks (`bun run test:architecture`) and the FTA complexity gate (`bun run report:complexity`: it fails when a file scores
-over 75 and higher than at the base branch; locally `bun run report:complexity --base origin/<release branch>`). Run the integration target yourself before pushing a change it covers.
+over 100, or over 75 and higher than at the base branch; locally `bun run report:complexity --base origin/<release branch>`). Run the integration target yourself before pushing a change it covers.
 
 - `bun run test:unit` (`scripts/test-unit.sh`) runs every `*.test.ts` under
   `tests/` except `tests/integration/`. That includes the top-level
