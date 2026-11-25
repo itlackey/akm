@@ -7,7 +7,7 @@
 // outside `/akm/`, so a link, an asset or an API call that assumes the root of the site shows up as a failure.
 
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import http from "node:http";
 import test from "node:test";
 import { chromium, expect } from "@playwright/test";
@@ -165,6 +165,35 @@ test("the UI works under a path prefix that the proxy removes", { timeout: 18000
     await expect(page.locator(".document-body, .markdown").first()).toContainText("Edited through the prefix.");
   });
 
+  await t.test(
+    "a direct load of any nested route has its root: a link and an API call on each stay under the prefix",
+    async () => {
+      for (const route of [
+        "/settings/connections",
+        "/library/files?bundle=personal&path=knowledge",
+        "/activity/overview",
+      ]) {
+        const before = proxy.requests.length;
+        await page.goto(at(route));
+        await expect(page.getByRole("navigation", { name: "Primary navigation" })).toBeVisible();
+        // The shell reads /api/desktop on every load; the link is the brand link, present on every page.
+        await expect
+          .poll(() => proxy.requests.slice(before).some((r) => r.url.startsWith(`${PREFIX}/api/`)))
+          .toBe(true);
+        await expect(page.locator("a.brand")).toHaveAttribute("href", `${PREFIX}/`);
+        await nav("Review").click();
+        await expect(page).toHaveURL(/\/akm\/review/);
+      }
+    },
+  );
+
+  await t.test("a trailing slash is stripped by a redirect that stays under the prefix", async () => {
+    await page.goto(at("/settings/bundles/"));
+    await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+    await expect(page).toHaveURL(at("/settings/bundles"));
+    await expect(page.locator("a.brand")).toHaveAttribute("href", `${PREFIX}/`);
+  });
+
   await t.test("no request left the prefix, and no page error occurred", () => {
     assert.deepEqual(proxy.outside(), []);
     assert.deepEqual(errors, []);
@@ -204,3 +233,18 @@ for (const { name, frameable, todo } of [
     assert.deepEqual(proxy.outside(), []);
   });
 }
+
+// A root-absolute address in source ignores the prefix. Links, `goto`, `fetch` and `redirect` take app paths through
+// `appHref` (`lib/client.ts`); this fails, naming file and line, if a literal slips past it.
+test("no source file uses a root-absolute address without appHref", async () => {
+  const files = (await readdir(new URL("../src", import.meta.url), { recursive: true })).filter(
+    (name) => /\.(svelte|ts)$/.test(name) && !name.startsWith("lib/server") && name !== "hooks.server.ts",
+  );
+  const bare = /href="\/(?!\/)|\b(goto|fetch)\(\s*["'`]\/(?!\/)|redirect\(\s*\d+,\s*["'`]\//;
+  const found = [];
+  for (const name of files)
+    (await readFile(new URL(`../src/${name}`, import.meta.url), "utf8")).split("\n").forEach((line, i) => {
+      if (bare.test(line)) found.push(`src/${name}:${i + 1}: ${line.trim()}`);
+    });
+  assert.deepEqual(found, []);
+});

@@ -15,8 +15,8 @@ export class ApiError extends Error {
 import type { Asset, AssetSummary } from "./types";
 
 // Where the UI is served from: "" at the root of a site, "/akm" when a proxy serves it under that path and removes it
-// before forwarding. Kit works it out from the page's address (`$app/paths`); `navigation.ts` hands it over, so that
-// this module needs no Kit import. Links, navigation and API calls keep app paths ("/library/search") and add it here.
+// before forwarding. Kit works it out from the page's address (`$app/paths`); `hooks.client.ts` (the first module Kit loads in
+// the browser, before any load function or component) hands it over, so that this module needs no Kit import. Links, navigation and API calls keep app paths ("/library/search") and add it here.
 let root = "";
 export function setRoot(base: string) {
   root = base;
