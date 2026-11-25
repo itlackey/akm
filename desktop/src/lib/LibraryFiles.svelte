@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack, type Snippet } from "svelte";
-  import { api } from "./client";
+  import { api, appHref } from "./client";
   import {
     ancestorPaths,
     directoryKey,
@@ -592,7 +592,7 @@
               ? "Choose an enabled bundle in the tree, or check your bundle settings."
               : "Add or enable a bundle to browse its folders and files."}
           </p>
-          <a href="/settings/bundles">Bundle settings</a>
+          <a href={appHref("/settings/bundles")}>Bundle settings</a>
         </section>
       {:else if documentOpen}{@render children?.({
           selectedFile,

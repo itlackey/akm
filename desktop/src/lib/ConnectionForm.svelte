@@ -16,6 +16,7 @@
 -->
 
 <script lang="ts">
+  import { appHref } from "./client";
   import { onDestroy, tick } from "svelte";
   import { workspace } from "./state/workspace.svelte";
   import {
@@ -281,7 +282,7 @@
       test connections. Saving only checks the configuration.</span
     >
     <div class="btn-row">
-      <a class="btn btn-secondary" href={cancelHref}>Cancel</a><button
+      <a class="btn btn-secondary" href={appHref(cancelHref)}>Cancel</a><button
         type="submit"
         disabled={busy || (!creating && !changes)}
         >{#if busy}<span class="spinner" aria-hidden="true"></span> Saving…{:else}{creating

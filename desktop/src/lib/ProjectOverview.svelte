@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api } from "./client";
+  import { api, appHref } from "./client";
   import Icon from "./Icon.svelte";
   import {
     assetCounts,
@@ -62,14 +62,14 @@
 </script>
 
 <nav class="crumbs" aria-label="Breadcrumb">
-  <a href="/projects">Projects</a> › <span aria-current="page">{row.name}</span>
+  <a href={appHref("/projects")}>Projects</a> › <span aria-current="page">{row.name}</span>
 </nav>
 <div class="head">
   <h1 tabindex="-1" id="project-title">{row.name}</h1>
   <span class="badge">{row.inherited ? "Inherited" : "Local"}</span>
   <div class="btn-row actions">
-    <a class="btn btn-secondary" href={`${base}/edit`}><Icon name="edit" size={16} /> Edit project</a>
-    <a class="btn" href={`${base}/assets`}>Browse assets</a>
+    <a class="btn btn-secondary" href={appHref(`${base}/edit`)}><Icon name="edit" size={16} /> Edit project</a>
+    <a class="btn" href={appHref(`${base}/assets`)}>Browse assets</a>
   </div>
 </div>
 
@@ -109,13 +109,15 @@
         </header>
         {#if !bundle.configured}
           <p class="small">akm skips this bundle until it is registered.</p>
-          <a class="small" href="/settings/bundles">Bundles & index →</a>
+          <a class="small" href={appHref("/settings/bundles")}>Bundles & index →</a>
         {:else if !bundle.enabled}
           <p class="small muted">
             {provider(bundle.name)} · <span class="warn">Disabled</span> · {bundle.writable ? "Writable" : "Read-only"}
           </p>
           <p class="small">Disabled. akm skips this bundle until it is enabled.</p>
-          <a class="small" href={`/settings/bundles?manage=${encodeURIComponent(bundle.name)}`}>Bundles & index →</a>
+          <a class="small" href={appHref(`/settings/bundles?manage=${encodeURIComponent(bundle.name)}`)}
+            >Bundles & index →</a
+          >
         {:else}
           <p class="small muted">
             {provider(bundle.name)} · Enabled · {bundle.writable ? "Writable" : "Read-only"}
@@ -131,11 +133,11 @@
               </p>{/if}
           {:else}<p class="small">{COUNTS_UNKNOWN}</p>{/if}
           {#if types.text}<p class="small muted" title={types.full}>{types.text}</p>{/if}
-          {#if !counts}<a class="small" href={`${base}/assets?bundle=${encodeURIComponent(bundle.name)}`}
+          {#if !counts}<a class="small" href={appHref(`${base}/assets?bundle=${encodeURIComponent(bundle.name)}`)}
               >Browse assets →</a
             >{:else if counts.eligible > 0}<a
               class="small"
-              href={`${base}/assets?bundle=${encodeURIComponent(bundle.name)}`}
+              href={appHref(`${base}/assets?bundle=${encodeURIComponent(bundle.name)}`)}
               >Browse {n(counts.eligible)}
               {counts.eligible === 1 ? "asset" : "assets"} →</a
             >{:else}<p class="small muted">No eligible assets</p>{/if}

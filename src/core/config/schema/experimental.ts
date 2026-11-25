@@ -13,7 +13,21 @@
 import { z } from "zod";
 import { ImproveWhereSchema } from "./improve";
 import { ImproveProfileConfigSchema } from "./improve-processes";
-import { engineName } from "./primitives";
+import { engineName, httpUrl, isApiKeyReference } from "./primitives";
+
+/** An http(s) origin: scheme, host and optional port, with no credentials, path, query or fragment. */
+function isHttpOrigin(value: string): boolean {
+  if (/[?#@]/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return /^https?:$/.test(url.protocol) && url.pathname === "/" && !/^https?:\/\/[^/]+\/./.test(value);
+  } catch {
+    return false;
+  }
+}
+const httpOrigin = httpUrl.refine(isHttpOrigin, {
+  message: "must be an http(s) origin such as https://host[:port], with no path, query or fragment",
+});
 
 export const ExperimentalConfigSchema = z
   .object({
@@ -48,6 +62,24 @@ export const ExperimentalConfigSchema = z
       .object({
         strategies: z.record(engineName, ImproveProfileConfigSchema).optional(),
         qualityGate: ImproveWhereSchema.optional(),
+      })
+      .passthrough()
+      .optional(),
+    /**
+     * Settings for `akm-web` (AKM Desktop's server). Experimental: names and behaviour may change in 0.11.
+     * `secret` is a reference (`$VAR`, `${VAR}` or `${secrets/<name>}`), never the secret itself.
+     */
+    web: z
+      .object({
+        host: z.string().min(1).optional(),
+        port: z.number().int().min(0).max(65535).optional(),
+        origin: httpOrigin.optional(),
+        secret: z
+          .string()
+          .refine(isApiKeyReference, { message: "secret must be a $VAR, ${VAR} or ${secrets/<name>} reference" })
+          .optional(),
+        allowedHosts: z.array(z.string().min(1)).optional(),
+        frameParents: z.array(httpOrigin).optional(),
       })
       .passthrough()
       .optional(),

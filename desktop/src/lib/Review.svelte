@@ -9,7 +9,7 @@
   import { refreshPending, workspace } from "./state/workspace.svelte";
   import { showToast } from "./state/toasts.svelte";
   import { onDestroy, tick, untrack } from "svelte";
-  import { api, apiState, date, title, toggleSelection } from "./client";
+  import { api, apiState, appHref, date, title, toggleSelection } from "./client";
   import Icon from "./Icon.svelte";
   import ReviewDetail from "./ReviewDetail.svelte";
   import ReviewFinished from "./ReviewFinished.svelte";
@@ -590,7 +590,7 @@
     <div class="page-heading">
       <div>
         <h1>Review</h1>
-        {#if analyticsReturn}<a class="return-link" href={analyticsReturn}
+        {#if analyticsReturn}<a class="return-link" href={appHref(analyticsReturn)}
             ><Icon name="arrow-left" size={16} /> Back to {analyticsReturn.startsWith("/activity/improve")
               ? "improve impact"
               : "activity"}</a
@@ -602,11 +602,11 @@
         <a
           class="tab"
           aria-current={status === "pending" ? "page" : undefined}
-          href={proposalHref("", new URLSearchParams({ status: "pending" }))}>Pending</a
+          href={appHref(proposalHref("", new URLSearchParams({ status: "pending" })))}>Pending</a
         ><a
           class="tab"
           aria-current={status === "recent" ? "page" : undefined}
-          href={proposalHref("", new URLSearchParams({ status: "recent" }))}>Recent decisions</a
+          href={appHref(proposalHref("", new URLSearchParams({ status: "recent" })))}>Recent decisions</a
         >
       </nav>
       <label
@@ -636,7 +636,7 @@
   {#if source || age || week || outcome}<p class="muted small active-filters">
       Active filters: {[source, age ? ageBands[age as keyof typeof ageBands] : "", week, outcome]
         .filter(Boolean)
-        .join(" · ")} · <a href={proposalHref("", new URLSearchParams({ status }))}>Clear filters</a>
+        .join(" · ")} · <a href={appHref(proposalHref("", new URLSearchParams({ status })))}>Clear filters</a>
     </p>{/if}
   {#if queueError}<div class="notice notice-fail" role="alert">
       Queue could not refresh: {queueError} <button class="btn-secondary" onclick={load}>Retry queue</button>
@@ -676,7 +676,7 @@
               data-id={p.id}
               title={p.ref}
               aria-current={desiredId === p.id ? "true" : undefined}
-              href={proposalHref(p.id, query)}
+              href={appHref(proposalHref(p.id, query))}
               ><strong>{title(p)}</strong><span class="queue-location">{conceptLocation(p.ref)}</span><span
                 class="queue-meta"
                 ><span>{p.isRetire ? "Retirement" : p.source}</span><time
@@ -720,7 +720,7 @@
                 ><tbody
                   >{#each queue.backlog as row}<tr
                       ><th>{row.source}</th>{#each Object.keys(ageBands) as band}<td
-                          ><a href={proposalHref("", new URLSearchParams({ source: row.source, age: band }))}
+                          ><a href={appHref(proposalHref("", new URLSearchParams({ source: row.source, age: band })))}
                             >{row[band as keyof typeof row]}</a
                           ></td
                         >{/each}</tr

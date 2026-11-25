@@ -3,5 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { redirect } from "@sveltejs/kit";
+import { appHref } from "../../lib/client";
 
-export const load = () => redirect(307, "/library/search");
+export const load = () => redirect(307, appHref("/library/search"));

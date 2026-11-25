@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, apiState, date } from "./client";
+  import { api, apiState, appHref, date } from "./client";
   import BackupsPrune from "./BackupsPrune.svelte";
   import Icon from "./Icon.svelte";
   import { homeConcerns, homeCoverage, pruneSummary, taskOutcomes } from "./home-model";
@@ -101,7 +101,7 @@
               Create your library, connect the agents you use, and check that they can reach it. It takes about two
               minutes, and nothing runs until you press a button.
             </p>
-            <a class="btn" href="/setup">Start setup<Icon name="arrow-right" size={16} /></a>
+            <a class="btn" href={appHref("/setup")}>Start setup<Icon name="arrow-right" size={16} /></a>
           </div>
         {:else}
           <div class="home-section-title">
@@ -135,7 +135,7 @@
                       />{/if}
                   </div>
                   <a
-                    href={item.href}
+                    href={appHref(item.href)}
                     class="home-detail-link"
                     aria-label={`${item.action}: ${item.title}, in ${item.destination}`}
                     >{item.action}<Icon name="external" size={16} /></a
@@ -143,7 +143,7 @@
                 </li>
               {/each}
             </ul>
-            {#if concerns.length > 4}<a class="home-more" href="/activity/overview"
+            {#if concerns.length > 4}<a class="home-more" href={appHref("/activity/overview")}
                 >View all health checks and activity <Icon name="arrow-right" size={16} /></a
               >{/if}
           {:else}<div class="home-empty">
@@ -156,7 +156,7 @@
                     ? `${unknown} checks have no result yet. Open health details to review coverage.`
                     : "Nothing needs attention in this snapshot."}
               </p>
-              <a href="/activity/overview">View health details <Icon name="arrow-right" size={16} /></a>
+              <a href={appHref("/activity/overview")}>View health details <Icon name="arrow-right" size={16} /></a>
             </div>{/if}
           {#if coverage.length}<div class="home-coverage" role="status">
               <strong>Incomplete snapshot</strong>
@@ -168,11 +168,15 @@
       <aside class="home-sidebar">
         <h2>Quick actions</h2>
         <nav class="home-shortcuts" aria-label="Quick actions">
-          <a href="/library/search"><Icon name="search" />Find an asset<Icon name="chevron-right" size={16} /></a>
-          <a href={"/library/files?" + new URLSearchParams({ bundle: workspace.defaultWriteTarget, path: "" })}
+          <a href={appHref("/library/search")}
+            ><Icon name="search" />Find an asset<Icon name="chevron-right" size={16} /></a
+          >
+          <a href={appHref("/library/files?" + new URLSearchParams({ bundle: workspace.defaultWriteTarget, path: "" }))}
             ><Icon name="plus" />Create in Files<Icon name="chevron-right" size={16} /></a
           >
-          <a href="/settings/bundles"><Icon name="folder" />Manage bundles<Icon name="chevron-right" size={16} /></a>
+          <a href={appHref("/settings/bundles")}
+            ><Icon name="folder" />Manage bundles<Icon name="chevron-right" size={16} /></a
+          >
         </nav>
         <div class="home-glance">
           <h3>At a glance</h3>
@@ -194,7 +198,9 @@
               </dd>
             </div>
           </dl>
-          <a href="/activity/overview" class="home-health-link">Health details <Icon name="arrow-right" size={16} /></a>
+          <a href={appHref("/activity/overview")} class="home-health-link"
+            >Health details <Icon name="arrow-right" size={16} /></a
+          >
         </div>
       </aside>
     </div>
@@ -202,7 +208,7 @@
       <section aria-labelledby="home-runs-title">
         <div class="home-section-title">
           <h2 id="home-runs-title">Task runs this week</h2>
-          <a href="/activity/overview?view=runs&window=7d" class="home-detail-link"
+          <a href={appHref("/activity/overview?view=runs&window=7d")} class="home-detail-link"
             >All activity<Icon name="external" size={16} /></a
           >
         </div>
@@ -251,7 +257,7 @@
               ? "New suggestions will appear here."
               : "Review suggested updates to your knowledge."}
         </p>
-        <a class:btn-secondary={!workspace.pendingCount} class="btn" href="/review"
+        <a class:btn-secondary={!workspace.pendingCount} class="btn" href={appHref("/review")}
           >{workspace.pendingCount ? "Review proposals" : "Open Review"}<Icon name="arrow-right" size={16} /></a
         >
       </section>

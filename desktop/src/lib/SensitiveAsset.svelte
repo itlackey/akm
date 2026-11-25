@@ -7,7 +7,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { afterNavigate } from "$app/navigation";
-  import { api } from "./client";
+  import { api, appHref } from "./client";
   import SensitiveEditor from "./SensitiveEditor.svelte";
   import Icon from "./Icon.svelte";
   import type { SensitiveInfo, SensitiveValue } from "./types";
@@ -101,7 +101,7 @@
     <p class="muted">{info.location.path}</p>
     <a
       class="btn btn-secondary"
-      href={"/library/files?" + new URLSearchParams({ bundle: info.bundle, path: info.location.parent })}
+      href={appHref("/library/files?" + new URLSearchParams({ bundle: info.bundle, path: info.location.parent }))}
       >Back to folder</a
     >
   {:else if editing && info}<SensitiveEditor

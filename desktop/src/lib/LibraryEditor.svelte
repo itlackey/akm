@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
-  import { api, ApiError, saveContent } from "./client";
+  import { api, ApiError, appHref, saveContent } from "./client";
   import { libraryRead, documentTitle } from "./library-model";
   import { clearDraft, draftKey, readDraft, setUnsaved, storeDraft } from "./drafts";
   import type { Bundle, FrontmatterRead, Json, Source, TextCheck, WriteResult } from "./types";
@@ -334,7 +334,7 @@
     {file ? file.path.split("/").at(-1) : source ? documentTitle({ ref, content: source.content }) : "Opening editor…"}
   </h1>
   <div class="editor-return">
-    <a href={backHref}
+    <a href={appHref(backHref)}
       ><Icon name="arrow-left" size={16} />{backHref.startsWith("/library/files")
         ? "Back to file"
         : "Back to document"}</a
@@ -343,7 +343,7 @@
 </div>
 {#if error}<div class="notice notice-warn" role="alert" tabindex="-1" bind:this={errorBox}>
     {error}{loaded && retained ? " Your draft is retained." : ""}{#if !loaded && (ref || file)}<p>
-        <a href={ref ? documentHref : backHref}>Open read-only</a> · Refresh the index if the source no longer matches.
+        <a href={appHref(ref ? documentHref : backHref)}>Open read-only</a> · Refresh the index if the source no longer matches.
       </p>{/if}
   </div>{/if}
 {#if loaded}<form

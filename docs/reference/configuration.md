@@ -1119,6 +1119,19 @@ section, an absent key, and an explicit `false` all read identically as off.
   the commits `akm proposal accept` makes, and the end-of-run `sync.push`
   (which has its own `--no-push` and `sync.push` controls).
 
+### Experimental web settings
+
+`experimental.web` holds the settings the AKM Desktop server (`akm-web`) reads when you run it by hand on a headless machine; Desktop itself ignores them. Every key is optional. `secret` is a reference, never the secret itself. Behavior is described in the [Desktop README](../../desktop/README.md).
+
+| Key | Meaning |
+| --- | --- |
+| `host` | Address to listen on. |
+| `port` | Port to listen on, 0 to 65535. |
+| `origin` | The address the browser uses: `http(s)://host[:port]`, no path, query or fragment. |
+| `secret` | Reference to the login secret: `$NAME`, `${NAME}` or `${secrets/<name>}`. `akm config get` shows the reference, never the value. |
+| `allowedHosts` | Extra `Host` names to accept. |
+| `frameParents` | `http(s)` origins allowed to show the UI in a frame. |
+
 ### Experimental learning aliases
 
 `experimental.learning.strategies` and `experimental.learning.qualityGate` mirror

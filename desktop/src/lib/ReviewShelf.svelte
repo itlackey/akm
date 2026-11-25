@@ -14,7 +14,7 @@
     type LastDecision,
     type ReviewProposal,
   } from "./review-model";
-  import { title } from "./client";
+  import { appHref, title } from "./client";
 
   let {
     current,
@@ -130,7 +130,8 @@
       <ul class="plain">
         {#each report.failed as f}<li>
             <span class="badge" data-tone="fail">Failed</span>
-            <a href={proposalHref(f.id, query)}>{f.ref ?? f.id}</a> — {f.error}{#if f.code}{" "}<code>{f.code}</code
+            <a href={appHref(proposalHref(f.id, query))}>{f.ref ?? f.id}</a> — {f.error}{#if f.code}{" "}<code
+                >{f.code}</code
               >{/if}
           </li>{/each}
       </ul>
