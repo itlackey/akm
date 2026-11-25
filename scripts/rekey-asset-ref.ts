@@ -47,11 +47,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { refToRelPath } from "../src/commands/lint/base-linter";
 import { conceptIdFromTypeName, parsePlacementRef } from "../src/core/asset/resolve-ref";
 import { resolveStashDir } from "../src/core/common";
 import { loadConfig } from "../src/core/config/config";
 import { appendEvent } from "../src/core/events";
+import { refToRelPath } from "../src/core/lint/base-linter";
 import { getDbPath } from "../src/core/paths";
 import { getStateDbPath, withStateDb } from "../src/core/state-db";
 import { resolveSourceEntries } from "../src/indexer/search/search-source";

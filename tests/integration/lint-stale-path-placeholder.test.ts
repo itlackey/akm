@@ -9,7 +9,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import os from "node:os";
-import { runBaseChecks } from "../../src/commands/lint/base-linter";
+import { runBaseChecks } from "../../src/core/lint/base-linter";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 function staleIssues(storage: IsolatedAkmStorage, body: string) {

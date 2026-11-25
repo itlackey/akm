@@ -39,6 +39,8 @@ import { bundleAtDir } from "../../core/config/config-sources";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import type { MemoryPruneCandidate } from "../../core/improve-types";
+import { runBaseChecks } from "../../core/lint/base-linter";
+import type { LintIssue, LintIssueType } from "../../core/lint/types";
 import { canonicalBundleIdForTarget, resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getStateDbPath, openStateReadSnapshot, withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
@@ -82,8 +84,6 @@ import { pkgVersion } from "../../version";
 import { contentHash } from "../improve/content-hash";
 import { writeSupersededEdge } from "../improve/memory/memory-belief";
 import { derivedTwinOf, retireCleanupCandidate } from "../improve/memory/memory-improve";
-import { runBaseChecks } from "../lint/base-linter";
-import type { LintIssue, LintIssueType } from "../lint/types";
 import { akmTasksDisable, akmTasksEnable, inspectTaskSchedulerBindings } from "../tasks/tasks";
 import { formatNewAssetDiff, formatRetireDiff, formatUnifiedDiff } from "./diff-format";
 import {

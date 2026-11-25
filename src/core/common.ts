@@ -870,7 +870,7 @@ export function todayIso(): string {
  * `YYYY-MM-DD` in LOCAL time — deliberately not {@link todayIso}, which is
  * UTC and can differ near midnight. This is the spelling the `updated:`
  * frontmatter stampers share (`core/asset/akm-markdown.ts` on write,
- * `commands/lint/base-linter.ts` on `--fix`), so the field's format has one
+ * `core/lint/base-linter.ts` on `--fix`), so the field's format has one
  * definition even though the two stampers pick different instants (now vs
  * file mtime).
  */

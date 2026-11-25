@@ -826,7 +826,7 @@ they actually work:
   item, not candidate packages, and are never considered.
 - **The base checks have one implementation.** `unquoted-colon`,
   `missing-updated`, `stale-path`, `missing-ref` and `redacted-content` are
-  `runBaseChecks` (`src/commands/lint/base-linter.ts`), and `ruleApplies`
+  `runBaseChecks` (`src/core/lint/base-linter.ts`), and `ruleApplies`
   (`src/core/asset/lint-text.ts`) decides whether a rule applies to a file
   (the skill and LLM Wiki exemptions, the bundle's `lint.skip`, an adapter's
   own exclusions). The `akm lint` sweep and every adapter's `validate` call

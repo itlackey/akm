@@ -12,14 +12,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { diagnosticToLintIssue, lintIssueDedupeKey } from "../../../commands/lint/diagnostics";
-import { checkEnvForDangerousKeys } from "../../../commands/lint/env-key-rules";
-import { readRecordedMoves } from "../../../commands/lint/moved-refs";
-import { isAdvisoryLintIssue, type LintFindings, type LintIssue, type LintRun } from "../../../commands/lint/types";
 import { stashDirFor } from "../../asset/asset-placement";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../asset/resolve-ref";
 import { validateBundleAssets } from "../../assets/validate";
 import { isAkmRegistryCachePath, safeRealpath } from "../../common";
+import { diagnosticToLintIssue, lintIssueDedupeKey } from "../../lint/diagnostics";
+import { checkEnvForDangerousKeys } from "../../lint/env-key-rules";
+import { readRecordedMoves } from "../../lint/moved-refs";
+import { isAdvisoryLintIssue, type LintFindings, type LintIssue, type LintRun } from "../../lint/types";
 import { warn } from "../../warn";
 import { heldFilesBelow, heldText } from "../directory/held-files";
 
