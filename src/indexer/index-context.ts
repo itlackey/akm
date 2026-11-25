@@ -1,4 +1,8 @@
-import { getMeta } from "../storage/repositories/index-meta-repository";
+import { warn } from "../core/warn";
+import type { Database } from "../storage/database";
+import { deleteEntriesByBundle } from "../storage/repositories/index-entries-repository";
+import { getMeta, setMeta } from "../storage/repositories/index-meta-repository";
+import type { SearchSource } from "./search/search-source";
 
 /**
  * Live runtime state of semantic search, computed fresh at index-finalize
@@ -74,10 +78,56 @@ export function readSemanticSearchRecord(db: Parameters<typeof getMeta>[0]): Sem
 /** What `akm info` and `akm bundle update` report about semantic search: the recorded status, or why none can be reported. */
 export type SemanticSearchStatus = SemanticSearchRecord["status"] | "pending" | "unknown";
 
-/** Canonical configured owner that disappeared or moved since the last complete scan. */
-export interface RemovedIndexSource {
+interface IndexSourceOwner {
   bundleId: string;
-  sourceRoot: string;
-  /** False when the same bundle id remains configured at a different root. */
-  removeBundleEntries: boolean;
+  sourceRoot?: string;
+}
+
+export function recordSourceOwners(db: Database, sources: readonly SearchSource[]): void {
+  const owners = sources.map(({ bundleId, path }) => ({ bundleId, sourceRoot: path }));
+  setMeta(db, "sourceOwners", JSON.stringify(owners));
+}
+
+export function readSourceOwners(db: Database): IndexSourceOwner[] {
+  const raw = getMeta(db, "sourceOwners");
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      !Array.isArray(parsed) ||
+      parsed.some(
+        (owner) =>
+          !owner ||
+          typeof owner !== "object" ||
+          typeof owner.bundleId !== "string" ||
+          (owner.sourceRoot !== undefined && typeof owner.sourceRoot !== "string"),
+      )
+    ) {
+      warn("index_meta sourceOwners value is invalid — treating as empty");
+      return [];
+    }
+    return parsed;
+  } catch {
+    warn("index_meta sourceOwners value is corrupt JSON — treating as empty");
+    return [];
+  }
+}
+
+export function applyRemovedSources(
+  db: Database,
+  sources: readonly SearchSource[],
+  previousOwners: readonly IndexSourceOwner[],
+  isIncremental: boolean,
+): void {
+  const currentBundles = new Set(sources.map((source) => source.bundleId));
+  for (const { bundleId } of previousOwners) {
+    if (!currentBundles.has(bundleId)) deleteEntriesByBundle(db, bundleId);
+  }
+  // A full run re-drains every configured source, so any other bundle's rows
+  // are stale even when no stored owner names them.
+  if (isIncremental) return;
+  const indexed = db.prepare("SELECT DISTINCT bundle_id AS bundleId FROM entries").all() as Array<{ bundleId: string }>;
+  for (const { bundleId } of indexed) {
+    if (!currentBundles.has(bundleId)) deleteEntriesByBundle(db, bundleId);
+  }
 }

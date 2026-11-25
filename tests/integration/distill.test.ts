@@ -61,7 +61,9 @@ function makeStashDir(): string {
 
 /** The durable `proposals.ref` item_ref (WI-8.5a): `<bundle>//<conceptId>`. */
 function durableRef(stashDir: string, type: string, name: string): string {
-  const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
+  const bundleId =
+    deriveInstallations([{ bundleId: slugForPath(stashDir), path: stashDir, writable: true }])[0]?.id ??
+    slugForPath(stashDir);
   return deriveEntryProvenance({ bundleId, adapterId: "akm" }, type, name).itemRef;
 }
 

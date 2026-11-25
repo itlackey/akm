@@ -21,8 +21,9 @@ import { interactive } from "./lease";
 /** The akm bundles the sweep covers: lint reads other adapters' bundles through their own validators. */
 function akmBundles(config: AkmConfig, bundle?: string) {
   return resolveSourceEntries(undefined, config).flatMap((source) => {
-    if (!source.registryId || source.unresolved || (bundle !== undefined && source.registryId !== bundle)) return [];
-    return adapterWrites(source.registryId, "knowledge") ? [{ name: source.registryId, source }] : [];
+    const { bundleId: name, path: root, registryId, unresolved, writable } = source;
+    if (!registryId || root === undefined || unresolved || (bundle !== undefined && name !== bundle)) return [];
+    return adapterWrites(name, "knowledge") ? [{ name, root, writable }] : [];
   });
 }
 
@@ -30,11 +31,11 @@ function akmBundles(config: AkmConfig, bundle?: string) {
 export async function movedLinks(input: { bundle?: string } = {}) {
   const config = loadConfig();
   const bundles = [];
-  for (const { name, source } of akmBundles(config, input.bundle || undefined)) {
-    const found = await akmLint({ dir: source.path, rule: "missing-ref", config });
+  for (const { name, root, writable } of akmBundles(config, input.bundle || undefined)) {
+    const found = await akmLint({ dir: root, rule: "missing-ref", config });
     bundles.push({
       bundle: name,
-      writable: source.writable === true,
+      writable: writable === true,
       writeBlocker: inspectWriteTarget(config, name).blocker,
       links: found.flagged.flatMap((issue) =>
         issue.movedFrom !== undefined && issue.movedTo !== undefined
@@ -53,12 +54,12 @@ export async function updateMovedLinks(input: { bundle: string }) {
   const found = akmBundles(config, name || undefined)[0];
   if (!name || !found) throw new UsageError(`"${name}" is not a bundle of akm assets.`, "INVALID_FLAG_VALUE");
   return interactive("ui-moved-links", async () => {
-    const result = await akmLint({ dir: found.source.path, fixMovedRefs: true, config });
+    const result = await akmLint({ dir: found.root, fixMovedRefs: true, config });
     const fixed = result.fixed.filter((issue) => issue.movedTo !== undefined);
     const files = [...new Set(fixed.map((issue) => issue.file))];
     await indexFiles(
       name,
-      files.map((file) => path.join(found.source.path, file)),
+      files.map((file) => path.join(found.root, file)),
     );
     return { bundle: name, rewritten: fixed.length, files };
   });

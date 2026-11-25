@@ -35,7 +35,12 @@ import { redactSensitiveText } from "../../core/redaction";
 import { openStateDatabase, openStateReadSnapshot } from "../../core/state-db";
 import { info, warn, warnVerbose } from "../../core/warn";
 import { beginWriteProvenance, relativeWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
-import { resolveWorkingStashTarget, resolveWritable, resolveWriteTarget } from "../../core/write-source";
+import {
+  requireWriteTargetPath,
+  resolveWorkingStashTarget,
+  resolveWritable,
+  resolveWriteTarget,
+} from "../../core/write-source";
 import { type Notice, noticeSet } from "../../execution/notices";
 import { buildIndex, isSkippedIndexBuild } from "../../indexer/index-build";
 import type { IndexResponse } from "../../indexer/indexer";
@@ -431,7 +436,7 @@ export function resolveImproveReadSource(
   if (!selector && process.env.AKM_BUNDLE_DIR?.trim()) {
     // A live run's working bundle starts from AKM_BUNDLE_DIR (`resolveWorkingStashTarget`), so its preview does too.
     const { source } = resolveWorkingStashTarget(config, { requireWritable: false });
-    return { source: { name: source.name, path: source.path } };
+    return { source: { name: source.name, path: requireWriteTargetPath(source) } };
   }
   const configuredSelector = selector ?? config.defaultBundle;
   if (configuredSelector) {
@@ -451,9 +456,10 @@ export function resolveImproveReadSource(
     }
     return { selector: configuredSelector, source: { name: configuredSelector, path: content.dir } };
   }
-  const implicit = resolveSourceEntries(undefined, config)[0];
-  if (!implicit) throw new ConfigError("no source configured; run `akm bundle create`", "STASH_DIR_NOT_FOUND");
-  return { source: { name: implicit.registryId ?? "stash", path: implicit.path } };
+  const implicit = resolveSourceEntries(undefined, config).find((source) => source.isDefault);
+  if (implicit?.path === undefined)
+    throw new ConfigError("no source configured; run `akm bundle create`", "STASH_DIR_NOT_FOUND");
+  return { source: { name: implicit.bundleId, path: implicit.path } };
 }
 
 /**
@@ -493,9 +499,7 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
       ? parsePlacementRef(scope.value)
       : undefined;
   const readSource = options.dryRun
-    ? options.writeTarget
-      ? { selector: options.writeTarget.selector, source: options.writeTarget.source }
-      : resolveImproveReadSource(config, scopedRef, options.target, options.stashDir)
+    ? (options.writeTarget ?? resolveImproveReadSource(config, scopedRef, options.target, options.stashDir))
     : undefined;
   const writeTarget = options.dryRun
     ? undefined

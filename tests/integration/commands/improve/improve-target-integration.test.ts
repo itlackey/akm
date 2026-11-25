@@ -5,7 +5,7 @@ import { akmConsolidate } from "../../../../src/commands/improve/consolidate";
 import { akmImprove } from "../../../../src/commands/improve/improve";
 import { type AkmConfig, type ImproveProfileConfig, saveConfig } from "../../../../src/core/config/config";
 import { ConfigError, UsageError } from "../../../../src/core/errors";
-import { resolveWriteTarget } from "../../../../src/core/write-source";
+import { requireWriteTargetPath, resolveWriteTarget } from "../../../../src/core/write-source";
 import { getCachePaths, parseGitRepoUrl } from "../../../../src/sources/providers/git";
 import { getWebsiteCachePaths } from "../../../../src/sources/snapshot-fetchers/website-ingest";
 import { withTestImproveLlm } from "../../../_helpers/improve-config";
@@ -106,7 +106,9 @@ describe("improve named target integration", () => {
       },
     });
 
-    expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(resolveWriteTarget(config).source.path));
+    expect(path.resolve(selectedRoot ?? "")).toBe(
+      path.resolve(requireWriteTargetPath(resolveWriteTarget(config).source)),
+    );
     expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(team));
   });
 

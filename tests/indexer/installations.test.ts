@@ -20,6 +20,7 @@ import { detectBundleAdapter } from "../../src/core/assets/gate";
 import { slugForRegistryId } from "../../src/core/bundle-id";
 import {
   deriveBundleId,
+  deriveBundleIds,
   deriveInstallations,
   deriveWritableBundleIds,
   slugForPath,
@@ -105,10 +106,10 @@ describe("detectBundleAdapter — adapter selection (ordered §1.2 probe)", () =
 });
 
 describe("deriveInstallations — id / trust / bundle shape", () => {
-  test("registryId is the bundle id when present; otherwise a path slug", () => {
+  test("installs sources under their resolved bundle IDs", () => {
     const sources: SearchSource[] = [
-      { path: AKM_ROOT, writable: true },
-      { path: OKF_ROOT, registryId: "team-catalog" },
+      { bundleId: "all-types", path: AKM_ROOT, writable: true },
+      { bundleId: "team-catalog", path: OKF_ROOT },
     ];
     const [primary, installed] = deriveInstallations(sources);
     expect(primary!.id).toBe("all-types");
@@ -117,8 +118,8 @@ describe("deriveInstallations — id / trust / bundle shape", () => {
 
   test("a bundle carries its root under its id; writability is the source's, by bundle id", () => {
     const sources: SearchSource[] = [
-      { path: AKM_ROOT, writable: true },
-      { path: OKF_ROOT, registryId: "ro", writable: false },
+      { bundleId: "all-types", path: AKM_ROOT, writable: true },
+      { bundleId: "ro", path: OKF_ROOT, writable: false },
     ];
     expect(deriveInstallations(sources)[0]).toEqual({ id: "all-types", root: AKM_ROOT });
     expect([...deriveWritableBundleIds(sources)]).toEqual(["all-types"]);
@@ -126,9 +127,9 @@ describe("deriveInstallations — id / trust / bundle shape", () => {
 
   test("source order is preserved as installation priority", () => {
     const ids = deriveInstallations([
-      { path: OKF_ROOT, registryId: "a" },
-      { path: LLM_WIKI_ROOT, registryId: "b" },
-      { path: AKM_ROOT, registryId: "c" },
+      { bundleId: "a", path: OKF_ROOT },
+      { bundleId: "b", path: LLM_WIKI_ROOT },
+      { bundleId: "c", path: AKM_ROOT },
     ]).map((i) => i.id);
     expect(ids).toEqual(["a", "b", "c"]);
   });
@@ -153,34 +154,36 @@ describe("deriveBundleId — D-R5 slug-gated derivation (shared with the config 
   });
 
   test("deriveInstallations ids equal a direct deriveBundleId pass over the same sources (no re-derive)", () => {
-    const sources: SearchSource[] = [
+    const sources = [
       { path: AKM_ROOT, writable: true },
       { path: OKF_ROOT, registryId: "team-catalog" },
       { path: LLM_WIKI_ROOT, registryId: "github:owner/repo" }, // non-slug-legal
     ];
     const used = new Set<string>();
     const expected = sources.map((s) => deriveBundleId(s.registryId, s.path, used));
-    expect(deriveInstallations(sources).map((i) => i.id)).toEqual(expected);
+    expect(
+      deriveInstallations(sources.map((source, i) => ({ ...source, bundleId: expected[i]! }))).map((i) => i.id),
+    ).toEqual(expected);
   });
 });
 
-describe("deriveInstallations — bundle id uniqueness within a batch", () => {
+describe("deriveBundleIds — bundle id uniqueness within a batch", () => {
   test("two distinct paths sharing a basename get distinct bundle ids", () => {
-    const ids = deriveInstallations([{ path: "/one/knowledge" }, { path: "/two/knowledge" }]).map((i) => i.id);
+    const ids = deriveBundleIds([{ path: "/one/knowledge" }, { path: "/two/knowledge" }]);
     expect(ids[0]).toBe("knowledge");
     expect(ids[1]).toMatch(/^knowledge-[0-9a-f]{8}$/);
     expect(new Set(ids).size).toBe(2);
   });
 
   test("a duplicate registryId is disambiguated deterministically", () => {
-    const first = deriveInstallations([
+    const first = deriveBundleIds([
       { path: "/p/one", registryId: "dup" },
       { path: "/p/two", registryId: "dup" },
-    ]).map((i) => i.id);
-    const second = deriveInstallations([
+    ]);
+    const second = deriveBundleIds([
       { path: "/p/one", registryId: "dup" },
       { path: "/p/two", registryId: "dup" },
-    ]).map((i) => i.id);
+    ]);
     expect(first[0]).toBe("dup");
     expect(new Set(first).size).toBe(2);
     expect(first).toEqual(second); // deterministic

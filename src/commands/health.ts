@@ -18,7 +18,7 @@ import {
   withStateDb,
 } from "../core/state-db";
 import { DURATION_UNITS, parseDuration, parseSinceToIso } from "../core/time";
-import { resolveSourceEntries } from "../indexer/search/search-source";
+import { resolveSourceEntries, sourcePaths } from "../indexer/search/search-source";
 import { probeLlmEndpoint } from "../llm/client";
 import { type Database, openDatabase } from "../storage/database";
 import { insertEvent } from "../storage/repositories/events-repository";
@@ -503,8 +503,8 @@ function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult 
     // Directory intent is read only from inside the bundle root that owns the entry.
     // Both spellings of each root: indexed paths may be realpaths (a symlinked
     // stash, macOS /var -> /private/var) while config holds the configured path.
-    const roots = resolveSourceEntries(stashRoot).flatMap((source) => {
-      const resolved = path.resolve(source.path);
+    const roots = sourcePaths(resolveSourceEntries(stashRoot)).flatMap((root) => {
+      const resolved = path.resolve(root);
       try {
         return [resolved, fs.realpathSync.native(resolved)];
       } catch {

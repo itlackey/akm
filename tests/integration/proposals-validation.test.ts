@@ -18,7 +18,10 @@ import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../s
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 function bundleIdFor(stashDir: string): string {
-  return deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
+  return (
+    deriveInstallations([{ bundleId: slugForPath(stashDir), path: stashDir, writable: true }])[0]?.id ??
+    slugForPath(stashDir)
+  );
 }
 
 function createProposal(stashDir: string, input: CreateProposalInput) {

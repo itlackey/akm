@@ -55,7 +55,7 @@ describe("generateEmbeddingsForDb: throughput line sums the capped text actually
   });
 
   function seedEntries(db: Database, texts: string[]): void {
-    const installation = deriveInstallations([{ path: storage.stashDir, writable: true }])[0];
+    const installation = deriveInstallations([{ bundleId: "stash", path: storage.stashDir, writable: true }])[0];
     if (!installation) throw new Error("failed to derive a test bundle installation");
     texts.forEach((text, i) => {
       const name = `entry-${i}`;

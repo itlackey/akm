@@ -6,10 +6,8 @@ import { type BundleRef, makeBundleRef, parseBundleRef } from "../core/asset/ass
 import { type Asset, findAsset } from "../core/assets/read";
 import { indexedPathOf } from "../core/assets/type";
 import { bundleAt } from "../core/bundle-at-dir";
-import { deriveBundleIds } from "../core/bundle-id";
 import { safeRealpath } from "../core/common";
 import { lookupBundleRef } from "./indexer";
-import { deriveInstallations } from "./installations";
 import { resolveSourceEntries } from "./search/search-source";
 
 export interface ResolveAssetPathOptions {
@@ -35,18 +33,15 @@ async function resolveViaIndex(ref: BundleRef): Promise<string | null> {
 export function findAssetOnDisk(ref: string, options: ResolveAssetPathOptions = {}): Asset | undefined {
   const parsed = parseBundleRef(ref);
   const allSources = resolveSourceEntries(options.stashDir);
-  const installations = deriveInstallations(allSources);
-  const sources = options.writableBundleIds
-    ? allSources.filter((_, index) => {
-        const bundleId = installations[index]?.id;
-        return bundleId !== undefined && options.writableBundleIds?.has(bundleId);
-      })
+  const { writableBundleIds } = options;
+  const sources = writableBundleIds
+    ? allSources.filter((source) => writableBundleIds.has(source.bundleId))
     : allSources;
   const bundle = options.honorOrigin !== false ? parsed.bundle : undefined;
   const held = options.stashDir === undefined ? undefined : bundleAt(options.stashDir);
-  return deriveBundleIds([...sources])
-    .filter((id) => bundle === undefined || id === bundle)
-    .map((id) => findAsset(makeBundleRef(id, parsed.conceptId), held))
+  return sources
+    .filter((source) => bundle === undefined || source.bundleId === bundle)
+    .map((source) => findAsset(makeBundleRef(source.bundleId, parsed.conceptId), held))
     .find((found) => found !== undefined);
 }
 

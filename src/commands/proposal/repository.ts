@@ -21,18 +21,15 @@ import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { currentConceptId, qualifyRef, readAsset } from "../../core/assets/read";
 import { type AssetAddress, addressOf } from "../../core/assets/write";
 import { bundleAt, stateBundleId } from "../../core/bundle-at-dir";
-import { bundleIdForDir } from "../../core/bundle-id";
 import { toErrorMessage } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
-import { bundleAtDir } from "../../core/config/config-sources";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getStateDbPath, openStateReadSnapshot, withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
-import type { ResolvedWriteTarget } from "../../core/write-source";
-import { deriveInstallations } from "../../indexer/installations";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { type ResolvedWriteTarget, requireWriteTargetPath } from "../../core/write-source";
+import { resolveSourceEntries, sourceAtPath } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { sha256Hex } from "../../runtime";
 import type { Database } from "../../storage/database";
@@ -300,7 +297,11 @@ function resolveCreateProposalTarget(
   const local = resolveProposalQueueTarget(stashDir, config);
   if (!bundle || bundle === local.source) return local;
   const target = resolveBundleWriteTarget(config, bundle);
-  return { source: target.source.name, root: target.source.path };
+  return proposalTargetOf(target);
+}
+
+export function proposalTargetOf(target: ResolvedWriteTarget): NonNullable<CreateProposalInput["target"]> {
+  return { source: target.source.name, root: requireWriteTargetPath(target.source) };
 }
 
 export function resolveProposalQueueTarget(
@@ -308,23 +309,17 @@ export function resolveProposalQueueTarget(
   config: AkmConfig = loadConfig(),
 ): NonNullable<CreateProposalInput["target"]> {
   const root = path.resolve(stashDir);
-  const sources = resolveSourceEntries(root, config);
-  const sourceIndex = sources.findIndex((source) => path.resolve(source.path) === root);
-  const source = sources[sourceIndex];
-  const bundleId =
-    sourceIndex >= 0
-      ? (bundleAtDir(config, root) ?? bundleIdForDir(root, new Set(Object.keys(config.bundles ?? {}))))
-      : undefined;
-  if (!source || !bundleId) {
+  const source = sourceAtPath(resolveSourceEntries(root, config), root);
+  if (!source) {
     throw new ConfigError(`No bundle owns proposal queue ${root}.`, "INVALID_CONFIG_FILE");
   }
   if (!source.registryId && Object.keys(config.bundles ?? {}).length > 0) {
     throw new ConfigError(`No configured bundle owns proposal queue ${root}.`, "INVALID_CONFIG_FILE");
   }
   if (source.writable !== true) {
-    throw new UsageError(`Proposal bundle "${bundleId}" is not writable.`, "INVALID_FLAG_VALUE");
+    throw new UsageError(`Proposal bundle "${source.bundleId}" is not writable.`, "INVALID_FLAG_VALUE");
   }
-  return { source: bundleId, root };
+  return { source: source.bundleId, root };
 }
 
 /**
@@ -338,10 +333,8 @@ function otherOwningBundle(itemRef: string, target: { source: string; root: stri
     const owner = parseBundleRef(itemRef).bundle;
     if (owner === undefined || owner === target.source) return undefined;
     const sources = resolveSourceEntries(target.root, loadConfig());
-    const ownerSource = sources[deriveInstallations(sources).findIndex((installation) => installation.id === owner)];
-    return ownerSource !== undefined && path.resolve(ownerSource.path) !== path.resolve(target.root)
-      ? owner
-      : undefined;
+    const ownerSource = sources.find((source) => source.bundleId === owner);
+    return ownerSource && ownerSource !== sourceAtPath(sources, target.root) ? owner : undefined;
   } catch (err) {
     rethrowIfTestIsolationError(err);
     return undefined;

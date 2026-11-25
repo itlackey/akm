@@ -7,11 +7,11 @@
  * of `index.db` uses (`search`, `curate`, `feedback`, write-through).
  *
  * Usable means the keyword data for the library is persisted: the `entries`
- * table exists and `stashDir` / `stashDirs` names this library. The persist
- * transaction records both with the entries and their FTS rows
+ * table exists and a directory or bundle-id marker names this library. The persist
+ * transaction records the markers with the entries and their FTS rows
  * (`persistDirRecords`), so a build that is still embedding, was interrupted
  * after the scan, or had one source fail is usable, and so is an empty library
- * that was indexed. An index an older akm finished carries the same two keys.
+ * that was indexed. Older indexes use `stashDir` / `stashDirs` even for stores.
  * `builtAt` is not part of the answer: it is the incremental watermark, written
  * when a build completes.
  *
@@ -20,7 +20,6 @@
  * gets {@link incompleteIndexWarning} alongside its results.
  */
 
-import { safeRealpath } from "../core/common";
 import { ConfigError } from "../core/errors";
 import { classifyPathAccess } from "../core/path-access";
 import { getDbPath } from "../core/paths";
@@ -33,6 +32,7 @@ import {
 } from "../storage/repositories/index-connection";
 import { hasCurrentEntriesTable } from "../storage/repositories/index-entry-schema";
 import { getMeta } from "../storage/repositories/index-meta-repository";
+import { type IndexLibrary, indexLibraryForSource, servesLibrary } from "./index-persist";
 import { heldRebuildLock } from "./index-rebuild-lock";
 
 /** Said when the library has no usable index and no build is running. */
@@ -59,14 +59,25 @@ export interface UsableIndex {
   complete: boolean;
 }
 
-/** Whether the index's `stashDir` / `stashDirs` meta names `library` (a realpath), however the stored value is spelled. */
-function namesLibrary(db: Database, library: string): boolean {
-  const stored = [getMeta(db, "stashDir"), ...(JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[])];
-  return stored.some((dir) => dir !== undefined && safeRealpath(dir) === library);
+export function openSourceIndex(
+  source: Parameters<typeof indexLibraryForSource>[0] | undefined,
+): UsableIndex | undefined {
+  return source && openUsableIndex(indexLibraryForSource(source));
+}
+
+/** The reader can serve any indexed member, not just the working bundle. */
+function namesLibrary(db: Database, library: IndexLibrary): boolean {
+  if (servesLibrary(getMeta(db, "stashDir"), library, getMeta(db, "stashBundle"))) return true;
+  if (typeof library !== "string") {
+    const stores = JSON.parse(getMeta(db, "stashBundles") ?? "[]") as string[];
+    if (stores.includes(library.bundleId)) return true;
+  }
+  const dirs = JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[];
+  return dirs.some((dir) => servesLibrary(dir, library));
 }
 
 /**
- * Open the index when it can serve `stashDir` (any library when omitted: the
+ * Open the index when it can serve `library` (any library when omitted: the
  * workspace reads every bundle's entries), or return `undefined`: no file,
  * no schema, nothing persisted for this library, built for another library, or
  * a file that cannot be read as an index (corrupt, mid-write). Never creates,
@@ -76,7 +87,7 @@ function namesLibrary(db: Database, library: string): boolean {
  * to read (#791, `DATA_DIR_UNREADABLE`), and an index laid out by a newer akm.
  */
 export function openUsableIndex(
-  stashDir: string | undefined,
+  library: IndexLibrary | undefined,
   options: { readOnly?: boolean; busyTimeoutMs?: number } = {},
 ): UsableIndex | undefined {
   const dbPath = getDbPath();
@@ -89,9 +100,9 @@ export function openUsableIndex(
     if (!db) return undefined;
     if (options.busyTimeoutMs !== undefined)
       db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(options.busyTimeoutMs))}`);
-    const servesLibrary =
-      hasCurrentEntriesTable(db) && (stashDir === undefined || namesLibrary(db, safeRealpath(stashDir)));
-    if (servesLibrary) return { db, complete: Boolean(getMeta(db, "builtAt")) };
+    if (hasCurrentEntriesTable(db) && (library === undefined || namesLibrary(db, library))) {
+      return { db, complete: Boolean(getMeta(db, "builtAt")) };
+    }
   } catch (error) {
     // Anything else (corrupt, unreadable meta, mid-write) is an index that cannot serve.
     if (error instanceof ConfigError) {

@@ -26,7 +26,7 @@ export interface LintScope {
 
 /** The root of each configured bundle by its id, for the checks that look a qualified ref up in the bundle it names. */
 function bundleRootsOf(sources: readonly BundleSourceRef[]): ReadonlyMap<string, string> {
-  return new Map(sources.flatMap((source) => (source.registryId ? [[source.registryId, source.path] as const] : [])));
+  return new Map(sources.flatMap(({ bundleId, path }) => (path === undefined ? [] : [[bundleId, path] as const])));
 }
 
 /**
@@ -41,8 +41,10 @@ export function lintScope(
 ): LintScope {
   return {
     stashRoot: root,
-    // asset-io: bundle-root root probe
-    extraStashRoots: sources.map((source) => source.path).filter((p) => p !== root && fs.existsSync(p)),
+    extraStashRoots: sources
+      .map((source) => source.path)
+      // asset-io: bundle-root root probe
+      .filter((p): p is string => p !== undefined && p !== root && fs.existsSync(p)),
     bundleRoots: bundleRootsOf(sources),
     moves: readMovedRefs(readMoves),
     stalePathRoots: stalePathRoots(cfg, root),

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmShowUnified as akmShow } from "../../src/commands/read/show";
+import { slugForPath } from "../../src/core/bundle-id";
 import { saveConfig } from "../../src/core/config/config";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { buildDbHit } from "../../src/indexer/search/db-search";
@@ -166,7 +167,7 @@ describe("estimatedTokens in search hits", () => {
       conceptId: "scripts/test-script",
       score: 0.5,
       defaultStashDir: tmpDir,
-      sources: [{ path: tmpDir }],
+      sources: [{ bundleId: slugForPath(tmpDir), path: tmpDir }],
       config: { semanticSearchMode: "off" },
     });
 
@@ -199,7 +200,7 @@ describe("estimatedTokens approximation", () => {
       conceptId: "scripts/sized-script",
       score: 0.5,
       defaultStashDir: tmpDir,
-      sources: [{ path: tmpDir }],
+      sources: [{ bundleId: slugForPath(tmpDir), path: tmpDir }],
       config: { semanticSearchMode: "off" },
     });
 
@@ -226,7 +227,7 @@ describe("estimatedTokens approximation", () => {
       conceptId: "scripts/no-size",
       score: 0.5,
       defaultStashDir: tmpDir,
-      sources: [{ path: tmpDir }],
+      sources: [{ bundleId: slugForPath(tmpDir), path: tmpDir }],
       config: { semanticSearchMode: "off" },
     });
 

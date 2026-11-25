@@ -58,9 +58,9 @@ export function akmBundleFile(input: { bundle: string; path: string; content: st
     throw new UsageError("Use a path inside the bundle.");
   const config = loadConfig();
   const source = resolveSourceEntries(undefined, config).find(
-    (entry) => entry.registryId === bundle && !entry.unresolved,
+    (entry) => entry.bundleId === bundle && !entry.unresolved,
   );
-  if (!source) throw new UsageError(`Bundle "${bundle}" is disabled or unavailable.`);
+  if (source?.path === undefined) throw new UsageError(`Bundle "${bundle}" is disabled or unavailable.`);
   // An akm bundle: its adapter holds knowledge as files of its own, so the indexer's recognition applies to any text.
   const isAkm = adapterWrites(bundle, "knowledge");
   if (!anyAdapter && !isAkm) throw new UsageError(`akm checks the files of akm bundles; "${bundle}" is not one.`);
@@ -68,7 +68,7 @@ export function akmBundleFile(input: { bundle: string; path: string; content: st
     folderBlocker(path.posix.dirname(relative)) ??
     (protectedTypeOf(relative) ? "Env and secret files are checked in the protected-file view." : null);
   if (blocked !== null) throw new UsageError(blocked);
-  return { bundle, relative, source, config, isAkm };
+  return { bundle, relative, root: source.path, config, isAkm };
 }
 
 /** The type akm gives a file at `relative` holding `content` in `bundle`, or null when it is no asset. */
@@ -78,12 +78,12 @@ export function typeOfText(bundle: string, relative: string, content: string): s
 
 /** The findings and readability for `content` as the text of `relative` in `bundle`. */
 export async function check(input: { bundle: string; path: string; content: string }) {
-  const { bundle, relative, source, config } = akmBundleFile(input);
+  const { bundle, relative, root, config } = akmBundleFile(input);
   const recognized = recognizeContent(bundle, relative, input.content);
   const type = recognized?.type ?? null;
   const subdir = type === null ? undefined : documentStashDirFor(type);
   const found = subdir
-    ? lintDocumentText({ root: source.path, relPath: relative, subdir, content: input.content, config })
+    ? lintDocumentText({ root, relPath: relative, subdir, content: input.content, config })
     : { flagged: [], warnings: [] };
   const task = found.flagged.find((finding) => finding.issue === "invalid-task-yaml");
   const unreadable = unreadableReason(recognized, relative, input.content, task?.detail);

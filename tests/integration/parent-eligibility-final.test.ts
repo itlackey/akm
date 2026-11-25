@@ -1,6 +1,8 @@
 // Integration: opens a real search database; independently authored final cases for #1198.
+
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import path from "node:path";
+import { slugForPath } from "../../src/core/bundle-id";
 import { getDbPath } from "../../src/core/paths";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
@@ -64,7 +66,12 @@ for (const mode of ["off", "auto"] as const) {
         searchType: "knowledge",
         limit: 1,
         stashDir: storage.stashDir,
-        sources: [{ path: path.join(storage.stashDir, "selected") }],
+        sources: [
+          {
+            bundleId: slugForPath(path.join(storage.stashDir, "selected")),
+            path: path.join(storage.stashDir, "selected"),
+          },
+        ],
         restrictToSources: true,
         filters: { user: "alice", agent: "worker", run: "r2", channel: "review" },
         beliefFilter: "historical",

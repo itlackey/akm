@@ -21,7 +21,12 @@ import { isWithin, relativeToRoot, safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { defaultBundleForTarget } from "../../core/mutation-target";
-import { prepareWriteTargetForMutation, type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-source";
+import {
+  prepareWriteTargetForMutation,
+  type ResolvedWriteTarget,
+  requireWriteTargetPath,
+  resolveWriteTarget,
+} from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { isRemoteOrigin, resolveSourcesForLocator, resolveSourcesForOrigin } from "../../registry/origin-resolve";
@@ -98,7 +103,10 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     }
   }
 
-  const destRoot = unmanagedDest !== undefined ? path.resolve(unmanagedDest) : writeTarget?.source.path;
+  const destRoot =
+    unmanagedDest !== undefined
+      ? path.resolve(unmanagedDest)
+      : writeTarget && requireWriteTargetPath(writeTarget.source);
 
   if (!destRoot) {
     throw new ConfigError(
@@ -117,6 +125,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   if (searchSources.length === 0 && parsed.origin && isRemoteOrigin(parsed.origin, allSources)) {
     const installResult = await syncFromRef(parsed.origin);
     const syntheticSource: SearchSource = {
+      bundleId: installResult.id,
       path: installResult.contentDir,
       registryId: installResult.id,
     };
@@ -233,11 +242,12 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   }
 
   // The source, read through the bundle it is in: a package whole, non-asset files included (§0.2 P12).
-  const sourceKey = sourceSource ? relativeToRoot(sourcePath, sourceSource.path) : undefined;
-  if (!sourceSource || !sourceKey) {
+  const sourceRoot = sourceSource?.path;
+  const sourceKey = sourceRoot === undefined ? undefined : relativeToRoot(sourcePath, sourceRoot);
+  if (sourceRoot === undefined || !sourceKey) {
     throw new NotFoundError(`Source asset not found for ref: ${options.sourceRef}`, "ASSET_NOT_FOUND");
   }
-  const sourceBundle = bundleAt(sourceSource.path);
+  const sourceBundle = bundleAt(sourceRoot);
   const key = sourceKey.split(path.sep).join("/");
   const stampMarkdown = (bytes: Buffer): Buffer => {
     const stamped = stampedOrigin(bytes.toString("utf8"), originRef);
@@ -388,6 +398,7 @@ function lstatIfExists(filePath: string): fs.Stats | undefined {
 
 /** The asset `conceptId` names in the bundle at `source`, and the file that holds it as authored (not a link's target). */
 function heldFile(source: SearchSource, conceptId: string): { asset: Asset; file: string } | undefined {
+  if (source.path === undefined) return undefined;
   const bundle = bundleAt(source.path);
   const ref = makeBundleRef(bundleNameOf(bundle), conceptId);
   const asset = findAsset(ref, bundle);

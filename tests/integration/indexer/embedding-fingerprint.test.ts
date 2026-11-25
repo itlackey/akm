@@ -82,7 +82,7 @@ describe("generateEmbeddingsForDb: per-row embedding model", () => {
   });
 
   function seedEntries(db: Database, count: number): void {
-    const installation = deriveInstallations([{ path: storage.stashDir, writable: true }])[0];
+    const installation = deriveInstallations([{ bundleId: "stash", path: storage.stashDir, writable: true }])[0];
     if (!installation) throw new Error("failed to derive a test bundle installation");
     for (let i = 0; i < count; i++) {
       const name = `memory-${i}`;

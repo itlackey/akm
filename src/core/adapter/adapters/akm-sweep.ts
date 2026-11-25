@@ -12,7 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { resolveSourceEntries, type SearchSource } from "../../../indexer/search/search-source";
+import { resolveSourceEntries, type SearchSource, sourceAtPath } from "../../../indexer/search/search-source";
 import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../../tasks/source-v3";
 import {
   isUsableWorkflowSource,
@@ -32,7 +32,7 @@ import type { Asset } from "../../assets/read";
 import { assetTypesByContent } from "../../assets/type";
 import { assetAtStoredKey, listBundleAssets } from "../../assets/validate";
 import { writeAssets } from "../../assets/write";
-import { compareCodePoints, isAkmRegistryCachePath, samePath } from "../../common";
+import { compareCodePoints, isAkmRegistryCachePath } from "../../common";
 import type { AkmConfig } from "../../config/config";
 import { defaultExcludedTypes } from "../../config/schema/search";
 import { UsageError } from "../../errors";
@@ -186,7 +186,7 @@ function resolveWorkflowLintOwnership(stashRoot: string, files: readonly string[
  * policy and stays fixable, exactly as today.
  */
 function assertFixTargetWritable(stashRoot: string, sources: SearchSource[]): void {
-  const target = sources.find((source) => samePath(source.path, stashRoot));
+  const target = sourceAtPath(sources, stashRoot);
   if (target?.writable !== false) return;
   // Same error kind and code `write-source.ts#ensureWritable` raises for the
   // identical refusal, so a scripted caller classifies both the same way.

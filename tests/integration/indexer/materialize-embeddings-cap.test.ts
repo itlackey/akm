@@ -49,7 +49,7 @@ describe("generateEmbeddingsForDb: per-document embedding cap (#956)", () => {
 
   /** Seed one entry whose body is `content`; returns the text it is embedded from. */
   function seedOneEntry(db: Database, content: string): string {
-    const installation = deriveInstallations([{ path: storage.stashDir, writable: true }])[0];
+    const installation = deriveInstallations([{ bundleId: "stash", path: storage.stashDir, writable: true }])[0];
     if (!installation) throw new Error("failed to derive a test bundle installation");
     const entry = { name: "big-note", type: "memories", filename: "big-note.md", content };
     const provenance = deriveEntryProvenance({ bundleId: installation.id, adapterId: "akm" }, "memories", "big-note");

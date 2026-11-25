@@ -86,7 +86,7 @@ function recordBundles(): RecordBundles {
       }
       sourcesOf.set(config, sources);
     }
-    return { id, source: sources.find((source) => source.registryId === id) };
+    return { id, source: sources.find((source) => source.bundleId === id) };
   };
   return {
     of(name, root) {
@@ -100,9 +100,12 @@ function recordBundles(): RecordBundles {
 
 function refOfPath(bundle: ConfiguredBundle | undefined, root: unknown, file: string, fallback: string): string {
   if (!bundle?.source) return fallback;
-  const relPath = path.isAbsolute(file)
-    ? path.relative(typeof root === "string" ? root : bundle.source.path, file)
-    : file;
+  let relPath = file;
+  if (path.isAbsolute(file)) {
+    const dir = typeof root === "string" ? root : bundle.source.path;
+    if (dir === undefined) return fallback;
+    relPath = path.relative(dir, file);
+  }
   const found = legacyRefOf(bundle.id, relPath.split(path.sep).join("/"));
   return found ?? fallback;
 }

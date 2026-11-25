@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmCurate } from "../../src/commands/read/curate";
+import { slugForPath } from "../../src/core/bundle-id";
 import { type AkmConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
@@ -63,7 +64,7 @@ function search(query: string, config: AkmConfig = { semanticSearchMode: "auto",
     searchType: "any",
     limit: 10,
     stashDir: storage.stashDir,
-    sources: [{ path: storage.stashDir }],
+    sources: [{ bundleId: slugForPath(storage.stashDir), path: storage.stashDir }],
     config,
   });
 }

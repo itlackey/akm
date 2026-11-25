@@ -19,6 +19,7 @@ import { appendEvent } from "../../core/events";
 import { type IncludeSelectors, includedTypes, includesProposed, normalizeInclude } from "../../core/include";
 import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
+import { indexLibraryForSource } from "../../indexer/index-persist";
 import type { ScopeFilters } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
 import { type ProjectContext, searchLocal } from "../../indexer/search/db-search";
@@ -183,7 +184,6 @@ export async function akmSearch(input: {
   let allSources = needsLocalSources ? resolveReadSources(undefined, config).sources : [];
 
   // When a named source was requested, narrow the sources list to just that entry.
-  // `resolveSourceEntries` sets `registryId` to `entry.name` for each config source.
   if (namedSourceNames !== undefined) {
     allSources = narrowSourcesToName(allSources, namedSourceNames);
     // allSources may still be empty if the configured source dir doesn't exist on
@@ -205,26 +205,22 @@ export async function akmSearch(input: {
     maybeLogSearchEvent(input, query, response);
     return response;
   }
-  // Primary stash directory — used for DB path lookups and as the default
-  // stash root. Empty when a pure registry search skipped local resolution
-  // entirely (safe: registry-only responses never read `stashDir`).
-  const stashDir = allSources[0]?.path ?? "";
-  // Expose the filtered source list to downstream search calls.
-  const sources = allSources;
+  const primary = allSources[0];
+  const bundleDir = primary?.path ?? "";
 
   const filters = normalizeScopeFilters(input.filters);
   const include = normalizeInclude(input.include);
   const includeProposed = input.includeProposed === true || includesProposed(include);
   const belief = parseBeliefFilterMode(input.belief ?? "current");
   const localResult =
-    source === "registry"
+    primary === undefined
       ? undefined
       : await searchLocal({
           query,
           searchType,
           limit,
-          stashDir,
-          sources,
+          stashDir: indexLibraryForSource(primary),
+          sources: allSources,
           config,
           filters,
           prefer: normalizeScopeFilters(input.prefer),
@@ -260,7 +256,7 @@ export async function akmSearch(input: {
     const hasResults = localHits.length > 0;
     const response: SearchResponse = {
       schemaVersion: 1,
-      bundleDir: stashDir,
+      bundleDir,
       source,
       ...bundlesField(namedSourceNames),
       hits: localHits,
@@ -294,7 +290,7 @@ export async function akmSearch(input: {
     const hasResults = slicedRegistryHits.length > 0;
     const response: SearchResponse = {
       schemaVersion: 1,
-      bundleDir: stashDir,
+      bundleDir,
       source,
       hits: [],
       registryHits: slicedRegistryHits,
@@ -317,7 +313,7 @@ export async function akmSearch(input: {
 
   const response: SearchResponse = {
     schemaVersion: 1,
-    bundleDir: stashDir,
+    bundleDir,
     source,
     ...bundlesField(namedSourceNames),
     hits: allStashHits,
@@ -351,13 +347,13 @@ function maybeLogSearchEvent(
   logSearchEvent(query, response, mode, input.eventSource, input.attributionProjection);
 }
 
-/** The sources the named `--from <name>` values select (any of them): matched on `registryId` or path. */
-export function narrowSourcesToName<T extends { registryId?: string; path: string }>(
+/** The sources the named `--from <name>` values select (any of them): matched on bundle id or path. */
+export function narrowSourcesToName<T extends { bundleId: string; path?: string }>(
   sources: T[],
   names: string | readonly string[],
 ): T[] {
   const wanted = typeof names === "string" ? [names] : names;
-  return sources.filter((s) => wanted.some((name) => s.registryId === name || s.path === name));
+  return sources.filter((s) => wanted.some((name) => s.bundleId === name || s.path === name));
 }
 
 /**

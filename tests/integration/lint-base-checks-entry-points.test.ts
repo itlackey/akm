@@ -16,6 +16,7 @@ import { akmLint } from "../../src/commands/lint";
 import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
 import { okfAdapter } from "../../src/core/adapter/adapters/okf-adapter";
 import { createFileValidateContext } from "../../src/core/adapter/validate-context";
+import { slugForPath } from "../../src/core/bundle-id";
 import { loadConfig } from "../../src/core/config/config";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
 import { checkChanges } from "../_helpers/adapter-hooks";
@@ -275,7 +276,7 @@ describe("a ref a file declares is checked wherever it points", () => {
       okfAdapter,
       { id: "okf", root },
       [{ path: "concepts/a.md", op: "update" }],
-      createFileValidateContext({ root, sources: [{ path: root }], config }),
+      createFileValidateContext({ root, sources: [{ bundleId: slugForPath(root), path: root }], config }),
     );
 
     expect(found.filter((f) => f.issue === "missing-ref").map((f) => f.detail)).toEqual([

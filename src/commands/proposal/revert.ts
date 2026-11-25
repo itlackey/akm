@@ -15,6 +15,7 @@ import {
   commitWriteTargetBoundary,
   prepareWriteTargetForMutation,
   type ResolvedWriteTarget,
+  requireWriteTargetPath,
 } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
@@ -112,7 +113,9 @@ async function unretireProposalWithLease(
   /** Where the asset `ref` is kept, as base named it in a refusal: its file in the bundle (display only). */
   const shown = (ref: string): string => {
     const file = resolveAddressSafe(target.source, ref)?.file;
-    return file === undefined ? ref : path.relative(target.source.path, file).split(path.sep).join("/");
+    return file === undefined
+      ? ref
+      : path.relative(requireWriteTargetPath(target.source), file).split(path.sep).join("/");
   };
   interface PendingRestore {
     handle: string;

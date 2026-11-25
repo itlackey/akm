@@ -76,6 +76,8 @@
  *     whose relations sat only in `document_json` — a reader serves it as-is,
  *     and the writable opener derives its declared links (#935) in place,
  *     re-reading only the directories that hold workflows and tasks.
+ *   - layout-26 library markers with the old keyring/vault cache paths (#1763),
+ *     read by bundle id and rewritten on index without discarding the rows.
  *   - a layout-20 derived index as 0.9.1 wrote it (`index-v20.sql`), whose
  *     `entries` table keeps the transitional NOT NULL columns layout 21
  *     removed and leaves `document_json` NULL — a reader cannot serve it, and
@@ -112,9 +114,11 @@ import {
   resetConfigCache,
   updateConfig,
 } from "../../src/core/config/config";
-import { getConfigPath } from "../../src/core/paths";
+import { getCacheDir, getConfigPath, getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, resetQuiet, setQuiet } from "../../src/core/warn";
+import { persistDirRecords } from "../../src/indexer/index-persist";
+import { openUsableIndex } from "../../src/indexer/index-readiness";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embeddings";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
@@ -127,7 +131,7 @@ import { upsertEntry } from "../../src/storage/repositories/index-entries-reposi
 import { CANONICAL_INDEX_DB_VERSION, hasCurrentEntriesTable } from "../../src/storage/repositories/index-entry-schema";
 import { searchFts } from "../../src/storage/repositories/index-fts-repository";
 import { countLinksByKind, readEntryLinks } from "../../src/storage/repositories/index-links-repository";
-import { getMeta } from "../../src/storage/repositories/index-meta-repository";
+import { getMeta, setMeta } from "../../src/storage/repositories/index-meta-repository";
 import { VACUUM_PENDING_META } from "../../src/storage/repositories/index-schema";
 import { getEmbeddingCount } from "../../src/storage/repositories/index-vec-repository";
 import { listStateProposals } from "../../src/storage/repositories/proposals-repository";
@@ -162,6 +166,69 @@ function migrateLegacyTask(filePath: string, yaml: string) {
 }
 
 describe("previous-release corpus — upgrade must not break reads", () => {
+  test("legacy store markers serve the same index and persist by bundle id without dropping entries", () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      const cacheBundles = path.join(getCacheDir(), "index", "bundles");
+      const keyring = path.join(cacheBundles, "keys");
+      const vault = path.join(cacheBundles, "vault");
+      const realDir = path.join(cacheBundles, "notes");
+      fs.mkdirSync(realDir, { recursive: true });
+      const builtAt = "2026-11-24T00:00:00.000Z";
+      const db = openIndexDatabase(getDbPath());
+      try {
+        setMeta(db, "stashDir", keyring);
+        setMeta(db, "stashDirs", JSON.stringify([keyring, vault, realDir]));
+        setMeta(db, "builtAt", builtAt);
+        const entry = { type: "secret" as const, name: "deploy", description: "Deploy credential metadata" };
+        upsertEntry(
+          db,
+          "",
+          entry,
+          deriveEntryProvenance({ bundleId: "keys", adapterId: "keyring" }, "secret", "deploy"),
+        );
+        const before = db.prepare("SELECT id, item_ref FROM entries").all();
+        expect(before).toHaveLength(1);
+
+        const assertReadiness = () => {
+          for (const library of [{ bundleId: "keys" }, { bundleId: "vault" }, realDir]) {
+            const usable = openUsableIndex(library, { readOnly: true });
+            if (!usable) throw new Error(`expected indexed library ${JSON.stringify(library)}`);
+            try {
+              expect(usable.complete).toBe(true);
+            } finally {
+              closeDatabase(usable.db);
+            }
+          }
+          for (const library of [{ bundleId: "other" }, { bundleId: "notes" }, storage.stashDir]) {
+            expect(openUsableIndex(library, { readOnly: true })).toBeUndefined();
+          }
+        };
+
+        assertReadiness();
+        expect(getMeta(db, "stashDir")).toBe(keyring); // A read does not migrate the file.
+        persistDirRecords(db, [], [], new Map(), 512, {
+          stashDir: { bundleId: "keys" },
+          sourceDirs: [realDir],
+          storeBundleIds: ["keys", "vault"],
+          unresolvedBundleIds: new Set(),
+          variants: new Map(),
+        });
+        expect(getMeta(db, "stashDir")).toBeUndefined();
+        expect(getMeta(db, "stashDirs")).toBe(JSON.stringify([realDir]));
+        expect(getMeta(db, "stashBundle")).toBe("keys");
+        expect(getMeta(db, "stashBundles")).toBe(JSON.stringify(["keys", "vault"]));
+        expect(getMeta(db, "builtAt")).toBe(builtAt);
+        expect(db.prepare("SELECT id, item_ref FROM entries").all()).toEqual(before);
+        assertReadiness();
+      } finally {
+        closeDatabase(db);
+      }
+    } finally {
+      storage.cleanup();
+    }
+  });
+
   test("v22 parent-only index is migrated in place: its entries stay searchable and the fragment source table is added", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v22-index-"));
     try {

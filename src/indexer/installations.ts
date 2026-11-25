@@ -11,11 +11,7 @@
  * indexing.
  *
  * Per source → one bundle:
- *   - `id`   = `source.registryId` ?? a deterministic slug of `source.path`
- *              (the `<bundle>` prefix of every ref its adapter emits). Slugs are
- *              made unique WITHIN a derivation batch by appending a short
- *              path-hash suffix on collision, so two sources sharing a basename
- *              never mint the same bundle id.
+ *   - `id`   = `source.bundleId`, the prefix of every ref its adapter emits.
  *   - `root` = `source.path`. The akm layout's type dirs (`knowledge/`,
  *              `skills/`, …) are type-derived leading path segments of the
  *              conceptId within the one bundle.
@@ -42,22 +38,18 @@ export { deriveBundleId, deriveBundleIds, slugForPath };
  * preserved (source priority = bundle priority). Bundle ids are unique within the
  * returned batch.
  */
-export function deriveInstallations(sources: SearchSource[]): Bundle[] {
-  const ids = deriveBundleIds(sources);
-  return sources.map((source, index) => ({
-    // D-R5 rule 1: when the source carries its config bundle key (a slug-legal
-    // registryId), that key IS the bundle id — equal by construction to this
-    // derivation. A non-slug-legal registryId slugs from the path instead.
-    id: ids[index] as string,
+export function deriveInstallations(sources: readonly SearchSource[]): Bundle[] {
+  return sources.map((source) => ({
+    id: source.bundleId,
     root: source.path,
     // asset-io: config the bundle's configured location, copied
     ...(source.location !== undefined ? { location: source.location } : {}),
   }));
 }
 
-/** The source that is the bundle `bundleId` (an id from {@link deriveBundleIds}); refused when none is. */
+/** The source for `bundleId`; refused when none is configured. */
 export function sourceOfBundle(sources: readonly SearchSource[], bundleId: string): SearchSource {
-  const source = sources[deriveBundleIds([...sources]).indexOf(bundleId)];
+  const source = sources.find((source) => source.bundleId === bundleId);
   if (!source)
     throw new ConfigError(`Bundle "${bundleId}" is not among the configured sources.`, "INVALID_CONFIG_FILE");
   return source;
@@ -65,8 +57,7 @@ export function sourceOfBundle(sources: readonly SearchSource[], bundleId: strin
 
 /** Canonical bundle ids whose configured policy permits mutation. */
 export function deriveWritableBundleIds(sources: SearchSource[]): Set<string> {
-  const ids = deriveBundleIds(sources);
-  return new Set(sources.flatMap((source, index) => (isSourceWriteActivated(source) ? [ids[index] as string] : [])));
+  return new Set(sources.filter(isSourceWriteActivated).map((source) => source.bundleId));
 }
 
 /**

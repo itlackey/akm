@@ -25,7 +25,6 @@ import { NotFoundError } from "../../core/errors";
 import { type ProjectView, resolveProject } from "../../core/projects";
 import { withStateDbTelemetry } from "../../core/state-db";
 import { warnOnce } from "../../core/warn";
-import { deriveInstallations } from "../../indexer/installations";
 import { isProposedQuality } from "../../indexer/passes/entry-normalize";
 import { scopeMatchesFilters } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
@@ -112,18 +111,17 @@ export function akmRules(input: {
         ...sources.filter((source) => source.isDefault),
         ...(project?.write.bundle ? narrowSourcesToName(sources, [project.write.bundle]) : []),
       ];
-  const installations = deriveInstallations(sources);
   const scope = normalizeScopeFilters(filters);
   const context = projectContext(project, filters);
 
   const bundles: string[] = [];
   const found: Array<RuleItem & { shared: boolean; durableRef: string }> = [];
   for (const source of new Set(wanted)) {
-    const bundle = installations[sources.indexOf(source)];
-    if (!bundle || source.unresolved || !adapterWrites(bundle.id, "rule")) continue;
-    bundles.push(bundle.id);
+    const bundleId = source.bundleId;
+    if (source.unresolved || !adapterWrites(bundleId, "rule")) continue;
+    bundles.push(bundleId);
     // Only the rules folder decides a rule (as the walk always read it), so only its assets are described.
-    for (const asset of listAssets({ bundle: bundle.id }).filter(({ conceptId }) =>
+    for (const asset of listAssets({ bundle: bundleId }).filter(({ conceptId }) =>
       conceptId.startsWith(RULES_PREFIX),
     )) {
       // Read as the adapter describes it now, so a rule edited since the last index applies as written.
@@ -137,10 +135,10 @@ export function akmRules(input: {
       found.push({
         ref: displayRefForConceptId(
           conceptId,
-          bundle.id,
-          config.defaultBundle ?? (source.isDefault ? bundle.id : undefined),
+          bundleId,
+          config.defaultBundle ?? (source.isDefault ? bundleId : undefined),
         ),
-        durableRef: `${bundle.id}//${conceptId}`,
+        durableRef: `${bundleId}//${conceptId}`,
         ...(entry.description ? { description: entry.description } : {}),
         ...(named?.length ? { project: named.length === 1 ? named[0] : named } : {}),
         content: parseFrontmatter(asset.entry.content()).content.trim(),

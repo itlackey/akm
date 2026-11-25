@@ -165,7 +165,7 @@ describe("re-embedding follows the embedded input, not the whole search text", (
   test("the decision is exact at the cut: the last embedded character re-embeds, the first one past it does not", () => {
     const db = openIndexDatabase();
     try {
-      const installation = deriveInstallations([{ path: storage.stashDir, writable: true }])[0];
+      const installation = deriveInstallations([{ bundleId: "stash", path: storage.stashDir, writable: true }])[0];
       if (!installation) throw new Error("failed to derive a test bundle installation");
       const provenance = deriveEntryProvenance({ bundleId: installation.id, adapterId: "akm" }, "knowledge", "edge");
       const filePath = path.join(storage.stashDir, "knowledge", "edge.md");

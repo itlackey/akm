@@ -73,7 +73,7 @@ test("query-embedding failure preserves FTS results and returns one sanitized ft
       searchType: "any",
       limit: 10,
       stashDir: storage.stashDir,
-      sources: [{ path: storage.stashDir }],
+      sources: [{ bundleId: "stash", path: storage.stashDir }],
       config,
     });
 
@@ -104,7 +104,7 @@ test("query-embedding failure preserves FTS results and returns one sanitized ft
       searchType: "any",
       limit: 10,
       stashDir: storage.stashDir,
-      sources: [{ path: storage.stashDir }],
+      sources: [{ bundleId: "stash", path: storage.stashDir }],
       config: { semanticSearchMode: "off" },
     });
     expect(intentionalKeyword.mode).toBe("keyword");

@@ -57,11 +57,11 @@ import { projectMarkdownFragmentContent } from "../../indexer/passes/markdown-pr
 import { applyCuratedFrontmatter, applyProvenanceFrontmatter, type IndexDocument } from "../../indexer/passes/metadata";
 import {
   buildEditHint,
-  findSourceForPath,
   findSourceForRow,
   isEditable,
   resolveSourceEntries,
   type SearchSource,
+  sourcePaths,
 } from "../../indexer/search/search-source";
 import { recentShowCount, recordShowUsage } from "../../indexer/usage/show-usage";
 import type { UsageEventSource } from "../../indexer/usage/usage-events";
@@ -218,6 +218,7 @@ async function showStashMeta(metaRef: MetaRef, readOnly = false): Promise<ShowRe
 
   const config = loadConfig();
   for (const source of sources) {
+    if (source.path === undefined) continue;
     const metaFile = readMetaFile(source.path, metaRef.name);
     if (!metaFile) continue;
     const editable = isEditable(metaFile.path, config, allSources);
@@ -312,7 +313,7 @@ export async function showLocal(input: {
   const allSources = resolveSourceEntries(input.stashDir);
   const searchSources = resolveSourcesForOrigin(parsed.bundle, allSources);
 
-  const allSourceDirs = searchSources.map((s) => s.path);
+  const allSourceDirs = sourcePaths(searchSources);
 
   const resolution = input.readOnly
     ? await lookupBundleRefWithResolutionReadonly(parsed)
@@ -366,21 +367,7 @@ export async function showLocal(input: {
   const owned = resolution.asset;
   if (!owned) throwIndexedPathNotFound(Object.assign(new Error("no entry"), { code: "ENOENT" }), input.ref);
 
-  // A row no file holds (`""`) belongs to its bundle's source.
-  const source =
-    assetPath === ""
-      ? findSourceForRow({ filePath: "", bundleId: indexedEntry.bundleId }, allSources)
-      : findSourceForPath(assetPath, allSources);
-  const sourceStashDir = source?.path ?? allSourceDirs[0];
-
-  if (!sourceStashDir) {
-    throw new UsageError(
-      `Could not determine stash root for asset: ${makeBundleRef(parsed.bundle, parsed.conceptId)}. ` +
-        "Run `akm bundle create` to create the stash directory, or check `akm bundle list` for configured paths.",
-    );
-  }
-
-  const fileCtx = fileContextOf(owned, sourceStashDir);
+  const source = findSourceForRow({ filePath: assetPath, bundleId: indexedEntry.bundleId }, allSources);
   const presentedName = indexedEntry.name;
   const opaqueFragmentSelector = parsed.fragment?.startsWith("akm-fragment-") === true;
   // Friendly heading selectors retain the source-live exact response contract.
@@ -399,7 +386,10 @@ export async function showLocal(input: {
   let response: ShowResponse;
   let markdown = false;
   try {
-    if (presentation === "projection") {
+    if (assetPath === "" && indexedEntry.type === "secret") {
+      const { secretShowResponse } = await import("../../output/renderers");
+      response = secretShowResponse(presentedName);
+    } else if (presentation === "projection") {
       markdown = path.extname(assetPath).toLowerCase() === ".md";
       response = buildIndexedProjectionResponse(
         indexedEntry,
@@ -426,6 +416,10 @@ export async function showLocal(input: {
 
       const renderBundle = indexedEntry.bundleId;
       const renderDefaultBundle = displayDefaultBundle(config.defaultBundle, source, renderBundle);
+      const sourceStashDir = source?.path ?? indexedEntry.stashDir;
+      if (!sourceStashDir)
+        throwIndexedPathNotFound(Object.assign(new Error("no source root"), { code: "ENOENT" }), input.ref);
+      const fileCtx = fileContextOf(owned, sourceStashDir);
       const renderCtx = buildRenderContext(fileCtx, match, allSourceDirs, renderBundle, renderDefaultBundle);
       response = renderer.buildShowResponse(renderCtx);
       markdown = match.renderer.endsWith("-md");
@@ -442,7 +436,7 @@ export async function showLocal(input: {
     // The outline is read from the bytes `#<slug>` resolves against, so every
     // listed slug selects its section even when the index is stale.
     if (markdown && parsed.fragment === undefined) {
-      const toc = markdownToc(fileCtx.content());
+      const toc = markdownToc(owned.entry.content());
       if (toc.length > 0) response.toc = toc;
     }
   } catch (error) {
@@ -450,17 +444,6 @@ export async function showLocal(input: {
   }
   response.type = indexedEntry.type;
   response.name = indexedEntry.name;
-  // An asset no file holds has no path to print.
-  // asset-io: display no file holds the asset
-  if (owned.entry.file === undefined) {
-    delete response.path;
-    // Nor is its value "the file contents".
-    if (response.action)
-      response.action = response.action.replace(
-        "the file contents are the value and are never",
-        "its content is the value and is never",
-      );
-  }
   const defaultBundle = displayDefaultBundle(config.defaultBundle, source, indexedEntry.bundleId);
   const canonicalRef = displayRef(
     { conceptId: indexedEntry.conceptId, bundleId: indexedEntry.bundleId },
@@ -513,7 +496,7 @@ export async function showLocal(input: {
   if (["memory", "lesson", "knowledge"].includes(response.type)) {
     evidenceMetadata = indexedFragment ? indexedEntry.document : { name: presentedName, type: response.type };
     if (!indexedFragment && evidenceMetadata) {
-      const frontmatter = parseFrontmatter(fileCtx.content()).data;
+      const frontmatter = parseFrontmatter(owned.entry.content()).data;
       applyCuratedFrontmatter(evidenceMetadata, frontmatter);
       applyProvenanceFrontmatter(evidenceMetadata, frontmatter);
     }
@@ -632,7 +615,8 @@ function findUnrecognizedScriptSource(
   for (const source of sources) {
     try {
       if (!adapterWrites(source, "script")) continue;
-      const sourceRoot = path.resolve(source.path);
+      const sourceRoot = source.path;
+      if (sourceRoot === undefined) continue;
       // A script's ref is its path, so the candidate is the ref itself.
       const candidate = path.resolve(sourceRoot, conceptId);
       if (!isContainedResolvedPath(candidate, sourceRoot)) continue;

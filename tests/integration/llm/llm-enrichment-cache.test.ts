@@ -15,6 +15,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { slugForPath } from "../../../src/core/bundle-id";
 import type { AkmConfig } from "../../../src/core/config/config";
 import type { SearchSource } from "../../../src/indexer/search/search-source";
 import type { Database } from "../../../src/storage/database";
@@ -115,7 +116,7 @@ function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
 }
 
 function sources(): SearchSource[] {
-  return [{ path: tmpStash, isDefault: true }];
+  return [{ bundleId: slugForPath(tmpStash), path: tmpStash, isDefault: true }];
 }
 
 function writeFile(rel: string, frontmatter: Record<string, unknown>, body: string): string {

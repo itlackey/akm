@@ -106,7 +106,7 @@ export function projectOverview(input: { project: string }) {
   const local = resolveReadSources(undefined, config).sources;
   const selected =
     project.from === undefined
-      ? local.map((source) => ({ name: source.registryId ?? source.path, source }))
+      ? local.map((source) => ({ name: source.bundleId, source }))
       : [project.from].flat().map((from) => ({ name: from, source: narrowSourcesToName(local, [from])[0] }));
   const readable = selected.flatMap((bundle) => (bundle.source ? [bundle.source] : []));
   const counts =
@@ -244,7 +244,7 @@ export async function history(input: { ref: string; revision?: string; limit?: n
   const selected = await show(input);
   if (selected.redacted || !selected.asset?.path) return { available: false, commits: [] };
   const source = findSourceForPath(selected.asset.path, resolveSourceEntries(undefined, loadConfig()));
-  if (!source) return { available: false, commits: [] };
+  if (source?.path === undefined) return { available: false, commits: [] };
   const file = path.relative(source.path, selected.asset.path).split(path.sep).join("/");
   if (file.startsWith("../") || path.isAbsolute(file)) throw new UsageError("Asset path is outside its bundle.");
   const read = await readRecentCommits(source.path, clampLimit(input.limit, 30), file);

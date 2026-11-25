@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 // asset-io: base the file the index row names, read as the row's adapter indexed it (not the facade's winner for the ref, which assetAtKey would give when two rows share a ref); the facade may not build a file context (facade-fs)
 import { buildFileContext } from "../../core/adapter/directory/file-context";
-import { type Bundle, rootOf } from "../../core/adapter/types";
+import type { Bundle } from "../../core/adapter/types";
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { renderIndexedExecutionSource } from "../../core/assets/gate";
 import { isContainedResolvedPath, isWithin } from "../../core/common";
@@ -22,7 +22,6 @@ import type {
   AdapterRenderedPersonaSource,
 } from "../../execution/source";
 import { type IndexEntry, lookupBundleRef } from "../../indexer/indexer";
-import { deriveInstallations } from "../../indexer/installations";
 import { resolveEntryContent, resolveSourceEntries } from "../../indexer/search/search-source";
 
 export type ExecutionSourceLookup = (ref: BundleRef) => Promise<IndexEntry | null>;
@@ -79,26 +78,17 @@ function isLexicallyWithin(candidate: string, root: string): boolean {
 }
 
 function implicitBundleForEntry(entry: IndexEntry, config: AkmConfig): Bundle | undefined {
-  const sources = resolveSourceEntries(undefined, config);
-  const installations = deriveInstallations(sources);
-  for (const [index, installation] of installations.entries()) {
-    if (installation.id !== entry.bundleId) continue;
-    const source = sources[index];
-    if (!source) continue;
-    const canonicalRoot = realDirectory(rootOf(installation), `Canonical implicit source root for ${entry.bundleId}`);
-    const { adapterId } = source;
-    if (adapterId !== entry.adapterId) {
-      warnOnce(
-        `execution-source-adapter-drift:${entry.itemRef}`,
-        `[command] Indexed adapter ${JSON.stringify(entry.adapterId)} for ${JSON.stringify(entry.itemRef)} no longer matches the working source's adapter ${JSON.stringify(adapterId)}; re-resolving from live config. Run \`akm index --full\` to refresh it.`,
-      );
-    }
-    return Object.freeze({
-      id: installation.id,
-      root: canonicalRoot,
-    });
+  const source = resolveSourceEntries(undefined, config).find(({ bundleId }) => bundleId === entry.bundleId);
+  if (source?.path === undefined) return undefined;
+  const root = realDirectory(source.path, `Canonical implicit source root for ${entry.bundleId}`);
+  const { adapterId } = source;
+  if (adapterId !== entry.adapterId) {
+    warnOnce(
+      `execution-source-adapter-drift:${entry.itemRef}`,
+      `[command] Indexed adapter ${JSON.stringify(entry.adapterId)} for ${JSON.stringify(entry.itemRef)} no longer matches the working source's adapter ${JSON.stringify(adapterId)}; re-resolving from live config. Run \`akm index --full\` to refresh it.`,
+    );
   }
-  return undefined;
+  return Object.freeze({ id: source.bundleId, root });
 }
 
 function bundleForEntry(entry: IndexEntry, config: AkmConfig, realRoot: string): Bundle {
@@ -169,8 +159,13 @@ function expectedIndexedType(kind: "command" | "persona"): string {
   return kind === "command" ? "command" : "agent";
 }
 
-function assertRenderedIdentity(source: AdapterRenderedExecutionSource, entry: IndexEntry, content: string): void {
-  const expectedFile = path.relative(path.resolve(entry.stashDir), path.resolve(entry.filePath)).replace(/\\/g, "/");
+function assertRenderedIdentity(
+  source: AdapterRenderedExecutionSource,
+  entry: IndexEntry,
+  root: string,
+  content: string,
+): void {
+  const expectedFile = path.relative(path.resolve(root), path.resolve(entry.filePath)).replace(/\\/g, "/");
   const expectedHash = createHash("sha256").update(content, "utf8").digest("hex");
   if (
     source.identity.ref !== entry.itemRef ||
@@ -226,11 +221,18 @@ export async function loadAdapterExecutionSource(
   }
 
   const config = await effectiveConfig(options.config);
-  const realRoot = realDirectory(entry.stashDir, `Indexed bundle root for ${entry.itemRef}`);
+  const root = entry.stashDir;
+  if (root === undefined) {
+    throw new ConfigError(
+      `Indexed execution source ${JSON.stringify(entry.itemRef)} has no filesystem root.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  const realRoot = realDirectory(root, `Indexed bundle root for ${entry.itemRef}`);
   realRegularFile(entry.filePath, `Indexed execution source ${entry.itemRef}`);
   // An index row must name a file inside its own bundle root. Checked on the
   // authored path, so a file that is a symlink to one elsewhere still loads.
-  if (!isContainedResolvedPath(path.resolve(entry.filePath), path.resolve(entry.stashDir))) {
+  if (!isContainedResolvedPath(path.resolve(entry.filePath), path.resolve(root))) {
     throw new ConfigError(
       `Indexed execution source ${JSON.stringify(entry.itemRef)} resolves outside its bundle root.`,
       "INVALID_CONFIG_FILE",
@@ -239,7 +241,7 @@ export async function loadAdapterExecutionSource(
   }
   const bundle = bundleForEntry(entry, config, realRoot);
   // asset-io: exec the indexed file akm runs
-  const fileContext = buildFileContext(entry.stashDir, entry.filePath);
+  const fileContext = buildFileContext(root, entry.filePath);
   const rendered = (options.render ?? renderIndexedExecutionSource)(entry, bundle, fileContext);
   if (!rendered || rendered.kind !== expectedKind) {
     throw new ConfigError(
@@ -248,6 +250,6 @@ export async function loadAdapterExecutionSource(
       "Rebuild the index; if the mismatch remains, repair the source file or owning adapter.",
     );
   }
-  assertRenderedIdentity(rendered, entry, fileContext.content());
+  assertRenderedIdentity(rendered, entry, root, fileContext.content());
   return rendered;
 }

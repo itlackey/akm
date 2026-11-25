@@ -398,17 +398,6 @@ export function getUnresolvedSourcesDir(stashDir: string): string {
 }
 
 /**
- * `$CACHE/index/bundles/<bundle>` — the `path` a store's source carries (a keyring,
- * a vault). A store has no directory, but the source lists, the write targets and
- * the indexer tell sources apart by `path`, so each store needs a value of its own
- * that is the same in every process; one inside akm's cache that akm never creates
- * names no directory a reader of `path` could find. Never written to disk.
- */
-export function getStoreSourceKey(bundle: string): string {
-  return path.join(getCacheDir(), "index", "bundles", bundle);
-}
-
-/**
  * `$STATE/locks/<stash>/` — per-stash operational lock files for the improve
  * pipeline (e.g. `improve.lock`). Moved out of `$STASH/.akm/` (itlackey/akm#890).
  */

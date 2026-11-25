@@ -45,10 +45,10 @@ import {
   isWriteCapableSourceKind,
   prepareWriteTargetForMutation,
   type ResolvedWriteTarget,
+  requireWriteTargetPath,
   resolveWorkingStashTarget,
   resolveWriteTarget,
 } from "../../core/write-source";
-import { deriveInstallations } from "../../indexer/installations";
 import { retiredEngineSelection } from "../../integrations/agent/resolution";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
@@ -669,12 +669,10 @@ async function buildSchedulerSyncPlan(
   // unscoped sync still removes that bundle's rows (below) and syncs the others,
   // and a scoped sync reports it as disabled only when it is the selected one.
   const sources = activeTaskSources(config);
-  const ids = deriveInstallations(sources).map((installation) => installation.id);
-  const kinds = sources.map((source) => source.type);
   const configuredSources = resolveConfiguredSources(config);
   if (bundleTarget) {
     // Only filesystem and git bundles can carry scheduler state.
-    const targetType = kinds[ids.indexOf(bundleTarget)];
+    const targetType = sources.find(({ bundleId }) => bundleId === bundleTarget)?.type;
     if (targetType !== undefined && !isWriteCapableSourceKind(targetType)) {
       throw new UsageError(
         `Bundle "${bundleTarget}" has kind "${targetType}"; task scheduling is only supported for filesystem and git bundles.`,
@@ -682,10 +680,9 @@ async function buildSchedulerSyncPlan(
       );
     }
   }
-  const schedulable = ids.filter((_, index) => {
-    const type = kinds[index];
-    return type !== undefined && isWriteCapableSourceKind(type);
-  });
+  const schedulable = sources.flatMap(({ bundleId, type }) =>
+    type !== undefined && isWriteCapableSourceKind(type) ? [bundleId] : [],
+  );
   const selected: string[] = bundleTarget ? [bundleTarget] : schedulable;
 
   const enabledRefSet = new Set(enabledRefs);
@@ -1089,7 +1086,7 @@ function resolveTaskBundle(target: string | undefined) {
   const resolved = prepareWriteTargetForMutation(
     resolveWriteTarget(config, target, { requireWritable: true, flag: "--bundle" }),
   );
-  return { resolved, config, stashDir: resolved.source.path, bundleName: resolved.source.name };
+  return { resolved, config, stashDir: requireWriteTargetPath(resolved.source), bundleName: resolved.source.name };
 }
 
 function taskProjectionAssetResolver(
@@ -1112,7 +1109,7 @@ function taskProjectionAssetResolver(
 export function resolveTaskReadBundle(
   refBundle: string | undefined,
   flagBundle: string | undefined,
-): Pick<ResolvedWriteTarget, "source"> {
+): { source: ResolvedWriteTarget["source"] & { path: string } } {
   if (refBundle && flagBundle && refBundle !== flagBundle) {
     throw new UsageError(
       `Task ref selects bundle ${JSON.stringify(refBundle)}, but --bundle selects ${JSON.stringify(flagBundle)}.`,
@@ -1138,9 +1135,9 @@ export function resolveTaskReadBundle(
     resolved = {
       source: {
         kind: source.type ?? "filesystem",
-        name: selector,
+        name: source.bundleId,
         path: source.path,
-        ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
+        adapterId: source.adapterId,
       },
     };
   }
@@ -1150,7 +1147,8 @@ export function resolveTaskReadBundle(
       "INVALID_FLAG_VALUE",
     );
   }
-  return resolved;
+  const { source } = resolved;
+  return { source: { ...source, path: requireWriteTargetPath(source) } };
 }
 
 /** True when `candidate` resolves to the same directory as the primary stash. */

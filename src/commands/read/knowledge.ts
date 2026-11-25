@@ -27,7 +27,7 @@ import { embedPendingWrites } from "../../core/assets/type";
 import { addressOf, writeAssets } from "../../core/assets/write";
 import { bundleAt } from "../../core/bundle-at-dir";
 import { bundleIdForDir } from "../../core/bundle-id";
-import { isHttpUrl, isWithin, resolveStashDir, safeRealpath, samePath, tryReadStdinText } from "../../core/common";
+import { isHttpUrl, isWithin, resolveStashDir, samePath, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { refToRelPath, resolveRefPathInStash } from "../../core/lint/base-linter";
@@ -38,12 +38,12 @@ import {
   commitWriteTargetBoundary,
   formatRefForMessage,
   type ResolvedWriteTarget,
+  requireWriteTargetPath,
   resolveWriteTarget,
   writeTargetAt,
 } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { deriveInstallations } from "../../indexer/installations";
-import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import { resolveSourceEntries, type SearchSource, sourceAtPath } from "../../indexer/search/search-source";
 import { storeSecretResolver } from "../../sources/snapshot-fetchers/secret-seam";
 import {
   fetchWebsiteMarkdownSnapshot,
@@ -255,7 +255,7 @@ function resolveWriteRefRoots(target?: string, targetFlag?: string): { roots: Wr
       throw error;
     }
   }
-  const stashRoot = writeTarget.source.path;
+  const stashRoot = requireWriteTargetPath(writeTarget.source);
   let workingStash: string | undefined;
   try {
     workingStash = resolveStashDir();
@@ -265,24 +265,13 @@ function resolveWriteRefRoots(target?: string, targetFlag?: string): { roots: Wr
   const mutableRoots: string[] = [stashRoot];
   if (workingStash && !samePath(workingStash, stashRoot)) mutableRoots.push(workingStash);
   const namedSources = resolveSourceEntries(undefined, cfg);
-  const installations = deriveInstallations(namedSources);
-  const configuredNames = new Set(installations.map((installation) => installation.id));
-  const bundleByPath = new Map(
-    namedSources.flatMap((source, index) => {
-      const bundleId = installations[index]?.id;
-      return bundleId ? [[path.resolve(source.path), bundleId] as const] : [];
-    }),
-  );
-  const otherSources = namedSources.filter(
-    // asset-io: bundle-root root probe
-    (s) => !mutableRoots.some((m) => samePath(m, s.path)) && fs.existsSync(s.path),
-  );
+  const configuredNames = new Set(namedSources.map(({ bundleId }) => bundleId));
   const roots = [
     ...mutableRoots
       // asset-io: bundle-root root probe
       .filter((p) => fs.existsSync(p))
       .map((p) => {
-        const source = namedSources.find((candidate) => samePath(candidate.path, p));
+        const source = sourceAtPath(namedSources, p);
         // The demotion of a superseded asset is an update of knowledge or a memory: its bundle's adapter writes them.
         const writesAssets = ((): boolean => {
           try {
@@ -295,16 +284,16 @@ function resolveWriteRefRoots(target?: string, targetFlag?: string): { roots: Wr
         return {
           path: p,
           source,
-          bundleId: bundleByPath.get(safeRealpath(p)) ?? bundleIdForDir(p, configuredNames),
+          bundleId: source?.bundleId ?? bundleIdForDir(p, configuredNames),
           mutable,
         };
       }),
-    ...otherSources.map((source) => ({
-      path: source.path,
-      source,
-      bundleId: bundleByPath.get(path.resolve(source.path)) ?? bundleIdForDir(source.path, configuredNames),
-      mutable: false,
-    })),
+    ...namedSources.flatMap((source) => {
+      const root = source.path;
+      // asset-io: bundle-root root probe
+      if (root === undefined || mutableRoots.some((m) => samePath(m, root)) || !fs.existsSync(root)) return [];
+      return [{ path: root, source, bundleId: source.bundleId, mutable: false }];
+    }),
   ];
   return { roots };
 }
@@ -725,7 +714,8 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
   });
   const { target } = resolved;
   const { source, config } = target;
-  const typeRoot = path.join(source.path, options.type === "knowledge" ? "knowledge" : "memories");
+  const stashDir = requireWriteTargetPath(source);
+  const typeRoot = path.join(stashDir, options.type === "knowledge" ? "knowledge" : "memories");
   const assetPath = assetPathForName(options.type, typeRoot, normalizedName);
   if (!isWithin(assetPath, typeRoot)) {
     throw new UsageError(`Resolved ${options.type} path escapes the stash: "${normalizedName}"`);
@@ -777,7 +767,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
         existing.equals(Buffer.from(options.content, "utf8")) ||
         existing.equals(Buffer.from(normalizeAkmMarkdown(options.content, resolved.ref.type), "utf8"));
       if (unchanged && !options.supersedes?.length) {
-        return { ref: resolved.displayRef, path: assetPath, stashDir: source.path, unchanged: true as const };
+        return { ref: resolved.displayRef, path: assetPath, stashDir, unchanged: true as const };
       }
     }
     // An overwrite rewrites the file the asset is read from (N19), so that is the path to report.
@@ -815,7 +805,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
       // skip instead of rewriting, mirroring mergeXrefsIntoContent's
       // abort-on-malformed policy (the correction itself still writes).
       const oldConceptId = parseBundleRef(item.ref).conceptId;
-      const oldTarget = samePath(item.stashRoot, source.path) ? target : writeTargetAt(item.stashRoot);
+      const oldTarget = samePath(item.stashRoot, stashDir) ? target : writeTargetAt(item.stashRoot);
       let oldFrontmatter: string | null = null;
       try {
         const old = readAsset(oldTarget.source, oldConceptId);
@@ -871,7 +861,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
   let hint: string | undefined;
   if (!subPath && !normalizedName.includes("/")) {
     try {
-      if (resolveStashStandards(source.path).trim().length > 0) {
+      if (resolveStashStandards(stashDir).trim().length > 0) {
         // Only point at the canonical organization fact when it actually
         // exists — resolveStashStandards fires for ANY convention/meta fact,
         // and a dead `akm show` pointer is worse than generic wording.
@@ -886,7 +876,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
   return {
     ref: result.ref,
     path: result.path,
-    stashDir: source.path,
+    stashDir,
     ...(hint ? { hint } : {}),
     ...(superseded.length > 0 ? { superseded } : {}),
   };

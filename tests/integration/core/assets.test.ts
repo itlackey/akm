@@ -51,8 +51,9 @@ import {
 
 // The facade takes bundle ids and bundles are the config's: these wrappers make a test's sources the config's bundles
 // first, so each test still names the bundles it reads.
-type Sources = { sources: readonly SearchSource[] };
-const asBundle = (source: SearchSource) => ({
+type TestSource = SearchSource & { path: string };
+type Sources = { sources: readonly TestSource[] };
+const asBundle = (source: TestSource) => ({
   path: source.path,
   ...(source.registryId !== undefined ? { registryId: source.registryId } : {}),
   ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
@@ -70,7 +71,7 @@ const listAssets = ({ sources, ...options }: Sources & { bundle?: string; type?:
   configureBundles(sources.map(asBundle));
   return facade.listAssets(options);
 };
-const currentConceptId = (ref: { conceptId: string }, sources: readonly SearchSource[]) => {
+const currentConceptId = (ref: { conceptId: string }, sources: readonly TestSource[]) => {
   configureBundles(sources.map(asBundle));
   return facade.currentConceptId(ref.conceptId);
 };
@@ -396,7 +397,7 @@ describe("finding an asset in one bundle — closed-form candidates (#857)", () 
 // ── The facade: finding, listing, addressing and writing ────────────────────
 
 /** An akm-layout bundle root holding the given files (relative path -> body). */
-function bundleOf(id: string, files: Record<string, string>, adapterId = "akm"): SearchSource {
+function bundleOf(id: string, files: Record<string, string>, adapterId = "akm"): TestSource {
   const root = makeSandboxDir(`akm-assets-${id}`);
   sandboxes.push(root);
   for (const [relative, body] of Object.entries(files)) {
@@ -404,7 +405,7 @@ function bundleOf(id: string, files: Record<string, string>, adapterId = "akm"):
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, body);
   }
-  return { path: root.dir, registryId: id, adapterId };
+  return { bundleId: id, path: root.dir, registryId: id, adapterId };
 }
 
 const sandboxes: SandboxedDir[] = [];
@@ -843,21 +844,24 @@ describe("a keyring bundle behind the facade", () => {
         },
         async () => {
           await akmIndex({ stashDir: storage.stashDir, full: true });
-          const sources = resolveSourceEntries(undefined, loadConfig());
-          const found = findAsset("keyring//secrets/gh_token", { sources });
+          const source = resolveSourceEntries(undefined, loadConfig()).find((source) => source.bundleId === "keyring");
+          expect(source).toBeDefined();
+          expect(source?.path).toBeUndefined();
+          const found = findAsset("keyring//secrets/gh_token");
           expect(found).toMatchObject({ bundle: "keyring" });
           expect(assetType(found as Asset)).toBe("secret");
           expect(found?.entry.file).toBeUndefined();
           expect(found?.entry.content()).toBe("ghp-value");
-          expect(listAssets({ sources, type: "secret" }).map((asset) => asset.ref)).toEqual([
+          expect(facade.listAssets({ type: "secret" }).map((asset) => asset.ref)).toEqual([
             "keyring//secrets/gh_token",
           ]);
 
           const target = resolveWriteTarget(loadConfig(), "keyring");
+          expect(target.source.path).toBeUndefined();
           writeAssets(target, { purpose: "test" }, (w) => w.create({ type: "secret", name: "other", content: "v2" }));
-          expect(findAsset("keyring//secrets/other", { sources })?.entry.content()).toBe("v2");
+          expect(findAsset("keyring//secrets/other")?.entry.content()).toBe("v2");
           writeAssets(target, { purpose: "test" }, (w) => w.delete("secrets/other"));
-          expect(findAsset("keyring//secrets/other", { sources })).toBeUndefined();
+          expect(findAsset("keyring//secrets/other")).toBeUndefined();
           expect(() =>
             writeAssets(target, { purpose: "test" }, (w) => w.create({ type: "knowledge", name: "k", content: "x" })),
           ).toThrow('Bundle "keyring" uses adapter "secret-tool", which does not support AKM asset writes.');
