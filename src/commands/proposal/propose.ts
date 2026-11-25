@@ -29,7 +29,7 @@ import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { warn } from "../../core/warn";
-import { resolveWriteTarget } from "../../core/write-source";
+import { requireWriteTargetPath, resolveWriteTarget } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { deriveEntryProvenance } from "../../indexer/installations";
 import { fillMetadata, sameScope, scopeFromFrontmatter, stampScope } from "../../indexer/passes/metadata";
@@ -243,7 +243,8 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   // prompt's standards are read from.
   const config = options.agentConfig ?? (await import("../../core/config/config.js")).loadConfig();
   const stash =
-    options.stashDir ?? (options.bundle ? resolveWriteTarget(config, options.bundle).source.path : resolveStashDir());
+    options.stashDir ??
+    (options.bundle ? requireWriteTargetPath(resolveWriteTarget(config, options.bundle).source) : resolveStashDir());
   const target = resolveProposalQueueTarget(stash, config);
 
   // 2. Build terminal user content.

@@ -440,8 +440,9 @@ export interface OkfProvenance {
 
 /** A configured bundle: where it is and the id its qualified refs name it by. */
 export interface BundleSourceRef {
-  path: string;
   registryId?: string;
+  bundleId: string;
+  path?: string;
 }
 
 // ── ValidateContext ─────────────────────────────────────────────────────────

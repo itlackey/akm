@@ -25,10 +25,11 @@ const portable = (value: string) => value.split(path.sep).join("/");
 /** Source roots and identities come from the same resolver as search, never from a ref's spelling. */
 export function bundleFileLocation(filePath: string): BundleFileLocation | null {
   const source = findSourceForPath(filePath, resolveSourceEntries());
-  if (!source?.registryId || source.unresolved || !isWithin(filePath, source.path)) return null;
+  if (!source?.registryId || source.path === undefined || source.unresolved || !isWithin(filePath, source.path))
+    return null;
   const relative = relativeToRoot(filePath, source.path) ?? path.relative(source.path, filePath);
   return {
-    bundle: source.registryId,
+    bundle: source.bundleId,
     path: portable(relative),
     parent: portable(path.dirname(relative)).replace(/^\.$/, ""),
   };
@@ -41,12 +42,13 @@ export function bundleFileLocation(filePath: string): BundleFileLocation | null 
  */
 export function listBundleFiles(bundle: string, relative = "", showHidden = false) {
   if (!bundle) throw new UsageError("Choose a registered bundle.", "MISSING_REQUIRED_ARGUMENT");
-  const source = resolveSourceEntries().find((entry) => entry.registryId === bundle);
-  if (!source || source.unresolved)
+  const source = resolveSourceEntries().find((entry) => entry.bundleId === bundle);
+  const root = source?.path;
+  if (root === undefined || source?.unresolved)
     throw new NotFoundError(`Bundle ${JSON.stringify(bundle)} is disabled or unavailable.`);
   if (path.isAbsolute(relative) || relative.includes("\0")) throw new UsageError("Use a path relative to the bundle.");
-  const target = path.resolve(source.path, relative);
-  if (!isWithin(target, source.path)) throw new UsageError("The folder is outside this bundle.");
+  const target = path.resolve(root, relative);
+  if (!isWithin(target, root)) throw new UsageError("The folder is outside this bundle.");
   let children: fs.Dirent[];
   try {
     children = fs.readdirSync(target, { withFileTypes: true });
@@ -55,7 +57,7 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
       throw new NotFoundError("The folder no longer exists.", "FILE_NOT_FOUND");
     throw new UsageError("This folder cannot be listed. Check its path and filesystem permissions.");
   }
-  const physicalRoot = safeRealpath(source.path);
+  const physicalRoot = safeRealpath(root);
   const rows = children
     .filter((entry) => showHidden || !entry.name.startsWith("."))
     .map((entry) => {
@@ -64,7 +66,7 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
       let unavailable: string | undefined;
       if (entry.isSymbolicLink()) {
         try {
-          if (!isWithin(absolute, source.path)) unavailable = "Link points outside this bundle.";
+          if (!isWithin(absolute, root)) unavailable = "Link points outside this bundle.";
           else {
             const stat = fs.statSync(absolute);
             kind = stat.isDirectory() ? "directory" : stat.isFile() ? "file" : "other";
@@ -82,11 +84,11 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
       }
       return {
         name: entry.name,
-        path: portable(path.relative(source.path, absolute)),
+        path: portable(path.relative(root, absolute)),
         kind,
         ...(stat ? { modified: stat.mtime.toISOString(), ...(stat.isFile() ? { size: stat.size } : {}) } : {}),
         // Keep the displayed alias, but look up the file under this bundle's indexed root.
-        absolute: path.join(source.path, path.relative(physicalRoot, safeRealpath(absolute))),
+        absolute: path.join(root, path.relative(physicalRoot, safeRealpath(absolute))),
         ...(entry.isSymbolicLink() ? { symlink: true } : {}),
         ...(unavailable ? { unavailable } : {}),
       };
@@ -116,7 +118,7 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
   } catch {
     /* Files remain browsable when the derived index needs repair. */
   }
-  const current = portable(path.relative(source.path, target));
+  const current = portable(path.relative(root, target));
   const writeBlockers = bundleWriteBlockers(loadConfig(), bundle);
   return {
     bundle,
@@ -130,8 +132,7 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
     place: placeVerdict(current, writeBlockers),
     entries: rows.map(({ absolute, ...row }) => {
       const assets = refs.get(absolute) ?? [];
-      const isProtected =
-        row.kind === "file" && protectedTypeOf(portable(path.relative(source.path, absolute))) !== undefined;
+      const isProtected = row.kind === "file" && protectedTypeOf(portable(path.relative(root, absolute))) !== undefined;
       return {
         ...row,
         assets,

@@ -12,6 +12,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { slugForPath } from "../../src/core/bundle-id";
 import { getStateDbPath } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { searchLocal } from "../../src/indexer/search/db-search";
@@ -39,7 +40,7 @@ describe("search and state.db", () => {
       searchType: "any",
       limit: 5,
       stashDir: storage.stashDir,
-      sources: [{ path: storage.stashDir }],
+      sources: [{ bundleId: slugForPath(storage.stashDir), path: storage.stashDir }],
       config: { semanticSearchMode: "off" },
     });
   }

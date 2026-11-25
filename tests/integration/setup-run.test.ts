@@ -226,8 +226,9 @@ function installSetupSeams(): void {
     return { bundleDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH, defaultBundleUpdated: true };
   });
   overrideSeam(_setAkmIndexForTests, async (options) => {
+    if (typeof options.stashDir !== "string") throw new Error("Expected an index build for a directory");
     setupState.indexCalls.push({
-      stashDir: options?.stashDir ?? "",
+      stashDir: options.stashDir,
       enrich: (options as { enrich?: boolean } | undefined)?.enrich,
     });
     if (setupState.indexError) {

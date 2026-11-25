@@ -202,6 +202,7 @@ export function legacyRefOf(bundle: BundleAddress, relPath: string): string | un
  */
 export function conceptIdAtFile(bundle: BundleAddress, file: string): string | undefined {
   const held = bundleFor(bundle);
+  if (held.root === undefined) return undefined;
   const key = toPosix(path.relative(held.root, file));
   return key === "" || key.startsWith("..") ? undefined : (held.identifyKey(key) ?? undefined);
 }

@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import type { FileChange } from "../../../../src/core/adapter/file-change";
 import { createFileValidateContext } from "../../../../src/core/adapter/validate-context";
+import { slugForPath } from "../../../../src/core/bundle-id";
 import { checkChanges } from "../../../_helpers/adapter-hooks";
 
 function makeRoot(): string {
@@ -158,7 +159,7 @@ describe("createFileValidateContext — resolveRef", () => {
     const root = makeRoot();
     const extra = makeRoot();
     write(extra, "tables/elsewhere.md", "---\ntype: table\n---\n");
-    const ctx = createFileValidateContext({ root, sources: [{ path: extra }] });
+    const ctx = createFileValidateContext({ root, sources: [{ bundleId: slugForPath(extra), path: extra }] });
     expect((await ctx.resolveRef("tables/elsewhere")).exists).toBe(true);
   });
 
@@ -167,7 +168,7 @@ describe("createFileValidateContext — resolveRef", () => {
     const extra = makeRoot();
     // The change targets a path relative to `root`; it must not leak into `extra`'s resolution.
     const changes: FileChange[] = [{ path: "tables/only-in-primary.md", after: "x", op: "create" }];
-    const ctx = createFileValidateContext({ root, sources: [{ path: extra }], changes });
+    const ctx = createFileValidateContext({ root, sources: [{ bundleId: slugForPath(extra), path: extra }], changes });
     expect((await ctx.resolveRef("tables/only-in-primary")).exists).toBe(true); // resolves via the primary root's overlay
     expect(fs.existsSync(path.join(extra, "tables/only-in-primary.md"))).toBe(false); // never written to the extra root
   });

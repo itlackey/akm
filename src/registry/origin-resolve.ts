@@ -2,10 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import path from "node:path";
 import { isBundleSlug } from "../core/asset/asset-ref";
 import { samePath } from "../core/common";
-import { deriveInstallations } from "../indexer/installations";
 import type { SearchSource } from "../indexer/search/search-source";
 import { parseRegistryRef } from "./resolve";
 
@@ -19,8 +17,7 @@ import { parseRegistryRef } from "./resolve";
 export function resolveSourcesForOrigin(origin: string | undefined, allSources: SearchSource[]): SearchSource[] {
   if (!origin) return allSources;
 
-  const installations = deriveInstallations(allSources);
-  return allSources.filter((_, index) => installations[index]?.id === origin);
+  return allSources.filter((source) => source.bundleId === origin);
 }
 
 /** Resolve the non-asset source locator grammar used by `akm clone`. */
@@ -36,7 +33,7 @@ export function resolveSourcesForLocator(locator: string, allSources: SearchSour
     // Not a registry locator; continue to path matching.
   }
 
-  return allSources.filter((source) => samePath(source.path, locator));
+  return allSources.filter((source) => source.path !== undefined && samePath(source.path, locator));
 }
 
 /**

@@ -83,6 +83,34 @@ describe("akm search/curate/show — JSON envelope snapshot (WS6)", () => {
     expect((env.hits as Array<{ name: string }>).map((h) => h.name)).toContain("deploy-widgets");
   });
 
+  test("search: a primary keyring does not report the other bundle's directory", async () => {
+    const stash = await makeIndexedStash();
+    await withEnv({ AKM_BUNDLE_DIR: undefined }, async () => {
+      saveConfig({
+        semanticSearchMode: "off",
+        defaultBundle: "keys",
+        bundles: { keys: { adapter: "secret-tool", location: "akm" }, notes: { path: stash } },
+      });
+      const result = await runCliCapture(["search", "deploy", "--format=json", "--detail=full"]);
+      expect(result.code, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).not.toHaveProperty("bundleDir");
+    });
+  });
+
+  test("search: no selected bundles preserves the empty bundleDir", async () => {
+    const stash = await makeIndexedStash();
+    const alias = path.join(stash, "alias");
+    fs.symlinkSync(stash, alias, "junction");
+    saveConfig({ semanticSearchMode: "off", bundles: { notes: { path: alias } } });
+    const { stdout, stderr, status } = await runCli(["search", "deploy", "--from", alias, "--detail=full"], stash);
+    expect(status, stderr).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({
+      bundleDir: "",
+      hits: [],
+      warnings: ["No bundles configured. Run `akm bundle create` to create your working bundle."],
+    });
+  });
+
   test("search: missing query → JSON envelope with hits array (F5/R-009: bare query browses, per --help's own contract)", async () => {
     const stash = await makeIndexedStash();
     // R-009 orchestrator ruling: `search --help` documents "QUERY  Search

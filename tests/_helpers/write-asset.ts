@@ -12,7 +12,7 @@ import { conceptIdFromTypeName, displayRef } from "../../src/core/asset/resolve-
 import { readAsset } from "../../src/core/assets/read";
 import { writeAssets } from "../../src/core/assets/write";
 import type { SourceConfigEntry } from "../../src/core/config/config";
-import type { WriteTargetSource } from "../../src/core/write-source";
+import { requireWriteTargetPath, type WriteTargetSource } from "../../src/core/write-source";
 import { configureBundles } from "./bundle-config";
 
 export async function writeAssetToSource(
@@ -48,13 +48,17 @@ export async function deleteAssetFromSource(
 /** Where a new asset of `ref` is placed in a directory bundle, for one the walk does not reach (a git-ignored file, §0.2 A6): no read finds it, so the path comes from placement. */
 function placedPath(source: WriteTargetSource, ref: AssetRef): string {
   const typeDir = stashDirFor(ref.type) as string;
-  return assetPathForName(ref.type, path.join(source.path, typeDir), ref.name);
+  return assetPathForName(ref.type, path.join(requireWriteTargetPath(source), typeDir), ref.name);
 }
 
 /** The asset in a write target's bundle, which a test has not configured: make it the config's bundle first. */
 function readAssetIn(source: WriteTargetSource, conceptId: string) {
   const [id] = configureBundles([
-    { path: source.path, registryId: source.name, ...(source.adapterId ? { adapterId: source.adapterId } : {}) },
+    {
+      path: requireWriteTargetPath(source),
+      registryId: source.name,
+      ...(source.adapterId ? { adapterId: source.adapterId } : {}),
+    },
   ]);
   return readAsset(id as string, conceptId);
 }

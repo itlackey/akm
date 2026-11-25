@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Keyring and vault bundles no longer report a cache directory as their path in index, search, doctor, and Desktop change listings.
+
 ## [0.10.261132] - 2026-11-25
 
 ### Changed

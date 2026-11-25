@@ -1,7 +1,9 @@
 // Opens a real index.db and exercises both candidate channels with controlled vectors.
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
+import { slugForPath } from "../../src/core/bundle-id";
 import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
@@ -53,7 +55,7 @@ function search(channel: string, options: Partial<SearchLocalInput> = {}) {
     searchType: "any",
     limit: 1,
     stashDir: storage.stashDir,
-    sources: [{ path: storage.stashDir }],
+    sources: [{ bundleId: slugForPath(storage.stashDir), path: storage.stashDir }],
     config: { defaultBundle: "stash", semanticSearchMode: channel === "lexical" ? "off" : "auto" },
     ...options,
   });
@@ -104,7 +106,10 @@ for (const channel of ["lexical", "vector", "combined"]) {
         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
         put("accepted", scenario.accepted, true);
         const options = { ...scenario.options };
-        if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+        if (scenario.rejectedBundle)
+          options.sources = [
+            { bundleId: slugForPath(path.join(storage.stashDir, "stash")), path: path.join(storage.stashDir, "stash") },
+          ];
         const result = await search(channel, options);
         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
         expect(result.mode).toBe(channel === "lexical" ? "keyword" : "semantic");

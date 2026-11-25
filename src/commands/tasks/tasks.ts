@@ -45,10 +45,10 @@ import {
   isWriteCapableSourceKind,
   prepareWriteTargetForMutation,
   type ResolvedWriteTarget,
+  requireWriteTargetPath,
   resolveWorkingStashTarget,
   resolveWriteTarget,
 } from "../../core/write-source";
-import { deriveInstallations } from "../../indexer/installations";
 import { retiredEngineSelection } from "../../integrations/agent/resolution";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
@@ -552,11 +552,15 @@ export async function akmTasksHistory(input: {
 }): Promise<TasksHistoryResult> {
   const limit = input.limit !== undefined && input.limit > 0 ? input.limit : 50;
   const parsed = input.id ? parseTaskRef(input.id) : undefined;
-  const bundle = resolveTaskReadBundle(parsed?.bundle, input.target);
-  const id = parsed ? (resolveTask(bundle.source, parsed.id)?.id ?? taskNameOf(bundle.source, parsed.id)) : undefined;
+  const source = resolveTaskReadSource(parsed?.bundle, input.target);
+  let id = parsed?.id;
+  if (parsed && source.path !== undefined) {
+    const taskSource = { ...source, path: source.path };
+    id = resolveTask(taskSource, parsed.id)?.id ?? taskNameOf(taskSource, parsed.id);
+  }
   // A bundle named by `--bundle` or by the ref selects the rows that recorded that bundle.
   const named = parsed?.bundle !== undefined || input.target !== undefined;
-  return { rows: readTaskHistory({ id, limit, ...(named ? { bundle: bundle.source.name } : {}) }) };
+  return { rows: readTaskHistory({ id, limit, ...(named ? { bundle: source.name } : {}) }) };
 }
 
 export interface TasksSyncResult {
@@ -669,12 +673,10 @@ async function buildSchedulerSyncPlan(
   // unscoped sync still removes that bundle's rows (below) and syncs the others,
   // and a scoped sync reports it as disabled only when it is the selected one.
   const sources = activeTaskSources(config);
-  const ids = deriveInstallations(sources).map((installation) => installation.id);
-  const kinds = sources.map((source) => source.type);
   const configuredSources = resolveConfiguredSources(config);
   if (bundleTarget) {
     // Only filesystem and git bundles can carry scheduler state.
-    const targetType = kinds[ids.indexOf(bundleTarget)];
+    const targetType = sources.find(({ bundleId }) => bundleId === bundleTarget)?.type;
     if (targetType !== undefined && !isWriteCapableSourceKind(targetType)) {
       throw new UsageError(
         `Bundle "${bundleTarget}" has kind "${targetType}"; task scheduling is only supported for filesystem and git bundles.`,
@@ -682,10 +684,9 @@ async function buildSchedulerSyncPlan(
       );
     }
   }
-  const schedulable = ids.filter((_, index) => {
-    const type = kinds[index];
-    return type !== undefined && isWriteCapableSourceKind(type);
-  });
+  const schedulable = sources.flatMap(({ bundleId, type }) =>
+    type !== undefined && isWriteCapableSourceKind(type) ? [bundleId] : [],
+  );
   const selected: string[] = bundleTarget ? [bundleTarget] : schedulable;
 
   const enabledRefSet = new Set(enabledRefs);
@@ -1089,7 +1090,7 @@ function resolveTaskBundle(target: string | undefined) {
   const resolved = prepareWriteTargetForMutation(
     resolveWriteTarget(config, target, { requireWritable: true, flag: "--bundle" }),
   );
-  return { resolved, config, stashDir: resolved.source.path, bundleName: resolved.source.name };
+  return { resolved, config, stashDir: requireWriteTargetPath(resolved.source), bundleName: resolved.source.name };
 }
 
 function taskProjectionAssetResolver(
@@ -1112,7 +1113,17 @@ function taskProjectionAssetResolver(
 export function resolveTaskReadBundle(
   refBundle: string | undefined,
   flagBundle: string | undefined,
-): Pick<ResolvedWriteTarget, "source"> {
+): { source: ResolvedWriteTarget["source"] & { path: string } } {
+  const source = resolveTaskReadSource(refBundle, flagBundle);
+  if (source.path === undefined)
+    throw new NotFoundError(`Task was not found in bundle ${JSON.stringify(source.name)}.`);
+  return { source: { ...source, path: source.path } };
+}
+
+function resolveTaskReadSource(
+  refBundle: string | undefined,
+  flagBundle: string | undefined,
+): ResolvedWriteTarget["source"] {
   if (refBundle && flagBundle && refBundle !== flagBundle) {
     throw new UsageError(
       `Task ref selects bundle ${JSON.stringify(refBundle)}, but --bundle selects ${JSON.stringify(flagBundle)}.`,
@@ -1121,36 +1132,18 @@ export function resolveTaskReadBundle(
   }
   const selector = flagBundle ?? refBundle;
   const config = loadConfig();
-  let resolved: Pick<ResolvedWriteTarget, "source">;
   if (!selector) {
-    resolved = resolveWorkingStashTarget(config, { requireWritable: false });
-  } else {
-    // Reading needs no write target: any bundle of the active set resolves.
-    const sources = activeTaskSources(config);
-    const source = resolveSourcesForOrigin(selector, sources)[0];
-    if (!source) {
-      assertBundleNotDisabled(config, selector);
-      throw new UsageError(
-        `${flagBundle !== undefined ? "--bundle" : "The task ref's bundle"} must reference a source name from your config. No source named "${selector}" is configured. Run \`akm bundle list\` to see available sources.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    resolved = {
-      source: {
-        kind: source.type ?? "filesystem",
-        name: selector,
-        path: source.path,
-        ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
-      },
-    };
+    return resolveWorkingStashTarget(config, { requireWritable: false }).source;
   }
-  if (refBundle && resolved.source.name !== refBundle) {
+  const source = resolveSourcesForOrigin(selector, activeTaskSources(config))[0];
+  if (!source) {
+    assertBundleNotDisabled(config, selector);
     throw new UsageError(
-      `Task ref bundle ${JSON.stringify(refBundle)} does not match the resolved source.`,
+      `${flagBundle !== undefined ? "--bundle" : "The task ref's bundle"} must reference a source name from your config. No source named "${selector}" is configured. Run \`akm bundle list\` to see available sources.`,
       "INVALID_FLAG_VALUE",
     );
   }
-  return resolved;
+  return { kind: source.type ?? "filesystem", name: selector, path: source.path, adapterId: source.adapterId };
 }
 
 /** True when `candidate` resolves to the same directory as the primary stash. */

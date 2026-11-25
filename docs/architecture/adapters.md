@@ -864,9 +864,7 @@ they actually work:
   through an explicit `adapter: "generic-files"` override.
 - **A location bundle has no directory.** A keyring's or vault's entries are
   index rows with an empty file path, found by ref, and no directory maps to the
-  bundle (`bundleAtDir`). Its source carries a key in place of a path
-  (`getStoreSourceKey`, `src/core/paths.ts`), because the source lists and the
-  indexer tell sources apart by path; nothing is created there.
+  bundle (`bundleAtDir`). Its source has a bundle ID and no path.
 
 ---
 

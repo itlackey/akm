@@ -85,6 +85,14 @@ export function canonicalizeStoredPaths(db: Database): void {
   })();
 }
 
+/** A real directory or the configured id of a pathless bundle. */
+export type IndexLibrary = string | { bundleId: string };
+
+/** The library marker for a resolved directory or store. */
+export function indexLibraryForSource(source: { path?: string; bundleId: string }): IndexLibrary {
+  return source.path ?? { bundleId: source.bundleId };
+}
+
 /** Whether the stored library marker names `stashDir`: the same directory, however either is spelled. */
 export function servesLibrary(stored: string | undefined, stashDir: string): boolean {
   return stored !== undefined && safeRealpath(stored) === safeRealpath(stashDir);
@@ -94,7 +102,7 @@ export function servesLibrary(stored: string | undefined, stashDir: string): boo
  * Phase 2 (sync): write all pre-generated scan records inside a single transaction.
  *
  * The same transaction records which library the persisted keyword data is for
- * (`stashDir` / `stashDirs`). That is the "usable index" marker readers test
+ * (`stashDir` / `stashDirs` for directories, `stashBundles` for stores). That is the "usable index" marker readers test
  * (`index-readiness.ts`), so it commits atomically with the entries and FTS rows
  * it describes, however the rest of the build goes.
  *
@@ -105,12 +113,13 @@ export function persistDirRecords(
   db: Database,
   dirRecords: DirRecord[],
   warnings: string[],
-  bundleByRoot: ReadonlyMap<string, { bundleId: string; adapterId: string }>,
+  bundleOwners: ReadonlyMap<string, { bundleId: string; adapterId: string }>,
   maxInputTokens: number,
   library: {
     stashDir: string;
     sourceDirs: string[];
-    unresolvedBundleIds: ReadonlySet<string | undefined>;
+    storeBundleIds: readonly string[];
+    unresolvedBundleIds: ReadonlySet<string>;
     variants: ReadonlyMap<string, string>;
   },
 ): IndexMoves | undefined {
@@ -127,8 +136,8 @@ export function persistDirRecords(
     const stored: StoredEntry[] = [];
     const fresh: NewEntry[] = [];
     for (const record of dirRecords) {
-      const bundle = bundleByRoot.get(path.resolve(record.currentStashDir));
-      if (record.skip || record.rows || !bundle) continue;
+      const bundle = bundleOwners.get(record.bundleId);
+      if (record.skip || record.rows !== undefined || !bundle) continue;
       const kept = new Set<string>();
       for (const entry of record.remove ? [] : (record.stash?.entries ?? [])) {
         const found = identifyEntry(record.dirPath, bundle, entry, record.conceptIdByFile);
@@ -156,11 +165,17 @@ export function persistDirRecords(
       deleteMeta(db, "builtAt");
       addDeletedEntries(
         deletedEntries,
-        deleteEntriesOutsideLibrary(db, library.sourceDirs, library.unresolvedBundleIds),
+        deleteEntriesOutsideLibrary(
+          db,
+          library.sourceDirs,
+          new Set([...library.unresolvedBundleIds, ...library.storeBundleIds]),
+        ),
       );
     }
     setMeta(db, "stashDir", safeRealpath(library.stashDir));
     setMeta(db, "stashDirs", JSON.stringify(library.sourceDirs));
+    if (library.storeBundleIds.length > 0) setMeta(db, "stashBundles", JSON.stringify(library.storeBundleIds));
+    else deleteMeta(db, "stashBundles");
     pairing = pairMoves();
     for (const pair of pairing.pairs) {
       // The row index-on-miss wrote for the moved file gives way to the vanished entry's, which keeps its history.
@@ -172,24 +187,11 @@ export function persistDirRecords(
       rekeyLlmCache(db, pair.oldFilePath, pair.entry.filePath);
       movedRefs.add(pair.entry.provenance.itemRef);
     }
-    for (const {
-      dirPath,
-      currentStashDir,
-      files,
-      fingerprint,
-      stash,
-      skip,
-      reason,
-      persistedRowCount,
-      hashByFile,
-      conceptIdByFile,
-      indexVariant,
-      remove,
-      rows,
-    } of dirRecords) {
-      const bundle = bundleByRoot.get(path.resolve(currentStashDir));
-      if (!bundle) throw new Error(`Missing bundle provenance for indexed source ${currentStashDir}`);
-      if (rows) {
+    for (const record of dirRecords) {
+      const { bundleId, reason, indexVariant, rows } = record;
+      const bundle = bundleOwners.get(bundleId);
+      if (!bundle) throw new Error(`Missing provenance for indexed bundle ${bundleId}`);
+      if (rows !== undefined) {
         // A bundle that is no directory: one row per entry, keyed by its ref and holding no path. An entry whose hash,
         // adapter and (absent) file are as stored is left as it is; a row written before 4f.2 holds a path, so it is
         // written again in this form. What the listing no longer holds is pruned.
@@ -222,6 +224,8 @@ export function persistDirRecords(
         );
         continue;
       }
+      const { dirPath, files, fingerprint, stash, skip, persistedRowCount, hashByFile, conceptIdByFile, remove } =
+        record;
       if (remove) {
         const removed = deleteEntriesByDirAndBundle(db, dirPath, bundle.bundleId, {
           cleanupUsageEvents: false,

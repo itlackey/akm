@@ -3,7 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-import path from "node:path";
 import { type Asset, lookupAsset, scanBundle } from "../core/assets/read";
 import { indexedPathOf } from "../core/assets/type";
 import { isHttpUrl, safeRealpath } from "../core/common";
@@ -47,7 +46,6 @@ import {
   openReadonlyExistingDatabase,
 } from "../storage/repositories/index-connection";
 import {
-  deleteEntriesByBundle,
   deleteEntriesByIds,
   findEntryIdByRef,
   getEmbeddableEntryCount,
@@ -69,21 +67,23 @@ import {
   workflowNameForSourcePath,
 } from "../workflows/source-files";
 import {
+  applyRemovedSources,
   INCOMPLETE_SOURCES_META_KEY,
   type IncompleteIndexSource,
   type IndexVerification,
-  type RemovedIndexSource,
+  readSourceOwners,
+  recordSourceOwners,
   SEMANTIC_SEARCH_META_KEY,
   type SemanticSearchRecord,
 } from "./index-context";
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { canonicalizeStoredPaths, persistDirRecords, servesLibrary } from "./index-persist";
-import { deriveInstallations, sourceOfBundle } from "./installations";
+import { sourceOfBundle } from "./installations";
 import { entryOnMiss, indexedPathMatchesOwner } from "./lookup/indexed-owner";
 import { type EmbeddingGenerationResult, embeddingInputCap, generateEmbeddingsForDb } from "./materialize-embeddings";
 import { type IndexDocument, isWorkflowSkipWarning } from "./passes/metadata";
 import type { SearchSource } from "./search/search-source";
-import { buildIndexedSourceOwners, scanSourceDirs } from "./source-scan";
+import { scanSourceDirs } from "./source-scan";
 import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -224,82 +224,6 @@ function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
-// ── Source ownership ─────────────────────────────────────────────────────────
-
-interface IndexSourceOwner {
-  bundleId: string;
-  sourceRoot: string;
-}
-
-function sourceOwners(sources: readonly SearchSource[]): IndexSourceOwner[] {
-  return deriveInstallations([...sources]).map((bundle, index) => ({
-    bundleId: bundle.id,
-    sourceRoot: path.resolve((sources[index] as SearchSource).path),
-  }));
-}
-
-function parseStoredSourceOwners(raw: string | undefined): IndexSourceOwner[] {
-  if (!raw) return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      !Array.isArray(parsed) ||
-      parsed.some(
-        (owner) =>
-          typeof owner !== "object" ||
-          owner === null ||
-          typeof (owner as Record<string, unknown>).bundleId !== "string" ||
-          typeof (owner as Record<string, unknown>).sourceRoot !== "string",
-      )
-    ) {
-      warn("index_meta sourceOwners value is invalid — treating as empty");
-      return [];
-    }
-    return parsed.map((owner) => {
-      const stored = owner as { bundleId: string; sourceRoot: string };
-      return { bundleId: stored.bundleId, sourceRoot: path.resolve(stored.sourceRoot) };
-    });
-  } catch {
-    warn("index_meta sourceOwners value is corrupt JSON — treating as empty");
-    return [];
-  }
-}
-
-/**
- * Sources removed (or moved) since the last complete run. Their entries are
- * purged by {@link applyRemovedSources} once the walk completes.
- */
-function findRemovedSources(db: Database, sources: readonly SearchSource[]): RemovedIndexSource[] {
-  const currentByBundle = new Map(sourceOwners(sources).map((owner) => [owner.bundleId, owner]));
-  return parseStoredSourceOwners(getMeta(db, "sourceOwners")).flatMap((previous) => {
-    const current = currentByBundle.get(previous.bundleId);
-    if (current && current.sourceRoot === previous.sourceRoot) return [];
-    return [{ ...previous, removeBundleEntries: current === undefined }];
-  });
-}
-
-function applyRemovedSources(
-  db: Database,
-  sources: readonly SearchSource[],
-  removedSources: readonly RemovedIndexSource[],
-  isIncremental: boolean,
-): void {
-  const owners = sourceOwners(sources);
-  for (const removed of removedSources) {
-    if (removed.removeBundleEntries) deleteEntriesByBundle(db, removed.bundleId);
-  }
-  // A full run re-drains every configured source, so any other bundle's rows
-  // are stale even when no stored owner names them.
-  if (isIncremental) return;
-  const currentBundles = new Set(owners.map((owner) => owner.bundleId));
-  const indexed = db.prepare("SELECT DISTINCT bundle_id AS bundleId FROM entries").all() as Array<{
-    bundleId: string;
-  }>;
-  for (const { bundleId } of indexed) {
-    if (!currentBundles.has(bundleId)) deleteEntriesByBundle(db, bundleId);
-  }
-}
-
 /** Result of the shared embedding pass — see {@link runEmbeddingPass}. */
 export interface EmbeddingPassResult {
   embeddingResult: EmbeddingGenerationResult;
@@ -393,7 +317,7 @@ function finalizeIndex(args: {
   // (Which library the index serves is recorded when the entries are persisted.)
   if (args.scanComplete) {
     setMeta(db, "builtAt", new Date().toISOString());
-    setMeta(db, "sourceOwners", JSON.stringify(sourceOwners(sources)));
+    recordSourceOwners(db, sources);
   }
   // The sources the index holds last-known-good rows for: what `akm doctor` reads. Empty once every source scanned.
   setMeta(db, INCOMPLETE_SOURCES_META_KEY, JSON.stringify(args.incompleteSources));
@@ -548,7 +472,7 @@ function detectAndPersistBundleAdapters(
   for (const source of allSourceEntries) {
     // `resolveSourceEntries` found an adapter for every entry without one; this records it.
     if (source.registryId === undefined || source.unresolved || config.bundles?.[source.registryId]?.adapter) continue;
-    if (source.adapterId !== undefined && isReadableDirectory(source.path)) {
+    if (source.adapterId !== undefined && source.path !== undefined && isReadableDirectory(source.path)) {
       detectedByBundle.set(source.registryId, source.adapterId);
     }
   }
@@ -652,10 +576,10 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
   });
   config = detected.config;
   const { persistedAdapters } = detected;
-  const sourceDirs = sources.map((s) => s.path);
+  const sourceDirs = sources.flatMap((source) => (source.path === undefined ? [] : [source.path]));
   onProgress({
     phase: "preflight",
-    message: `Resolved ${sourceDirs.length} stash source${sourceDirs.length === 1 ? "" : "s"}.`,
+    message: `Resolved ${sources.length} stash source${sources.length === 1 ? "" : "s"}.`,
   });
 
   const t0 = Date.now();
@@ -667,9 +591,8 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     // `--full` folds into `isIncremental`: a full run drains every directory
     // through the same diff-persist path as an incremental one.
     canonicalizeStoredPaths(db);
-    const prevStashDir = getMeta(db, "stashDir");
     const prevBuiltAt = getMeta(db, "builtAt");
-    const isIncremental = !full && servesLibrary(prevStashDir, stashDir) && !!prevBuiltAt;
+    const isIncremental = !full && servesLibrary(getMeta(db, "stashDir"), stashDir) && !!prevBuiltAt;
     const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
     const mode = isIncremental ? "incremental" : "full";
 
@@ -677,30 +600,38 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       phase: "summary",
       message: buildIndexSummaryMessage({
         mode,
-        sourcesCount: sourceDirs.length,
+        sourcesCount: sources.length,
         semanticSearchMode: config.semanticSearchMode,
         embeddingProvider: getEmbeddingProvider(effectiveEmbedding(config)),
       }),
     });
 
-    const removedSources = findRemovedSources(db, sources);
+    const previousOwners = readSourceOwners(db);
 
     // ── Walk: scan the filesystem, generate metadata, persist entries ─────
     throwIfAborted(signal);
     const tWalkStart = Date.now();
     // Walk every source and pre-generate all metadata outside any transaction…
-    const { dirRecords, variants, scannedDirs, skippedDirs, generatedCount, warnings, complete, incompleteSources } =
-      await scanSourceDirs(db, sources, isIncremental, builtAtMs, onProgress, !clean);
+    const {
+      dirRecords,
+      bundleOwners,
+      storeBundleIds,
+      variants,
+      scannedDirs,
+      skippedDirs,
+      generatedCount,
+      warnings,
+      complete,
+      incompleteSources,
+    } = await scanSourceDirs(db, sources, isIncremental, builtAtMs, onProgress, !clean);
     // …then write it in one transaction: `item_ref = <bundle>//<conceptId>`
-    // plus canonical bundle/adapter provenance per source root.
-    const bundleByRoot = buildIndexedSourceOwners(sources);
+    // plus canonical bundle/adapter provenance.
     // A source that did not resolve this run keeps its last-known-good rows through a library switch.
-    const unresolvedBundleIds = new Set(
-      sources.flatMap((source) => (source.unresolved ? [bundleByRoot.get(path.resolve(source.path))?.bundleId] : [])),
-    );
-    const moves = persistDirRecords(db, dirRecords, warnings, bundleByRoot, embeddingInputCap(config), {
+    const unresolvedBundleIds = new Set(sources.filter((source) => source.unresolved).map((source) => source.bundleId));
+    const moves = persistDirRecords(db, dirRecords, warnings, bundleOwners, embeddingInputCap(config), {
       stashDir,
       sourceDirs,
+      storeBundleIds,
       unresolvedBundleIds,
       variants,
     });
@@ -725,7 +656,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     // ~0) so the JSON shape is unchanged.
     const tLlmEnd = Date.now();
 
-    if (complete) applyRemovedSources(db, sources, removedSources, isIncremental);
+    if (complete) applyRemovedSources(db, sources, previousOwners, isIncremental);
 
     // Reconcile explicit missing-file cleanup before embeddings, totals, or
     // verification describe this generation. Dry-run intentionally leaves
@@ -913,7 +844,7 @@ export interface IndexEntry {
   /** Absolute path of the indexed file on disk. */
   filePath: string;
   /** Source root (the directory the walker rooted at). */
-  stashDir: string;
+  stashDir?: string;
   /** Asset type (skill, command, knowledge, ...). */
   type: string;
   /** Asset name as recorded by the indexer. */
@@ -995,7 +926,11 @@ async function lookupBundleRefWithResolutionUsing(
     const adapterId = scanBundle(source, bundleId).adapterId;
     const ownerPath = indexedPathOf(asset);
     // A workflow source that is a symlink to a file of another extension is warned about once, as before.
-    if (workflowNameForSourcePath(source.path, adapterId, ownerPath) !== undefined) {
+    if (
+      source.path !== undefined &&
+      ownerPath !== "" &&
+      workflowNameForSourcePath(source.path, adapterId, ownerPath) !== undefined
+    ) {
       isUsableWorkflowSource(source.path, ownerPath);
     }
     const inputRef = makeBundleRef(qualified ? ref.bundle : undefined, asset.conceptId);
@@ -1112,7 +1047,12 @@ export async function lookupBundleRefsReadonly(
   }
 }
 
-function readLookupEntry(db: Database, id: number, fallbackConceptId: string, sourceRoot: string): IndexEntry | null {
+function readLookupEntry(
+  db: Database,
+  id: number,
+  fallbackConceptId: string,
+  sourceRoot: string | undefined,
+): IndexEntry | null {
   const row = db
     .prepare(
       "SELECT file_path AS filePath, type, document_json AS documentJson, " +

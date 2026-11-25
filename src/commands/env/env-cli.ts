@@ -31,7 +31,7 @@ import {
 } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { stderr, stdout } from "../../core/stdio";
-import { assertWritePathsInsideSource } from "../../core/write-source";
+import { assertWritePathsInsideSource, requireWriteTargetPath } from "../../core/write-source";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
 import { runProgram } from "./injection";
@@ -105,7 +105,7 @@ const envCreateCommand = defineJsonCommand({
     // Without content, an env kept in the file a create writes is left as it is; one kept under another spelling is refused.
     if (exists && content === undefined && held.file !== undefined && held.heldElsewhere === true) {
       throw new UsageError(
-        `Env "${ref}" already exists as ${path.relative(source.path, held.file).split(path.sep).join("/")}. Remove it first (\`akm env remove\`) or edit the file directly.`,
+        `Env "${ref}" already exists as ${path.relative(requireWriteTargetPath(source), held.file).split(path.sep).join("/")}. Remove it first (\`akm env remove\`) or edit the file directly.`,
         "RESOURCE_ALREADY_EXISTS",
       );
     }

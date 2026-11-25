@@ -333,7 +333,7 @@ function scanBundleRefs(
   scanBody: string,
   allRoots: string[],
   movedConcepts: MovedConcepts,
-  bundleRoots: ReadonlyMap<string, string>,
+  bundleRoots: ReadonlyMap<string, string[]>,
 ): Array<{ ref: string; resolvedRelPath: string }> {
   const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
   const re = new RegExp(BUNDLE_REF_RE.source, BUNDLE_REF_RE.flags);
@@ -358,12 +358,11 @@ function scanBundleRefs(
 type MovedConcepts = { has(concept: string): boolean };
 
 const NO_CONCEPTS: MovedConcepts = new Set<string>();
-const NO_BUNDLES: ReadonlyMap<string, string> = new Map();
+const NO_BUNDLES: ReadonlyMap<string, string[]> = new Map();
 
 /** A qualified ref is checked in the bundle it names; a bundle the config does not name is checked as an unqualified ref is. */
-function rootsOfBundle(bundle: string, allRoots: string[], bundleRoots: ReadonlyMap<string, string>): string[] {
-  const root = bundleRoots.get(bundle);
-  return root === undefined ? allRoots : [root];
+function rootsOfBundle(bundle: string, allRoots: string[], bundleRoots: ReadonlyMap<string, string[]>): string[] {
+  return bundleRoots.get(bundle) ?? allRoots;
 }
 
 /**
@@ -443,7 +442,7 @@ function checkMissingRefs(
   stashRoot: string,
   extraStashRoots: string[] = [],
   movedConcepts: MovedConcepts = NO_CONCEPTS,
-  bundleRoots: ReadonlyMap<string, string> = NO_BUNDLES,
+  bundleRoots: ReadonlyMap<string, string[]> = NO_BUNDLES,
 ): Array<{ ref: string; resolvedRelPath: string }> {
   const allRoots = [stashRoot, ...extraStashRoots];
   // C1: Strip fenced code blocks so example refs inside ``` are not flagged.
@@ -467,7 +466,7 @@ function checkMissingRefsInList(
   stashRoot: string,
   extraStashRoots: string[] = [],
   movedConcepts: MovedConcepts = NO_CONCEPTS,
-  bundleRoots: ReadonlyMap<string, string> = NO_BUNDLES,
+  bundleRoots: ReadonlyMap<string, string[]> = NO_BUNDLES,
 ): Array<{ ref: string; resolvedRelPath: string }> {
   const allRoots = [stashRoot, ...extraStashRoots];
   const missing: Array<{ ref: string; resolvedRelPath: string }> = [];

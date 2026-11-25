@@ -18,7 +18,7 @@ import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { AkmError, NotFoundError } from "../../core/errors";
 import type { CommitOutcome, ResolvedWriteTarget } from "../../core/write-source";
-import { resolveWriteTarget } from "../../core/write-source";
+import { requireWriteTargetPath, resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import {
   type AcceptCommitCollector,
@@ -65,7 +65,7 @@ function resolveProposalQueue(
   if (stashDir) return { stashDir };
   if (!queue) return { stashDir: resolveStash() };
   const target = resolveWriteTarget(config ?? loadConfig(), queue, { flag: "--queue" });
-  return { stashDir: target.source.path, target };
+  return { stashDir: requireWriteTargetPath(target.source), target };
 }
 
 // ── list ────────────────────────────────────────────────────────────────────

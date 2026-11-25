@@ -9,7 +9,7 @@ import path from "node:path";
 import { akmSearch } from "../../../src/commands/read/search";
 import { akmShowUnified } from "../../../src/commands/read/show";
 import { resetConfigCache } from "../../../src/core/config/config";
-import { getUnresolvedSourcesDir } from "../../../src/core/paths";
+import { getCacheDir, getStashStateKey } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
 import * as websiteProvider from "../../../src/sources/providers/website";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
@@ -358,7 +358,13 @@ describe("full-index bundle identity", () => {
       },
     });
     resetConfigCache();
-    const unresolvedPath = path.join(getUnresolvedSourcesDir(bundleRoot), "escaping");
+    const unresolvedPath = path.join(
+      getCacheDir(),
+      "index",
+      "unresolved-sources",
+      getStashStateKey(bundleRoot),
+      "escaping",
+    );
     fs.mkdirSync(unresolvedPath, { recursive: true });
     await akmIndex({ stashDir: unresolvedPath, full: true });
 

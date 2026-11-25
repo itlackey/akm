@@ -92,12 +92,14 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   // asset-io: deprecated workflows are not read through the adapters
   const assetPath = asset.entry.file;
   if (assetPath === undefined) throw new UsageError(`Asset ${asset.ref} is not kept in a file.`);
+  const sourcePath = source.path;
   // A symlink to a file of another extension, or a file no workflow folder owns (a loose `.md` with `type: workflow`),
   // is no workflow source: it is not run.
   if (
-    !isUsableWorkflowSource(source.path, assetPath) ||
+    sourcePath === undefined ||
+    !isUsableWorkflowSource(sourcePath, assetPath) ||
     // asset-io: deprecated
-    !isWorkflowSource(source.path, bundleAdapterId(source), assetPath)
+    !isWorkflowSource(sourcePath, bundleAdapterId(source), assetPath)
   ) {
     refuseByAdapter(bundleId, "does not support native workflow execution", "WORKFLOW_SOURCE_INVALID");
   }
@@ -107,7 +109,7 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   const canonicalName = canonicalizeWorkflowName(asset.conceptId);
   const fullRef = makeBundleRef(bundleId, canonicalName);
 
-  return { assetPath, sourcePath: source.path, canonicalName, fullRef };
+  return { assetPath, sourcePath, canonicalName, fullRef };
 }
 
 /**
@@ -135,6 +137,12 @@ export function resolveRunBundleRoot(ref: string): string {
   if (!source) {
     throw new UsageError(
       `workflow ${ref} does not resolve to a bundle: bundle "${bundle}" is not configured`,
+      "WORKFLOW_SOURCE_INVALID",
+    );
+  }
+  if (source.path === undefined) {
+    throw new UsageError(
+      `workflow ${ref} does not resolve to a bundle directory: ${source.unresolved?.reason ?? `bundle "${bundle}" has no directory`}`,
       "WORKFLOW_SOURCE_INVALID",
     );
   }

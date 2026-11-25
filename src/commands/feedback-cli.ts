@@ -20,7 +20,8 @@ import { appendEvent } from "../core/events";
 import { resolveMutationTarget } from "../core/mutation-target";
 import { getStateDbPath, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
-import { NO_INDEX_MESSAGE, openUsableIndex } from "../indexer/index-readiness";
+import { requireWriteTargetPath } from "../core/write-source";
+import { NO_INDEX_MESSAGE, openSourceIndex } from "../indexer/index-readiness";
 import { heldRebuildLock } from "../indexer/index-rebuild-lock";
 import { recomputeUtilityScores } from "../indexer/indexer";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
@@ -128,7 +129,7 @@ function appendLessonStrength(
   }
 
   const resolved = resolveMutationTarget(config, { type: "lesson", name: conceptId, origin: bundleId });
-  if (!isWithin(filePath, resolved.target.source.path)) {
+  if (!isWithin(filePath, requireWriteTargetPath(resolved.target.source))) {
     throw new UsageError(`Resolved lesson ${requestedRef} is outside bundle "${bundleId}".`);
   }
 
@@ -700,8 +701,7 @@ export const feedbackCommand = defineJsonCommand({
     const config = loadConfig();
     const sources = resolveSourceEntries(undefined, config);
     // The library is the primary source, as in search.
-    const library = sources[0];
-    const usable = library ? openUsableIndex(library.path) : undefined;
+    const usable = openSourceIndex(sources[0]);
     if (!usable) {
       // A build in progress is a retry, not a usage error.
       if (heldRebuildLock()) {
@@ -759,10 +759,11 @@ export const feedbackCommand = defineJsonCommand({
         const { bundle, conceptId } = parseBundleRef(itemRef);
         const assetRef: AssetRef = { type: entryType ?? "", name: conceptId, origin: bundle };
         const resolved = resolveMutationTarget(config, assetRef, undefined, { requireWritable: true });
-        if (!isWithin(filePath, resolved.target.source.path)) {
+        const root = requireWriteTargetPath(resolved.target.source);
+        if (!isWithin(filePath, root)) {
           throw new UsageError(`${itemRef} is outside bundle "${resolved.target.source.name}".`);
         }
-        assertProposalWritesFile(itemRef, resolved.target.source.path, filePath);
+        assertProposalWritesFile(itemRef, root, filePath);
         let mark: HistoryMark | undefined;
         if (hasMark) {
           if (entryType === "env" || entryType === "secret" || !filePath.toLowerCase().endsWith(".md")) {
@@ -788,7 +789,7 @@ export const feedbackCommand = defineJsonCommand({
         };
         fix = {
           content: after,
-          target: { source: resolved.target.source.name, root: resolved.target.source.path },
+          target: { source: resolved.target.source.name, root },
           ...(marked ? { marked } : {}),
         };
         metadataObj.fix = { source: fixSource, replacements: fixPairs.length, ...marked };

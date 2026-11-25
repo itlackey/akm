@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../src/core/asset/asset-serialize";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+import { slugForPath } from "../../src/core/bundle-id";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { isPendingMemory, runMemoryInferencePass } from "../../src/indexer/passes/memory-inference";
 import { _setChatCompletionForTests } from "../../src/llm/client";
@@ -58,7 +59,7 @@ async function run(writable: boolean) {
     () =>
       runMemoryInferencePass({
         config: config(writable),
-        sources: [{ path: storage.stashDir, isDefault: true, writable }],
+        sources: [{ bundleId: slugForPath(storage.stashDir), path: storage.stashDir, isDefault: true, writable }],
       }),
   );
   return { result, warnings };

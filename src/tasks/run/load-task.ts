@@ -82,7 +82,12 @@ export function resolveBundleAsset(
   const conceptId = conceptIdFromTypeName(type, name);
   const sources = activeTaskSources(config);
   const asset = findAsset(makeBundleRef(bundle, conceptId));
-  if (asset) return { file: taskAssetFile(asset), bundleRoot: sourceOfBundle(sources, asset.bundle).path };
+  if (asset) {
+    const file = taskAssetFile(asset);
+    const bundleRoot = sourceOfBundle(sources, asset.bundle).path;
+    if (bundleRoot === undefined) throw new UsageError(`Bundle "${asset.bundle}" has no resolved directory.`);
+    return { file, bundleRoot };
+  }
   if (resolveSourcesForOrigin(bundle, sources).length === 0) {
     assertBundleNotDisabled(config, bundle);
     throw new UsageError(

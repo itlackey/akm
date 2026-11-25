@@ -27,6 +27,7 @@ import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { resolveBundleWriteTarget } from "../core/mutation-target";
 import { warn } from "../core/warn";
+import { requireWriteTargetPath } from "../core/write-source";
 import { NO_INDEX_MESSAGE, readUsableIndex } from "../indexer/index-readiness";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
 import { retireBlocker } from "./file-actions";
@@ -183,7 +184,7 @@ export async function retire(input: { ref: string; revision: string }) {
     const minted = createRetireProposal(stashDir, {
       ref: canonical,
       source: "propose",
-      target: { source: target.source.name, root: target.source.path },
+      target: { source: target.source.name, root: requireWriteTargetPath(target.source) },
       expectedRevision: revision,
     });
     let result: Awaited<ReturnType<typeof akmProposalAccept>>;

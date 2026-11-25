@@ -104,13 +104,16 @@ function resolveBundle(origin: string | undefined): { sourceName: string; source
   const stashDir = resolveStashDir();
   const sources = resolveSourceEntries(stashDir, config);
   if (origin !== undefined) {
-    const owner = sources.find((source) => source.registryId === origin);
+    const owner = sources.find((source) => source.bundleId === origin);
     if (!owner) fail(`Bundle "${origin}" is not configured — nothing re-keyed.`);
+    if (owner.path === undefined) fail(`Bundle "${origin}" has no filesystem root — nothing re-keyed.`);
     return { sourceName: origin, sourceRoot: path.resolve(owner.path) };
   }
-  const primary = sources.find((source) => path.resolve(source.path) === path.resolve(stashDir));
+  const primary = sources.find(
+    (source) => source.path !== undefined && path.resolve(source.path) === path.resolve(stashDir),
+  );
   return {
-    sourceName: primary?.registryId ?? config.defaultBundle ?? DEFAULT_SOURCE_NAME,
+    sourceName: primary?.bundleId ?? config.defaultBundle ?? DEFAULT_SOURCE_NAME,
     sourceRoot: path.resolve(stashDir),
   };
 }

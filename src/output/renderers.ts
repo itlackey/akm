@@ -425,16 +425,18 @@ const secretFileRenderer: AssetRenderer = {
   name: "secret-file",
 
   buildShowResponse(ctx: RenderContext): ShowResponse {
-    const name = deriveName(ctx);
-    return {
-      type: "secret",
-      name,
-      path: ctx.absPath,
-      action:
-        "Secret — name only; the file contents are the value and are never written to akm's stdout. Put the command in a script asset and run it with `akm run --secret <ref>:<VAR> scripts/<file>` to run it with the value injected into $VAR.",
-    };
+    return secretShowResponse(deriveName(ctx), ctx.absPath);
   },
 };
+
+export function secretShowResponse(name: string, path?: string): ShowResponse {
+  return {
+    type: "secret",
+    name,
+    ...(path === undefined ? {} : { path }),
+    action: `Secret — name only; ${path === undefined ? "its content is the value and is" : "the file contents are the value and are"} never written to akm's stdout. Put the command in a script asset and run it with \`akm run --secret <ref>:<VAR> scripts/<file>\` to run it with the value injected into $VAR.`,
+  };
+}
 
 // ── 7. task-md ───────────────────────────────────────────────────────────────
 

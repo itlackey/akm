@@ -266,7 +266,7 @@ export interface BundleScan {
  * indexer scans the sources it resolved itself (an override directory, a source not yet in config), so it is handed
  * the source, not an id to resolve again for each bundle.
  */
-export function scanBundle(source: SearchSource, bundle: string): BundleScan {
+export function scanBundle(source: SearchSource, bundle = source.bundleId): BundleScan {
   const held = assetBundleOf({
     name: bundle,
     path: source.path,
@@ -279,7 +279,10 @@ export function scanBundle(source: SearchSource, bundle: string): BundleScan {
     inDirectories: !held.isStore,
     list: () => held.list(),
     recognize: (entry) => held.recognize(entry),
-    fileContext: (entry) => fileContextOfEntry(held.root, entry),
+    fileContext: (entry) => {
+      if (held.root === undefined) throw new Error(`Bundle "${held.name}" is not kept in a directory.`);
+      return fileContextOfEntry(held.root, entry);
+    },
   };
 }
 
