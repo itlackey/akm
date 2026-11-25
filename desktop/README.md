@@ -231,14 +231,15 @@ and the server keeps running.
 ##### Shutdown
 
 On `SIGINT`, `SIGTERM` or a `shutdown` message the server stops accepting connections and waits up to 10 seconds for
-requests in flight and for running child processes (host tools, the akm CLI, git, harness runs). It then closes the
-remaining connections and terminates what still runs: each child's process group gets `SIGTERM`, and `SIGKILL` 2
-seconds later. It waits for those exits, writes one line to stderr that names what it stopped (`Shutdown: stopped …`),
-and exits 0. A shutdown takes at most 13 seconds. A launcher should wait 15 seconds before it force-kills the server
-(`SHUTDOWN_WAIT_MS` in `server/shutdown.mjs`, which AKM Desktop and the tests use).
+requests in flight and for running child processes (host tools, the akm CLI, git, harness runs) and what they started.
+It then closes the remaining connections and terminates what still runs: each child's process group gets `SIGTERM`,
+and `SIGKILL` 2 seconds later. It waits until nothing of those groups is left, writes one line to stderr that names what
+it stopped (`Shutdown: stopped …`), and exits 0. A shutdown takes at most 13 seconds. A launcher should wait 15 seconds
+before it force-kills the server (`SHUTDOWN_WAIT_MS` in `server/shutdown.mjs`, which AKM Desktop and the tests use).
 
-Limits: a grandchild that ignores `SIGTERM` after its group leader has exited is not swept. On Windows a child that
-does not lead its own process group is killed without the processes it started.
+On Linux and macOS the server starts every child in a process group of its own, and that group is stopped even after
+the child that led it has exited. Limits: a process that leaves its group (a new session of its own) is not found. On
+Windows there are no process groups: a child is ended without the processes it started.
 
 In Docker, publish the port, pass the secret and name the address the browser will use:
 

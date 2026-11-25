@@ -140,8 +140,9 @@ enable CORS and sends `Cache-Control: no-store`. The secret is redacted by AKM's
 denied unless `frameParents` names origins, which then replace the `frame-ancestors` directive; with an `https`
 origin the cookie then becomes `SameSite=None; Secure; Partitioned`. On `SIGTERM`, `SIGINT` or the `shutdown` message
 the server stops accepting connections and gives requests in flight and running child processes up to 10 seconds. It
-then terminates what still runs (the child's process group gets `SIGTERM`, then `SIGKILL` after 2 seconds), waits for
-the exits, names what it stopped on stderr and exits 0, in at most 13 seconds (`server/shutdown.mjs`).
+then terminates what still runs (the child's process group gets `SIGTERM`, then `SIGKILL` after 2 seconds), waits
+until the group is empty, names what it stopped on stderr and exits 0, in at most 13 seconds (`server/shutdown.mjs`).
+On Linux and macOS every child gets a process group of its own, which is stopped even after the child itself has exited.
 Unless `akm-web` is started with `--host`, this local HTTP listener is implementation detail, **not** a public API server.
 
 The renderer has no Node integration or preload authority. Electron sandboxing

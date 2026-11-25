@@ -22,7 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The ready line is `{"type":"ready","origin":"..."}`: it has no `url`, and the launch-token address (`?desktop_session=`) and its cookie are gone. A launcher that opened `url` must send the header or use a login link.
 - `akm-web` opens a browser only with `--open`. It used to open one when started from a terminal with a display.
 - `akm-web --origin` with a path, query or fragment is refused with exit 2. It used to warn.
-- On `SIGTERM`, `SIGINT` or a `shutdown` message `akm-web` stops accepting connections and waits up to 10 seconds for requests in flight and for running child processes (host tools, the akm CLI, git, harness runs). It then terminates what still runs (the process group gets `SIGTERM`, then `SIGKILL` after 2 seconds), writes one stderr line that names what it stopped, and exits 0, in at most 13 seconds; a launcher should wait 15 seconds before it force-kills the server. It used to close every connection at once and leave host-tool children running.
+- On `SIGTERM`, `SIGINT` or a `shutdown` message `akm-web` stops accepting connections and waits up to 10 seconds for requests in flight and for running child processes (host tools, the akm CLI, git, harness runs). It then terminates what still runs (each child runs in a process group of its own on Linux and macOS, and the group gets `SIGTERM`, then `SIGKILL` after 2 seconds, also when the child that led it has already exited), writes one stderr line that names what it stopped, and exits 0, in at most 13 seconds; a launcher should wait 15 seconds before it force-kills the server. It used to close every connection at once and leave host-tool children running.
 
 ## [0.10.261132] - 2026-11-25
 

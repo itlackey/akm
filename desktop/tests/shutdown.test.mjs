@@ -6,12 +6,14 @@
 // terminates what remains and waits for it before it exits. The operation here is a real host-tool command (a fake
 // `akm` on PATH), the way software.test.mjs and the Software page run one.
 import assert from "node:assert/strict";
-import { fork } from "node:child_process";
+import { execFile, fork } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { createFixture } from "../scripts/fixture.mjs";
 import { SHUTDOWN_BOUND_MS, SHUTDOWN_GRACE_MS, SHUTDOWN_WAIT_MS } from "../server/shutdown.mjs";
 
@@ -132,4 +134,113 @@ test("an operation that finishes within the grace period is allowed to finish", 
   assert.equal(await alive(group), false);
   assert.match(await readFile(app.ticks, "utf8"), /done\n$/, "it ran to the end");
   assert.doesNotMatch(app.stderr(), /stopped/i);
+});
+
+/**
+ * Runs `body` in a fresh Node process that tracks its children the way the server does. `body` gets the exports of
+ * shutdown.mjs, node's `spawn` and a `sleep`; what it returns comes back with the process's stderr. The process has
+ * `WRITER` (a script that ignores SIGTERM and appends to `TICKS` every 100 ms), `TICKS` and `PIDFILE` in its environment.
+ */
+async function probe(t, body) {
+  const dir = await mkdtemp(path.join(tmpdir(), "akm-shutdown-"));
+  const env = {
+    ...process.env,
+    WRITER: path.join(dir, "writer"),
+    TICKS: path.join(dir, "ticks"),
+    PIDFILE: path.join(dir, "pid"),
+  };
+  t.after(async () => {
+    try {
+      process.kill(Number(await readFile(env.PIDFILE, "utf8")), "SIGKILL");
+    } catch {
+      /* gone */
+    }
+    await rm(dir, { recursive: true, force: true });
+  });
+  await writeFile(
+    env.WRITER,
+    `#!/bin/sh\ntrap '' TERM\necho $$ > "$PIDFILE"\nwhile :; do echo x >> "$TICKS"; sleep 0.1; done\n`,
+  );
+  await chmod(env.WRITER, 0o755);
+  const source = `
+    import { spawn } from "node:child_process";
+    import * as shutdown from ${JSON.stringify(pathToFileURL(path.join(appRoot, "server/shutdown.mjs")).href)};
+    shutdown.track();
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    console.log(JSON.stringify(await (${body})(shutdown, spawn, sleep)));
+  `;
+  const { stdout, stderr } = await promisify(execFile)(process.execPath, ["--input-type=module", "-e", source], {
+    env,
+  });
+  return { ...JSON.parse(stdout), stderr, ticks: env.TICKS };
+}
+
+/** Whether anything still appends to `file`. */
+async function written(file) {
+  const size = (await stat(file)).size;
+  await sleep(500);
+  return (await stat(file)).size > size;
+}
+
+/** Starts a shell that starts the writer, then waits for it (`wait`) or exits at once; terminates once the writer writes. */
+const tree = (detached, shell) => `async (shutdown, spawn, sleep) => {
+  const { existsSync } = await import("node:fs");
+  const child = spawn("sh", ["-c", ${JSON.stringify(shell)}], { detached: ${detached}, stdio: "ignore" });
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  if (${!shell.includes("wait")}) await exited;
+  while (!existsSync(process.env.TICKS)) await sleep(25);
+  const started = Date.now();
+  await shutdown.terminate();
+  return { ms: Date.now() - started };
+}`;
+
+const posix = { skip: process.platform === "win32" };
+
+test("a grandchild that ignores SIGTERM is stopped after its group leader exits on SIGTERM", posix, async (t) => {
+  const result = await probe(t, tree(true, `"$WRITER" & wait`));
+  assert.equal(await written(result.ticks), false, "nothing writes after terminate() returned");
+  assert.ok(result.ms < SHUTDOWN_BOUND_MS - SHUTDOWN_GRACE_MS + 500, `terminate() took ${result.ms} ms`);
+  assert.match(result.stderr, /stopped sh/);
+});
+
+test("what a child left running when it exited before shutdown is stopped", posix, async (t) => {
+  const result = await probe(t, tree(true, `"$WRITER" &`));
+  assert.equal(await written(result.ticks), false, "nothing writes after terminate() returned");
+  assert.match(result.stderr, /stopped sh/);
+});
+
+test("the tree of a child that was not started detached is stopped", posix, async (t) => {
+  const result = await probe(t, tree(false, `"$WRITER" & wait`));
+  assert.equal(await written(result.ticks), false, "nothing writes after terminate() returned");
+  const left = await probe(t, tree(false, `"$WRITER" &`));
+  assert.equal(await written(left.ticks), false, "nor when the child exited before shutdown");
+});
+
+// A process that has exited stays in its group until its parent waits for it. Where that never happens (a container
+// whose first process does not reap), such a group must not hold up every shutdown.
+test("a group holding only a process nobody waited for does not count as running", {
+  skip: process.platform !== "linux",
+}, async (t) => {
+  // The leader exits; its child starts one that exits at once, never waits for it, and leaves the group.
+  const perl = `use POSIX; exit 0 if fork; exit 0 if !fork; POSIX::setsid(); open(F, ">", $ENV{PIDFILE}); print F $$; close F; sleep 30`;
+  const result = await probe(
+    t,
+    `async (shutdown, spawn, sleep) => {
+        const { existsSync } = await import("node:fs");
+        const child = spawn("perl", ["-e", ${JSON.stringify(perl)}], { detached: true, stdio: "ignore" });
+        const group = child.pid;
+        await new Promise((resolve) => child.once("exit", resolve));
+        while (!existsSync(process.env.PIDFILE)) await sleep(25);
+        await sleep(100);
+        let members = true;
+        try { process.kill(-group, 0); } catch { members = false; }
+        const started = Date.now();
+        await shutdown.drained(2000);
+        await shutdown.terminate();
+        return { members, ms: Date.now() - started };
+      }`,
+  );
+  assert.equal(result.members, true, "the group still has its unreaped member");
+  assert.ok(result.ms < 1000, `shutdown waited ${result.ms} ms for it`);
+  assert.equal(result.stderr, "");
 });
