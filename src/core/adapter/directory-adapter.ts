@@ -24,7 +24,7 @@ import {
   getMarkdownFragmentContent,
   hasMarkdownFragmentContent,
   setMarkdownFragmentContent,
-} from "../../indexer/passes/metadata";
+} from "../../indexer/passes/markdown-projection";
 import { heldAssetRef } from "../asset/asset-ref";
 import {
   compareCodePoints,

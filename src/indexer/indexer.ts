@@ -114,13 +114,8 @@ import {
   getDirIndexState,
   inferZeroRowReason,
 } from "./passes/dir-staleness";
-import {
-  CONTENT_PROJECTION_VERSION,
-  type IndexDocument,
-  isWorkflowSkipWarning,
-  type StashFile,
-  withFileSize,
-} from "./passes/metadata";
+import { CONTENT_PROJECTION_VERSION } from "./passes/markdown-projection";
+import { type IndexDocument, isWorkflowSkipWarning, type StashFile, withFileSize } from "./passes/metadata";
 import {
   type MovePairing,
   type NewEntry,

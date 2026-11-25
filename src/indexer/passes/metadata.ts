@@ -10,20 +10,38 @@ import type { buildFileContext } from "../../core/adapter/directory/file-context
 // — and the sub-shapes it references — live in `core/adapter/types.ts` so
 // `IndexDocument` can reference them without a `metadata.ts ↔ types.ts` cycle;
 // they are imported (and re-exported below) here. `SCOPE_KEYS` (a value) stays.
-import type {
-  AssetParameter,
-  IndexDocument,
-  ScopeFilters,
-  ScopeKey,
-  StashEntryScope,
-  StashIntent,
-} from "../../core/adapter/types";
+import type { IndexDocument, ScopeFilters, ScopeKey, StashEntryScope, StashIntent } from "../../core/adapter/types";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter, readFrontmatterDate } from "../../core/asset/frontmatter";
-import type { TocHeading } from "../../core/asset/markdown";
 import { asNonEmptyString } from "../../core/common";
 import { isoDay } from "../../core/time";
 import { isVerbose, warn, warnOnce } from "../../core/warn";
+import {
+  isWikiRole,
+  normalizeNonEmptyStringList,
+  normalizeQuality,
+  normalizeScopeObject,
+  normalizeTerms,
+  SCOPE_KEYS,
+} from "./entry-normalize";
+import {
+  getMarkdownFragmentContent,
+  hasMarkdownFragmentContent,
+  hasSessionMemoryMarker,
+  MARKDOWN_CONTENT_MAX_CHARS,
+  projectMarkdownContent,
+  projectMarkdownFragmentContent,
+  setMarkdownFragmentContent,
+} from "./markdown-projection";
+
+import {
+  type CommentMetadata,
+  extractCommandParameters,
+  extractCommentMetadata,
+  extractFrontmatterParameters,
+  extractScriptParameters,
+  mergeParameters,
+} from "./script-metadata";
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
@@ -36,208 +54,12 @@ export type {
   StashIntent,
 } from "../../core/adapter/types";
 
-export const SCOPE_KEYS: readonly ScopeKey[] = ["user", "agent", "run", "channel"] as const;
-
 /** Every frontmatter key that carries scope: the flat `scope_*` keys and a legacy nested `scope:`. */
 export const SCOPE_FRONTMATTER_KEYS: readonly string[] = ["scope", ...SCOPE_KEYS.map((key) => `scope_${key}`)];
 
 export interface StashFile {
   entries: IndexDocument[];
   warnings?: string[];
-}
-
-// ── Quality semantics ───────────────────────────────────────────────────────
-
-/**
- * Well-known quality values. `generated`, `curated`, and `enriched` are included in
- * default search; `proposed` is excluded by default and opt-in via
- * `--include-proposed`. Unknown values warn once and remain searchable.
- */
-export const KNOWN_QUALITY_VALUES = new Set(["generated", "curated", "enriched", "proposed"]);
-
-/** Tracks unknown quality values we've already warned about (one warn per value per process). */
-const warnedUnknownQualityValues = new Set<string>();
-
-/**
- * Normalize a `quality` string off a stash entry. Known values pass through
- * untouched. Unknown values are accepted as-is (preserved verbatim on the
- * entry) but trigger a one-time warning per unique value via the shared
- * `warn()` helper (honours --quiet / `setQuiet()`).
- */
-export function normalizeQuality(raw: string): string {
-  if (KNOWN_QUALITY_VALUES.has(raw)) return raw;
-  if (!warnedUnknownQualityValues.has(raw)) {
-    warnedUnknownQualityValues.add(raw);
-    warn(
-      `Warning: unknown quality value "${raw}" — entry remains searchable, but consider using "generated", "curated", or "proposed".`,
-    );
-  }
-  return raw;
-}
-
-/**
- * Test-only: clear the per-process unknown-quality warning memo so a test
- * can re-trigger the warning. Not part of the public API.
- */
-export function _resetUnknownQualityWarnings(): void {
-  warnedUnknownQualityValues.clear();
-}
-
-/**
- * Returns true if an entry's quality marks it as "proposed". Proposed
- * entries are excluded from default search.
- */
-export function isProposedQuality(quality: string | undefined): boolean {
-  return quality === "proposed";
-}
-
-/**
- * Validate and normalize a raw object into a `IndexDocument`.
- *
- * Open type token: `entry.type` accepts any non-empty string. Type ownership
- * and capability decisions belong to the adapter; this format-neutral
- * projection must not reject a value merely because AKM does not own it.
- */
-export function validateStashEntry(entry: unknown): IndexDocument | null {
-  if (typeof entry !== "object" || entry === null) return null;
-  const e = entry as Record<string, unknown>;
-  if (typeof e.name !== "string" || !e.name) return null;
-  if (typeof e.type !== "string" || !e.type) return null;
-
-  const result: IndexDocument = {
-    name: e.name,
-    type: e.type as string,
-  };
-  if (typeof e.description === "string" && e.description) result.description = e.description;
-  if (Array.isArray(e.tags)) result.tags = e.tags.filter((t): t is string => typeof t === "string");
-  if (Array.isArray(e.examples)) result.examples = e.examples.filter((x): x is string => typeof x === "string");
-  if (Array.isArray(e.searchHints)) {
-    const filtered = e.searchHints.filter((s): s is string => typeof s === "string" && s.trim().length > 0);
-    if (filtered.length > 0) result.searchHints = filtered;
-  }
-  if (typeof e.intent === "object" && e.intent !== null) {
-    const intent = e.intent as Record<string, unknown>;
-    result.intent = {};
-    if (typeof intent.when === "string") result.intent.when = intent.when;
-    if (typeof intent.input === "string") result.intent.input = intent.input;
-    if (typeof intent.output === "string") result.intent.output = intent.output;
-  }
-  if (typeof e.filename === "string" && e.filename) result.filename = e.filename;
-  if (typeof e.quality === "string" && e.quality.length > 0) {
-    result.quality = normalizeQuality(e.quality);
-  }
-  if (typeof e.confidence === "number" && Number.isFinite(e.confidence))
-    result.confidence = Math.max(0, Math.min(1, e.confidence));
-  if (
-    typeof e.source === "string" &&
-    ["package", "frontmatter", "comments", "filename", "manual", "llm"].includes(e.source)
-  ) {
-    result.source = e.source as IndexDocument["source"];
-  }
-  if (Array.isArray(e.aliases)) {
-    const filtered = e.aliases.filter((a): a is string => typeof a === "string" && a.trim().length > 0);
-    if (filtered.length > 0) result.aliases = normalizeTerms(filtered);
-  }
-  if (Array.isArray(e.toc)) {
-    const validated = e.toc.filter((h: unknown): h is TocHeading => {
-      if (typeof h !== "object" || h === null) return false;
-      const rec = h as Record<string, unknown>;
-      return typeof rec.level === "number" && typeof rec.text === "string" && typeof rec.line === "number";
-    });
-    if (validated.length > 0) result.toc = validated;
-  }
-  const usage = normalizeNonEmptyStringList(e.usage);
-  if (usage) result.usage = usage;
-  // SECURITY NOTE: run, setup, and cwd are advisory metadata fields for AI agent consumers.
-  // They are NOT executed by akm directly. Consumers should validate and sanitize before execution.
-  if (typeof e.run === "string" && e.run.trim()) result.run = e.run.trim();
-  if (typeof e.setup === "string" && e.setup.trim()) result.setup = e.setup.trim();
-  if (typeof e.cwd === "string" && e.cwd.trim()) result.cwd = e.cwd.trim();
-  if (typeof e.fileSize === "number" && Number.isFinite(e.fileSize) && e.fileSize >= 0) result.fileSize = e.fileSize;
-  if (isWikiRole(e.wikiRole)) result.wikiRole = e.wikiRole;
-  if (typeof e.pageKind === "string" && e.pageKind.trim().length > 0) {
-    result.pageKind = e.pageKind.trim();
-  }
-  const xrefs = normalizeNonEmptyStringList(e.xrefs);
-  if (xrefs) result.xrefs = xrefs;
-  const sources = normalizeNonEmptyStringList(e.sources);
-  if (sources) result.sources = sources;
-  // `category` must survive the projection. Non-string values are
-  // dropped, not coerced.
-  if (typeof e.category === "string" && e.category.trim().length > 0) {
-    result.category = e.category.trim();
-  }
-  if (typeof e.beliefState === "string" && e.beliefState.trim().length > 0) {
-    result.beliefState = e.beliefState.trim() as IndexDocument["beliefState"];
-  }
-  const supersededBy = normalizeNonEmptyStringList(e.supersededBy);
-  if (supersededBy) result.supersededBy = supersededBy;
-  const contradictedBy = normalizeNonEmptyStringList(e.contradictedBy);
-  if (contradictedBy) result.contradictedBy = contradictedBy;
-
-  const currentBeliefRefs = normalizeNonEmptyStringList(e.currentBeliefRefs);
-  if (currentBeliefRefs) result.currentBeliefRefs = currentBeliefRefs;
-  if (e.captureMode === "hot" || e.captureMode === "background") {
-    result.captureMode = e.captureMode;
-  }
-  if (typeof e.whenToUse === "string" && e.whenToUse.trim().length > 0) {
-    result.whenToUse = e.whenToUse.trim();
-  }
-  if (typeof e.lessonStrength === "number" && Number.isFinite(e.lessonStrength) && e.lessonStrength >= 0) {
-    result.lessonStrength = Math.floor(e.lessonStrength);
-  }
-  const evidenceSources = normalizeNonEmptyStringList(e.evidenceSources);
-  if (evidenceSources) result.evidenceSources = evidenceSources;
-  if (typeof e.evidence === "string" && e.evidence.trim().length > 0) result.evidence = e.evidence;
-  if (typeof e.derivedFrom === "string" && e.derivedFrom.trim().length > 0) {
-    result.derivedFrom = e.derivedFrom.trim();
-  }
-  if (typeof e.content === "string" && e.content.trim().length > 0) {
-    result.content = e.content;
-  }
-  if (typeof e.scope === "object" && e.scope !== null && !Array.isArray(e.scope)) {
-    const scope = normalizeScopeObject(e.scope as Record<string, unknown>);
-    if (scope) result.scope = scope;
-  }
-  if (Array.isArray(e.parameters)) {
-    const validated = e.parameters
-      .filter((p: unknown): p is AssetParameter => {
-        if (typeof p !== "object" || p === null) return false;
-        const rec = p as Record<string, unknown>;
-        return typeof rec.name === "string" && rec.name.trim().length > 0;
-      })
-      .map((p: unknown) => {
-        const rec = p as Record<string, unknown>;
-        const param: AssetParameter = { name: (rec.name as string).trim() };
-        if (typeof rec.type === "string" && rec.type.trim()) param.type = rec.type.trim();
-        if (typeof rec.description === "string" && rec.description.trim()) param.description = rec.description.trim();
-        if (typeof rec.required === "boolean") param.required = rec.required;
-        if (typeof rec.default === "string" && rec.default.trim().length > 0) param.default = rec.default;
-        return param;
-      });
-    if (validated.length > 0) result.parameters = validated;
-  }
-
-  return result;
-}
-
-/**
- * Coerce a raw `{ user, agent, run, channel }` object into a clean
- * `StashEntryScope`, dropping non-string and empty values. Returns
- * `undefined` when no recognized keys carry a value.
- */
-function normalizeScopeObject(raw: Record<string, unknown>): StashEntryScope | undefined {
-  const out: StashEntryScope = {};
-  for (const key of SCOPE_KEYS) {
-    const value = raw[key];
-    if (typeof value === "string") {
-      const trimmed = value.trim();
-      if (trimmed) out[key] = trimmed;
-    } else if (typeof value === "number" && Number.isFinite(value)) {
-      out[key] = String(value);
-    }
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**
@@ -533,49 +355,6 @@ function applySelectionFrontmatter(entry: IndexDocument, fmData: Record<string, 
   if (Object.keys(kept).length > 0) entry.frontmatter = kept;
 }
 
-function normalizeNonEmptyStringList(value: unknown): string[] | undefined {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed ? [trimmed] : undefined;
-  }
-  if (!Array.isArray(value)) return undefined;
-  const filtered = value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-  return filtered.length > 0 ? filtered : undefined;
-}
-
-// ── Parameter Extraction ─────────────────────────────────────────────────────
-
-/**
- * Extract structured parameters from a command template containing
- * `$ARGUMENTS`, `$1`-`$9`, or `{{named}}` placeholders.
- */
-export function extractCommandParameters(template: string): AssetParameter[] | undefined {
-  const params: AssetParameter[] = [];
-
-  if (/\$ARGUMENTS\b/.test(template)) {
-    params.push({ name: "ARGUMENTS" });
-  }
-
-  for (const match of template.matchAll(/\$([1-9])(?!\d)/g)) {
-    const name = `$${match[1]}`;
-    if (!params.some((p) => p.name === name)) {
-      params.push({ name });
-    }
-  }
-
-  for (const match of template.matchAll(/\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g)) {
-    const name = match[1]!;
-    if (!params.some((p) => p.name === name)) {
-      params.push({ name });
-    }
-  }
-
-  return params.length > 0 ? params : undefined;
-}
-
 /**
  * Extract wiki frontmatter fields (wikiRole, pageKind, xrefs, sources) from a parsed
  * frontmatter block and apply them to the entry. Tolerates missing or malformed values.
@@ -591,10 +370,6 @@ export function applyWikiFrontmatter(entry: IndexDocument, fmData: Record<string
   if (xrefs) entry.xrefs = xrefs;
   const sources = Array.isArray(fmData.sources) ? normalizeNonEmptyStringList(fmData.sources) : undefined;
   if (sources) entry.sources = sources;
-}
-
-function isWikiRole(value: unknown): value is NonNullable<IndexDocument["wikiRole"]> {
-  return value === "schema" || value === "index" || value === "log" || value === "raw" || value === "page";
 }
 
 /**
@@ -674,188 +449,6 @@ export function applyProvenanceFrontmatter(entry: IndexDocument, fmData: Record<
   if (Object.keys(result).length > 0) entry.provenance = result;
 }
 
-// AKM-stash indexing policy (env/secrets sensitive-marker + wiki-infra
-// exclusions) lives in the `akm` adapter's `recognize` as path/stat-based
-// abstention. See
-// `akmStashAbstains` in `src/core/adapter/adapters/akm-adapter.ts`.
-
-/**
- * Extract `@param` JSDoc tags from a script file's leading comment block.
- *
- * Supports both JSDoc-style (`/** ... * /`) and hash-style (`# @param ...`)
- * comments. Optionally captures `{type}` annotations.
- */
-export function extractScriptParameters(content: string): AssetParameter[] | undefined {
-  const lines = content.split(/\r?\n/).slice(0, 50);
-  const params: AssetParameter[] = [];
-
-  // Match @param lines in any comment style:
-  // JSDoc:  * @param {string} name - description
-  // JSDoc:  * @param name - description
-  // Hash:   # @param name - description
-  const paramRegex = /^[\s/*#;-]*@param\s+(?:\{([^}]+)\}\s+)?(\w+)(?:\s+-\s+(.+))?/;
-
-  for (const line of lines) {
-    const match = line.match(paramRegex);
-    if (match) {
-      const param: AssetParameter = { name: match[2]! };
-      if (match[1]) param.type = match[1].trim();
-      if (match[3]) param.description = match[3].trim();
-      params.push(param);
-    }
-  }
-
-  return params.length > 0 ? params : undefined;
-}
-
-/**
- * Extract parameters from frontmatter `params:` key.
- *
- * The frontmatter parser produces a nested object for `params:` like:
- * ```
- * { region: "AWS region to deploy to", instance_type: "EC2 instance type" }
- * ```
- */
-export function extractFrontmatterParameters(fmData: Record<string, unknown>): AssetParameter[] | undefined {
-  const paramsRaw = fmData.params;
-  if (typeof paramsRaw !== "object" || paramsRaw === null || Array.isArray(paramsRaw)) return undefined;
-
-  const paramsObj = paramsRaw as Record<string, unknown>;
-  const params: AssetParameter[] = [];
-
-  for (const [key, value] of Object.entries(paramsObj)) {
-    const param: AssetParameter = { name: key };
-    if (typeof value === "string" && value.trim()) {
-      param.description = value.trim();
-    }
-    params.push(param);
-  }
-
-  return params.length > 0 ? params : undefined;
-}
-
-/**
- * Merge two parameter lists, deduplicating by name.
- * Parameters from `additional` are appended only if their name is not already present.
- */
-function mergeParameters(
-  existing: AssetParameter[] | undefined,
-  additional: AssetParameter[] | undefined,
-): AssetParameter[] | undefined {
-  if (!additional || additional.length === 0) return existing;
-  if (!existing || existing.length === 0) return additional;
-
-  const names = new Set(existing.map((p) => p.name));
-  const merged = [...existing];
-  for (const param of additional) {
-    if (!names.has(param.name)) {
-      merged.push(param);
-      names.add(param.name);
-    }
-  }
-  return merged;
-}
-
-export interface CommentMetadata {
-  description?: string;
-  tags?: string[];
-  aliases?: string[];
-  searchHints?: string[];
-  usage?: string[];
-  examples?: string[];
-  intent?: StashIntent;
-  run?: string;
-  setup?: string;
-  cwd?: string;
-  scope?: StashEntryScope;
-}
-
-function splitCommentList(raw: string): string[] {
-  return raw
-    .split(/[;,]/)
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-}
-
-function parseCommentScope(raw: string): StashEntryScope | undefined {
-  const pairs = raw
-    .split(/[;,]/)
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-  if (pairs.length === 0) return undefined;
-  const scopeRaw: Record<string, unknown> = {};
-  for (const pair of pairs) {
-    const [keyPart, ...valueParts] = pair.split("=");
-    const key = keyPart?.trim();
-    const value = valueParts.join("=").trim();
-    if (!key || !value) continue;
-    if ((SCOPE_KEYS as readonly string[]).includes(key)) {
-      scopeRaw[key] = value;
-    }
-  }
-  return normalizeScopeObject(scopeRaw);
-}
-
-function parseIntentCommentLine(cleaned: string, metadata: CommentMetadata): boolean {
-  const intentMatch = cleaned.match(/^@intent(?:\.(when|input|output))?\s+(.+)$/);
-  if (!intentMatch) return false;
-  metadata.intent ??= {};
-  const value = intentMatch[2]!.trim();
-  const key = intentMatch[1];
-  if (key === "when") metadata.intent.when = value;
-  else if (key === "input") metadata.intent.input = value;
-  else if (key === "output") metadata.intent.output = value;
-  else metadata.intent.when ??= value;
-  return true;
-}
-
-/** `@tag value` comment lines, in match order; the first matching tag wins a line. */
-const COMMENT_TAGS: ReadonlyArray<readonly [RegExp, (metadata: CommentMetadata, value: string) => void]> = [
-  [/^@description\s+(.+)$/, (m, v) => (m.description = v.trim())],
-  [/^@tags?\s+(.+)$/, (m, v) => (m.tags = splitCommentList(v))],
-  [/^@aliases?\s+(.+)$/, (m, v) => (m.aliases = splitCommentList(v))],
-  [/^@searchHints?\s+(.+)$/, (m, v) => (m.searchHints = splitCommentList(v))],
-  [/^@usage\s+(.+)$/, (m, v) => (m.usage = [...(m.usage ?? []), v.trim()])],
-  [/^@examples?\s+(.+)$/, (m, v) => (m.examples = [...(m.examples ?? []), v.trim()])],
-  [/^@run\s+(.+)$/, (m, v) => (m.run = v.trim())],
-  [/^@setup\s+(.+)$/, (m, v) => (m.setup = v.trim())],
-  [/^@cwd\s+(.+)$/, (m, v) => (m.cwd = v.trim())],
-  [
-    /^@scope\s+(.+)$/,
-    (m, v) => {
-      const scope = parseCommentScope(v);
-      if (scope) m.scope = scope;
-    },
-  ],
-];
-
-export function extractCommentMetadata(content: string): CommentMetadata | undefined {
-  const lines = content.split(/\r?\n/).slice(0, 50);
-  const metadata: CommentMetadata = {};
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!/^(?:\/\/|#|\/?\*|;|--)/.test(trimmed) && !trimmed.startsWith("'")) continue;
-
-    const cleaned = trimmed
-      .replace(/^(?:\/\/|##?|\/?\*\*?\/?|;|--|'?)\s*/, "")
-      .replace(/\*\/\s*$/, "")
-      .trim();
-    if (!cleaned) continue;
-
-    if (parseIntentCommentLine(cleaned, metadata)) continue;
-    for (const [pattern, apply] of COMMENT_TAGS) {
-      const match = cleaned.match(pattern);
-      if (match) {
-        apply(metadata, match[1]!);
-        break;
-      }
-    }
-  }
-
-  return Object.keys(metadata).length > 0 ? metadata : undefined;
-}
-
 export function applyCommentMetadata(entry: IndexDocument, metadata: CommentMetadata | undefined): void {
   if (!metadata) return;
   let usedCommentMetadata = false;
@@ -887,453 +480,6 @@ function mergeAliases(existing: string[] | undefined, generated: string[]): stri
   return merged.length > 0 ? merged : undefined;
 }
 
-// ── Native Markdown search projection ──────────────────────────────────────
-
-/**
- * Maximum native Markdown prose carried by the low-weight `content` field.
- *
- * Set far past any real authored document, so ordinary long-form
- * skills/knowledge docs never lose their tail from FTS or the embedding
- * input. The bound exists only to
- * stop a truly pathological single file (a committed data dump, a decompressed
- * log) from ballooning index size — not to shave real content — so a caller
- * that hits it is always told, unconditionally.
- */
-export const MARKDOWN_CONTENT_MAX_CHARS = 1_000_000;
-
-/**
- * Locate a leading nested frontmatter block in a body: up to three blank
- * lines, then a `---` line, closed by a later `---` line. Mirrors the
- * base-linter's `parseInnerFrontmatterBlock` recognition — when `akm
- * remember` wraps a session-capture hook's file in its own frontmatter, the
- * hook's `---\nakm_memory_kind: …\n---` block survives at the top of the
- * body. Returns the open/close line indexes, or `null` when no block opens.
- * Location only — callers apply their own interior checks (marker scan in
- * {@link hasSessionMemoryMarker}, shape test in {@link isFrontmatterShaped}).
- */
-function findInnerFrontmatterBlock(lines: string[]): { open: number; close: number } | null {
-  let i = 0;
-  while (i < lines.length && i < 3 && lines[i]!.trim() === "") i += 1;
-  if (lines[i] !== "---") return null;
-  for (let j = i + 1; j < lines.length; j += 1) {
-    if (lines[j] === "---") return { open: i, close: j };
-  }
-  return null;
-}
-
-/**
- * True when the document carries the session-capture `akm_memory_kind`
- * marker — in the outer frontmatter data OR in a nested inner block at the
- * top of the body (both producer layouts exist; see base-linter's
- * `extractFrontmatterRefs`). Session bodies are raw transcripts, never a
- * searchable content projection.
- */
-function hasSessionMemoryMarker(fmData: Record<string, unknown>, body: string): boolean {
-  if (typeof fmData.akm_memory_kind === "string") return true;
-  const lines = body.split(/\r?\n/);
-  const block = findInnerFrontmatterBlock(lines);
-  if (!block) return false;
-  for (let i = block.open + 1; i < block.close; i += 1) {
-    if (/^akm_memory_kind:\s*\S/.test(lines[i]!)) return true;
-  }
-  return false;
-}
-
-/**
- * True when the interior of a candidate inner block (located by
- * {@link findInnerFrontmatterBlock}) actually reads as YAML frontmatter:
- * every line is blank, indented (a continuation or nested value), or shaped
- * like a top-level `key:` mapping entry. Ordinary prose bracketed by two
- * thematic-break `---` lines fails this test, so a decorative opening
- * callout is treated as the paragraph it is instead of being discarded
- * (the block finder alone accepts ANY content up
- * to an arbitrarily distant closing `---`).
- */
-function isFrontmatterShaped(lines: string[], block: { open: number; close: number }): boolean {
-  for (let i = block.open + 1; i < block.close; i += 1) {
-    const line = lines[i]!;
-    if (line.trim() === "") continue;
-    if (/^\s/.test(line)) continue; // indented continuation / nested value
-    if (/^[A-Za-z0-9_.-]+:(\s|$)/.test(line)) continue; // top-level key
-    return false;
-  }
-  return true;
-}
-
-export function truncateUnicodeSafe(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  let cut = text.slice(0, maxChars);
-  const lastCode = cut.charCodeAt(cut.length - 1);
-  if (lastCode >= 0xd800 && lastCode <= 0xdbff) cut = cut.slice(0, -1);
-  const boundary = cut.lastIndexOf(" ");
-  if (boundary >= Math.floor(maxChars * 0.9)) cut = cut.slice(0, boundary);
-  return cut.trimEnd();
-}
-
-type MarkdownFence = { marker: "`" | "~"; length: number };
-
-function parseMarkdownFenceOpening(line: string): MarkdownFence | undefined {
-  const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-  const run = match?.[1];
-  if (!run) return undefined;
-  const marker = run[0] as "`" | "~";
-  // CommonMark forbids backticks in the info string of a backtick fence.
-  if (marker === "`" && match?.[2]?.includes("`")) return undefined;
-  return { marker, length: run.length };
-}
-
-function isMarkdownFenceClosing(line: string, fence: MarkdownFence): boolean {
-  let cursor = 0;
-  while (cursor < line.length && cursor < 3 && line[cursor] === " ") cursor += 1;
-  const runStart = cursor;
-  while (cursor < line.length && line[cursor] === fence.marker) cursor += 1;
-  if (cursor - runStart < fence.length) return false;
-  return /^[\t ]*$/.test(line.slice(cursor));
-}
-
-/**
- * Version of what {@link projectMarkdownContent} indexes. It is part of every
- * directory's index fingerprint, so bumping it makes the next `akm index`
- * re-project every directory once instead of keeping the old text for
- * unchanged files. 3: count each fenced identifier once per document (akm#1284).
- */
-export const CONTENT_PROJECTION_VERSION = 3;
-
-/** At or above this length a token with a digit reads as a key or hash, not a name. */
-const TOKEN_LIKE_MIN_LENGTH = 20;
-
-/**
- * The searchable identifiers of one line of fenced code, without its literal
- * values (akm#1260). Fenced code holds the names agents look for (functions,
- * classes, CLI flags, config keys, environment variable names, paths) and
- * also example secrets, so it keeps names and drops values:
- *
- * - a quoted string survives only as a key (`"name":`) or an absolute path;
- *   every other quoted literal is dropped;
- * - the value of an assignment (`KEY=value`, `key: value`, `"key": value`,
- *   `Authorization: Bearer token`) is dropped unless it is a dotted code
- *   reference (`process.env.CI`); the name stays;
- * - long token-like strings with digits (keys, hashes) are dropped, base64
- *   included: its `/`, `+` and `=` do not cut it into short kept pieces;
- * - camelCase, snake_case, dotted and dashed names also add their parts.
- *
- * Numbers, punctuation and operators never reach the result.
- */
-export function fencedCodeIdentifiers(line: string): string {
-  const cleaned = line
-    .replace(
-      /(["'`])((?:\\.|(?!\1).)*)\1(\s*:)?/g,
-      (match: string, _quote: string, body: string, colon: string | undefined, offset: number) => {
-        // Keep a key's colon when an unquoted value follows, so the assignment rule below drops that value.
-        if (colon) return /^\s*["'`]/.test(line.slice(offset + match.length)) ? ` ${body} ` : ` ${body}: `;
-        return /^\/[\w./-]+$/.test(body) ? ` ${body} ` : " ";
-      },
-    )
-    .replace(
-      /([A-Za-z_][A-Za-z0-9_.-]*\s*[:=]\s*)((?:[Bb]earer|[Bb]asic|[Tt]oken|[Dd]igest)\s+\S+|\S+)/g,
-      (_match, name: string, value: string) =>
-        /^[!(]*[A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)+[()\]}]*[,;]?$/.test(value) ? `${name} ${value}` : name,
-    )
-    // Base64 is one token: its `/`, `+` and `=` would otherwise cut a key body into short pieces that are kept.
-    .replace(/(?<![\w.-])[A-Za-z0-9+/=]{20,}(?![\w.-])/g, (run) =>
-      /[a-z]/.test(run) && /[A-Z]/.test(run) && /\d/.test(run) ? " " : run,
-    );
-  const words: string[] = [];
-  for (let token of cleaned.match(/--?[A-Za-z][A-Za-z0-9-]*|[A-Za-z_][A-Za-z0-9_.-]*/g) ?? []) {
-    token = token.replace(/[.-]+$/, "");
-    const bare = token.replace(/^-+/, "");
-    if (bare.length < 2) continue;
-    if (bare.length >= TOKEN_LIKE_MIN_LENGTH && /\d/.test(bare)) continue;
-    words.push(token);
-    const parts = bare.split(/[_.-]|(?<=[a-z0-9])(?=[A-Z])/).filter((part) => part.length > 1);
-    if (parts.length > 1) words.push(...parts);
-  }
-  return words.join(" ");
-}
-
-function stripMarkdownHtmlComments(line: string, state: { inComment: boolean }): string {
-  let cursor = 0;
-  let visible = "";
-  while (cursor < line.length) {
-    if (state.inComment) {
-      const close = line.indexOf("-->", cursor);
-      if (close < 0) return visible;
-      state.inComment = false;
-      cursor = close + 3;
-      continue;
-    }
-    const open = line.indexOf("<!--", cursor);
-    if (open < 0) return `${visible}${line.slice(cursor)}`;
-    visible += line.slice(cursor, open);
-    state.inComment = true;
-    cursor = open + 4;
-  }
-  return visible;
-}
-
-function findBalancedMarkdownClose(text: string, openAt: number, open: string, close: string): number | undefined {
-  let depth = 1;
-  for (let cursor = openAt + 1; cursor < text.length; cursor += 1) {
-    const char = text[cursor];
-    if (char === "\\") {
-      cursor += 1;
-      continue;
-    }
-    if (char === open) depth += 1;
-    if (char !== close) continue;
-    depth -= 1;
-    if (depth === 0) return cursor;
-  }
-  return undefined;
-}
-
-/**
- * Find the closing parenthesis of an inline link destination. Parentheses in
- * angle-delimited destinations and quoted titles are data, while unquoted
- * parentheses remain balanced. Backslash escapes suppress delimiter meaning.
- */
-function findMarkdownDestinationClose(text: string, openAt: number): number | undefined {
-  let depth = 1;
-  let phase: "before-destination" | "angle-destination" | "bare-destination" | "after-destination" | "title" =
-    "before-destination";
-  let quote: '"' | "'" | undefined;
-  let parenthesizedTitle = false;
-  let titleSeparator = false;
-  for (let cursor = openAt + 1; cursor < text.length; cursor += 1) {
-    const char = text[cursor];
-    if (char === "\\") {
-      cursor += 1;
-      continue;
-    }
-
-    if (phase === "before-destination") {
-      if (/\s/u.test(char ?? "")) continue;
-      if (char === "<") {
-        phase = "angle-destination";
-        continue;
-      }
-      if (char === ")") return cursor;
-      phase = "bare-destination";
-    }
-
-    if (phase === "angle-destination") {
-      if (char === ">") phase = "after-destination";
-      continue;
-    }
-
-    if (phase === "title") {
-      if (quote) {
-        if (char === quote) {
-          quote = undefined;
-          phase = "after-destination";
-          titleSeparator = false;
-        }
-        continue;
-      }
-      if (parenthesizedTitle) {
-        if (char === "(") depth += 1;
-        if (char !== ")") continue;
-        depth -= 1;
-        if (depth === 1) {
-          parenthesizedTitle = false;
-          phase = "after-destination";
-          titleSeparator = false;
-        }
-      }
-      continue;
-    }
-
-    if (phase === "after-destination") {
-      if (/\s/u.test(char ?? "")) {
-        titleSeparator = true;
-        continue;
-      }
-      if (char === ")") return cursor;
-      if (titleSeparator && (char === '"' || char === "'")) {
-        quote = char;
-        phase = "title";
-        continue;
-      }
-      if (titleSeparator && char === "(") {
-        depth += 1;
-        parenthesizedTitle = true;
-        phase = "title";
-        continue;
-      }
-      // Invalid trailing bytes are still consumed conservatively until the
-      // balanced outer close. Quotes here are ordinary bytes, never titles.
-      phase = "bare-destination";
-    }
-
-    if (phase !== "bare-destination") continue;
-    if (char === "(") {
-      depth += 1;
-      continue;
-    }
-    if (char === ")") {
-      depth -= 1;
-      if (depth === 0) return cursor;
-      continue;
-    }
-    if (/\s/u.test(char ?? "") && depth === 1) {
-      phase = "after-destination";
-      titleSeparator = true;
-    }
-  }
-  return undefined;
-}
-
-const MAX_MARKDOWN_LINK_NESTING = 32;
-
-/** Retain recursively projected link labels while dropping complete destinations. */
-function stripMarkdownLinkDestinations(text: string, nesting = 0): string {
-  let visible = "";
-  let cursor = 0;
-  while (cursor < text.length) {
-    const isImage = text[cursor] === "!" && text[cursor + 1] === "[";
-    const labelOpen = isImage ? cursor + 1 : cursor;
-    if (text[labelOpen] !== "[") {
-      visible += text[cursor];
-      cursor += 1;
-      continue;
-    }
-    const labelClose = findBalancedMarkdownClose(text, labelOpen, "[", "]");
-    const destinationOpen = labelClose === undefined ? undefined : labelClose + 1;
-    if (destinationOpen === undefined || text[destinationOpen] !== "(") {
-      visible += text[cursor];
-      cursor += 1;
-      continue;
-    }
-    const destinationClose = findMarkdownDestinationClose(text, destinationOpen);
-    if (destinationClose === undefined) {
-      visible += text[cursor];
-      cursor += 1;
-      continue;
-    }
-    // Labels may themselves contain images/links. Recursively project them so
-    // an inner destination cannot become visible when its outer link is
-    // removed. At an adversarial nesting depth, omit the label rather than
-    // leaking its unparsed bytes into the search projection.
-    if (nesting < MAX_MARKDOWN_LINK_NESTING) {
-      visible += stripMarkdownLinkDestinations(text.slice(labelOpen + 1, labelClose), nesting + 1);
-    }
-    cursor = destinationClose + 1;
-  }
-  return visible;
-}
-
-/**
- * Derive the one low-weight search projection for an AKM-native Markdown body.
- * Frontmatter is removed by the caller. This projection drops comments, raw
- * link targets, and structural punctuation while retaining prose, headings,
- * link labels, and inline identifiers. From fenced code it keeps only the
- * identifiers ({@link fencedCodeIdentifiers}): names, flags, keys and paths,
- * never literal values (akm#1260). It never receives secret/env/session bytes;
- * that policy is enforced at the adapter metadata boundary below.
- *
- * Changing what this returns changes the indexed text of every Markdown entry,
- * so bump {@link CONTENT_PROJECTION_VERSION} with it: the indexer re-projects
- * every directory once on the next `akm index`.
- */
-export function projectMarkdownContent(body: string, truncationInfo?: { truncated: boolean }): string | undefined {
-  const lines = body.split(/\r?\n/);
-  const innerBlock = findInnerFrontmatterBlock(lines);
-  const start = innerBlock && isFrontmatterShaped(lines, innerBlock) ? innerBlock.close + 1 : 0;
-  const projected: string[] = [];
-  const fenced = new Map<string, string>();
-  forEachVisibleMarkdownLine(
-    lines,
-    start,
-    (_index, visible) => {
-      let trimmed = visible.trim();
-      if (!trimmed || /^(-{3,}|\*{3,}|_{3,}|=+)$/.test(trimmed)) return;
-      if (/^\s*\[[^\]]+\]:\s*\S+/.test(trimmed)) return;
-      if (/^<[^>]+>$/.test(trimmed)) return;
-
-      // Preserve human-facing labels and inline identifiers, never destinations.
-      trimmed = stripMarkdownLinkDestinations(trimmed);
-      trimmed = trimmed.replace(/`{1,2}([^`]+)`{1,2}/g, "$1");
-      trimmed = trimmed.replace(/^#{1,6}\s+/, "");
-      trimmed = trimmed.replace(/^(?:>|[-+*]|\d+[.)])\s+/, "");
-      trimmed = trimmed.replace(/<[^>]+>/g, " ");
-      trimmed = trimmed.replace(/[|]+/g, " ");
-      trimmed = trimmed.replace(/\s+/g, " ").trim();
-      if (trimmed) projected.push(trimmed);
-    },
-    (_index, fencedLine) => {
-      const identifiers = fencedCodeIdentifiers(fencedLine);
-      for (const identifier of identifiers.split(/\s+/)) {
-        if (identifier) fenced.set(identifier.toLowerCase(), identifier);
-      }
-    },
-  );
-
-  // Fenced identifiers follow the prose, so a head-truncated embedding input keeps the prose first.
-  const text = [...projected, ...fenced.values()].join(" ").replace(/\s+/g, " ").trim();
-  if (!text) return undefined;
-  if (truncationInfo) truncationInfo.truncated = text.length > MARKDOWN_CONTENT_MAX_CHARS;
-  return truncateUnicodeSafe(text, MARKDOWN_CONTENT_MAX_CHARS);
-}
-
-/**
- * Visit each line from `start` that lies outside fenced code, with HTML
- * comments removed (`visible`); fence lines themselves are never visited.
- * `visitFenced`, when given, receives each raw line inside a fence (not the
- * opening or closing fence line), from the same fence state.
- */
-function forEachVisibleMarkdownLine(
-  lines: string[],
-  start: number,
-  visit: (index: number, visible: string) => void,
-  visitFenced?: (index: number, rawLine: string) => void,
-): void {
-  let fence: MarkdownFence | undefined;
-  const htmlComment = { inComment: false };
-  for (let index = start; index < lines.length; index += 1) {
-    const rawLine = lines[index]!;
-    if (fence) {
-      if (isMarkdownFenceClosing(rawLine, fence)) fence = undefined;
-      else visitFenced?.(index, rawLine);
-      continue;
-    }
-    // A leading fence owns the whole line, including any info string that
-    // resembles HTML. Comment state therefore cannot begin inside a fence.
-    const leadingFence = htmlComment.inComment ? undefined : parseMarkdownFenceOpening(rawLine);
-    if (leadingFence) {
-      fence = leadingFence;
-      continue;
-    }
-    const visible = stripMarkdownHtmlComments(rawLine, htmlComment);
-    const openingFence = parseMarkdownFenceOpening(visible.trim());
-    if (openingFence) {
-      fence = openingFence;
-      continue;
-    }
-    visit(index, visible);
-  }
-}
-
-// Fragment text is intentionally not an IndexDocument field. IndexDocument is
-// an adapter/search payload boundary; this is an internal, derived index input
-// that is persisted separately by the entries repository for deterministic FTS
-// rebuilds. The WeakMap follows the already-read document through recognition
-// without making safe body bytes observable through public payloads.
-const markdownFragmentContentByEntry = new WeakMap<IndexDocument, string>();
-const markdownFragmentProjectionEntries = new WeakSet<IndexDocument>();
-
-export function setMarkdownFragmentContent(entry: IndexDocument, content: string | undefined): void {
-  markdownFragmentProjectionEntries.add(entry);
-  if (content) markdownFragmentContentByEntry.set(entry, content);
-}
-
-export function getMarkdownFragmentContent(entry: IndexDocument): string | undefined {
-  return markdownFragmentContentByEntry.get(entry);
-}
-
-export function hasMarkdownFragmentContent(entry: IndexDocument): boolean {
-  return markdownFragmentProjectionEntries.has(entry);
-}
-
 /**
  * A copy of `entry` carrying `filePath`'s size (and its fragment projection),
  * or `entry` itself when the file cannot be stat'ed.
@@ -1347,28 +493,6 @@ export function withFileSize(entry: IndexDocument, filePath: string): IndexDocum
   } catch {
     return entry;
   }
-}
-
-/**
- * Produce a safe, structure-preserving projection for fragment indexing.
- * Excluded source lines are retained as blank lines so fragment locations map
- * exactly to authored line numbers. This must be called from both indexing and
- * `show`; it deliberately never performs a storage-layer file reread.
- */
-export function projectMarkdownFragmentContent(raw: string): string | undefined {
-  const lines = raw.split(/\r?\n/);
-  const parsed = parseFrontmatter(raw);
-  const projected = lines.map(() => "");
-  forEachVisibleMarkdownLine(lines, parsed.frontmatter ? parsed.bodyStartLine - 1 : 0, (index, visible) => {
-    // Reference link destinations and standalone HTML are not retrieval
-    // evidence and can contain credential-bearing URLs.
-    if (/^\s*\[[^\]]+\]:\s*\S+/.test(visible) || /^\s*<[^>]+>\s*$/.test(visible)) return;
-    projected[index] = stripMarkdownLinkDestinations(visible)
-      .replace(/<[^>]+>/g, " ")
-      .replace(/[ \t]+$/g, "");
-  });
-  const text = projected.join("\n");
-  return text.trim() ? text : undefined;
 }
 
 // ── Metadata Generation ─────────────────────────────────────────────────────
@@ -1535,19 +659,6 @@ export function isWorkflowSkipWarning(warning: string): boolean {
   return warning.startsWith("Skipped workflow ");
 }
 
-function normalizeTerms(values: string[]): string[] {
-  const normalized = new Set<string>();
-  for (const value of values) {
-    const cleaned = value.toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
-    if (!cleaned) continue;
-    normalized.add(cleaned);
-    // No de-pluralization here: the FTS5 porter stemmer (configured with
-    // `tokenize='porter unicode61'`) handles stemming correctly, including
-    // edge cases like "kubernetes" and "status" that a naive s-strip mangles.
-  }
-  return Array.from(normalized);
-}
-
 function buildAliases(name: string, tags: string[]): string[] {
   const aliases = new Set<string>();
   const spaced = name.replace(/[-_]+/g, " ").trim().toLowerCase();
@@ -1583,8 +694,7 @@ export function extractDescriptionFromComments(content: string): string | null {
     const line = lines[i]!.trim();
     if (line.startsWith("#") && !line.startsWith("#!")) {
       hashLines.push(line.replace(/^#+\s*/, "").trim());
-    } else if (line === "") {
-    } else {
+    } else if (line !== "") {
       break;
     }
   }

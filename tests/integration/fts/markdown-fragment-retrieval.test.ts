@@ -8,10 +8,10 @@ import path from "node:path";
 import { splitMarkdownFragments } from "../../../src/core/asset/markdown-fragments";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import {
-  type IndexDocument,
   projectMarkdownFragmentContent,
   setMarkdownFragmentContent,
-} from "../../../src/indexer/passes/metadata";
+} from "../../../src/indexer/passes/markdown-projection";
+import type { IndexDocument } from "../../../src/indexer/passes/metadata";
 import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
