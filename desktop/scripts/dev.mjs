@@ -22,7 +22,9 @@ const child = spawn(process.execPath, [fileURLToPath(new URL("../node_modules/vi
   stdio: "inherit",
   env,
 });
-console.log(`Open ${origin} and log in with${process.env.AKM_WEB_SECRET ? " AKM_WEB_SECRET" : ` this secret: ${secret}`}`);
+console.log(
+  `Open ${origin} and log in with${process.env.AKM_WEB_SECRET ? " AKM_WEB_SECRET" : ` this secret: ${secret}`}`,
+);
 for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM"])) process.once(signal, () => child.kill(signal));
 child.once("exit", (code) => {
   process.exitCode = code ?? 1;

@@ -35,11 +35,19 @@ try {
       resolve(message);
     });
   });
-  assert.deepEqual(Object.keys(ready).sort(), ["origin", "type"], "The ready line carries the origin and nothing else.");
+  assert.deepEqual(
+    Object.keys(ready).sort(),
+    ["origin", "type"],
+    "The ready line carries the origin and nothing else.",
+  );
   const page = await fetch(ready.origin, { headers: { accept: "text/html" } });
   assert.equal(page.status, 401, "A browser without a session gets the login form.");
   assert.match(await page.text(), /<form method="post" action="api\/session">/);
-  assert.equal((await fetch(`${ready.origin}/api/desktop`)).status, 401, "The API refuses a request without a session.");
+  assert.equal(
+    (await fetch(`${ready.origin}/api/desktop`)).status,
+    401,
+    "The API refuses a request without a session.",
+  );
   for (const route of ["/", "/api/desktop", "/api/bundles"]) {
     /** @type {number} */
     const status = (await fetch(ready.origin + route, { headers: { authorization: `Bearer ${secret}` } })).status;

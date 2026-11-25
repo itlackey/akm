@@ -39,7 +39,10 @@ try {
   });
   const bin = path.join(prefix, "node_modules/.bin/akm-web");
   const secret = randomBytes(32).toString("hex");
-  child = spawn(process.execPath, [bin], { env: { ...fixture.env, AKM_WEB_SECRET: secret }, stdio: ["ignore", "pipe", "inherit"] });
+  child = spawn(process.execPath, [bin], {
+    env: { ...fixture.env, AKM_WEB_SECRET: secret },
+    stdio: ["ignore", "pipe", "inherit"],
+  });
   const lines = readline.createInterface({ input: /** @type {import("node:stream").Readable} */ (child.stdout) });
   /** @type {{ origin: string }} */
   const ready = await new Promise((resolve, reject) => {

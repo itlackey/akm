@@ -546,8 +546,11 @@ export async function launchFixture({
     const cookie = setCookie.split(";")[0];
     // `url` is where a test's browser starts. A cookie is shared by every port of a host, so this stand-in for a
     // launcher gives any new browser context the session above and sends it on to the app, as Desktop's window has.
-    door = http.createServer((req, res) => {
-      res.writeHead(302, { "Set-Cookie": `${cookie}; Path=/; HttpOnly; SameSite=Strict`, Location: `${ready.origin}/` });
+    door = http.createServer((_req, res) => {
+      res.writeHead(302, {
+        "Set-Cookie": `${cookie}; Path=/; HttpOnly; SameSite=Strict`,
+        Location: `${ready.origin}/`,
+      });
       res.end();
     });
     await new Promise((resolve) => door.listen(0, "127.0.0.1", resolve));
