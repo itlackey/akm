@@ -17,6 +17,7 @@ import { openStateDatabase } from "../../../src/core/state-db";
 import { acquireAssetMutationLease } from "../../../src/indexer/index-writer-lock";
 import { proposals } from "../../../src/workspace";
 import { git } from "../../_helpers/git";
+import { prerequisiteGap } from "../../_helpers/prerequisites";
 import {
   commitCount,
   ctx,
@@ -35,6 +36,8 @@ import {
 } from "./workspace-behaviour-helpers";
 
 useSandbox();
+
+const rootGap = prerequisiteGap("non-root");
 
 describe("proposal writes", () => {
   test("accept writes the asset and makes exactly one commit", async () => {
@@ -125,23 +128,26 @@ describe("proposal writes", () => {
       expect((await out(proposals.accept({ id }))).commit).toEqual({ committed: false, reason: "ignored" });
     });
 
-    test("a commit that git refuses is failed, with the error, and the accept stands", async () => {
-      await seed();
-      const id = propose("lessons/rg");
-      const objects = path.join(ctx.storage.stashDir, ".git", "objects");
-      const before = commitCount();
-      git(ctx.storage.stashDir, ["config", "core.hooksPath", "/nonexistent"]);
-      fs.chmodSync(objects, 0o555);
-      try {
-        const result = await out(proposals.accept({ id }));
-        expect(result.commit).toMatchObject({ committed: false, reason: "failed" });
-        expect(result.commit.error).toEqual(expect.any(String));
-        expect(result.proposal.status).toBe("accepted");
-        expect(commitCount()).toBe(before);
-      } finally {
-        fs.chmodSync(objects, 0o755);
-      }
-    });
+    test.skipIf(rootGap !== undefined)(
+      "a commit that git refuses is failed, with the error, and the accept stands",
+      async () => {
+        await seed();
+        const id = propose("lessons/rg");
+        const objects = path.join(ctx.storage.stashDir, ".git", "objects");
+        const before = commitCount();
+        git(ctx.storage.stashDir, ["config", "core.hooksPath", "/nonexistent"]);
+        fs.chmodSync(objects, 0o555);
+        try {
+          const result = await out(proposals.accept({ id }));
+          expect(result.commit).toMatchObject({ committed: false, reason: "failed" });
+          expect(result.commit.error).toEqual(expect.any(String));
+          expect(result.proposal.status).toBe("accepted");
+          expect(commitCount()).toBe(before);
+        } finally {
+          fs.chmodSync(objects, 0o755);
+        }
+      },
+    );
   });
 
   test("batch input is bounded: 1 to 200 ids, strings only", async () => {
