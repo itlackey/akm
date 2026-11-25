@@ -1129,8 +1129,8 @@ section, an absent key, and an explicit `false` all read identically as off.
 | `port` | Port to listen on, 0 to 65535. | a free port |
 | `origin` | The address the browser uses: `http(s)://host[:port]`, no path, query or fragment. | the bound address |
 | `secret` | Reference to the secret (at least 32 characters): `$NAME`, `${NAME}` or `${secrets/<name>}`. `akm config get` shows the reference, never the value. `AKM_WEB_SECRET`, when set, overrides it for that run. | none |
-| `allowedHosts` | Extra `Host` names to accept, with or without a port. | none: only the origin's host |
-| `frameParents` | `http(s)` origins allowed to show the UI in a frame. | none: framing is denied |
+| `allowedHosts` | Extra `Host` values to accept: a host name or address with an optional port (`akm-internal`, `akm-internal:8080`, `[::1]:3000`), no scheme, no path. Without a port, any port; with one, only that port. | none: only the origin's host |
+| `frameParents` | Exact `http(s)` origins allowed to show the UI in a frame; a wildcard is refused. | none: framing is denied |
 
 ### Experimental learning aliases
 

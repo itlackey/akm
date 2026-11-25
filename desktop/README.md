@@ -199,7 +199,8 @@ akm-web --host 0.0.0.0 --port 4444 --origin http://my-server:4444
 The secret is at least 32 characters. Give it as the environment variable `AKM_WEB_SECRET`, or as
 `experimental.web.secret` in the akm config, which holds a reference (`$NAME`, `${NAME}` or `${secrets/<name>}`),
 never the secret itself. When both are set, `AKM_WEB_SECRET` wins. The secret is read once at startup and removed from
-the process environment, so the CLI commands the server runs do not inherit it. To rotate it, change it and restart.
+the server's environment under every name that holds it (`AKM_WEB_SECRET`, and the variable a configured `$NAME`
+reference names), so the processes the server starts do not inherit it. To rotate it, change it and restart.
 
 The other settings live under `experimental.web` in the akm config
 ([reference](../docs/reference/configuration.md#experimental-web-settings)) and are Experimental: names and behaviour
@@ -211,8 +212,8 @@ may change in 0.11. Flags apply to one run and override the config key of the sa
 | `port` | `--port <n>` | Port to listen on. | a free port |
 | `origin` | `--origin <url>` | The address the browser uses: `http(s)://host[:port]`, no path. It differs from the listen address behind a Docker port mapping or a proxy. It is required with a wildcard host (`0.0.0.0`, `::`). An `https` origin marks the session cookie `Secure`. | the bound address |
 | `secret` | | Reference to the secret. | none |
-| `allowedHosts` | | Extra `Host` names to accept, for a proxy that reaches `akm-web` under a private name. A name matches with or without its port. | none: only the origin's host |
-| `frameParents` | | Origins allowed to show the UI in a frame. | none: framing is denied |
+| `allowedHosts` | | Extra `Host` values to accept, for a proxy that reaches `akm-web` under a private name. Each entry is a host name or address with an optional port (`akm-internal`, `akm-internal:8080`, `[::1]:3000`), no scheme and no path. Without a port it accepts that host on any port; with a port, only that port. The origin's default port (80 for `http`, 443 for `https`) is the same as no port. | none: only the origin's host |
+| `frameParents` | | Origins allowed to show the UI in a frame. Exact origins only: a wildcard is refused. | none: framing is denied |
 | | `--open` | Open the UI in the default browser. Nothing opens without it. | |
 | | `--auto-login` | With `--open`: the browser arrives logged in, through a one-time login link that is not printed. Without it, the browser shows the login form. | |
 
@@ -220,12 +221,24 @@ With `--open --auto-login` the one-time code is part of the address passed to th
 visible in the process list. It works once and expires after 60 seconds.
 
 `akm-web` exits with status 2 and a message that says what to set when there is no secret, when the secret is shorter
-than 32 characters, when `--auto-login` is given without `--open`, or when the origin has a path, query or fragment.
+than 32 characters, when `--auto-login` is given without `--open`, when the origin has a path, query or fragment, or when
+an `allowedHosts` or `frameParents` entry is invalid. The config schema refuses the same entries.
 
 When the server answers authenticated requests it prints one line, `{"type":"ready","origin":"..."}`. It has no URL and
 no credential. Open the origin and type the secret into the login form. A failed `--open` prints one line to stderr
-and the server keeps running. On `SIGTERM` or `SIGINT` the server stops accepting connections, waits up to 10 seconds
-for requests in flight, closes what remains and exits 0.
+and the server keeps running.
+
+##### Shutdown
+
+On `SIGINT`, `SIGTERM` or a `shutdown` message the server stops accepting connections and waits up to 10 seconds for
+requests in flight and for running child processes (host tools, the akm CLI, git, harness runs). It then closes the
+remaining connections and terminates what still runs: each child's process group gets `SIGTERM`, and `SIGKILL` 2
+seconds later. It waits for those exits, writes one line to stderr that names what it stopped (`Shutdown: stopped …`),
+and exits 0. A shutdown takes at most 13 seconds. A launcher should wait 15 seconds before it force-kills the server
+(`SHUTDOWN_WAIT_MS` in `server/shutdown.mjs`, which AKM Desktop and the tests use).
+
+Limits: a grandchild that ignores `SIGTERM` after its group leader has exited is not swept. On Windows a child that
+does not lead its own process group is killed without the processes it started.
 
 In Docker, publish the port, pass the secret and name the address the browser will use:
 
@@ -239,14 +252,17 @@ The login form posts the secret in the request body and receives a session: a ra
 host-only cookie. The secret is never in a cookie. Sessions are kept in memory, in a bounded table, and end after 8
 hours without use, on logout (the "Log out" button in the page's top bar, which calls `POST /api/session/logout`), or when the server
 restarts. "Log out" is shown only to a person with a session cookie, not in AKM Desktop or behind a proxy that sends the
-header. Logout ends your own session only; there is no way to end someone else's short of a restart. The cookie name carries the port, so two instances on one host do not share
+header. Logout ends your own session only; there is no way to end someone else's short of a restart. The lifetimes are
+constants, not settings: 8 hours without use for a session, 60 seconds and one use for a login link. The cookie name carries the port, so two instances on one host do not share
 sessions.
 
 ##### Checks that are always on
 
 None can be turned off, whichever way you come in.
 
-- `Host` must be the origin's host or one of `allowedHosts`; anything else gets `403`.
+- `Host` must be the origin's host or one of `allowedHosts`; anything else gets `403` with code `HOST_NOT_ALLOWED`. The
+  message names the `Host` received, and the server writes one line to stderr for each distinct refused `Host`
+  (`Refused a request with Host "…"; accepted: …`), so you can see what a proxy really sends.
 - Every write (any method other than `GET` and `HEAD`) must carry an `Origin` equal to the configured origin. This holds for
   requests that carry the header too.
 - No CORS, and `Cache-Control: no-store`.
@@ -254,8 +270,9 @@ None can be turned off, whichever way you come in.
 #### Programs
 
 A program sends the secret in an `Authorization: Bearer <secret>` header on each request. No session is made, so it
-needs no cookie, and a restart does not log it out. A request that carries an `Authorization` header must carry the
-right secret: a wrong one is refused even when the request also has a valid session cookie.
+needs no cookie, and a restart does not log it out. Only a `Bearer` credential is the secret's header. Another scheme
+(a proxy's HTTP Basic) is ignored: the session cookie or the login form applies. A wrong `Bearer` secret is refused
+with `401` and never falls back to the cookie, even when the request also has a valid session cookie.
 
 **A program must send `Origin` itself on every write.** A browser does this by itself; a server does not. Set
 `Origin` to the configured origin. With no `Origin`, or another one, the write is refused with `403`.
@@ -297,8 +314,25 @@ browser --https--> app (public)  /akm/...  --private network--> akm-web (not pub
 
 The proxy removes the path before forwarding, replaces any `Authorization` header from the browser with its own, and
 leaves the browser's `Origin` as it is. The app decides who may reach which assistant: `akm-web` trusts every request
-that carries the secret. The UI's links and API calls work from whatever path it is served under; there is no setting
-for the path.
+that carries the secret. The UI's links (those inside rendered documents too) and API calls work from whatever path it
+is served under; there is no setting for the path.
+
+What the app must do:
+
+- Redirect `/akm` to `/akm/`. Without the trailing slash the page's base is the site root, and every asset and API
+  call leaves the path.
+- Send `Origin: <configured origin>` on any write it makes itself, such as asking for a login link. A browser sends
+  its own `Origin`, which the proxy leaves as it is.
+- Serve one public origin only. `origin` is a single value, so a write from the same app under another host name
+  gets `403`.
+- Keep the platform's TCP probe. An HTTP probe gets `403` (its `Host` is the replica's address) or `401`.
+- Use one replica if people log in with the form or with login links. With the header nothing is per replica, but
+  login sessions and login links are kept in memory by each process, so a link issued by one replica fails at another.
+- Give a sandboxed frame `allow-same-origin`, `allow-forms` and `allow-scripts`. Without `allow-same-origin` the
+  frame sends `Origin: null` and the login form and every write are refused; the UI needs the scripts, and its login
+  form needs `allow-forms`.
+- Put its path in front of a login link: the link is `<origin>/?login=<code>` and has no path
+  (`<origin>/akm/?login=<code>`).
 
 Configure the assistant with:
 
@@ -309,6 +343,9 @@ Configure the assistant with:
 
 The user is never prompted and their browser never holds an akm credential. Because the header needs no session,
 restarts and more than one replica do not log anyone out.
+
+If a person's session ends while they use the UI (idle, a restart, a logout elsewhere), the page reloads once and shows
+the login form. Under the header a `401` is shown as an error, because the person has no session to lose.
 
 ##### In a frame pointed at the server
 
@@ -336,13 +373,14 @@ gives the broker only the hostname it assigns.
 - On the assistant, `origin` is the broker's public origin and `allowedHosts` holds the assistant's internal name.
 - One Container Apps secret is given to both apps, as `AKM_WEB_SECRET` on the assistant and in the broker's
   `Authorization` header.
-- The platform's probe is a TCP probe, which shows only that the port is open. The broker, which holds the secret,
-  calls `GET /api/session` before it shows the UI.
+- The platform's probe is a TCP probe, which shows only that the port is open. Keep it: an HTTP probe gets `403` or
+  `401`. The broker, which holds the secret, calls `GET /api/session` before it shows the UI.
 
 Serving under a path, and the arrangement of different internal and public host names, are checked by tests with a
 local proxy (`tests/path-prefix.test.mjs`, `tests/web-access.test.mjs`). The Azure arrangement itself has not been run
-by the project: the `Host` value internal ingress passes to the container, and whether the broker's proxy streams
-responses and leaves `Origin` untouched, are for you to confirm.
+by the project. To find the `Host` internal ingress sends, start the assistant, open it through the broker, and read
+the stderr line `Refused a request with Host "…"; accepted: …`. Put that name in `allowedHosts`. Whether the broker's
+proxy streams responses and leaves `Origin` untouched is for you to confirm.
 
 #### Limits, stated plainly
 

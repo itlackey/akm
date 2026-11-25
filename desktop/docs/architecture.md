@@ -132,13 +132,16 @@ One secret grants access, in three ways: typed into a login form (a session in a
 ended after 8 hours without use, on logout (the UI's "Log out" button, shown only for a cookie session) or on restart), sent as the header by a program that forwards requests, or
 traded for a one-time login link (60 seconds, works once; `POST /api/session/link` returns `<origin>/?login=<code>` with no path, so an app serving the UI under a path puts its path in front). The secret is never in a cookie, a URL or the output; the
 ready line carries only the origin. The server will not start without a secret of at least 32 characters, and removes
-`AKM_WEB_SECRET` from its environment after reading it. These checks are always on: `Host` must be the origin's host
-or an allowed host (checked before the framework sees the request, which is then given the configured origin), and
-every write must carry an `Origin` equal to the origin, programs included. The app validates JSON body sizes, does not
+the secret from its environment under every name that holds it (`AKM_WEB_SECRET` and a configured `$NAME`) after reading it, so child processes do not inherit it. These checks are always on: `Host` must be the origin's host
+or an allowed host (a name or address with an optional port; checked before the framework sees the request, which is then given the configured origin), and
+every write must carry an `Origin` equal to the origin, programs included. Only a `Bearer` credential is the secret's
+header; a wrong one is refused with `401` and never falls back to the cookie. The app validates JSON body sizes, does not
 enable CORS and sends `Cache-Control: no-store`. The secret is redacted by AKM's configuration inspector. Framing is
 denied unless `frameParents` names origins, which then replace the `frame-ancestors` directive; with an `https`
 origin the cookie then becomes `SameSite=None; Secure; Partitioned`. On `SIGTERM`, `SIGINT` or the `shutdown` message
-the server stops accepting connections, gives requests in flight up to 10 seconds, then closes the rest and exits 0.
+the server stops accepting connections and gives requests in flight and running child processes up to 10 seconds. It
+then terminates what still runs (the child's process group gets `SIGTERM`, then `SIGKILL` after 2 seconds), waits for
+the exits, names what it stopped on stderr and exits 0, in at most 13 seconds (`server/shutdown.mjs`).
 Unless `akm-web` is started with `--host`, this local HTTP listener is implementation detail, **not** a public API server.
 
 The renderer has no Node integration or preload authority. Electron sandboxing

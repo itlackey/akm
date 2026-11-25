@@ -42,7 +42,7 @@ refused from AKM's `actions` and `place` verdicts, and followed by `bundles.inde
 ## Rules
 
 - Use the existing public API semantics. New deletions, schema changes or proposal behavior require a separate scoped design.
-- Keep the renderer sandboxed. The server listens on loopback unless `akm-web` is given `--host` or `experimental.web`; Desktop reads none of that. Access takes the secret (`AKM_WEB_SECRET`) as a login-form session or an `Authorization` header, and the `Host` and write-`Origin` checks are compared with the configured origin; none can be turned off. Test authentication, source conflicts and credential
+- Keep the renderer sandboxed. The server listens on loopback unless `akm-web` is given `--host` or `experimental.web`; Desktop reads none of that. Access takes the secret (`AKM_WEB_SECRET`) as a login-form session or an `Authorization: Bearer` header, and the `Host` and write-`Origin` checks are compared with the configured origin; none can be turned off. Test authentication, source conflicts and credential
   redaction after changes.
 - Test only against generated synthetic HOME/XDG/AKM paths. Do not run manual writes, provider requests or bundle
   operations against a developer's real data.
