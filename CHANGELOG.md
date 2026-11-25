@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `experimental.web` config, Experimental: `host`, `port`, `origin`, `secret` (a `$VAR`, `${VAR}` or `${secrets/<name>}` reference), `allowedHosts` and `frameParents` for the AKM Desktop server, kept by `akm migrate apply`. `config.webSettings()` of `akm-cli/workspace` returns them with the secret resolved. See [Configuration](docs/reference/configuration.md#experimental-web-settings).
+
 ## [0.10.261132] - 2026-11-25
 
 ### Changed

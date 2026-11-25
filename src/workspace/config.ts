@@ -16,6 +16,7 @@ import {
   loadConfig,
   mutateConfig,
   resetConfigCache,
+  resolveSecret,
 } from "../core/config/config";
 import { parseConfigText, readConfigText } from "../core/config/config-io";
 import { storedCredential, writeCredential } from "../core/config/credentials";
@@ -26,6 +27,7 @@ import { redactUrlCredentials } from "../core/redaction";
 import { hasLocalEmbeddings, noLocalEmbeddingsReason } from "../llm/embedders/onnx-runtime";
 import { parseSetupFlags } from "../setup/setup-flags";
 import { applySetupAnswers, type EmbeddingAnswer } from "../setup/setup-plan";
+import { storeSecretResolver } from "../sources/snapshot-fetchers/secret-seam";
 import { automaticWriteTarget, configSource, preserveUnrelatedConfig } from "./readers";
 import { isSecretEnvName, redactForUi } from "./redact";
 
@@ -124,6 +126,39 @@ export function get() {
     defaultConnection: defaultConnection(live)?.name ?? null,
     harnesses: named(effective.harnesses),
     env,
+  };
+}
+
+/**
+ * The `experimental.web` settings `akm-web` starts with. `secret` is the resolved value of the configured reference
+ * (`undefined` when none is set); a reference that cannot be read throws an error naming it, never the value. The
+ * `AKM_WEB_SECRET` override and the secret's length are the server's to decide.
+ */
+export function webSettings(): {
+  host?: string;
+  port?: number;
+  origin?: string;
+  allowedHosts: string[];
+  frameParents: string[];
+  secret?: string;
+} {
+  const web = loadConfig().experimental?.web;
+  let secret: string | undefined;
+  if (web?.secret !== undefined) {
+    try {
+      secret = resolveSecret(web.secret, storeSecretResolver.resolveSecret);
+    } catch {
+      throw new UsageError(`experimental.web.secret ${web.secret} could not be read.`);
+    }
+    if (!secret) throw new UsageError(`experimental.web.secret ${web.secret} could not be read.`);
+  }
+  return {
+    ...(web?.host !== undefined ? { host: web.host } : {}),
+    ...(web?.port !== undefined ? { port: web.port } : {}),
+    ...(web?.origin !== undefined ? { origin: web.origin } : {}),
+    allowedHosts: web?.allowedHosts ?? [],
+    frameParents: web?.frameParents ?? [],
+    ...(secret !== undefined ? { secret } : {}),
   };
 }
 

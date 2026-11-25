@@ -204,6 +204,28 @@ test("apply removes the retired top-level and nested keys, keeps the live one, a
   expect(warnings.some((w) => w.includes("retired config key"))).toBe(false);
 });
 
+test("experimental.web survives `akm migrate apply`, run twice", async () => {
+  const configPath = path.join(storage.configDir, "akm", "config.json");
+  const web = {
+    host: "0.0.0.0",
+    port: 4096,
+    origin: "https://akm.example.com",
+    secret: "${AKM_WEB_TEST_SECRET}",
+    allowedHosts: ["akm.internal"],
+    frameParents: ["https://app.example.com"],
+  };
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({ configVersion: "0.9.0", llm: { model: "gpt-4" }, experimental: { web, workflowEngine: true } }),
+  );
+
+  await runMigration({ apply: true });
+  await runMigration({ apply: true });
+
+  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as { experimental: Record<string, unknown> };
+  expect(written.experimental).toEqual({ web });
+});
+
 test("a pre-0.9.15 stashDir/sources config is not converted: apply blocks on it, naming akm 0.9.x, and leaves the file unchanged", async () => {
   const configPath = writeLegacySourceShapeConfig(storage.configDir, storage.stashDir);
   const before = fs.readFileSync(configPath, "utf8");
