@@ -48,7 +48,7 @@ jobs:
       - run: bun run check
       # Three integration tests guard module boundaries and stored fields cheaply, so they run on every pull request,
       # not only at release; the FTA complexity report goes to the job summary, and on a pull request it fails the
-      # step when a file scores higher than at the base branch. Both run even if the first fails.
+      # step when a file scores higher than at the base branch and over 75. Both run even if the first fails.
       - name: Architecture checks and complexity report
         run: |
           status=0
