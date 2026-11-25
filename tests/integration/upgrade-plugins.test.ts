@@ -12,7 +12,7 @@ import { openCodeConfigSpec, usesHostCache } from "../../src/commands/sources/pl
 import { moveToTrash } from "../../src/core/trash";
 import { OPENCODE_V1 } from "../../src/integrations/harnesses/opencode/plugin-layout";
 import { shapeForCommand } from "../../src/output/shapes";
-import { formatUpgradePlain } from "../../src/output/text/command-format";
+import { formatUpgradePlain } from "../../src/output/text/lifecycle-format";
 import type { UpgradeCheckResponse, UpgradeResponse } from "../../src/sources/types";
 import { makeSandboxDir, withEnv } from "../_helpers/sandbox";
 
