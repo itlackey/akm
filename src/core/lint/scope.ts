@@ -15,7 +15,7 @@ export interface LintScope {
   /** The other configured bundles' roots, for cross-bundle ref resolution. */
   extraStashRoots: string[];
   /** Bundle id to root, so a qualified ref is checked in the bundle it names. */
-  bundleRoots: ReadonlyMap<string, string>;
+  bundleRoots: ReadonlyMap<string, string[]>;
   /** The refs the index recorded as moved; read the first time a ref that did not resolve asks. */
   moves: MovedRefs;
   /** Roots that make an absolute path judgeable for `stale-path`. */
@@ -25,8 +25,10 @@ export interface LintScope {
 }
 
 /** The root of each configured bundle by its id, for the checks that look a qualified ref up in the bundle it names. */
-function bundleRootsOf(sources: readonly BundleSourceRef[]): ReadonlyMap<string, string> {
-  return new Map(sources.flatMap(({ bundleId, path }) => (path === undefined ? [] : [[bundleId, path] as const])));
+function bundleRootsOf(sources: readonly BundleSourceRef[]): ReadonlyMap<string, string[]> {
+  return new Map(
+    sources.flatMap(({ registryId, path }) => (registryId ? [[registryId, path === undefined ? [] : [path]]] : [])),
+  );
 }
 
 /**

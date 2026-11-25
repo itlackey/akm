@@ -17,7 +17,7 @@ import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
 import { okfAdapter } from "../../src/core/adapter/adapters/okf-adapter";
 import { createFileValidateContext } from "../../src/core/adapter/validate-context";
 import { slugForPath } from "../../src/core/bundle-id";
-import { loadConfig } from "../../src/core/config/config";
+import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
 import { checkChanges } from "../_helpers/adapter-hooks";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -225,6 +225,16 @@ describe("a ref a file declares is checked wherever it points", () => {
     const sweep = (await akmLint({ dir: root, config })).flagged;
     return sweep.filter((f) => f.file === rel && f.issue === "missing-ref").map((f) => f.detail);
   }
+
+  test("a ref to a store does not resolve against a directory bundle", async () => {
+    saveConfig({ semanticSearchMode: "off", bundles: { keys: { adapter: "secret-tool", location: "akm" } } });
+    put(storage.stashDir, "secrets/example.env", "EXAMPLE=\n");
+    put(storage.stashDir, "knowledge/ref.md", `${FM}xrefs:\n  - keys//secrets/example\n---\n\nBody.\n`);
+
+    expect(await missingRefs("knowledge/ref.md")).toEqual([
+      "missing ref: keys//secrets/example (frontmatter xrefs; resolved to secrets/example.md)",
+    ]);
+  });
 
   test("a declared ref to a missing concept outside the type folders is reported, an existing one is not", async () => {
     put(storage.stashDir, "concepts/there.md", `${FM}---\n\nBody.\n`);

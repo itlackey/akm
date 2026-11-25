@@ -293,7 +293,7 @@ interface SweepScope {
   fix: boolean;
   fixMovedRefs: boolean;
   moves: MovedRefs;
-  bundleRoots: ReadonlyMap<string, string>;
+  bundleRoots: ReadonlyMap<string, string[]>;
   pruneDanglingEdges: boolean;
   /** Rules to skip for this run, on top of the bundle's `lint.skip`. */
   lintSkip?: string[];
