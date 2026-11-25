@@ -20,7 +20,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { _setDrainObserverForTests, akmIndex } from "../../../src/indexer/indexer";
+import { akmIndex } from "../../../src/indexer/indexer";
+import { _setDrainObserverForTests } from "../../../src/indexer/source-scan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 import { withSeam } from "../../_helpers/seams";
 
