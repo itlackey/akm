@@ -124,12 +124,7 @@ export const indexCommand = defineCommand({
         spin?.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
       };
       let latestMessage = "";
-      const config = loadConfig();
-      const defaultBundle = config.defaultBundle;
-      const stashDir =
-        !process.env.AKM_BUNDLE_DIR?.trim() && defaultBundle && config.bundles?.[defaultBundle]?.location
-          ? { bundleId: defaultBundle }
-          : resolveStashDir();
+      const stashDir = resolveStashDir();
       try {
         // One build at a time: while another build runs, this one steps aside.
         const result = await buildIndex({
