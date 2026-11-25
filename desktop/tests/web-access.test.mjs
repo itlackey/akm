@@ -333,6 +333,25 @@ test("the header allows a request without a session, and the secret appears nowh
   assert.ok(!JSON.stringify(Object.fromEntries(Object.entries(ok.headers))).includes(app.secret));
 });
 
+test("a proxy's own Authorization scheme does not lock a person out; only a Bearer header is the secret's", async (t) => {
+  const app = await start(t);
+  const basic = { Authorization: `Basic ${Buffer.from("user:pass").toString("base64")}` };
+  const html = { Accept: "text/html" };
+  const page = await app.request("/", { headers: { ...basic, ...html } });
+  assert.equal(page.status, 401);
+  assert.match(page.text, /<form/, "a navigation behind Basic auth is offered the login form");
+  assert.equal((await app.request("/api/session", { headers: basic })).status, 401, "an API call is not served");
+  const cookie = cookieOf(await app.login());
+  const served = await app.request("/api/session", { headers: { ...basic, Cookie: cookie } });
+  assert.equal(served.status, 200, "Basic header and a valid session");
+  assert.equal(served.json().session, true);
+  const wrong = await app.request("/api/session", { headers: { Authorization: "Bearer nope", Cookie: cookie } });
+  assert.equal(wrong.status, 401, "a wrong Bearer secret is not rescued by the cookie");
+  const wrongPage = await app.request("/", { headers: { Authorization: "Bearer nope", Cookie: cookie, ...html } });
+  assert.equal(wrongPage.status, 401);
+  assert.doesNotMatch(wrongPage.text, /<form/);
+});
+
 test("a program that writes sends the origin itself, with the header too", async (t) => {
   const app = await start(t);
   for (const [route, body] of [

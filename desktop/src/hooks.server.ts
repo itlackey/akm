@@ -84,6 +84,8 @@ export const handle: Handle = async ({ event, resolve }) => {
     finish(new Response(null, { status: 303, headers: { Location: to, ...extra } }));
   const refuse = (...args: Parameters<typeof failure>) => finish(failure(...args));
 
+  // server.mjs checks Host first, but this stays: with an origin that has no port, an absolute-form request target
+  // (`GET http://evil/x`) reaches Kit as another origin, and only this line refuses it.
   if (event.url.origin !== origin || headers.get("host") !== new URL(origin).host)
     return refuse(403, "HOST_NOT_ALLOWED", "This application only accepts the address it was started with.");
 
@@ -117,7 +119,8 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   const bearer = /^Bearer (.+)$/i.exec(headers.get("authorization") ?? "")?.[1];
-  const byHeader = headers.has("authorization");
+  // Only a Bearer credential is a program's: another scheme (a proxy's HTTP Basic) is not ours, so the session decides.
+  const byHeader = bearer !== undefined;
   const sessionId = event.cookies.get(COOKIE);
   if (byHeader ? !sameSecret(bearer, secret) : !useSession(sessionId)) {
     const navigation =
