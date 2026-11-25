@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { detectBundleAdapter } from "../../core/assets/gate";
-import { bundleIdForDir } from "../../core/bundle-id";
+import { deriveBundleId } from "../../core/bundle-id";
 import { isWithin, relativeToRoot, resolveStashDir, safeRealpath, toErrorMessage } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import { bundleAtDir, bundlesToSourceEntries, getSources, isBundleEnabled, loadConfig } from "../../core/config/config";
@@ -93,9 +93,7 @@ export function resolveSourceEntries(overrideStashDir?: string | null, existingC
   const sources: SearchSource[] = implicitStash
     ? [
         {
-          bundleId:
-            implicitConfiguredBundle ??
-            bundleIdForDir(safeRealpath(implicitStash), new Set(Object.keys(config.bundles ?? {}))),
+          bundleId: deriveBundleId(undefined, safeRealpath(implicitStash), new Set()),
           path: safeRealpath(implicitStash),
           writable: true,
           isDefault: true,
@@ -116,7 +114,7 @@ export function resolveSourceEntries(overrideStashDir?: string | null, existingC
   ) => {
     const root = dir === undefined ? undefined : safeRealpath(dir);
     const existing = sources.find(
-      (source) => source.bundleId === registryId || (root !== undefined && source.path === root),
+      (source) => source.path === root && (root !== undefined || source.bundleId === registryId),
     );
     if (existing) {
       // Already in the source list — typically the primary stash injected at
@@ -211,6 +209,14 @@ export function resolveSourceEntries(overrideStashDir?: string | null, existingC
     );
   }
 
+  const working = sources[0];
+  if (working?.registryId === undefined && working?.path !== undefined) {
+    working.bundleId = deriveBundleId(
+      undefined,
+      working.path,
+      new Set(sources.slice(1).map((source) => source.bundleId)),
+    );
+  }
   return sources;
 }
 

@@ -195,6 +195,24 @@ describe("resolveSourceEntries", () => {
     }
   });
 
+  test("an unnamed working stash uses its basename slug", () => {
+    const root = path.join(stashDir, "My Knowledge.Stash");
+    fs.mkdirSync(root);
+    saveConfig({ semanticSearchMode: "off" });
+    expect(resolveSourceEntries(root)[0]).toMatchObject({ bundleId: "my-knowledge-stash", path: root });
+  });
+
+  test("keeps a configured git subdirectory separate from its working checkout root", () => {
+    const docs = path.join(stashDir, "docs");
+    fs.mkdirSync(docs);
+    saveConfig({ semanticSearchMode: "off", bundles: { g: { git: "https://example.test/g", root: "docs" } } });
+    seedLockEntries([{ id: "g", source: "git", ref: "git:https://example.test/g", localRoot: stashDir }]);
+    const sources = resolveSourceEntries(stashDir);
+    expect(sources).toHaveLength(2);
+    expect(sources[0]).toMatchObject({ bundleId: slugForPath(stashDir), path: stashDir, type: "filesystem" });
+    expect(sources[1]).toMatchObject({ bundleId: "g", path: docs, type: "git" });
+  });
+
   test("keeps AKM_BUNDLE_DIR ahead of a configured default bundle", () => {
     const configuredDefault = fs.mkdtempSync(path.join(os.tmpdir(), "akm-configured-default-"));
     try {
