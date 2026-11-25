@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-// asset-io: base the file the index row names, read as the row's adapter indexed it (not the facade's winner for the ref)
+// asset-io: base the file the index row names, read as the row's adapter indexed it (not the facade's winner for the ref, which assetAtKey would give when two rows share a ref); the facade may not build a file context (facade-fs)
 import { buildFileContext } from "../../core/adapter/directory/file-context";
 import { type Bundle, rootOf } from "../../core/adapter/types";
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
