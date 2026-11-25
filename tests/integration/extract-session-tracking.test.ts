@@ -11,7 +11,7 @@
 //   - shouldSkipAlreadyExtractedSession(prior, currentContentHash: string)
 //   - ExtractedSessionRow.content_hash
 //   - upsertExtractedSession({ ..., contentHash })
-//   - hashSessionContent(data) exported from extract.ts
+//   - hashSessionContent(data) exported from extract-sessions.ts
 //   - migration 013-extract-sessions-content-hash (content_hash column)
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -19,8 +19,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import * as extractModule from "../../src/commands/improve/extract";
 import { akmExtract } from "../../src/commands/improve/extract";
+import { hashSessionContent } from "../../src/commands/improve/extract-sessions";
 import type { AkmConfig } from "../../src/core/config/config";
 import { tryAcquireLockSync } from "../../src/core/file-lock";
 import { openStateDatabase } from "../../src/core/state-db";
@@ -42,11 +42,6 @@ import {
 } from "../../src/storage/repositories/extract-sessions-repository";
 import { rejectJsonSchemaOn } from "../_helpers/json-schema-endpoint";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
-
-// hashSessionContent (#602) is reached via the namespace import for ESM-safety;
-// it resolves to the real export from extract.ts.
-const hashSessionContent = (data: SessionData): string =>
-  (extractModule as { hashSessionContent: (d: SessionData) => string }).hashSessionContent(data);
 
 const tempDirs: string[] = [];
 let storage: IsolatedAkmStorage;

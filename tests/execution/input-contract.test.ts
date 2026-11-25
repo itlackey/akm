@@ -50,7 +50,7 @@ import {
   type WorkflowParameterPlan,
 } from "../../src/workflows/ir/params";
 import { canonicalJson } from "../../src/workflows/ir/plan-hash";
-import { PROGRAM_PARAM_NAME_PATTERN } from "../../src/workflows/parser";
+import { PROGRAM_PARAM_NAME_PATTERN } from "../../src/workflows/step-fields";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 

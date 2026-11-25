@@ -9,7 +9,6 @@ import {
   DEFAULT_CONFIG,
   defaultConnection,
   defaultHarness,
-  getConfigValueSource,
   getImproveProcessConfig,
   type ImproveProfileConfig,
   loadConfig,
@@ -20,6 +19,7 @@ import {
   saveConfig,
   updateConfig,
 } from "../../src/core/config/config";
+import { getConfigValueSource } from "../../src/core/config/config-extends";
 import { backupExistingConfig, copyToConfigBackups } from "../../src/core/config/config-io";
 import { EmbeddingConnectionConfigSchema } from "../../src/core/config/config-schema";
 import { ConfigError } from "../../src/core/errors";

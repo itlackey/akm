@@ -12,12 +12,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { getConfigValue, setConfigValue } from "../../src/commands/config-cli";
 import { resolveImprovePlan } from "../../src/commands/improve/improve-strategies";
-import {
-  mutateConfig,
-  parseAndValidateConfigText,
-  resetConfigCache,
-  unknownConfigKeyPaths,
-} from "../../src/core/config/config";
+import { mutateConfig, parseAndValidateConfigText, resetConfigCache } from "../../src/core/config/config";
+import { unknownConfigKeyPaths } from "../../src/core/config/config-file-forms";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { sandboxXdgConfigHome } from "../_helpers/sandbox";
 

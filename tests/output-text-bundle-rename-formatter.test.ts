@@ -12,7 +12,7 @@
 // (never claiming "re-synced under the new name") when there are any.
 
 import { describe, expect, it } from "bun:test";
-import { formatBundleRenamePlain } from "../src/output/text/command-format";
+import { formatBundleRenamePlain } from "../src/output/text/lifecycle-format";
 
 function baseResult(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
