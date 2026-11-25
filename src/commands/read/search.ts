@@ -288,7 +288,7 @@ export async function akmSearch(input: {
     const hasResults = slicedRegistryHits.length > 0;
     const response: SearchResponse = {
       schemaVersion: 1,
-      bundleDir: "",
+      ...(bundleDir === undefined ? {} : { bundleDir }),
       source,
       hits: [],
       registryHits: slicedRegistryHits,
