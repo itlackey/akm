@@ -264,7 +264,8 @@ test("a request before the app has loaded gets the 503 error shape the renderer 
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, "server"));
   await mkdir(path.join(root, "build"));
-  await copyFile(path.join(appRoot, "server/server.mjs"), path.join(root, "server/server.mjs"));
+  for (const file of ["server.mjs", "shutdown.mjs"])
+    await copyFile(path.join(appRoot, "server", file), path.join(root, "server", file));
   await copyFile(path.join(appRoot, "package.json"), path.join(root, "package.json"));
   // A stand-in app that reports the listening origin, then finishes loading only when told to.
   await writeFile(

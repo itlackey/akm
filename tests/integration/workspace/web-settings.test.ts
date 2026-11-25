@@ -40,6 +40,9 @@ describe("experimental.web schema", () => {
     expect(parse({ secret: "$WEB_TEST_SECRET" })).toBe(true);
     expect(parse({ secret: "${secrets/web}" })).toBe(true);
     expect(parse({ origin: "http://127.0.0.1:4096/" })).toBe(true);
+    expect(parse({ allowedHosts: ["akm.internal", "akm.internal:8080", "10.0.0.5", "[::1]", "[::1]:3000"] })).toBe(
+      true,
+    );
   });
 
   test.each([
@@ -56,6 +59,13 @@ describe("experimental.web schema", () => {
     [{ allowedHosts: "akm.internal" }],
     [{ frameParents: ["https://app.example.com/x"] }],
     [{ frameParents: ["app.example.com"] }],
+    [{ frameParents: ["https://*.example.com"] }],
+    [{ allowedHosts: ["http://akm.internal"] }],
+    [{ allowedHosts: ["akm.internal/path"] }],
+    [{ allowedHosts: ["akm.internal:99999"] }],
+    [{ allowedHosts: ["akm.internal:"] }],
+    [{ allowedHosts: ["*.internal"] }],
+    [{ allowedHosts: [""] }],
   ])("refuses %j", (web) => {
     expect(parse(web)).toBe(false);
   });
