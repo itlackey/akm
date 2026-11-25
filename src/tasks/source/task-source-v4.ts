@@ -24,7 +24,7 @@
  */
 
 import { timeoutMilliseconds } from "../../cli/parse-args";
-import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../commands/command/builtin-action";
+import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../core/builtin-action";
 import { UsageError } from "../../core/errors";
 import {
   checkJsonSchemaDefinition,

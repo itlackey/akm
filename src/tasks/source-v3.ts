@@ -22,7 +22,7 @@
  * producer.
  * */
 
-import type { ParsedBuiltinCommandAction } from "../commands/command/builtin-action";
+import type { ParsedBuiltinCommandAction } from "../core/builtin-action";
 import type { ExecutionJsonObject } from "../execution/json";
 import { TASK_V3_MAX_SCHEDULES } from "./source/bounded-document";
 import type { TaskSourceV4Step } from "./source/task-source-v4";

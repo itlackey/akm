@@ -104,7 +104,6 @@ const REGISTRY_CALLS = new Set(["adapterForId", "getAdapters"]);
 const UPWARD_LAYERS = ["src/commands/", "src/tasks/", "src/indexer/"];
 /** ...but for these modules, still there until what they hold moves down into core. A new one fails; do not add to it. */
 const UPWARD_ALLOWED = [
-  "src/commands/command/builtin-action",
   "src/indexer/index-readiness",
   "src/indexer/index-rows",
   "src/indexer/materialize-embeddings",

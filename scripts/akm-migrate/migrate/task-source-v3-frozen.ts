@@ -40,11 +40,8 @@
  * helpers for `src/`-side consumers, not part of reading a document).
  */
 
-import {
-  type ParsedBuiltinCommandAction,
-  parseBuiltinCommandAction,
-} from "../../../src/commands/command/builtin-action";
 import { bundleRefToString, parseBundleRef } from "../../../src/core/asset/asset-ref";
+import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../../src/core/builtin-action";
 import { UsageError } from "../../../src/core/errors";
 import { checkJsonSchemaDefinition } from "../../../src/core/json-schema";
 import type { ExecutionJsonObject, ExecutionJsonValue } from "../../../src/execution/json";

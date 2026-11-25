@@ -3,11 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../src/commands/command/builtin-action";
 import {
   applyPortableCommandArguments,
   validatePortableCommandTemplate,
 } from "../../src/commands/command/portable-template";
+import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../src/core/builtin-action";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import {
   composePersonaFallbackPrompt,

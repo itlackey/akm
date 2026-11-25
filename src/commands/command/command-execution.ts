@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { parseBundleRef } from "../../core/asset/asset-ref";
+import { parseBuiltinCommandAction } from "../../core/builtin-action";
 import type { AkmConfig } from "../../core/config/config-types";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { UsageError } from "../../core/errors";
@@ -34,7 +35,6 @@ import {
 } from "../../integrations/agent/execution";
 import { type RunExecutionOptions, runExecution } from "../../integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../../integrations/agent/spawn";
-import { parseBuiltinCommandAction } from "./builtin-action";
 import {
   type ExecutionSourceLookup,
   type LoadAdapterExecutionSourceOptions,

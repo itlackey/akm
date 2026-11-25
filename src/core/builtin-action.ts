@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { UsageError } from "../../core/errors";
-import { assertSnapshotKeys, snapshotStrictRecord } from "../../execution/record";
+import { assertSnapshotKeys, snapshotStrictRecord } from "../execution/record";
+import { UsageError } from "./errors";
 
 export type ParsedBuiltinCommandAction =
   | Readonly<{ kind: "stored"; ref: string; arguments?: string }>
