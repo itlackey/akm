@@ -107,7 +107,6 @@ const UPWARD_ALLOWED = [
   "src/commands/command/builtin-action",
   "src/indexer/index-readiness",
   "src/indexer/index-rows",
-  "src/indexer/index-writer-lock",
   "src/indexer/materialize-embeddings",
   "src/indexer/passes/metadata",
   "src/indexer/scan/drain-dir",

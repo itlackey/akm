@@ -1171,7 +1171,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
   // tests below used to burn a real `Bun.sleep(150)` between starting the
   // mutation and asserting it hasn't completed yet. That sleep was not
   // needed for correctness and was a source of narrow-margin timing risk on
-  // a loaded runner. `withAssetMutationLease` (src/indexer/index-writer-lock.ts,
+  // a loaded runner. `withAssetMutationLease` (src/core/index-writer-lock.ts,
   // `acquireAssetMutationLease`) makes its FIRST lock-acquisition attempt
   // (`tryAcquireLockSync` + `probeLock`,
   // src/core/file-lock.ts) entirely synchronously — none of those calls

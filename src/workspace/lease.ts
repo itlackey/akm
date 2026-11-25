@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { TransientError } from "../core/errors";
-import { withAssetMutationLease } from "../indexer/index-writer-lock";
+import { withAssetMutationLease } from "../core/index-writer-lock";
 
 /** An interactive request waits only this long for another writer, then fails with `ASSET_MUTATION_LEASE_HELD`. */
 const INTERACTIVE_LEASE_WAIT_MS = 3000;

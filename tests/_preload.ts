@@ -48,8 +48,8 @@ import { registerTestRoot } from "../scripts/sweep-test-tmp";
 
 import { _resetParsedInvocationForTests } from "../src/cli/invocation";
 import { resetConfigCache } from "../src/core/config/config";
+import { _setAssetMutationLeaseSyncTimingForTests } from "../src/core/index-writer-lock";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
-import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-writer-lock";
 import { agentRuntime } from "../src/integrations/agent/runtime";
 import { HARNESS_REGISTRY } from "../src/integrations/harnesses";
 import { _setOpencodeVersionProbeForTests } from "../src/integrations/harnesses/opencode/version";

@@ -3,10 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { readEvents } from "../../src/core/events";
-import {
-  _setAssetMutationLeaseSyncTimingForTests,
-  acquireAssetMutationLease,
-} from "../../src/indexer/index-writer-lock";
+import { _setAssetMutationLeaseSyncTimingForTests, acquireAssetMutationLease } from "../../src/core/index-writer-lock";
 import { akmIndex } from "../../src/indexer/indexer";
 import { getCachePaths, parseGitRepoUrl } from "../../src/sources/providers/git";
 import { runCliCapture } from "../_helpers/cli";

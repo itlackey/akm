@@ -22,7 +22,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import path from "node:path";
-import { TransientError } from "../core/errors";
+import { sleepSync } from "../runtime";
+import { TransientError } from "./errors";
 import {
   createLockPayload,
   type LockOwnership,
@@ -30,10 +31,9 @@ import {
   reclaimStaleLock,
   releaseLock,
   tryAcquireLockSync,
-} from "../core/file-lock";
-import { getDbPath, getIndexWriterLockPath } from "../core/paths";
-import { warn } from "../core/warn";
-import { sleepSync } from "../runtime";
+} from "./file-lock";
+import { getDbPath, getIndexWriterLockPath } from "./paths";
+import { warn } from "./warn";
 
 const ASSET_MUTATION_WAIT_MS = 100;
 const DEFAULT_ASSET_MUTATION_MAX_WAIT_MS = 10 * 60 * 1000;
