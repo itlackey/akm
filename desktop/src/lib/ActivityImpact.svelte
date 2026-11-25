@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { api, apiState, date } from "./client";
+  import { api, apiState, appHref, date } from "./client";
   import { navigate } from "./navigation";
   import ActivityChart from "./ActivityChart.svelte";
   import { verticalBars, lines, stepLine } from "./ui/chart-view.js";
@@ -169,7 +169,7 @@
     </div>{/if}
   <nav class="impact-links" aria-label="Improve sections" data-sveltekit-reset="false">
     {#each [["outcomes", "Outcomes"], ["search", "Retrieval after changes"], ["flow", "Review flow"], ["library", "Library"], ["harm", "Harm log"], ["cost", "Cost"], ["changed", "Changed assets"], ["judge", "Judge and you"]] as [id, label]}<a
-        href={`/activity/improve?since=${impact.since}&anchor=${id}`}>{label}</a
+        href={appHref(`/activity/improve?since=${impact.since}&anchor=${id}`)}>{label}</a
       >{/each}
   </nav>
   <div class="impact-sections">
@@ -270,8 +270,8 @@
             </p>{:else}<p class="muted small">Up to 50 matching proposals, not an exhaustive inventory.</p>
             <ul class="change-list">
               {#each proposals as proposal}<li>
-                  <a href={proposalHref(proposal.id, true)}>{proposal.ref}</a><span>{proposal.status}</span><a
-                    href={assetHref(proposal.ref)}>Open asset</a
+                  <a href={appHref(proposalHref(proposal.id, true))}>{proposal.ref}</a><span>{proposal.status}</span><a
+                    href={appHref(assetHref(proposal.ref))}>Open asset</a
                   >
                 </li>{/each}
             </ul>
@@ -419,10 +419,11 @@
       </p>
       {#if impact.harm?.length}<ul class="change-list">
           {#each impact.harm as item}<li>
-              <strong>{harmLabels[item.kind] ?? item.kind}</strong><a class="mono wrap" href={assetHref(item.ref)}
-                >{item.ref}</a
-              ><span>{item.detail} · {date(item.at)}</span>{#if item.proposalId}<a href={proposalHref(item.proposalId)}
-                  >Review proposal</a
+              <strong>{harmLabels[item.kind] ?? item.kind}</strong><a
+                class="mono wrap"
+                href={appHref(assetHref(item.ref))}>{item.ref}</a
+              ><span>{item.detail} · {date(item.at)}</span>{#if item.proposalId}<a
+                  href={appHref(proposalHref(item.proposalId))}>Review proposal</a
                 >{/if}
             </li>{/each}
         </ul>{:else}<p>
@@ -485,7 +486,7 @@
             ></thead
           ><tbody
             >{#each impact.changedAssets ?? [] as item}<tr
-                ><th><a class="wrap" href={assetHref(item.ref)}>{item.ref}</a></th><td>{item.source}</td><td
+                ><th><a class="wrap" href={appHref(assetHref(item.ref))}>{item.ref}</a></th><td>{item.source}</td><td
                   >{date(item.decidedAt)}{item.outcome === "reverted" ? " · Reverted" : ""}</td
                 ><td>{item.beforeComplete ? item.before.hits : "Not recorded"} → {item.after.hits}</td><td
                   >{item.beforeComplete ? item.before.negative : "Not recorded"} → {item.after.negative}</td

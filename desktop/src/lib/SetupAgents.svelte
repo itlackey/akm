@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-  import { api } from "./client";
+  import { api, appHref } from "./client";
   import { classifyEngineSkew, updateHeld } from "./engine-skew";
   import Icon from "./Icon.svelte";
   import SetupLearning from "./SetupLearning.svelte";
@@ -324,8 +324,8 @@
           <div class="notice notice-warn" role="alert">
             <p><strong>{outcome.label}.</strong> {outcome.error}</p>
             {#if software.data?.host.consent}<p>
-                <a href="/settings/software">Continue in Settings → Software</a>, where you can choose to install from
-                the existing marketplace or replace the CLI.
+                <a href={appHref("/settings/software")}>Continue in Settings → Software</a>, where you can choose to
+                install from the existing marketplace or replace the CLI.
               </p>{/if}
             {#if outcome.errorDetail}<details>
                 <summary>Details</summary>

@@ -1119,6 +1119,19 @@ section, an absent key, and an explicit `false` all read identically as off.
   the commits `akm proposal accept` makes, and the end-of-run `sync.push`
   (which has its own `--no-push` and `sync.push` controls).
 
+### Experimental web settings
+
+`experimental.web` holds the settings the AKM Desktop server (`akm-web`) reads when you run it by hand on a headless machine; Desktop itself ignores them. Every key is optional. `secret` is a reference, never the secret itself. `akm-web` does not start without a secret. Behavior is described in the [Desktop README](../../desktop/README.md#run-it-on-a-server).
+
+| Key | Meaning | Default |
+| --- | --- | --- |
+| `host` | Address to listen on. | `127.0.0.1` |
+| `port` | Port to listen on, 0 to 65535. | a free port |
+| `origin` | The address the browser uses: `http(s)://host[:port]`, no path, query or fragment. | the bound address |
+| `secret` | Reference to the secret (at least 32 characters): `$NAME`, `${NAME}` or `${secrets/<name>}`. `akm config get` shows the reference, never the value. `AKM_WEB_SECRET`, when set, overrides it for that run. | none |
+| `allowedHosts` | Extra `Host` values to accept: a host name or address with an optional port (`akm-internal`, `akm-internal:8080`, `[::1]:3000`), no scheme, no path. Without a port, any port; with one, only that port. | none: only the origin's host |
+| `frameParents` | Exact `http(s)` origins allowed to show the UI in a frame; a wildcard is refused. | none: framing is denied |
+
 ### Experimental learning aliases
 
 `experimental.learning.strategies` and `experimental.learning.qualityGate` mirror

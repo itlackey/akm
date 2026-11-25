@@ -8,7 +8,7 @@
   import Diff from "./Diff.svelte";
   import Icon from "./Icon.svelte";
   import ReviewEvidence from "./ReviewEvidence.svelte";
-  import { title } from "./client";
+  import { appHref, title } from "./client";
   import { proposalHref, type ReviewProposal } from "./review-model";
   import type { ProposalDetail } from "./types";
 
@@ -24,7 +24,9 @@
 <!-- Reading order, visual and DOM, at every window size: what it is, what to watch for, why it was proposed, the change
      itself, then the rest of the evidence. The reason is short, so it never pushes out of view with a long diff. -->
 <nav class="crumbs proposal-back" aria-label="Proposal breadcrumb">
-  <a class="back" href={proposalHref("", query)}><Icon name="arrow-left" size={16} /><span>Back to queue</span></a>
+  <a class="back" href={appHref(proposalHref("", query))}
+    ><Icon name="arrow-left" size={16} /><span>Back to queue</span></a
+  >
 </nav>
 <header class="proposal-summary">
   <div class="proposal-title">
@@ -39,8 +41,9 @@
     <span class="mono wrap small">{current.ref}</span>{#if detail.diff?.isNew}<span class="muted small">New asset</span
       >{:else}<a
         class="target-link"
-        href={`/library/asset?ref=${encodeURIComponent(current.ref)}&view=files&returnTo=${encodeURIComponent(proposalHref(current.id, query))}`}
-        >Open in Files</a
+        href={appHref(
+          `/library/asset?ref=${encodeURIComponent(current.ref)}&view=files&returnTo=${encodeURIComponent(proposalHref(current.id, query))}`,
+        )}>Open in Files</a
       >{/if}
   </div>
 </header>

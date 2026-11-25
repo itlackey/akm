@@ -71,13 +71,23 @@ AKM's web interface for a server or container. It manages the library of the use
 
 \`\`\`sh
 npm install -g ${PACKAGE_NAME}
+export AKM_WEB_SECRET="$(openssl rand -hex 32)"
 akm-web --host 0.0.0.0 --port 4444 --origin http://my-server:4444
 \`\`\`
 
-It prints one JSON line with the \`url\` to open; that URL carries the session token. Anyone with the token can edit
-the library's files, reveal its secrets and install host tools, and over plain HTTP the token is not encrypted: use a
-private network, or a TLS proxy that keeps the Host header. See
-https://github.com/itlackey/akm/blob/main/desktop/README.md#run-it-on-a-server.
+It needs one secret of at least 32 characters and does not start without it. Give it in \`AKM_WEB_SECRET\`, or name it
+in the akm config as \`experimental.web.secret\` (a reference such as \`$NAME\`, never the value). When it is ready it
+prints one JSON line, \`{"type":"ready","origin":"…"}\`, which carries no credential.
+
+There are three ways in:
+
+- Open the origin in a browser and type the secret into the login form.
+- A program sends \`Authorization: Bearer <secret>\` on each request.
+- A program that holds the secret asks \`POST /api/session/link\` for a one-time login link and hands it to a browser.
+
+Anyone who gets in can edit the library's files, reveal its secrets and install host tools, and over plain HTTP the
+secret is not encrypted: use a private network, or a TLS proxy. For the other settings, running behind a proxy and
+showing the UI inside another app, see https://github.com/itlackey/akm/blob/main/desktop/README.md#run-it-on-a-server.
 `,
 );
 console.log(JSON.stringify({ name: PACKAGE_NAME, version, stage }));

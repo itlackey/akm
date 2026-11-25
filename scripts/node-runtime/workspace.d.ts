@@ -185,6 +185,15 @@ export namespace config {
   function get(): unknown;
   /** Replace one connection with `entry` as a whole (removed aliases and options leave the file); a literal API key is refused. */
   function saveConnection(input: { name: string; entry: Record<string, unknown> }): { saved: boolean };
+  /** The `experimental.web` settings of `akm-web`; `secret` is the resolved value of the configured reference (`undefined` when none), and a reference that cannot be read throws an error naming it, never the value. With `{ resolveSecret: false }` the reference is not read and `secret` is omitted. */
+  function webSettings(options?: { resolveSecret?: boolean }): {
+    host?: string;
+    port?: number;
+    origin?: string;
+    allowedHosts: string[];
+    frameParents: string[];
+    secret?: string;
+  };
   /** Set the embedding model as `akm setup` does (local, a model on the default connection, or an endpoint with a `{ env }` or `{ pasted }` key); a pasted key goes to credentials.json, never config.json. */
   function saveEmbedding(input: {
     kind: "local" | "connection" | "endpoint";

@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
-  import { api, type ApiError } from "./client";
+  import { api, type ApiError, appHref } from "./client";
   import { navigate } from "./navigation";
   import { plural } from "./review-model";
   import ConnectionForm from "./ConnectionForm.svelte";
@@ -167,7 +167,7 @@
     />
   {:else if view === "edit" && row}
     <nav class="crumbs" aria-label="Breadcrumb">
-      <a href={LIST}>Connections</a> › <a href={detailHref(row.name)}>{row.name}</a> ›
+      <a href={appHref(LIST)}>Connections</a> › <a href={appHref(detailHref(row.name))}>{row.name}</a> ›
       <span aria-current="page">Edit</span>
     </nav>
     <h2 class="conn-title" tabindex="-1">Edit {row.name}</h2>
@@ -183,14 +183,16 @@
       />{/key}
   {:else if view === "detail" && row}
     <nav class="crumbs" aria-label="Breadcrumb">
-      <a href={LIST}>Connections</a> › <span aria-current="page">{row.name}</span>
+      <a href={appHref(LIST)}>Connections</a> › <span aria-current="page">{row.name}</span>
     </nav>
     <div class="conn-head">
       <h2 class="conn-title" tabindex="-1">{row.name}</h2>
       {#if config?.defaultConnection === row.name}<span class="badge accent">Default</span>{/if}
       <span class="badge">{provenanceOf(row)}</span>
       <div class="btn-row conn-actions">
-        <a class="btn btn-secondary" href={`${detailHref(row.name)}&edit`}><Icon name="edit" size={16} /> Edit</a>
+        <a class="btn btn-secondary" href={appHref(`${detailHref(row.name)}&edit`)}
+          ><Icon name="edit" size={16} /> Edit</a
+        >
         {#if !row.inherited}<button class="btn-secondary danger" onclick={askDelete}>Delete…</button>{/if}
       </div>
     </div>
@@ -275,12 +277,12 @@
     <div class="state">
       <h2 class="conn-title" tabindex="-1">Connection not found</h2>
       <p>No connection named “{name}” is configured. It may have been deleted.</p>
-      <a class="btn" href={LIST}>View connections</a>
+      <a class="btn" href={appHref(LIST)}>View connections</a>
     </div>
   {:else}
     <div class="conn-head">
       <h2 class="conn-title" tabindex="-1">Connections</h2>
-      <a class="btn conn-actions" href={`${LIST}?add`}><Icon name="plus" size={16} /> Add connection</a>
+      <a class="btn conn-actions" href={appHref(`${LIST}?add`)}><Icon name="plus" size={16} /> Add connection</a>
     </div>
     <p class="muted">OpenAI-compatible endpoints akm sends its model work to.</p>
     {#if status.kind === "named"}<p>Default connection: <strong>default</strong> (named “default”).</p>
@@ -292,10 +294,10 @@
     {#if !rows.length}<div class="state">
         <h2>No connections</h2>
         <p>A connection is an OpenAI-compatible endpoint akm uses for model work such as improve and index passes.</p>
-        <a class="btn" href={`${LIST}?add`}>Add connection</a>
+        <a class="btn" href={appHref(`${LIST}?add`)}>Add connection</a>
       </div>{:else}<ul class="conn-list">
         {#each rows as r (r.name)}<li>
-            <a href={detailHref(r.name)}>
+            <a href={appHref(detailHref(r.name))}>
               <span class="row-main"
                 ><strong>{r.name}</strong>{#if config?.defaultConnection === r.name}<span class="badge accent"
                     >Default</span

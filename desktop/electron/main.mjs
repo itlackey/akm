@@ -3,15 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { fork } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, session, shell } from "electron";
 import electronUpdater from "electron-updater";
+import { SHUTDOWN_WAIT_MS } from "../server/shutdown.mjs";
+import { addServerAuthorization } from "./auth-header.mjs";
 import { DESKTOP_ID, DesktopMenu } from "./menu-install.mjs";
 import { createFolderPicker } from "./pick-folder.mjs";
 import { createUpdater } from "./updater.mjs";
 
-/** @typedef {{ type?: string, busy?: boolean, id?: string, action?: string, start?: string, path?: string, channel?: unknown, url?: string, origin?: string }} ChildMessage */
+/** @typedef {{ type?: string, busy?: boolean, id?: string, action?: string, start?: string, path?: string, channel?: unknown, origin?: string }} ChildMessage */
 /** @type {import("node:child_process").ChildProcess | undefined} */
 let child;
 /** @type {import("electron").BrowserWindow | undefined} */
@@ -50,7 +53,7 @@ async function stopServer() {
     const timer = setTimeout(() => {
       server.kill("SIGKILL");
       resolve();
-    }, 5000);
+    }, SHUTDOWN_WAIT_MS);
     server.once("exit", () => {
       clearTimeout(timer);
       resolve();
@@ -105,10 +108,13 @@ else
               : undefined,
       });
       const pickFolder = createFolderPicker({ dialog, window: () => window });
+      // One secret per launch, held only here: the server takes it from its environment, the window's own session
+      // adds it as a header. The renderer, logs and URLs never see it.
+      const secret = randomBytes(32).toString("base64url");
       const server = fork(fileURLToPath(new URL("../server/server.mjs", import.meta.url)), [], {
         execPath: process.execPath,
         execArgv: [],
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", AKM_DESKTOP_NATIVE: "1" },
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", AKM_DESKTOP_NATIVE: "1", AKM_WEB_SECRET: secret },
         stdio: ["ignore", "pipe", "pipe", "ipc"],
         windowsHide: true,
       });
@@ -201,17 +207,18 @@ else
         server.once("exit", (code) => failed(new Error(`Local server stopped (${code}).`)));
         server.on("message", (raw) => {
           const message = /** @type {ChildMessage} */ (raw);
-          if (message?.type === "ready" && typeof message.url === "string") {
+          if (message?.type === "ready" && typeof message.origin === "string") {
             clearTimeout(timer);
             resolve(message);
           }
         });
       });
-      const origin = ready.origin;
+      const origin = String(ready.origin);
       const appSession = session.fromPartition(`akm-desktop-${process.pid}-${Date.now()}`);
       appSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
       appSession.setPermissionCheckHandler(() => false);
       appSession.on("will-download", (event) => event.preventDefault());
+      const removeAuthorization = addServerAuthorization(appSession, origin, secret);
       const win = new BrowserWindow({
         width: 1280,
         height: 860,
@@ -229,6 +236,7 @@ else
         },
       });
       window = win;
+      win.on("closed", removeAuthorization);
       win.on("close", (event) => {
         if (!canClose()) event.preventDefault();
       });
@@ -266,7 +274,7 @@ else
       server.on("exit", () => {
         if (!stopping) app.quit();
       });
-      await win.loadURL(String(ready.url));
+      await win.loadURL(`${origin}/`);
       win.show();
       updater.start();
     } catch (error) {

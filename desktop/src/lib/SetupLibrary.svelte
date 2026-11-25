@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-  import { api, pickFolder } from "./client";
+  import { api, appHref, pickFolder } from "./client";
   import { hasStarter } from "./setup-model";
   import { refreshBundles, workspace } from "./state/workspace.svelte";
 
@@ -77,7 +77,7 @@
       Your library is set up with {workspace.bundles.length}
       {workspace.bundles.length === 1 ? "bundle" : "bundles"}:
       {workspace.bundles.map((bundle) => bundle.name).join(", ") || "the working library"}.
-      <a href="/settings/bundles">Manage bundles</a>
+      <a href={appHref("/settings/bundles")}>Manage bundles</a>
     </p>
   {:else}
     <p>

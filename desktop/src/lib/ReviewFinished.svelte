@@ -5,6 +5,7 @@
 -->
 
 <script lang="ts">
+  import { appHref } from "./client";
   import { proposalHref } from "./review-model";
 
   let {
@@ -29,7 +30,9 @@
     <h2 bind:this={heading} tabindex="-1">Nothing left in this view</h2>
     <p>{remaining} more proposals are waiting outside these filters.</p>
     <div class="btn-row">
-      <a class="btn" href={all}>Show all pending</a><a class="btn btn-secondary" href={recent}>View recent decisions</a>
+      <a class="btn" href={appHref(all)}>Show all pending</a><a class="btn btn-secondary" href={appHref(recent)}
+        >View recent decisions</a
+      >
     </div>
   {:else}
     <h2 bind:this={heading} tabindex="-1">All caught up</h2>
@@ -37,10 +40,12 @@
       Nothing is waiting for review.{#if !filtered && reviewed > 0}{" "}You reviewed {reviewed} this session.{/if}
     </p>
     <div class="btn-row">
-      {#if filtered}<a class="btn" href={all}>Clear filters</a><a class="btn btn-secondary" href={recent}
-          >View recent decisions</a
-        >{:else}<a class="btn" href={recent}>View recent decisions</a><a class="btn btn-secondary" href="/"
-          >Go to Home</a
+      {#if filtered}<a class="btn" href={appHref(all)}>Clear filters</a><a
+          class="btn btn-secondary"
+          href={appHref(recent)}>View recent decisions</a
+        >{:else}<a class="btn" href={appHref(recent)}>View recent decisions</a><a
+          class="btn btn-secondary"
+          href={appHref("/")}>Go to Home</a
         >{/if}
     </div>
   {/if}

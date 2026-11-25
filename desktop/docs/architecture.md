@@ -18,7 +18,7 @@ host CLI/harnesses strictly for explicit installation and upgrade management.
 | Layer | Owns |
 | --- | --- |
 | `electron/` | The privileged shell only: window, local server lifecycle, external browser links, application-menu install |
-| `server/` | The web process (`server.mjs`): per-launch token, HTTP listener (loopback by default; `--host`/`--origin` for `akm-web` on a server), the built app. Runs on plain Node or Bun; imports nothing from Electron |
+| `server/` | The web process (`server.mjs`): per-launch secret and sessions, HTTP listener (loopback by default; `--host`/`--origin` and `experimental.web` for `akm-web` on a server), `Host` check, graceful shutdown, the built app. Runs on plain Node or Bun; imports nothing from Electron |
 | `src/hooks.server.ts` | Per-launch authentication and same-origin checks |
 | `src/lib/server/` and `src/routes/api/` | HTTP shell (`http.ts`: body limits, envelope, scrubbing and the one error-to-status mapping) over one route table (`routes.ts`: each route names a workspace operation and its input; unknown request fields are warned and ignored) |
 | `src/lib/server/features/` | Desktop-only features built on `akm-cli/workspace`: plain file editing, secret reveal policy, preferences, native host software orchestration |
@@ -122,11 +122,27 @@ owns it; Desktop does not rebuild it from other fields.
 
 ## Local application boundary
 
-By default the server binds an OS-selected port on `127.0.0.1`; `akm-web` with `--host` and `--origin` binds elsewhere
-(see the README section "Run it on a server"). A random per-launch token
-bootstraps an HttpOnly, SameSite=Strict cookie and is removed from the browser
-URL. The app refuses foreign Host/Origin requests, validates JSON body sizes,
-and does not enable CORS. Its token is redacted by AKM's configuration inspector.
+By default the server binds an OS-selected port on `127.0.0.1`. AKM Desktop starts it with fixed settings: loopback, a
+free port, the bound address as origin, no extra hosts, no frame parents, and a random secret made for that launch
+and passed in `AKM_WEB_SECRET`. It reads none of `experimental.web`, so remote-hosting settings do not change how
+Desktop starts. Electron adds the secret to its window's requests as an `Authorization: Bearer` header; the page never
+sees it. `akm-web` binds elsewhere from `experimental.web` or flags (see the README section "Run it on a server").
+
+One secret grants access, in three ways: typed into a login form (a session in an HttpOnly cookie, kept in memory and
+ended after 8 hours without use, on logout (the UI's "Log out" button, shown only for a cookie session) or on restart), sent as the header by a program that forwards requests, or
+traded for a one-time login link (60 seconds, works once; `POST /api/session/link` returns `<origin>/?login=<code>` with no path, so an app serving the UI under a path puts its path in front). The secret is never in a cookie, a URL or the output; the
+ready line carries only the origin. The server will not start without a secret of at least 32 characters, and removes
+the secret from its environment under every name that holds it (`AKM_WEB_SECRET` and a configured `$NAME`) after reading it, so child processes do not inherit it. These checks are always on: `Host` must be the origin's host
+or an allowed host (a name or address with an optional port; checked before the framework sees the request, which is then given the configured origin), and
+every write must carry an `Origin` equal to the origin, programs included. Only a `Bearer` credential is the secret's
+header; a wrong one is refused with `401` and never falls back to the cookie. The app validates JSON body sizes, does not
+enable CORS and sends `Cache-Control: no-store`. The secret is redacted by AKM's configuration inspector. Framing is
+denied unless `frameParents` names origins, which then replace the `frame-ancestors` directive; with an `https`
+origin the cookie then becomes `SameSite=None; Secure; Partitioned`. On `SIGTERM`, `SIGINT` or the `shutdown` message
+the server stops accepting connections and gives requests in flight and running child processes up to 10 seconds. It
+then terminates what still runs (the child's process group gets `SIGTERM`, then `SIGKILL` after 2 seconds), waits
+until the group is empty, names what it stopped on stderr and exits 0, in at most 13 seconds (`server/shutdown.mjs`).
+On Linux and macOS every child gets a process group of its own, which is stopped even after the child itself has exited.
 Unless `akm-web` is started with `--host`, this local HTTP listener is implementation detail, **not** a public API server.
 
 The renderer has no Node integration or preload authority. Electron sandboxing

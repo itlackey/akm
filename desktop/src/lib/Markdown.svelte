@@ -5,6 +5,7 @@
 -->
 
 <script lang="ts">
+  import { appHref } from "./client";
   import { markdown } from "./ui/markdown.js";
   let {
     content = "",
@@ -33,7 +34,7 @@
     source.body.match(/^#[ \t]+([^\n]+)(?:\n|$)/)?.[1]?.trim() === omitHeading ? omitHeading : undefined,
   );
   const rendered = $derived(
-    markdown(source.body, { ref, bundle, links, headings, startLine: source.startLine, skipTitle }),
+    markdown(source.body, { ref, bundle, links, headings, startLine: source.startLine, skipTitle, href: appHref }),
   );
 </script>
 

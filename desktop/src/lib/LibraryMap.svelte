@@ -35,7 +35,7 @@
   // counts them on each group's name, and lists exactly those beside the map with the figure that decides each one.
   // Choosing a group scopes the filters to it; choosing an asset shows what is wrong with it, what it is joined to and
   // the content closest to it in meaning. Where the map was left is remembered while the app is open.
-  import { api } from "./client";
+  import { api, appHref } from "./client";
   import Icon from "./Icon.svelte";
   import { FAMILIES } from "./graph-model";
   import {
@@ -620,7 +620,7 @@
   {@const shown = whole[id] ? list.length : limit}
   <ul class="read">
     {#each list.slice(0, shown) as i}<li class="read-row">
-        <a href={open(o!.ref[i]!)} title={o!.ref[i]}>{short(o!.ref[i]!)}</a>{#if note(i)}<span class="count"
+        <a href={appHref(open(o!.ref[i]!))} title={o!.ref[i]}>{short(o!.ref[i]!)}</a>{#if note(i)}<span class="count"
             >{note(i)}</span
           >{/if}
       </li>{/each}
@@ -645,11 +645,11 @@
 {#snippet pairList(list: Pair[], limit = 8)}
   <ul class="pairs">
     {#each list.slice(0, limit) as d}<li>
-        <a href={open(o!.ref[d.a]!)} title={o!.ref[d.a]}>{short(o!.ref[d.a]!)}</a>
+        <a href={appHref(open(o!.ref[d.a]!))} title={o!.ref[d.a]}>{short(o!.ref[d.a]!)}</a>
         <span class="pair-foot"
-          ><a href={open(o!.ref[d.b]!)} title={o!.ref[d.b]}>{short(o!.ref[d.b]!)}</a><span class="muted"
+          ><a href={appHref(open(o!.ref[d.b]!))} title={o!.ref[d.b]}>{short(o!.ref[d.b]!)}</a><span class="muted"
             >{Math.round(d.cosine * 100)}% alike</span
-          ><a href={compare(o!.ref[d.a]!, o!.ref[d.b]!)}>Compare</a></span
+          ><a href={appHref(compare(o!.ref[d.a]!, o!.ref[d.b]!))}>Compare</a></span
         >
       </li>{/each}
   </ul>
@@ -664,9 +664,9 @@
 />
 <div class="map-head">
   <nav class="library-views" aria-label="Library views" data-sveltekit-reset="false">
-    <a href="/library/search">Search</a>
-    <a href={filesLink}>Files</a>
-    <a href="/library/map" aria-current="page">Map</a>
+    <a href={appHref("/library/search")}>Search</a>
+    <a href={appHref(filesLink)}>Files</a>
+    <a href={appHref("/library/map")} aria-current="page">Map</a>
   </nav>
   <h1 class="sr-only">Library map</h1>
   <div class="views" role="tablist" aria-label="Question">
@@ -890,7 +890,7 @@
             </header>
             <section>
               <div class="actions">
-                <a class="btn btn-secondary" href={open(o.ref[i]!)}>Open</a>
+                <a class="btn btn-secondary" href={appHref(open(o.ref[i]!))}>Open</a>
                 <button
                   class="btn-secondary"
                   aria-expanded={near?.ref === o.ref[i]}
@@ -902,7 +902,7 @@
                   {#if o.problems[i]!.includes("outdated")}<li>
                       <strong>Outdated:</strong>
                       {#each o.outdatedWhy[i]! as x, n}{n ? ", " : ""}{x.why}{#if x.by >= 0}{" by "}<a
-                            href={open(o.ref[x.by]!)}
+                            href={appHref(open(o.ref[x.by]!))}
                             title={o.ref[x.by]}>{short(o.ref[x.by]!)}</a
                           >{/if}{/each}. Open it to retire it or fix the link.
                     </li>{/if}
@@ -917,7 +917,7 @@
                         >{short(o.ref[other]!)}</button
                       >
                       ({Math.round(d.cosine * 100)}% alike).
-                      <a href={compare(o.ref[i]!, o.ref[other]!)}>Compare</a> and keep one.
+                      <a href={appHref(compare(o.ref[i]!, o.ref[other]!))}>Compare</a> and keep one.
                     </li>{/each}
                 </ul>{/if}
               <dl class="figures">
@@ -938,9 +938,9 @@
                   {:else if !near.matches.length}<p class="muted small">No embedded content to compare.</p>
                   {:else}<ul>
                       {#each near.matches as m}<li>
-                          <a href={open(m.ref)} title={m.ref}>{short(m.ref)}</a><span class="muted small"
+                          <a href={appHref(open(m.ref))} title={m.ref}>{short(m.ref)}</a><span class="muted small"
                             >{Math.round(m.cosine * 100)}% alike</span
-                          ><a class="small" href={compare(o.ref[i]!, m.ref)}>Compare</a>
+                          ><a class="small" href={appHref(compare(o.ref[i]!, m.ref))}>Compare</a>
                         </li>{/each}
                     </ul>{/if}
                 </div>{/if}

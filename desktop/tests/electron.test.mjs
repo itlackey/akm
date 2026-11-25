@@ -5,11 +5,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, realpath, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import http from "node:http";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { _electron, expect } from "@playwright/test";
+import { addServerAuthorization, isServerRequest } from "../electron/auth-header.mjs";
 import { DESKTOP_ID, desktopEntry } from "../electron/menu-install.mjs";
 import { createFixture } from "../scripts/fixture.mjs";
 
@@ -42,7 +44,7 @@ test("native Electron window preserves size, sandbox, isolated data, and server 
   const page = await app.firstWindow();
   await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
   const origin = new URL(page.url()).origin;
-  assert.equal(new URL(page.url()).searchParams.has("desktop_session"), false);
+  assert.equal(new URL(page.url()).search, "", "the window's URL carries no credential");
   const bounds = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds());
   const initialBounds = await bounds();
   const prefs = await app.evaluate(({ BrowserWindow }) => {
@@ -362,4 +364,259 @@ test("Reveal in file manager reaches the main process: the menu offers it, and c
   } finally {
     await fixture.cleanup();
   }
+});
+
+/** The environment of a process, or "" when it cannot be read (it ended, or this is not Linux). */
+const environOf = (/** @type {string | number} */ pid) => readFile(`/proc/${pid}/environ`, "latin1").catch(() => "");
+
+/** Direct children of a process (Linux). */
+async function childrenOf(/** @type {number} */ parent) {
+  const found = [];
+  for (const entry of await readdir("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
+    const stat = await readFile(`/proc/${entry}/stat`, "latin1").catch(() => "");
+    // Fields after the parenthesised command name: state, ppid, ...
+    if (Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) === parent) found.push(Number(entry));
+  }
+  return found;
+}
+
+/** The per-launch secret, read from the server's start-up environment: only a test on Linux can see it. */
+async function launchSecret(/** @type {number} */ mainPid) {
+  for (const pid of await childrenOf(mainPid)) {
+    const match = /(?:^|\0)AKM_WEB_SECRET=([^\0]+)/.exec(await environOf(pid));
+    if (match) return { secret: match[1], serverPid: pid };
+  }
+  throw new Error("The server's secret was not found.");
+}
+
+/** A local server that records the headers of every request it gets. */
+async function recorder(/** @type {(request: import("node:http").IncomingMessage) => string | undefined} */ redirect) {
+  const seen = /** @type {Array<{ url: string, headers: import("node:http").IncomingHttpHeaders }>} */ ([]);
+  const server = http.createServer((request, response) => {
+    seen.push({ url: request.url ?? "", headers: request.headers });
+    const to = redirect(request);
+    if (to) response.writeHead(302, { location: to }).end();
+    else response.writeHead(200, { "access-control-allow-origin": "*" }).end("ok");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(undefined)));
+  const origin = `http://127.0.0.1:${/** @type {import("node:net").AddressInfo} */ (server.address()).port}`;
+  return { seen, origin, close: () => new Promise((resolve) => server.close(() => resolve(undefined))) };
+}
+
+test("the header filter matches the server's origin exactly and adds nothing elsewhere", async () => {
+  const origin = "http://127.0.0.1:4100";
+  assert.equal(isServerRequest("http://127.0.0.1:4100/api/session", origin), true);
+  for (const url of [
+    "http://127.0.0.1:4101/",
+    "http://localhost:4100/",
+    "https://127.0.0.1:4100/",
+    "http://127.0.0.1:4100@evil.example/",
+    "http://evil.example/http://127.0.0.1:4100/",
+    "not a url",
+  ])
+    assert.equal(isServerRequest(url, origin), false, url);
+  assert.equal(isServerRequest("http://127.0.0.1:4100/", "http://127.0.0.1:4100/path"), false);
+  let handler;
+  let removed = false;
+  const remove = addServerAuthorization(
+    {
+      webRequest: {
+        /** @type {any} */
+        onBeforeSendHeaders: (/** @type {any} */ filter, /** @type {any} */ listener) => {
+          if (listener) {
+            assert.deepEqual(filter, { urls: [`${origin}/*`] });
+            handler = listener;
+          } else removed = filter === null;
+        },
+      },
+    },
+    origin,
+    "s".repeat(40),
+  );
+  const run = (url) => new Promise((resolve) => handler({ url, requestHeaders: { Accept: "*/*" } }, resolve));
+  assert.equal((await run(`${origin}/x`)).requestHeaders.Authorization, `Bearer ${"s".repeat(40)}`);
+  assert.equal((await run("http://127.0.0.1:4101/x")).requestHeaders.Authorization, undefined);
+  remove();
+  assert.equal(removed, true);
+});
+
+test("Desktop starts with no configuration, keeps its secret to itself, and sends it only to its own origin", {
+  skip: Boolean(process.env.AKM_DESKTOP_TEST_RUNTIME) || process.platform !== "linux",
+  timeout: 120000,
+}, async (t) => {
+  const fixture = await createFixture();
+  const other = await recorder((request) =>
+    request.url === "/redirect-to-akm" ? `${launched.origin}/api/session` : undefined,
+  );
+  t.after(() => other.close());
+  /** @type {{ origin: string }} */
+  const launched = { origin: "" };
+  const app = await _electron.launch({
+    chromiumSandbox: true,
+    args: [root],
+    cwd: fixture.root,
+    env: fixture.env,
+    timeout: 45000,
+  });
+  const output = /** @type {string[]} */ ([]);
+  app.process().stdout?.on("data", (chunk) => output.push(String(chunk)));
+  app.process().stderr?.on("data", (chunk) => output.push(String(chunk)));
+  t.after(async () => {
+    await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
+    await app.close().catch(() => {});
+    await fixture.cleanup();
+  });
+  const page = await app.firstWindow();
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+  launched.origin = new URL(page.url()).origin;
+  const { secret, serverPid } = await launchSecret(app.process().pid);
+  assert.ok(secret.length >= 32);
+  assert.ok(launched.origin.startsWith("http://127.0.0.1:"));
+
+  // The secret is nowhere the window, the page or a log can reach.
+  assert.equal(page.url(), `${launched.origin}/`);
+  assert.equal(await page.evaluate(() => document.cookie), "");
+  assert.equal(
+    await page.evaluate(async () => ({ ...(await (await fetch("/api/session")).json()) })).then((v) => v.ok),
+    true,
+    "the page is signed in by the header alone",
+  );
+  assert.ok(!(await page.content()).includes(secret));
+  assert.ok(!JSON.stringify(await page.evaluate(() => ({ ...sessionStorage, ...localStorage }))).includes(secret));
+  assert.ok(!output.join("").includes(secret), "process output");
+  for (const pid of await childrenOf(app.process().pid))
+    if (pid !== serverPid) assert.ok(!(await environOf(pid)).includes(secret), `environment of child ${pid}`);
+  assert.ok(!(await environOf(app.process().pid)).includes(secret), "environment of the main process");
+
+  // The header goes to the server's origin and to nothing else: not another origin, not a redirect that leaves it,
+  // not an external link, not another session.
+  const asked = () => other.seen.map((request) => request.headers.authorization);
+  // The page's own policy keeps it from fetching other origins, so these go through the window's session, which is
+  // where the header is added.
+  const windowFetch = (/** @type {string} */ url) =>
+    app.evaluate(
+      async ({ BrowserWindow }, target) =>
+        (await BrowserWindow.getAllWindows()[0].webContents.session.fetch(target)).status,
+      url,
+    );
+  assert.equal(await windowFetch(`${other.origin}/direct`), 200);
+  assert.equal(other.seen.length, 1);
+  await app.evaluate(
+    ({ BrowserWindow }, { from, to }) => {
+      // An address on the server's origin that redirects to another origin.
+      BrowserWindow.getAllWindows()[0].webContents.session.webRequest.onBeforeRequest(
+        { urls: [`${from}/leave`] },
+        (_details, callback) => callback({ redirectURL: to }),
+      );
+    },
+    { from: launched.origin, to: `${other.origin}/redirected` },
+  );
+  await windowFetch(`${launched.origin}/leave`);
+  assert.equal(other.seen.at(-1)?.url, "/redirected");
+  await windowFetch(`${other.origin}/redirect-to-akm`);
+  assert.ok(
+    asked().every((value) => value === undefined),
+    "no header reaches another origin",
+  );
+
+  await app.evaluate(({ shell }) => {
+    globalThis.external = [];
+    shell.openExternal = async (url) => void globalThis.external.push(url);
+  });
+  await page.evaluate((url) => {
+    const link = document.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    document.body.append(link);
+    link.click();
+  }, `${other.origin}/link`);
+  await page.evaluate((url) => {
+    location.href = url;
+  }, `${other.origin}/navigate`);
+  await expect.poll(() => app.evaluate(() => globalThis.external.length)).toBe(2);
+  assert.equal(page.url(), `${launched.origin}/`);
+  assert.ok(
+    other.seen.every((request) => !["/link", "/navigate"].includes(request.url)),
+    "links open outside",
+  );
+  assert.ok(asked().every((value) => value === undefined));
+
+  const statusIn = (partition) =>
+    app.evaluate(
+      async ({ session }, { url, partition }) => {
+        const target = partition ? session.fromPartition(partition) : session.defaultSession;
+        return (await target.fetch(url)).status;
+      },
+      { url: `${launched.origin}/api/session`, partition },
+    );
+  assert.equal(await statusIn(undefined), 401, "the default session has no header");
+  assert.equal(await statusIn("akm-test-other"), 401, "another partition has no header");
+  assert.equal(
+    await app.evaluate(
+      async ({ BrowserWindow }, url) => (await BrowserWindow.getAllWindows()[0].webContents.session.fetch(url)).status,
+      `${launched.origin}/api/session`,
+    ),
+    200,
+    "the window's own session does",
+  );
+
+  // Closing the window removes the handler: its session sends no header afterwards (app.quit is held back so the
+  // server stays up to answer).
+  const afterClose = await app.evaluate(async ({ BrowserWindow, app }, url) => {
+    const quit = app.quit;
+    app.quit = () => {};
+    const win = BrowserWindow.getAllWindows()[0];
+    const closing = new Promise((resolve) => win.once("closed", resolve));
+    const windowSession = win.webContents.session;
+    win.close();
+    await closing;
+    const status = (await windowSession.fetch(url)).status;
+    app.quit = quit;
+    return status;
+  }, `${launched.origin}/api/session`);
+  assert.equal(afterClose, 401);
+});
+
+test("Desktop ignores experimental.web: loopback, its own origin, its own secret", {
+  skip: Boolean(process.env.AKM_DESKTOP_TEST_RUNTIME) || process.platform !== "linux",
+  timeout: 120000,
+}, async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.cleanup());
+  const remoteSecret = "remote-hosting-secret-".padEnd(48, "r");
+  const configPath = path.join(fixture.root, "config/config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.experimental = {
+    web: {
+      host: "0.0.0.0",
+      port: 47311,
+      origin: "https://assistant.example.test",
+      secret: "$AKM_TEST_REMOTE_SECRET",
+      allowedHosts: ["assistant.internal"],
+    },
+  };
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+  const app = await _electron.launch({
+    chromiumSandbox: true,
+    args: [root],
+    cwd: fixture.root,
+    env: { ...fixture.env, AKM_TEST_REMOTE_SECRET: remoteSecret },
+    timeout: 45000,
+  });
+  t.after(async () => {
+    await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
+    await app.close().catch(() => {});
+  });
+  const page = await app.firstWindow();
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+  const url = new URL(page.url());
+  assert.equal(url.hostname, "127.0.0.1");
+  assert.notEqual(url.port, "47311");
+  const { secret, serverPid } = await launchSecret(app.process().pid);
+  assert.notEqual(secret, remoteSecret);
+  const asServer = (/** @type {Record<string, string>} */ headers) => fetch(`${url.origin}/api/session`, { headers });
+  assert.equal((await asServer({ Authorization: `Bearer ${remoteSecret}` })).status, 401, "the configured secret");
+  assert.equal((await asServer({ Authorization: `Bearer ${secret}` })).status, 200, "the launch's own secret");
+  assert.ok(serverPid > 0);
 });
