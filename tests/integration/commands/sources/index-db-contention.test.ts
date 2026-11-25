@@ -3,29 +3,19 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm index` against a genuinely contended index.db (field follow-up to
- * #956, F1). Mirrors `index-sigterm-promptness.test.ts`: spawns the REAL CLI
- * child process (`bun src/cli.ts index`) rather than the in-process
- * `runCliCapture` harness, since the point is what the real SQLite driver
- * does under contention from a second connection. A held write transaction
- * on index.db forces the busy connection to exhaust SQLite's own
- * `busy_timeout` (30s, `SQLITE_BUSY_TIMEOUT_MS` in
- * src/storage/sqlite-pragmas.ts) before returning `SQLITE_BUSY` — this test
- * necessarily takes about that long for its first assertion; see the PR
- * description for why that floor cannot be shortened without touching that
- * shared constant, out of scope for this change.
- *
- * Integration-scoped (ORG-03/06): spawns a real child process and opens a
- * real index.db (a second connection here, plus the child's own).
+ * A held index.db write transaction forces a second connection to exhaust
+ * SQLite's busy timeout. Run that write path in-process to shorten the wait.
+ * The lock-held check uses a child so the sentinel belongs to another PID.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../../../../src/core/config/config";
 import { getIndexRebuildLockPath } from "../../../../src/core/paths";
 import type { Database } from "../../../../src/storage/database";
-import { openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
+import * as indexConnection from "../../../../src/storage/repositories/index-connection";
+import { runCliCapture } from "../../../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
@@ -77,18 +67,21 @@ function parseTrailingJsonEnvelope(stderr: string): { ok: boolean; error: string
 }
 
 describe("akm index — index.db contention (field follow-up to #956, F1)", () => {
-  test("a busy index.db reclassifies to exit 75 INDEX_DB_CONTENDED; " +
-    "with a live rebuild lock `akm index` skips at exit 0 without ever touching the DB", async () => {
+  test("SQLite contention exits 75; a live rebuild lock skips before writing and exits 0", async () => {
     writeMemory("note-0");
 
     // A writer outside any akm build holds an open write transaction on
     // index.db: a plain `akm index` takes the rebuild lock, then runs out
     // the busy timeout (this contention reclassification, a field follow-up).
+    const openIndexDatabase = indexConnection.openIndexDatabase;
     const holder: Database = openIndexDatabase();
     holder.exec("BEGIN IMMEDIATE");
 
     try {
-      const contended = await runIndexChild(["--full", "--format=json"]);
+      const writer = spyOn(indexConnection, "openIndexDatabase").mockImplementation((dbPath, options) =>
+        openIndexDatabase(dbPath, { ...options, busyTimeoutMs: 300 }),
+      );
+      const contended = await runCliCapture(["index", "--full", "--format=json"]).finally(() => writer.mockRestore());
 
       expect(contended.stdout.trim()).toBe("");
       expect(contended.code).toBe(75);
@@ -125,5 +118,5 @@ describe("akm index — index.db contention (field follow-up to #956, F1)", () =
       }
       holder.close();
     }
-  }, 45_000);
+  });
 });
