@@ -104,20 +104,13 @@ const REGISTRY_CALLS = new Set(["adapterForId", "getAdapters"]);
 const UPWARD_LAYERS = ["src/commands/", "src/tasks/", "src/indexer/"];
 /** ...but for these modules, still there until what they hold moves down into core. A new one fails; do not add to it. */
 const UPWARD_ALLOWED = [
-  "src/commands/command/builtin-action",
-  "src/indexer/index-on-miss",
   "src/indexer/index-readiness",
   "src/indexer/index-rows",
-  "src/indexer/index-writer-lock",
   "src/indexer/materialize-embeddings",
-  "src/indexer/passes/markdown-projection",
   "src/indexer/passes/metadata",
   "src/indexer/scan/drain-dir",
   "src/indexer/search/search-source",
-  "src/tasks/backends",
   "src/tasks/schedule-gates",
-  "src/tasks/source-v3",
-  "src/tasks/source/bounded-document",
   "src/tasks/source/parse-task-source",
 ];
 const FACADE_INTERNAL_MODULES = ["src/core/assets/bundle", "src/core/assets/asset", "src/core/assets/index-rows"];

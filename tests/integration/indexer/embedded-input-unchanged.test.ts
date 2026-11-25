@@ -23,7 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
-import { deriveEntryProvenance, deriveInstallations } from "../../../src/indexer/installations";
+import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import {
   closeDatabase,
   openExistingDatabase,
@@ -165,9 +165,7 @@ describe("re-embedding follows the embedded input, not the whole search text", (
   test("the decision is exact at the cut: the last embedded character re-embeds, the first one past it does not", () => {
     const db = openIndexDatabase();
     try {
-      const installation = deriveInstallations([{ path: storage.stashDir, writable: true }])[0];
-      if (!installation) throw new Error("failed to derive a test bundle installation");
-      const provenance = deriveEntryProvenance({ bundleId: installation.id, adapterId: "akm" }, "knowledge", "edge");
+      const provenance = deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "knowledge", "edge");
       const filePath = path.join(storage.stashDir, "knowledge", "edge.md");
       // The search text is `edge <content>`; a 10-token cap embeds its first 40 characters.
       const capTokens = 10;

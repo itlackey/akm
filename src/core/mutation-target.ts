@@ -3,7 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
-import { deriveInstallations } from "../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
 import { type AssetRef, conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
 import type { AkmConfig } from "./config/config";
@@ -14,6 +13,7 @@ import {
   resolveWorkingStashTarget,
   resolveWriteTarget,
   type WriteTargetOptions,
+  type WriteTargetSource,
 } from "./write-source";
 
 export interface ResolvedMutationTarget {
@@ -24,30 +24,23 @@ export interface ResolvedMutationTarget {
   displayRef: string;
 }
 
-interface CanonicalSource {
-  bundleId: string;
-  source: SearchSource;
-}
-
-function canonicalSources(config: AkmConfig): CanonicalSource[] {
-  const sources = resolveSourceEntries(undefined, config);
-  const installations = deriveInstallations(sources);
-  return sources.flatMap((source, index) => {
-    const bundleId = installations[index]?.id;
-    return bundleId ? [{ bundleId, source }] : [];
-  });
+function sameTarget(left: WriteTargetSource, right: { name: string; path?: string }): boolean {
+  if (left.path !== undefined && right.path !== undefined) {
+    return path.resolve(left.path) === path.resolve(right.path);
+  }
+  return left.path === undefined && right.path === undefined && left.name === right.name;
 }
 
 function targetForCanonicalSource(
   config: AkmConfig,
-  canonical: CanonicalSource,
+  source: SearchSource,
   options: WriteTargetOptions,
 ): ResolvedWriteTarget {
-  const target = canonical.source.registryId
-    ? resolveWriteTarget(config, canonical.source.registryId, options)
+  const target = source.registryId
+    ? resolveWriteTarget(config, source.bundleId, options)
     : resolveWorkingStashTarget(config, options);
-  if (path.resolve(target.source.path) !== path.resolve(canonical.source.path)) {
-    throw new UsageError(`Bundle "${canonical.bundleId}" no longer resolves to its indexed source root.`);
+  if (source.unresolved || !sameTarget(target.source, { name: source.bundleId, path: source.path })) {
+    throw new UsageError(`Bundle "${source.bundleId}" no longer resolves to its indexed source root.`);
   }
   return target;
 }
@@ -55,8 +48,8 @@ function targetForCanonicalSource(
 /** Resolve the canonical bundle id currently assigned to a write target. */
 export function canonicalBundleIdForTarget(config: AkmConfig, target: ResolvedWriteTarget): string {
   return (
-    canonicalSources(config).find(
-      (candidate) => path.resolve(candidate.source.path) === path.resolve(target.source.path),
+    resolveSourceEntries(undefined, config).find(
+      (source) => !source.unresolved && sameTarget(target.source, { name: source.bundleId, path: source.path }),
     )?.bundleId ?? target.source.name
   );
 }
@@ -67,7 +60,7 @@ export function resolveBundleWriteTarget(
   bundleId: string,
   options: WriteTargetOptions = {},
 ): ResolvedWriteTarget {
-  const canonical = canonicalSources(config).find((candidate) => candidate.bundleId === bundleId);
+  const canonical = resolveSourceEntries(undefined, config).find((source) => source.bundleId === bundleId);
   if (!canonical) {
     throw new UsageError(`Bundle "${bundleId}" is not configured.`, "INVALID_FLAG_VALUE");
   }
@@ -108,11 +101,7 @@ export function resolveMutationTarget(
   const explicitResolved = explicitTarget
     ? resolveExplicitMutationTarget(config, explicitTarget, writeOptions)
     : undefined;
-  if (
-    qualifiedTarget &&
-    explicitResolved &&
-    path.resolve(qualifiedTarget.source.path) !== path.resolve(explicitResolved.source.path)
-  ) {
+  if (qualifiedTarget && explicitResolved && !sameTarget(qualifiedTarget.source, explicitResolved.source)) {
     throw new UsageError(
       `Qualified ref bundle "${ref.origin}" conflicts with ${flag} "${explicitTarget}".`,
       "INVALID_FLAG_VALUE",

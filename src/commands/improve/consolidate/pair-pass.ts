@@ -76,6 +76,7 @@ import {
   listProposalsReadOnly,
   type ProposalsContext,
   proposalContentHash,
+  proposalTargetOf,
   recordGateDecision,
 } from "../../proposal/repository";
 import type { AkmConsolidateOptions } from "../consolidate";
@@ -985,9 +986,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
         // promotion review) never sweeps a retire proposal, and the reverse.
         source: "consolidate-pair",
         sourceRun: ctx.opts.sourceRun,
-        ...(ctx.opts.writeTarget
-          ? { target: { source: ctx.opts.writeTarget.source.name, root: ctx.opts.writeTarget.source.path } }
-          : {}),
+        ...(ctx.opts.writeTarget ? { target: proposalTargetOf(ctx.opts.writeTarget) } : {}),
         confidence: verdict.confidence,
         retirement,
       },

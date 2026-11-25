@@ -10,7 +10,12 @@ import { addressOf, writeAssets } from "../../core/assets/write";
 import { isWithin } from "../../core/common";
 import { loadConfig, mutateConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import { commitWriteTargetBoundary, prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
+import {
+  assertPlainWritable,
+  commitWriteTargetBoundary,
+  prepareWriteTargetForMutation,
+  resolveWriteTarget,
+} from "../../core/write-source";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { selectBackend } from "../../tasks/backends";
 import type { SchedulerBackend } from "../../tasks/backends/types";
@@ -43,7 +48,10 @@ export async function importTaskFile(
   const id = normaliseTaskId(input.name ?? path.basename(input.source).replace(/\.ya?ml$/i, ""));
   const config = loadConfig();
   const target = resolveWriteTarget(config, input.target, { requireWritable: true, flag: "--bundle" });
-  const file = assetPathForName("task", path.join(target.source.path, "tasks"), id);
+  const { source } = target;
+  assertPlainWritable(source, target.config);
+  const taskDir = path.join(source.path, "tasks");
+  const file = assetPathForName("task", taskDir, id);
   return withSchedulerLock(async () => {
     const existed = addressOf(target.source, `tasks/${id}`).exists;
     if (existed && !input.force) {
@@ -66,7 +74,7 @@ export async function importTaskFile(
       if (schedulerEnabledRefs(loadConfig())?.includes(ref)) setSchedulerRefEnabled(ref, false);
     }
     // A task file that is a link leaving `tasks/` is refused here, before the write refuses links as it does for every type.
-    if (!isWithin(file, path.join(target.source.path, "tasks"))) {
+    if (!isWithin(file, taskDir)) {
       throw new UsageError(
         `Resolved asset path escapes its source: "${id}" in source "${target.source.name}".`,
         "PATH_ESCAPE_VIOLATION",

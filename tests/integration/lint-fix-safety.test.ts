@@ -28,8 +28,8 @@ import { akmLint } from "../../src/commands/lint/index";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import { UsageError } from "../../src/core/errors";
+import * as indexWriterLock from "../../src/core/index-writer-lock";
 import { runBaseChecks } from "../../src/core/lint/base-linter";
-import * as indexWriterLock from "../../src/indexer/index-writer-lock";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 

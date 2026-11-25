@@ -9,9 +9,11 @@
  * Usage:
  *   AKM_SEMANTIC_TESTS=1 bun test tests/integration/semantic-search-e2e.test.ts
  */
+
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { slugForPath } from "../../src/core/bundle-id";
 import type { AkmConfig } from "../../src/core/config/config";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
@@ -407,7 +409,7 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       searchType: "any",
       limit: 10,
       stashDir,
-      sources: [{ path: stashDir }],
+      sources: [{ bundleId: slugForPath(stashDir), path: stashDir }],
       config,
     });
 
@@ -432,7 +434,7 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       searchType: "any",
       limit: 10,
       stashDir,
-      sources: [{ path: stashDir }],
+      sources: [{ bundleId: slugForPath(stashDir), path: stashDir }],
       config,
     });
 
@@ -452,7 +454,7 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       searchType: "any",
       limit: 10,
       stashDir,
-      sources: [{ path: stashDir }],
+      sources: [{ bundleId: slugForPath(stashDir), path: stashDir }],
       config,
     });
 
@@ -474,7 +476,7 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       searchType: "any",
       limit: 10,
       stashDir,
-      sources: [{ path: stashDir }],
+      sources: [{ bundleId: slugForPath(stashDir), path: stashDir }],
       config,
     });
 
@@ -491,7 +493,7 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       searchType: "any",
       limit: 10,
       stashDir,
-      sources: [{ path: stashDir }],
+      sources: [{ bundleId: slugForPath(stashDir), path: stashDir }],
       config,
     });
 
@@ -518,7 +520,7 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       searchType: "any",
       limit: 10,
       stashDir,
-      sources: [{ path: stashDir }],
+      sources: [{ bundleId: slugForPath(stashDir), path: stashDir }],
       config,
     });
 
@@ -534,7 +536,7 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       searchType: "any",
       limit: 10,
       stashDir,
-      sources: [{ path: stashDir }],
+      sources: [{ bundleId: slugForPath(stashDir), path: stashDir }],
       config,
     });
 
@@ -634,7 +636,7 @@ describe("Semantic search graceful degradation", () => {
       searchType: "any",
       limit: 10,
       stashDir,
-      sources: [{ path: stashDir }],
+      sources: [{ bundleId: slugForPath(stashDir), path: stashDir }],
       config,
     });
 

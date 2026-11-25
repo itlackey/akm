@@ -39,11 +39,10 @@ import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-ty
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { openStateDatabase } from "../../core/state-db";
 import { info, warn, warnVerbose } from "../../core/warn";
-import { type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-source";
+import { type ResolvedWriteTarget, requireWriteTargetPath, resolveWriteTarget } from "../../core/write-source";
 import { type NoticeSink, noticeSet } from "../../execution/notices";
-import { deriveInstallations } from "../../indexer/installations";
 import { listMemories } from "../../indexer/passes/memory-inference";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveSourceEntries, sourceAtPath, sourcePaths } from "../../indexer/search/search-source";
 import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
@@ -380,7 +379,7 @@ export function makeConsolidateResult(
 
 export function resolveConsolidationWriteTarget(opts: AkmConsolidateOptions, config: AkmConfig): ResolvedWriteTarget {
   if (opts.writeTarget) {
-    const root = path.resolve(opts.writeTarget.source.path);
+    const root = path.resolve(requireWriteTargetPath(opts.writeTarget.source));
     return {
       ...opts.writeTarget,
       source: {
@@ -399,7 +398,7 @@ export function resolveConsolidationWriteTarget(opts: AkmConsolidateOptions, con
     };
   }
   const target = resolveWriteTarget(config, opts.target);
-  return { ...target, source: { ...target.source, path: path.resolve(target.source.path) } };
+  return { ...target, source: { ...target.source, path: path.resolve(requireWriteTargetPath(target.source)) } };
 }
 
 export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<ConsolidateResult> {
@@ -407,7 +406,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const config = opts.config ?? loadConfig();
   const writeTarget = resolveConsolidationWriteTarget(opts, config);
   const profile = opts.improveProfile ?? resolveImproveStrategy(undefined, config).config;
-  const stashDir = writeTarget.source.path;
+  const stashDir = requireWriteTargetPath(writeTarget.source);
   const notices = noticeSet(opts.onNotices);
   const enabled = resolveProcessEnabled("consolidate", profile);
   const runner = enabled ? stageRunner(opts, config, "consolidate", notices.add) : undefined;
@@ -505,20 +504,14 @@ function resolveConsolidationSourceOwner(
   const targetRoot = path.resolve(opts.writeTarget?.source.path ?? stashDir);
   try {
     const sources = resolveSourceEntries(stashDir, opts.config);
-    const targetIndex = sources.findIndex((source) => path.resolve(source.path) === targetRoot);
-    const target = deriveInstallations(sources)[targetIndex];
+    const target = sourceAtPath(sources, targetRoot);
     if (!target) return undefined;
     // The directory is a bundle the facade takes as its source, which config may not name (an override directory).
     return {
-      bundle: { ...bundleSourceAt(stashDir, opts.config), name: target.id },
-      bundleId: target.id,
+      bundle: { ...bundleSourceAt(stashDir, opts.config), name: target.bundleId },
+      bundleId: target.bundleId,
       sourceRoot: targetRoot,
-      excludedSourceRoots: new Set(
-        sources
-          .filter((_, index) => index !== targetIndex)
-          .map((source) => path.resolve(source.path))
-          .filter((sourceRoot) => sourceRoot.startsWith(`${targetRoot}${path.sep}`)),
-      ),
+      excludedSourceRoots: new Set(sourcePaths(sources).filter((root) => root.startsWith(`${targetRoot}${path.sep}`))),
     };
   } catch {
     return undefined;
@@ -1126,7 +1119,7 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
     }
     const proposal = mintProposal(stashDir, ctx.proposalsCtx, {
       ref: knowledgeRef,
-      target: { source: target.source.name, root: target.source.path },
+      target: { source: target.source.name, root: requireWriteTargetPath(target.source) },
       source: "consolidate",
       sourceRun: ctx.sourceRun,
       payload: {

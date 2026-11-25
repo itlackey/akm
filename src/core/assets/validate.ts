@@ -13,16 +13,15 @@
 import type { SearchSource } from "../../indexer/search/search-source";
 import type { AssetEntry } from "../adapter/bundle-adapter";
 import type { AssetEdit, Diagnostic, ValidateContext } from "../adapter/types";
-import { deriveBundleIds } from "../bundle-id";
 import { type Asset, assetOf } from "./asset";
-import { assetBundleOf } from "./bundle";
+import { assetBundleOf, type BundleSource, sourceBundle } from "./bundle";
 
 /**
  * What the bundle's adapter reports for the assets it lists, each checked as an `update` in the adapter's listing
  * order; `keep` narrows them by their entries. This is `akm lint`'s scan of a bundle as it stands.
  */
 export function validateBundleAssets(
-  bundle: { name: string; path: string; location?: string; adapterId?: string },
+  bundle: BundleSource,
   options: { keep?: (entry: AssetEntry) => boolean; ctx?: ValidateContext } = {},
 ): Promise<Diagnostic[]> {
   const held = assetBundleOf(bundle);
@@ -39,17 +38,11 @@ export function validateBundleAssets(
  * store that cannot be reached, or fails, has nothing to report.
  */
 export async function storeFindings(sources: readonly SearchSource[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  const ids = deriveBundleIds([...sources]);
   const found: Diagnostic[] = [];
-  for (const [index, source] of sources.entries()) {
+  for (const source of sources) {
     if (source.unresolved) continue;
     try {
-      const held = assetBundleOf({
-        name: ids[index] as string,
-        path: source.path,
-        ...(source.location !== undefined ? { location: source.location } : {}),
-        ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
-      });
+      const held = assetBundleOf(sourceBundle(source));
       if (!held.isStore) continue;
       const edits = held.list().assets.map(({ conceptId }): AssetEdit => ({ conceptId, op: "update" }));
       found.push(...(await held.validate(edits, ctx)));
@@ -61,21 +54,13 @@ export async function storeFindings(sources: readonly SearchSource[], ctx: Valid
 }
 
 /** Every asset the bundle's adapter lists, one per concept, in the adapter's listing order. */
-export function listBundleAssets(bundle: {
-  name: string;
-  path: string;
-  location?: string;
-  adapterId?: string;
-}): Asset[] {
+export function listBundleAssets(bundle: BundleSource): Asset[] {
   const held = assetBundleOf(bundle);
   return held.list().assets.map((found) => assetOf(held, found));
 }
 
 /** The asset the bundle holds at the stored `key`, when it holds one there. */
-export function assetAtStoredKey(
-  bundle: { name: string; path: string; location?: string; adapterId?: string },
-  key: string,
-): Asset | undefined {
+export function assetAtStoredKey(bundle: BundleSource, key: string): Asset | undefined {
   const held = assetBundleOf(bundle);
   const conceptId = held.identifyKey(key);
   const found = conceptId === null ? undefined : held.read(conceptId);

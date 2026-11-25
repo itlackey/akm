@@ -16,9 +16,15 @@ import { listAssets, readAsset } from "../../core/assets/read";
 import { writeAssets } from "../../core/assets/write";
 import { loadConfig, mutateConfig, resetConfigCache } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import { commitWriteTargetBoundary, prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
+import { backendNameForPlatform } from "../../core/platform";
+import {
+  commitWriteTargetBoundary,
+  prepareWriteTargetForMutation,
+  requireWriteTargetPath,
+  resolveWriteTarget,
+} from "../../core/write-source";
 import { enabledRefsFromInstalled, isSchedulerBundleActive, schedulerEnabledRefs } from "../../tasks/activation-config";
-import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
+import { selectBackend } from "../../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../../tasks/embedded";
 import { parseSchedule } from "../../tasks/schedule";
 import type { InstalledSchedulerBinding } from "../../tasks/scheduler-binding";
@@ -166,7 +172,7 @@ export async function prepareSetupTaskDefinitions(
   const target = prepareWriteTargetForMutation(
     resolveWriteTarget(config, config.defaultBundle, { requireWritable: true }),
   );
-  const taskDir = path.join(target.source.path, "tasks");
+  const taskDir = path.join(requireWriteTargetPath(target.source), "tasks");
   const write = deps.writeAssets ?? writeAssets;
   const commitBoundary = deps.commitBoundary ?? commitWriteTargetBoundary;
 

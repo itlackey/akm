@@ -86,9 +86,8 @@ export function clearAdapterCaches(): void {
 }
 
 /** The bundle its adapter is called with: its id (its config name), and its `location` when it is a store, else its root. */
-export function bundleOf(source: { name: string; path: string; location?: string }): Bundle {
-  return {
-    id: source.name,
-    ...(source.location ? { location: source.location } : { root: source.path }),
-  };
+export function bundleOf(source: { name: string; path?: string; location?: string }): Bundle {
+  if (source.location !== undefined) return { id: source.name, location: source.location };
+  if (source.path !== undefined) return { id: source.name, root: source.path };
+  throw new ConfigError(`Bundle "${source.name}" has no resolved directory.`, "INVALID_CONFIG_FILE");
 }

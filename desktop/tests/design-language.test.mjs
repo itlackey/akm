@@ -259,6 +259,7 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
 
   // Review: Tab never moves up, or left on the same row, from the control before; and no focus ring is cut.
   await open(`/review/${app.proposals.fresh}`, ".dcol.inline");
+  await expect(page.locator(".review-pane").getByRole("button", { name: "Accept…", exact: true })).toBeVisible();
   const proposal = await tabStops(page, ".review-pane");
   assert.ok(proposal.length >= 5, `the proposal pane has its controls in the tab order (${proposal.length})`);
   assert.deepEqual(out(proposal, "moved"), [], "Review, short window: focus order is reading order in the proposal");

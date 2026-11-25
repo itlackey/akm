@@ -8,8 +8,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { realpathSync } from "node:fs";
+import { resolveStashDir } from "../../../src/core/common";
+import { openUsableIndex } from "../../../src/indexer/index-readiness";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { findAssetOnDisk, resolveAssetPath } from "../../../src/indexer/path-resolver";
+import { closeDatabase } from "../../../src/storage/repositories/index-connection";
+import { getMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { withFakeSecretStores } from "../../_helpers/fake-secret-stores";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
@@ -22,14 +27,14 @@ beforeEach(() => {
 afterEach(() => storage.cleanup());
 
 describe("a ref no file holds (F36)", () => {
-  test("is found, and has no path", async () => {
+  test.each(["stash", "keyring"])("is found without a path with working bundle %s", async (working) => {
     writeSandboxConfig({
       semanticSearchMode: "off",
       bundles: {
         stash: { path: storage.stashDir, writable: true },
         keyring: { adapter: "secret-tool", location: "akm" },
       },
-      defaultBundle: "stash",
+      defaultBundle: working,
     });
     const keyrings = {
       akm: [
@@ -43,7 +48,20 @@ describe("a ref no file holds (F36)", () => {
     };
 
     await withFakeSecretStores({ keyrings }, async () => {
-      await akmIndex({ stashDir: storage.stashDir, full: true });
+      const library = resolveStashDir();
+      await akmIndex({ stashDir: library, full: true });
+      const usable = openUsableIndex({ bundleId: "keyring" }, { readOnly: true });
+      expect(usable?.complete).toBe(true);
+      if (!usable) throw new Error("Expected a usable index for the keyring");
+      try {
+        const { db } = usable;
+        expect(getMeta(db, "stashDirs")).toBe(JSON.stringify([realpathSync(storage.stashDir)]));
+        expect(getMeta(db, "stashBundles")).toBe(JSON.stringify(["keyring"]));
+        expect(getMeta(db, "stashDir")).toBe(realpathSync(storage.stashDir));
+      } finally {
+        closeDatabase(usable.db);
+      }
+      expect((await akmIndex({ stashDir: library })).mode).toBe("incremental");
       expect(findAssetOnDisk("keyring//secrets/gh_token")?.ref).toBe("keyring//secrets/gh_token");
       expect(await resolveAssetPath("keyring//secrets/gh_token", { mode: "disk-only" })).toBeNull();
       expect(await resolveAssetPath("keyring//secrets/gh_token")).toBeNull();

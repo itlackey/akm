@@ -16,11 +16,11 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
+import { CONTENT_PROJECTION_VERSION } from "../../../src/core/asset/markdown-projection";
 import { saveConfig } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex, lookupBundleRef } from "../../../src/indexer/indexer";
 import { computeDirFingerprint } from "../../../src/indexer/passes/dir-staleness";
-import { CONTENT_PROJECTION_VERSION } from "../../../src/indexer/passes/markdown-projection";
 import { openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 

@@ -20,10 +20,11 @@ import { assertAdapterWrites } from "../../core/assets/gate";
 import { type Asset, readAsset } from "../../core/assets/read";
 import { type AssetAddress, addressOf, writeAssets } from "../../core/assets/write";
 import { stateBundleId } from "../../core/bundle-at-dir";
-import { toErrorMessage } from "../../core/common";
+import { groupBy, toErrorMessage } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import type { MemoryPruneCandidate } from "../../core/improve-types";
+import { withAssetMutationLease } from "../../core/index-writer-lock";
 import { runBaseChecks } from "../../core/lint/base-linter";
 import type { LintIssue, LintIssueType } from "../../core/lint/types";
 import { canonicalBundleIdForTarget, resolveBundleWriteTarget } from "../../core/mutation-target";
@@ -34,12 +35,13 @@ import {
   commitAcceptedPaths,
   prepareWriteTargetForMutation,
   type ResolvedWriteTarget,
+  repoDirFor,
+  requireWriteTargetPath,
   resolveWriteTarget,
   type WriteTargetSource,
 } from "../../core/write-source";
-import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { sameScope, scopeFromFrontmatter } from "../../indexer/passes/metadata";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveSourceEntries, sourcePaths } from "../../indexer/search/search-source";
 import { upsertProposal } from "../../storage/repositories/proposals-repository";
 import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { withSchedulerLock } from "../../tasks/scheduler-lock";
@@ -300,7 +302,6 @@ function promotionLintBlockers(
   } else {
     ({ data, content: body, frontmatter, bodyStartLine } = parseFrontmatter(raw));
   }
-  const resolvedRoot = path.resolve(targetRoot);
   return runBaseChecks({
     filePath: assetPath,
     relPath: path.relative(targetRoot, assetPath),
@@ -312,9 +313,7 @@ function promotionLintBlockers(
     fix: false,
     stashRoot: targetRoot,
     stalePathRoots: stalePathRoots(config, targetRoot),
-    extraStashRoots: resolveSourceEntries(targetRoot, config)
-      .map((source) => source.path)
-      .filter((sourcePath) => path.resolve(sourcePath) !== resolvedRoot),
+    extraStashRoots: sourcePaths(resolveSourceEntries(targetRoot, config)).slice(1),
   }).filter((finding) => PROMOTION_LINT_ISSUE_TYPES.has(finding.issue));
 }
 
@@ -346,11 +345,12 @@ export function preflightProposalPromotion(
     );
   }
   const target = resolveProposalWriteTarget(config, prepared, options.target, options.queueTarget);
-  const ref = addressOf(target.source, prepared.ref);
+  const { source } = target;
+  const ref = addressOf(source, prepared.ref);
   if (!ref.exists && ref.file === undefined && stashDirFor(ref.type) === undefined) {
     throw new UsageError(`Proposal ${proposal.id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
-  assertAdapterWrites(target.source, ref.type);
+  assertAdapterWrites(source, ref.type);
   const assetPath = ref.file;
   if (!assetPath) {
     throw new UsageError(`Proposal ${proposal.id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
@@ -359,7 +359,7 @@ export function preflightProposalPromotion(
   let stampedContent = markdown
     ? stampProposalProvenance(repairedContent, prepared, options.gateDecision, ctx, nowIso(ctx))
     : repairedContent;
-  const live = markdown && ref.exists ? readAsset(target.source, ref.conceptId) : undefined;
+  const live = markdown && ref.exists ? readAsset(source, ref.conceptId) : undefined;
   if (live) {
     // Keep the live target's bookkeeping frontmatter the proposal doesn't set
     // (STALE, R20) — dropping `inferenceProcessed` would re-run inference.
@@ -370,17 +370,18 @@ export function preflightProposalPromotion(
     }
   }
   if (prepared.promotionSource) {
-    const source = currentAsset(target.source, prepared.promotionSource);
-    if (source && !sameScope(scopeOf(source.entry.content()), scopeOf(stampedContent))) {
+    const parent = currentAsset(source, prepared.promotionSource);
+    if (parent && !sameScope(scopeOf(parent.entry.content()), scopeOf(stampedContent))) {
       throw new UsageError(
         `Promotion ${proposal.id} has incompatible source/output scope — reject and reassess.`,
         "INVALID_FLAG_VALUE",
       );
     }
   }
-  const lintBlockers = promotionLintBlockers(stampedContent, assetPath, target.source.path, ref.type, config);
-  if (lintBlockers.length > 0) {
-    const summary = lintBlockers.map((finding) => `[${finding.issue}] ${finding.detail}`).join("; ");
+  const root = requireWriteTargetPath(source);
+  const blockers = promotionLintBlockers(stampedContent, assetPath, root, ref.type, config);
+  if (blockers.length) {
+    const summary = blockers.map(({ issue, detail }) => `[${issue}] ${detail}`).join("; ");
     warn(`[proposal] promotion lint for ${proposal.id} found (non-blocking): ${summary}`);
   }
   return { proposal: prepared, repairedContent, ref, target, assetPath, stampedContent };
@@ -488,11 +489,7 @@ function commitAccept(
  */
 export function commitCollectedAccepts(collector: AcceptCommitCollector, label: string): Map<string, CommitOutcome> {
   const outcomes = new Map<string, CommitOutcome>();
-  const byRepo = new Map<string, AcceptCommitCollector>();
-  for (const entry of collector.splice(0)) {
-    const key = path.resolve(entry.target.source.repoPath ?? entry.target.source.path);
-    byRepo.set(key, [...(byRepo.get(key) ?? []), entry]);
-  }
+  const byRepo = groupBy(collector.splice(0), (entry) => repoDirFor(entry.target.source));
   for (const entries of byRepo.values()) {
     const first = entries[0] as AcceptCommitCollector[number];
     if (entries.length === 1) {

@@ -26,11 +26,10 @@ import type {
 import { bundleAdapterId } from "../adapter/detect-adapter";
 import { bundleOf, requireAdapter } from "../adapter/registry";
 import type { AssetEdit, Bundle, Diagnostic, IndexDocument, ValidateContext } from "../adapter/types";
-import { deriveBundleIds } from "../bundle-id";
 import { type AkmConfig, loadConfig } from "../config/config";
 import { ConfigError, UsageError, type UsageErrorCode } from "../errors";
 
-export type BundleSource = { name: string; path: string; location?: string; adapterId?: string };
+export type BundleSource = { name: string; path?: string; location?: string; adapterId?: string };
 
 /**
  * A bundle as a caller names it to the facade: a configured bundle by its id, else the source of a directory no config
@@ -46,8 +45,8 @@ export function bundleNameOf(bundle: BundleAddress): string {
 export class AssetBundle {
   /** The id refs use. */
   readonly name: string;
-  /** The directory its assets are read from (a store has none: its source's key), and a store's `location`: for the index and for display only. */
-  readonly root: string;
+  /** The directory its assets are read from, absent for a store. */
+  readonly root?: string;
   readonly location?: string;
   /** The adapter that reads it, as recorded in config (found once where an old entry without one is resolved). */
   readonly adapterId: string;
@@ -57,11 +56,11 @@ export class AssetBundle {
   /** The adapter the source is configured with, else the one its root's probe finds. */
   constructor(source: BundleSource) {
     this.name = source.name;
-    this.root = source.path;
     if (source.location !== undefined) this.location = source.location;
     this.adapterId = bundleAdapterId(source);
     this.#adapter = requireAdapter(source.name, this.adapterId, { location: source.location !== undefined });
     this.#bundle = bundleOf(source);
+    this.root = this.#bundle.root;
   }
 
   /** The prefix of the freshness variant the index records for this adapter's rows: id and version. */
@@ -214,14 +213,17 @@ export function activeSources(config: AkmConfig): SearchSource[] {
 export function bundleFor(bundle: BundleAddress): AssetBundle {
   if (typeof bundle !== "string") return assetBundleOf(bundle);
   const sources = activeSources(loadConfig());
-  const source = sources[deriveBundleIds([...sources]).indexOf(bundle)];
-  if (source) return assetBundleOf(sourceBundle(bundle, source));
+  const source = sources.find((source) => source.bundleId === bundle);
+  if (source?.unresolved) {
+    throw new ConfigError(`Bundle "${bundle}" is unavailable: ${source.unresolved.reason}`, "INVALID_CONFIG_FILE");
+  }
+  if (source) return assetBundleOf(sourceBundle(source));
   throw new ConfigError(`Bundle "${bundle}" is not among the configured sources.`, "INVALID_CONFIG_FILE");
 }
 
-function sourceBundle(name: string, source: SearchSource): BundleSource {
+export function sourceBundle(source: SearchSource): BundleSource {
   return {
-    name,
+    name: source.bundleId,
     path: source.path,
     adapterId: bundleAdapterId(source),
     ...(source.location !== undefined ? { location: source.location } : {}),
@@ -232,10 +234,7 @@ function sourceBundle(name: string, source: SearchSource): BundleSource {
 export function orderedBundles(): AssetBundle[] {
   const config = loadConfig();
   const sources = activeSources(config);
-  const ids = deriveBundleIds(sources);
-  return sources.flatMap((source, index) =>
-    source.unresolved ? [] : [assetBundleOf(sourceBundle(ids[index] as string, source))],
-  );
+  return sources.flatMap((source) => (source.unresolved ? [] : [assetBundleOf(sourceBundle(source))]));
 }
 
 /**
@@ -252,10 +251,8 @@ export function lookupBundles(held?: BundleAddress): AssetBundle[] {
     // The configured sources can be unresolvable (no working directory) while the directory a command was handed is not.
     if (extra === undefined) throw error;
   }
-  const ids = deriveBundleIds(sources);
-  const bundles = sources.flatMap((source, index) => {
-    const id = ids[index] as string;
-    return source.unresolved || id === extra?.name ? [] : [assetBundleOf(sourceBundle(id, source))];
-  });
+  const bundles = sources.flatMap((source) =>
+    source.unresolved || source.bundleId === extra?.name ? [] : [assetBundleOf(sourceBundle(source))],
+  );
   return extra ? [...bundles, assetBundleOf(extra)] : bundles;
 }

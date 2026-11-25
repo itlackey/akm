@@ -179,7 +179,7 @@ export type TransientErrorCode =
   // 30 s acquisition window (`src/integrations/lockfile.ts`). Previously a
   // ConfigError (exit 78) for what is a timing collision, not a bad config.
   | "LOCKFILE_CONTENDED"
-  // The asset-mutation lease (`src/indexer/index-writer-lock.ts`) stayed held
+  // The asset-mutation lease (`src/core/index-writer-lock.ts`) stayed held
   // by a live process for the whole wait window. Previously a bare Error
   // (exit 70) for the same ordinary contention.
   | "ASSET_MUTATION_LEASE_HELD"

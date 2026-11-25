@@ -30,6 +30,7 @@ import {
   assertWritableSource,
   commitWriteTargetBoundary,
   prepareWriteTargetForMutation,
+  requireWriteTargetPath,
   writeSourceFile,
 } from "../core/write-source";
 import { buildWorkflowTemplate } from "../workflows/authoring/authoring";
@@ -134,11 +135,12 @@ export async function createFile(input: CreateFileInput) {
     // A file of no type is a plain file; a typed asset is written by the bundle's adapter, which must write that type.
     const resolved = resolveBundleWriteTarget(config, bundle, { requireWritable: true });
     const target = prepareWriteTargetForMutation(resolved, type === null ? { plain: true } : { assetType: type });
-    if (type === null) assertPlainWritable(target.source, target.config);
-    else assertWritableSource(target.source, target.config, type);
+    const { source } = target;
+    if (type === null) assertPlainWritable(source, target.config);
+    else assertWritableSource(source, target.config, type);
     if (type === "skill" && fileName !== "SKILL.md")
       throw new UsageError("A skill is a folder with a SKILL.md: create the folder first.");
-    const root = target.source.path;
+    const root = requireWriteTargetPath(source);
     const file = path.join(root, folder, fileName as string);
     if (!isWithin(file, root)) throw new UsageError(`"${name}" resolves outside the bundle.`, "PATH_ESCAPE_VIOLATION");
     const relative = path.posix.join(folder, fileName as string);
@@ -150,7 +152,7 @@ export async function createFile(input: CreateFileInput) {
     if (type === null) {
       // asset-io: files-view a plain file, not an asset
       if (fs.existsSync(file)) throw used();
-      writeSourceFile(target.source, file, content);
+      writeSourceFile(source, file, content);
       commitWriteTargetBoundary(target, `Create ${relative}`);
       indexed = await indexFiles(bundle, [file]);
     } else {

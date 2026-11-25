@@ -23,6 +23,7 @@ import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
 import { getSources, loadConfig, resolveSecret } from "../../core/config/config";
 import { retiredBundleComponents } from "../../core/config/config-file-forms";
 import { AkmError, ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { withAssetMutationLease } from "../../core/index-writer-lock";
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath, getRegistryCacheDir } from "../../core/paths";
 import { warn } from "../../core/warn";
@@ -35,7 +36,6 @@ import {
   withIndexBuildLock,
 } from "../../indexer/index-build";
 import type { SemanticSearchStatus } from "../../indexer/index-context";
-import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import type { IndexOptions, IndexResponse } from "../../indexer/indexer";
 import type { LockfileEntry } from "../../integrations/lockfile";
 import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";

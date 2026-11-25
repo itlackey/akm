@@ -13,6 +13,15 @@ import type { buildFileContext } from "../../core/adapter/directory/file-context
 import type { IndexDocument, ScopeFilters, ScopeKey, StashEntryScope, StashIntent } from "../../core/adapter/types";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter, readFrontmatterDate } from "../../core/asset/frontmatter";
+import {
+  getMarkdownFragmentContent,
+  hasMarkdownFragmentContent,
+  hasSessionMemoryMarker,
+  MARKDOWN_CONTENT_MAX_CHARS,
+  projectMarkdownContent,
+  projectMarkdownFragmentContent,
+  setMarkdownFragmentContent,
+} from "../../core/asset/markdown-projection";
 import { asNonEmptyString } from "../../core/common";
 import { isoDay } from "../../core/time";
 import { isVerbose, warn, warnOnce } from "../../core/warn";
@@ -24,15 +33,6 @@ import {
   normalizeTerms,
   SCOPE_KEYS,
 } from "./entry-normalize";
-import {
-  getMarkdownFragmentContent,
-  hasMarkdownFragmentContent,
-  hasSessionMemoryMarker,
-  MARKDOWN_CONTENT_MAX_CHARS,
-  projectMarkdownContent,
-  projectMarkdownFragmentContent,
-  setMarkdownFragmentContent,
-} from "./markdown-projection";
 
 import {
   type CommentMetadata,

@@ -16,7 +16,7 @@ import { akmShowUnified as akmShow } from "../../../src/commands/read/show";
 import { clearAdapterCaches } from "../../../src/core/adapter/registry";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { readSecret } from "../../../src/core/env-secret-ref";
-import { getDbPath, getStoreSourceKey } from "../../../src/core/paths";
+import { getCacheDir, getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { withFakeSecretStores } from "../../_helpers/fake-secret-stores";
@@ -76,7 +76,7 @@ function writeLegacyForm(options: { storeField?: boolean } = {}): void {
       const { locator, ...rest } = JSON.parse(row.document_json);
       const document = { ...rest, fileless: true, ...(options.storeField ? { store: locator } : { locator }) };
       db.prepare("UPDATE entries SET file_path = ?, document_json = ? WHERE id = ?").run(
-        `${getStoreSourceKey("keyring")}/${row.item_ref.split("//")[1]}`,
+        `${getCacheDir()}/index/bundles/keyring/${row.item_ref.split("//")[1]}`,
         JSON.stringify(document),
         row.id,
       );

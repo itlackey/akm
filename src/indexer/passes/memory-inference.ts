@@ -48,7 +48,6 @@ import {
   replaceFrontmatterBlocks,
 } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
-import { adapterWrites } from "../../core/assets/gate";
 import { type Asset, listAssets, readAsset } from "../../core/assets/read";
 import { assetTypesByContent, indexedPathOf } from "../../core/assets/type";
 import { writeAssets } from "../../core/assets/write";
@@ -59,7 +58,7 @@ import { concurrentMap } from "../../core/concurrent";
 import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { beginWriteProvenance, type WriteProvenanceJournal } from "../../core/write-provenance";
-import { resolveWritable, writeTargetAt } from "../../core/write-source";
+import { writeTargetAt } from "../../core/write-source";
 import { type NoticeSink, noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -78,7 +77,7 @@ import {
   scopeFromFrontmatter,
   stampScope,
 } from "./metadata";
-import type { PassContext } from "./pass-context";
+import { memoryInferenceRoot, type PassContext } from "./pass-context";
 
 /**
  * Frontmatter keys this pass cares about. Constants so a future rename only
@@ -466,35 +465,18 @@ async function runMemoryInferencePassBody(
   const llmRunner = execution.runner;
   if (!llmRunner) return completeResult();
 
-  // The pass only writes to the default (working) stash, found by its
-  // `isDefault` flag and never by array position. Read-only caches (git, npm,
-  // website) are deliberately untouched — writing inferred children there
-  // would be clobbered by the next sync().
-  const primary = sources.find((source) => source.isDefault === true);
-  if (!primary) {
-    warn("memory inference: skipped — no default bundle among the sources, so there is no write target");
-    return completeResult();
-  }
-  if (!adapterWrites(primary, "memory")) {
-    warn(`memory inference: skipped — the default bundle at ${primary.path} is not an akm bundle`);
-    return completeResult();
-  }
-
   // One decision, before any model call: the bundle derived memories are written to, resolved as the write resolves
   // it. A bundle that takes no writes skips the pass, so its pending memories wait instead of each paying a model call
   // for a write that is then refused.
-  const target = writeTargetAt(primary.path, config);
-  if (!resolveWritable(target.config)) {
-    warn(`memory inference: skipped — bundle "${target.source.name}" is not writable, so its pending memories wait`);
-    return completeResult();
-  }
+  const root = memoryInferenceRoot(sources, config);
+  if (root === undefined) return completeResult();
 
   const inCandidates = (ref: string) => !options.candidateRefs || options.candidateRefs.has(ref);
-  const scan = scanMemories(primary.path);
+  const scan = scanMemories(root);
   // The deterministic scope rewrite runs before, and apart from, any model work.
   if (!signal?.aborted) {
     result.scopeSynced = syncDerivedChildScopes(
-      primary.path,
+      root,
       scan.scopeDrift.filter((drift) => inCandidates(drift.parentRef)),
     );
   }

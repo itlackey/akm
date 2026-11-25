@@ -13,8 +13,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { acquireAssetMutationLease } from "../../src/core/index-writer-lock";
 import { getIndexWriterLockPath } from "../../src/core/paths";
-import { acquireAssetMutationLease } from "../../src/indexer/index-writer-lock";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `src/tasks/source/bounded-document.ts` — the version-agnostic bounded YAML
+ * `src/core/asset/bounded-task-document.ts` — the version-agnostic bounded YAML
  * front end shared by task source v4's own parser and (frozen, vendored)
  * task v3's — renders every source label its callers supply through the
  * SAME shared funnel (D2-N4, spec docs/plans/specs/p2a-task-source-v4.md
@@ -47,12 +47,12 @@
 
 import { describe, expect, test } from "bun:test";
 import { LineCounter, parseDocument } from "yaml";
-import { UsageError } from "../../src/core/errors";
 import {
   assertBoundedTaskYamlDocument,
   sourceError,
   TASK_V3_MAX_STRING_BYTES,
-} from "../../src/tasks/source/bounded-document";
+} from "../../src/core/asset/bounded-task-document";
+import { UsageError } from "../../src/core/errors";
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
 import { parseTaskSourceV4, parseTaskSourceV4Document } from "../../src/tasks/source/task-source-v4";
 

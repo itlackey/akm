@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { genericFilesAdapter } from "../../src/core/adapter/adapters/generic-files-adapter";
+import { resolveStashDir } from "../../src/core/common";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { _setWarnSinkForTests } from "../../src/core/warn";
@@ -18,14 +19,18 @@ import { readIncompleteSources } from "../../src/indexer/index-context";
 import { akmIndex } from "../../src/indexer/indexer";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { withFakeSecretStores } from "../_helpers/fake-secret-stores";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 let dir: string;
 
 type IndexOutput = {
+  mode: string;
+  stashDir: string;
+  totalEntries: number;
   scanComplete: boolean;
-  incompleteSources: Array<{ bundle: string; path: string; reason: string }>;
+  incompleteSources: Array<{ bundle: string; path?: string; reason: string }>;
   clean?: { skipped?: { reason: string; sources: unknown[] }; checked?: number };
 };
 
@@ -34,6 +39,39 @@ async function index(...extra: string[]): Promise<{ out: IndexOutput; stderr: st
   expect(result.code, result.stderr).toBe(0);
   return { out: JSON.parse(result.stdout) as IndexOutput, stderr: result.stderr };
 }
+
+test("akm index uses the same directory library as other builders with a keyring default", async () => {
+  saveConfig({
+    semanticSearchMode: "off",
+    defaultBundle: "keyring",
+    bundles: { keyring: { adapter: "secret-tool", location: "akm" }, notes: { path: dir } },
+  });
+  await withEnv({ AKM_BUNDLE_DIR: undefined, HOME: storage.root }, async () => {
+    const homeStash = path.join(storage.root, "akm");
+    fs.mkdirSync(path.join(homeStash, "knowledge"), { recursive: true });
+    fs.writeFileSync(path.join(homeStash, "knowledge", "home.md"), "---\ndescription: home\n---\n\n# Home\n");
+    await withFakeSecretStores(
+      {
+        keyrings: {
+          akm: [
+            {
+              path: "/org/freedesktop/secrets/collection/akm/1",
+              label: "token",
+              attributes: { akm: "akm/token" },
+              secret: "fixture",
+            },
+          ],
+        },
+      },
+      async () => {
+        expect((await index()).out).toMatchObject({ mode: "full", stashDir: homeStash, totalEntries: 3 });
+        expect((await index()).out).toMatchObject({ mode: "incremental", stashDir: homeStash, totalEntries: 3 });
+        expect(await akmIndex({ stashDir: resolveStashDir() })).toMatchObject({ mode: "incremental", totalEntries: 3 });
+        expect((await index()).out).toMatchObject({ mode: "incremental", stashDir: homeStash, totalEntries: 3 });
+      },
+    );
+  });
+});
 
 function recordedIncompleteSources() {
   const db = openReadonlyExistingDatabase(getDbPath());
@@ -57,6 +95,16 @@ afterEach(() => {
 });
 
 describe("a configured source that cannot be scanned", () => {
+  test("an unreachable keyring has no path in the index output or recorded evidence", async () => {
+    saveConfig({ semanticSearchMode: "off", bundles: { keyring: { adapter: "secret-tool", location: "absent" } } });
+    await withFakeSecretStores({}, async () => {
+      const { out } = await index();
+      expect(out.scanComplete).toBe(false);
+      expect(out.incompleteSources).toEqual([{ bundle: "keyring", reason: expect.any(String) }]);
+      expect(recordedIncompleteSources()).toEqual(out.incompleteSources);
+    });
+  });
+
   test("is named with its error, --clean says it was skipped, and the index records the list", async () => {
     expect((await runCliCapture(["bundle", "add", dir, "--name", "notes"])).code).toBe(0);
     const first = await index();

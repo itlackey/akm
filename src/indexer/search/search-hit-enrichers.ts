@@ -2,18 +2,40 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import path from "node:path";
 import { displayRef } from "../../core/asset/resolve-ref";
 import { presentationFor } from "../../core/type-presentation";
 import { getRenderer } from "../../output/renderer-registry";
 import type { SourceSearchHit } from "../../sources/types";
 import type { Database } from "../../storage/database";
 import { getDerivedForParent, getItemRefById } from "../../storage/repositories/index-entries-repository";
+import type { IndexLibrary } from "../index-persist";
 import { extractDirTagsFromName, extractTagsFromPath, type IndexDocument } from "../passes/metadata";
 import { attachSearchHitAttribution } from "./search-attribution";
+import type { SearchSource } from "./search-source";
+
+export function searchHitLibrary(
+  library: IndexLibrary,
+  source: SearchSource | undefined,
+  filePath: string,
+  bundleId: string,
+  configuredDefault: string | undefined,
+): { entryStashDir?: string; defaultBundleId?: string } {
+  if (typeof library !== "string") {
+    return { entryStashDir: source?.path, defaultBundleId: library.bundleId };
+  }
+  const sourcePath = source?.path;
+  return {
+    entryStashDir: sourcePath ?? (filePath === "" ? undefined : library),
+    defaultBundleId:
+      configuredDefault ??
+      (sourcePath !== undefined && path.resolve(sourcePath) === path.resolve(library) ? bundleId : undefined),
+  };
+}
 
 export interface SearchHitContext {
   type: string;
-  stashDir: string;
+  stashDir?: string;
   bundleId: string;
   /** The hit's stored conceptId. */
   conceptId: string;
@@ -36,7 +58,7 @@ export interface SearchHitContext {
  */
 export async function enrichSearchHit(hit: SourceSearchHit, ctx: SearchHitContext): Promise<void> {
   const rendererName = presentationFor(ctx.type).renderer;
-  if (rendererName) {
+  if (rendererName && ctx.stashDir !== undefined) {
     const renderer = await getRenderer(rendererName);
     renderer?.enrichSearchHit?.(hit, ctx.stashDir);
   }

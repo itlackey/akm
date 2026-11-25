@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { SearchSource } from "../../src/indexer/search/search-source";
+import { deriveBundleId } from "../../src/core/bundle-id";
+import { resolveSourceEntries, type SearchSource } from "../../src/indexer/search/search-source";
 import { isRemoteOrigin, resolveSourcesForLocator, resolveSourcesForOrigin } from "../../src/registry/origin-resolve";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -16,8 +17,10 @@ function makeTmpDir(): string {
 }
 
 function makeSource(overrides?: Partial<SearchSource>): SearchSource {
+  const root = overrides?.path ?? makeTmpDir();
   return {
-    path: overrides?.path ?? makeTmpDir(),
+    bundleId: overrides?.bundleId ?? deriveBundleId(overrides?.registryId, root, new Set()),
+    path: root,
     registryId: overrides?.registryId,
   };
 }
@@ -117,10 +120,14 @@ describe("resolveSourcesForOrigin", () => {
     const parent = makeTmpDir();
     const stashPath = path.join(parent, "stash");
     fs.mkdirSync(stashPath);
-    const implicit = makeSource({ path: stashPath });
     const configured = makeSource({ registryId: "stash" });
+    const [implicit, named] = resolveSourceEntries(stashPath, {
+      semanticSearchMode: "off",
+      bundles: { stash: { path: configured.path } },
+    });
 
-    expect(resolveSourcesForOrigin("stash", [implicit, configured])).toEqual([configured]);
+    expect(implicit?.bundleId).toMatch(/^stash-[0-9a-f]{8}$/);
+    expect(resolveSourcesForOrigin("stash", [implicit!, named!])).toEqual([named!]);
   });
 
   test("a local bundle cannot fall through to npm shorthand", () => {

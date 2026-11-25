@@ -17,6 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+import { slugForPath } from "../../src/core/bundle-id";
 import type { AkmConfig } from "../../src/core/config/config";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import {
@@ -104,7 +105,7 @@ function config(): AkmConfig {
 }
 
 function sources(): SearchSource[] {
-  return [{ path: tmpStash, isDefault: true }];
+  return [{ bundleId: slugForPath(tmpStash), path: tmpStash, isDefault: true }];
 }
 
 async function withDb<T>(fn: (db: ReturnType<typeof openIndexDatabase>) => Promise<T>): Promise<T> {

@@ -22,7 +22,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../../../src/core/config/config";
 import { resetVerbose, setVerbose } from "../../../src/core/warn";
-import { deriveEntryProvenance, deriveInstallations } from "../../../src/indexer/installations";
+import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../../src/indexer/materialize-embeddings";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import type { EmbeddingBatchCommit, EmbeddingSkipHandler } from "../../../src/llm/embedders/remote";
@@ -47,12 +47,10 @@ describe("generateEmbeddingsForDb: per-batch progress and final outcome line (#9
   });
 
   function seedEntries(db: Database, count: number): void {
-    const installation = deriveInstallations([{ path: storage.stashDir, writable: true }])[0];
-    if (!installation) throw new Error("failed to derive a test bundle installation");
     for (let i = 0; i < count; i++) {
       const name = `entry-${i}`;
       const entry = { name, type: "memories", filename: `${name}.md` };
-      const provenance = deriveEntryProvenance({ bundleId: installation.id, adapterId: "akm" }, "memories", name);
+      const provenance = deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "memories", name);
       upsertEntry(db, `${storage.stashDir}/memories/${name}.md`, entry, provenance);
     }
   }

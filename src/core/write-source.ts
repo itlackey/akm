@@ -44,12 +44,11 @@ import { conceptIdFromTypeName } from "./asset/resolve-ref";
 import { assertLinksLeadInside } from "./assets/files";
 import { assertAdapterWrites, detectBundleAdapter } from "./assets/gate";
 import { bundleIdForDir } from "./bundle-id";
-import { existingFileMode, isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
+import { existingFileMode, isWithin, resolveStashDir, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
 import { bundleAtDir, loadConfig, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
 import { ConfigError, UsageError } from "./errors";
 import { sanitizeCommitMessage } from "./git-message";
-import { getStoreSourceKey } from "./paths";
 import { warn, warnOnce } from "./warn";
 import { recordWrittenPath } from "./write-provenance";
 
@@ -62,12 +61,12 @@ export interface WriteTargetSource {
   /** Human-readable identifier surfaced in error messages. */
   readonly name: string;
   /** Absolute filesystem path the indexer walks. The asset is written here. */
-  readonly path: string;
+  readonly path?: string;
   /** Git repository root used only for the boundary commit. */
   readonly repoPath?: string;
   /** Bundle adapter that owns placement and authoring semantics. */
   readonly adapterId?: string;
-  /** A location bundle's `location`: where its adapter finds it. `path` is then only its key (`getStoreSourceKey`): it has no directory. */
+  /** A location bundle's `location`: where its adapter finds it. */
   readonly location?: string;
 }
 
@@ -249,7 +248,6 @@ function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
       source: {
         kind: "location",
         name: runtime.name,
-        path: safeRealpath(getStoreSourceKey(runtime.name)),
         ...(runtime.adapterId ? { adapterId: runtime.adapterId } : {}),
         location,
       },
@@ -340,7 +338,7 @@ function checkWriteTarget(
   if (!kind.plain) assertAdapterWrites(target.source, kind.assetType);
   if (target.source.kind !== "git") return { target };
 
-  const contentRoot = path.resolve(target.source.path);
+  const contentRoot = path.resolve(requireWriteTargetPath(target.source));
   const rootResult = runGit(["-C", contentRoot, "rev-parse", "--show-toplevel"]);
   if (rootResult.status !== 0 || !rootResult.stdout.trim()) {
     throw new ConfigError(
@@ -388,7 +386,7 @@ export function inspectWriteTarget(
 export function prepareWriteTargetForMutation(target: ResolvedWriteTarget, kind: WriteKind = {}): ResolvedWriteTarget {
   const { repoPath } = checkWriteTarget(target, kind);
   if (repoPath === undefined) return target;
-  const contentRoot = path.resolve(target.source.path);
+  const contentRoot = path.resolve(requireWriteTargetPath(target.source));
   try {
     const upstream = inspectGitUpstream(repoPath);
     if (upstream.behind > 0) {
@@ -423,9 +421,12 @@ export function assertWritableSource(source: WriteTargetSource, config: SourceCo
 }
 
 /** The gates of a plain file write: the source takes writes and is a kind akm writes, whatever its adapter. */
-export function assertPlainWritable(source: WriteTargetSource, config: SourceConfigEntry): void {
+export function assertPlainWritable(
+  source: WriteTargetSource,
+  config: SourceConfigEntry,
+): asserts source is WriteTargetSource & { path: string } {
   ensureWritable(source, config);
-  assertSupportedKind(source);
+  requireWriteTargetPath(source);
 }
 
 /**
@@ -452,8 +453,9 @@ export function ensureWritable(source: WriteTargetSource, config: SourceConfigEn
   );
 }
 
-function assertSupportedKind(source: WriteTargetSource): void {
-  if (isWriteCapableSourceKind(source.kind)) return;
+/** Require a path for a directory-only operation. */
+export function requireWriteTargetPath(source: WriteTargetSource): string {
+  if (source.path !== undefined && isWriteCapableSourceKind(source.kind)) return source.path;
   throw new ConfigError(
     `write-source: unsupported kind "${source.kind}" for source "${source.name}". ` +
       "Writes are only defined for `filesystem` and `git` sources.",
@@ -478,8 +480,8 @@ export function formatRefForMessage(ref: AssetRef): string {
  */
 const pendingGitPaths = new Map<string, Set<string>>();
 
-function repoDirFor(source: WriteTargetSource): string {
-  return path.resolve(source.repoPath ?? source.path);
+export function repoDirFor(source: WriteTargetSource): string {
+  return path.resolve(source.repoPath ?? requireWriteTargetPath(source));
 }
 
 /** Record a path the git target's next boundary commit must include. */
@@ -497,7 +499,7 @@ export function recordWriteTargetPath(source: WriteTargetSource, filePath: strin
  * bundle or leading nowhere is refused. The source root itself may be a symlink.
  */
 export function assertWritePathsInsideSource(source: WriteTargetSource, filePaths: readonly string[]): void {
-  for (const filePath of filePaths) assertLinksLeadInside(source.path, source.name, filePath);
+  for (const filePath of filePaths) assertLinksLeadInside(requireWriteTargetPath(source), source.name, filePath);
 }
 
 /**
@@ -531,7 +533,9 @@ function commitBoundary(
   message: string,
   options?: { push?: boolean; paths?: string[]; filesystem?: boolean; body?: string[] },
 ): CommitOutcome {
-  if (target.source.kind !== "git" && !options?.filesystem) return { committed: false, reason: "not-git" };
+  if (target.source.path === undefined || (target.source.kind !== "git" && !options?.filesystem)) {
+    return { committed: false, reason: "not-git" };
+  }
   const repoDir = repoDirFor(target.source);
   const recorded = pendingGitPaths.get(repoDir) ?? new Set<string>();
   pendingGitPaths.delete(repoDir);

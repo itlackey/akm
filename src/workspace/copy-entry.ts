@@ -83,7 +83,7 @@ export async function copyEntry(input: CopyEntryInput) {
   const blocker = folderBlocker(folder) ?? plainWriteBlocker(config, toBundle);
   if (blocker !== null) throw new UsageError(blocker);
   const sourceRoot = resolveSourceEntries(undefined, config).find(
-    (entry) => entry.registryId === bundle && !entry.unresolved,
+    (entry) => entry.bundleId === bundle && !entry.unresolved,
   )?.path;
   if (!sourceRoot) throw new UsageError(`Bundle "${bundle}" is disabled or unavailable.`);
   // A skill's manifest is not a skill: it copies as the skill's folder, the rule `move` states for the same file.
@@ -98,8 +98,9 @@ export async function copyEntry(input: CopyEntryInput) {
   return interactive("ui-file-copy", async () => {
     const resolved = resolveBundleWriteTarget(config, toBundle, { requireWritable: true });
     const target = prepareWriteTargetForMutation(resolved, { plain: true });
-    assertPlainWritable(target.source, target.config);
-    const root = target.source.path;
+    const { source } = target;
+    assertPlainWritable(source, target.config);
+    const root = source.path;
     const destination = path.join(root, folder, name);
     if (!isWithin(destination, root))
       throw new UsageError(`"${name}" resolves outside the bundle.`, "PATH_ESCAPE_VIOLATION");
@@ -125,7 +126,7 @@ export async function copyEntry(input: CopyEntryInput) {
       throw error;
     }
     const files = stat.isDirectory() ? listTreeFiles(destination) : [destination];
-    const commitRoot = target.source.repoPath ?? root;
+    const commitRoot = source.repoPath ?? root;
     const to = path.posix.join(folder, name);
     commitWriteTargetBoundary(target, `Copy ${bundle}//${from} to ${toBundle}//${to}`, {
       paths: files.map((file) => path.relative(commitRoot, file).replaceAll(path.sep, "/")),

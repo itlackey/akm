@@ -9,7 +9,6 @@ import { displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { lintAssetText, lintBundle, lintLooseFile } from "../../core/assets/gate";
 import { storeFindings } from "../../core/assets/validate";
 import { bundleSourceAt } from "../../core/bundle-at-dir";
-import { deriveBundleIds } from "../../core/bundle-id";
 import { resolveStashDir, samePath } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig, primaryBundlePath } from "../../core/config/config";
@@ -53,9 +52,8 @@ export interface AkmLintResult {
 
 /** The bundle at `stashRoot` among the configured `sources`, under the id refs name it by (its path when none is configured there). */
 function lintBundleOf(adapterId: string | undefined, stashRoot: string, sources: SearchSource[]): LintBundle {
-  const ids = deriveBundleIds(sources);
-  const sourceIndex = sources.findIndex((s) => samePath(s.path, stashRoot));
-  return { name: sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot, path: stashRoot, adapterId };
+  const source = sources.find((s) => s.path !== undefined && samePath(s.path, stashRoot));
+  return { name: source?.bundleId ?? stashRoot, path: stashRoot, adapterId };
 }
 
 /**
@@ -119,7 +117,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
   }
   const root = containingBundleRoot(absFile, [
     ...(options.dir ? [options.dir] : []),
-    ...(primary ? resolveSourceEntries(primary, cfg).map((source) => source.path) : []),
+    ...(primary ? resolveSourceEntries(primary, cfg).flatMap(({ path }) => (path === undefined ? [] : [path])) : []),
   ]);
   if (root === undefined) {
     return finishLint(lintLooseFile({ given: file, real: absFile }, cfg, options), cfg, options);
@@ -127,8 +125,11 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
   const sources = resolveSourceEntries(root, cfg);
   const found = await lintBundle({
     bundle: lintBundleOf(bundleSourceAt(root, cfg).adapterId, root, sources),
-    // asset-io: bundle-root root probe
-    extraStashRoots: sources.map((s) => s.path).filter((p) => p !== root && fs.existsSync(p)),
+    extraStashRoots: sources
+      .map((source) => source.path)
+      .filter((p) => p !== undefined)
+      // asset-io: bundle-root root probe
+      .filter((p) => !samePath(p, root) && fs.existsSync(p)),
     sources,
     cfg,
     options,
@@ -237,7 +238,7 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   const stashRoot = options.dir ?? primaryBundlePath(cfg) ?? resolveStashDir();
   const sources = resolveSourceEntries(stashRoot, cfg);
   const bundle = lintBundleOf(
-    sources.find((source) => samePath(source.path, stashRoot))?.adapterId,
+    sources.find((source) => source.path !== undefined && samePath(source.path, stashRoot))?.adapterId,
     stashRoot,
     sources,
   );
@@ -247,8 +248,11 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   options = { ...options, readMoves: () => (moves ??= readMoves()) };
   const found = await lintBundle({
     bundle,
-    // asset-io: bundle-root root probe
-    extraStashRoots: sources.map((s) => s.path).filter((p) => p !== stashRoot && fs.existsSync(p)),
+    extraStashRoots: sources
+      .map((source) => source.path)
+      .filter((p) => p !== undefined)
+      // asset-io: bundle-root root probe
+      .filter((p) => !samePath(p, stashRoot) && fs.existsSync(p)),
     sources,
     cfg,
     options,

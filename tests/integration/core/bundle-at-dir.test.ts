@@ -13,7 +13,7 @@ import path from "node:path";
 import { bundleKeyForDir } from "../../../src/core/bundle-at-dir";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { bundleAtDir } from "../../../src/core/config/config-sources";
-import { getStoreSourceKey } from "../../../src/core/paths";
+import { getCacheDir } from "../../../src/core/paths";
 import { writeLockfile } from "../../../src/integrations/lockfile";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -62,7 +62,7 @@ describe("bundleAtDir", () => {
 
   test("a location bundle has no directory: none is at its source's key", () => {
     const config = configOf({ keys: { location: "alias", adapter: "secret-tool" } });
-    expect(bundleAtDir(config, getStoreSourceKey("keys"))).toBeUndefined();
+    expect(bundleAtDir(config, path.join(getCacheDir(), "index", "bundles", "keys"))).toBeUndefined();
   });
 
   test("two bundles on one directory: the default bundle, else the first in configured order", () => {

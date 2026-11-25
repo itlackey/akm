@@ -161,7 +161,7 @@ export interface FileValidateContextOptions {
 export function createFileValidateContext(options: FileValidateContextOptions): FileValidateContext {
   const root = options.root;
   const sources = options.sources ?? [];
-  const extraRoots = sources.map((source) => source.path).filter((sourcePath) => sourcePath !== root);
+  const extraRoots = sources.map((source) => source.path).filter((p): p is string => p !== undefined && p !== root);
   const overlay = buildOverlay(root, options.changes ?? []);
 
   async function readFile(p: string): Promise<string | Uint8Array | null> {

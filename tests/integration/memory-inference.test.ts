@@ -17,6 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+import { slugForPath } from "../../src/core/bundle-id";
 import type { AkmConfig } from "../../src/core/config/config";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import type { LoweringNotice } from "../../src/execution/resolved-request";
@@ -105,7 +106,7 @@ function configOptedOut(): AkmConfig {
 }
 
 function sources(): SearchSource[] {
-  return [{ path: tmpStash, isDefault: true }];
+  return [{ bundleId: slugForPath(tmpStash), path: tmpStash, isDefault: true }];
 }
 
 function sampleDraft(title = "Derived Insight"): Draft {
@@ -602,7 +603,7 @@ describe("runMemoryInferencePass — enabled", () => {
 
     const result = await runMemoryInferencePass({
       config: configWithLlm(),
-      sources: [{ path: tmpStash, adapterId: "okf", isDefault: true }],
+      sources: [{ bundleId: slugForPath(tmpStash), path: tmpStash, adapterId: "okf", isDefault: true }],
     });
 
     expect(result.considered).toBe(0);
@@ -735,7 +736,10 @@ describe("runMemoryInferencePass — enabled", () => {
 
       const result = await runMemoryInferencePass({
         config: configWithLlm(),
-        sources: [{ path: tmpStash, isDefault: true }, { path: cacheDir }],
+        sources: [
+          { bundleId: slugForPath(tmpStash), path: tmpStash, isDefault: true },
+          { bundleId: slugForPath(cacheDir), path: cacheDir },
+        ],
       });
 
       // Only the primary parent was considered.
@@ -897,8 +901,8 @@ describe("runMemoryInferencePass — bundle selection and parent stamp", () => {
       const result = await runMemoryInferencePass({
         config: configWithLlm(),
         sources: [
-          { path: other, adapterId: "akm" },
-          { path: tmpStash, adapterId: "akm", isDefault: true },
+          { bundleId: slugForPath(other), path: other, adapterId: "akm" },
+          { bundleId: slugForPath(tmpStash), path: tmpStash, adapterId: "akm", isDefault: true },
         ],
       });
 
@@ -920,7 +924,7 @@ describe("runMemoryInferencePass — bundle selection and parent stamp", () => {
     try {
       const result = await runMemoryInferencePass({
         config: configWithLlm(),
-        sources: [{ path: tmpStash, adapterId: "akm" }],
+        sources: [{ bundleId: slugForPath(tmpStash), path: tmpStash, adapterId: "akm" }],
       });
       expect(result.considered).toBe(0);
     } finally {
