@@ -145,6 +145,20 @@ describe("release workflow", () => {
     expect(source).toContain("gh release create");
   });
 
+  test("the integration matrix runs every shard of one plan exactly once", () => {
+    const job = workflow.jobs.integration as { strategy?: { matrix?: { shards?: string[] } } } | undefined;
+    const step = workflow.jobs.integration?.steps?.find((s) => s.run === "bun run test:integration") as
+      | { env?: Record<string, string | number> }
+      | undefined;
+    const total = Number(step?.env?.TEST_SHARDS);
+    const covered = (job?.strategy?.matrix?.shards ?? []).flatMap((range) => {
+      const [first, last] = range.split("-").map(Number) as [number, number];
+      return Array.from({ length: last - first + 1 }, (_, i) => first + i);
+    });
+    expect(covered).toEqual(Array.from({ length: total }, (_, i) => i + 1));
+    expect(step?.env?.TEST_SHARD_RANGE).toBe("$" + "{{ matrix.shards }}");
+  });
+
   test("the integration and Node smoke jobs share a cache for the pinned OpenCode binary", () => {
     const caches = ["integration", "node-smoke"].map((id) => {
       const steps = workflow.jobs[id]?.steps ?? [];
@@ -222,7 +236,7 @@ describe("release workflow", () => {
     // The pull request's own Release run on that head: nothing failed, and the integration job really ran (a draft
     // run is all skipped).
     expect(run).toContain("workflows/release.yml/runs?event=pull_request&head_sha=");
-    expect(run).toContain('.name == "integration" and .conclusion == "success"');
+    expect(run).toContain('(.name | startswith("integration (")) and .conclusion == "success"');
     expect(run).toContain('.conclusion == "success" or .conclusion == "skipped"');
     // Only a proof sets it: no proof, or a failed lookup, runs the gates as before.
     expect(run).toContain('echo "skip=true" >> "$GITHUB_OUTPUT"');

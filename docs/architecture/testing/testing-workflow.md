@@ -157,21 +157,22 @@ weighs the median, and ties go by path, so every machine plans the same shards. 
 seconds only rank the files, so times from a local run serve as well as CI's.
 
 Each shard writes a junit report (`shard-N.xml`) and its file list
-(`shard-N.files`) next to its log. The Release workflow's `integration` job keeps
-that directory (`TEST_INTEGRATION_LOGDIR`) and uploads it as the
-`integration-shards` artifact of every run, green or not. When the shards drift apart (compare the `time` on the
+(`shard-N.files`) next to its log. The Release workflow runs one plan of four shards
+as two `integration` jobs, shards 1-2 and 3-4 (`TEST_SHARD_RANGE`). Each keeps its
+directory (`TEST_INTEGRATION_LOGDIR`) and uploads it as the
+`integration-shards-1-2` or `integration-shards-3-4` artifact of every run, green or not. When the shards drift apart (compare the `time` on the
 `<testsuites>` line of each `shard-N.xml`), regenerate the file from one run's reports and commit it:
 
 ```sh
-gh run download <run-id> --name integration-shards --dir /tmp/shards
-bun scripts/integration-timings.ts update /tmp/shards/shard-*.xml
+gh run download <run-id> --pattern 'integration-shards-*' --dir /tmp/shards
+bun scripts/integration-timings.ts update /tmp/shards/*/shard-*.xml
 ```
 
 `update` takes the reported time for every file the reports name, keeps the
 record of any other file, and drops files that no longer exist. A local run works
 the same way: `TEST_INTEGRATION_LOGDIR=/tmp/shards bun run test:integration`.
 The committed file comes from local runs; once a Release run has uploaded an
-`integration-shards` artifact, regenerate it from that run's reports.
+`integration-shards-*` artifact, regenerate it from that run's reports.
 
 ### The preload
 
