@@ -32,6 +32,8 @@ const grouped = process.platform !== "win32";
 const live = new Set();
 let tracking = false;
 let untracked = false;
+/** Set when termination begins: from then on, whatever a running operation starts next is stopped as it starts. */
+let terminating = false;
 
 /**
  * Whether a process group has a running member. A process that exited but that nobody waited for still belongs to its
@@ -92,6 +94,7 @@ function track() {
       this.once("exit", () => {
         if (!running(this)) live.delete(this);
       });
+      if (terminating) signal(this, "SIGKILL");
     }
     return result;
   };
@@ -136,9 +139,11 @@ async function drained(ms) {
 
 /**
  * Called when the grace period is over: terminates what still runs (each process group, SIGTERM then SIGKILL), waits
- * until nothing of it is left, and says on stderr which operations had to be stopped.
+ * until nothing of it is left, and says on stderr which operations had to be stopped. A command an operation starts
+ * after this point (its next step, once the current one is stopped) gets SIGKILL as it starts.
  */
 async function terminate() {
+  terminating = true;
   prune();
   if (!live.size) return;
   console.error(`Shutdown: stopped ${names()} after the ${SHUTDOWN_GRACE_MS / 1000} s allowance.`);
