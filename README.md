@@ -8,7 +8,9 @@
 
 Build your agent library once. Use it from any shell-capable coding agent.
 
-**[Watch the AKM feature tour (6 min)](https://github.com/itlackey/akm/releases/download/v0.10.261133/akm-feature-tour-0.10.261133.mp4)** — See an agent find existing guidance, capture what it learned, and turn that evidence into a reviewed bundle change. [Captions (SRT)](https://github.com/itlackey/akm/releases/download/v0.10.261133/akm-feature-tour-0.10.261133.srt) · [Narration script](https://github.com/itlackey/akm/releases/download/v0.10.261133/akm-feature-tour-narration.md).
+**AKM feature tour (6 min)** — See an agent find existing guidance, capture what it learned, and turn that evidence into a reviewed bundle change.
+
+https://github.com/user-attachments/assets/500b1afa-9a1b-4a34-8d03-3a17d0ac1900
 
 ## Why AKM exists
 
