@@ -1121,7 +1121,7 @@ section, an absent key, and an explicit `false` all read identically as off.
 
 ### Experimental web settings
 
-`experimental.web` holds the settings the AKM Desktop server (`akm-web`) reads when you run it by hand on a headless machine; Desktop itself ignores them. Every key is optional. `secret` is a reference, never the secret itself. `akm-web` does not start without a secret. Behavior is described in the [Desktop README](../../desktop/README.md#run-it-on-a-server).
+`experimental.web` holds the settings the AKM Desktop server (`akm-web`) reads when you run it by hand on a headless machine; Desktop itself ignores them. Every key is optional. `secret` is a reference, never the secret itself. `akm-web` does not start without a secret. Behavior is described in the [Desktop README](https://github.com/itlackey/akm/blob/main/desktop/README.md#run-it-on-a-server).
 
 | Key | Meaning | Default |
 | --- | --- | --- |
