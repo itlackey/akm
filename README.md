@@ -8,6 +8,8 @@
 
 Build your agent library once. Use it from any shell-capable coding agent.
 
+**[Watch the AKM feature tour (6 min)](https://github.com/itlackey/akm/releases/download/v0.10.261133/akm-feature-tour-0.10.261133.mp4)** — See an agent find existing guidance, capture what it learned, and turn that evidence into a reviewed bundle change. [Captions (SRT)](https://github.com/itlackey/akm/releases/download/v0.10.261133/akm-feature-tour-0.10.261133.srt) · [Narration script](https://github.com/itlackey/akm/releases/download/v0.10.261133/akm-feature-tour-narration.md).
+
 ## Why AKM exists
 
 Every coding agent wants its own copy of your team's knowledge — an `AGENTS.md` here, a tool-specific skills folder there, prompts scattered across repos and chat logs. AKM indexes existing agent assets in place, loads only what a task needs, packages capabilities into shareable bundles, improves the library through reviewable proposals, and runs durable workflows — locally and without tying the library to one assistant. The core loop is `connect -> index -> curate -> show -> use/run -> feedback -> proposal` (not every task uses every stage).
