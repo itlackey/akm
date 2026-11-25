@@ -92,7 +92,9 @@ bun run lint:fix   # Biome with --write; read git diff afterwards
 bun run lint       # what CI runs: Biome, the secret-resolver and shipped-assets lints, the doc-example lint, the lockfile lint
 ```
 Every pull request runs the fast gate (`bun run check`: lint, types, the unit
-suite) and the three architecture checks (`bun run test:architecture`); the
+suite), the three architecture checks (`bun run test:architecture`) and the FTA complexity gate (no file's score
+may rise compared with the branch the pull request merges into; run it locally with
+`bun run report:complexity --base origin/<release branch>`); the
 integration suite, with the Node fallback smoke and the upgrade rehearsals,
 runs only at release, as gates in the Release workflow (see the
 [release checklist](../docs/maintainers/release-checklist.md)). Push in batches
