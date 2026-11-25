@@ -20,7 +20,11 @@ import { akmSearch } from "../../src/commands/read/search";
 import { saveConfig } from "../../src/core/config/config";
 import { setQuiet } from "../../src/core/warn";
 import { akmIndex } from "../../src/indexer/indexer";
-import { _resetUnknownQualityWarnings, isProposedQuality, validateStashEntry } from "../../src/indexer/passes/metadata";
+import {
+  _resetUnknownQualityWarnings,
+  isProposedQuality,
+  validateStashEntry,
+} from "../../src/indexer/passes/entry-normalize";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome, withEnv } from "../_helpers/sandbox";
 

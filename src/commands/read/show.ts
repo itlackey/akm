@@ -53,12 +53,8 @@ import {
   lookupBundleRefWithResolution,
   lookupBundleRefWithResolutionReadonly,
 } from "../../indexer/indexer";
-import {
-  applyCuratedFrontmatter,
-  applyProvenanceFrontmatter,
-  type IndexDocument,
-  projectMarkdownFragmentContent,
-} from "../../indexer/passes/metadata";
+import { projectMarkdownFragmentContent } from "../../indexer/passes/markdown-projection";
+import { applyCuratedFrontmatter, applyProvenanceFrontmatter, type IndexDocument } from "../../indexer/passes/metadata";
 import {
   buildEditHint,
   findSourceForPath,

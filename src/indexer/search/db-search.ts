@@ -46,13 +46,8 @@ import { searchFts } from "../../storage/repositories/index-fts-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
 import { incompleteIndexWarning, noIndexWarning, openUsableIndex } from "../index-readiness";
-import {
-  appliesToProject,
-  type IndexDocument,
-  isProposedQuality,
-  type ScopeFilters,
-  scopeMatchesFilters,
-} from "../passes/metadata";
+import { isProposedQuality } from "../passes/entry-normalize";
+import { appliesToProject, type IndexDocument, type ScopeFilters, scopeMatchesFilters } from "../passes/metadata";
 import { countFeedbackSignalsByRef, countShownByRef } from "../usage/usage-events";
 import { ftsQueryTokens, parseRefPrefixQuery } from "./fts-query";
 import {

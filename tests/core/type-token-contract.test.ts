@@ -25,7 +25,7 @@
 import { describe, expect, test } from "bun:test";
 import { DEPRECATED_REJECTED_TYPES, isKnownType, KNOWN_TYPES } from "../../src/core/recognition-util";
 import { presentationFor, TYPE_PRESENTATION } from "../../src/core/type-presentation";
-import { validateStashEntry } from "../../src/indexer/passes/metadata";
+import { validateStashEntry } from "../../src/indexer/passes/entry-normalize";
 
 // ── (a) open-token acceptance as DATA ───────────────────────────────────────
 

@@ -20,7 +20,7 @@ import { saveConfig } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex, lookupBundleRef } from "../../../src/indexer/indexer";
 import { computeDirFingerprint } from "../../../src/indexer/passes/dir-staleness";
-import { CONTENT_PROJECTION_VERSION } from "../../../src/indexer/passes/metadata";
+import { CONTENT_PROJECTION_VERSION } from "../../../src/indexer/passes/markdown-projection";
 import { openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 

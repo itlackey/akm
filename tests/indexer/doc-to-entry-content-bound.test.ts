@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { IndexDocument } from "../../src/core/adapter/types";
-import { MARKDOWN_CONTENT_MAX_CHARS } from "../../src/indexer/passes/metadata";
+import { MARKDOWN_CONTENT_MAX_CHARS } from "../../src/indexer/passes/markdown-projection";
 import { indexDocumentToStashEntry } from "../../src/indexer/scan/doc-to-entry";
 
 function doc(content: string, adapterId: string): IndexDocument {
