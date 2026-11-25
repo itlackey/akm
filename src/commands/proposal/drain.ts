@@ -138,7 +138,6 @@ export function isPromotionProposal(proposal: Proposal): boolean {
 /** An empty diff: no non-blank body line outside the frontmatter. */
 export function isEmptyDiff(proposal: Proposal): boolean {
   const content = proposalContent(proposal);
-  if (content.trim().length === 0) return true;
   return !parseFrontmatter(content)
     .content.split("\n")
     .some((line) => line.trim().length > 0);
