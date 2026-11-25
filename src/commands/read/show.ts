@@ -33,7 +33,7 @@ import {
 } from "../../core/asset/markdown-fragments";
 import { displayDefaultBundle, displayRef, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
-import { adapterDeclaresTypes } from "../../core/assets/gate";
+import { adapterWrites } from "../../core/assets/gate";
 import { fileContextOf, findAsset } from "../../core/assets/read";
 import { presentationOf } from "../../core/assets/type";
 import { asNonEmptyString, isContainedResolvedPath, toPosix } from "../../core/common";
@@ -635,7 +635,7 @@ function findUnrecognizedScriptSource(
 
   for (const source of sources) {
     try {
-      if (!adapterDeclaresTypes(source)) continue;
+      if (!adapterWrites(source, "script")) continue;
       const sourceRoot = path.resolve(source.path);
       // A script's ref is its path, so the candidate is the ref itself.
       const candidate = path.resolve(sourceRoot, conceptId);

@@ -1,0 +1,38 @@
+{
+  "code": 0,
+  "stdout": {
+    "ok": true,
+    "fixed": [],
+    "flagged": [
+      {
+        "file": "tasks/nightly.yaml",
+        "issue": "invalid-task-yaml",
+        "detail": "task file uses the .yaml extension; akm recognizes tasks only as .yml, so this file is never indexed or scheduled — rename it to tasks/nightly.yml.",
+        "fixed": false,
+        "ref": "tasks/nightly.yaml"
+      },
+      {
+        "file": "tasks/nightly.yaml",
+        "issue": "invalid-task-yaml",
+        "detail": "Invalid task source v4 at tasks/nightly.yaml:1: with built-in command action with must be an object Fix the task source at the reported path and line, then re-run.",
+        "fixed": false,
+        "ref": "tasks/nightly.yaml"
+      }
+    ],
+    "warnings": [],
+    "summary": {
+      "fixed": 0,
+      "flagged": 2,
+      "warnings": 0
+    },
+    "byRule": {
+      "invalid-task-yaml": {
+        "findings": 2,
+        "assets": 1
+      }
+    },
+    "shape": "lint",
+    "schemaVersion": 1
+  },
+  "stderr": ""
+}

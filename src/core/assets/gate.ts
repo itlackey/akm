@@ -4,8 +4,11 @@
 
 /** What a bundle's adapter writes, for callers that decide before they write. `bundle.ts` itself stays inside the facade. */
 
+import type { AkmLintOptions, LintFindings, LintRun } from "../../commands/lint/types";
 import type { AdapterRenderedExecutionSource } from "../../execution/source";
 import { akmAdapter } from "../adapter/adapters/akm-adapter";
+import { lintByValidateAndEnvSweep } from "../adapter/adapters/akm-lint-run";
+import { lintAkmFile, lintAkmText } from "../adapter/adapters/akm-sweep";
 import type { AssetEntry } from "../adapter/bundle-adapter";
 import { bundleAdapterId, detectAdapterId } from "../adapter/detect-adapter";
 import {
@@ -16,6 +19,7 @@ import {
   requireAdapter,
 } from "../adapter/registry";
 import type { Bundle } from "../adapter/types";
+import type { AkmConfig } from "../config/config";
 import { ConfigError, UsageError, type UsageErrorCode } from "../errors";
 import { assetBundleOf, bundleFor } from "./bundle";
 
@@ -86,16 +90,26 @@ export function knownAdapterIds(): string[] {
 }
 
 /**
- * Whether the folders of the bundle's adapter declare the types of what they hold (an akm bundle's `memories/`):
- * `akm lint` sweeps such a bundle folder by folder, and its `--type` names a folder.
+ * `akm lint` of a bundle, or of one file of it (`run.file`), by its adapter: what the adapter finds, fixes written as
+ * asset writes. An adapter without a `lint` of its own is checked by its `validate` and the cross-bundle `.env` sweep.
  */
-export function adapterDeclaresTypes(bundle: BundleRecord): boolean {
-  return adapterForId(bundleAdapterId(bundle))?.declaredType !== undefined;
+export function lintBundle(run: LintRun): Promise<LintFindings> {
+  const adapter = adapterForId(bundleAdapterId(run.bundle));
+  return adapter?.lint ? adapter.lint(run) : lintByValidateAndEnvSweep(run);
 }
 
-/** Whether the bundle's adapter's own checks are the whole `akm lint` of a primary bundle: no cross-bundle sweep runs. */
-export function adapterLintsAlone(bundle: BundleRecord): boolean {
-  return adapterForId(bundleAdapterId(bundle))?.lintsAlone === true;
+/** `akm lint <file>` for a file no bundle holds: it is read as the akm document type `--type` names. */
+export function lintLooseFile(
+  file: { given: string; real: string },
+  cfg: AkmConfig,
+  options: AkmLintOptions,
+): LintFindings {
+  return lintAkmFile(file, undefined, [], cfg, options);
+}
+
+/** What `akm lint` would find in `content` as the text of the akm asset at `relPath` of the bundle at `root`. Nothing is read from or written to the file. */
+export function lintAssetText(input: Parameters<typeof lintAkmText>[0]): LintFindings {
+  return lintAkmText(input);
 }
 
 /** Whether some adapter's install-time probe claims `root` as the root of a bundle of its format. A probe that throws does not claim it. */
