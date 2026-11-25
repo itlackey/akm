@@ -32,7 +32,7 @@ import {
   type StepExecutionResult,
 } from "../../../src/workflows/exec/native-executor";
 import { cpuDerivedUnitConcurrency } from "../../../src/workflows/exec/scheduler";
-import type { UnitDispatchResult } from "../../../src/workflows/exec/unit-dispatch";
+import type { UnitDispatcher, UnitDispatchResult } from "../../../src/workflows/exec/unit-dispatch";
 import type { WorkflowPlan, WorkflowPlanStep } from "../../../src/workflows/plan";
 import {
   execContextLimits,
@@ -940,6 +940,19 @@ function killHolder(pidFile: string): void {
 }
 
 describe("exec unit — an INCOMPLETE capture is never a success (finding 2)", () => {
+  const dispatcher: UnitDispatcher = (request) => {
+    if (request.frozenTarget.kind !== "shell") throw new Error("expected an exec unit");
+    return runExecUnit(
+      {
+        unitId: request.unitId,
+        exec: request.frozenTarget.exec,
+        baseDir: workDir,
+        timeoutMs: request.timeoutMs,
+      },
+      100,
+    );
+  };
+
   /**
    * A command whose LEADER writes a prefix of its output and exits 0
    * immediately, leaving a descendant in a SESSION OF ITS OWN (akm stops what is left in the leader's group, so only
@@ -968,13 +981,13 @@ describe("exec unit — an INCOMPLETE capture is never a success (finding 2)", (
       "    unit:",
       "      exec:",
       `        command: ${JSON.stringify(fdHolderArgv(holderPid))}`,
-      '      timeout: "2s"',
+      '      timeout: "500ms"',
     ]);
     storePlan(plan);
 
     let result: Awaited<ReturnType<typeof run>>;
     try {
-      result = await run(plan);
+      result = await run(plan, { dispatcher });
     } finally {
       killHolder(holderPid);
     }
@@ -1047,14 +1060,14 @@ describe("exec unit — an INCOMPLETE capture is never a success (finding 2)", (
       "    unit:",
       "      exec:",
       `        command: ${JSON.stringify(fdHolderArgv(holderPid, log))}`,
-      '      timeout: "2s"',
+      '      timeout: "500ms"',
       "      retry: { max: 2, on: [spawn_failed] }",
     ]);
     storePlan(plan);
 
     let result: Awaited<ReturnType<typeof run>>;
     try {
-      result = await run(plan);
+      result = await run(plan, { dispatcher });
     } finally {
       killHolder(holderPid);
     }

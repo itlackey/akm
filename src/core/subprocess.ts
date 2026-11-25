@@ -570,14 +570,6 @@ const EMPTY_READ: StreamReadResult = {
   bytesRead: 0,
   retainedBytes: 0,
 };
-/**
- * How long a captured pipe may stay open after the pipe's owner left, with or without a wall budget: the
- * child exited, or (a child that survived its own kill ladder) the budget expired. Anything still holding
- * the fd open then is a background descendant, not the command. It bounds only what a pipe does after its
- * owner is gone, so it never caps the run itself.
- */
-const POST_EXIT_STREAM_DRAIN_GRACE_MS = 2_000;
-
 function toError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
@@ -591,6 +583,7 @@ function toError(err: unknown): Error {
 export async function runManagedSubprocess(
   cmd: string[],
   opts: RunManagedSubprocessOptions,
+  drainGraceMs = 2_000,
 ): Promise<ManagedSubprocessResult> {
   const setTimeoutImpl = opts.setTimeoutFn ?? setTimeout;
   const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
@@ -707,7 +700,7 @@ export async function runManagedSubprocess(
     await Promise.race([
       bothDrained,
       new Promise<void>((resolve) => {
-        graceTimer = setTimeoutImpl(resolve, POST_EXIT_STREAM_DRAIN_GRACE_MS);
+        graceTimer = setTimeoutImpl(resolve, drainGraceMs);
         if (typeof graceTimer !== "number") graceTimer.unref?.();
       }),
     ]);
@@ -717,7 +710,7 @@ export async function runManagedSubprocess(
   const pipeOwnerGone =
     leftoversStopped && budgetExpired ? Promise.race([leftoversStopped, budgetExpired]) : leftoversStopped;
   const readOpts = {
-    timeoutMs: POST_EXIT_STREAM_DRAIN_GRACE_MS,
+    timeoutMs: drainGraceMs,
     setTimeoutFn: setTimeoutImpl,
     clearTimeoutFn: clearTimeoutImpl,
     ...(pipeOwnerGone ? { armTimeoutAfter: pipeOwnerGone } : {}),
