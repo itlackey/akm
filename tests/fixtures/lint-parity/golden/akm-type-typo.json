@@ -1,0 +1,132 @@
+{
+  "code": 0,
+  "stdout": {
+    "ok": true,
+    "fixed": [],
+    "flagged": [
+      {
+        "file": "skills/nopkg",
+        "issue": "missing-skill-md",
+        "detail": "no SKILL.md in skills/nopkg/",
+        "fixed": false
+      },
+      {
+        "file": "knowledge/colon.md",
+        "issue": "unquoted-colon",
+        "detail": "description value contains unquoted colon: Note: with an unquoted colon",
+        "fixed": false,
+        "ref": "knowledge/colon"
+      },
+      {
+        "file": "knowledge/colon.md",
+        "issue": "missing-updated",
+        "detail": "no updated field in frontmatter",
+        "fixed": false,
+        "ref": "knowledge/colon"
+      },
+      {
+        "file": "knowledge/refs.md",
+        "issue": "missing-ref",
+        "detail": "missing ref: knowledge/ghost (frontmatter xrefs; resolved to knowledge/ghost.md)",
+        "fixed": false,
+        "ref": "knowledge/refs"
+      },
+      {
+        "file": "knowledge/refs.md",
+        "issue": "missing-ref",
+        "detail": "missing ref: memories/old (frontmatter xrefs; resolved to memories/old.md)",
+        "fixed": false,
+        "ref": "knowledge/refs"
+      },
+      {
+        "file": "workflows/broken.md",
+        "issue": "invalid-workflow-structure",
+        "detail": "Step \"work\" \"output\" is not a valid JSON Schema (at $.type): unknown type \"strig\" (valid types: string, number, integer, boolean, object, array, null).",
+        "fixed": false,
+        "line": 8,
+        "ref": "workflows/broken"
+      },
+      {
+        "file": "memories/holder.md",
+        "issue": "missing-ref",
+        "detail": "missing ref: memories/gone (frontmatter contradictedBy; resolved to memories/gone.md)",
+        "fixed": false,
+        "ref": "memories/holder"
+      },
+      {
+        "file": "tasks/nightly.yaml",
+        "issue": "invalid-task-yaml",
+        "detail": "task file uses the .yaml extension; akm recognizes tasks only as .yml, so this file is never indexed or scheduled — rename it to tasks/nightly.yml.",
+        "fixed": false,
+        "ref": "tasks/nightly.yaml"
+      },
+      {
+        "file": "tasks/nightly.yaml",
+        "issue": "invalid-task-yaml",
+        "detail": "Invalid task source v4 at tasks/nightly.yaml:1: with built-in command action with must be an object Fix the task source at the reported path and line, then re-run.",
+        "fixed": false,
+        "ref": "tasks/nightly.yaml"
+      },
+      {
+        "file": "env/dev.env",
+        "issue": "dangerous-env-key",
+        "detail": "Env key `NODE_OPTIONS` can be used to hijack process execution when injected with `--env`. Ref: env/dev. Review this file before running `akm run --env` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on previous line)",
+        "fixed": false,
+        "ref": "env/dev"
+      },
+      {
+        "file": "env/prod.env",
+        "issue": "dangerous-env-key",
+        "detail": "Env key `LD_PRELOAD` can be used to hijack process execution when injected with `--env`. Ref: envb//env/prod. Review this file before running `akm run --env` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on previous line)",
+        "fixed": false,
+        "ref": "env/prod"
+      },
+      {
+        "file": "secrets/token.env",
+        "issue": "dangerous-env-key",
+        "detail": "Env key `PATH` can be used to hijack process execution when injected with `--env`. Ref: envb//secrets/token.env. Review this file before running `akm run --env` against untrusted stashes. (suppress with: # akm-lint-ok: dangerous-env-key on previous line)",
+        "fixed": false,
+        "ref": "secrets/token.env"
+      }
+    ],
+    "warnings": [],
+    "summary": {
+      "fixed": 0,
+      "flagged": 12,
+      "warnings": 0
+    },
+    "byRule": {
+      "missing-skill-md": {
+        "findings": 1,
+        "assets": 1
+      },
+      "unquoted-colon": {
+        "findings": 1,
+        "assets": 1
+      },
+      "missing-updated": {
+        "findings": 1,
+        "assets": 1
+      },
+      "missing-ref": {
+        "findings": 3,
+        "assets": 2
+      },
+      "invalid-workflow-structure": {
+        "findings": 1,
+        "assets": 1
+      },
+      "invalid-task-yaml": {
+        "findings": 2,
+        "assets": 1
+      },
+      "dangerous-env-key": {
+        "findings": 3,
+        "assets": 3
+      }
+    },
+    "shape": "lint",
+    "schemaVersion": 1
+  },
+  "stderr": "Warning: lint --type \"workflo\" is not a recognized akm asset type — valid types: skill, command, agent, knowledge, instruction, workflow, memory, lesson, task, session, fact, rule. The whole bundle was validated.\n"
+}

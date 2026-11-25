@@ -36,7 +36,7 @@ The failure to avoid is treating something other than the user's stated intent a
 
 ## Commands
 - `bun install`; `bun run build`.
-- Before committing: `bun run lint:fix`, `bunx tsc --noEmit`, the focused tests (`bun test tests/<file>.test.ts`), `bun run check:changed`. CI runs `bun run check` (lint, types, the unit suite); the integration suite (`bun run test:integration`, with the Node fallback smoke and the upgrade rehearsals) and Desktop's tests run only at release, as gates in `.github/workflows/release.yml`, except three architecture checks (`bun run test:architecture`), which CI runs on every pull request with an FTA complexity gate (`bun run report:complexity`: no file may score higher than at the base branch; locally `bun run report:complexity --base origin/<release branch>`).
+- Before committing: `bun run lint:fix`, `bunx tsc --noEmit`, the focused tests (`bun test tests/<file>.test.ts`), `bun run check:changed`. CI runs `bun run check` (lint, types, the unit suite); the integration suite (`bun run test:integration`, with the Node fallback smoke and the upgrade rehearsals) and Desktop's tests run only at release, as gates in `.github/workflows/release.yml`, except three architecture checks (`bun run test:architecture`), which CI runs on every pull request with an FTA complexity gate (`bun run report:complexity`: no file scoring over 75 may score higher than at the base branch; locally `bun run report:complexity --base origin/<release branch>`).
 - Run the working tree as `bun src/cli.ts …`. A bare `akm` is the installed copy, using the real config and bundles.
 
 ## Branches

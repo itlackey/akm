@@ -48,15 +48,20 @@ jobs:
       - run: bun run check
       # Three integration tests guard module boundaries and stored fields cheaply, so they run on every pull request,
       # not only at release; the FTA complexity report goes to the job summary, and on a pull request it fails the
-      # step when a file scores higher than at the base branch. Both run even if the first fails.
+      # step when a file scores higher than at the base branch and over 75. Both run even if the first fails.
       - name: Architecture checks and complexity report
         run: |
           status=0
+          base=()
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
+            # The base is the commit the pull request's test merge was made on (its first parent), not the branch tip,
+            # which may have moved since and would credit or blame this pull request for someone else's change.
+            parent=$(git cat-file -p HEAD | awk '/^parent /{print $2; exit}')
+            git fetch --no-tags --depth=1 origin "$parent"
+            base=(--base "$parent")
           fi
           bun run test:architecture || status=$?
-          bun run report:complexity || status=$?
+          bun run report:complexity "${base[@]}" || status=$?
           exit "$status"
       - run: bun run build
 
