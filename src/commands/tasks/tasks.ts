@@ -38,6 +38,7 @@ import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
+import { backendNameForPlatform } from "../../core/platform";
 import { warn } from "../../core/warn";
 import {
   assertBundleNotDisabled,
@@ -52,7 +53,7 @@ import {
 import { retiredEngineSelection } from "../../integrations/agent/resolution";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
-import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
+import { selectBackend } from "../../tasks/backends";
 import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptions } from "../../tasks/backends/types";
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";

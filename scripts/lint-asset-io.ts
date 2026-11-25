@@ -110,7 +110,6 @@ const UPWARD_ALLOWED = [
   "src/indexer/passes/metadata",
   "src/indexer/scan/drain-dir",
   "src/indexer/search/search-source",
-  "src/tasks/backends",
   "src/tasks/schedule-gates",
   "src/tasks/source-v3",
   "src/tasks/source/bounded-document",

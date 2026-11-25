@@ -10,3 +10,9 @@
  */
 
 export const IS_WINDOWS = process.platform === "win32";
+
+export function backendNameForPlatform(platform: NodeJS.Platform = process.platform): "schtasks" | "launchd" | "cron" {
+  if (platform === "win32") return "schtasks";
+  if (platform === "darwin") return "launchd";
+  return "cron";
+}
