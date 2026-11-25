@@ -31,12 +31,12 @@
 import { types as utilTypes } from "node:util";
 import { isAlias, isMap, isScalar, isSeq, LineCounter, parseDocument } from "yaml";
 import { timeoutMilliseconds } from "../../cli/parse-args";
-import { wellFormedUnicode } from "../../core/common";
-import { UsageError } from "../../core/errors";
 import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
 import { EXECUTION_MAX_TIMEOUT_MS } from "../../execution/limits";
 import { type StrictRecordSnapshot, snapshotStrictRecord } from "../../execution/record";
 import { WORKFLOW_ENV_VAR_NAME_PATTERN } from "../../workflows/resource-limits";
+import { wellFormedUnicode } from "../common";
+import { UsageError } from "../errors";
 
 // ── Resource bounds (D2-N4: owned here, re-exported by source-v3.ts) ───────
 

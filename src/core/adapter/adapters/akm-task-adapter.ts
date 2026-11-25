@@ -32,7 +32,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { readBoundedTaskSourceYaml } from "../../../tasks/source/bounded-document";
 import { parseTaskSource, peekTaskSourceVersion } from "../../../tasks/source/parse-task-source";
 import {
   TASK_EXTENSION,
@@ -40,6 +39,7 @@ import {
   taskExtensionDetail,
   taskSourceErrorDetail,
 } from "../../../tasks/source-v3";
+import { readBoundedTaskSourceYaml } from "../../asset/bounded-task-document";
 import { toPosix } from "../../common";
 import type { FileContext } from "../directory/file-context";
 import { DirectoryAdapterBase } from "../directory-adapter";

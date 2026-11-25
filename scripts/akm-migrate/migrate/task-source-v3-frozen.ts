@@ -41,10 +41,6 @@
  */
 
 import { bundleRefToString, parseBundleRef } from "../../../src/core/asset/asset-ref";
-import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../../src/core/builtin-action";
-import { UsageError } from "../../../src/core/errors";
-import { checkJsonSchemaDefinition } from "../../../src/core/json-schema";
-import type { ExecutionJsonObject, ExecutionJsonValue } from "../../../src/execution/json";
 import {
   asRecord,
   type BoundedDocumentContext,
@@ -61,7 +57,11 @@ import {
   stringField,
   TASK_V3_MAX_REDACT_NAMES,
   TASK_V3_MAX_SCHEDULES,
-} from "../../../src/tasks/source/bounded-document";
+} from "../../../src/core/asset/bounded-task-document";
+import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../../src/core/builtin-action";
+import { UsageError } from "../../../src/core/errors";
+import { checkJsonSchemaDefinition } from "../../../src/core/json-schema";
+import type { ExecutionJsonObject, ExecutionJsonValue } from "../../../src/execution/json";
 import { WORKFLOW_ENV_VAR_NAME_PATTERN } from "../../../src/workflows/resource-limits";
 
 /** `akm.tools` — retired in task source v4; validated here as v3 did, then dropped by the migration. */
@@ -557,7 +557,7 @@ export function parseTaskV3Document(value: unknown, options: ParseTaskV3Document
 /**
  * Parse hostile YAML without aliases/tags/merges, then enter the canonical
  * object parser. The bounded-YAML front end itself is
- * `readBoundedTaskSourceYaml` (`src/tasks/source/bounded-document.ts`) —
+ * `readBoundedTaskSourceYaml` (`src/core/asset/bounded-task-document.ts`) —
  * this is a thin wrapper passing `sourceLabel: "task v3 source"`.
  */
 export function parseTaskV3Yaml(input: ParseTaskV3YamlInput): TaskV3SourceDocument {
