@@ -138,7 +138,7 @@ test("an operation that finishes within the grace period is allowed to finish", 
 
 /**
  * Runs `body` in a fresh Node process that tracks its children the way the server does. `body` gets the exports of
- * shutdown.mjs, node's `spawn` and a `sleep`; what it returns comes back with the process's stderr. The process has
+ * shutdown.mjs, akm-cli's recorded `spawn` and a `sleep`; what it returns comes back with the process's stderr. The process has
  * `WRITER` (a script that ignores SIGTERM and appends to `TICKS` every 100 ms), `TICKS` and `PIDFILE` in its environment.
  */
 async function probe(t, body) {
@@ -163,14 +163,16 @@ async function probe(t, body) {
   );
   await chmod(env.WRITER, 0o755);
   const source = `
-    import { spawn } from "node:child_process";
+    import { children } from "akm-cli/workspace";
     import * as shutdown from ${JSON.stringify(pathToFileURL(path.join(appRoot, "server/shutdown.mjs")).href)};
-    shutdown.track();
+    shutdown.track(children);
+    const spawn = children.spawnChild;
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     console.log(JSON.stringify(await (${body})(shutdown, spawn, sleep)));
   `;
   const { stdout, stderr } = await promisify(execFile)(process.execPath, ["--input-type=module", "-e", source], {
     env,
+    cwd: appRoot,
   });
   return { ...JSON.parse(stdout), stderr, ticks: env.TICKS };
 }

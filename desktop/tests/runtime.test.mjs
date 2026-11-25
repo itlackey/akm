@@ -258,7 +258,7 @@ test("Electron Node child loads native SQLite and existing CLI-spawning workspac
 });
 
 test("a request before the app has loaded gets the 503 error shape the renderer reads", async (t) => {
-  const { mkdtemp, mkdir, copyFile, writeFile, rm } = await import("node:fs/promises");
+  const { mkdtemp, mkdir, copyFile, writeFile, rm, symlink } = await import("node:fs/promises");
   const os = await import("node:os");
   const root = await mkdtemp(path.join(os.tmpdir(), "akm-desktop-starting-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -267,6 +267,8 @@ test("a request before the app has loaded gets the 503 error shape the renderer 
   for (const file of ["server.mjs", "shutdown.mjs"])
     await copyFile(path.join(appRoot, "server", file), path.join(root, "server", file));
   await copyFile(path.join(appRoot, "package.json"), path.join(root, "package.json"));
+  // The server records the children akm-cli starts, so it loads akm-cli as the packaged app does.
+  await symlink(path.join(appRoot, "node_modules"), path.join(root, "node_modules"), "junction");
   // A stand-in app that reports the listening origin, then finishes loading only when told to.
   await writeFile(
     path.join(root, "build/handler.js"),
@@ -277,7 +279,7 @@ export const handler = (req, res) => res.end('loaded');
   );
   const child = fork(path.join(root, "server/server.mjs"), [], {
     execArgv: [],
-    // Native mode reads no akm config, so the stand-in directory needs no akm-cli.
+    // Native mode reads no akm config.
     env: { ...process.env, HOME: root, AKM_DESKTOP_NATIVE: "1", AKM_WEB_SECRET: "s".repeat(32) },
     stdio: ["ignore", "ignore", "inherit", "ipc"],
   });
