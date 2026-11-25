@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261132] - 2026-11-25
+
 ### Changed
 
 - Removing an asset that is a symbolic link (`akm env remove`, `akm secret remove`, a removal by `akm lint --fix`) removes the link itself and never what it points at, also when the link leaves the bundle or leads nowhere. Any link used to refuse the removal. Retiring and restoring still refuse a link, because a relative link moved into the archive would lead nowhere.
