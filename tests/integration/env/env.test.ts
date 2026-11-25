@@ -579,7 +579,7 @@ describe("env create by the file spelling of an env that exists (§0.2 N20)", ()
     expect(fs.readFileSync(path.join(stashDir, "env", ".env"), "utf8")).toBe("KEEP=me\n");
   });
 
-  test("a symbolic-linked env is refused as before, not left as it is", async () => {
+  test("an env that is a symbolic link to a file inside the bundle is left as it is, exit 0", async () => {
     const stashDir = makeTempDir("akm-envcli-stash-");
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "app.env"), "KEEP=me\n", "utf8");
@@ -587,9 +587,26 @@ describe("env create by the file spelling of an env that exists (§0.2 N20)", ()
 
     const result = await runCli(["env", "create", "env/lnk"], { AKM_BUNDLE_DIR: stashDir });
 
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain("symbolic link");
+    expect(result.status).toBe(0);
+    expect(fs.lstatSync(path.join(stashDir, "env", "lnk.env")).isSymbolicLink()).toBe(true);
     expect(fs.readFileSync(path.join(stashDir, "env", "app.env"), "utf8")).toBe("KEEP=me\n");
+  });
+
+  test("without content, an env that is a link leaving the bundle or leading to nothing is refused", async () => {
+    for (const kind of ["leaving", "dangling"] as const) {
+      const stashDir = makeTempDir("akm-envcli-stash-");
+      const outsideDir = makeTempDir("akm-envcli-outside-");
+      fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+      const target = kind === "leaving" ? path.join(outsideDir, "app.env") : "nowhere.env";
+      if (kind === "leaving") fs.writeFileSync(target, "KEEP=outside\n", "utf8");
+      const link = path.join(stashDir, "env", "lnk.env");
+      fs.symlinkSync(target, link);
+
+      const result = await runCli(["env", "create", "env/lnk"], { AKM_BUNDLE_DIR: stashDir });
+
+      expect(result.status, kind).toBe(2);
+      expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    }
   });
 });
 

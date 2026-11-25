@@ -420,7 +420,8 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   delete(b: Bundle, conceptId: string): AssetChange[] {
     const entry = this.existing(b, conceptId);
     const file = entry.entry.file;
-    assertWritableFile(rootOf(b), b.id, file);
+    // Only the asset's own file may be a link (it is removed, never followed); every folder above it must lead inside.
+    if (path.dirname(file) !== rootOf(b)) assertLinksLeadInside(rootOf(b), b.id, path.dirname(file));
     const dir = this.packageDir(buildFileContext(rootOf(b), file));
     // A package at the bundle's root is not the bundle's to remove: only its entry goes.
     if (dir === undefined || !isWithin(dir, rootOf(b)) || path.resolve(dir) === path.resolve(rootOf(b))) {
@@ -656,9 +657,10 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   }
 
   private existing(b: Bundle, conceptId: string): FileAsset {
-    const found = this.read(b, conceptId);
-    if (!found?.entry.file) throw assetNotFound(`${b.id}//${conceptId}`);
-    return found as FileAsset;
+    // A dangling link is still a path a delete can remove and the shared write guard can refuse by name.
+    const held = this.holders(liveView(b, "file", true), conceptId);
+    if (!held?.files[0]) throw assetNotFound(`${b.id}//${conceptId}`);
+    return { conceptId: held.conceptId, entry: buildFileContext(rootOf(b), path.join(rootOf(b), held.files[0])) };
   }
 
   /** The bytes and file mode a write gives a file. */
@@ -720,7 +722,7 @@ interface FileView {
  * may reach; `"walk"`, for a check of many assets, walks the bundle once, the first time it is asked, and answers every
  * file from that walk (one `git check-ignore` per file costs far more than one walk).
  */
-function liveView(b: Bundle, reached: "file" | "walk" = "file"): FileView {
+function liveView(b: Bundle, reached: "file" | "walk" = "file", includeDanglingLinks = false): FileView {
   const walks = new Map<boolean, Set<string>>();
   return {
     rootExists() {
@@ -744,9 +746,8 @@ function liveView(b: Bundle, reached: "file" | "walk" = "file"): FileView {
       const authored = path.resolve(rootOf(b), relPath);
       if (!within(authored, rootOf(b))) return false;
       try {
-        const stat = fs.lstatSync(authored);
-        if (!stat.isFile() && !stat.isSymbolicLink()) return false;
-        return fs.statSync(fs.realpathSync(authored)).isFile();
+        const link = fs.lstatSync(authored).isSymbolicLink();
+        return fs.statSync(authored, { throwIfNoEntry: false })?.isFile() ?? (includeDanglingLinks && link);
       } catch {
         return false;
       }
@@ -852,12 +853,8 @@ function directoryLinksBelow(dir: string): string[] {
 
 // ── Writing helpers ─────────────────────────────────────────────────────────
 
-/**
- * Refuse a change to `file` that leaves the bundle's root, or passes through a
- * symbolic link below it. A delete, retire or restore acts on the entry it names
- * and follows no link.
- */
-export function assertWritableFile(root: string, bundle: string, file: string): void {
+/** Retire and restore follow no link: moving a relative link into the archive would leave it dangling. */
+function assertWritableFile(root: string, bundle: string, file: string): void {
   checkWritePath(root, bundle, file, false);
 }
 
@@ -867,7 +864,7 @@ export function assertWritableFile(root: string, bundle: string, file: string): 
  * bundle, or leading to nothing) refuses the write. A create then puts a regular file where the link was, and what it
  * led to is not written; an update writes where the link leads (`linkTargetInside`), and the link stays.
  */
-function assertLinksLeadInside(root: string, bundle: string, file: string): void {
+export function assertLinksLeadInside(root: string, bundle: string, file: string): void {
   checkWritePath(root, bundle, file, true);
 }
 
