@@ -16,7 +16,6 @@ import {
   getStashLocksDir,
   getStashStateKey,
   getStateDir,
-  getUnresolvedSourcesDir,
 } from "../src/core/paths";
 
 // ── Environment helpers ─────────────────────────────────────────────────────
@@ -490,19 +489,15 @@ describe("getStashStateKey", () => {
   });
 });
 
-describe("per-stash $STATE/$CACHE writer dirs", () => {
+describe("per-stash lock directories", () => {
   test("namespace two different stashes to two different directories", () => {
     process.env.XDG_STATE_HOME = "/state";
-    process.env.XDG_CACHE_HOME = "/cache";
-    expect(getUnresolvedSourcesDir("/stash-a")).not.toBe(getUnresolvedSourcesDir("/stash-b"));
     expect(getStashLocksDir("/stash-a")).not.toBe(getStashLocksDir("/stash-b"));
   });
 
-  test("are rooted at $STATE/locks/* or $CACHE/index/* respectively", () => {
+  test("are rooted at $STATE/locks/*", () => {
     process.env.XDG_STATE_HOME = "/state";
-    process.env.XDG_CACHE_HOME = "/cache";
     const key = getStashStateKey("/stash-a");
-    expect(getUnresolvedSourcesDir("/stash-a")).toBe(path.join("/cache", "akm", "index", "unresolved-sources", key));
     expect(getStashLocksDir("/stash-a")).toBe(path.join("/state", "akm", "locks", key));
   });
 });

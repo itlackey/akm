@@ -3,9 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Chunk 5 M-a — `deriveInstallations` (`src/indexer/installations.ts`):
- * SearchSource[] → Bundle[] derivation (spec §1.1/§1.2).
- *
  * Exercised against the frozen fixture roots the conformance suite uses so the
  * ordered `looksLikeRoot` probe is checked over real bundle layouts:
  *   - `all-types` stash  → akm  (type dirs, no root index.md)
@@ -17,18 +14,12 @@ import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { bundleAdapterId } from "../../src/core/adapter/detect-adapter";
 import { detectBundleAdapter } from "../../src/core/assets/gate";
-import { slugForRegistryId } from "../../src/core/bundle-id";
-import {
-  deriveBundleId,
-  deriveBundleIds,
-  deriveInstallations,
-  deriveWritableBundleIds,
-  slugForPath,
-} from "../../src/indexer/installations";
+import { deriveBundleId, deriveBundleIds, slugForPath, slugForRegistryId } from "../../src/core/bundle-id";
+import { deriveWritableBundleIds } from "../../src/indexer/installations";
 import type { SearchSource } from "../../src/indexer/search/search-source";
 
 // NO registry setup: the registry is a static frozen map (normative §12.6)
-// populated at module load, so `deriveInstallations`'s ordered `looksLikeRoot`
+// populated at module load, so the ordered `looksLikeRoot`
 // probe runs in production with the full built-in set WITHOUT any registration
 // call. These tests assert exactly that production path.
 
@@ -95,7 +86,7 @@ describe("detectBundleAdapter — adapter selection (ordered §1.2 probe)", () =
   test("the ordered probe is genuinely consulted in production — non-akm roots no longer all collapse to akm", () => {
     // The pre-wiring bug: an empty registry made EVERY source fall back to
     // `akm`. Now distinct bundle shapes resolve to distinct adapters through
-    // the same `deriveInstallations` call sites production uses.
+    // the same detection function production uses.
     const adapters = [AKM_ROOT, OKF_ROOT, LLM_WIKI_ROOT].map((root) => detectBundleAdapter(root));
     expect(adapters).toEqual(["akm", "okf", "llm-wiki"]);
   });
@@ -105,33 +96,13 @@ describe("detectBundleAdapter — adapter selection (ordered §1.2 probe)", () =
   });
 });
 
-describe("deriveInstallations — id / trust / bundle shape", () => {
-  test("installs sources under their resolved bundle IDs", () => {
-    const sources: SearchSource[] = [
-      { bundleId: "all-types", path: AKM_ROOT, writable: true },
-      { bundleId: "team-catalog", path: OKF_ROOT },
-    ];
-    const [primary, installed] = deriveInstallations(sources);
-    expect(primary!.id).toBe("all-types");
-    expect(installed!.id).toBe("team-catalog");
-  });
-
-  test("a bundle carries its root under its id; writability is the source's, by bundle id", () => {
+describe("deriveWritableBundleIds", () => {
+  test("writability is the source's, by bundle id", () => {
     const sources: SearchSource[] = [
       { bundleId: "all-types", path: AKM_ROOT, writable: true },
       { bundleId: "ro", path: OKF_ROOT, writable: false },
     ];
-    expect(deriveInstallations(sources)[0]).toEqual({ id: "all-types", root: AKM_ROOT });
     expect([...deriveWritableBundleIds(sources)]).toEqual(["all-types"]);
-  });
-
-  test("source order is preserved as installation priority", () => {
-    const ids = deriveInstallations([
-      { bundleId: "a", path: OKF_ROOT },
-      { bundleId: "b", path: LLM_WIKI_ROOT },
-      { bundleId: "c", path: AKM_ROOT },
-    ]).map((i) => i.id);
-    expect(ids).toEqual(["a", "b", "c"]);
   });
 });
 
@@ -151,19 +122,6 @@ describe("deriveBundleId — D-R5 slug-gated derivation (shared with the config 
   test("an empty registryId falls back to the path slug", () => {
     expect(deriveBundleId(undefined, "/x/y/team-catalog", new Set())).toBe("team-catalog");
     expect(deriveBundleId("", "/x/y/team-catalog", new Set())).toBe("team-catalog");
-  });
-
-  test("deriveInstallations ids equal a direct deriveBundleId pass over the same sources (no re-derive)", () => {
-    const sources = [
-      { path: AKM_ROOT, writable: true },
-      { path: OKF_ROOT, registryId: "team-catalog" },
-      { path: LLM_WIKI_ROOT, registryId: "github:owner/repo" }, // non-slug-legal
-    ];
-    const used = new Set<string>();
-    const expected = sources.map((s) => deriveBundleId(s.registryId, s.path, used));
-    expect(
-      deriveInstallations(sources.map((source, i) => ({ ...source, bundleId: expected[i]! }))).map((i) => i.id),
-    ).toEqual(expected);
   });
 });
 

@@ -80,7 +80,6 @@ export type SemanticSearchStatus = SemanticSearchRecord["status"] | "pending" | 
 
 interface IndexSourceOwner {
   bundleId: string;
-  sourceRoot?: string;
 }
 
 export function recordSourceOwners(db: Database, sources: readonly SearchSource[]): void {
@@ -95,13 +94,7 @@ export function readSourceOwners(db: Database): IndexSourceOwner[] {
     const parsed: unknown = JSON.parse(raw);
     if (
       !Array.isArray(parsed) ||
-      parsed.some(
-        (owner) =>
-          !owner ||
-          typeof owner !== "object" ||
-          typeof owner.bundleId !== "string" ||
-          (owner.sourceRoot !== undefined && typeof owner.sourceRoot !== "string"),
-      )
+      parsed.some((owner) => !owner || typeof owner !== "object" || typeof owner.bundleId !== "string")
     ) {
       warn("index_meta sourceOwners value is invalid — treating as empty");
       return [];

@@ -22,7 +22,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../../src/core/config/config";
-import { deriveEntryProvenance, deriveInstallations } from "../../../src/indexer/installations";
+import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../../src/indexer/materialize-embeddings";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import {
@@ -55,12 +55,10 @@ describe("generateEmbeddingsForDb: throughput line sums the capped text actually
   });
 
   function seedEntries(db: Database, texts: string[]): void {
-    const installation = deriveInstallations([{ bundleId: "stash", path: storage.stashDir, writable: true }])[0];
-    if (!installation) throw new Error("failed to derive a test bundle installation");
     texts.forEach((text, i) => {
       const name = `entry-${i}`;
       const entry = { name, type: "memories", filename: `${name}.md`, content: text };
-      const provenance = deriveEntryProvenance({ bundleId: installation.id, adapterId: "akm" }, "memories", name);
+      const provenance = deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "memories", name);
       upsertEntry(db, `${storage.stashDir}/memories/${name}.md`, entry, provenance);
     });
   }

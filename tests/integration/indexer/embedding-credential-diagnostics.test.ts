@@ -20,7 +20,7 @@ import type { AkmConfig } from "../../../src/core/config/config";
 import { writeCredential } from "../../../src/core/config/credentials";
 import { getConfigPath } from "../../../src/core/paths";
 import { resetVerbose, setVerbose } from "../../../src/core/warn";
-import { deriveEntryProvenance, deriveInstallations } from "../../../src/indexer/installations";
+import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../../src/indexer/materialize-embeddings";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import type { EmbeddingBatchCommit } from "../../../src/llm/embedders/remote";
@@ -50,10 +50,8 @@ describe("generateEmbeddingsForDb: embedding-credential diagnostics (#953)", () 
   });
 
   function seedOneEntry(db: Database): void {
-    const installation = deriveInstallations([{ bundleId: "stash", path: storage.stashDir, writable: true }])[0];
-    if (!installation) throw new Error("failed to derive a test bundle installation");
     const entry = { name: "note", type: "memories", filename: "note.md" };
-    const provenance = deriveEntryProvenance({ bundleId: installation.id, adapterId: "akm" }, "memories", "note");
+    const provenance = deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "memories", "note");
     upsertEntry(db, `${storage.stashDir}/memories/note.md`, entry, provenance);
   }
 

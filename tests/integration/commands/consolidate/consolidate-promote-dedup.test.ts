@@ -36,16 +36,14 @@ import { contentHash } from "../../../../src/commands/improve/content-hash";
 import { createProposal, listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { resolveWriteTarget } from "../../../../src/core/write-source";
-import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../../../src/indexer/installations";
+import { deriveEntryProvenance, slugForPath } from "../../../../src/indexer/installations";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** The durable `proposals.ref` item_ref (WI-8.5a): `<bundle>//<conceptId>`. */
 function durableRef(stashDir: string, type: string, name: string): string {
-  const bundleId =
-    deriveInstallations([{ bundleId: slugForPath(stashDir), path: stashDir, writable: true }])[0]?.id ??
-    slugForPath(stashDir);
+  const bundleId = slugForPath(stashDir);
   return deriveEntryProvenance({ bundleId, adapterId: "akm" }, type, name).itemRef;
 }
 

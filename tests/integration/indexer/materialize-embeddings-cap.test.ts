@@ -15,7 +15,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
-import { deriveEntryProvenance, deriveInstallations } from "../../../src/indexer/installations";
+import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../../src/indexer/materialize-embeddings";
 import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
@@ -49,10 +49,8 @@ describe("generateEmbeddingsForDb: per-document embedding cap (#956)", () => {
 
   /** Seed one entry whose body is `content`; returns the text it is embedded from. */
   function seedOneEntry(db: Database, content: string): string {
-    const installation = deriveInstallations([{ bundleId: "stash", path: storage.stashDir, writable: true }])[0];
-    if (!installation) throw new Error("failed to derive a test bundle installation");
     const entry = { name: "big-note", type: "memories", filename: "big-note.md", content };
-    const provenance = deriveEntryProvenance({ bundleId: installation.id, adapterId: "akm" }, "memories", "big-note");
+    const provenance = deriveEntryProvenance({ bundleId: "stash", adapterId: "akm" }, "memories", "big-note");
     upsertEntry(db, `${storage.stashDir}/memories/big-note.md`, entry, provenance);
     return buildSearchText(entry);
   }

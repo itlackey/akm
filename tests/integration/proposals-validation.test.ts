@@ -14,14 +14,11 @@ import {
   listProposals,
   purgeOrphanProposals,
 } from "../../src/commands/proposal/repository";
-import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
+import { deriveEntryProvenance, slugForPath } from "../../src/indexer/installations";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 function bundleIdFor(stashDir: string): string {
-  return (
-    deriveInstallations([{ bundleId: slugForPath(stashDir), path: stashDir, writable: true }])[0]?.id ??
-    slugForPath(stashDir)
-  );
+  return slugForPath(stashDir);
 }
 
 function createProposal(stashDir: string, input: CreateProposalInput) {

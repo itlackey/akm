@@ -2,50 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/**
- * `deriveInstallations`.
- *
- * Bridges the `SearchSource[]` model (the live indexer's source list,
- * `search-source.ts`) onto the durable `Bundle[]` model. Called from the indexer
- * (provenance derivation), the proposal repository, and written-asset
- * indexing.
- *
- * Per source → one bundle:
- *   - `id`   = `source.bundleId`, the prefix of every ref its adapter emits.
- *   - `root` = `source.path`. The akm layout's type dirs (`knowledge/`,
- *              `skills/`, …) are type-derived leading path segments of the
- *              conceptId within the one bundle.
- *
- * The adapter that reads a bundle is not part of it: {@link bundleAdapterId}
- * (`core/adapter/detect-adapter.ts`) is the one place that says which, the
- * configured id or else the ordered `looksLikeRoot` probe over the built-in
- * adapters (`getAdapters()`, most specific first), falling back to `akm` when no
- * probe fires (an empty or not-yet-materialized root).
- */
-
-import type { Bundle } from "../core/adapter/types";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
-import { deriveBundleId, deriveBundleIds, slugForPath } from "../core/bundle-id";
 import { ConfigError } from "../core/errors";
 import { isSourceWriteActivated } from "../core/write-source";
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
 import type { SearchSource } from "./search/search-source";
 
-export { deriveBundleId, deriveBundleIds, slugForPath };
-
-/**
- * Derive the durable `Bundle[]` from the transitional `SearchSource[]`. Order is
- * preserved (source priority = bundle priority). Bundle ids are unique within the
- * returned batch.
- */
-export function deriveInstallations(sources: readonly SearchSource[]): Bundle[] {
-  return sources.map((source) => ({
-    id: source.bundleId,
-    root: source.path,
-    // asset-io: config the bundle's configured location, copied
-    ...(source.location !== undefined ? { location: source.location } : {}),
-  }));
-}
+export { deriveBundleId, slugForPath } from "../core/bundle-id";
 
 /** The source for `bundleId`; refused when none is configured. */
 export function sourceOfBundle(sources: readonly SearchSource[], bundleId: string): SearchSource {

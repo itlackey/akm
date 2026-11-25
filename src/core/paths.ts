@@ -388,16 +388,6 @@ function stashScopedDir(base: string, stashDir: string): string {
 }
 
 /**
- * `$CACHE/index/unresolved-sources/<stash>/` — synthetic placeholder path for
- * a configured source whose content root did not resolve this run. Never
- * written to disk; only used as a stable, reportable `SearchSource.path`.
- * Moved out of `$STASH/.akm/unresolved-sources/` (itlackey/akm#890).
- */
-export function getUnresolvedSourcesDir(stashDir: string): string {
-  return stashScopedDir(path.join(getCacheDir(), "index", "unresolved-sources"), stashDir);
-}
-
-/**
  * `$STATE/locks/<stash>/` — per-stash operational lock files for the improve
  * pipeline (e.g. `improve.lock`). Moved out of `$STASH/.akm/` (itlackey/akm#890).
  */
