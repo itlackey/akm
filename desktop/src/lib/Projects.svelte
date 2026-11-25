@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { api, type ApiError } from "./client";
+  import { api, type ApiError, appHref } from "./client";
   import { navigate } from "./navigation";
   import LibraryAsset from "./LibraryAsset.svelte";
   import ProjectAssets from "./ProjectAssets.svelte";
@@ -134,7 +134,7 @@
     <ProjectList projects={rows} warnings={config?.projectWarnings ?? []} configPath={config?.path ?? ""} />
   {:else if view === "add"}
     <nav class="crumbs" aria-label="Breadcrumb">
-      <a href="/projects">Projects</a> › <span aria-current="page">Add</span>
+      <a href={appHref("/projects")}>Projects</a> › <span aria-current="page">Add</span>
     </nav>
     <h1 tabindex="-1">Add a project</h1>
     <ProjectForm
@@ -152,11 +152,11 @@
     <div class="state">
       <h1 tabindex="-1">Project not found</h1>
       <p>No project named “{name}” is configured. It may have been renamed or removed.</p>
-      <a class="btn" href="/projects">View projects</a>
+      <a class="btn" href={appHref("/projects")}>View projects</a>
     </div>
   {:else if row && view === "edit"}
     <nav class="crumbs" aria-label="Breadcrumb">
-      <a href="/projects">Projects</a> › <a href={`/projects/${enc(row.name)}`}>{row.name}</a> ›
+      <a href={appHref("/projects")}>Projects</a> › <a href={appHref(`/projects/${enc(row.name)}`)}>{row.name}</a> ›
       <span aria-current="page">Edit</span>
     </nav>
     <div class="head">
@@ -178,8 +178,10 @@
     {#key row.name + "|" + query}<ProjectAssets {row} {query} />{/key}
   {:else if row && view === "asset"}
     <nav class="crumbs" aria-label="Breadcrumb">
-      <a href="/projects">Projects</a> › <a href={`/projects/${enc(row.name)}`}>{row.name}</a> ›
-      {#if assetBundle}<a href={returnTo}>{assetBundle}</a>{:else}<a href={returnTo}>All read bundles</a>{/if} ›
+      <a href={appHref("/projects")}>Projects</a> › <a href={appHref(`/projects/${enc(row.name)}`)}>{row.name}</a> ›
+      {#if assetBundle}<a href={appHref(returnTo)}>{assetBundle}</a>{:else}<a href={appHref(returnTo)}
+          >All read bundles</a
+        >{/if} ›
       <span aria-current="page">{assetTitle || assetRef.split("/").pop()}</span>
     </nav>
     <p class="muted small">Reading in project {row.name}.</p>

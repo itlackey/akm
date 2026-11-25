@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-  import { api, date } from "./client";
+  import { api, appHref, date } from "./client";
   import { duration } from "./activity-presenter";
   import type { WorkflowTrace } from "./activity-types";
   import { traceRows, type TraceRow } from "./workflow-trace-model";
@@ -196,7 +196,7 @@
       </div>{/if}
     {#if trace.children.length}<p class="muted small">
         Child runs: {#each trace.children as child, i}{i ? ", " : ""}<a
-            href={`/activity/overview?view=runs&run=${encodeURIComponent(child.runId)}&anchor=workflow-trace`}
+            href={appHref(`/activity/overview?view=runs&run=${encodeURIComponent(child.runId)}&anchor=workflow-trace`)}
             >{child.workflowRef}</a
           >{/each}
       </p>{/if}

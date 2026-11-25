@@ -8,7 +8,7 @@
   import { onMount, tick, type Snippet } from "svelte";
   import { afterNavigate, beforeNavigate } from "$app/navigation";
   import { page } from "$app/state";
-  import { api } from "../lib/client";
+  import { api, appHref, appPath } from "../lib/client";
   import { hasStoredDrafts, hasUnsaved } from "../lib/drafts";
   import { navigate } from "../lib/navigation";
   import { pageTitle } from "../lib/page-title";
@@ -45,11 +45,12 @@
   let approved = "";
   let editorFocus: HTMLElement | null = null;
 
-  const prefix = $derived(page.url.pathname.split("/")[1] ?? "");
+  const path = $derived(appPath(page.url.pathname));
+  const prefix = $derived(path.split("/")[1] ?? "");
   const section = $derived(sections.find((item) => item.prefix === prefix) ?? sections[0]);
   // First-run setup is reached from Home and Settings, not from the bar, so no section is current there.
   const current = $derived(prefix === "setup" ? undefined : section);
-  const view = $derived(page.url.pathname.split("/")[2] ?? "");
+  const view = $derived(path.split("/")[2] ?? "");
   const editing = $derived(prefix === "library" && ["edit"].includes(view));
   const workspaceActive = $derived(
     prefix === "review" || (prefix === "library" && ["files", "edit", "new-sensitive", "compare"].includes(view)),
@@ -79,9 +80,9 @@
       approved = "";
       leaveDialog?.close();
     }
-    if (section.prefix) workspace.sectionHref[section.name] = page.url.pathname + page.url.search;
+    if (section.prefix) workspace.sectionHref[section.name] = path + page.url.search;
     if (section.name === "Review" || section.name === "Home") void refreshPending();
-    if (navigation.type !== "enter" && navigation.from?.url.pathname.split("/")[1] !== prefix) {
+    if (navigation.type !== "enter" && appPath(navigation.from?.url.pathname ?? "").split("/")[1] !== prefix) {
       void tick().then(() => {
         const heading = main?.querySelector<HTMLElement>("h1");
         if (heading) {
@@ -197,7 +198,12 @@
   });
 </script>
 
-<svelte:head><title>{pageTitle(page.url)}</title><meta name="color-scheme" content="light dark" /></svelte:head>
+<svelte:head
+  ><title>{pageTitle({ pathname: path, searchParams: page.url.searchParams })}</title><meta
+    name="color-scheme"
+    content="light dark"
+  /></svelte:head
+>
 <svelte:window onkeydown={shortcuts} onbeforeunload={unload} />
 <a
   href="#main"
@@ -209,10 +215,10 @@
 >
 <div class="desktop-shell" class:library-active={prefix === "library"} class:workspace-active={workspaceActive}>
   <header class="desktop-topbar">
-    <a class="brand" href="/" aria-label="AKM home">akm<span aria-hidden="true">.</span></a>
+    <a class="brand" href={appHref("/")} aria-label="AKM home">akm<span aria-hidden="true">.</span></a>
     <nav aria-label="Primary navigation">
       {#each sections as item}
-        <a href={workspace.sectionHref[item.name]} aria-current={current === item ? "page" : undefined}
+        <a href={appHref(workspace.sectionHref[item.name])} aria-current={current === item ? "page" : undefined}
           >{item.name}{#if item.name === "Review" && workspace.pendingCount !== null && workspace.pendingCount > 0}<span
               class="nav-count"
               aria-label={workspace.pendingCount + " pending proposals"}>{workspace.pendingCount}</span

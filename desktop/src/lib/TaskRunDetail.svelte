@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-  import { api, date } from "./client";
+  import { api, appHref, date } from "./client";
   import { duration } from "./activity-presenter";
   import Outcome from "./Outcome.svelte";
   import { statusOutcome } from "./run-model";
@@ -81,7 +81,7 @@
   </details>
   {#if workflowRunId}<p>
       <span class="badge" data-tone="ok">Matched by run id</span>
-      <a href={`/activity/overview?view=runs&run=${encodeURIComponent(workflowRunId)}&anchor=workflow-trace`}
+      <a href={appHref(`/activity/overview?view=runs&run=${encodeURIComponent(workflowRunId)}&anchor=workflow-trace`)}
         >Open the workflow run this task ran</a
       >.
     </p>{/if}

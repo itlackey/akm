@@ -3,12 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { redirect } from "@sveltejs/kit";
+import { appHref } from "../../../lib/client";
 
 /** Links from before the move: connection groups, Add connection and Projects now live elsewhere. */
 export const load = ({ params, url }: { params: { section: string }; url: URL }) => {
   const section = params.section === "config" ? (url.searchParams.get("section") ?? "") : "";
   if (section.startsWith("connection-"))
-    redirect(307, `/settings/connections?name=${encodeURIComponent(section.slice("connection-".length))}`);
-  if (section === "add-connection") redirect(307, "/settings/connections?add");
-  if (section === "projects") redirect(307, "/projects");
+    redirect(307, appHref(`/settings/connections?name=${encodeURIComponent(section.slice("connection-".length))}`));
+  if (section === "add-connection") redirect(307, appHref("/settings/connections?add"));
+  if (section === "projects") redirect(307, appHref("/projects"));
 };

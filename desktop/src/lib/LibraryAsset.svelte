@@ -7,7 +7,7 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
   import { afterNavigate } from "$app/navigation";
-  import { api, assetSource, date, stateUnavailableText, type StateUnavailable } from "./client";
+  import { api, appHref, assetSource, date, type StateUnavailable, stateUnavailableText } from "./client";
   import { documentTitle, libraryRead, typedLinks } from "./library-model";
   import type { AssetRead, Improvement, SearchHit } from "./library-model";
   import type { FileRequest } from "./library-files-model";
@@ -408,7 +408,7 @@
     <div class="page-actions">
       <button onclick={undoRetirement} disabled={busy}>{busy ? "Restoring…" : "Undo retirement"}</button><a
         class="btn btn-secondary"
-        href={returnTo}>Back to {mode === "files" ? "folder" : "results"}</a
+        href={appHref(returnTo)}>Back to {mode === "files" ? "folder" : "results"}</a
       >
     </div>
     {#each retired.warnings as warning}<p class="notice notice-warn">{warning}</p>{/each}
@@ -419,13 +419,13 @@
   {#if data.redacted}{#key canonical}<SensitiveAsset ref={canonical} {onChanged} />{/key}
   {:else}
     {#if mode === "search" && !hideBack}<div class="reader-navigation">
-        <a href={returnTo}><Icon name="arrow-left" size={16} />Search results</a>
+        <a href={appHref(returnTo)}><Icon name="arrow-left" size={16} />Search results</a>
       </div>{/if}
     <header class="asset-heading">
       <div class="asset-title-row">
         <h1 bind:this={heading} id={titleAnchor} tabindex="-1">{documentTitle(data.asset)}</h1>
         <div class="page-actions">
-          {#if data.actions?.edit.allowed}<a class="btn btn-secondary" href={editorHref}
+          {#if data.actions?.edit.allowed}<a class="btn btn-secondary" href={appHref(editorHref)}
               ><Icon name="edit" size={16} />Edit page</a
             >{:else if data.actions}<button
               class="btn btn-secondary"
@@ -480,11 +480,13 @@
         <span>{data.bundle || data.asset.origin || "Local"} · {data.asset.type}</span>
         {#if data.actions && !data.actions.edit.allowed}<span id="edit-page-reason">{data.actions.edit.reason}</span
           >{/if}
-        {#if mode === "search" && filesHref}<a href={filesHref}><Icon name="folder" size={15} />View in folder</a>{/if}
+        {#if mode === "search" && filesHref}<a href={appHref(filesHref)}
+            ><Icon name="folder" size={15} />View in folder</a
+          >{/if}
         <button class="text-action" onclick={() => showView("Related")}
           ><Icon name="link" size={15} />Related assets</button
         >
-        {#if pending.length}<a class="pending-review" href={"/review/" + encodeURIComponent(pending[0].id)}
+        {#if pending.length}<a class="pending-review" href={appHref("/review/" + encodeURIComponent(pending[0].id))}
             >{pending.length} proposed {pending.length === 1 ? "change" : "changes"}</a
           >{/if}
       </div>
@@ -511,7 +513,7 @@
               <summary>On this page</summary>
               <ul>
                 {#each data.headings ?? [] as h}<li>
-                    <a href={assetHref(canonical) + "&section=" + encodeURIComponent(h.slug)}>{h.text}</a>
+                    <a href={appHref(assetHref(canonical) + "&section=" + encodeURIComponent(h.slug))}>{h.text}</a>
                   </li>{/each}
               </ul>
             </details>{/if}
@@ -663,7 +665,7 @@
               <h3>Pending changes</h3>
               <ul>
                 {#each improve.proposals.filter((p) => p.status === "pending") as p}<li>
-                    <a href={"/review/" + encodeURIComponent(p.id)}>{p.id}</a> · {p.source}
+                    <a href={appHref("/review/" + encodeURIComponent(p.id))}>{p.id}</a> · {p.source}
                   </li>{/each}
               </ul>
             </section>{/if}
@@ -691,7 +693,7 @@
                     >{#each links as row}<tr
                         ><td>{row.direction}</td><td>{row.kind}</td><td
                           >{#each row.refs as linked}<p>
-                              <a class="mono wrap" href={assetHref(linked)}>{linked}</a>
+                              <a class="mono wrap" href={appHref(assetHref(linked))}>{linked}</a>
                             </p>{/each}{#if row.total > row.refs.length}<span class="muted">{row.total} total</span
                             >{/if}</td
                         ></tr
@@ -711,7 +713,7 @@
               <h4>Recent decisions</h4>
               <ul class="plain">
                 {#each improve.proposals.filter((p) => p.status !== "pending").slice(0, 5) as p}<li class="small">
-                    <a href={"/review/" + encodeURIComponent(p.id)}
+                    <a href={appHref("/review/" + encodeURIComponent(p.id))}
                       >{p.outcome === "you"
                         ? "Accepted by you"
                         : p.outcome === "judge"

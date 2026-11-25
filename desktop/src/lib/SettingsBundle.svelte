@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-  import { date } from "./client";
+  import { appHref, date } from "./client";
   import Icon from "./Icon.svelte";
   import BundleRename from "./BundleRename.svelte";
   import { provenance } from "./settings-presenter";
@@ -71,8 +71,9 @@
             : ` · Root: ${bundle.root}`}
         </p>
       </div>
-      <a href={`/library/search?bundle=${encodeURIComponent(bundle.name)}`} aria-label={`Browse ${bundle.name} assets`}
-        >Browse assets <Icon name="arrow-right" size={16} /></a
+      <a
+        href={appHref(`/library/search?bundle=${encodeURIComponent(bundle.name)}`)}
+        aria-label={`Browse ${bundle.name} assets`}>Browse assets <Icon name="arrow-right" size={16} /></a
       >
     </header>
     <BundleRename bundle={bundle.name} {action} disabled={busy} />
@@ -153,7 +154,7 @@
         <h3>{bundle.name}</h3>
         <a
           class="btn btn-secondary"
-          href={`/settings/bundles?manage=${encodeURIComponent(bundle.name)}`}
+          href={appHref(`/settings/bundles?manage=${encodeURIComponent(bundle.name)}`)}
           aria-label={`Manage ${bundle.name}`}><Icon name="sliders" size={16} /> Manage</a
         >
       </div>
@@ -220,8 +221,9 @@
         </dd>
       </dl>{:else}<p class="muted">Not a Git repository.</p>{/if}
     <footer class="bundle-actions">
-      <a href={`/library/search?bundle=${encodeURIComponent(bundle.name)}`} aria-label={`Browse ${bundle.name} assets`}
-        >Browse assets <Icon name="arrow-right" size={16} /></a
+      <a
+        href={appHref(`/library/search?bundle=${encodeURIComponent(bundle.name)}`)}
+        aria-label={`Browse ${bundle.name} assets`}>Browse assets <Icon name="arrow-right" size={16} /></a
       >
     </footer>
   {/if}

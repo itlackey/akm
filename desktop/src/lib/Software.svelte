@@ -5,6 +5,7 @@
 -->
 
 <script lang="ts">
+  import { appHref } from "./client";
   import { onMount, tick } from "svelte";
   import { classifyEngineSkew, holdReason, skewAdvice, updateHeld } from "./engine-skew";
   import Icon from "./Icon.svelte";
@@ -100,7 +101,7 @@
   <div class="intro">
     <h2>Software</h2>
     <p class="muted">
-      Desktop, host CLI and integrations on this computer. <a href="/setup">Run setup again</a>
+      Desktop, host CLI and integrations on this computer. <a href={appHref("/setup")}>Run setup again</a>
     </p>
   </div>
   {#if error}<p class="notice notice-warn" role="alert">{error}</p>

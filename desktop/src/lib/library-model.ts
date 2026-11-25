@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { ApiError, assetSource, title } from "./client";
+import { ApiError, appHref, assetSource, title } from "./client";
 import type { FileActions } from "./library-files-model";
 import type { Asset, AssetDetail, AssetSummary, Json } from "./types";
 export interface SearchHit extends AssetSummary {
@@ -80,7 +80,7 @@ export function typedLinks(
 }
 export async function libraryRead<T>(path: string, params: Record<string, string>, signal?: AbortSignal): Promise<T> {
   const response = await fetch(
-    `/api${path}?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== ""))}`,
+    appHref(`/api${path}?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== ""))}`),
     { signal },
   );
   const envelope = await response.json();

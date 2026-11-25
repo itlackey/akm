@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { api, apiState, date } from "./client";
+  import { api, apiState, appHref, date } from "./client";
   import { navigate } from "./navigation";
   import ActivityOverview from "./ActivityOverview.svelte";
   import ActivityImpact from "./ActivityImpact.svelte";
@@ -234,7 +234,7 @@
   {#each views as tab}<a
       class:active={view === tab.name}
       aria-current={view === tab.name ? "page" : undefined}
-      href={tab.path}>{tab.name}</a
+      href={appHref(tab.path)}>{tab.name}</a
     >{/each}
 </nav>
 <div class="page-header" class:sr-only={view === "Replay"}>
@@ -359,7 +359,8 @@
             ><tbody
               >{#each repeatedMisses as miss}<tr
                   ><th>{miss.query}</th><td>{miss.count}</td><td>{miss.days}</td><td>{date(miss.lastAt)}</td><td
-                    ><a href={`/library/search?tab=misses&q=${encodeURIComponent(miss.query)}`}>Review search gap</a
+                    ><a href={appHref(`/library/search?tab=misses&q=${encodeURIComponent(miss.query)}`)}
+                      >Review search gap</a
                     ></td
                   ></tr
                 >{/each}</tbody
