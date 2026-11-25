@@ -8,9 +8,9 @@
 
 Build your agent library once. Use it from any shell-capable coding agent.
 
-**AKM feature tour (6 min)** — See an agent find existing guidance, capture what it learned, and turn that evidence into a reviewed bundle change.
+**AKM in 56 seconds** — See how one agent improves a guide, a human approves the change, and the next agent starts with better guidance.
 
-https://github.com/user-attachments/assets/500b1afa-9a1b-4a34-8d03-3a17d0ac1900
+https://github.com/user-attachments/assets/4ca3bda5-458f-4ab4-97ec-1b9a1a12f660
 
 ## Why AKM exists
 
