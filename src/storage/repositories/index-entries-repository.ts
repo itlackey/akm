@@ -18,11 +18,8 @@ import { bestEffort } from "../../core/best-effort";
 import { isPathAbsent } from "../../core/path-access";
 import { getStateDbPath, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
-import {
-  getMarkdownFragmentContent,
-  hasMarkdownFragmentContent,
-  type IndexDocument,
-} from "../../indexer/passes/metadata";
+import { getMarkdownFragmentContent, hasMarkdownFragmentContent } from "../../indexer/passes/markdown-projection";
+import type { IndexDocument } from "../../indexer/passes/metadata";
 import { buildSearchText } from "../../indexer/search/search-fields";
 import { capEmbeddingText, DEFAULT_MAX_INPUT_TOKENS } from "../../llm/embedders/remote";
 import { sha256Hex } from "../../runtime";

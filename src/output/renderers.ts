@@ -20,7 +20,7 @@ import { findAsset } from "../core/assets/read";
 import { asNonEmptyString, hasErrnoCode, scanEnvKeyNames } from "../core/common";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import type { IndexDocument } from "../indexer/passes/metadata";
-import { extractCommentMetadata } from "../indexer/passes/metadata";
+import { extractCommentMetadata } from "../indexer/passes/script-metadata";
 import type { ShowResponse, SourceSearchHit } from "../sources/types";
 import { buildWorkflowAction, workflowMdRenderer } from "../workflows/renderer";
 import { type AssetRenderer, type RenderContext, registerRenderer } from "./renderer-registry";

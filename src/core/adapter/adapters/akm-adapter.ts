@@ -51,12 +51,11 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AdapterRenderedExecutionSource } from "../../../execution/source";
 import {
-  applyPostContributorFields,
-  applyPreContributorFields,
   getMarkdownFragmentContent,
   hasMarkdownFragmentContent,
   setMarkdownFragmentContent,
-} from "../../../indexer/passes/metadata";
+} from "../../../indexer/passes/markdown-projection";
+import { applyPostContributorFields, applyPreContributorFields } from "../../../indexer/passes/metadata";
 import {
   assetPathCandidatesForName,
   deriveCanonicalAssetNameFromStashRoot,

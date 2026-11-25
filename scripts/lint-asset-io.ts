@@ -110,6 +110,7 @@ const UPWARD_ALLOWED = [
   "src/indexer/index-rows",
   "src/indexer/index-writer-lock",
   "src/indexer/materialize-embeddings",
+  "src/indexer/passes/markdown-projection",
   "src/indexer/passes/metadata",
   "src/indexer/scan/drain-dir",
   "src/indexer/search/search-source",

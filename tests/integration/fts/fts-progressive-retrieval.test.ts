@@ -5,8 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { recognizeStashEntries } from "../../../src/core/adapter/directory/recognize-stash-entries";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { MARKDOWN_CONTENT_MAX_CHARS, projectMarkdownContent } from "../../../src/indexer/passes/markdown-projection";
 import type { IndexDocument } from "../../../src/indexer/passes/metadata";
-import { MARKDOWN_CONTENT_MAX_CHARS, projectMarkdownContent } from "../../../src/indexer/passes/metadata";
 import { buildSearchFields, buildSearchText } from "../../../src/indexer/search/search-fields";
 import type { Database as AkmDatabase } from "../../../src/storage/database";
 import { searchFts } from "../../../src/storage/repositories/index-fts-repository";
@@ -154,7 +154,7 @@ describe("native Markdown content projection (#819)", () => {
     const prose = "Provider retries retries.\n";
     const fence = "```ts\nQuokkaInitFailure(code)\n```\n";
     expect(projectMarkdownContent(prose + fence.repeat(50))).toBe(projectMarkdownContent(prose + fence));
-    expect(projectMarkdownContent(prose + fence + "```ts\nRareRecoveryHandler(code)\n```")).toContain(
+    expect(projectMarkdownContent(`${prose + fence}\`\`\`ts\nRareRecoveryHandler(code)\n\`\`\``)).toContain(
       "RareRecoveryHandler",
     );
     expect(projectMarkdownContent(prose + fence)).toContain("retries retries");
