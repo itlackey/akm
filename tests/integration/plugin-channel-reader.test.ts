@@ -135,4 +135,70 @@ afterEach(() => cleanup());
     expect(advisory?.evidence?.availableVersion).toBe(planned?.to);
     expect(advisory?.evidence?.stale).toBe(true);
   });
+
+  test("a marketplace registered from a plain directory is read in place, with no clone", () => {
+    const dir = file("baked");
+    fs.mkdirSync(path.join(dir, "claude", ".claude-plugin"), { recursive: true });
+    fs.mkdirSync(path.join(dir, ".claude-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, ".claude-plugin", "marketplace.json"),
+      JSON.stringify({ plugins: [{ name: "akm", source: "./claude" }] }),
+    );
+    fs.writeFileSync(path.join(dir, "claude", ".claude-plugin", "plugin.json"), JSON.stringify({ version: "0.10.2" }));
+    fs.mkdirSync(path.join(dir, ".agents", "plugins"), { recursive: true });
+    fs.mkdirSync(path.join(dir, "codex", ".codex-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, ".agents", "plugins", "marketplace.json"),
+      JSON.stringify({ plugins: [{ name: "akm", source: { source: "local", path: "./codex" } }] }),
+    );
+    fs.writeFileSync(path.join(dir, "codex", ".codex-plugin", "plugin.json"), JSON.stringify({ version: "0.10.2" }));
+
+    const plugins = file("claude/plugins");
+    fs.mkdirSync(plugins, { recursive: true });
+    fs.writeFileSync(
+      path.join(plugins, "known_marketplaces.json"),
+      JSON.stringify({ "akm-plugins": { source: { source: "directory", path: dir } } }),
+    );
+    // A stand-in for the VCS binary that leaves a marker if it is ever started.
+    fs.mkdirSync(file("bin"));
+    fs.writeFileSync(file("bin/git"), `#!/bin/sh\ntouch ${file("ran")}\nexit 1\n`, { mode: 0o755 });
+
+    const status = (installed: string) => {
+      const installPath = path.join(plugins, "cache/akm-plugins/akm", installed);
+      fs.mkdirSync(installPath, { recursive: true });
+      fs.writeFileSync(
+        path.join(installPath, "package.json"),
+        JSON.stringify({ dependencies: { "akm-cli": "0.10.2" } }),
+      );
+      fs.writeFileSync(path.join(plugins, "installed_plugins.json"), JSON.stringify({ version: 2, plugins: {} }));
+      fs.writeFileSync(
+        file("rows.json"),
+        JSON.stringify([{ id: "akm@akm-plugins", version: installed, scope: "user", enabled: true, installPath }]),
+      );
+      fs.writeFileSync(file("marketplaces.json"), JSON.stringify([{ name: "akm-plugins" }]));
+      fs.writeFileSync(
+        file("bin/claude"),
+        `#!/bin/sh\ncase "$*" in\n"plugin marketplace list --json") cat ${file("marketplaces.json")};;\n"plugin list --json") cat ${file("rows.json")};;\nesac\n`,
+        { mode: 0o755 },
+      );
+      const env = {
+        PATH: `${file("bin")}${path.delimiter}${process.env.PATH}`,
+        CLAUDE_CONFIG_DIR: file("claude"),
+        AKM_CLAUDE_PLUGINS_DIR: plugins,
+        CODEX_HOME: file("codex-home"),
+        XDG_CONFIG_HOME: file("config"),
+        XDG_CACHE_HOME: file("cache"),
+        XDG_DATA_HOME: file("data"),
+        OPENCODE_CONFIG: "",
+      };
+      return withEnvSync(env, () =>
+        collectPluginStalenessAdvisories({ cliVersion: "0.10.2", opencodeCacheRoot: file("no-opencode") }),
+      ).find((a) => a.name === "plugin-version")?.status;
+    };
+
+    expect(status("0.10.2")).toBe("pass");
+    expect(status("0.10.1")).toBe("warn");
+    expect(marketplaceTargetVersion(dir, "latest", "codex")).toBe("0.10.2");
+    expect(fs.existsSync(file("ran"))).toBe(false);
+  });
 });

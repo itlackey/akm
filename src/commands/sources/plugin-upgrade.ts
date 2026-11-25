@@ -416,25 +416,38 @@ export type UpgradeRunResult =
 export function marketplaceTargetVersion(source: string, channel: UpgradeChannel, harness: "claude" | "codex"): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-channel-check-"));
   const checkout = path.join(root, "marketplace");
+  // A marketplace registered from a plain local directory (a baked-in image) is read in place: no clone, no network.
+  // asset-io: install
+  const local = fs.existsSync(source) && fs.statSync(source).isDirectory() && !fs.existsSync(path.join(source, ".git"));
   try {
-    const cloned = runCommand(
-      "git",
-      [
-        "clone",
-        "--depth",
-        "1",
-        "--single-branch",
-        "--filter=blob:none",
-        "--no-checkout",
-        ...(channel === "next" ? ["--branch", "next"] : []),
-        "--",
-        source,
-        checkout,
-      ],
-      REFRESH_TIMEOUT_MS,
-    );
+    const cloned = local
+      ? { ok: true as const, error: "" }
+      : runCommand(
+          "git",
+          [
+            "clone",
+            "--depth",
+            "1",
+            "--single-branch",
+            "--filter=blob:none",
+            "--no-checkout",
+            ...(channel === "next" ? ["--branch", "next"] : []),
+            "--",
+            source,
+            checkout,
+          ],
+          REFRESH_TIMEOUT_MS,
+        );
     if (!cloned.ok) throw new UsageError(`Could not check the target plugin version: ${cloned.error}`);
-    const show = (file: string) => runCommand("git", ["-C", checkout, "show", `HEAD:${file}`], REFRESH_TIMEOUT_MS);
+    const show = (file: string) => {
+      if (!local) return runCommand("git", ["-C", checkout, "show", `HEAD:${file}`], REFRESH_TIMEOUT_MS);
+      try {
+        // asset-io: install
+        return { ok: true as const, stdout: fs.readFileSync(path.join(source, file), "utf8"), error: "" };
+      } catch (error) {
+        return { ok: false as const, stdout: "", error: toErrorMessage(error) };
+      }
+    };
     const manifestDir = harness === "codex" ? ".codex-plugin" : ".claude-plugin";
     const catalogFile = harness === "codex" ? ".agents/plugins/marketplace.json" : ".claude-plugin/marketplace.json";
     const catalogText = show(catalogFile);
@@ -502,11 +515,15 @@ export function claudeMarketplace(
   // asset-io: install
   const known = tryParseJson(fs.readFileSync(path.join(pluginsRoot, "known_marketplaces.json"), "utf8")) as Record<
     string,
-    { source: { source: string; repo?: string; url?: string; ref?: string } }
+    { source: { source: string; repo?: string; url?: string; path?: string; ref?: string } }
   >;
   const registered = known[marketplace]?.source;
   const url =
-    registered?.source === "github" && registered.repo ? `https://github.com/${registered.repo}.git` : registered?.url;
+    registered?.source === "github" && registered.repo
+      ? `https://github.com/${registered.repo}.git`
+      : registered?.source === "directory"
+        ? registered.path
+        : registered?.url;
   if (!url) throw new UsageError("Could not determine the Claude marketplace Git source; no channel was changed");
   return { source: url, ref: typeof registered?.ref === "string" ? registered.ref : undefined };
 }
