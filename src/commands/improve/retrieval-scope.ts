@@ -95,7 +95,7 @@ export function isInRetrievalScope(scope: RetrievalScope | undefined, ref: strin
   if (scope.used.has(conceptId)) return true;
   if (scope.processed.has(conceptId)) return false;
   try {
-    // asset-io: base the modification time of the file a candidate names
+    // asset-io: base the modification time of the file a candidate names; the facade has no mtime read and may not stat (facade-fs), and one listing of a 2,400-asset bundle took 72 ms against 7 ms of stats
     return filePath === undefined || fs.statSync(filePath).mtimeMs >= scope.sinceMs;
   } catch {
     return true;
