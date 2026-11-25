@@ -13,8 +13,6 @@
  * heuristic triage scores it below threshold.
  */
 
-import fs from "node:fs";
-import path from "node:path";
 import type { SelectionFlags } from "../../cli/selection";
 import type { StashEntryScope } from "../../core/adapter/types";
 import { assembleAsset } from "../../core/asset/asset-serialize";
@@ -28,14 +26,7 @@ import { collectCredentialValues } from "../../core/config/credentials";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
-import {
-  createLockPayload,
-  type LockOwnership,
-  probeLock,
-  reclaimStaleLock,
-  releaseLock,
-  tryAcquireLockSync,
-} from "../../core/file-lock";
+import { type LockOwnership, releaseLock } from "../../core/file-lock";
 import type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
 import { EXTRACT_INFRASTRUCTURE_SKIP_REASONS } from "../../core/improve-types";
 import { type ResolvedProject, resolveProject } from "../../core/projects";
@@ -52,7 +43,6 @@ import { fillMetadata, stampScope } from "../../indexer/passes/metadata";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { collectDispatchSensitiveValues } from "../../integrations/agent/runner-dispatch";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
-import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
 import type { ChatCompletionConfig, ChatMessage } from "../../llm/client";
 import { isRefused } from "../../llm/structured";
@@ -61,7 +51,6 @@ import {
   type ExtractedSessionRow,
   getExtractedSessionsMap,
   getLastExtractRunAt,
-  shouldSkipAlreadyExtractedSession,
   upsertExtractedSession,
 } from "../../storage/repositories/extract-sessions-repository";
 import { type ImproveLedgerRow, listImproveLedgerRows } from "../../storage/repositories/improve-ledger-repository";
@@ -77,6 +66,21 @@ import {
   type ExtractPayload,
   parseExtractPayload,
 } from "./extract-prompt";
+import {
+  acquireExtractSessionLock,
+  DEFAULT_TRIAGE_MIN_SCORE,
+  type ExtractEligibleGate,
+  type ExtractSessionOutcome,
+  type ExtractSessionPlan,
+  extractSessionLockPath,
+  hashSessionContent,
+  lockedConcurrentResult,
+  planExtractSessions,
+  preFilterStats,
+  runPreLlmSessionGates,
+  type SessionGateOptions,
+  sessionOutcome,
+} from "./extract-sessions";
 import { cloneAndFreeze, resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { isLedgerBlocked, ledgerKey, readLedgerDb } from "./ledger";
 import {
@@ -90,6 +94,7 @@ import {
 import { callStage, callStageLoop, mintProposal } from "./stage";
 
 export type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
+export { hashSessionContent };
 
 /** Minimum session duration (minutes) for writing a session asset. */
 const DEFAULT_MIN_SESSION_DURATION_MINUTES = 5;
@@ -125,38 +130,6 @@ function resolveDefaultSinceMs(
     return floor;
   } finally {
     snapshot?.close();
-  }
-}
-
-function extractSessionLockPath(harness: string, sessionId: string, stateDbPath: string): string {
-  const safe = `${harness}-${sessionId}`.replace(/[^A-Za-z0-9._-]/g, "_");
-  return path.join(path.dirname(stateDbPath), "extract-locks", `extract-${safe}.lock`);
-}
-
-function extractSessionLockIsUnavailable(harness: string, sessionId: string, stateDbPath: string): boolean {
-  const probe = probeLock(extractSessionLockPath(harness, sessionId, stateDbPath));
-  return probe.state === "held" || probe.state === "inaccessible";
-}
-
-/**
- * Claim a session so a concurrent extract (a session-end hook racing the
- * hourly improve run) cannot process it twice. Only a lock whose holder is
- * dead is reclaimed (no age window: a live extraction can run for many
- * minutes, the #872 lesson in `core/run-lock.ts`); a
- * filesystem error proceeds, so locking never blocks extraction outright.
- */
-function acquireExtractSessionLock(lockPath: string): { proceed: boolean; ownership?: LockOwnership } {
-  try {
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    let ownership = tryAcquireLockSync(lockPath, createLockPayload());
-    if (ownership) return { proceed: true, ownership };
-    const probe = probeLock(lockPath);
-    if (probe.state === "held") return { proceed: false };
-    if (probe.state === "stale" && !reclaimStaleLock(lockPath, probe)) return { proceed: false };
-    ownership = tryAcquireLockSync(lockPath, createLockPayload());
-    return ownership ? { proceed: true, ownership } : { proceed: false };
-  } catch {
-    return { proceed: true };
   }
 }
 
@@ -269,28 +242,6 @@ export function resolveStandaloneExtractPlan(
     embeddingConfig: cloneAndFreeze(config.embedding),
     ...(resolved.notices.length > 0 ? { notices: cloneAndFreeze(resolved.notices) } : {}),
   });
-}
-
-/**
- * A session result before the run's engine is stamped on it. `failedCauses` holds the causes of writes the
- * validator did not refuse; the run sums them into `writeFailures` and does not return them per session (#1290).
- */
-type ExtractSessionOutcome = Omit<ExtractedSessionResult, "engine"> & { failedCauses?: string[] };
-type PreFilterStats = ExtractedSessionResult["preFilter"];
-
-const NO_PREFILTER: PreFilterStats = { inputCount: 0, outputCount: 0, truncatedCount: 0 };
-
-function sessionOutcome(
-  sessionId: string,
-  harness: string,
-  fields: Partial<ExtractSessionOutcome>,
-): ExtractSessionOutcome {
-  return { sessionId, harness, candidateCount: 0, proposalIds: [], preFilter: NO_PREFILTER, warnings: [], ...fields };
-}
-
-function preFilterStats(filtered: ReturnType<typeof preFilterSession>): PreFilterStats {
-  const { inputCount, outputCount, truncatedCount } = filtered.stats;
-  return { inputCount, outputCount, truncatedCount };
 }
 
 /** An extract envelope for a run that processed no sessions. */
@@ -418,175 +369,6 @@ function resolveExtractStandards(stashDir: string): string {
       sections.push(`# ${typeConventionRef(type)} (soft per-type conventions — guidance, not enforced)\n${body}`);
   }
   return sections.join("\n\n");
-}
-
-/**
- * The skip authority for "already extracted": a hash of the raw event stream
- * (`role\ntext` per event, NUL-separated so boundaries cannot be forged). It
- * excludes titles, timestamps and inline refs, and ignores pre-filter config.
- */
-export function hashSessionContent(data: SessionData): string {
-  return contentHash(data.events.map((e) => `${e.role ?? "unknown"}\n${e.text}`).join("\n\0\n"));
-}
-
-// ── Session triage (heuristic, zero LLM cost, default off) ───────────────────
-
-const DEFAULT_TRIAGE_MIN_SCORE = 2;
-const TRIAGE_MARKER_RE =
-  /\b(error|failed|fix(?:ed)?|root cause|turns out|because|decided|instead|gotcha|workaround|regress(?:ed)?|broke|TIL)\b/i;
-const TRIAGE_EDIT_COMMIT_RE = /\b(Edit|Write|MultiEdit|git commit|diff)\b/i;
-
-/**
- * Score a session for extraction worth: learning markers (capped 2), tool
- * density, edits/commits, and the substantive assistant/tool share.
- */
-function sessionTriagePasses(data: SessionData, minScore: number): boolean {
-  const events = data.events;
-  const count = (predicate: (e: SessionData["events"][number]) => boolean) => events.filter(predicate).length;
-  const markers = Math.min(
-    count((e) => TRIAGE_MARKER_RE.test(e.text)),
-    2,
-  );
-  const toolDensity = Math.min(count((e) => e.role === "tool") * 0.25, 1.5);
-  const editCommit = Math.min(count((e) => Boolean(e.filePath) || TRIAGE_EDIT_COMMIT_RE.test(e.text)) * 0.25, 1.5);
-  const substantive = count((e) => (e.role === "assistant" || e.role === "tool") && e.text.length >= 40);
-  const substantiveRatio = Math.min(events.length > 0 ? substantive / events.length : 0, 1);
-  return markers + toolDensity + editCommit + substantiveRatio >= minScore;
-}
-
-type Triage = { enabled: boolean; minScore: number };
-
-// ── Planning ─────────────────────────────────────────────────────────────────
-
-interface SessionGateOptions {
-  maxTotalChars: number | undefined;
-  minContentChars: number;
-  triage: Triage;
-}
-
-/**
- * The zero-LLM gates for one session: read, the content-hash skip (only
- * `--force` overrides it, even for `--session-id`), the raw-size floor and the
- * triage score. Returns a skip, or what the prompt needs.
- */
-async function runPreLlmSessionGates(
-  harness: SessionLogHarness,
-  sessionRef: SessionRef,
-  prior: ExtractedSessionRow | undefined,
-  force: boolean,
-  gates: SessionGateOptions,
-): Promise<
-  | { skip: ExtractSessionOutcome }
-  | { data: SessionData; filtered: ReturnType<typeof preFilterSession>; contentHash: string }
-> {
-  const { sessionId } = sessionRef;
-  let data: SessionData;
-  try {
-    data = await harness.readSession(sessionRef);
-  } catch (err) {
-    return {
-      skip: sessionOutcome(sessionId, harness.name, {
-        warnings: [`readSession failed: ${err instanceof Error ? err.message : String(err)}`],
-        skipped: true,
-        skipReason: "read_failed",
-      }),
-    };
-  }
-  const hash = hashSessionContent(data);
-  if (!force && shouldSkipAlreadyExtractedSession(prior, hash)) {
-    return {
-      skip: sessionOutcome(sessionId, harness.name, {
-        warnings: [`already extracted (content unchanged) at ${prior?.processed_at}; pass --force to re-process`],
-        skipped: true,
-        skipReason: "already_extracted",
-        contentHash: hash,
-      }),
-    };
-  }
-  // The prompt sees only parent-origin events; subagent work still reaches
-  // the hash above and the inline-ref harvest.
-  const filtered = preFilterSession(
-    { ...data, events: data.events.filter((e) => e.filePath === data.ref.filePath) },
-    typeof gates.maxTotalChars === "number" ? { maxTotalChars: gates.maxTotalChars } : {},
-  );
-  // Measured on the full raw stream: pre-filtered size says little about value.
-  const rawChars = data.events.reduce((sum, event) => sum + event.text.length, 0);
-  const skipReason =
-    gates.minContentChars > 0 && rawChars < gates.minContentChars
-      ? "too_short"
-      : gates.triage.enabled && !sessionTriagePasses(data, gates.triage.minScore)
-        ? "triaged_out"
-        : undefined;
-  if (skipReason) {
-    return {
-      skip: sessionOutcome(sessionId, harness.name, {
-        preFilter: preFilterStats(filtered),
-        skipped: true,
-        skipReason,
-        contentHash: hash,
-      }),
-    };
-  }
-  return { data, filtered, contentHash: hash };
-}
-
-type ExtractEligibleGate = Exclude<Awaited<ReturnType<typeof runPreLlmSessionGates>>, { skip: ExtractSessionOutcome }>;
-
-type ExtractSessionPlan =
-  | { kind: "skip"; summary: SessionSummary; result: ExtractSessionOutcome }
-  | { kind: "model"; summary: SessionSummary; gate: ExtractEligibleGate };
-
-function lockedConcurrentResult(harness: string, summary: SessionSummary): ExtractSessionOutcome {
-  return sessionOutcome(summary.sessionId, harness, {
-    warnings: ["concurrent extract holds this session's lock — skipped (handled by the other run)"],
-    skipped: true,
-    skipReason: "locked_concurrent",
-  });
-}
-
-/**
- * Classify candidates read-only, up to `maxSessionsPerRun` model sessions
- * (explicit `--session-id` and `--force` are uncapped); the rest are deferred.
- */
-async function planExtractSessions(args: {
-  candidates: SessionSummary[];
-  options: AkmExtractOptions;
-  harness: SessionLogHarness;
-  seenMap: Map<string, ExtractedSessionRow>;
-  gates: SessionGateOptions;
-  maxSessionsPerRun: number;
-  locking: boolean;
-}): Promise<{ plans: ExtractSessionPlan[]; deferredCandidates: SessionSummary[] }> {
-  const { candidates, options, harness, maxSessionsPerRun, locking } = args;
-  const lockUnavailable = (summary: SessionSummary) =>
-    locking &&
-    extractSessionLockIsUnavailable(harness.name, summary.sessionId, options.stateDbPath ?? getStateDbPath());
-  const plans: ExtractSessionPlan[] = [];
-  let modelCount = 0;
-  for (let index = 0; index < candidates.length; index++) {
-    const capped = !options.sessionId && !options.force && maxSessionsPerRun > 0 && modelCount >= maxSessionsPerRun;
-    if (options.signal?.aborted || capped) return { plans, deferredCandidates: candidates.slice(index) };
-    const summary = candidates[index];
-    if (!summary) continue;
-    if (lockUnavailable(summary)) {
-      plans.push({ kind: "skip", summary, result: lockedConcurrentResult(harness.name, summary) });
-      continue;
-    }
-    const prior = args.seenMap.get(summary.sessionId);
-    const gate = await runPreLlmSessionGates(harness, summary, prior, options.force === true, args.gates);
-    if ("skip" in gate) {
-      plans.push({ kind: "skip", summary, result: gate.skip });
-      continue;
-    }
-    // Classifying can take long enough for a session-end hook to claim the lock.
-    if (lockUnavailable(summary)) {
-      plans.push({ kind: "skip", summary, result: lockedConcurrentResult(harness.name, summary) });
-      continue;
-    }
-    plans.push({ kind: "model", summary, gate });
-    modelCount += 1;
-  }
-  return { plans, deferredCandidates: [] };
 }
 
 // ── Extraction ───────────────────────────────────────────────────────────────
