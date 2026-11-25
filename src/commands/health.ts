@@ -434,7 +434,7 @@ function gatherAncillaryAdvisories(
     // Non-fatal.
   }
 
-  const workflowFiles = collectWorkflowFilesAdvisory(options.stashDir);
+  const workflowFiles = collectWorkflowFilesAdvisory(db, options.stashDir);
   if (workflowFiles) advisories.push(workflowFiles);
 
   // What the bundles' configuration does to their content: nested bundles share files, a narrow adapter skips some.
