@@ -1121,16 +1121,16 @@ section, an absent key, and an explicit `false` all read identically as off.
 
 ### Experimental web settings
 
-`experimental.web` holds the settings the AKM Desktop server (`akm-web`) reads when you run it by hand on a headless machine; Desktop itself ignores them. Every key is optional. `secret` is a reference, never the secret itself. Behavior is described in the [Desktop README](../../desktop/README.md).
+`experimental.web` holds the settings the AKM Desktop server (`akm-web`) reads when you run it by hand on a headless machine; Desktop itself ignores them. Every key is optional. `secret` is a reference, never the secret itself. `akm-web` does not start without a secret. Behavior is described in the [Desktop README](../../desktop/README.md#run-it-on-a-server).
 
-| Key | Meaning |
-| --- | --- |
-| `host` | Address to listen on. |
-| `port` | Port to listen on, 0 to 65535. |
-| `origin` | The address the browser uses: `http(s)://host[:port]`, no path, query or fragment. |
-| `secret` | Reference to the login secret: `$NAME`, `${NAME}` or `${secrets/<name>}`. `akm config get` shows the reference, never the value. |
-| `allowedHosts` | Extra `Host` names to accept. |
-| `frameParents` | `http(s)` origins allowed to show the UI in a frame. |
+| Key | Meaning | Default |
+| --- | --- | --- |
+| `host` | Address to listen on. | `127.0.0.1` |
+| `port` | Port to listen on, 0 to 65535. | a free port |
+| `origin` | The address the browser uses: `http(s)://host[:port]`, no path, query or fragment. | the bound address |
+| `secret` | Reference to the secret (at least 32 characters): `$NAME`, `${NAME}` or `${secrets/<name>}`. `akm config get` shows the reference, never the value. `AKM_WEB_SECRET`, when set, overrides it for that run. | none |
+| `allowedHosts` | Extra `Host` names to accept, with or without a port. | none: only the origin's host |
+| `frameParents` | `http(s)` origins allowed to show the UI in a frame. | none: framing is denied |
 
 ### Experimental learning aliases
 

@@ -160,42 +160,196 @@ under `out/<timestamp>/`. Keep the entire output directory together. `npm run sm
 starts the newest package headless and checks that it answers with the right version.
 CI packages and starts Desktop on Linux, macOS and Windows; the installers are unsigned.
 
-`npm run dev` starts a loopback-only Vite preview and prints a private launch
-URL. It uses your configured AKM data unless you supply isolated environment
-paths. Do not share that URL.
+`npm run dev` starts a loopback-only Vite preview at `http://127.0.0.1:5173`. It logs in with
+`AKM_WEB_SECRET` when that is set, otherwise with a secret it makes and prints. It uses your configured AKM data
+unless you supply isolated environment paths. Do not share that secret.
 
 ## Run it on a server
 
-`akm-web` is the web process alone, with no Electron and no display, for a server or an Assistant container. It
-replaces `akm ui` for headless installs and manages the library of the user that runs it.
+AKM Desktop needs none of this. It starts the web process on `127.0.0.1` on a free port, with a secret it makes
+for that launch, and shows it in its own window. There is nothing to configure and no login to see, and nothing in
+`experimental.web` changes how it starts.
+
+`akm-web` is the same web process alone, with no Electron and no display, for a server or an Assistant container. It
+replaces `akm ui` for headless installs and manages the library of the user that runs it. Everything below is
+**Advanced**.
+
+### Advanced: a host, programs and embedding
+
+This is for people who understand origins, proxies, cookies and TLS. Listening on another host, or showing the UI
+inside another app, may need infrastructure akm does not provide: TLS, a reverse proxy, DNS and network rules. Over
+plain HTTP the secret and any revealed secret cross the network unencrypted.
+
+`akm-web` needs one secret. There are three ways to use it:
+
+- A **person** types it into the login form and gets a session cookie.
+- A **program that forwards requests** (a proxy, another app's server) sends it in a header on each request.
+- A **program that wants a browser logged in without typing** trades it for a one-time login link.
+
+Nothing else grants access, and `akm-web` prints no credential.
+
+#### Run it on a host or in a container
 
 ```sh
 npm install -g akm-web   # Node 22.18 or later
+export AKM_WEB_SECRET="$(openssl rand -hex 32)"
 akm-web --host 0.0.0.0 --port 4444 --origin http://my-server:4444
 ```
 
-- `--host <addr>` is the address to listen on (default `127.0.0.1`).
-- `--port <n>` is the port (default: a free one).
-- `--origin <url>` is the address your browser uses, which differs from the listen address behind a Docker port
-  mapping or a proxy (default `http://<host>:<port>`). It is required with a wildcard `--host` (`0.0.0.0`, `::`); without
-  it the command exits with an error. An `https` origin marks the session cookie `Secure`.
+The secret is at least 32 characters. Give it as the environment variable `AKM_WEB_SECRET`, or as
+`experimental.web.secret` in the akm config, which holds a reference (`$NAME`, `${NAME}` or `${secrets/<name>}`),
+never the secret itself. When both are set, `AKM_WEB_SECRET` wins. The secret is read once at startup and removed from
+the process environment, so the CLI commands the server runs do not inherit it. To rotate it, change it and restart.
 
-When started from a terminal on a machine with a screen it also opens that URL in the default browser. It does not when
-there is no TTY, an SSH session, CI, a container, or (on Linux) no `DISPLAY` or `WAYLAND_DISPLAY`; there is no flag for it.
-A failed open prints one line to stderr and the server keeps running.
+The other settings live under `experimental.web` in the akm config
+([reference](../docs/reference/configuration.md#experimental-web-settings)) and are Experimental: names and behaviour
+may change in 0.11. Flags apply to one run and override the config key of the same name.
 
-It prints one JSON line, `{"type":"ready","url":"...","origin":"..."}`; open `url`. The URL carries the session token
-and the browser keeps it in a cookie. The token, Host and Origin checks are always on and are compared with `--origin`.
+| Key | Flag | Meaning | Default |
+| --- | --- | --- | --- |
+| `host` | `--host <addr>` | Address to listen on. | `127.0.0.1` |
+| `port` | `--port <n>` | Port to listen on. | a free port |
+| `origin` | `--origin <url>` | The address the browser uses: `http(s)://host[:port]`, no path. It differs from the listen address behind a Docker port mapping or a proxy. It is required with a wildcard host (`0.0.0.0`, `::`). An `https` origin marks the session cookie `Secure`. | the bound address |
+| `secret` | | Reference to the secret. | none |
+| `allowedHosts` | | Extra `Host` names to accept, for a proxy that reaches `akm-web` under a private name. A name matches with or without its port. | none: only the origin's host |
+| `frameParents` | | Origins allowed to show the UI in a frame. | none: framing is denied |
+| | `--open` | Open the UI in the default browser. Nothing opens without it. | |
+| | `--auto-login` | With `--open`: the browser arrives logged in, through a one-time login link that is not printed. Without it, the browser shows the login form. | |
 
-In Docker, publish the port and pass the address the browser will use:
+`akm-web` exits with status 2 and a message that says what to set when there is no secret, when the secret is shorter
+than 32 characters, when `--auto-login` is given without `--open`, or when the origin has a path, query or fragment.
+
+When the server answers authenticated requests it prints one line, `{"type":"ready","origin":"..."}`. It has no URL and
+no credential. Open the origin and type the secret into the login form. A failed `--open` prints one line to stderr
+and the server keeps running. On `SIGTERM` or `SIGINT` the server stops accepting connections, waits up to 10 seconds
+for requests in flight, closes what remains and exits 0.
+
+In Docker, publish the port, pass the secret and name the address the browser will use:
 
 ```sh
-docker run -p 4444:4444 my-image akm-web --host 0.0.0.0 --port 4444 --origin http://localhost:4444
+docker run -p 4444:4444 -e AKM_WEB_SECRET my-image akm-web --host 0.0.0.0 --port 4444 --origin http://localhost:4444
 ```
 
-Whoever holds the token has the owner's full authority over that library: they can edit bundle files, reveal
-secrets and install host tools. Over plain HTTP the token and any revealed secret cross the network unencrypted, so use a
-private network or a TLS proxy that keeps the `Host` header. Desktop does not add TLS or a login.
+##### Sessions
+
+The login form posts the secret in the request body and receives a session: a random identifier in an `HttpOnly`,
+host-only cookie. The secret is never in a cookie. Sessions are kept in memory, in a bounded table, and end after 8
+hours without use, on logout (`POST /api/session/logout`), or when the server restarts. Logout ends your own session only; there is no way to
+end someone else's short of a restart. The cookie name carries the port, so two instances on one host do not share
+sessions.
+
+##### Checks that are always on
+
+None can be turned off, whichever way you come in.
+
+- `Host` must be the origin's host or one of `allowedHosts`; anything else gets `403`.
+- Every write (any method other than `GET` and `HEAD`) must carry an `Origin` equal to the configured origin. This holds for
+  requests that carry the header too.
+- No CORS, and `Cache-Control: no-store`.
+
+#### Programs
+
+A program sends the secret in an `Authorization: Bearer <secret>` header on each request. No session is made, so it
+needs no cookie, and a restart does not log it out. A request that carries an `Authorization` header must carry the
+right secret: a wrong one is refused even when the request also has a valid session cookie.
+
+**A program must send `Origin` itself on every write.** A browser does this by itself; a server does not. Set
+`Origin` to the configured origin. With no `Origin`, or another one, the write is refused with `403`.
+
+- `GET /api/session` returns `{"ok":true,"active":<boolean>}`. It tells "listening" from "ready": until the server
+  answers authenticated requests, every request gets `503` with code `STARTING`. `active` is true while a request
+  other than this one is being served or a host-tool operation is running, so a launcher can ask before an idle
+  shutdown.
+- `POST /api/session/link`, with the header and `Origin`, returns `{"url":"<origin>/?login=<code>"}`. Opening that
+  address in a browser sets a session cookie and shows the UI. A link works once and expires after 60 seconds.
+- `POST /api/session/logout` ends the caller's session and clears its cookie.
+
+```sh
+curl -X POST http://my-server:4444/api/session/link \
+  -H "Authorization: Bearer $AKM_WEB_SECRET" \
+  -H "Origin: http://my-server:4444"
+```
+
+A request without a session or the header gets the structured `401`; a browser navigation gets the login form.
+
+#### Show the UI inside another app
+
+There are two ways. Both trust whoever holds the secret with the owner's full authority (see
+[Limits](#limits-stated-plainly)).
+
+##### Through the app's own server, under a path
+
+The browser talks only to the app, and the app forwards. The assistant takes no public traffic.
+
+```
+browser --https--> app (public)  /akm/...  --private network--> akm-web (not public)
+                   - checks its own signed-in user
+                   - removes the /akm prefix
+                   - adds Authorization: Bearer <secret>
+                   - forwards the request and streams the response back
+```
+
+The proxy removes the path before forwarding, replaces any `Authorization` header from the browser with its own, and
+leaves the browser's `Origin` as it is. The app decides who may reach which assistant: `akm-web` trusts every request
+that carries the secret. The UI's links and API calls work from whatever path it is served under; there is no setting
+for the path.
+
+Configure the assistant with:
+
+- `origin`: the app's public origin, because that is where the browser is. Writes are checked against it.
+- `allowedHosts`: the private name the app calls it by, unless the proxy sends the origin's host.
+- `frameParents`: the app's origin, if the page shows the UI in a frame.
+- `secret`: usually `$AKM_WEB_SECRET`, filled from the platform's secret store.
+
+The user is never prompted and their browser never holds an akm credential. Because the header needs no session,
+restarts and more than one replica do not log anyone out.
+
+##### In a frame pointed at the server
+
+For setups where the user's browser can reach the assistant. Set `frameParents` to the page's origin. Then the
+response allows exactly those origins (`Content-Security-Policy: frame-ancestors`, with no `X-Frame-Options`); with no
+`frameParents`, framing is denied.
+
+- Without automatic login, the frame shows the login form and the user types the secret.
+- With automatic login, the app's server, holding the secret, asks for a one-time login link (sending `Origin`) and
+  uses it as the frame's address.
+
+If the page and the assistant are on the same site (the same machine, or one parent domain), this works over `http`
+or `https`. On different sites the origin must be `https`: the cookie then becomes `SameSite=None; Secure;
+Partitioned`, which is what a browser needs before it sends a cookie inside a frame on another site. It still depends
+on the browser accepting it, and some browsers block cookies in frames from another site, so this will not work for
+everyone. Without `frameParents` the cookie is `SameSite=Strict`.
+
+#### Example: Azure Container Apps
+
+An assistant and a broker app (the one the user's browser talks to) in one Container Apps environment. The platform
+gives the broker only the hostname it assigns.
+
+- The assistant app has internal ingress only, with `host` set to `0.0.0.0`. No public traffic reaches it.
+- The broker app has external ingress and reaches the assistant by its internal address in the same environment.
+- On the assistant, `origin` is the broker's public origin and `allowedHosts` holds the assistant's internal name.
+- One Container Apps secret is given to both apps, as `AKM_WEB_SECRET` on the assistant and in the broker's
+  `Authorization` header.
+- The platform's probe is a TCP probe, which shows only that the port is open. The broker, which holds the secret,
+  calls `GET /api/session` before it shows the UI.
+
+Serving under a path, and the arrangement of different internal and public host names, are checked by tests with a
+local proxy (`tests/path-prefix.test.mjs`, `tests/web-access.test.mjs`). The Azure arrangement itself has not been run
+by the project: the `Host` value internal ingress passes to the container, and whether the broker's proxy streams
+responses and leaves `Origin` untouched, are for you to confirm.
+
+#### Limits, stated plainly
+
+- Anyone who gets in has the owner's full authority over that assistant's library: editing files, revealing secrets,
+  installing host tools.
+- A user who is not shown the secret can still find it, with that authority. Keeping the assistant off the public
+  network is what stops them using it directly.
+- An allowed frame parent is trusted with the user's clicks, because it can draw over the frame.
+- Some browsers block cookies in frames from another site, so a frame on another site will not work for everyone.
+- Logout ends a person's own session. There is no way to end someone else's, short of a restart.
+- Over plain HTTP the secret and any revealed secret cross the network unencrypted. Use a private network or a TLS
+  proxy that keeps the `Host` header (or lists its name in `allowedHosts`).
+- akm provides no TLS, no user accounts and no roles.
 
 ## AKM dependency
 

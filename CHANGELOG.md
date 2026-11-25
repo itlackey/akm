@@ -9,6 +9,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - `experimental.web` config, Experimental: `host`, `port`, `origin`, `secret` (a `$VAR`, `${VAR}` or `${secrets/<name>}` reference), `allowedHosts` and `frameParents` for the AKM Desktop server, kept by `akm migrate apply`. `config.webSettings()` of `akm-cli/workspace` returns them with the secret resolved. See [Configuration](docs/reference/configuration.md#experimental-web-settings).
+- `akm-web` shows a login form to a browser without a session: the secret goes in, a session cookie comes back, and the session ends after 8 hours without use, on logout (`POST /api/session/logout`) or on restart. The secret is `AKM_WEB_SECRET`, or `experimental.web.secret`, at least 32 characters.
+- A program sends the secret as `Authorization: Bearer <secret>` on each request instead of logging in; a wrong secret is refused even with a valid session cookie. Every write, from a program too, must carry an `Origin` equal to the configured origin.
+- `POST /api/session/link` with the header returns a one-time login link, `<origin>/?login=<code>`, that works once and expires after 60 seconds. `GET /api/session` returns `{"ok":true,"active":<boolean>}` for a launcher; requests get `503` with code `STARTING` until the server is ready.
+- `akm-web --open` opens the UI in the default browser, and `--open --auto-login` opens it logged in through a link that is not printed.
+- `experimental.web.allowedHosts` accepts extra `Host` names for a proxy that reaches `akm-web` under a private name. `experimental.web.frameParents` lets the listed origins show the UI in a frame; with an `https` origin the cookie is then `SameSite=None; Secure; Partitioned`.
+- The UI works when a proxy serves it under a path (`https://app.example/akm/`) and removes the path before forwarding.
+- On `SIGTERM`, `SIGINT` or a `shutdown` message `akm-web` stops accepting connections, waits up to 10 seconds for requests in flight and exits 0. It used to close every connection at once.
+
+### Changed
+
+- `akm-web` does not start without a secret: it exits 2 and says to set `AKM_WEB_SECRET` or `experimental.web.secret` (at least 32 characters). It used to make a token for the run.
+- The ready line is `{"type":"ready","origin":"..."}`: it has no `url`, and the launch-token address (`?desktop_session=`) and its cookie are gone. A launcher that opened `url` must send the header or use a login link.
+- `akm-web` opens a browser only with `--open`. It used to open one when started from a terminal with a display.
+- `akm-web --origin` with a path, query or fragment is refused with exit 2. It used to warn.
 
 ## [0.10.261132] - 2026-11-25
 
