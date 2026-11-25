@@ -49,6 +49,7 @@ else {process.exitCode=1}
   t.after(() => browser.close());
   const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
   const page = await context.newPage();
+  await page.clock.install();
   await page.goto(server.url);
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await page.getByRole("link", { name: "Software", exact: true }).click();
@@ -230,6 +231,7 @@ else {process.exitCode=1}
     await route.fulfill({ response, json: body });
   });
   const status = page.locator("#desktop-update-status");
+  await page.clock.fastForward(2000);
   await expect(status).toHaveAttribute("role", "status");
   await expect(status).toHaveText("Checking for updates…");
   await status.evaluate((element) => {
@@ -249,6 +251,7 @@ else {process.exitCode=1}
     [{ state: "available", version }, "Version 0.10.261106 is available."],
   ]) {
     update = { ...next, channel: "stable" };
+    await page.clock.fastForward(2000);
     await expect(status).toContainText(text);
     assert.equal(await status.getAttribute("data-same-node"), "yes", `${next.state}: the same live region`);
   }
@@ -257,6 +260,7 @@ else {process.exitCode=1}
   ).toHaveAttribute("href", "https://github.com/itlackey/akm/releases/tag/v0.10.261106");
   // A prerelease build that follows stable releases: the note that it is never downgraded is the select's description.
   prereleaseBuild = true;
+  await page.clock.fastForward(2000);
   await expect(updates).toHaveAccessibleDescription(/never replaced by an older one/);
   // An install the host will refuse is not a dead button (it used to be disabled with no reason given when the host
   // CLI could not run): it is operable, the reason arrives as an alert, and focus stays on the button.
