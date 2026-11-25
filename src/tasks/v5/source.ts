@@ -23,7 +23,6 @@ import {
   sourceError,
   stringField,
 } from "../../core/asset/bounded-task-document";
-import { UsageError } from "../../core/errors";
 import { isSecretRefToken, parseSecretSpec, REF_TOKEN_RE } from "../../core/ref-token";
 import { warnOnce } from "../../core/warn";
 import type { InputContract } from "../../execution/input-contract";
@@ -151,14 +150,6 @@ export type TaskV5Fail = (path: Path, detail: string) => never;
 
 const isMap = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
-/** What `akm run` refuses when asked to run a version 5 file before the build that runs them. */
-export function refuseRunningTaskV5(filePath: string): never {
-  throw new UsageError(
-    `TASK_SCHEMA_VERSION_UNSUPPORTED: Task at ${filePath} is version ${TASK_SOURCE_V5_VERSION}; this build reads and checks it, and running version 5 tasks arrives in a later build.`,
-    "TASK_SCHEMA_VERSION_UNSUPPORTED",
-  );
-}
 
 /** The kind of asset a `run:` value names, or undefined when it is no ref to a task, prompt asset, script or agent. */
 export function taskV5RefKind(ref: string): TaskV5RefKind | undefined {

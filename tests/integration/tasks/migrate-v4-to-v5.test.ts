@@ -54,6 +54,8 @@ function versionOf(file: string): string | undefined {
   return parsed.version === 4 ? undefined : parsed.v5.version;
 }
 
+const ENVIRONMENT_NOTE = /clean one.*`inherit:`/;
+
 /** The planner's output for a v4 task text, parsed. */
 function convert(text: string): {
   out: Record<string, unknown> & { steps?: Record<string, unknown>[] };
@@ -293,6 +295,7 @@ describe("comments", () => {
       [
         `version: ${TASK_SOURCE_V5_VERSION}`,
         "lock: true",
+        "cwd: .",
         "# the steps",
         "steps:",
         "  # first, fetch",
@@ -338,20 +341,30 @@ describe("what to change by hand", () => {
     expect(notes).toEqual([
       expect.stringMatching(/^Step a: .*the task's values appended/),
       expect.stringMatching(/^Step b: .*the task's values and the earlier steps' results appended/),
+      expect.stringMatching(ENVIRONMENT_NOTE),
     ]);
   });
 
   test("a first prompt step of a task with no inputs had nothing appended and is not reported", () => {
-    expect(convert("version: 4\nsteps:\n  - name: a\n    prompt: First.\n").notes).toEqual([]);
+    expect(convert("version: 4\nsteps:\n  - name: a\n    prompt: First.\n").notes).toEqual([
+      expect.stringMatching(ENVIRONMENT_NOTE),
+    ]);
   });
 
   test("shell: bash is dropped and reported; shell: sh is not", () => {
-    expect(convert("version: 4\nshell: bash\nrun: ls\n").notes).toEqual([expect.stringMatching(/shell: bash/)]);
-    expect(convert("version: 4\nshell: sh\nrun: ls\n").notes).toEqual([]);
+    expect(convert("version: 4\nshell: bash\nrun: ls\n").notes[0]).toMatch(/shell: bash/);
+    expect(convert("version: 4\nshell: sh\nrun: ls\n").notes).toEqual([expect.stringMatching(ENVIRONMENT_NOTE)]);
   });
 
-  test("a task that is one command has nothing to change by hand", () => {
-    expect(convert("version: 4\nrun: ls\n").notes).toEqual([]);
+  test("a task that is one command has only the environment to change by hand", () => {
+    expect(convert("version: 4\nrun: ls\n").notes).toEqual([expect.stringMatching(ENVIRONMENT_NOTE)]);
+  });
+
+  test("a task with no working-directory keeps the bundle root and is told steps no longer inherit akm's environment", () => {
+    const { out, notes } = convert("version: 4\nsteps:\n  - name: a\n    run: ls\n");
+    expect(out.cwd).toBe(".");
+    expect(notes).toContainEqual(expect.stringMatching(ENVIRONMENT_NOTE));
+    expect(convert("version: 4\nuses: commands/report\n").out.cwd).toBe(".");
   });
 });
 
@@ -426,7 +439,13 @@ describe("the check a start makes", () => {
     const status = await applyTaskFilesV5Migration([file]);
     expect(status.files).toEqual([expect.objectContaining({ filePath: file, status: "converted" })]);
     expect(versionOf(file)).toBe(TASK_SOURCE_V5_VERSION);
+    expect(parseYaml(read(file)).cwd).toBe(".");
+    expect(status.files[0]?.notes).toContainEqual(expect.stringMatching(ENVIRONMENT_NOTE));
     await checkTaskV5({ ref: "tasks/weekly", bundle: { name: "stash", dir: storage.stashDir } });
+    const converted = read(file);
+    const again = await applyTaskFilesV5Migration([file]);
+    expect(again.files).toEqual([expect.objectContaining({ status: "skipped", reason: "already-v5" })]);
+    expect(read(file)).toBe(converted);
   });
 
   test("a file the checker refuses is not written, and the reason is the checker's", async () => {
