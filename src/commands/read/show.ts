@@ -19,7 +19,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-// asset-io: base a script file no adapter lists (its extension is unknown), shown as plain text as show always did
+// asset-io: base a script file no adapter lists (its extension is unknown), shown as plain text as show always did; a facade read goes through an adapter (facade-fs), and none lists it
 import { buildFileContext } from "../../core/adapter/directory/file-context";
 import type { MatchResult } from "../../core/adapter/types";
 import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../../core/asset/asset-placement";
