@@ -26,7 +26,8 @@ const id = () => randomBytes(32).toString("base64url");
 
 // In memory only: a restart ends every session and link. Kept on globalThis because a dev server re-evaluates this module.
 const store = globalThis as { __akmWebAccess?: { sessions: Map<string, number>; links: Map<string, number> } };
-const { sessions, links } = (store.__akmWebAccess ??= { sessions: new Map(), links: new Map() });
+store.__akmWebAccess ??= { sessions: new Map(), links: new Map() };
+const { sessions, links } = store.__akmWebAccess;
 
 /** Drop what has expired, then the oldest if the table is still full. Maps keep insertion order, so the first is oldest. */
 function trim(table: Map<string, number>, limit: number, now: number, ttl: number) {

@@ -45,7 +45,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   // Every response: no caching, and framing allowed for exactly the configured parents or denied.
   const finish = (response: Response) => {
     response.headers.set("X-Content-Type-Options", "nosniff");
-    response.headers.set("Referrer-Policy", "no-referrer");
+    if (!response.headers.has("Referrer-Policy")) response.headers.set("Referrer-Policy", "no-referrer");
     response.headers.set("Cache-Control", "no-store");
     if (framed) {
       const directive = `frame-ancestors ${frameParents.join(" ")}`;
@@ -53,7 +53,11 @@ export const handle: Handle = async ({ event, resolve }) => {
       response.headers.delete("X-Frame-Options");
       response.headers.set(
         "Content-Security-Policy",
-        !csp ? directive : /frame-ancestors[^;]*/.test(csp) ? csp.replace(/frame-ancestors[^;]*/, directive) : `${csp}; ${directive}`,
+        !csp
+          ? directive
+          : /frame-ancestors[^;]*/.test(csp)
+            ? csp.replace(/frame-ancestors[^;]*/, directive)
+            : `${csp}; ${directive}`,
       );
     } else response.headers.set("X-Frame-Options", "DENY");
     return response;
@@ -61,13 +65,16 @@ export const handle: Handle = async ({ event, resolve }) => {
   // A cookie in a frame on another site needs SameSite=None, which a browser accepts only as Secure and partitioned.
   const cookie = (value: string, extra = "") =>
     `${COOKIE}=${value}; Path=/; HttpOnly; ${framed && https ? "SameSite=None; Secure; Partitioned" : `SameSite=Strict${https ? "; Secure" : ""}`}${extra}`;
+  // The login form is the one page that posts a form: under `no-referrer` a browser sends `Origin: null` with it.
   const html = (body: string, status: number, extra: Record<string, string> = {}) =>
     finish(
       new Response(body, {
         status,
         headers: {
           "Content-Type": "text/html; charset=utf-8",
-          "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'",
+          "Content-Security-Policy":
+            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'",
+          "Referrer-Policy": "same-origin",
           ...extra,
         },
       }),
@@ -87,7 +94,10 @@ export const handle: Handle = async ({ event, resolve }) => {
       const set = { "Set-Cookie": cookie(startSession()) };
       const site = headers.get("sec-fetch-site");
       if (site === "none" || site === "same-origin") return redirect("./", set);
-      return html('<!doctype html><meta http-equiv="refresh" content="0;url=./">', 200, set);
+      return html('<!doctype html><meta http-equiv="refresh" content="0;url=./">', 200, {
+        ...set,
+        "Referrer-Policy": "no-referrer",
+      });
     }
   }
 
@@ -110,7 +120,10 @@ export const handle: Handle = async ({ event, resolve }) => {
   const byHeader = headers.has("authorization");
   const sessionId = event.cookies.get(COOKIE);
   if (byHeader ? !sameSecret(bearer, secret) : !useSession(sessionId)) {
-    const navigation = ["GET", "HEAD"].includes(method) && !path.startsWith("/api/") && (headers.get("accept") ?? "").includes("text/html");
+    const navigation =
+      ["GET", "HEAD"].includes(method) &&
+      !path.startsWith("/api/") &&
+      (headers.get("accept") ?? "").includes("text/html");
     if (navigation && !byHeader) return html(loginForm(up, false), 401);
     return refuse(401, "UNAUTHORIZED", "Missing or invalid application session.");
   }
@@ -118,7 +131,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   if (path === "/api/session") {
     if (method === "GET") {
-      const active = ((web.inflight ?? 1) > 1) || (Boolean(hostTools.pending) && hostTools.state.phase !== "check");
+      const active = (web.inflight ?? 1) > 1 || (Boolean(hostTools.pending) && hostTools.state.phase !== "check");
       return finish(Response.json({ ok: true, active }));
     }
   }

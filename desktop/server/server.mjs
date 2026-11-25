@@ -72,16 +72,17 @@ export async function startServer({
     web.inflight++;
     res.once("close", () => web.inflight--);
     const requested = hostOf(req.headers.host);
-    if (requested === undefined || !(requested === originHost || hosts.has(requested) || hosts.has(requested.replace(/:\d+$/, "")))) {
-      res
-        .writeHead(403, { "Content-Type": "application/json" })
-        .end(
-          JSON.stringify({
-            ok: false,
-            code: "HOST_NOT_ALLOWED",
-            error: "This application only accepts the address it was started with.",
-          }),
-        );
+    if (
+      requested === undefined ||
+      !(requested === originHost || hosts.has(requested) || hosts.has(requested.replace(/:\d+$/, "")))
+    ) {
+      res.writeHead(403, { "Content-Type": "application/json" }).end(
+        JSON.stringify({
+          ok: false,
+          code: "HOST_NOT_ALLOWED",
+          error: "This application only accepts the address it was started with.",
+        }),
+      );
       return;
     }
     // The framework derives its origin from these two, so it always sees the configured origin, whichever allowed
@@ -232,7 +233,9 @@ function validateSecret(secret) {
       "No secret. Set the AKM_WEB_SECRET environment variable, or experimental.web.secret in the akm config, to at least 32 characters.",
     );
   if (secret.length < 32)
-    throw new Error("The secret is shorter than 32 characters. Set AKM_WEB_SECRET (or experimental.web.secret) to a longer one.");
+    throw new Error(
+      "The secret is shorter than 32 characters. Set AKM_WEB_SECRET (or experimental.web.secret) to a longer one.",
+    );
 }
 
 /** @param {string[]} argv */
@@ -261,8 +264,9 @@ function parseArgs(argv) {
  */
 async function webSettings() {
   const { config } = await import("akm-cli/workspace");
-  // Until akm-cli ships webSettings, nothing is configured. Remove this fallback when it does.
-  return typeof config?.webSettings === "function" ? config.webSettings() : { allowedHosts: [], frameParents: [] };
+  // Until akm-cli ships webSettings, nothing is configured. Remove this fallback (and the cast) when it does.
+  const settings = /** @type {any} */ (config)?.webSettings;
+  return typeof settings === "function" ? settings() : { allowedHosts: [], frameParents: [] };
 }
 
 /**
@@ -278,7 +282,8 @@ async function resolveSettings(args, env) {
   const port = args.port === undefined ? undefined : Number(args.port);
   if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535))
     throw new Error(`--port must be a number from 0 to 65535, not "${args.port}".`);
-  if (args["auto-login"] && !args.open) throw new Error("--auto-login needs --open: it logs in the browser that --open starts.");
+  if (args["auto-login"] && !args.open)
+    throw new Error("--auto-login needs --open: it logs in the browser that --open starts.");
   if (env.AKM_DESKTOP_NATIVE === "1")
     return { host: "127.0.0.1", port: port ?? 0, secret: envSecret || undefined, allowedHosts: [], frameParents: [] };
   const web = await webSettings();
