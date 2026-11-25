@@ -13,10 +13,10 @@
  *   - environment `release` deploys from `main` and `release/*` only;
  *   - the release branches left over from the old process are deleted.
  *
- * The required checks are read from .github/workflows/ci.yml (every job and matrix entry CI runs on a release pull
- * request; the integration suite, the Node fallback smoke, the upgrade rehearsals and Gated CI run from the Release
- * workflow, not on the pull request), so the script is rerun after a matrix change, or after a job moves between
- * workflows, and the ruleset follows. Idempotent.
+ * The required checks are read from the workflow files: every job and matrix entry .github/workflows/ci.yml runs on
+ * a release pull request, plus the gate jobs of .github/workflows/release.yml (RELEASE_GATES), which run on the
+ * release pull request too. The script is rerun after a matrix change, or after a job moves between workflows, and
+ * the ruleset follows. Idempotent.
  * Needs `gh` logged in with admin rights on the repository.
  *
  *   bun scripts/github-settings.ts            # apply
@@ -25,10 +25,22 @@
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import YAML from "yaml";
 
 const dryRun = process.argv.includes("--dry-run");
 const STALE_BRANCHES = ["release/0.9.25", "release/0.9.26", "release/0.9.27", "release/0.10.261020"];
+
+/** The release.yml jobs that run on a release pull request; the rest build, tag or publish, or run only on a dispatch. */
+export const RELEASE_GATES = [
+  "integration",
+  "node-smoke",
+  "upgrade-rehearsal",
+  "desktop-tests",
+  "desktop-e2e",
+  "desktop-usability",
+  "gated",
+];
 
 type Job = {
   name?: string;
@@ -37,11 +49,18 @@ type Job = {
 };
 type Workflow = { jobs: Record<string, Job> };
 
-/** The check names GitHub reports for a workflow's jobs: `name` or the job id, one per matrix entry. */
-function checkNames(workflow: Workflow): string[] {
+/**
+ * The check names GitHub reports for a workflow's jobs: `name` or the job id, one per matrix entry. A job that calls
+ * a workflow in this repository reports `<job id> / <the called job's name>`.
+ */
+function checkNames(workflow: Workflow, only?: string[]): string[] {
   const names: string[] = [];
   for (const [id, job] of Object.entries(workflow.jobs)) {
-    if (job.uses) continue;
+    if (only && !only.includes(id)) continue;
+    if (job.uses) {
+      if (only) names.push(...checkNames(readWorkflow(path.basename(job.uses))).map((name) => `${id} / ${name}`));
+      continue;
+    }
     const matrix = job.strategy?.matrix;
     if (!matrix) {
       names.push(job.name ?? id);
@@ -63,6 +82,11 @@ function checkNames(workflow: Workflow): string[] {
 
 function readWorkflow(file: string): Workflow {
   return YAML.parse(fs.readFileSync(`.github/workflows/${file}`, "utf8")) as Workflow;
+}
+
+/** Every check the ruleset on main requires. */
+export function requiredChecks(): string[] {
+  return [...checkNames(readWorkflow("ci.yml")), ...checkNames(readWorkflow("release.yml"), RELEASE_GATES)];
 }
 
 function api<T = unknown>(method: string, path: string, body?: unknown): T | null {
@@ -102,7 +126,7 @@ function main(): void {
   const remote = execFileSync("git", ["remote", "get-url", "origin"], { encoding: "utf8" }).trim();
   const repo = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/.exec(remote)?.[1];
   if (!repo) throw new Error(`origin is not a GitHub repository: ${remote}`);
-  const checks = checkNames(readWorkflow("ci.yml"));
+  const checks = requiredChecks();
   console.log(`${repo}: ${checks.length} required checks on main:\n  ${checks.join("\n  ")}`);
 
   upsertRuleset(repo, {
@@ -186,4 +210,4 @@ function main(): void {
   }
 }
 
-main();
+if (import.meta.main) main();
