@@ -215,7 +215,7 @@ export function proposalRefIdentity(ref: string): ProposalRefIdentity | undefine
   try {
     const parsed = parseBundleRef(ref);
     if (parsed.fragment !== undefined || isLegacyProposalRef(ref)) return undefined;
-    return { conceptId: parsed.conceptId, ...(parsed.bundle !== undefined ? { bundle: parsed.bundle } : {}) };
+    return { conceptId: parsed.conceptId, bundle: parsed.bundle };
   } catch {
     return undefined;
   }
