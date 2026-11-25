@@ -384,11 +384,11 @@ function gatherSessionExtractionLedgerPhase(
  * must not abort the health report — each group degrades to "no advisory"
  * independently.
  */
-async function gatherAncillaryAdvisories(
+function gatherAncillaryAdvisories(
   db: Database,
   options: AkmHealthOptions,
   egressConfigView: EgressConfigView | undefined,
-): Promise<HealthCheckResult[]> {
+): HealthCheckResult[] {
   const advisories: HealthCheckResult[] = [];
 
   const indexStateMismatch = detectIndexStateGenerationMismatch(db);
@@ -434,7 +434,7 @@ async function gatherAncillaryAdvisories(
     // Non-fatal.
   }
 
-  const workflowFiles = await collectWorkflowFilesAdvisory(options.stashDir);
+  const workflowFiles = collectWorkflowFilesAdvisory(db, options.stashDir);
   if (workflowFiles) advisories.push(workflowFiles);
 
   // What the bundles' configuration does to their content: nested bundles share files, a narrow adapter skips some.
@@ -794,7 +794,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       outcomes,
     } = buildImproveWindowSummary(db, stateDbPath, since, until, readOnly);
 
-    advisories.push(...(await gatherAncillaryAdvisories(db, options, egressConfigView)));
+    advisories.push(...gatherAncillaryAdvisories(db, options, egressConfigView));
 
     const sessionExtractionLedger = gatherSessionExtractionLedgerPhase(db, now);
     const proposalQueue = gatherProposalQueue();

@@ -13,7 +13,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { listWorkflowRuns } from "../../workflows/runtime/runs";
+import type { Database } from "../../storage/database";
+import { WorkflowRunsRepository } from "../../storage/repositories/workflow-runs-repository";
 import type { HealthCheckResult } from "./types";
 
 /** The workflow files under a bundle root's `workflows` folder, sorted. */
@@ -65,16 +66,19 @@ function describeBlockedWorkflowRuns(runs: readonly { id: string; workflowRef: s
   );
 }
 
-/** The advisory for the workflow files and blocked workflow runs left, or `undefined` when there are none. */
-export async function collectWorkflowFilesAdvisory(stashDir?: string): Promise<HealthCheckResult | undefined> {
+/**
+ * The advisory for the workflow files and blocked workflow runs left, or `undefined` when there are none. Runs are
+ * read from `stateDb`, the connection doctor already holds; without one only files are looked for.
+ */
+export function collectWorkflowFilesAdvisory(stateDb?: Database, stashDir?: string): HealthCheckResult | undefined {
   const base = { name: "workflow-files", kind: "deterministic", confidence: "high" } as const;
   let bundles: WorkflowFilesOfBundle[];
   let blocked: { id: string; workflowRef: string }[];
   try {
     bundles = remainingWorkflowFiles(stashDir);
-    blocked = (await listWorkflowRuns()).runs
+    blocked = (stateDb ? new WorkflowRunsRepository(stateDb).listRuns() : [])
       .filter((run) => run.status === "blocked")
-      .map(({ id, workflowRef }) => ({ id, workflowRef }));
+      .map((run) => ({ id: run.id, workflowRef: run.workflow_ref }));
   } catch (error) {
     return {
       ...base,
