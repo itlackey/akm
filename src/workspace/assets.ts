@@ -106,7 +106,7 @@ export function projectOverview(input: { project: string }) {
   const local = resolveReadSources(undefined, config).sources;
   const selected =
     project.from === undefined
-      ? local.map((source) => ({ name: source.bundleId, source }))
+      ? local.map((source) => ({ name: source.registryId ?? source.path ?? source.bundleId, source }))
       : [project.from].flat().map((from) => ({ name: from, source: narrowSourcesToName(local, [from])[0] }));
   const readable = selected.flatMap((bundle) => (bundle.source ? [bundle.source] : []));
   const counts =

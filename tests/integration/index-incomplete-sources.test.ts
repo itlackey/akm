@@ -157,7 +157,7 @@ describe("an unresolved source", () => {
 });
 
 describe("an unresolved source reports the provider's own error", () => {
-  test("an invalid git URL is unknown, with the URL error as the reason", async () => {
+  test("an invalid git URL reports the URL error without a path", async () => {
     saveConfig({ semanticSearchMode: "off", bundles: { broken: { git: "not a url" } } });
 
     const result = await akmIndex({
@@ -167,7 +167,8 @@ describe("an unresolved source reports the provider's own error", () => {
     });
 
     const broken = result.incompleteSources.find((source) => source.bundle === "broken");
-    expect(broken?.path).toBe("unknown");
+    expect(broken).toBeDefined();
+    expect(broken).not.toHaveProperty("path");
     expect(broken?.reason).toContain("Invalid git URL");
   }, 60_000);
 
@@ -189,7 +190,8 @@ describe("an unresolved source reports the provider's own error", () => {
 
     expect(result.totalEntries).toBe(0);
     const pad = result.incompleteSources.find((source) => source.bundle === "pad");
-    expect(pad?.path).toBe("unknown");
+    expect(pad).toBeDefined();
+    expect(pad).not.toHaveProperty("path");
     expect(pad?.reason).toContain("akm bundle update");
   }, 60_000);
 });

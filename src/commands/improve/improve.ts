@@ -456,10 +456,10 @@ export function resolveImproveReadSource(
     }
     return { selector: configuredSelector, source: { name: configuredSelector, path: content.dir } };
   }
-  const implicit = resolveSourceEntries(undefined, config).find((source) => source.isDefault);
+  const implicit = resolveSourceEntries(undefined, config)[0];
   if (implicit?.path === undefined)
     throw new ConfigError("no source configured; run `akm bundle create`", "STASH_DIR_NOT_FOUND");
-  return { source: { name: implicit.bundleId, path: implicit.path } };
+  return { source: { name: implicit.registryId ?? "stash", path: implicit.path } };
 }
 
 /**

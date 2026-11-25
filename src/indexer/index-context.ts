@@ -52,7 +52,7 @@ export interface SemanticSearchRecord {
 export interface IncompleteIndexSource {
   /** The bundle's id. */
   bundle: string;
-  path: string;
+  path?: string;
   /** The filesystem error that stopped the scan, or why the source could not be scanned. */
   reason: string;
 }

@@ -192,11 +192,8 @@ export async function akmSearch(input: {
   }
 
   if (needsLocalSources && allSources.length === 0) {
-    // stashDir: "" is a safe sentinel here — the response carries zero hits
-    // and a warning, so no downstream code will try to use the empty path.
     const response: SearchResponse = {
       schemaVersion: 1,
-      bundleDir: "",
       source,
       hits: [],
       warnings: ["No bundles configured. Run `akm bundle create` to create your working bundle."],
@@ -206,7 +203,7 @@ export async function akmSearch(input: {
     return response;
   }
   const primary = allSources[0];
-  const bundleDir = primary?.path ?? "";
+  const bundleDir = allSources.find((source) => source.path !== undefined)?.path;
 
   const filters = normalizeScopeFilters(input.filters);
   const include = normalizeInclude(input.include);
@@ -256,7 +253,7 @@ export async function akmSearch(input: {
     const hasResults = localHits.length > 0;
     const response: SearchResponse = {
       schemaVersion: 1,
-      bundleDir,
+      ...(bundleDir === undefined ? {} : { bundleDir }),
       source,
       ...bundlesField(namedSourceNames),
       hits: localHits,
@@ -290,7 +287,7 @@ export async function akmSearch(input: {
     const hasResults = slicedRegistryHits.length > 0;
     const response: SearchResponse = {
       schemaVersion: 1,
-      bundleDir,
+      ...(bundleDir === undefined ? {} : { bundleDir }),
       source,
       hits: [],
       registryHits: slicedRegistryHits,
@@ -313,7 +310,7 @@ export async function akmSearch(input: {
 
   const response: SearchResponse = {
     schemaVersion: 1,
-    bundleDir,
+    ...(bundleDir === undefined ? {} : { bundleDir }),
     source,
     ...bundlesField(namedSourceNames),
     hits: allStashHits,

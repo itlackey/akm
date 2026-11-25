@@ -215,7 +215,7 @@ export async function recentChanges(input: { limit?: number } = {}) {
   const read = root === undefined ? null : await readRecentCommits(root, limit);
   return {
     bundle: target.source.name,
-    path: root ?? null,
+    ...(root === undefined ? {} : { path: root }),
     git: read !== null,
     commits: read?.commits ?? [],
     ...(read?.error ? { error: read.error } : {}),
