@@ -746,9 +746,10 @@ function liveView(b: Bundle, reached: "file" | "walk" = "file", includeDanglingL
       const authored = path.resolve(rootOf(b), relPath);
       if (!within(authored, rootOf(b))) return false;
       try {
-        return fs.statSync(authored).isFile();
+        const link = fs.lstatSync(authored).isSymbolicLink();
+        return fs.statSync(authored, { throwIfNoEntry: false })?.isFile() ?? (includeDanglingLinks && link);
       } catch {
-        return includeDanglingLinks && fs.lstatSync(authored, { throwIfNoEntry: false })?.isSymbolicLink() === true;
+        return false;
       }
     },
     isWalked(relPath, options) {
