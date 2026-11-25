@@ -4,6 +4,7 @@
 
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { type Asset, findAsset } from "../core/assets/read";
+import { indexedPathOf } from "../core/assets/type";
 import { materialiseBundleDir } from "../core/bundle-at-dir";
 import { deriveBundleIds } from "../core/bundle-id";
 import { safeRealpath } from "../core/common";
@@ -51,9 +52,9 @@ export function findAssetOnDisk(ref: string, options: ResolveAssetPathOptions = 
 
 /** The file of the asset `ref` names on disk; null when none holds it, or no file does (a keyring's or vault's). */
 function resolveViaDisk(ref: string, options: ResolveAssetPathOptions): string | null {
-  // asset-io: base the file a ref resolves to, which improve and schema repair read
-  const file = findAssetOnDisk(ref, options)?.entry.file;
-  return file === undefined ? null : safeRealpath(file);
+  const found = findAssetOnDisk(ref, options);
+  const file = found && indexedPathOf(found);
+  return file ? safeRealpath(file) : null;
 }
 
 export async function resolveAssetPath(ref: string, options: ResolveAssetPathOptions = {}): Promise<string | null> {

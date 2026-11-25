@@ -110,7 +110,7 @@ beforeEach(() => {
   fs.writeFileSync(path.join(work, "fake-harness"), '#!/bin/sh\ncat > /dev/null\nenv > "$HARNESS_ENV"\necho reply\n', {
     mode: 0o755,
   });
-  fs.writeFileSync(path.join(stash.dir, "scripts", "sl6.sh"), "#!/bin/sh\nsleep 6\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(stash.dir, "scripts", "sl6.sh"), '#!/bin/sh\necho $$ > "$BG"\nsleep 6\n', { mode: 0o755 });
   fs.writeFileSync(
     path.join(stash.dir, "scripts", "tick.sh"),
     ["#!/bin/bash", 'echo $$ > "$BG"', "while true; do sleep 0.2; done", ""].join("\n"),
@@ -301,7 +301,8 @@ await Promise.all([own, shared]);
 
   test("SIGTERM to akm reaches the script's TERM trap", async () => {
     const { exited } = akmOnTerminal(["run", "scripts/tty.sh"]);
-    expect(await until(() => readPid("akm-pid") !== undefined, 15_000)).toBe(true);
+    // `bg` is written after the script's traps and pid files: the signal meets a script that is set up.
+    expect(await until(() => readPid("bg") !== undefined, 15_000)).toBe(true);
     process.kill(readPid("akm-pid") as number, "SIGTERM");
     await exited;
     expect(mark()).toBe("term");
@@ -341,9 +342,19 @@ describe.skipIf(!posix || !hasPython)("the installed launcher", () => {
       test("akm exec gives an interactive shell the terminal (job control) and keeps it alive through Ctrl-C", async () => {
         const marker = path.join(work, "shell-alive");
         const { child, exited } = onTerminal(viaLauncher(["exec", "--", "bash", "--norc", "-i"]));
-        await new Promise((r) => setTimeout(r, 2_000));
+        // The shell is at its prompt once it has run a command; the terminal queues what follows in order.
+        const ready = path.join(work, "shell-ready");
+        const survived = path.join(work, "shell-survived");
+        child.stdin?.write(`touch ${ready}\n`);
+        expect(await until(() => fs.existsSync(ready), 15_000)).toBe(true);
         child.stdin?.write("\x03");
-        await new Promise((r) => setTimeout(r, 500));
+        // The Ctrl-C discards what the shell had not yet read, so ask again until the shell answers: it is alive.
+        const answered = await until(() => {
+          if (fs.existsSync(survived)) return true;
+          child.stdin?.write(`touch ${survived}\n`);
+          return false;
+        }, 15_000);
+        expect(answered).toBe(true);
         // `m` is in $- only when the shell has job control, which needs a controlling terminal.
         child.stdin?.write(`case $- in *m*) echo jobcontrol;; *) echo nojobcontrol;; esac > ${marker}\nexit\n`);
         await exited;
@@ -374,7 +385,7 @@ describe.skipIf(!posix || !hasPython)("the installed launcher", () => {
           ),
         ).toBe(true);
         child.stdin?.write("kill -9 %1\n");
-        await new Promise((r) => setTimeout(r, 500));
+        expect(await until(() => !alive(script), 5_000)).toBe(true);
         child.stdin?.write("exit\nexit\n");
         await exited;
       }, 30_000);
@@ -452,16 +463,16 @@ describe.skipIf(!posix || !hasPython)("the installed launcher", () => {
 
       test("a shell loop around akm run stops at one Ctrl-C", async () => {
         const loop = path.join(work, "loop");
-        const started = Date.now();
         const { child, exited } = onTerminal([
           "bash",
           "-c",
           `for i in 1 2 3; do ${viaLauncher(["run", "scripts/sl6.sh"]).join(" ")}; echo next $i >> ${loop}; done`,
         ]);
-        await new Promise((r) => setTimeout(r, 2_500));
+        expect(await until(() => readPid("bg") !== undefined, 15_000)).toBe(true);
+        const interrupted = Date.now();
         child.stdin?.write("\x03");
         await exited;
-        expect(Date.now() - started).toBeLessThan(8_000);
+        expect(Date.now() - interrupted).toBeLessThan(8_000);
         expect(fs.existsSync(loop)).toBe(false);
       }, 30_000);
     });
