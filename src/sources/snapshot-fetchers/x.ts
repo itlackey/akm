@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { parse } from "node-html-parser";
-import { ResponseTooLargeError, readBodyWithByteCap } from "../../core/common";
+import { readBodyWithByteCap } from "../../core/common";
 import { warn } from "../../core/warn";
 import { avoidReservedBasename, coerceString, escapeMarkdownStructure } from "./fetcher-util";
 import { fetchGuardedResponse, fetchPinnedJson } from "./host-guard";
@@ -45,8 +45,6 @@ const RESERVED_X_PATHS = new Set([
   "tos",
   "privacy",
 ]);
-
-export { extractPublicXArticle };
 
 export type XResource =
   | { kind: "profile"; username: string }
@@ -174,8 +172,7 @@ async function fetchPostViaApi(
   });
   const response = await xApiJson(`${X_API_BASE}/tweets/${encodeURIComponent(postId)}?${params}`, token, context);
   const data = response?.data as Record<string, unknown> | undefined;
-  if (!data) return null;
-  if (coerceString(data.id) !== postId) return null;
+  if (!data || coerceString(data.id) !== postId) return null;
   const noteTweet = data.note_tweet as Record<string, unknown> | undefined;
   const text = coerceString(noteTweet?.text) || coerceString(data.text);
   if (!text) return null;
@@ -205,8 +202,7 @@ function renderProfileMarkdown(username: string, tweets: XTweet[]): string {
   const sections: string[] = [];
   for (const tweet of tweets) {
     if (!tweet.text) continue;
-    const when = tweet.createdAt ? new Date(tweet.createdAt) : null;
-    const iso = when && !Number.isNaN(when.getTime()) ? when.toISOString() : "";
+    const iso = toIsoDate(tweet.createdAt);
     sections.push(`## ${iso || "(undated)"}`, "", escapeXPlainText(tweet.text), "");
     if (tweet.id) sections.push(`https://x.com/${username}/status/${tweet.id}`, "");
   }
@@ -267,7 +263,6 @@ async function fetchPublicXHtml(url: URL, context: FetcherContext): Promise<{ ht
     return { html, finalUrl: fetched.finalUrl };
   } catch (error) {
     if (context.signal?.aborted) throw error;
-    if (error instanceof ResponseTooLargeError) return null;
     return null;
   }
 }

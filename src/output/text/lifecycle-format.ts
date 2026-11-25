@@ -29,7 +29,7 @@ export function formatIndexPlain(r: Record<string, unknown>): string {
   const warnings = indexResult.warnings;
   if (Array.isArray(warnings) && warnings.length > 0) {
     out += `\nWarnings (${warnings.length}):`;
-    for (const message of warnings) out += `\n  - ${String(message)}`;
+    out += warnings.map((message) => `\n  - ${String(message)}`).join("");
   }
   const verification = indexResult.verification;
   if (verification?.ok === false && verification.message) {
@@ -37,16 +37,8 @@ export function formatIndexPlain(r: Record<string, unknown>): string {
   }
   const timing = indexResult.timing;
   if (timing) {
-    out +=
-      `\nTiming: total ${timing.totalMs}ms` +
-      `, preflight ${timing.preflightMs}ms` +
-      `, walk ${timing.walkMs}ms` +
-      `, llm ${timing.llmMs}ms` +
-      `, embeddings ${timing.embedMs}ms` +
-      `, fts ${timing.ftsMs}ms` +
-      `, finalize ${timing.finalizeMs}ms` +
-      `, clean ${timing.cleanMs}ms` +
-      `, end-to-end ${timing.endToEndMs}ms`;
+    const t = timing;
+    out += `\nTiming: total ${t.totalMs}ms, preflight ${t.preflightMs}ms, walk ${t.walkMs}ms, llm ${t.llmMs}ms, embeddings ${t.embedMs}ms, fts ${t.ftsMs}ms, finalize ${t.finalizeMs}ms, clean ${t.cleanMs}ms, end-to-end ${t.endToEndMs}ms`;
   }
   return out;
 }
@@ -54,20 +46,15 @@ export function formatIndexPlain(r: Record<string, unknown>): string {
 export function formatListPlain(r: Record<string, unknown>): string {
   const sources = Array.isArray(r.sources) ? (r.sources as Record<string, unknown>[]) : [];
   if (sources.length === 0) return "No sources configured. Use `akm bundle add` to add a source.";
-  const lines: string[] = [];
-  for (const src of sources) {
+  const lines = sources.map((src) => {
     const kind = typeof src.kind === "string" ? src.kind : "unknown";
     const name = typeof src.name === "string" ? src.name : "unnamed";
     const ver = typeof src.version === "string" ? ` v${src.version}` : "";
     const prov = typeof src.provider === "string" ? ` (${src.provider})` : "";
-    const flags: string[] = [];
-    if (src.default === true) flags.push("default");
-    if (src.writable === true) flags.push("writable");
-    const flagText = flags.length > 0 ? ` [${flags.join(", ")}]` : "";
-    lines.push(`[${kind}] ${name}${ver}${prov}${flagText}`);
-  }
-  lines.push("");
-  lines.push("To search: akm search '<query>'  |  To view an asset: akm show <ref>");
+    const flags = [src.default === true && "default", src.writable === true && "writable"].filter(Boolean);
+    return `[${kind}] ${name}${ver}${prov}${flags.length > 0 ? ` [${flags.join(", ")}]` : ""}`;
+  });
+  lines.push("", "To search: akm search '<query>'  |  To view an asset: akm show <ref>");
   return lines.join("\n");
 }
 
@@ -106,11 +93,9 @@ export function formatBundleShowPlain(r: Record<string, unknown>): string {
   const lines = [`${name} [${kind}]`];
   if (r.default === true) lines.push("  default: true");
   if (r.writable === true) lines.push("  writable: true");
-  if (typeof r.version === "string") lines.push(`  version: ${r.version}`);
-  if (typeof r.provider === "string") lines.push(`  provider: ${r.provider}`);
-  if (typeof r.path === "string") lines.push(`  path: ${r.path}`);
-  if (typeof r.ref === "string") lines.push(`  ref: ${r.ref}`);
-  if (typeof r.registryId === "string") lines.push(`  registryId: ${r.registryId}`);
+  for (const key of ["version", "provider", "path", "ref", "registryId"]) {
+    if (typeof r[key] === "string") lines.push(`  ${key}: ${r[key]}`);
+  }
   lines.push(`  items: ${typeof r.itemCount === "number" ? r.itemCount : 0}`);
   const byType = r.byType as Record<string, number> | undefined;
   if (byType && Object.keys(byType).length > 0) {
@@ -147,7 +132,7 @@ export function formatAddPlain(r: Record<string, unknown>): string {
   const warnings = index?.warnings;
   if (Array.isArray(warnings) && warnings.length > 0) {
     lines.push(`Warnings (${warnings.length}):`);
-    for (const message of warnings) lines.push(`  - ${String(message)}`);
+    lines.push(...warnings.map((message) => `  - ${String(message)}`));
   }
   return lines.join("\n");
 }
@@ -208,21 +193,20 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
     lines.push(
       "Active and blocked workflow runs keep the old bundle name in their frozen plan; continue them (`akm run <id>`, after `akm workflow resume <id>` for a blocked one) or abandon them (`akm workflow abandon <id>`):",
     );
-    for (const run of activeWorkflowRuns) lines.push(`  - ${run.id} (${run.workflowRef}, ${run.status})`);
+    lines.push(...activeWorkflowRuns.map((run) => `  - ${run.id} (${run.workflowRef}, ${run.status})`));
   }
   if (!applied) {
     lines.push("Re-run without --dry-run to apply. It also re-syncs native scheduler bindings under the new name.");
     if (nativeSchedulerRows.length > 0) {
       lines.push(`Native scheduler rows naming "${oldId}//" that the sync would replace:`);
-      for (const row of nativeSchedulerRows) lines.push(`  - ${String(row)}`);
+      lines.push(...nativeSchedulerRows.map((row) => `  - ${String(row)}`));
     }
   } else {
     const taskSync = r.taskSync as { ok?: boolean; error?: string; result?: Record<string, unknown> } | undefined;
     const syncResult = taskSync?.result;
     if (syncResult) {
-      const installed = Array.isArray(syncResult.installed) ? syncResult.installed.length : 0;
-      const updated = Array.isArray(syncResult.updated) ? syncResult.updated.length : 0;
-      const removed = Array.isArray(syncResult.removed) ? syncResult.removed.length : 0;
+      const count = (value: unknown) => (Array.isArray(value) ? value.length : 0);
+      const [installed, updated, removed] = [syncResult.installed, syncResult.updated, syncResult.removed].map(count);
       const failures = Array.isArray(syncResult.failures)
         ? (syncResult.failures as { path: string; ref?: string; reason: string }[])
         : [];
@@ -234,7 +218,7 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
         lines.push(
           `Native scheduler sync after rename: ${installed} installed, ${updated} updated, ${removed} removed, ${failures.length} failed.`,
         );
-        for (const failure of failures) lines.push(`  - ${failure.ref ?? failure.path}: ${failure.reason}`);
+        lines.push(...failures.map((failure) => `  - ${failure.ref ?? failure.path}: ${failure.reason}`));
         lines.push("Run `akm doctor scheduler sync` to retry.");
       }
     } else if (taskSync?.ok === false && taskSync.error) {
@@ -245,7 +229,7 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
   }
   if (contentRefs.length > 0) {
     lines.push(`Content still spelling "${oldId}//" (not rewritten — edit these by hand):`);
-    for (const file of contentRefs) lines.push(`  - ${String(file)}`);
+    lines.push(...contentRefs.map((file) => `  - ${String(file)}`));
   }
   return lines.join("\n");
 }

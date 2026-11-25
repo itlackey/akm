@@ -73,7 +73,6 @@ import {
   type ExtractSessionOutcome,
   type ExtractSessionPlan,
   extractSessionLockPath,
-  hashSessionContent,
   lockedConcurrentResult,
   planExtractSessions,
   preFilterStats,
@@ -94,7 +93,6 @@ import {
 import { callStage, callStageLoop, mintProposal } from "./stage";
 
 export type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
-export { hashSessionContent };
 
 /** Minimum session duration (minutes) for writing a session asset. */
 const DEFAULT_MIN_SESSION_DURATION_MINUTES = 5;
@@ -390,6 +388,13 @@ interface ExtractRun {
   standardsContext: string;
 }
 
+/** The model call's request: the response schema plus the run's abort signal and chat override, when given. */
+const modelRequest = <T>(options: Pick<AkmExtractOptions, "signal" | "chat">, responseSchema: T) => ({
+  responseSchema,
+  ...(options.signal ? { signal: options.signal } : {}),
+  ...(options.chat ? { chat: options.chat } : {}),
+});
+
 type SessionExtraction =
   | { kind: "success"; payload: ExtractPayload; attempts: number }
   | { kind: "unavailable" }
@@ -405,11 +410,7 @@ async function extractFromSession(run: ExtractRun, prompt: string): Promise<Sess
     {
       runner: run.llmRunner,
       prompt,
-      request: {
-        responseSchema: EXTRACT_JSON_SCHEMA,
-        ...(run.options.signal ? { signal: run.options.signal } : {}),
-        ...(run.options.chat ? { chat: run.options.chat } : {}),
-      },
+      request: modelRequest(run.options, EXTRACT_JSON_SCHEMA),
       onNotices: run.notices.add,
     },
     (raw) => {
@@ -484,28 +485,24 @@ async function processSession(
       ...(run.standardsContext.trim() ? { standardsContext: run.standardsContext } : {}),
     }),
   );
-  if (extraction.kind === "unavailable") {
-    return sessionOutcome(sessionRef.sessionId, harness.name, {
+  const skip = (skipReason: ExtractSessionOutcome["skipReason"], warnings: string[]) =>
+    sessionOutcome(sessionRef.sessionId, harness.name, {
       ...base,
-      warnings: ["session_extraction feature returned empty (disabled / timeout / error)"],
+      warnings,
       skipped: true,
-      skipReason: "llm_unavailable",
+      skipReason,
       ...run.notices.fields(),
     });
+  if (extraction.kind === "unavailable") {
+    return skip("llm_unavailable", ["session_extraction feature returned empty (disabled / timeout / error)"]);
   }
   if (extraction.kind === "malformed") {
     warnVerbose(
       `[extract] malformed model output for session ${sessionRef.sessionId}: ${redactErrorBody(extraction.raw)}`,
     );
-    return sessionOutcome(sessionRef.sessionId, harness.name, {
-      ...base,
-      warnings: [
-        `malformed_model_output: ${extraction.failure.message}; attempts=${extraction.attempts}; responseLength=${extraction.raw.length}; responseSha256=${contentHash(extraction.raw)}`,
-      ],
-      skipped: true,
-      skipReason: "malformed_model_output",
-      ...run.notices.fields(),
-    });
+    return skip("malformed_model_output", [
+      `malformed_model_output: ${extraction.failure.message}; attempts=${extraction.attempts}; responseLength=${extraction.raw.length}; responseSha256=${contentHash(extraction.raw)}`,
+    ]);
   }
 
   const { payload } = extraction;
@@ -562,18 +559,14 @@ async function processSession(
         project?.write.metadata,
       );
       const ledgerRow = ledger.get(ledgerKey("extract", built.ref));
-      if (isLedgerBlocked(ledgerRow, nowIso)) {
+      const skipped = isLedgerBlocked(ledgerRow, nowIso)
+        ? `${ledgerRow?.outcome} until ${ledgerRow?.nextEligibleAt}`
+        : ledgerRow?.proposalId && acceptedHere.has(ledgerRow.proposalId)
+          ? `accepted from this session as proposal ${ledgerRow.proposalId}`
+          : undefined;
+      if (skipped) {
         blockedCount += 1;
-        warnings.push(
-          `candidate ${candidate.type}:${candidate.name} skipped: ${ledgerRow?.outcome} until ${ledgerRow?.nextEligibleAt}`,
-        );
-        continue;
-      }
-      if (ledgerRow?.proposalId && acceptedHere.has(ledgerRow.proposalId)) {
-        blockedCount += 1;
-        warnings.push(
-          `candidate ${candidate.type}:${candidate.name} skipped: accepted from this session as proposal ${ledgerRow.proposalId}`,
-        );
+        warnings.push(`candidate ${candidate.type}:${candidate.name} skipped: ${skipped}`);
         continue;
       }
       if (dryRun) {
@@ -888,11 +881,7 @@ function resolveExtractRun(
     const outcome = await callStage({
       runner,
       prompt: buildSessionSummaryPrompt(data, sensitiveValues),
-      request: {
-        responseSchema: SESSION_SUMMARY_JSON_SCHEMA,
-        ...(options.signal ? { signal: options.signal } : {}),
-        ...(options.chat ? { chat: options.chat } : {}),
-      },
+      request: modelRequest(options, SESSION_SUMMARY_JSON_SCHEMA),
       parse: parseSessionSummary,
       onNotices: notices.add,
     });
@@ -1097,16 +1086,13 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       }
     }
   }
-  if (tally.deferred > 0) {
+  if (tally.deferred > 0)
     topLevelWarnings.push(
       `Reached maxSessionsPerRun=${resolved.maxSessionsPerRun}; ${tally.deferred} session(s) deferred to a later run.`,
     );
-  }
   // Every skip reason is counted; infrastructure failures also get a warning line.
   const counts: NonNullable<AkmExtractResult["skipReasons"]> = {};
-  for (const session of tally.sessions) {
-    if (session.skipReason) counts[session.skipReason] = (counts[session.skipReason] ?? 0) + 1;
-  }
+  for (const { skipReason } of tally.sessions) if (skipReason) counts[skipReason] = (counts[skipReason] ?? 0) + 1;
   for (const reason of EXTRACT_INFRASTRUCTURE_SKIP_REASONS) {
     const n = counts[reason];
     if (n)
@@ -1130,11 +1116,10 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
           causes: boundedCauses(tally.failedCauses),
         }
       : undefined;
-  if (writeFailures) {
+  if (writeFailures)
     topLevelWarnings.push(
       `${writeFailures.candidates} candidate write(s) failed in ${writeFailures.sessions} session(s): ${writeFailures.causes.join("; ")}; those sessions stay retryable.`,
     );
-  }
   if (modelPlanCount > 0 && resolved.gates.triage.enabled && tally.triageEvaluated > 0) {
     appendEvent(
       {

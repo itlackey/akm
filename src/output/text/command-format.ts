@@ -27,9 +27,8 @@ export function formatInfoPlain(r: Record<string, unknown>): string {
   // normal shape and is absent there.
   if (typeof r.error === "string") lines.push(`error: ${r.error}`);
   if (r.bundleDir) lines.push(`bundleDir: ${String(r.bundleDir)}`);
-  if (r.defaultBundle !== undefined) {
+  if (r.defaultBundle !== undefined)
     lines.push(`defaultBundle: ${r.defaultBundle === null ? "(none)" : String(r.defaultBundle)}`);
-  }
   if (typeof r.configError === "string") lines.push(`configError: ${r.configError}`);
   if (typeof r.bundleDirError === "string") lines.push(`bundleDirError: ${r.bundleDirError}`);
   if (Array.isArray(r.assetTypes) && r.assetTypes.length > 0) {
@@ -41,9 +40,7 @@ export function formatInfoPlain(r: Record<string, unknown>): string {
   const semanticSearch = r.semanticSearch as Record<string, unknown> | undefined;
   if (semanticSearch) {
     lines.push("semanticSearch:");
-    for (const [k, v] of Object.entries(semanticSearch)) {
-      lines.push(`  ${k}: ${String(v)}`);
-    }
+    lines.push(...Object.entries(semanticSearch).map(([k, v]) => `  ${k}: ${String(v)}`));
   }
   const registries = Array.isArray(r.registries) ? (r.registries as Array<Record<string, unknown>>) : undefined;
   if (registries) {
@@ -77,9 +74,11 @@ export function formatInfoPlain(r: Record<string, unknown>): string {
   const indexStats = r.indexStats as Record<string, unknown> | undefined;
   if (indexStats) {
     lines.push("indexStats:");
-    for (const [k, v] of Object.entries(indexStats)) {
-      lines.push(`  ${k}: ${typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)}`);
-    }
+    lines.push(
+      ...Object.entries(indexStats).map(
+        ([k, v]) => `  ${k}: ${typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)}`,
+      ),
+    );
   }
   if (lines.length === 0) return JSON.stringify(r, null, 2);
   return lines.join("\n");
@@ -121,17 +120,12 @@ export function formatFeedbackPlain(r: Record<string, unknown>): string {
 }
 
 export function formatRememberPlain(r: Record<string, unknown>): string {
-  const ref = String(r.ref ?? "?");
-  const pathValue = String(r.path ?? "?");
-  return `Saved ${ref} at ${pathValue}`;
+  return `Saved ${String(r.ref ?? "?")} at ${String(r.path ?? "?")}`;
 }
 
 export function formatImportPlain(r: Record<string, unknown>): string {
   if (r.destination !== undefined) return formatClonePlain(r).replace(/^Cloned/, "Imported");
-  const ref = String(r.ref ?? "?");
-  const source = String(r.source ?? "?");
-  const pathValue = String(r.path ?? "?");
-  return `Imported ${source} → ${ref} at ${pathValue}`;
+  return `Imported ${String(r.source ?? "?")} → ${String(r.ref ?? "?")} at ${String(r.path ?? "?")}`;
 }
 
 export function formatSyncPlain(r: Record<string, unknown>): string {
@@ -140,19 +134,16 @@ export function formatSyncPlain(r: Record<string, unknown>): string {
     return `sync: failed (${reason})`;
   }
   const name = typeof r.name === "string" ? r.name : "primary bundle";
-  const committed = r.committed === true;
-  const pushed = r.pushed === true;
-  const parts = [`sync: ${name}`];
-  parts.push(committed ? "committed" : "no changes");
-  if (pushed) parts.push("pushed");
-  return parts.join(" — ");
+  return [
+    `sync: ${name}`,
+    r.committed === true ? "committed" : "no changes",
+    ...(r.pushed === true ? ["pushed"] : []),
+  ].join(" — ");
 }
 
 export function formatRegistryListPlain(r: Record<string, unknown>): string {
   const registries = Array.isArray(r.registries) ? (r.registries as Array<Record<string, unknown>>) : [];
-  if (registries.length === 0) {
-    return "No registries configured. Add one with `akm registry add <url>`.";
-  }
+  if (registries.length === 0) return "No registries configured. Add one with `akm registry add <url>`.";
   const lines: string[] = [];
   for (const reg of registries) {
     const url = typeof reg.url === "string" ? formatRegistryUrl(reg.url) : "?";
@@ -166,17 +157,13 @@ export function formatRegistryListPlain(r: Record<string, unknown>): string {
 }
 
 export function formatRegistryAddPlain(r: Record<string, unknown>): string {
-  if (r.added === false) {
-    return typeof r.message === "string" ? r.message : "Registry already configured.";
-  }
+  if (r.added === false) return typeof r.message === "string" ? r.message : "Registry already configured.";
   const registries = Array.isArray(r.registries) ? r.registries.length : 0;
   return `Registry added (${registries} total).`;
 }
 
 export function formatRegistryRemovePlain(r: Record<string, unknown>): string {
-  if (r.removed === false) {
-    return typeof r.message === "string" ? r.message : "No matching registry found.";
-  }
+  if (r.removed === false) return typeof r.message === "string" ? r.message : "No matching registry found.";
   const entry = r.entry as Record<string, unknown> | undefined;
   const url = entry ? (typeof entry.url === "string" ? formatRegistryUrl(entry.url) : String(entry.name ?? "?")) : "?";
   return `Removed registry ${url}`;
@@ -185,9 +172,8 @@ export function formatRegistryRemovePlain(r: Record<string, unknown>): string {
 export function formatEnvListPlain(r: Record<string, unknown>): string {
   // Multi-env listing: { envs: [{ ref, path, keys }, ...] }
   const envs = Array.isArray(r.envs) ? (r.envs as Array<Record<string, unknown>>) : [];
-  if (envs.length === 0) {
+  if (envs.length === 0)
     return "No env files. Create one with `akm env create env/<name>`, then edit the .env file directly.";
-  }
   const lines: string[] = [];
   for (const v of envs) {
     const ref = String(v.ref ?? "?");
@@ -198,9 +184,7 @@ export function formatEnvListPlain(r: Record<string, unknown>): string {
       lines.push("- (no keys)");
       continue;
     }
-    for (const key of keys) {
-      lines.push(`- ${key}`);
-    }
+    lines.push(...keys.map((key) => `- ${key}`));
   }
   return lines.join("\n");
 }
@@ -227,14 +211,8 @@ export function formatEventsPlain(r: Record<string, unknown>): string {
   const totalCount = typeof r.totalCount === "number" ? r.totalCount : events.length;
   headerParts.push(`${totalCount} event(s)`);
   const header = headerParts.join("  ");
-  if (events.length === 0) {
-    return `${header}\nNo events.`;
-  }
-  const lines = [header, ""];
-  for (const event of events) {
-    lines.push(formatEventLine(event));
-  }
-  return lines.join("\n").trimEnd();
+  if (events.length === 0) return `${header}\nNo events.`;
+  return [header, "", ...events.map(formatEventLine)].join("\n").trimEnd();
 }
 
 export function formatEventLine(event: Record<string, unknown>): string {
@@ -291,18 +269,14 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (typeof hit.observed === "string") lines.push(`  observed: ${hit.observed}`);
     if (typeof hit.updated === "string") lines.push(`  updated: ${hit.updated}`);
     // Surface optional hit-level warnings.
-    if (Array.isArray(hit.warnings) && hit.warnings.length > 0) {
-      lines.push(`  warnings: ${(hit.warnings as string[]).join("; ")}`);
-    }
+    if (Array.isArray(hit.warnings) && hit.warnings.length > 0) lines.push(`  warnings: ${hit.warnings.join("; ")}`);
 
     if (detail === "full") {
       if (hit.path) lines.push(`  path: ${String(hit.path)}`);
       if (hit.editable != null) lines.push(`  editable: ${String(hit.editable)}`);
       if (hit.editHint) lines.push(`  editHint: ${String(hit.editHint)}`);
       const whyMatched = hit.whyMatched as string[] | undefined;
-      if (whyMatched && whyMatched.length > 0) {
-        lines.push(`  whyMatched: ${whyMatched.join(", ")}`);
-      }
+      if (whyMatched && whyMatched.length > 0) lines.push(`  whyMatched: ${whyMatched.join(", ")}`);
     }
 
     lines.push(""); // blank line between hits
@@ -345,18 +319,14 @@ export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLeve
   for (const item of items) {
     const type = typeof item.type === "string" ? item.type : "unknown";
     const name = typeof item.name === "string" ? item.name : "unnamed";
-    lines.push("");
-    lines.push(`[${type}] ${name}`);
+    lines.push("", `[${type}] ${name}`);
     if (item.description) lines.push(`  ${String(item.description)}`);
     if (item.preview) lines.push(`  preview: ${String(item.preview)}`);
     if (item.ref) lines.push(`  ref: ${String(item.ref)}`);
     if (item.id) lines.push(`  id: ${String(item.id)}`);
-    if (Array.isArray(item.keys) && item.keys.length > 0) {
-      lines.push(`  keys: ${item.keys.join(", ")}`);
-    }
-    if (Array.isArray(item.parameters) && item.parameters.length > 0) {
+    if (Array.isArray(item.keys) && item.keys.length > 0) lines.push(`  keys: ${item.keys.join(", ")}`);
+    if (Array.isArray(item.parameters) && item.parameters.length > 0)
       lines.push(`  parameters: ${item.parameters.join(", ")}`);
-    }
     if (item.run) lines.push(`  run: ${String(item.run)}`);
     if (item.followUp) lines.push(`  show: ${String(item.followUp)}`);
     if (Array.isArray(item.supportRefs) && item.supportRefs.length > 0) {
@@ -372,18 +342,16 @@ export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLeve
 
   const warnings = Array.isArray(r.warnings) ? r.warnings : [];
   if (warnings.length > 0) {
-    lines.push("");
-    lines.push("Warnings:");
-    for (const warning of warnings) {
-      lines.push(`- ${String(warning)}`);
-    }
+    lines.push("", "Warnings:", ...warnings.map((warning) => `- ${String(warning)}`));
   }
 
-  lines.push("");
-  lines.push("Next steps:");
-  lines.push("  1. Run `akm show <ref>` to read the best result above.");
-  lines.push("  2. Run `akm feedback <ref> --positive` when the task succeeds.");
-  lines.push("To search further: akm search '<query>'");
+  lines.push(
+    "",
+    "Next steps:",
+    "  1. Run `akm show <ref>` to read the best result above.",
+    "  2. Run `akm feedback <ref> --positive` when the task succeeds.",
+    "To search further: akm search '<query>'",
+  );
 
   return lines.join("\n");
 }
