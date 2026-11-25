@@ -10,14 +10,13 @@ import { readFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
-
-/** In-flight requests get this long to finish on shutdown; then the remaining connections are closed. */
-const SHUTDOWN_GRACE_MS = 10_000;
+import { drained, outliving, SHUTDOWN_GRACE_MS, terminate, track } from "./shutdown.mjs";
 
 let prepared = false;
 async function prepareEnvironment() {
   if (prepared) return;
   prepared = true;
+  track();
   delete process.env.AKM_LAUNCHER_PATH;
   delete process.env.AKM_LAUNCHER_PID;
   process.env.AKM_LAUNCHER_NODE = process.execPath;
@@ -57,6 +56,7 @@ export async function startServer({
 }) {
   const configuredOrigin = configured === undefined ? undefined : parseOrigin(configured, "origin");
   validateSecret(secret);
+  for (const entry of allowedHosts) validateAllowedHost(entry);
   const frames = frameParents.map((parent) => parseOrigin(parent, "frameParents entry"));
   await prepareEnvironment();
   /** @type {import("node:http").RequestListener | undefined} */
@@ -65,22 +65,32 @@ export async function startServer({
   let originHost = "";
   /** @type {Set<string>} */
   let hosts = new Set();
+  /** @type {Set<string>} */
+  const refused = new Set();
   // The settings the request hook reads (src/lib/server/web-access.ts). `inflight` backs GET /api/session `active`.
   const web = { secret, origin: "", frameParents: frames, inflight: 0 };
   /** @type {{ __akmWeb?: typeof web }} */ (globalThis).__akmWeb = web;
   const server = http.createServer((req, res) => {
     web.inflight++;
     res.once("close", () => web.inflight--);
-    const requested = hostOf(req.headers.host);
+    const requested = hostOf(req.headers.host, protocol);
     if (
       requested === undefined ||
       !(requested === originHost || hosts.has(requested) || hosts.has(requested.replace(/:\d+$/, "")))
     ) {
+      // One stderr line per distinct refused Host (bounded), so an operator can see what a proxy really sends.
+      const received = String(req.headers.host ?? "").slice(0, 100);
+      if (refused.size < 50 && !refused.has(received)) {
+        refused.add(received);
+        console.error(
+          `Refused a request with Host ${JSON.stringify(received)}; accepted: ${[originHost, ...hosts].join(", ")}.`,
+        );
+      }
       res.writeHead(403, { "Content-Type": "application/json" }).end(
         JSON.stringify({
           ok: false,
           code: "HOST_NOT_ALLOWED",
-          error: "This application only accepts the address it was started with.",
+          error: `This application only accepts the address it was started with; it received the Host ${requested === undefined ? "(not a valid host)" : `"${requested}"`}.`,
         }),
       );
       return;
@@ -114,7 +124,7 @@ export async function startServer({
     new URL(`http://${net.isIPv6(address.address) ? `[${address.address}]` : address.address}:${address.port}`).origin;
   protocol = new URL(origin).protocol.slice(0, -1);
   originHost = new URL(origin).host;
-  hosts = new Set(allowedHosts.map((name) => name.toLowerCase()));
+  hosts = new Set(allowedHosts.map((name) => /** @type {string} */ (hostOf(name, protocol))));
   web.origin = origin;
   // Import after environment initialization, including for loader subprocesses.
   // A computed specifier: the build output is generated and is not part of the type-checked program.
@@ -152,18 +162,19 @@ export async function startServer({
   const probe = await ask("GET", "/api/session");
   if (probe.status !== 200) throw new Error(`The server did not answer authenticated requests (${probe.status}).`);
 
-  // Stop accepting; give requests in flight the grace period; then close what remains.
+  // Stop accepting; give requests in flight and running operations (every child this process started) the grace period;
+  // then close the remaining connections and terminate the remaining children, and wait for their exit.
   let closing;
   const close = () =>
-    (closing ??= new Promise((resolve) => {
-      server.close(resolve);
+    (closing ??= (async () => {
+      const closed = new Promise((resolve) => server.close(resolve));
       const idle = setInterval(() => server.closeIdleConnections(), 50);
       const limit = setTimeout(() => server.closeAllConnections(), SHUTDOWN_GRACE_MS);
-      server.once("close", () => {
-        clearInterval(idle);
-        clearTimeout(limit);
-      });
-    }));
+      await Promise.all([closed, drained(SHUTDOWN_GRACE_MS)]);
+      clearInterval(idle);
+      clearTimeout(limit);
+      await terminate();
+    })());
   /** A one-time login link for a browser this process opens. It is never printed. */
   const loginLink = async () => {
     const issued = await ask("POST", "/api/session/link");
@@ -187,22 +198,43 @@ function openBrowser(url, shown) {
         ? ["cmd", "/c", "start", "", url]
         : ["xdg-open", url];
   try {
-    const opener = spawn(/** @type {string} */ (command), args, { detached: true, stdio: "ignore" });
-    opener.once("error", () => console.error(`Could not open a browser; open ${shown} yourself.`));
-    opener.unref();
+    // The browser outlives the server, so it is not one of the children shutdown terminates.
+    outliving(() => {
+      const opener = spawn(/** @type {string} */ (command), args, { detached: true, stdio: "ignore" });
+      opener.once("error", () => console.error(`Could not open a browser; open ${shown} yourself.`));
+      opener.unref();
+    });
   } catch {
     console.error(`Could not open a browser; open ${shown} yourself.`);
   }
 }
 
 /**
- * The Host header as `host[:port]` in lower case, or undefined when it is not one.
- * @param {string | undefined} value
+ * An `allowedHosts` entry: a host name or address with an optional port, no scheme and no path. Without a port it
+ * matches that host on any port; with one, only that port (the scheme's default port counts as no port).
+ * @param {string} entry
  */
-function hostOf(value) {
+function validateAllowedHost(entry) {
+  const port = /:(\d+)$/.exec(entry)?.[1];
+  if (
+    !/^(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/.test(entry) ||
+    (port !== undefined && Number(port) > 65535)
+  )
+    throw new Error(
+      `allowedHosts entry "${entry}" must be a host name or address with an optional port, such as akm-internal or akm-internal:8080, with no scheme and no path.`,
+    );
+}
+
+/**
+ * The Host header as `host[:port]` in lower case, or undefined when it is not one. The scheme is the origin's, so
+ * its default port (80, 443) is dropped, as in the origin itself.
+ * @param {string | undefined} value
+ * @param {string} scheme
+ */
+function hostOf(value, scheme) {
   if (!value || !/^[A-Za-z0-9.:[\]_-]+$/.test(value)) return undefined;
   try {
-    return new URL(`http://${value}`).host;
+    return new URL(`${scheme}://${value}`).host;
   } catch {
     return undefined;
   }
@@ -270,15 +302,26 @@ async function webSettings(overridden) {
 }
 
 /**
- * Flags override the config per key; the environment's AKM_WEB_SECRET overrides the configured secret and is removed
- * from the environment here, so CLI children never inherit it. AKM Desktop (AKM_DESKTOP_NATIVE=1) reads none of
+ * Flags override the config per key; the environment's AKM_WEB_SECRET overrides the configured secret. The secret is
+ * removed from the environment here, under every name that holds it (AKM_WEB_SECRET, or the variable a configured
+ * `$NAME` reference names), so CLI children never inherit it. AKM Desktop (AKM_DESKTOP_NATIVE=1) reads none of
  * `experimental.web`: loopback, the given or a free port, the bound address as origin, no extra hosts, no frame parents.
  * @param {Record<string, string | true>} args
  * @param {NodeJS.ProcessEnv} env
  */
 async function resolveSettings(args, env) {
-  const envSecret = env.AKM_WEB_SECRET;
+  const settings = await readSettings(args, env);
   delete env.AKM_WEB_SECRET;
+  if (settings.secret) for (const [name, value] of Object.entries(env)) if (value === settings.secret) delete env[name];
+  return settings;
+}
+
+/**
+ * @param {Record<string, string | true>} args
+ * @param {NodeJS.ProcessEnv} env
+ */
+async function readSettings(args, env) {
+  const envSecret = env.AKM_WEB_SECRET;
   const port = args.port === undefined ? undefined : Number(args.port);
   if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535))
     throw new Error(`--port must be a number from 0 to 65535, not "${args.port}".`);

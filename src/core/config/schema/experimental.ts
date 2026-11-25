@@ -29,6 +29,22 @@ const httpOrigin = httpUrl.refine(isHttpOrigin, {
   message: "must be an http(s) origin such as https://host[:port], with no path, query or fragment",
 });
 
+/** A frame parent is an exact origin; a wildcard is not one. */
+const frameParent = httpOrigin.refine((value) => !value.includes("*"), {
+  message: "must be an exact origin; wildcards are not supported",
+});
+
+/**
+ * An `allowedHosts` entry: a host name or address with an optional port, with no scheme and no path. Without a port it
+ * matches that host on any port; with one, only that port (an origin's default port, 80 or 443, counts as none).
+ */
+const allowedHost = z
+  .string()
+  .regex(/^(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/, {
+    message: "must be a host name or address with an optional port (host or host:port), with no scheme and no path",
+  })
+  .refine((value) => Number(/:(\d+)$/.exec(value)?.[1] ?? 0) <= 65535, { message: "port must be at most 65535" });
+
 export const ExperimentalConfigSchema = z
   .object({
     /**
@@ -78,8 +94,8 @@ export const ExperimentalConfigSchema = z
           .string()
           .refine(isApiKeyReference, { message: "secret must be a $VAR, ${VAR} or ${secrets/<name>} reference" })
           .optional(),
-        allowedHosts: z.array(z.string().min(1)).optional(),
-        frameParents: z.array(httpOrigin).optional(),
+        allowedHosts: z.array(allowedHost).optional(),
+        frameParents: z.array(frameParent).optional(),
       })
       .passthrough()
       .optional(),

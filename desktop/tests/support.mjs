@@ -12,6 +12,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { createFixture } from "../scripts/fixture.mjs";
+import { SHUTDOWN_WAIT_MS } from "../server/shutdown.mjs";
 
 export const root = fileURLToPath(new URL("..", import.meta.url));
 const appRoot = process.env.AKM_DESKTOP_TEST_APP_ROOT ?? root;
@@ -510,7 +511,7 @@ export async function launchFixture({
       const exited = once(child, "exit");
       if (child.connected) child.send("shutdown");
       else child.kill("SIGTERM");
-      const timer = setTimeout(() => child.kill("SIGKILL"), 6000);
+      const timer = setTimeout(() => child.kill("SIGKILL"), SHUTDOWN_WAIT_MS);
       await exited;
       clearTimeout(timer);
     }

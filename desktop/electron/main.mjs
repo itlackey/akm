@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, session, shell } from "electron";
 import electronUpdater from "electron-updater";
+import { SHUTDOWN_WAIT_MS } from "../server/shutdown.mjs";
 import { addServerAuthorization } from "./auth-header.mjs";
 import { DESKTOP_ID, DesktopMenu } from "./menu-install.mjs";
 import { createFolderPicker } from "./pick-folder.mjs";
@@ -52,7 +53,7 @@ async function stopServer() {
     const timer = setTimeout(() => {
       server.kill("SIGKILL");
       resolve();
-    }, 5000);
+    }, SHUTDOWN_WAIT_MS);
     server.once("exit", () => {
       clearTimeout(timer);
       resolve();
