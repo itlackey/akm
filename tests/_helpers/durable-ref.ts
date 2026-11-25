@@ -8,15 +8,15 @@
  * writer) now stores, and that the indexer mints for an accepted asset.
  *
  * The bundle id is the write-target stash's installation id — the SAME
- * `deriveInstallations` derivation the index write path uses — so a test asserting
+ * basename slug the index uses for an unnamed stash — so a test asserting
  * the stored `proposals.ref` / `events.ref` / entry `item_ref` sources its
  * expected spelling here rather than a legacy `type:name` literal.
  */
 
-import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
+import { deriveEntryProvenance, slugForPath } from "../../src/indexer/installations";
 
 /** The durable `<bundle>//<conceptId>` item_ref for `type`/`name` in `stashDir`. */
 export function durableItemRef(stashDir: string, type: string, name: string): string {
-  const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
+  const bundleId = slugForPath(stashDir);
   return deriveEntryProvenance({ bundleId, adapterId: "akm" }, type, name).itemRef;
 }

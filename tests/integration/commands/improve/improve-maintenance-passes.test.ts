@@ -55,7 +55,7 @@ function inferenceResult(overrides: Partial<MemoryInferenceResult> = {}): Memory
 function makeCtx(stashDir: string, overrides: Partial<MaintenanceCtx> = {}): MaintenanceCtx {
   return {
     config: {} as AkmConfig,
-    sources: [{ name: "primary", path: stashDir } as MaintenanceCtx["sources"][number]],
+    sources: [{ bundleId: "primary", path: stashDir }],
     primaryStashDir: stashDir,
     memoryInferenceFn: () => {
       throw new Error("memoryInferenceFn not expected in this scenario");

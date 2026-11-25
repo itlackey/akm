@@ -3,15 +3,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { isProcessAlive } from "../../src/core/common";
 import { TransientError } from "../../src/core/errors";
-import { getIndexWriterLockPath } from "../../src/core/paths";
-import { _setWarnSinkForTests } from "../../src/core/warn";
 import {
   _setAssetMutationLeaseSyncTimingForTests,
   acquireAssetMutationLease,
   probeAssetMutationLease,
   withAssetMutationLease,
   withAssetMutationLeaseSync,
-} from "../../src/indexer/index-writer-lock";
+} from "../../src/core/index-writer-lock";
+import { getIndexWriterLockPath } from "../../src/core/paths";
+import { _setWarnSinkForTests } from "../../src/core/warn";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 /**

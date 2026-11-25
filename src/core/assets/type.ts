@@ -156,7 +156,8 @@ export function presentationOf(
   if (renderer !== undefined) {
     return { type: row.type, specificity: Number.MAX_SAFE_INTEGER, renderer };
   }
-  return recognizeMatch(fileContextOfEntry(bundleHolding(asset).root, asset.entry));
+  const root = bundleHolding(asset).root;
+  return root === undefined ? null : recognizeMatch(fileContextOfEntry(root, asset.entry));
 }
 
 /**

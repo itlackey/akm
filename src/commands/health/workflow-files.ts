@@ -37,7 +37,7 @@ export function remainingWorkflowFiles(stashDir?: string): WorkflowFilesOfBundle
   return resolveSourceEntries(stashDir)
     .filter((source) => source.writable === true && !source.unresolved)
     .sort((a, b) => Number(b.isDefault === true) - Number(a.isDefault === true))
-    .map((source) => ({ bundle: source.path, files: workflowFilesIn(source.path) }))
+    .flatMap(({ path }) => (path === undefined ? [] : [{ bundle: path, files: workflowFilesIn(path) }]))
     .filter((entry) => entry.files.length > 0);
 }
 

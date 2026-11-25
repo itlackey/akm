@@ -5,6 +5,7 @@
 -->
 
 <script lang="ts">
+  import { appHref } from "./client";
   import { assetMap, fit, type MapGroup } from "./asset-map-model";
   let {
     ref,
@@ -78,7 +79,7 @@
           />
           {#if group.missing}<text class="label missing" {x} y={link.y + PAD} text-anchor={anchor}
               ><title>{link.ref}</title>{fit(link.label, room)}</text
-            >{:else}<a href={href(link.ref)} aria-label={`${group.title}: ${link.ref}`}
+            >{:else}<a href={appHref(href(link.ref))} aria-label={`${group.title}: ${link.ref}`}
               ><title>{link.ref}{link.note ? ` · ${link.note}` : ""}</title><text
                 class="label"
                 {x}

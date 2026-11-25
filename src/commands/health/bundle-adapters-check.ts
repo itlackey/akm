@@ -10,7 +10,6 @@
 
 import { type AdapterSkip, adapterSkipMessage, adapterSkipOf } from "../../core/adapter/adapter-skips";
 import { assertKnownAdapter } from "../../core/assets/gate";
-import { deriveBundleIds } from "../../core/bundle-id";
 import { toErrorMessage } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -55,10 +54,9 @@ export function collectAdapterSkipCheck(readConfig: () => AkmConfig = loadConfig
   const skips: Array<{ bundle: string } & AdapterSkip> = [];
   try {
     const sources = resolveSourceEntries(undefined, readConfig());
-    const ids = deriveBundleIds(sources);
-    for (const [index, source] of sources.entries()) {
-      if (source.unresolved) continue;
-      const name = ids[index] as string;
+    for (const source of sources) {
+      if (source.unresolved || source.path === undefined) continue;
+      const name = source.bundleId;
       const skip = adapterSkipOf({
         name,
         path: source.path,

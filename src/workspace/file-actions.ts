@@ -91,7 +91,8 @@ export interface WriteBlockers {
 }
 
 export function plainWriteBlocker(config: AkmConfig, bundle: string): string | null {
-  const source = resolveSourceEntries(undefined, config).find((entry) => entry.registryId === bundle);
+  const source = resolveSourceEntries(undefined, config).find((entry) => entry.bundleId === bundle);
+  if (source && !source.unresolved && source.path === undefined) return `Bundle ${bundle} has no files to edit.`;
   // A bundle that does not resolve is the caller's error to name, not a read-only bundle.
   return source === undefined || source.writable === true
     ? null

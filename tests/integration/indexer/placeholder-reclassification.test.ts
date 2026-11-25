@@ -9,10 +9,10 @@ import path from "node:path";
 import { akmHealth } from "../../../src/commands/health";
 import { akmShowUnified } from "../../../src/commands/read/show";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
+import { CONTENT_PROJECTION_VERSION } from "../../../src/core/asset/markdown-projection";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex, lookupBundleRef } from "../../../src/indexer/indexer";
 import { computeDirFingerprint } from "../../../src/indexer/passes/dir-staleness";
-import { CONTENT_PROJECTION_VERSION } from "../../../src/indexer/passes/markdown-projection";
 import { openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 

@@ -11,7 +11,15 @@ import { KNOWN_UPGRADE_ORIGINS } from "./integration/upgrade-rehearsal/previous-
 const source = fs.readFileSync(path.resolve(import.meta.dir, "../.github/workflows/release.yml"), "utf8");
 const STAGE_INPUT = "$" + "{{ inputs.stage }}";
 
-type Step = { name?: string; if?: string; run?: string; env?: Record<string, string> };
+type Step = {
+  id?: string;
+  name?: string;
+  if?: string;
+  run?: string;
+  env?: Record<string, string>;
+  uses?: string;
+  with?: Record<string, string>;
+};
 type Job = {
   uses?: string;
   needs?: string | string[];
@@ -27,6 +35,7 @@ const workflow = YAML.parse(source) as {
     pull_request: { branches: string[]; types: string[] };
     workflow_dispatch: { inputs: Record<string, { type: string; default?: unknown; options?: string[] }> };
   };
+  concurrency: { group: string; "cancel-in-progress": string };
   jobs: Record<string, Job>;
 };
 // The gate jobs run for a dispatch (not a dry run), for a release pull request (ready, from a release/* branch), and
@@ -62,6 +71,21 @@ describe("release workflow", () => {
       default: "beta",
       options: ["alpha", "beta", "rc"],
     });
+  });
+
+  test("its concurrency group never matches the group of the CI it calls", () => {
+    // A called workflow evaluates github.workflow and github.run_id as the caller's, so ci.yml's group on a dispatch is
+    // `Release-<run id>`. A Release group of that shape puts both in one group, and GitHub cancels the run as a deadlock.
+    const ciGroup = (
+      YAML.parse(fs.readFileSync(path.resolve(import.meta.dir, "../.github/workflows/ci.yml"), "utf8")) as {
+        concurrency: { group: string };
+      }
+    ).concurrency.group;
+    expect(ciGroup.startsWith("$" + "{{ github.workflow }}-")).toBe(true);
+    expect(workflow.concurrency.group).toBe(
+      "release-workflow-$" + "{{ github.event.pull_request.number || github.run_id }}",
+    );
+    expect(workflow.concurrency["cancel-in-progress"]).toBe("$" + "{{ github.event_name == 'pull_request' }}");
   });
 
   test("runs the gates as its own jobs, then one release job, then Desktop and akm-web", () => {
@@ -121,6 +145,19 @@ describe("release workflow", () => {
     expect(source).toContain("gh release create");
   });
 
+  test("the integration and Node smoke jobs share a cache for the pinned OpenCode binary", () => {
+    const caches = ["integration", "node-smoke"].map((id) => {
+      const steps = workflow.jobs[id]?.steps ?? [];
+      const cacheIndex = steps.findIndex((step) => step.with?.path === "node_modules/.cache/akm-test-opencode");
+      const cache = steps[cacheIndex];
+      expect(cache?.uses).toMatch(/^actions\/cache@[0-9a-f]{40}$/);
+      expect(cacheIndex).toBeLessThan(steps.findIndex((step) => step.run?.includes("bun run test:")));
+      expect(cache?.with?.key).toContain("src/integrations/harnesses/opencode/runtime/binary.ts");
+      return cache?.with?.key;
+    });
+    expect(caches[0]).toBe(caches[1]);
+  });
+
   test("Desktop's tests gate the release as three parallel jobs: every command runs once, on the commit that ships", () => {
     const commands: Record<string, string[]> = {
       "desktop-tests": [
@@ -147,7 +184,14 @@ describe("release workflow", () => {
         job?.steps?.some((step) => step.run === "bun run desktop:setup"),
         id,
       ).toBe(true);
-      expect(run, id).toContain("playwright/test/cli.js install --with-deps chromium");
+      const cache = job?.steps?.find((step) => step.id === "desktop-downloads");
+      expect(cache?.uses, id).toMatch(/^actions\/cache@[0-9a-f]{40}$/);
+      expect(cache?.with?.path, id).toContain("~/.cache/ms-playwright");
+      const deps = job?.steps?.find((step) => step.run?.includes("playwright/test/cli.js install-deps chromium"));
+      expect(deps, id).toBeDefined();
+      expect(deps?.if, id).toBeUndefined();
+      const download = job?.steps?.find((step) => step.run?.includes("playwright/test/cli.js install chromium"));
+      expect(download?.if, id).toBe("steps.desktop-downloads.outputs.cache-hit != 'true'");
       everything.push(...(run.match(/npm (?:run [\w:-]+|test)\b/g) ?? []));
     }
     for (const command of ["npm run test:e2e", "npm run test:usability", "npm test", "npm run test:electron"]) {

@@ -2,14 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Integration: opens a real index database (akmIndex + filtered akmSearch) to
-// prove a synced child's scope reaches scoped retrieval.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { assembleAsset } from "../../src/core/asset/asset-serialize";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+// Integration: opens a real index database (akmIndex + filtered akmSearch) to
+// prove a synced child's scope reaches scoped retrieval.
+import { slugForPath } from "../../src/core/bundle-id";
 import { saveConfig } from "../../src/core/config/config";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { akmIndex } from "../../src/indexer/indexer";
@@ -43,7 +44,12 @@ function config(writable?: boolean) {
     index: { connection: "memory" },
   };
 }
-function run(sources: SearchSource[] = [{ path: storage.stashDir, isDefault: true, writable: true }], cfg = config()) {
+function run(
+  sources: SearchSource[] = [
+    { bundleId: slugForPath(storage.stashDir), path: storage.stashDir, isDefault: true, writable: true },
+  ],
+  cfg = config(),
+) {
   return runMemoryInferencePass({ config: cfg, sources });
 }
 function memoryFile(name: string, root = storage.stashDir): string {
@@ -210,7 +216,10 @@ test("a read-only bundle is skipped without error", async () => {
   writeParent({ scope_user: "alice" });
   const child = writeChild({});
   const bytes = fs.readFileSync(child, "utf8");
-  const readOnly = await run([{ path: storage.stashDir, isDefault: true, writable: false }], config(false));
+  const readOnly = await run(
+    [{ bundleId: slugForPath(storage.stashDir), path: storage.stashDir, isDefault: true, writable: false }],
+    config(false),
+  );
   expect(readOnly).toMatchObject({ scopeSynced: 0, writtenPaths: [] });
   expect(fs.readFileSync(child, "utf8")).toBe(bytes);
 
@@ -220,8 +229,8 @@ test("a read-only bundle is skipped without error", async () => {
   const otherChild = writeChild({}, other);
   const otherBytes = fs.readFileSync(otherChild, "utf8");
   const result = await run([
-    { path: storage.stashDir, isDefault: true, writable: true },
-    { path: other, writable: false },
+    { bundleId: slugForPath(storage.stashDir), path: storage.stashDir, isDefault: true, writable: true },
+    { bundleId: slugForPath(other), path: other, writable: false },
   ]);
   expect(result.scopeSynced).toBe(1);
   expect(fs.readFileSync(otherChild, "utf8")).toBe(otherBytes);

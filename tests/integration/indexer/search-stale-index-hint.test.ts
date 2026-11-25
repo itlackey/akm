@@ -37,7 +37,7 @@ function runSearch() {
     searchType: "any",
     limit: 5,
     stashDir,
-    sources: [{ path: stashDir }],
+    sources: [{ bundleId: "stash", path: stashDir }],
     config,
   });
 }

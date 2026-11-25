@@ -8,7 +8,7 @@
   import type { Snippet } from "svelte";
   import type { ProposalDetail } from "./types";
   import { plural, proposalReason, record, relativeAge, rows, text, type ReviewProposal } from "./review-model";
-  import { date } from "./client";
+  import { appHref, date } from "./client";
 
   let {
     detail,
@@ -118,13 +118,16 @@
       </details>{/if}{/if}
   {#if p.retirement}
     <p class="retire">
-      Retires <a class="mono wrap" href={`/library/asset?ref=${encodeURIComponent(text(retirement.retiredRef, p.ref))}`}
+      Retires <a
+        class="mono wrap"
+        href={appHref(`/library/asset?ref=${encodeURIComponent(text(retirement.retiredRef, p.ref))}`)}
         >{text(retirement.retiredRef, p.ref)}</a
       >
       →
       {#if typeof retirement.successorRef === "string"}<a
           class="mono wrap"
-          href={`/library/asset?ref=${encodeURIComponent(retirement.successorRef)}`}>{retirement.successorRef}</a
+          href={appHref(`/library/asset?ref=${encodeURIComponent(retirement.successorRef)}`)}
+          >{retirement.successorRef}</a
         >{:else}no successor{/if}
       · similarity {typeof retirement.cosine === "number" ? retirement.cosine.toFixed(2) : "not recorded"}
     </p>

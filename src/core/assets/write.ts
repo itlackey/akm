@@ -9,7 +9,6 @@
  */
 
 import path from "node:path";
-import { withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
 import type {
   AssetChange,
   AssetPlacement,
@@ -23,6 +22,7 @@ import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { parsePlacementRef } from "../asset/resolve-ref";
 import { toPosix } from "../common";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
+import { withAssetMutationLeaseSync } from "../index-writer-lock";
 import { warn } from "../warn";
 import { recordWrittenPath } from "../write-provenance";
 import {
@@ -202,6 +202,7 @@ export function legacyRefOf(bundle: BundleAddress, relPath: string): string | un
  */
 export function conceptIdAtFile(bundle: BundleAddress, file: string): string | undefined {
   const held = bundleFor(bundle);
+  if (held.root === undefined) return undefined;
   const key = toPosix(path.relative(held.root, file));
   return key === "" || key.startsWith("..") ? undefined : (held.identifyKey(key) ?? undefined);
 }

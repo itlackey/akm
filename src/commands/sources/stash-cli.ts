@@ -29,7 +29,7 @@ import { appendEvent } from "../../core/events";
 import { resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getRunLogDir } from "../../core/paths";
 import { clearLogFile, info, isVerbose, setLogFile, warn } from "../../core/warn";
-import { resolveWriteTarget } from "../../core/write-source";
+import { requireWriteTargetPath, resolveWriteTarget } from "../../core/write-source";
 import { exportVectors } from "../../indexer/export-vectors";
 import { buildIndex, isSkippedIndexBuild, skippedIndexReport } from "../../indexer/index-build";
 import { getOutputMode } from "../../output/context";
@@ -287,19 +287,21 @@ export const importKnowledgeCommand = defineJsonCommand({
       if (!xrefs.includes(s.ref)) xrefs.push(s.ref);
     }
     const config = loadConfig();
-    const stashDir = (() => {
+    const target = (() => {
       try {
-        return resolveWriteTarget(config, writeTarget).source.path;
+        return resolveWriteTarget(config, writeTarget);
       } catch (error) {
         if (!writeTarget) throw error;
         try {
-          return resolveBundleWriteTarget(config, writeTarget).source.path;
+          return resolveBundleWriteTarget(config, writeTarget);
         } catch {
           throw error;
         }
       }
     })();
-    const { content, preferredName } = await readKnowledgeInput(args.source, { stashDir });
+    const { content, preferredName } = await readKnowledgeInput(args.source, {
+      stashDir: requireWriteTargetPath(target.source),
+    });
     // Imported docs may carry their own frontmatter: merge (dedupe-append)
     // BEFORE the write so write-path indexing sees the final content and no
     // second frontmatter block is ever nested.

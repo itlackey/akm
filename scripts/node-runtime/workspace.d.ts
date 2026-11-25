@@ -177,6 +177,31 @@ export namespace bundles {
   function setSettings(input: { bundle?: string; enabled?: boolean; writable?: boolean }): { saved: boolean };
   function update(input: { bundle: string }): Promise<unknown>;
 }
+export namespace children {
+  /** A child akm started asynchronously, kept while it or anything in the process group it leads still runs. */
+  interface StartedChild {
+    readonly pid: number;
+    /** The program's file name and its first argument, for messages. */
+    readonly name: string;
+    /** Whether it leads a process group of its own; then the group is what runs and is signalled. */
+    readonly grouped: boolean;
+    exited: boolean;
+  }
+  /** From now on every child starts in a process group of its own on POSIX, so a host can stop it with what it started. */
+  function startChildrenInOwnGroups(): void;
+  /** The recorded children that still run. */
+  function runningChildren(): StartedChild[];
+  /** Signals a recorded child: its whole process group when it leads one, otherwise the child alone. */
+  function signalChild(child: StartedChild, signal: NodeJS.Signals): void;
+  /** Calls `listener` with every child recorded from now on. Returns the function that stops it. */
+  function onChildStarted(listener: (child: StartedChild) => void): () => void;
+  /** `child_process.spawn`, recorded. */
+  function spawnChild(
+    file: string,
+    args: readonly string[],
+    options: import("node:child_process").SpawnOptions,
+  ): import("node:child_process").ChildProcess;
+}
 export namespace config {
   function change(input: { set?: Record<string, string>; unset?: string[] }): { saved: boolean };
   function changeProjects(input: { set?: Record<string, Record<string, unknown>>; unset?: string[] }): {
@@ -185,6 +210,15 @@ export namespace config {
   function get(): unknown;
   /** Replace one connection with `entry` as a whole (removed aliases and options leave the file); a literal API key is refused. */
   function saveConnection(input: { name: string; entry: Record<string, unknown> }): { saved: boolean };
+  /** The `experimental.web` settings of `akm-web`; `secret` is the resolved value of the configured reference (`undefined` when none), and a reference that cannot be read throws an error naming it, never the value. With `{ resolveSecret: false }` the reference is not read and `secret` is omitted. */
+  function webSettings(options?: { resolveSecret?: boolean }): {
+    host?: string;
+    port?: number;
+    origin?: string;
+    allowedHosts: string[];
+    frameParents: string[];
+    secret?: string;
+  };
   /** Set the embedding model as `akm setup` does (local, a model on the default connection, or an endpoint with a `{ env }` or `{ pasted }` key); a pasted key goes to credentials.json, never config.json. */
   function saveEmbedding(input: {
     kind: "local" | "connection" | "endpoint";

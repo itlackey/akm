@@ -6,7 +6,17 @@
 
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { api, assetSource, title, toggleSelection, date, matchesAssetRef, type ApiError } from "./client";
+  import {
+    api,
+    type ApiError,
+    appHref,
+    appPath,
+    assetSource,
+    date,
+    matchesAssetRef,
+    title,
+    toggleSelection,
+  } from "./client";
   import { libraryRead, resultContext, searchHref, documentTitle } from "./library-model";
   import { filesHref, parentPath, parseFilesHref } from "./library-files-model";
   import type { FileListing, FileLocation, FilesViewState, MovedLinksReport } from "./library-files-model";
@@ -314,7 +324,7 @@
     }))
       if (value) next.set(key, value);
     const href = searchHref(next);
-    if (location.pathname + location.search === href) {
+    if (appPath(location.pathname) + location.search === href) {
       searchParams = next;
       void search();
     } else void navigate(href);
@@ -556,12 +566,14 @@
 />
 {#if !(ref && !inFiles) && !(normalizedRoute === "asset" && query.get("view") === "files")}
   <nav class="library-views" aria-label="Library views" data-sveltekit-reset="false">
-    <a href={lastSearch} aria-current={!inFiles ? "page" : undefined}>Search</a>
+    <a href={appHref(lastSearch)} aria-current={!inFiles ? "page" : undefined}>Search</a>
     <a
-      href={lastFiles || filesHref({ bundle: defaultBundle || bundles.find((b) => b.enabled)?.name || "", path: "" })}
+      href={appHref(
+        lastFiles || filesHref({ bundle: defaultBundle || bundles.find((b) => b.enabled)?.name || "", path: "" }),
+      )}
       aria-current={inFiles ? "page" : undefined}>Files</a
     >
-    <a href="/library/map">Map</a>
+    <a href={appHref("/library/map")}>Map</a>
   </nav>
 {/if}
 {#if query.has("saved")}<p class="write-receipt" role="status">
@@ -570,9 +582,9 @@
 {#each writeWarnings as warning}<p class="notice notice-warn">{warning}</p>{/each}
 {#if error}<p class="notice notice-warn" role="alert">
     {error}
-    {#if errorCode === "STASH_DIR_NOT_FOUND"}<a href="/setup">Set up akm</a>{/if}
+    {#if errorCode === "STASH_DIR_NOT_FOUND"}<a href={appHref("/setup")}>Set up akm</a>{/if}
     {#if resolvingLocation}<span>Resolving location…</span>{:else if query.get("view") === "files"}<a
-        href={"/library/asset?ref=" + encodeURIComponent(ref)}>Read in Search</a
+        href={appHref("/library/asset?ref=" + encodeURIComponent(ref))}>Read in Search</a
       >{:else}<button class="btn-secondary" onclick={() => (compareRefs.length === 2 ? compare(compareRefs) : search())}
         >Retry</button
       >{/if}
@@ -599,7 +611,7 @@
           : "Select two pages from the results or folders."}</span
       >
     </div>
-    {#if selected.length === 2}<a class="btn" href={compareHref()}>Compare</a>{/if}{#if selected.length}<button
+    {#if selected.length === 2}<a class="btn" href={appHref(compareHref())}>Compare</a>{/if}{#if selected.length}<button
         class="quiet"
         onclick={() => (selected = [])}>Clear selection</button
       >{/if}<button class="quiet" onclick={cancelComparison}><Icon name="close" size={16} />Cancel comparison</button>
@@ -611,7 +623,7 @@
       <h1>Compare assets</h1>
       <p class="muted small">Changes between the two source files.</p>
     </div>
-    <a href={closeComparison()} onclick={() => (comparisonMode = true)}
+    <a href={appHref(closeComparison())} onclick={() => (comparisonMode = true)}
       ><Icon name="arrow-left" size={16} />Close comparison</a
     >
   </header>
@@ -622,19 +634,20 @@
             <span class="comparison-side"
               >{index === 0 ? "First asset" : "Second asset"} · {item.bundle || item.asset.origin || "Local"}</span
             ><strong>{documentTitle(item.asset)}</strong><a
-              href={inFiles && item.location
-                ? filesHref(
-                    {
-                      bundle: item.location.bundle,
-                      path: item.location.parent,
-                      file: item.location.path,
-                      ref: item.durableRef ?? item.asset.ref,
-                      open: true,
-                    },
-                    readingHref,
-                  )
-                : searchHref(searchParams, item.durableRef ?? item.asset.ref)}
-              >Open {documentTitle(item.asset)}<Icon name="arrow-right" size={16} /></a
+              href={appHref(
+                inFiles && item.location
+                  ? filesHref(
+                      {
+                        bundle: item.location.bundle,
+                        path: item.location.parent,
+                        file: item.location.path,
+                        ref: item.durableRef ?? item.asset.ref,
+                        open: true,
+                      },
+                      readingHref,
+                    )
+                  : searchHref(searchParams, item.durableRef ?? item.asset.ref),
+              )}>Open {documentTitle(item.asset)}<Icon name="arrow-right" size={16} /></a
             >
           </div>{/each}
       </div>
@@ -672,8 +685,8 @@
     }}
   >
     {#snippet actions()}<div class="files-actions">
-        {#if reviewHref}<a href={reviewHref}>Back to review</a>{:else if readingHref && !editing}<a href={readingHref}
-            >Back to reading</a
+        {#if reviewHref}<a href={appHref(reviewHref)}>Back to review</a>{:else if readingHref && !editing}<a
+            href={appHref(readingHref)}>Back to reading</a
           >{/if}
       </div>{/snippet}
     {#snippet children({ selectedFile, loading: folderLoading, error: folderError })}<section
@@ -734,7 +747,9 @@
               onChanged={() => mutationRevision++}
             />{/key}
         {:else if folderError}<p role="alert">{folderError}</p>
-          <a href={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}>Back to folder</a>
+          <a href={appHref(withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref)))}
+            >Back to folder</a
+          >
         {:else if folderLoading}<p role="status">Checking file…</p>
         {:else if selectedFile?.unavailable}<h1>{selectedFile.name}</h1>
           <p class="notice">{selectedFile.unavailable}</p>
@@ -743,10 +758,12 @@
           <ul class="asset-choices">
             {#each selectedFile.assets as { ref: choice }}<li>
                 <a
-                  href={withReview(
-                    filesHref(
-                      { bundle: fileBundle, path: filePath, file: selectedFile.path, ref: choice, open: true },
-                      readingHref,
+                  href={appHref(
+                    withReview(
+                      filesHref(
+                        { bundle: fileBundle, path: filePath, file: selectedFile.path, ref: choice, open: true },
+                        readingHref,
+                      ),
                     ),
                   )}>{choice}</a
                 >
@@ -761,8 +778,10 @@
             />{/key}
         {:else}<h1>{selectedFilePath.split("/").at(-1) || "File"}</h1>
           <p class="notice">This file is no longer present in the folder listing.</p>
-          <a href={withReview(filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath }, readingHref))}
-            >Back to folder</a
+          <a
+            href={appHref(
+              withReview(filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath }, readingHref)),
+            )}>Back to folder</a
           >{/if}
       </section>{/snippet}
   </LibraryFiles>
@@ -792,7 +811,7 @@
   <section class="inspector comparison-inspector" aria-label="Asset workspace">{@render comparison()}</section>
 {:else if searchParams.get("tab") === "misses"}
   <section class="library-gaps">
-    <a href={tabHref("results")}>Back to library</a>
+    <a href={appHref(tabHref("results"))}>Back to library</a>
     <h1>Where searches found nothing</h1>
     {#if misses}<p>{misses.foundNothing} of {misses.searches} searches returned no results in the last 30 days.</p>
       {#if misses.misses.length}<div class="table-wrap">
@@ -865,7 +884,8 @@
               type="button"
               class="btn-secondary"
               onclick={closeFilters}>Cancel</button
-            >{#if active}<a href="/library/search" data-sveltekit-reset="false" onclick={closeFilters}>Clear filters</a
+            >{#if active}<a href={appHref("/library/search")} data-sveltekit-reset="false" onclick={closeFilters}
+                >Clear filters</a
               >{/if}
           </div>
         </div>
@@ -876,7 +896,7 @@
         >{result?.hits.length ?? 0} {q ? "matches" : "assets"} shown{loading ? " · searching…" : ""}</span
       >
       <div>
-        <a href={tabHref("misses")}>Search gaps</a>{#if !comparisonMode}<button
+        <a href={appHref(tabHref("misses"))}>Search gaps</a>{#if !comparisonMode}<button
             class="quiet"
             onclick={() => (comparisonMode = true)}>Compare assets</button
           >{/if}
@@ -896,7 +916,7 @@
           <h2>No matching assets</h2>
           <p>{result.tip ?? "Try a shorter query or another bundle."}</p>
           {#if q}<button class="text-action" onclick={() => writeThisUp(q)}>Write this up</button>{/if}
-          <p><a href="/library/search">Clear filters</a></p>
+          <p><a href={appHref("/library/search")}>Clear filters</a></p>
         </div>{/if}
       <ul class="search-results">
         {#each result?.hits ?? [] as hit (hit.ref)}<li class="search-result">
@@ -909,8 +929,10 @@
               />{/if}
             <article>
               <h2>
-                <a class="library-hit-content" href={searchHref(searchParams, hit.ref)} onclick={rememberSearch}
-                  >{title(hit)}</a
+                <a
+                  class="library-hit-content"
+                  href={appHref(searchHref(searchParams, hit.ref))}
+                  onclick={rememberSearch}>{title(hit)}</a
                 >
               </h2>
               {#if hit.description}<p>{hit.description}</p>{/if}

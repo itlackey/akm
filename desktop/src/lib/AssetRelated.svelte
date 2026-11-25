@@ -5,6 +5,7 @@
 -->
 
 <script lang="ts">
+  import { appHref } from "./client";
   import { onDestroy } from "svelte";
   import { libraryRead, typedLinks } from "./library-model";
   import type { Json } from "./types";
@@ -89,10 +90,8 @@
                 <strong>{label(target)}</strong><span>Not found: this asset does not exist or is not indexed</span>
               </div>
             {:else}
-              <a href={href(target)}><strong>{label(target)}</strong><span>{target.split("//")[0]}</span></a><button
-                class="btn-secondary"
-                onclick={() => onCompare?.([ref, target])}>Compare</button
-              >
+              <a href={appHref(href(target))}><strong>{label(target)}</strong><span>{target.split("//")[0]}</span></a
+              ><button class="btn-secondary" onclick={() => onCompare?.([ref, target])}>Compare</button>
             {/if}
           </li>
         {/each}
@@ -146,7 +145,7 @@
     <ul class="related-list">
       {#each result.matches as match}
         <li>
-          <a href={href(match.ref)}
+          <a href={appHref(href(match.ref))}
             ><strong>{match.title}</strong><span>{match.ref.split("//")[0]} · {match.type}</span></a
           ><span class="score" title="Cosine similarity, from −1 to 1"
             >Cosine <strong>{match.cosine.toFixed(3)}</strong></span

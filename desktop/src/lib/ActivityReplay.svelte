@@ -18,7 +18,7 @@
   // every figure full; clicking or dragging the timeline moves the playhead.
   import Icon from "./Icon.svelte";
   import { onDestroy } from "svelte";
-  import { api } from "./client";
+  import { api, appHref } from "./client";
   import { FAMILIES } from "./graph-model";
   import { buildOverview, groupsOf, mindMap, type Overview, type OverviewPayload } from "./library-overview";
   import { searchHref } from "./library-model";
@@ -420,8 +420,9 @@
                     : `${chosen!.kind} · ${chosen!.members.length.toLocaleString()} assets · ${count}`}
                 </p>
               </div>
-              {#if picked >= 0}<a class="btn btn-secondary" href={searchHref(new URLSearchParams(), o.ref[picked]!)}
-                  >Open</a
+              {#if picked >= 0}<a
+                  class="btn btn-secondary"
+                  href={appHref(searchHref(new URLSearchParams(), o.ref[picked]!))}>Open</a
                 >{/if}
               <button
                 class="icon-btn"
@@ -445,7 +446,7 @@
                           : step.kind === "feedback"
                             ? `${step.signal ?? ""} feedback`
                             : step.eventType}{#if picked < 0 && step.node >= 0}{" · "}<a
-                          href={searchHref(new URLSearchParams(), o.ref[step.node]!)}>{o.path(step.node)}</a
+                          href={appHref(searchHref(new URLSearchParams(), o.ref[step.node]!))}>{o.path(step.node)}</a
                         >{/if}</span
                     >
                     <span class="fig">{stampText(step.t, span)}</span>
@@ -467,8 +468,8 @@
               <ul class="rows">
                 {#each capped(misses, "misses") as [query, count]}<li>
                     <span class="what" title={query}>{query}</span>
-                    <a href={`/library/search?${new URLSearchParams([["q", query]])}`}>Search again</a>
-                    <a href="/library/files">Create</a>
+                    <a href={appHref(`/library/search?${new URLSearchParams([["q", query]])}`)}>Search again</a>
+                    <a href={appHref("/library/files")}>Create</a>
                     <span class="fig">{count}×</span>
                   </li>{:else}<li class="muted">None</li>{/each}
               </ul>
@@ -479,7 +480,7 @@
               <ol class="rows">
                 {#each capped(feedback, "feedback") as step}<li>
                     <span class="sign" data-signal={step.signal}>{step.signal === "negative" ? "−" : "+"}</span>
-                    {#if step.ref}<a class="what" href={searchHref(new URLSearchParams(), step.ref)}
+                    {#if step.ref}<a class="what" href={appHref(searchHref(new URLSearchParams(), step.ref))}
                         >{step.node >= 0 ? o.path(step.node) : step.ref}</a
                       >{:else}<span class="what">an asset</span>{/if}
                     <span class="fig">{stampText(step.t, span)}</span>
@@ -491,7 +492,7 @@
               <h3>Most used <span>Events</span></h3>
               <ol class="rows">
                 {#each mostUsed as row}<li>
-                    <a class="what" href={searchHref(new URLSearchParams(), row.ref)}>{o.path(row.node)}</a>
+                    <a class="what" href={appHref(searchHref(new URLSearchParams(), row.ref))}>{o.path(row.node)}</a>
                     <span class="fig">{row.count}</span>
                   </li>{:else}<li class="muted">None</li>{/each}
               </ol>

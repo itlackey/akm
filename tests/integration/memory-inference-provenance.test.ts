@@ -2,15 +2,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Integration (#1210): a derived memory carries truthful generation provenance
-// and keeps its source's historical facts distinct from it. Real inference
-// writes, index database, show and the provenance reader, under a fixed clock.
 import { afterEach, beforeEach, expect, setSystemTime, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmShowUnified } from "../../src/commands/read/show";
 import { assembleAsset } from "../../src/core/asset/asset-serialize";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+// Integration (#1210): a derived memory carries truthful generation provenance
+// and keeps its source's historical facts distinct from it. Real inference
+// writes, index database, show and the provenance reader, under a fixed clock.
+import { slugForPath } from "../../src/core/bundle-id";
 import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
@@ -73,7 +74,10 @@ function writeParent(
   fs.writeFileSync(parentFile(), assembleAsset(fm, body));
 }
 function runPass() {
-  return runMemoryInferencePass({ config: config(), sources: [{ path: storage.stashDir, isDefault: true }] });
+  return runMemoryInferencePass({
+    config: config(),
+    sources: [{ bundleId: slugForPath(storage.stashDir), path: storage.stashDir, isDefault: true }],
+  });
 }
 async function infer() {
   const result = await runPass();

@@ -1976,6 +1976,40 @@
             }
           },
           "additionalProperties": {}
+        },
+        "web": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string",
+              "minLength": 1
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "origin": {
+              "type": "string"
+            },
+            "secret": {
+              "type": "string"
+            },
+            "allowedHosts": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(?:[A-Za-z0-9._-]+|\\[[0-9A-Fa-f:.]+\\])(?::\\d{1,5})?$"
+              }
+            },
+            "frameParents": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": {}
         }
       },
       "additionalProperties": {}
@@ -3957,6 +3991,40 @@
                     }
                   },
                   "additionalProperties": {}
+                }
+              },
+              "additionalProperties": {}
+            },
+            "web": {
+              "type": "object",
+              "properties": {
+                "host": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65535
+                },
+                "origin": {
+                  "type": "string"
+                },
+                "secret": {
+                  "type": "string"
+                },
+                "allowedHosts": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^(?:[A-Za-z0-9._-]+|\\[[0-9A-Fa-f:.]+\\])(?::\\d{1,5})?$"
+                  }
+                },
+                "frameParents": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "additionalProperties": {}

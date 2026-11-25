@@ -9,7 +9,6 @@ import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef, resolveRef } from "../../core/asset/resolve-ref";
 import { findAsset } from "../../core/assets/read";
 import { bundleAt } from "../../core/bundle-at-dir";
-import { deriveBundleIds } from "../../core/bundle-id";
 import { closestMatch } from "../../core/closest-match";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -19,7 +18,7 @@ import { isPathAbsent } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
 import { KNOWN_TYPES } from "../../core/recognition-util";
 import { warn } from "../../core/warn";
-import { deriveInstallations, deriveWritableBundleIds } from "../../indexer/installations";
+import { deriveWritableBundleIds } from "../../indexer/installations";
 import { findAssetOnDisk, resolveAssetPath } from "../../indexer/path-resolver";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import type { Database } from "../../storage/database";
@@ -164,16 +163,11 @@ type EligibleRefs = {
  * the write target, so a candidate owned by any other bundle would be read from
  * one bundle and filed in another (#1000).
  */
-function runBundleIdOf(
-  sources: readonly SearchSource[],
-  installations: readonly { id: string }[],
-  stashDir: string | undefined,
-): string | undefined {
+function runBundleIdOf(sources: readonly SearchSource[], stashDir: string | undefined): string | undefined {
   const root = stashDir === undefined ? undefined : path.resolve(stashDir);
-  const index = sources.findIndex((source) =>
-    root === undefined ? source.isDefault === true : path.resolve(source.path) === root,
-  );
-  return installations[index]?.id;
+  return sources.find((source) =>
+    root === undefined ? source.isDefault === true : source.path !== undefined && path.resolve(source.path) === root,
+  )?.bundleId;
 }
 
 export async function collectEligibleRefs(
@@ -216,9 +210,8 @@ async function collectEligibleRefsFromIndex(
     return empty();
   }
   if (sources.length === 0) return empty();
-  const installations = deriveInstallations(sources);
   const writableBundleIds = deriveWritableBundleIds(sources);
-  const runBundleId = runBundleIdOf(sources, installations, stashDir);
+  const runBundleId = runBundleIdOf(sources, stashDir);
   // Candidates come from the write target alone, and only while it is writable.
   const isCandidateBundle = (bundleId: string | undefined): boolean =>
     bundleId !== undefined && bundleId === runBundleId && writableBundleIds.has(bundleId);
@@ -242,9 +235,9 @@ async function collectEligibleRefsFromIndex(
       try {
         resolved = resolveRef(scope.value, {
           defaultBundle: config.defaultBundle,
-          bundles: installations.map((installation) => ({
-            id: installation.id,
-            hasConcept: (conceptId) => entriesByItemRef.has(`${installation.id}//${conceptId}`),
+          bundles: sources.map(({ bundleId }) => ({
+            id: bundleId,
+            hasConcept: (conceptId) => entriesByItemRef.has(`${bundleId}//${conceptId}`),
           })),
           ...(runBundleId ? { only: runBundleId } : {}),
         });
@@ -252,9 +245,9 @@ async function collectEligibleRefsFromIndex(
         if (!(error instanceof NotFoundError) || !runBundleId) throw error;
         // Name the bundle that owns the ref; a typo or an unindexed ref keeps the default advice.
         const { conceptId } = parseBundleRef(scope.value);
-        const owner = installations.find(
-          (installation) => installation.id !== runBundleId && entriesByItemRef.has(`${installation.id}//${conceptId}`),
-        )?.id;
+        const owner = sources.find(
+          ({ bundleId }) => bundleId !== runBundleId && entriesByItemRef.has(`${bundleId}//${conceptId}`),
+        )?.bundleId;
         if (!owner) throw error;
         throw new NotFoundError(
           error.message,
@@ -352,7 +345,7 @@ export function memoryCleanupParentRef(scope: Scope, stashDir?: string): string 
   if (!parsed.name.endsWith(".derived")) return conceptIdFromTypeName(parsed.type, parsed.name);
   const stash = stashDir === undefined ? undefined : bundleAt(stashDir);
   const sources = resolveSourceEntries(stashDir);
-  for (const id of deriveBundleIds(sources)) {
+  for (const { bundleId: id } of sources) {
     const found = findAsset(makeBundleRef(id, conceptIdFromTypeName("memory", parsed.name)), stash);
     if (!found) continue;
     const fm = found.entry.frontmatter() ?? {};

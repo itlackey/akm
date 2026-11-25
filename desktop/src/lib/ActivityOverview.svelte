@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { api, apiState, date } from "./client";
+  import { api, apiState, appHref, date } from "./client";
   import { navigate } from "./navigation";
   import ActivityChart from "./ActivityChart.svelte";
   import Icon from "./Icon.svelte";
@@ -328,7 +328,7 @@
                 <li>
                   <!-- The name says the dot's colour in words and keeps the text and the action apart as two phrases. -->
                   <a
-                    href={item.href}
+                    href={appHref(item.href)}
                     aria-label={`${item.tone === "fail" ? "Failure: " : item.tone === "warn" ? "Warning: " : ""}${line}. ${item.action}`}
                     ><i
                       class="signal"
@@ -649,7 +649,7 @@
       Last {pulse.improveLine.weeks} weeks: {pulse.improveLine.proposed} proposed; {pulse.improveLine.accepted} accepted ({pulse
         .improveLine.acceptedThenReverted} since reverted), {pulse.improveLine.rejected} rejected, {pulse.improveLine
         .waiting} waiting · {pulse.improveLine.calls} model calls.
-      <a href="/activity/improve">Improve impact <Icon name="arrow-right" size={16} /></a>
+      <a href={appHref("/activity/improve")}>Improve impact <Icon name="arrow-right" size={16} /></a>
     </p>{/if}
 {:else if mode === "runs"}
   {#if metrics}<RunOutcomes rows={outcomeRows} oninspect={inspectTask} />{/if}
@@ -727,8 +727,10 @@
           ><tbody
             >{#each workflowRuns.slice(0, 50) as run}<tr
                 ><th
-                  ><a href={`/activity/overview?view=runs&run=${encodeURIComponent(run.id)}&anchor=workflow-trace`}
-                    >{run.title || run.workflowRef}</a
+                  ><a
+                    href={appHref(
+                      `/activity/overview?view=runs&run=${encodeURIComponent(run.id)}&anchor=workflow-trace`,
+                    )}>{run.title || run.workflowRef}</a
                   ></th
                 ><td>{run.status}</td><td>{date(run.createdAt)}</td><td
                   >{run.completedAt ? duration(Date.parse(run.completedAt) - Date.parse(run.createdAt)) : "Running"}</td

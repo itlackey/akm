@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { slugForPath } from "../../src/core/bundle-id";
 import type { AkmConfig, BundleConfigEntry } from "../../src/core/config/config";
 import { saveConfig } from "../../src/core/config/config";
-import { getUnresolvedSourcesDir } from "../../src/core/paths";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { resolveWritable } from "../../src/core/write-source";
 import { buildDbHit } from "../../src/indexer/search/db-search";
@@ -195,6 +195,24 @@ describe("resolveSourceEntries", () => {
     }
   });
 
+  test("an unnamed working stash uses its basename slug", () => {
+    const root = path.join(stashDir, "My Knowledge.Stash");
+    fs.mkdirSync(root);
+    saveConfig({ semanticSearchMode: "off" });
+    expect(resolveSourceEntries(root)[0]).toMatchObject({ bundleId: "my-knowledge-stash", path: root });
+  });
+
+  test("keeps a configured git subdirectory separate from its working checkout root", () => {
+    const docs = path.join(stashDir, "docs");
+    fs.mkdirSync(docs);
+    saveConfig({ semanticSearchMode: "off", bundles: { g: { git: "https://example.test/g", root: "docs" } } });
+    seedLockEntries([{ id: "g", source: "git", ref: "git:https://example.test/g", localRoot: stashDir }]);
+    const sources = resolveSourceEntries(stashDir);
+    expect(sources).toHaveLength(2);
+    expect(sources[0]).toMatchObject({ bundleId: slugForPath(stashDir), path: stashDir, type: "filesystem" });
+    expect(sources[1]).toMatchObject({ bundleId: "g", path: docs, type: "git" });
+  });
+
   test("keeps AKM_BUNDLE_DIR ahead of a configured default bundle", () => {
     const configuredDefault = fs.mkdtempSync(path.join(os.tmpdir(), "akm-configured-default-"));
     try {
@@ -263,18 +281,9 @@ describe("resolveSourceEntries", () => {
         unresolved: { reason: expect.stringContaining("escapes bundle") },
         registryId: "escaping",
       });
-      // itlackey/akm#890: the placeholder lives under $CACHE, keyed by the
-      // bundle root, never under the bundle root (or the escaped root) itself.
-      expect(unresolved?.path.startsWith(`${getUnresolvedSourcesDir(bundleRoot)}${path.sep}`)).toBe(true);
-      expect(unresolved?.path.startsWith(`${bundleRoot}${path.sep}`)).toBe(false);
+      expect(unresolved?.bundleId).toBe("escaping");
+      expect(unresolved?.path).toBeUndefined();
       expect(sources.some((source) => source.path === path.dirname(bundleRoot))).toBe(false);
-      if (!unresolved) throw new Error("expected unresolved source");
-      fs.mkdirSync(unresolved.path, { recursive: true });
-      expect(resolveSourceEntries(unresolved.path)[0]).toMatchObject({
-        path: unresolved.path,
-        registryId: "escaping",
-        unresolved: { reason: expect.stringContaining("escapes bundle") },
-      });
     } finally {
       fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -331,7 +340,10 @@ describe("resolveSourceEntries", () => {
 
 describe("findSourceForPath", () => {
   test("finds correct source for file inside primary stash", () => {
-    const sources = [{ path: stashDir }, { path: "/other/dir" }];
+    const sources = [
+      { bundleId: "stash", path: stashDir },
+      { bundleId: "other", path: "/other/dir" },
+    ];
     const filePath = path.join(stashDir, "scripts", "deploy.sh");
     const result = findSourceForPath(filePath, sources);
     expect(result).toBeDefined();
@@ -341,7 +353,10 @@ describe("findSourceForPath", () => {
   test("finds correct source for file inside search path", () => {
     const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-"));
     try {
-      const sources = [{ path: stashDir }, { path: extraDir }];
+      const sources = [
+        { bundleId: "stash", path: stashDir },
+        { bundleId: "extra", path: extraDir },
+      ];
       const filePath = path.join(extraDir, "scripts", "test.sh");
       const result = findSourceForPath(filePath, sources);
       expect(result).toBeDefined();
@@ -352,7 +367,7 @@ describe("findSourceForPath", () => {
   });
 
   test("returns undefined for file not in any source", () => {
-    const sources = [{ path: stashDir }];
+    const sources = [{ bundleId: "stash", path: stashDir }];
     const result = findSourceForPath("/completely/unrelated/path.sh", sources);
     expect(result).toBeUndefined();
   });
@@ -456,8 +471,8 @@ describe("isEditable", () => {
         expect(writable).toBe(false);
         expect(
           isEditable(path.join(cacheDir, "knowledge", "guide.md"), undefined, [
-            { path: stashDir, writable: true },
-            { path: cacheDir, type, writable },
+            { bundleId: slugForPath(stashDir), path: stashDir, writable: true },
+            { bundleId: slugForPath(cacheDir), path: cacheDir, type, writable },
           ]),
         ).toBe(false);
       } finally {
@@ -484,8 +499,8 @@ describe("isEditable", () => {
         score: 1,
         defaultStashDir: stashDir,
         sources: [
-          { path: stashDir, writable: true },
-          { path: sourceDir, registryId: "team", type: "git", writable: false },
+          { bundleId: slugForPath(stashDir), path: stashDir, writable: true },
+          { bundleId: "team", path: sourceDir, registryId: "team", type: "git", writable: false },
         ],
         config: { semanticSearchMode: "off" },
       });
@@ -517,6 +532,7 @@ describe("isEditable", () => {
             score: 1,
             defaultStashDir: stashDir,
             sources: roots.map((sourceRoot, sourceIndex) => ({
+              bundleId: `bundle-${sourceIndex + 1}`,
               path: sourceRoot,
               registryId: `bundle-${sourceIndex + 1}`,
               writable: false,

@@ -124,13 +124,14 @@ are ignored) and returns plain JSON-safe data without a CLI envelope; failures r
 | `documents` | `readSource`, `save`, `createKnowledge`, `createFile`, `check`, `frontmatter`, `applyFrontmatter`, `copy`, `retire` |
 | `proposals` | `list`, `get`, `recentChanges`, `accept`, `reject`, `revert`, `reopen`, `acceptMany`, `rejectMany` |
 | `bundles` | `list`, `add`, `remove`, `update`, `index`, `rename`, `setSettings`, `commit` |
-| `config` | `get`, `change`, `changeProjects`, `saveConnection`, `removeConnection`, `saveEmbedding` |
+| `config` | `get`, `change`, `changeProjects`, `saveConnection`, `removeConnection`, `saveEmbedding`, `webSettings` |
 | `feedback` | `record` |
 | `setup` | `detect`, `apply` (first-run setup: the library, and the agent programs akm may use; `akm bundle create`, `akm setup --yes --harness`) |
 | `sensitive` | `describe`, `readValue`, `save`, `remove` (env files and secrets; only `readValue` returns a value) |
 | `activity` | `overview`, `pulse`, `health`, `retrievalTrend`, `improveImpact`, `improveRun`, `taskHistory`, `taskRunLog`, `taskRuns`, `workflowRuns`, `workflowRun`, `events`, `reportUsage`, `meta` |
 | `tasks` | `list`, `enable`, `disable` |
 | `backups` | `prune` |
+| `children` | `startChildrenInOwnGroups`, `runningChildren`, `signalChild`, `onChildStarted`, `spawnChild` (the child processes akm starts asynchronously, for a host that stops them on shutdown; `spawnChild` starts one of the host's own on the same record) |
 
 Also exported: `AkmError`, `UsageError`, `NotFoundError`, `ConfigError`, `TransientError`, the
 `AkmErrorKind` type, `CONFLICT_CODES`, `scrubUrlCredentials`, `clearAdapterCaches()` (Experimental; a host that

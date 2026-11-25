@@ -13,12 +13,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseBundleRef } from "../../core/asset/asset-ref";
+import { getMarkdownFragmentContent, hasMarkdownFragmentContent } from "../../core/asset/markdown-projection";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { bestEffort } from "../../core/best-effort";
 import { isPathAbsent } from "../../core/path-access";
 import { getStateDbPath, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
-import { getMarkdownFragmentContent, hasMarkdownFragmentContent } from "../../indexer/passes/markdown-projection";
 import type { IndexDocument } from "../../indexer/passes/metadata";
 import { buildSearchText } from "../../indexer/search/search-fields";
 import { capEmbeddingText, DEFAULT_MAX_INPUT_TOKENS } from "../../llm/embedders/remote";

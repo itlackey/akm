@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
-  import { api, date, pickFolder, type ApiError } from "./client";
+  import { api, type ApiError, appHref, date, pickFolder } from "./client";
   import SettingsBundleCard from "./SettingsBundle.svelte";
   import SettingsFieldControl from "./SettingsField.svelte";
   import Connections from "./Connections.svelte";
@@ -328,16 +328,20 @@
     >{/if}
 </div>
 <nav class="settings-tabs" aria-label="Settings views" data-sveltekit-reset="false">
-  <a href="/settings/bundles" class:active={route === "bundles"} aria-current={route === "bundles" ? "page" : undefined}
-    >Bundles & index</a
+  <a
+    href={appHref("/settings/bundles")}
+    class:active={route === "bundles"}
+    aria-current={route === "bundles" ? "page" : undefined}>Bundles & index</a
   ><a
-    href="/settings/connections"
+    href={appHref("/settings/connections")}
     class:active={route === "connections"}
     aria-current={route === "connections" ? "page" : undefined}>Connections</a
-  ><a href="/settings/config" class:active={route === "config"} aria-current={route === "config" ? "page" : undefined}
-    >Configuration</a
   ><a
-    href="/settings/software"
+    href={appHref("/settings/config")}
+    class:active={route === "config"}
+    aria-current={route === "config" ? "page" : undefined}>Configuration</a
+  ><a
+    href={appHref("/settings/software")}
     class:active={route === "software"}
     aria-current={route === "software" ? "page" : undefined}>Software</a
   >
@@ -345,7 +349,7 @@
 {#if route === "software"}<Software />{:else if route === "connections"}<Connections {query} />{:else}
   {#if error}<div class="notice notice-warn" role="alert">
       {error}
-      {#if errorCode === "STASH_DIR_NOT_FOUND"}<a href="/setup">Set up akm</a>{/if}
+      {#if errorCode === "STASH_DIR_NOT_FOUND"}<a href={appHref("/setup")}>Set up akm</a>{/if}
       <p>Your entered values remain available. Review the error before retrying.</p>
     </div>{/if}
   {#each renameNotes as note}<p class="notice notice-warn">{note}</p>{/each}
@@ -364,9 +368,10 @@
     <p class="muted" hidden={!!manageName}>
       Default bundle: <strong>{listing?.defaultBundle ?? "none yet"}</strong>. New content goes to:
       <strong>{listing?.defaultWriteTarget ?? "a bundle chosen automatically"}</strong>.
-      <a href="/settings/config">Change library defaults</a> · <a href="/setup">Run setup again</a>
+      <a href={appHref("/settings/config")}>Change library defaults</a> ·
+      <a href={appHref("/setup")}>Run setup again</a>
     </p>
-    {#if manageName}<a class="bundle-back" href="/settings/bundles"
+    {#if manageName}<a class="bundle-back" href={appHref("/settings/bundles")}
         ><Icon name="arrow-left" size={16} /> Back to bundles</a
       >{/if}
     <section
@@ -398,7 +403,7 @@
           />{/each}{#if manageName && listing && !listing.bundles.some((bundle) => bundle.name === manageName)}<p
             class="notice"
           >
-            This bundle is no longer registered. <a href="/settings/bundles">View configured bundles</a>.
+            This bundle is no longer registered. <a href={appHref("/settings/bundles")}>View configured bundles</a>.
           </p>{:else if listing && !listing.bundles.length}<p class="empty">
             No configured bundles. Register a source below.
           </p>{/if}
@@ -493,14 +498,14 @@
       <aside class="configuration-navigation">
         <nav aria-label="Configuration sections">
           {#each groups as group}<a
-              href={`/settings/config?section=${group.id}`}
+              href={appHref(`/settings/config?section=${group.id}`)}
               aria-current={selectedGroup === group.id ? "page" : undefined}
               >{group.title}{#if editCounts[group.id]}<span aria-label="Unsaved changes">•</span>{/if}</a
             >{/each}<a
-            href="/settings/config?section=embedding-settings"
+            href={appHref("/settings/config?section=embedding-settings")}
             aria-current={selectedGroup === "embedding-settings" ? "page" : undefined}>Embeddings</a
           ><a
-            href="/settings/config?section=advanced-settings"
+            href={appHref("/settings/config?section=advanced-settings")}
             aria-current={selectedGroup === "advanced-settings" ? "page" : undefined}>Advanced</a
           >
         </nav>

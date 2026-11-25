@@ -13,7 +13,37 @@
 import { z } from "zod";
 import { ImproveWhereSchema } from "./improve";
 import { ImproveProfileConfigSchema } from "./improve-processes";
-import { engineName } from "./primitives";
+import { engineName, httpUrl, isApiKeyReference } from "./primitives";
+
+/** An http(s) origin: scheme, host and optional port, with no credentials, path, query or fragment. */
+function isHttpOrigin(value: string): boolean {
+  if (/[?#@]/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return /^https?:$/.test(url.protocol) && url.pathname === "/" && !/^https?:\/\/[^/]+\/./.test(value);
+  } catch {
+    return false;
+  }
+}
+const httpOrigin = httpUrl.refine(isHttpOrigin, {
+  message: "must be an http(s) origin such as https://host[:port], with no path, query or fragment",
+});
+
+/** A frame parent is an exact origin; a wildcard is not one. */
+const frameParent = httpOrigin.refine((value) => !value.includes("*"), {
+  message: "must be an exact origin; wildcards are not supported",
+});
+
+/**
+ * An `allowedHosts` entry: a host name or address with an optional port, with no scheme and no path. Without a port it
+ * matches that host on any port; with one, only that port (an origin's default port, 80 or 443, counts as none).
+ */
+const allowedHost = z
+  .string()
+  .regex(/^(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/, {
+    message: "must be a host name or address with an optional port (host or host:port), with no scheme and no path",
+  })
+  .refine((value) => Number(/:(\d+)$/.exec(value)?.[1] ?? 0) <= 65535, { message: "port must be at most 65535" });
 
 export const ExperimentalConfigSchema = z
   .object({
@@ -48,6 +78,24 @@ export const ExperimentalConfigSchema = z
       .object({
         strategies: z.record(engineName, ImproveProfileConfigSchema).optional(),
         qualityGate: ImproveWhereSchema.optional(),
+      })
+      .passthrough()
+      .optional(),
+    /**
+     * Settings for `akm-web` (AKM Desktop's server). Experimental: names and behaviour may change in 0.11.
+     * `secret` is a reference (`$VAR`, `${VAR}` or `${secrets/<name>}`), never the secret itself.
+     */
+    web: z
+      .object({
+        host: z.string().min(1).optional(),
+        port: z.number().int().min(0).max(65535).optional(),
+        origin: httpOrigin.optional(),
+        secret: z
+          .string()
+          .refine(isApiKeyReference, { message: "secret must be a $VAR, ${VAR} or ${secrets/<name>} reference" })
+          .optional(),
+        allowedHosts: z.array(allowedHost).optional(),
+        frameParents: z.array(frameParent).optional(),
       })
       .passthrough()
       .optional(),

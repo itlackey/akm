@@ -30,7 +30,7 @@ import { readEvents } from "../../src/core/events";
 import { validateJsonSchemaSubset } from "../../src/core/json-schema";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../src/core/warn";
-import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
+import { deriveEntryProvenance, slugForPath } from "../../src/indexer/installations";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { LlmCallError } from "../../src/llm/client";
 import { listImproveLedgerRows } from "../../src/storage/repositories/improve-ledger-repository";
@@ -61,7 +61,7 @@ function makeStashDir(): string {
 
 /** The durable `proposals.ref` item_ref (WI-8.5a): `<bundle>//<conceptId>`. */
 function durableRef(stashDir: string, type: string, name: string): string {
-  const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
+  const bundleId = slugForPath(stashDir);
   return deriveEntryProvenance({ bundleId, adapterId: "akm" }, type, name).itemRef;
 }
 

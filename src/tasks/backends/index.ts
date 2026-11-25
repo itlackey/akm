@@ -14,7 +14,7 @@
  * code paths.
  */
 
-import type { ScheduleBackend } from "../schedule";
+import { backendNameForPlatform } from "../../core/platform";
 import { CRON_BACKEND, type CronBackendOptions } from "./cron";
 import { LAUNCHD_BACKEND, type LaunchdBackendOptions } from "./launchd";
 import { SCHTASKS_BACKEND, type SchtasksBackendOptions } from "./schtasks";
@@ -32,19 +32,12 @@ export interface SelectBackendOptions {
 // `name`), so no module-level override binding is needed. `selectBackend`'s
 // `options.platform` steers the platform.
 export function selectBackend(options: SelectBackendOptions = {}): SchedulerBackend {
-  const platform = options.platform ?? process.platform;
-  switch (platform) {
-    case "win32":
+  switch (backendNameForPlatform(options.platform)) {
+    case "schtasks":
       return SCHTASKS_BACKEND(options.schtasks);
-    case "darwin":
+    case "launchd":
       return LAUNCHD_BACKEND(options.launchd);
     default:
       return CRON_BACKEND(options.cron);
   }
-}
-
-export function backendNameForPlatform(platform: NodeJS.Platform = process.platform): ScheduleBackend {
-  if (platform === "win32") return "schtasks";
-  if (platform === "darwin") return "launchd";
-  return "cron";
 }

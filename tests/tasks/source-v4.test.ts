@@ -84,6 +84,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { TASK_V3_MAX_REDACT_NAMES } from "../../src/core/asset/bounded-task-document";
 import { UsageError } from "../../src/core/errors";
 import {
   checkJsonSchemaDefinition,
@@ -92,7 +93,6 @@ import {
 } from "../../src/core/json-schema";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { EXECUTION_MAX_TIMEOUT_MS } from "../../src/execution/limits";
-import { TASK_V3_MAX_REDACT_NAMES } from "../../src/tasks/source/bounded-document";
 import * as ParseTaskSourceModule from "../../src/tasks/source/parse-task-source";
 import * as TaskSourceV4Module from "../../src/tasks/source/task-source-v4";
 import { TASK_V3_MAX_SCHEDULES } from "../../src/tasks/source-v3";

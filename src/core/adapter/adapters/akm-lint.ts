@@ -52,16 +52,16 @@
  */
 
 import path from "node:path";
-import { backendNameForPlatform } from "../../../tasks/backends";
 import { assertTaskScheduleCronValid, assertTaskScheduleInputsSatisfyContract } from "../../../tasks/schedule-gates";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
-import { taskSourceErrorDetail } from "../../../tasks/source-v3";
 import { checkWorkflowPlan, compileWorkflowSource } from "../../../workflows/compile";
+import { taskSourceErrorDetail } from "../../asset/bounded-task-document";
 import { type RuleScope, ruleApplies } from "../../asset/lint-text";
 import { conceptIdForStashFile } from "../../asset/resolve-ref";
 import { KNOWN_CATEGORIES } from "../../asset/type-keys";
 import { isAkmRegistryCachePath, scanEnvKeyNames } from "../../common";
 import { isDangerousEnvKey } from "../../lint/env-key-rules";
+import { backendNameForPlatform } from "../../platform";
 import type { Bundle } from "../types";
 import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 

@@ -27,6 +27,18 @@ import path from "node:path";
 import { toPosix } from "../common";
 import { type KnownType, SCRIPT_EXTENSIONS, WORKFLOW_EXTENSIONS } from "../recognition-util";
 
+export const TASK_EXTENSION = ".yml";
+export const TASK_NEAR_MISS_EXTENSION = ".yaml";
+
+/** Explain why the near-miss `.yaml` spelling is not a task source. */
+export function taskExtensionDetail(relPath: string): string {
+  const base = relPath.replace(/\.yaml$/i, "");
+  return (
+    `task file uses the ${TASK_NEAR_MISS_EXTENSION} extension; akm recognizes tasks only as ` +
+    `${TASK_EXTENSION}, so this file is never indexed or scheduled — rename it to ${base}${TASK_EXTENSION}.`
+  );
+}
+
 export interface AssetSpec {
   stashDir: string;
   /**
@@ -161,13 +173,13 @@ const BUILTIN_PLACEMENT_SPECS = {
   task: {
     stashDir: "tasks",
     documentFormat: "yaml",
-    isRelevantFile: (fileName: string) => path.extname(fileName).toLowerCase() === ".yml",
+    isRelevantFile: (fileName: string) => path.extname(fileName).toLowerCase() === TASK_EXTENSION,
     toCanonicalName: (typeRoot: string, filePath: string) => {
       const rel = toPosix(path.relative(typeRoot, filePath));
-      return rel.toLowerCase().endsWith(".yml") ? rel.slice(0, -4) : rel;
+      return rel.toLowerCase().endsWith(TASK_EXTENSION) ? rel.slice(0, -TASK_EXTENSION.length) : rel;
     },
     toAssetPath: (typeRoot: string, name: string) => {
-      const withExt = name.toLowerCase().endsWith(".yml") ? name : `${name}.yml`;
+      const withExt = name.toLowerCase().endsWith(TASK_EXTENSION) ? name : `${name}${TASK_EXTENSION}`;
       return path.join(typeRoot, withExt);
     },
   },

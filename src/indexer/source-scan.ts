@@ -4,8 +4,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { BundleListing } from "../core/adapter/bundle-adapter";
+import type { AssetEntry, BundleListing } from "../core/adapter/bundle-adapter";
 import type { Bundle, FileContext } from "../core/adapter/types";
+import { CONTENT_PROJECTION_VERSION } from "../core/asset/markdown-projection";
 import { type BundleScan, scanBundle } from "../core/assets/read";
 import { toErrorMessage } from "../core/common";
 import { isVerbose, warn } from "../core/warn";
@@ -20,7 +21,6 @@ import type { EntryProvenance } from "../storage/repositories/index-entry-types"
 import { setStoreFindings } from "../storage/repositories/index-meta-repository";
 import type { IncompleteIndexSource } from "./index-context";
 import type { IndexProgressEvent } from "./indexer";
-import { deriveInstallations } from "./installations";
 import {
   computeDirFingerprint,
   type DirFingerprint,
@@ -28,18 +28,17 @@ import {
   getCachedDirState,
   getDirIndexState,
 } from "./passes/dir-staleness";
-import { CONTENT_PROJECTION_VERSION } from "./passes/markdown-projection";
 import type { IndexDocument, StashFile } from "./passes/metadata";
-import { drainDirDocuments } from "./scan/drain-dir";
+import { drainDirDocuments, indexRowEntry } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
 
 type DirScanReason =
   | DirStaleReason
   | { kind: "duplicate-dir" | "no-indexable-files" | "full-rebuild" | "not-in-source-snapshot"; detail?: string };
 
-export type DirRecord = {
+type DirectoryRecord = {
+  bundleId: string;
   dirPath: string;
-  currentStashDir: string;
   files: string[];
   stash: StashFile | null;
   skip: boolean;
@@ -63,39 +62,34 @@ export type DirRecord = {
   indexVariant?: string;
   /** Persisted directory omitted by the current successful adapter walk. */
   remove?: boolean;
-  /**
-   * The drained entries of a bundle that is no directory (a keyring, a vault), kept as a whole under no path: the
-   * record stands for the bundle, not for a directory.
-   */
-  rows?: StoreRow[];
+  rows?: never;
 };
+
+/** A store drains as a whole and has no directory. */
+export type DirRecord =
+  | DirectoryRecord
+  | {
+      bundleId: string;
+      rows: StoreRow[];
+      reason: DirScanReason;
+      indexVariant: string;
+      skip: false;
+      remove?: never;
+    };
 
 /** One drained entry of a bundle that is no directory. */
 type StoreRow = { entry: IndexDocument; conceptId: string; contentHash?: string };
 
 type IndexedSourceOwner = Pick<EntryProvenance, "bundleId" | "adapterId">;
 
-export function buildIndexedSourceOwners(sources: readonly SearchSource[]): Map<string, IndexedSourceOwner> {
-  const bundles = deriveInstallations([...sources]);
-  return new Map(
-    sources.map((source, index) => [
-      path.resolve(source.path),
-      {
-        bundleId: (bundles[index] as Bundle).id,
-        adapterId: scanBundle(source, (bundles[index] as Bundle).id).adapterId,
-      },
-    ]),
-  );
-}
-
 type SourceScanPlan = {
-  currentStashDir: string;
+  source: SearchSource;
   bundle: Bundle;
   scan?: BundleScan;
   dirGroups: Map<string, FileContext[]>;
   /** A bundle that is no directory lists its entries whole, not grouped by directory. */
-  storeFiles?: FileContext[];
-  removals: Array<DirRecord & { reason: DirScanReason }>;
+  storeEntries?: AssetEntry[];
+  removals: Array<DirectoryRecord & { reason: DirScanReason }>;
   walkComplete: boolean;
   /** When the scan of this source is incomplete: the error that stopped it. */
   incompleteReason?: string;
@@ -105,6 +99,8 @@ type SourceScanPlan = {
 
 type SourceScanResult = {
   dirRecords: DirRecord[];
+  bundleOwners: Map<string, IndexedSourceOwner>;
+  storeBundleIds: string[];
   /** The freshness variant each completely scanned bundle's rows were described under. */
   variants: Map<string, string>;
   scannedDirs: number;
@@ -158,43 +154,39 @@ function buildSourceScanPlans(
   isIncremental: boolean,
   reconcileMissingDirs: boolean,
 ): { plans: SourceScanPlan[]; handoffDirs: Set<string> } {
-  // Each source root → its durable `Bundle`; the per-dir document drain dispatches
-  // its adapter's `recognize` for it.
-  const bundles = deriveInstallations(allSourceEntries);
-  const bundleBySource = new Map(allSourceEntries.map((source, index) => [source.path, bundles[index] as Bundle]));
   const handoffDirs = new Set<string>();
-  const plans = allSourceEntries.map((sourceAdded): SourceScanPlan => {
-    const currentStashDir = sourceAdded.path;
-    const bundle = bundleBySource.get(currentStashDir) as Bundle;
-    if (sourceAdded.unresolved) {
+  const plans = allSourceEntries.map((source): SourceScanPlan => {
+    const bundle = { id: source.bundleId, root: source.path, location: source.location };
+    if (source.unresolved) {
       return {
-        currentStashDir,
+        source,
         bundle,
         scan: undefined,
         dirGroups: new Map(),
         removals: [],
         walkComplete: false,
-        incompleteReason: sourceAdded.unresolved.reason,
-        incompletePath: sourceAdded.unresolved.path ?? "unknown",
+        incompleteReason: source.unresolved.reason,
+        incompletePath: source.unresolved.path ?? "unknown",
       };
     }
     // A bundle that names an adapter akm does not have stops the index before it changes anything.
-    const scan = scanBundle(sourceAdded, bundle.id);
+    const scan = scanBundle(source, bundle.id);
     const listing = listOrKeep(scan);
     // A store's findings (invalid or shadowed names) are recorded for `akm lint`, which never lists the store.
     if (!scan.inDirectories && listing.complete) {
       setStoreFindings(db, bundle.id, listing.findings ?? []);
       for (const finding of listing.findings ?? []) warn(`${finding.ref} ${finding.issue}: ${finding.detail}`);
     }
-    // Every listed entry is a `FileContext` keyed under the bundle's root.
-    const files = listing.assets.map(({ entry }) => scan.fileContext(entry));
-    const dirGroups = scan.inDirectories ? groupFileContextsByDir(files) : new Map<string, FileContext[]>();
+    const entries = listing.assets.map(({ entry }) => entry);
+    const dirGroups = scan.inDirectories
+      ? groupFileContextsByDir(entries.map((entry) => scan.fileContext(entry)))
+      : new Map<string, FileContext[]>();
     return {
-      currentStashDir,
+      source,
       bundle,
       scan,
       dirGroups,
-      ...(scan.inDirectories ? {} : { storeFiles: files }),
+      ...(scan.inDirectories ? {} : { storeEntries: entries }),
       removals: [],
       walkComplete: listing.complete,
       ...(listing.incompleteReason ? { incompleteReason: listing.incompleteReason } : {}),
@@ -202,14 +194,14 @@ function buildSourceScanPlans(
   });
 
   const removalKeys = new Set<string>();
-  const addRemoval = (plan: SourceScanPlan, dirPath: string, stashDir: string) => {
+  const addRemoval = (plan: SourceScanPlan, dirPath: string, bundleId: string) => {
     const resolvedDir = path.resolve(dirPath);
-    const key = `${resolvedDir}\0${path.resolve(stashDir)}`;
+    const key = `${resolvedDir}\0${bundleId}`;
     if (removalKeys.has(key)) return;
     removalKeys.add(key);
     plan.removals.push({
       dirPath,
-      currentStashDir: stashDir,
+      bundleId,
       files: [],
       stash: null,
       skip: false,
@@ -228,6 +220,7 @@ function buildSourceScanPlans(
     const allIndexedDirsByBundle = !isIncremental ? new Map<string, Set<string>>() : undefined;
     if (allIndexedDirsByBundle) {
       for (const entry of getAllEntries(db)) {
+        if (entry.filePath === "") continue;
         const dirs = allIndexedDirsByBundle.get(entry.bundleId) ?? new Set<string>();
         dirs.add(path.dirname(path.resolve(entry.filePath)));
         allIndexedDirsByBundle.set(entry.bundleId, dirs);
@@ -237,7 +230,7 @@ function buildSourceScanPlans(
       if (!plan.walkComplete || !plan.scan?.inDirectories) continue;
       const currentDirs = new Set([...plan.dirGroups.keys()].map((dirPath) => path.resolve(dirPath)));
       for (const dirPath of sourceSnapshotRemovals(db, plan.bundle.id, currentDirs, allIndexedDirsByBundle)) {
-        addRemoval(plan, dirPath, plan.currentStashDir);
+        addRemoval(plan, dirPath, plan.bundle.id);
       }
     }
   }
@@ -249,17 +242,15 @@ function buildSourceScanPlans(
   // The first configured source that exposes a physical directory owns it.
   // Remove rows left by a prior owner even when both adapters are identical.
   const claimedDirs = new Set<string>();
-  const sourcePathByBundle = new Map(plans.map((plan) => [plan.bundle.id, plan.currentStashDir] as const));
+  const configuredBundles = new Set(plans.map((plan) => plan.bundle.id));
   for (const plan of plans) {
     for (const dirPath of plan.dirGroups.keys()) {
       const resolvedDir = path.resolve(dirPath);
       if (claimedDirs.has(resolvedDir)) continue;
       claimedDirs.add(resolvedDir);
       for (const priorOwnerBundle of getIndexedBundleIdsByDir(db, dirPath)) {
-        if (priorOwnerBundle !== plan.bundle.id) {
-          const priorOwnerPath = sourcePathByBundle.get(priorOwnerBundle);
-          if (priorOwnerPath) addRemoval(plan, dirPath, priorOwnerPath);
-        }
+        if (priorOwnerBundle !== plan.bundle.id && configuredBundles.has(priorOwnerBundle))
+          addRemoval(plan, dirPath, priorOwnerBundle);
       }
     }
   }
@@ -293,6 +284,8 @@ export async function scanSourceDirs(
   const { plans, handoffDirs } = buildSourceScanPlans(db, allSourceEntries, isIncremental, reconcileMissingDirs);
 
   const dirRecords: DirRecord[] = [];
+  const bundleOwners = new Map<string, IndexedSourceOwner>();
+  const storeBundleIds: string[] = [];
   const variants = new Map<string, string>();
   let processedDirs = 0;
 
@@ -302,26 +295,25 @@ export async function scanSourceDirs(
   const reportDirDecision = (
     kind: "scan" | "skip",
     dirPath: string,
-    currentStashDir: string,
+    source: SearchSource,
     reason: DirScanReason,
     persistedRowCount?: number,
   ) => {
     if (!isVerbose()) return;
     const detail = reason.detail ? ` (${reason.detail})` : "";
     const rowInfo = persistedRowCount !== undefined ? `; previous rows=${persistedRowCount}` : "";
-    reportScanProgress(
-      `${kind === "scan" ? "Rescanning" : "Skipping"} ${path.relative(currentStashDir, dirPath) || "."} ` +
-        `from ${currentStashDir}: ${reason.kind}${detail}${rowInfo}`,
-    );
+    const label =
+      source.path === undefined ? source.bundleId : `${path.relative(source.path, dirPath) || "."} from ${source.path}`;
+    reportScanProgress(`${kind === "scan" ? "Rescanning" : "Skipping"} ${label}: ${reason.kind}${detail}${rowInfo}`);
   };
 
   // Only the first source that exposes a physical directory may index it.
-  const markSeenOrSkipDuplicate = (dirPath: string, currentStashDir: string, files: string[]): boolean => {
+  const markSeenOrSkipDuplicate = (dirPath: string, source: SearchSource, files: string[]): boolean => {
     const resolved = path.resolve(dirPath);
     if (seenPaths.has(resolved)) {
       const reason = { kind: "duplicate-dir" } satisfies DirScanReason;
-      dirRecords.push({ dirPath, currentStashDir, files, stash: null, skip: true, reason });
-      reportDirDecision("skip", dirPath, currentStashDir, reason);
+      dirRecords.push({ dirPath, bundleId: source.bundleId, files, stash: null, skip: true, reason });
+      reportDirDecision("skip", dirPath, source, reason);
       return true;
     }
     seenPaths.add(resolved);
@@ -329,7 +321,8 @@ export async function scanSourceDirs(
   };
 
   for (const plan of plans) {
-    const { currentStashDir, bundle, scan, dirGroups, removals, walkComplete } = plan;
+    const { source, bundle, scan, dirGroups, removals, walkComplete } = plan;
+    if (plan.storeEntries !== undefined) storeBundleIds.push(bundle.id);
     processedDirs++;
     reportScanProgress(
       `Processed ${processedDirs}/${allSourceEntries.length} source${allSourceEntries.length === 1 ? "" : "s"}.`,
@@ -340,7 +333,7 @@ export async function scanSourceDirs(
       const reason = plan.incompleteReason ?? "the scan did not complete";
       incompleteSources.push({
         bundle: bundle.id,
-        path: plan.incompletePath ?? currentStashDir,
+        ...(scan?.inDirectories === false ? {} : { path: plan.incompletePath ?? source.path }),
         reason,
       });
       warn(`[index] source "${bundle.id}" was not scanned completely; preserving its last-known-good rows. ${reason}`);
@@ -352,37 +345,41 @@ export async function scanSourceDirs(
     // every directory once instead of keeping the old text for unchanged files.
     const indexVariant = `${scan.variantPrefix}content${CONTENT_PROJECTION_VERSION}`;
     variants.set(bundle.id, indexVariant);
+    bundleOwners.set(bundle.id, { bundleId: bundle.id, adapterId: scan.adapterId });
 
     for (const removal of removals) {
       dirRecords.push(removal);
       scannedDirs++;
-      reportDirDecision("scan", removal.dirPath, currentStashDir, removal.reason);
+      reportDirDecision("scan", removal.dirPath, source, removal.reason);
     }
 
-    if (plan.storeFiles) {
+    if (plan.storeEntries) {
       // A bundle that is no directory is drained whole, each entry through its own `recognize`, under no path.
       const rows: StoreRow[] = [];
-      const adapter = { id: scan.adapterId, recognize: (_bundle: Bundle, entry: FileContext) => scan.recognize(entry) };
-      for (const ctx of plan.storeFiles) {
-        const drained = drainDirDocuments(adapter, bundle, [ctx]);
-        warnings.push(...drained.warnings);
-        const entry = drained.entries[0];
-        const conceptId = drained.conceptIdByFile.get(ctx.absPath);
-        if (entry && conceptId) rows.push({ entry, conceptId, contentHash: drained.hashByFile.get(ctx.absPath) });
+      for (const entry of plan.storeEntries) {
+        const doc = scan.recognize(entry);
+        if (doc === null) continue;
+        if (!doc.conceptId) {
+          warnings.push(`Skipped ${bundle.id}//${entry.key}: adapter "${scan.adapterId}" returned no conceptId.`);
+          continue;
+        }
+        rows.push({
+          entry: indexRowEntry(doc, path.posix.basename(entry.key)),
+          conceptId: doc.conceptId,
+          contentHash: doc.hash,
+        });
       }
       generatedCount += rows.length;
       const reason = isIncremental
         ? ({ kind: "index-context-changed" } satisfies DirScanReason)
         : ({ kind: "full-rebuild" } satisfies DirScanReason);
-      for (const dirPath of groupFileContextsByDir(plan.storeFiles).keys()) {
+      // Keep the scan tally by logical group, without manufacturing a path.
+      for (const group of new Set(plan.storeEntries.map((entry) => path.posix.dirname(entry.key)))) {
         scannedDirs++;
-        reportDirDecision("scan", dirPath, currentStashDir, reason);
+        reportDirDecision("scan", group, source, reason);
       }
       dirRecords.push({
-        dirPath: currentStashDir,
-        currentStashDir,
-        files: [],
-        stash: null,
+        bundleId: bundle.id,
         skip: false,
         reason,
         rows,
@@ -398,13 +395,13 @@ export async function scanSourceDirs(
       const indexableFiles = ctxs.map((ctx) => ctx.absPath);
       const forceScan = handoffDirs.has(path.resolve(dirPath)) || requiresWorkflowSourcePreflight(ctxs);
 
-      if (markSeenOrSkipDuplicate(dirPath, currentStashDir, indexableFiles)) continue;
+      if (markSeenOrSkipDuplicate(dirPath, source, indexableFiles)) continue;
 
       if (indexableFiles.length === 0) {
         skippedDirs++;
         const reason = { kind: "no-indexable-files" } satisfies DirScanReason;
-        dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash: null, skip: true, reason });
-        reportDirDecision("skip", dirPath, currentStashDir, reason);
+        dirRecords.push({ dirPath, bundleId: bundle.id, files: indexableFiles, stash: null, skip: true, reason });
+        reportDirDecision("skip", dirPath, source, reason);
         continue;
       }
 
@@ -419,14 +416,14 @@ export async function scanSourceDirs(
         skippedDirs++;
         dirRecords.push({
           dirPath,
-          currentStashDir,
+          bundleId: bundle.id,
           files: indexableFiles,
           stash: null,
           skip: true,
           reason: cachedState.reason,
           indexVariant,
         });
-        reportDirDecision("skip", dirPath, currentStashDir, cachedState.reason, cachedState.persistedRowCount);
+        reportDirDecision("skip", dirPath, source, cachedState.reason, cachedState.persistedRowCount);
         continue;
       }
 
@@ -458,7 +455,7 @@ export async function scanSourceDirs(
         const reason = previousState.reason;
         dirRecords.push({
           dirPath,
-          currentStashDir,
+          bundleId: bundle.id,
           files: staleFiles,
           fingerprint,
           stash: null,
@@ -467,14 +464,14 @@ export async function scanSourceDirs(
           persistedRowCount,
           indexVariant,
         });
-        reportDirDecision("skip", dirPath, currentStashDir, reason, persistedRowCount);
+        reportDirDecision("skip", dirPath, source, reason, persistedRowCount);
         continue;
       }
       scannedDirs++;
       const reason = isIncremental ? previousState.reason : ({ kind: "full-rebuild" } satisfies DirScanReason);
       dirRecords.push({
         dirPath,
-        currentStashDir,
+        bundleId: bundle.id,
         files: staleFiles,
         fingerprint,
         stash,
@@ -485,12 +482,14 @@ export async function scanSourceDirs(
         conceptIdByFile: drained.conceptIdByFile,
         indexVariant,
       });
-      reportDirDecision("scan", dirPath, currentStashDir, reason, persistedRowCount);
+      reportDirDecision("scan", dirPath, source, reason, persistedRowCount);
     }
   }
 
   return {
     dirRecords: removalsFirst(dirRecords),
+    bundleOwners,
+    storeBundleIds,
     variants,
     scannedDirs,
     skippedDirs,

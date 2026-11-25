@@ -13,7 +13,7 @@ import { UsageError } from "../../core/errors";
 import { defaultBundleForTarget } from "../../core/mutation-target";
 import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../../core/recognition-util";
 import { warn } from "../../core/warn";
-import { prepareWriteTargetForMutation, resolveWriteTarget } from "../../core/write-source";
+import { prepareWriteTargetForMutation, requireWriteTargetPath, resolveWriteTarget } from "../../core/write-source";
 import { checkWorkflowPlan, compileWorkflowSource } from "../compile";
 import type { WorkflowError } from "../plan";
 
@@ -73,7 +73,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   const config = loadConfig();
   const resolvedTarget = resolveWriteTarget(config);
   const target = prepareWriteTargetForMutation(resolvedTarget, { assetType: "workflow" });
-  const bundleDir = target.source.path;
+  const bundleDir = requireWriteTargetPath(target.source);
   // asset-io: deprecated workflows are not read through the adapters
   const standaloneWorkflowBundle = target.source.adapterId === "akm-workflow";
   const typeRoot = standaloneWorkflowBundle ? bundleDir : path.join(bundleDir, "workflows");

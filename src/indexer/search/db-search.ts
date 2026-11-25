@@ -45,6 +45,7 @@ import type { CandidateFilter, DbVecResult } from "../../storage/repositories/in
 import { searchFts } from "../../storage/repositories/index-fts-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
+import type { IndexLibrary } from "../index-persist";
 import { incompleteIndexWarning, noIndexWarning, openUsableIndex } from "../index-readiness";
 import { isProposedQuality } from "../passes/entry-normalize";
 import { appliesToProject, type IndexDocument, type ScopeFilters, scopeMatchesFilters } from "../passes/metadata";
@@ -60,7 +61,7 @@ import {
   reciprocalRankFusion,
 } from "./ranking";
 import { attachSearchHitAttribution } from "./search-attribution";
-import { enrichSearchHit, type SearchHitContext } from "./search-hit-enrichers";
+import { enrichSearchHit, type SearchHitContext, searchHitLibrary } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForRow, isEditable, type SearchSource } from "./search-source";
 
 /**
@@ -131,7 +132,7 @@ export interface SearchLocalInput {
   query: string;
   searchType: AkmSearchType;
   limit: number;
-  stashDir: string;
+  stashDir: IndexLibrary;
   sources: SearchSource[];
   config: AkmConfig;
   /**
@@ -554,7 +555,7 @@ async function enumerateEntries(
     prefer?: ScopeFilters;
     /** Order by use instead: only assets shown in `project` (any, when absent), most shown first. */
     usage?: ProjectContext;
-    stashDir: string;
+    stashDir: IndexLibrary;
     config: AkmConfig;
   },
 ): Promise<SourceSearchHit[]> {
@@ -869,7 +870,7 @@ export async function buildDbHit(input: {
   conceptId: string;
   score: number;
   whyMatched?: string[];
-  defaultStashDir: string;
+  defaultStashDir: IndexLibrary;
   sources: SearchSource[];
   config?: AkmConfig;
   /**
@@ -884,13 +885,13 @@ export async function buildDbHit(input: {
   // An entry no file holds has no path: none is printed.
   const absolutePath = input.path === "" ? "" : path.resolve(input.path);
   const source = findSourceForRow({ filePath: absolutePath, bundleId: input.bundleId }, input.sources);
-  const entryStashDir = source?.path ?? input.defaultStashDir;
-
-  const defaultBundleId =
-    input.config?.defaultBundle ??
-    (source && path.resolve(source.path) === path.resolve(input.defaultStashDir)
-      ? (input.bundleId ?? undefined)
-      : undefined);
+  const { entryStashDir, defaultBundleId } = searchHitLibrary(
+    input.defaultStashDir,
+    source,
+    absolutePath,
+    input.bundleId,
+    input.config?.defaultBundle,
+  );
   const ref = resolveSearchHitRef(input, defaultBundleId);
   const editable =
     absolutePath === "" ? source?.writable === true : isEditable(absolutePath, input.config, input.sources);

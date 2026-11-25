@@ -214,6 +214,11 @@
     font-size: var(--text-xs);
     overflow-wrap: anywhere;
   }
+  .logout {
+    font-size: var(--text-xs);
+    min-block-size: 32px;
+    padding-block: 0;
+  }
   .version {
     font-family: var(--mono);
     border-inline-start: 1px solid var(--border);

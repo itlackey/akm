@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261133] - 2026-11-25
+
+### Added
+
+- `experimental.web` config, Experimental: `host`, `port`, `origin`, `secret` (a `$VAR`, `${VAR}` or `${secrets/<name>}` reference), `allowedHosts` and `frameParents` for the AKM Desktop server, kept by `akm migrate apply`. `config.webSettings()` of `akm-cli/workspace` returns them with the secret resolved. See [Configuration](docs/reference/configuration.md#experimental-web-settings).
+- `children` in `akm-cli/workspace`, Experimental: the child processes akm starts asynchronously, for a host that stops them on shutdown. `startChildrenInOwnGroups()` starts each in a process group of its own on Linux and macOS, `runningChildren()` and `signalChild()` find and stop what is left, `onChildStarted()` reports each start, and `spawnChild()` starts one of the host's own on the same record. `akm-web` uses it in place of patching Node's `ChildProcess`.
+- `akm-web` shows a login form to a browser without a session: the secret goes in, a session cookie comes back, and the session ends after 8 hours without use, on logout (`POST /api/session/logout`, which the UI offers as a "Log out" button to a person with a session) or on restart. The secret is `AKM_WEB_SECRET`, or `experimental.web.secret`, at least 32 characters.
+- A program sends the secret as `Authorization: Bearer <secret>` on each request instead of logging in; a wrong secret is refused even with a valid session cookie. Every write, from a program too, must carry an `Origin` equal to the configured origin.
+- `POST /api/session/link` with the header returns a one-time login link, `<origin>/?login=<code>` with no path, that works once and expires after 60 seconds. `GET /api/session` returns `{"ok":true,"active":<boolean>,"session":<boolean>}` for a launcher; requests get `503` with code `STARTING` until the server is ready.
+- `akm-web --open` opens the UI in the default browser, and `--open --auto-login` opens it logged in through a link that is not printed.
+- `experimental.web.allowedHosts` accepts extra `Host` values for a proxy that reaches `akm-web` under a private name: a host name or address with an optional port (`akm-internal`, `akm-internal:8080`, `[::1]:3000`), no scheme, no path. An invalid entry is refused at startup (exit 2) and by the config schema. A refused `Host` gets `403 HOST_NOT_ALLOWED` that names the `Host` received, and the server writes one stderr line per distinct refused `Host`. `experimental.web.frameParents` lets the listed origins show the UI in a frame; with an `https` origin the cookie is then `SameSite=None; Secure; Partitioned`.
+- The UI works when a proxy serves it under a path (`https://app.example/akm/`) and removes the path before forwarding.
+
+### Changed
+
+- `akm-web` does not start without a secret: it exits 2 and says to set `AKM_WEB_SECRET` or `experimental.web.secret` (at least 32 characters). It used to make a token for the run.
+- The ready line is `{"type":"ready","origin":"..."}`: it has no `url`, and the launch-token address (`?desktop_session=`) and its cookie are gone. A launcher that opened `url` must send the header or use a login link.
+- `akm-web` opens a browser only with `--open`. It used to open one when started from a terminal with a display.
+- `akm-web --origin` with a path, query or fragment is refused with exit 2. It used to warn.
+- On `SIGTERM`, `SIGINT` or a `shutdown` message `akm-web` stops accepting connections and waits up to 10 seconds for requests in flight and for running child processes (host tools, the akm CLI, git, harness runs). It then terminates what still runs (each child runs in a process group of its own on Linux and macOS, and the group gets `SIGTERM`, then `SIGKILL` after 2 seconds, also when the child that led it has already exited), writes one stderr line that names what it stopped, and exits 0, in at most 13 seconds; a launcher should wait 15 seconds before it force-kills the server. It used to close every connection at once and leave host-tool children running.
+
+### Fixed
+
+- Keyring and vault bundles no longer report a cache directory as their path in index, search, doctor, and Desktop change listings.
+
 ## [0.10.261132] - 2026-11-25
 
 ### Changed

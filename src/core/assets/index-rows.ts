@@ -8,10 +8,8 @@
  */
 
 import path from "node:path";
-import { addIndexOnMissRefs } from "../../indexer/index-on-miss";
 import { openUsableIndex } from "../../indexer/index-readiness";
 import { upsertIndexRows, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../../indexer/index-rows";
-import { holdsAssetMutationLease, withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
 import {
   embeddingInputCap,
   generateEmbeddingsForDb,
@@ -25,11 +23,17 @@ import { fileContextOfEntry } from "../adapter/directory/file-context";
 import type { IndexDocument } from "../adapter/types";
 import { loadConfig } from "../config/config";
 import { assetNotFound, isDataDirUnreadableError, TransientError } from "../errors";
+import { addIndexOnMissRefs } from "../index-on-miss";
+import { holdsAssetMutationLease, withAssetMutationLeaseSync } from "../index-writer-lock";
 import { isPathAbsent } from "../path-access";
 import { getDbPath } from "../paths";
 import { warn, warnVerbose } from "../warn";
 import { type Asset, bundleHolding } from "./asset";
 import type { AssetBundle } from "./bundle";
+
+function indexLibraryOf(bundle: AssetBundle) {
+  return bundle.root ?? { bundleId: bundle.name };
+}
 
 /**
  * Recognize each of `assets` once and, when `persist` is set and a usable index serves their bundles, record the rows:
@@ -90,7 +94,9 @@ export function record(documents: ReadonlyMap<Asset, IndexDocument>, onMiss: boo
 function write(documents: ReadonlyMap<Asset, IndexDocument>, onMiss: boolean): boolean {
   {
     const first = documents.keys().next().value as Asset;
-    const usable = openUsableIndex(bundleHolding(first).root, { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
+    const usable = openUsableIndex(indexLibraryOf(bundleHolding(first)), {
+      busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS,
+    });
     if (!usable) return false;
     try {
       const { db } = usable;
@@ -100,7 +106,10 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, onMiss: boolean): b
         for (const [asset, document] of documents) {
           const held = bundleHolding(asset);
           // The scan drops a workflow that does not compile, so no ask of it records a row either.
-          const dropped = brokenWorkflowWarning(document, fileContextOfEntry(held.root, asset.entry));
+          const dropped =
+            held.root === undefined
+              ? null
+              : brokenWorkflowWarning(document, fileContextOfEntry(held.root, asset.entry));
           if (dropped !== null) {
             // An asset akm just wrote that no longer compiles is indexed as the scan would: not at all, so its old row
             // goes, with the scan's warning (F19).
@@ -139,7 +148,7 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, onMiss: boolean): b
           );
           if (onMiss) written.push(asset.ref);
           // akm's own write: its vector is made after the lease is released (`embedPendingWrites`).
-          else pendingEmbeddings.add(held.root, asset.ref);
+          else pendingEmbeddings.add(held, asset.ref);
         }
         addIndexOnMissRefs(db, written);
       })();
@@ -151,19 +160,19 @@ function write(documents: ReadonlyMap<Asset, IndexDocument>, onMiss: boolean): b
 }
 
 /**
- * The refs whose rows akm's own writes recorded since the last {@link embedPendingWrites}, by the root of the bundle
+ * The refs whose rows akm's own writes recorded since the last {@link embedPendingWrites}, by the id of the bundle
  * that holds them. A write stays synchronous and holds the lease only for its rows; their vectors are made after.
  */
 const pendingEmbeddings = {
-  byRoot: new Map<string, Set<string>>(),
-  add(root: string, ref: string): void {
-    const refs = this.byRoot.get(root) ?? new Set<string>();
-    refs.add(ref);
-    this.byRoot.set(root, refs);
+  byBundle: new Map<string, { library: ReturnType<typeof indexLibraryOf>; refs: Set<string> }>(),
+  add(bundle: AssetBundle, ref: string): void {
+    const pending = this.byBundle.get(bundle.name) ?? { library: indexLibraryOf(bundle), refs: new Set<string>() };
+    pending.refs.add(ref);
+    this.byBundle.set(bundle.name, pending);
   },
-  take(): Array<[string, Set<string>]> {
-    const taken = [...this.byRoot];
-    this.byRoot.clear();
+  take() {
+    const taken = [...this.byBundle.values()];
+    this.byBundle.clear();
     return taken;
   },
 };
@@ -179,12 +188,12 @@ export async function embedPendingWrites(): Promise<void> {
   // A held lease never waits on an embedding call: the queue stays for the caller that releases it (the CLI dispatcher,
   // the Desktop route wrapper).
   if (holdsAssetMutationLease()) return;
-  for (const [root, refs] of pendingEmbeddings.take()) {
+  for (const { library, refs } of pendingEmbeddings.take()) {
     try {
       if (isPathAbsent(getDbPath())) continue;
       const config = loadConfig();
       if (config.semanticSearchMode === "off") continue;
-      const usable = openUsableIndex(root, { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
+      const usable = openUsableIndex(library, { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
       if (!usable) continue;
       try {
         const { db } = usable;
@@ -228,7 +237,7 @@ export function forgetIndexedAsset(bundle: AssetBundle, conceptId: string): bool
     return withAssetMutationLeaseSync(
       "index-asset",
       () => {
-        const usable = openUsableIndex(bundle.root, { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
+        const usable = openUsableIndex(indexLibraryOf(bundle), { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
         if (!usable) return false;
         try {
           const rows = usable.db

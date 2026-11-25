@@ -22,7 +22,7 @@
  * @module runtime
  */
 
-import { type ChildProcess, spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
+import { type ChildProcess, spawnSync as nodeSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createWriteStream, statfsSync, type WriteStream } from "node:fs";
 import { createRequire } from "node:module";
@@ -30,6 +30,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import { childDetached, recordChild, spawnChild } from "./core/children";
 import { ResponseTooLargeError, readChunkWithDeadline } from "./core/common";
 import { stdin } from "./core/stdio";
 
@@ -109,7 +110,10 @@ export interface SpawnSyncOptions {
  */
 export function spawn(cmd: string[], options: SpawnOptions = {}): Subprocess {
   if (isBun) {
-    return bunGlobal().spawn(cmd, options) as unknown as Subprocess;
+    const detached = childDetached(options.detached);
+    const proc = bunGlobal().spawn(cmd, { ...options, detached }) as unknown as Subprocess;
+    recordChild(proc.pid, cmd, detached, proc.exited);
+    return proc;
   }
   return nodeSpawnAdapter(cmd, options);
 }
@@ -149,7 +153,7 @@ export function spawnSync(cmd: string[], options: SpawnSyncOptions = {}): SpawnS
 
 function nodeSpawnAdapter(cmd: string[], options: SpawnOptions): Subprocess {
   const [bin, ...args] = cmd;
-  const child: ChildProcess = nodeSpawn(bin!, args, {
+  const child: ChildProcess = spawnChild(bin!, args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
     detached: options.detached,

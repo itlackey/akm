@@ -44,7 +44,9 @@ export async function validateFindings(run: LintRun, keep?: (key: string) => boo
  */
 export function envSweepFindings({ bundle, extraStashRoots, sources, cfg }: LintRun): LintIssue[] {
   const flagged: LintIssue[] = [];
-  const bundleIdByRoot = new Map(sources.map((source) => [safeRealpath(source.path), source.registryId]));
+  const bundleIdByRoot = new Map(
+    sources.flatMap(({ path, registryId }) => (path === undefined ? [] : [[safeRealpath(path), registryId] as const])),
+  );
   for (const root of [bundle.path, ...extraStashRoots]) {
     const bundleId = bundleIdByRoot.get(safeRealpath(root));
     // `env` assets live under `env/`, whole-file `secret` assets under `secrets/`. `displayRefForConceptId` owns the

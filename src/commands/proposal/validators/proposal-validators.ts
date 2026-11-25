@@ -56,7 +56,9 @@ function bundleRelativeFile(proposal: Proposal): string | undefined {
   try {
     const { source } = resolveBundleWriteTarget(loadConfig(), bound);
     const { file } = addressOf(source, proposal.ref);
-    return file === undefined ? undefined : path.relative(source.path, file).split(path.sep).join("/");
+    return file === undefined || source.path === undefined
+      ? undefined
+      : path.relative(source.path, file).split(path.sep).join("/");
   } catch {
     return undefined;
   }

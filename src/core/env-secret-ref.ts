@@ -19,12 +19,11 @@ import { type AssetRef, conceptIdFromTypeName, displayRef } from "./asset/resolv
 import { type Asset, listAssets, lookupAsset, readAsset, unindexedHint } from "./assets/read";
 import { assetType } from "./assets/type";
 import { fileOfRef, type WriteResult, writeAssets } from "./assets/write";
-import { deriveBundleIds } from "./bundle-id";
 import { isWithin, scanEnvKeyNames } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
 import { resolveMutationTarget } from "./mutation-target";
-import { formatRefForMessage, type ResolvedWriteTarget } from "./write-source";
+import { formatRefForMessage, type ResolvedWriteTarget, requireWriteTargetPath } from "./write-source";
 
 /**
  * The secrets in the type's folder (`secrets/`): the refs the secret commands accept. A file elsewhere that is typed
@@ -45,17 +44,21 @@ function listSecretsInFolder(): Asset[] {
 export function listEnvsRecursive(
   config: AkmConfig = loadConfig(),
 ): Array<{ ref: string; path?: string; keys: string[] }> {
-  const sources = resolveSourceEntries(undefined, config);
-  const ids = deriveBundleIds(sources);
+  const sources = resolveSourceEntries(undefined, config).flatMap(({ bundleId, path }) =>
+    path === undefined ? [] : [{ bundleId, root: path }],
+  );
   // The folders of a bundle that another bundle is at: what is under them is that bundle's.
-  const nested = sources.map((outer) =>
-    sources
-      .map((inner) => path.relative(outer.path, inner.path))
-      .filter((relative) => relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative))
-      .map((relative) => `${relative.split(path.sep).join("/")}/`),
+  const nested = new Map(
+    sources.map(({ bundleId, root }) => [
+      bundleId,
+      sources
+        .map((inner) => path.relative(root, inner.root))
+        .filter((relative) => relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative))
+        .map((relative) => `${relative.split(path.sep).join("/")}/`),
+    ]),
   );
   return listAssets({ type: "env" })
-    .filter(({ bundle, conceptId }) => !nested[ids.indexOf(bundle)]?.some((folder) => conceptId.startsWith(folder)))
+    .filter(({ bundle, conceptId }) => !nested.get(bundle)?.some((folder) => conceptId.startsWith(folder)))
     .map(({ conceptId, bundle, entry }) => ({
       ref: makeEnvRef(conceptId, bundle, config),
       // asset-io: display the env file's path in a listing
@@ -172,7 +175,7 @@ export function makeSecretRef(conceptId: string, bundleId?: string): string {
 
 function displayDefaultBundle(bundleId?: string, config: AkmConfig = loadConfig()): string | undefined {
   if (config.defaultBundle || !bundleId) return config.defaultBundle;
-  const primary = deriveBundleIds(resolveSourceEntries(undefined, config))[0];
+  const primary = resolveSourceEntries(undefined, config)[0]?.bundleId;
   return primary === bundleId ? bundleId : undefined;
 }
 
@@ -233,7 +236,11 @@ function resolveEnvSecretWriteTarget(
   const { source } = resolved.target;
   const folder = stashDirFor(type);
   const file = fileOfRef(source, conceptIdFromTypeName(type, parsed.name));
-  if (file !== undefined && folder !== undefined && !isWithin(file, path.join(source.path, folder))) {
+  if (
+    file !== undefined &&
+    folder !== undefined &&
+    !isWithin(file, path.join(requireWriteTargetPath(source), folder))
+  ) {
     throw new UsageError(
       `${type === "env" ? "Env" : "Secret"} name "${parsed.name}" escapes the ${folder === "env" ? "env" : "secrets"} directory.`,
       "INVALID_FLAG_VALUE",

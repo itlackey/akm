@@ -15,6 +15,7 @@
  * replay, so nothing to compare).
  */
 
+import { bundleSourceAt } from "../../../core/bundle-at-dir";
 import type { AkmConfig } from "../../../core/config/config";
 import { type SearchLocalInput, searchLocal } from "../../../indexer/search/db-search";
 import type { SearchExecutionMode } from "../../../sources/types";
@@ -72,11 +73,12 @@ export type ContinuitySearch = (query: string) => Promise<ContinuitySearchResult
  * bulk-acceptable — result).
  */
 export function createContinuitySearch(stashDir: string, config: AkmConfig): ContinuitySearch {
+  const bundle = bundleSourceAt(stashDir, config);
   const base: Omit<SearchLocalInput, "query" | "config"> = {
     searchType: "any",
     limit: CONTINUITY_TOP_N,
     stashDir,
-    sources: [{ path: stashDir, isDefault: true }],
+    sources: [{ path: stashDir, bundleId: bundle.name, isDefault: true }],
   };
   let keywordOnly = false;
   return async (query) => {

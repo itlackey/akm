@@ -39,9 +39,11 @@ export async function indexFiles(bundle: BundleAddress, files: string[]): Promis
     // A bundle that is not configured has no index to refresh.
     return false;
   }
+  const root = held.root;
+  if (root === undefined) return false;
   try {
     // An index akm may not read is not "nothing to update": it is said where an operator can see it (#791), and is `false`.
-    const usable = openUsableIndex(held.root, { readOnly: true });
+    const usable = openUsableIndex(root, { readOnly: true });
     if (usable) closeDatabase(usable.db);
   } catch (error) {
     if (isDataDirUnreadableError(error)) {
@@ -51,7 +53,7 @@ export async function indexFiles(bundle: BundleAddress, files: string[]): Promis
   }
   try {
     for (const file of files) {
-      const key = toPosix(path.relative(held.root, file));
+      const key = toPosix(path.relative(root, file));
       const conceptId = key === "" || key.startsWith("..") ? null : held.identifyKey(key);
       if (conceptId === null) continue;
       const asset = readFrom(held, conceptId);

@@ -22,6 +22,7 @@ import {
   akmTasksAdd,
   akmTasksDisable,
   akmTasksEnable,
+  akmTasksHistory,
   akmTasksRun,
   akmTasksSync,
   resolveTaskReadBundle,
@@ -30,6 +31,7 @@ import { loadConfig, resetConfigCache, saveConfig } from "../../../src/core/conf
 import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../../../src/tasks/activation-config";
 import { buildCronLine, CRON_BACKEND, type CronExec, type CronExecResult } from "../../../src/tasks/backends/cron";
 import type { SchedulerBinding } from "../../../src/tasks/scheduler-binding";
+import { seedLockEntries } from "../../_helpers/lockfile";
 import { sandboxRowEnvironment, sandboxRowEnvironmentInline } from "../../_helpers/row-environment";
 import {
   type IsolatedAkmStorage,
@@ -352,6 +354,25 @@ describe("bundle-targeted tasks via --bundle", () => {
       path: path.resolve(iso.stashDir),
     });
     expect(() => resolveTaskReadBundle(undefined, "other")).toThrow(/No source named "other"/);
+  });
+
+  test("task run reads an npm bundle from its locked content root", async () => {
+    const config = loadConfig();
+    saveConfig({ ...config, bundles: { ...config.bundles, tools: { npm: "tools" } } });
+    const npmRoot = path.join(readonlyDir.dir, "npm");
+    seedLockEntries([{ id: "tools", source: "npm", ref: "npm:tools", localRoot: npmRoot }]);
+    fs.mkdirSync(path.join(npmRoot, "tasks"), { recursive: true });
+    fs.writeFileSync(path.join(npmRoot, "tasks", "hello.yml"), taskYaml());
+
+    expect((await akmTasksRun("tools//tasks/hello")).result.status).toBe("completed");
+  });
+
+  test("a store has no task source, but can still select history rows", async () => {
+    const config = loadConfig();
+    saveConfig({ ...config, bundles: { ...config.bundles, keys: { adapter: "secret-tool", location: "akm" } } });
+
+    await expect(akmTasksRun("keys//tasks/hello")).rejects.toMatchObject({ code: "ASSET_NOT_FOUND" });
+    expect(await akmTasksHistory({ target: "keys" })).toEqual({ rows: [] });
   });
 
   test("a disabled bundle selector is reported as disabled, not as unconfigured", () => {

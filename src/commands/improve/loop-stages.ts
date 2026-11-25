@@ -20,7 +20,7 @@ import {
   type MemoryInferenceResult,
   runMemoryInferencePass,
 } from "../../indexer/passes/memory-inference";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveSourceEntries, sourcePaths } from "../../indexer/search/search-source";
 import type { Database } from "../../storage/database";
 import { purgeOldEvents } from "../../storage/repositories/events-repository";
 import { purgeOldImproveRuns } from "../../storage/repositories/improve-runs-repository";
@@ -647,10 +647,7 @@ function runProposalHygienePass(ctx: MaintenanceCtx): {
   let orphansPurged = 0;
   let proposalsExpired = 0;
   try {
-    const purge = purgeOrphanProposals(
-      primaryStashDir,
-      ctx.sources.map((s) => s.path),
-    );
+    const purge = purgeOrphanProposals(primaryStashDir, sourcePaths(ctx.sources));
     orphansPurged = purge.rejected;
     if (purge.rejected > 0) {
       info(
