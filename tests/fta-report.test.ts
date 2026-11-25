@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { RISE_FLOOR, scoreRises } from "../scripts/fta-report";
+import { overCap, RISE_FLOOR, SCORE_CAP, scoreRises } from "../scripts/fta-report";
 
 describe("scoreRises", () => {
   test("a rise fails and names the file with both scores", () => {
@@ -29,6 +29,21 @@ describe("scoreRises", () => {
     );
     expect(scoreRises([{ file_name: "a.ts", fta_score: 70 }], [{ file_name: "a.ts", fta_score: 76 }])).toEqual([
       { file: "src/a.ts", base: 70, now: 76 },
+    ]);
+  });
+});
+
+describe("overCap", () => {
+  test("a file over the cap fails, new or not, and one at the cap passes", () => {
+    const base = [{ file_name: "b.ts", fta_score: SCORE_CAP + 5 }];
+    const now = [
+      { file_name: "a.ts", fta_score: SCORE_CAP },
+      { file_name: "b.ts", fta_score: SCORE_CAP + 1 },
+      { file_name: "c.ts", fta_score: SCORE_CAP + 2 },
+    ];
+    expect(overCap(base, now)).toEqual([
+      { file: "src/b.ts", base: SCORE_CAP + 5, now: SCORE_CAP + 1 },
+      { file: "src/c.ts", base: undefined, now: SCORE_CAP + 2 },
     ]);
   });
 });
