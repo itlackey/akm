@@ -119,9 +119,12 @@ export async function hostEnvironment(
 ) {
   const next = { ...env };
   // Electron's Node child uses a launcher for bundled workspace commands.
-  // Never pass it (or the private session) to the real host CLI/harnesses.
+  // Never pass it (or the web secret) to the real host CLI/harnesses.
   for (const key of Object.keys(next))
-    if (/^AKM_(?:LAUNCHER_|DESKTOP_)/.test(key) || ["ELECTRON_RUN_AS_NODE", "NODE_OPTIONS", "NODE_PATH"].includes(key))
+    if (
+      /^AKM_(?:LAUNCHER_|DESKTOP_)/.test(key) ||
+      ["AKM_WEB_SECRET", "ELECTRON_RUN_AS_NODE", "NODE_OPTIONS", "NODE_PATH"].includes(key)
+    )
       delete next[key];
   const paths = (next.PATH ?? "").split(path.delimiter).filter((item) => path.isAbsolute(item));
   const extra = [".local/bin", ".bun/bin", ".opencode/bin"].map((item) => path.join(home, item));

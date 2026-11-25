@@ -478,6 +478,7 @@ export async function launchFixture({
   empty = false,
   execArgv = [],
   configureFixture,
+  login = true,
 } = {}) {
   const fixture = await createFixture({ assetCount, git, empty, packageRoot: appRoot });
   if (configureFixture) await configureFixture(fixture);
@@ -534,27 +535,33 @@ export async function launchFixture({
       });
     });
     // Log in through the login form, as a person does. The session cookie is what `call` and `server.cookie` use.
-    const login = await fetch(`${ready.origin}/api/session`, {
-      method: "POST",
-      redirect: "manual",
-      headers: { Origin: ready.origin, "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ secret }),
-    });
-    assert.equal(login.status, 303);
-    const setCookie = login.headers.get("set-cookie");
-    assert.ok(setCookie, `Login must set a cookie. ${logs}`);
-    const cookie = setCookie.split(";")[0];
-    // `url` is where a test's browser starts. A cookie is shared by every port of a host, so this stand-in for a
-    // launcher gives any new browser context the session above and sends it on to the app, as Desktop's window has.
-    door = http.createServer((_req, res) => {
-      res.writeHead(302, {
-        "Set-Cookie": `${cookie}; Path=/; HttpOnly; SameSite=Strict`,
-        Location: `${ready.origin}/`,
+    // `login: false` is for a test whose origin is not the server's own address (a proxy): it logs in itself.
+    let cookie;
+    let url = ready.origin;
+    if (login) {
+      const response = await fetch(`${ready.origin}/api/session`, {
+        method: "POST",
+        redirect: "manual",
+        headers: { Origin: ready.origin, "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ secret }),
       });
-      res.end();
-    });
-    await new Promise((resolve) => door.listen(0, "127.0.0.1", resolve));
-    const url = `http://127.0.0.1:${door.address().port}/`;
+      assert.equal(response.status, 303);
+      const setCookie = response.headers.get("set-cookie");
+      assert.ok(setCookie, `Login must set a cookie. ${logs}`);
+      cookie = setCookie.split(";")[0];
+      const session = cookie;
+      // `url` is where a test's browser starts. A cookie is shared by every port of a host, so this stand-in for a
+      // launcher gives any new browser context the session above and sends it on to the app, as Desktop's window has.
+      door = http.createServer((_req, res) => {
+        res.writeHead(302, {
+          "Set-Cookie": `${session}; Path=/; HttpOnly; SameSite=Strict`,
+          Location: `${ready.origin}/`,
+        });
+        res.end();
+      });
+      await new Promise((resolve) => door.listen(0, "127.0.0.1", resolve));
+      url = `http://127.0.0.1:${door.address().port}/`;
+    }
     const call = async (pathname, body) => {
       const response = await fetch(`${ready.origin}${pathname}`, {
         method: body === undefined ? "GET" : "POST",

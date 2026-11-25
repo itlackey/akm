@@ -20,9 +20,6 @@ import { createFixture } from "../scripts/fixture.mjs";
 
 const appRoot = process.env.AKM_DESKTOP_TEST_APP_ROOT ?? fileURLToPath(new URL("..", import.meta.url));
 const server = path.join(appRoot, "server/server.mjs");
-// The configured settings (allowed hosts, frame parents) are read through akm-cli; tests that set them need that.
-const configurable = await import("akm-cli/workspace").then((m) => typeof m.config?.webSettings === "function");
-const needsConfig = configurable ? false : "akm-cli has no experimental.web yet";
 const form = (fields) => new URLSearchParams(fields).toString();
 const FORM = "application/x-www-form-urlencoded";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -475,6 +472,30 @@ test("a browser opens only with --open, and logs in only with --auto-login", {
   assert.equal((await auto.request("/api/session", { headers: { Cookie: cookieOf(arrived) } })).status, 200);
 });
 
+test("the environment's secret does not depend on the configured reference", async (t) => {
+  const reference = "$AKM_WEB_TEST_UNSET_REFERENCE";
+  const app = await start(t, { web: { secret: reference } });
+  assert.equal((await app.request("/api/session", { headers: app.bearer })).status, 200);
+  const unread = await createFixture({ packageRoot: appRoot, index: false });
+  try {
+    const file = path.join(unread.root, "config/config.json");
+    const config = JSON.parse(await readFile(file, "utf8"));
+    config.experimental = { web: { secret: reference } };
+    await writeFile(file, JSON.stringify(config));
+    const child = spawn(process.execPath, [server], { env: { ...unread.env }, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    for (const stream of [child.stdout, child.stderr])
+      stream.on("data", (chunk) => {
+        output += chunk;
+      });
+    const [code] = await new Promise((resolve) => child.once("exit", (...exit) => resolve(exit)));
+    assert.equal(code, 2, "with no AKM_WEB_SECRET the unreadable reference stops startup");
+    assert.match(output, /AKM_WEB_TEST_UNSET_REFERENCE/);
+  } finally {
+    await unread.cleanup();
+  }
+});
+
 test("AKM Desktop's launch settings ignore the address flags", async (t) => {
   const app = await start(t, {
     env: { AKM_DESKTOP_NATIVE: "1" },
@@ -609,9 +630,7 @@ async function proxy(t, { port, internal, secret }) {
   return listener.address().port;
 }
 
-test("different internal and public hosts: the public origin is what the framework sees", {
-  skip: needsConfig,
-}, async (t) => {
+test("different internal and public hosts: the public origin is what the framework sees", async (t) => {
   // The public origin is the proxy's address as the browser sees it; no name needs to resolve for these requests.
   const origin = "http://public.example:4242";
   const app = await start(t, {
@@ -660,7 +679,7 @@ test("different internal and public hosts: the public origin is what the framewo
   assert.equal((await app.request("/api/session", { host: "akm-internal", headers: app.bearer })).status, 200);
 });
 
-test("framing: denied by default; allowed for exactly the configured parents", { skip: needsConfig }, async (t) => {
+test("framing: denied by default; allowed for exactly the configured parents", async (t) => {
   const plain = await start(t);
   const denied = await plain.request("/", { headers: { ...plain.bearer, Accept: "text/html" } });
   assert.match(denied.headers["content-security-policy"], /frame-ancestors 'none'/);
@@ -719,7 +738,6 @@ test("framing: denied by default; allowed for exactly the configured parents", {
 });
 
 test("a frame shows the login form or follows a login link, for an allowed parent only", {
-  skip: needsConfig,
   timeout: 120000,
 }, async (t) => {
   // A page that frames `target`, on a port of its own. The allowed parent's origin is in the server's config.

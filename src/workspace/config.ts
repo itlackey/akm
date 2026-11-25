@@ -132,9 +132,10 @@ export function get() {
 /**
  * The `experimental.web` settings `akm-web` starts with. `secret` is the resolved value of the configured reference
  * (`undefined` when none is set); a reference that cannot be read throws an error naming it, never the value. The
- * `AKM_WEB_SECRET` override and the secret's length are the server's to decide.
+ * `AKM_WEB_SECRET` override and the secret's length are the server's to decide. With `resolveSecret: false` the
+ * reference is not read and `secret` is omitted, so an override does not depend on the configured reference.
  */
-export function webSettings(): {
+export function webSettings(options: { resolveSecret?: boolean } = {}): {
   host?: string;
   port?: number;
   origin?: string;
@@ -144,7 +145,7 @@ export function webSettings(): {
 } {
   const web = loadConfig().experimental?.web;
   let secret: string | undefined;
-  if (web?.secret !== undefined) {
+  if (web?.secret !== undefined && options.resolveSecret !== false) {
     try {
       secret = resolveSecret(web.secret, storeSecretResolver.resolveSecret);
     } catch {

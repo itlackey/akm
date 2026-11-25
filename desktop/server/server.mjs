@@ -262,11 +262,11 @@ function parseArgs(argv) {
  * The web settings in akm's config (`experimental.web`), through akm-cli. Nothing is configured when akm-cli has none.
  * @returns {Promise<{ host?: string, port?: number, origin?: string, allowedHosts: string[], frameParents: string[], secret?: string }>}
  */
-async function webSettings() {
+/** @param {boolean} overridden */
+async function webSettings(overridden) {
   const { config } = await import("akm-cli/workspace");
-  // Until akm-cli ships webSettings, nothing is configured. Remove this fallback (and the cast) when it does.
-  const settings = /** @type {any} */ (config)?.webSettings;
-  return typeof settings === "function" ? settings() : { allowedHosts: [], frameParents: [] };
+  // An AKM_WEB_SECRET override does not depend on the configured reference, so it is not read then.
+  return config.webSettings({ resolveSecret: !overridden });
 }
 
 /**
@@ -286,7 +286,7 @@ async function resolveSettings(args, env) {
     throw new Error("--auto-login needs --open: it logs in the browser that --open starts.");
   if (env.AKM_DESKTOP_NATIVE === "1")
     return { host: "127.0.0.1", port: port ?? 0, secret: envSecret || undefined, allowedHosts: [], frameParents: [] };
-  const web = await webSettings();
+  const web = await webSettings(Boolean(envSecret));
   return {
     host: /** @type {string | undefined} */ (args.host) || web.host,
     port: port ?? web.port ?? 0,

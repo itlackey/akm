@@ -7,8 +7,10 @@
 // outside `/akm/`, so a link, an asset or an API call that assumes the root of the site shows up as a failure.
 
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import http from "node:http";
+import net from "node:net";
+import path from "node:path";
 import test from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { answered, launchFixture } from "./support.mjs";
@@ -16,24 +18,27 @@ import { answered, launchFixture } from "./support.mjs";
 const PREFIX = "/akm";
 const FRAME_HOST = "/frame-host.html"; // a page of the proxy's own origin (the "app"), not part of the UI
 
-/**
- * The ONE place this test knows how the browser is let in. Today the fixture's bootstrap leaves a session cookie and
- * the server accepts writes only from its own origin and Host; the proxy adds the cookie and presents the server's
- * own Host and Origin, as a broker holding the credential would. When the secret header replaces the cookie
- * (`Authorization: Bearer <secret>`), this is a one-line change.
- */
-async function credentialHeaders(server) {
-  if (!server.cookie) {
-    const response = await fetch(server.url, { redirect: "manual" });
-    server.cookie = response.headers.get("set-cookie").split(";")[0];
-  }
-  return { cookie: server.cookie, host: new URL(server.origin).host, origin: server.origin };
+const FORM = "application/x-www-form-urlencoded";
+
+async function freePort() {
+  const probe = net.createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const { port } = probe.address();
+  await new Promise((resolve) => probe.close(resolve));
+  return port;
 }
 
-/** A prefix-stripping proxy in front of `server`. `frameable` removes the two headers that deny framing. */
-async function startProxy(server, { frameable = false } = {}) {
+/**
+ * A prefix-stripping proxy and the server behind it, as a broker serving the UI under `/akm/` would run them. The
+ * server's origin is the proxy's, it listens on a port of its own, and the proxy reaches it under another name
+ * (`allowedHosts`). `header` makes the proxy add the secret (a broker); without it the browser logs in itself.
+ * Every URL the browser asks the proxy for is recorded, and anything outside `/akm/` answers 404, so a link, an asset
+ * or an API call that assumes the root of the site shows up as a failure.
+ */
+async function startProxied(t, { header = true, ...options } = {}) {
   const requests = [];
-  const proxy = http.createServer(async (req, res) => {
+  let server;
+  const proxy = http.createServer((req, res) => {
     const url = req.url ?? "/";
     requests.push({ method: req.method, url });
     if (url === FRAME_HOST) {
@@ -50,24 +55,14 @@ async function startProxy(server, { frameable = false } = {}) {
       res.writeHead(404, { "content-type": "text/plain" });
       return res.end("outside the prefix");
     }
-    const headers = { ...req.headers, ...(await credentialHeaders(server)) };
-    if (!["GET", "HEAD"].includes(req.method)) headers.origin = server.origin;
-    else delete headers.origin;
+    // The browser's own Origin and cookies pass through; the proxy names the server by its private host.
+    const headers = { ...req.headers, host: `127.0.0.1:${serverPort}` };
+    if (header) headers.authorization = server.headers.Authorization;
+    else delete headers.authorization;
     const upstream = http.request(
-      {
-        host: "127.0.0.1",
-        port: new URL(server.origin).port,
-        method: req.method,
-        path: url.slice(PREFIX.length),
-        headers,
-      },
+      { host: "127.0.0.1", port: serverPort, method: req.method, path: url.slice(PREFIX.length), headers },
       (response) => {
-        const out = { ...response.headers };
-        if (frameable) {
-          delete out["x-frame-options"];
-          delete out["content-security-policy"];
-        }
-        res.writeHead(response.statusCode ?? 502, out);
+        res.writeHead(response.statusCode ?? 502, response.headers);
         response.pipe(res); // streamed, not buffered
       },
     );
@@ -79,28 +74,46 @@ async function startProxy(server, { frameable = false } = {}) {
   });
   await new Promise((resolve) => proxy.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${proxy.address().port}`;
+  const serverPort = await freePort();
+  server = await launchFixture({
+    ...options,
+    login: false,
+    configureFixture: async (fixture) => {
+      await options.configureFixture?.(fixture);
+      const file = path.join(fixture.root, "config/config.json");
+      const config = JSON.parse(await readFile(file, "utf8"));
+      config.experimental = {
+        ...config.experimental,
+        web: { port: serverPort, origin, allowedHosts: ["127.0.0.1"], frameParents: [origin] },
+      };
+      await writeFile(file, JSON.stringify(config));
+    },
+  });
+  t.after(() => server.stop());
+  t.after(() => new Promise((resolve) => (proxy.closeAllConnections(), proxy.close(resolve))));
+  assert.equal(server.origin, origin);
   return {
+    server,
+    serverPort,
     origin,
     requests,
+    at: (route) => `${origin}${PREFIX}${route}`,
     outside: () => requests.filter((r) => r.url !== FRAME_HOST && !r.url.startsWith(`${PREFIX}/`) && r.url !== PREFIX),
-    close: () => new Promise((resolve) => (proxy.closeAllConnections(), proxy.close(resolve))),
   };
 }
 
 // The UI has no streamed request (no SSE, no streamed fetch body; `grep` of `desktop/src` finds none), so there is no
 // streaming case here; the proxy still pipes every response rather than buffering it.
 test("the UI works under a path prefix that the proxy removes", { timeout: 180000 }, async (t) => {
-  const server = await launchFixture({ proposals: true });
-  t.after(() => server.stop());
-  const proxy = await startProxy(server);
-  t.after(() => proxy.close());
+  const proxy = await startProxied(t, { proposals: true });
+  const { server } = proxy;
   const browser = await chromium.launch();
   t.after(() => browser.close());
   const page = await browser.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.setDefaultTimeout(8000);
-  const at = (route) => `${proxy.origin}${PREFIX}${route}`;
+  const at = proxy.at;
   const nav = (name) =>
     page
       .getByRole("navigation", { name: "Primary navigation" })
@@ -200,39 +213,63 @@ test("the UI works under a path prefix that the proxy removes", { timeout: 18000
   });
 });
 
-// Framed on a page of the proxy's origin. The server denies framing today (X-Frame-Options: DENY and CSP
-// frame-ancestors 'none'); `frameParents` (another lane) lifts that for a named parent. With `frameable` the proxy
-// removes those two headers, which tests only this UI's own use of the prefix inside a frame.
-for (const { name, frameable, todo } of [
-  { name: "in a frame, with the framing headers removed by the proxy", frameable: true },
-  {
-    name: "in a frame, as served (needs frameParents)",
-    frameable: false,
-    todo: "framing is denied until frameParents exists",
-  },
-]) {
-  test(`the UI works under a path prefix ${name}`, { timeout: 120000, todo }, async (t) => {
-    const server = await launchFixture();
-    t.after(() => server.stop());
-    const proxy = await startProxy(server, { frameable });
-    t.after(() => proxy.close());
-    const browser = await chromium.launch();
-    t.after(() => browser.close());
-    const page = await browser.newPage();
-    page.setDefaultTimeout(8000);
-    await page.goto(`${proxy.origin}${FRAME_HOST}`);
-    const frame = page.frameLocator("#akm");
-    const link = (label) =>
-      frame
-        .getByRole("navigation", { name: "Primary navigation" })
-        .getByRole("link", { name: new RegExp(`^${label}(?:\\s|$)`) });
-    await expect(link("Review")).toBeVisible();
-    await link("Settings").click();
-    await expect(frame.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
-    assert.match(page.frames().at(-1).url(), /\/akm\/settings\//);
-    assert.deepEqual(proxy.outside(), []);
+// Framed on a page of the proxy's origin, which `frameParents` names: the response allows exactly that parent.
+test("the UI works under a path prefix in a frame, as served", { timeout: 120000 }, async (t) => {
+  const proxy = await startProxied(t);
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  page.setDefaultTimeout(8000);
+  await page.goto(`${proxy.origin}${FRAME_HOST}`);
+  const frame = page.frameLocator("#akm");
+  const link = (label) =>
+    frame
+      .getByRole("navigation", { name: "Primary navigation" })
+      .getByRole("link", { name: new RegExp(`^${label}(?:\\s|$)`) });
+  await expect(link("Review")).toBeVisible();
+  await link("Settings").click();
+  await expect(frame.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+  assert.match(page.frames().at(-1).url(), /\/akm\/settings\//);
+  assert.deepEqual(proxy.outside(), []);
+});
+
+// A person without the header: the form is served at /akm/ and its post lands back under /akm/ (relative redirects).
+test("a person logs in through the proxy under the prefix, by the form and by a login link", {
+  timeout: 120000,
+}, async (t) => {
+  const proxy = await startProxied(t, { header: false });
+  const { server } = proxy;
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  page.setDefaultTimeout(8000);
+  const nav = page.getByRole("navigation", { name: "Primary navigation" });
+  await page.goto(proxy.at("/settings/bundles"));
+  await expect(page.getByLabel("Secret")).toBeVisible();
+  await page.getByLabel("Secret").fill("x".repeat(40));
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page).toHaveURL(proxy.at("/api/session"));
+  await page.getByLabel("Secret").fill(server.secret);
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(nav).toBeVisible();
+  await expect(page).toHaveURL(proxy.at("/"));
+
+  // A login link: a program asks the server for it (with the header and the public Origin); the app puts its own
+  // prefix in front of the address it gets back, and the person opens that through the proxy.
+  const issued = await fetch(`http://127.0.0.1:${proxy.serverPort}/api/session/link`, {
+    method: "POST",
+    headers: { ...server.headers, Origin: proxy.origin, Host: `127.0.0.1:${proxy.serverPort}` },
   });
-}
+  assert.equal(issued.status, 200);
+  const { url } = await issued.json();
+  assert.match(url, new RegExp(`^${proxy.origin}/\\?login=`));
+  const fresh = await browser.newPage();
+  await fresh.goto(`${proxy.origin}${PREFIX}/${new URL(url).search}`);
+  await expect(fresh.getByRole("navigation", { name: "Primary navigation" })).toBeVisible();
+  await expect(fresh).toHaveURL(proxy.at("/"));
+  assert.deepEqual(proxy.outside(), []);
+});
 
 // A root-absolute address in source ignores the prefix. Links, `goto`, `fetch` and `redirect` take app paths through
 // `appHref` (`lib/client.ts`); this fails, naming file and line, if a literal slips past it.

@@ -93,6 +93,11 @@ describe("config.webSettings", () => {
     expect(() => config.webSettings()).toThrow("${secrets/missing}");
   });
 
+  test("does not read the reference when asked not to", () => {
+    configure({ secret: "$WEB_TEST_SECRET", port: 4096 });
+    expect(config.webSettings({ resolveSecret: false })).toEqual({ port: 4096, allowedHosts: [], frameParents: [] });
+  });
+
   test("get() shows the reference and never resolves it", () => {
     process.env.WEB_TEST_SECRET = "resolved-value-that-must-not-appear";
     configure({ secret: "$WEB_TEST_SECRET" });

@@ -185,8 +185,8 @@ export namespace config {
   function get(): unknown;
   /** Replace one connection with `entry` as a whole (removed aliases and options leave the file); a literal API key is refused. */
   function saveConnection(input: { name: string; entry: Record<string, unknown> }): { saved: boolean };
-  /** The `experimental.web` settings of `akm-web`; `secret` is the resolved value of the configured reference (`undefined` when none), and a reference that cannot be read throws an error naming it, never the value. */
-  function webSettings(): {
+  /** The `experimental.web` settings of `akm-web`; `secret` is the resolved value of the configured reference (`undefined` when none), and a reference that cannot be read throws an error naming it, never the value. With `{ resolveSecret: false }` the reference is not read and `secret` is omitted. */
+  function webSettings(options?: { resolveSecret?: boolean }): {
     host?: string;
     port?: number;
     origin?: string;
