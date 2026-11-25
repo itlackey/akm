@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
-  import { api, title } from "./client";
+  import { api, appHref, title } from "./client";
   import { navigate } from "./navigation";
   import { plural } from "./review-model";
   import { assetCounts, COUNTS_UNKNOWN, scopeText, type Overview, type ProjectRow } from "./projects-model";
@@ -109,8 +109,9 @@
 </script>
 
 <nav class="crumbs" aria-label="Breadcrumb">
-  <a href="/projects">Projects</a> › <a href={base}>{name}</a> ›
-  {#if bundle}<a href={`${base}/assets`}>{bundle}</a>{:else}<span aria-current="page">All read bundles</span>{/if}
+  <a href={appHref("/projects")}>Projects</a> › <a href={appHref(base)}>{name}</a> ›
+  {#if bundle}<a href={appHref(`${base}/assets`)}>{bundle}</a>{:else}<span aria-current="page">All read bundles</span
+    >{/if}
 </nav>
 <div class="head" bind:this={root}>
   <h1 id="assets-title" tabindex="-1">Assets in {bundle || name}</h1>
@@ -120,15 +121,16 @@
 </div>
 <p class="muted small context">
   {filtersText ? `Filtered by ${filtersText}.` : "No filters."} Ranked by {preferText}.
-  <a href={`${base}/edit`}>Edit project</a>
+  <a href={appHref(`${base}/edit`)}>Edit project</a>
 </p>
 <div class="controls">
   <nav class="chips" aria-label="Bundles">
-    <a class="chip" href={href({ bundle: "" })} aria-current={!bundle ? "page" : undefined}>All read bundles</a>
+    <a class="chip" href={appHref(href({ bundle: "" }))} aria-current={!bundle ? "page" : undefined}>All read bundles</a
+    >
     {#each overview?.bundles ?? [] as b}
       {#if b.configured && b.enabled && b.readable}<a
           class="chip"
-          href={href({ bundle: b.name })}
+          href={appHref(href({ bundle: b.name }))}
           aria-current={bundle === b.name ? "page" : undefined}>{b.name}</a
         >{:else}<span
           class="chip disabled"
@@ -158,23 +160,23 @@
 {#if overview && !readable.length}<div class="state">
     <h2>Nothing to read</h2>
     <p>Every bundle this project reads is disabled or not registered.</p>
-    <a class="btn" href="/settings/bundles">Bundles & index</a>
+    <a class="btn" href={appHref("/settings/bundles")}>Bundles & index</a>
   </div>{:else if result && !hits.length && !loading}
   {#if searching}<div class="state">
       <h2>No matches</h2>
       <p>Try other words or clear the search.</p>
-      <a class="btn" href={href({ q: "", type: "" })}>Clear search</a>
+      <a class="btn" href={appHref(href({ q: "", type: "" }))}>Clear search</a>
     </div>{:else if !counts}<div class="state">
       <h2>No assets to show</h2>
       <p>{COUNTS_UNKNOWN}</p>
-      <a class="btn" href="/settings/bundles">Bundles & index</a>
+      <a class="btn" href={appHref("/settings/bundles")}>Bundles & index</a>
     </div>{:else}<div class="state">
       <h2>No assets match this project</h2>
       <p>
         The read {bundle ? "bundle has" : "bundles have"}
         {plural(counts.total, "asset")}, but none match the filters.
       </p>
-      <a class="btn" href={`${base}/edit`}>Edit project</a>
+      <a class="btn" href={appHref(`${base}/edit`)}>Edit project</a>
     </div>{/if}
 {:else}
   <p role="status" class="sr-only">{loading ? "Loading assets…" : `${plural(hits.length, "asset")} shown`}</p>
@@ -184,7 +186,7 @@
           <h2>
             <a
               class="library-hit-content"
-              href={`${base}/asset?ref=${encodeURIComponent(hit.ref)}&returnTo=${encodeURIComponent(here)}`}
+              href={appHref(`${base}/asset?ref=${encodeURIComponent(hit.ref)}&returnTo=${encodeURIComponent(here)}`)}
               >{title(hit)}</a
             >
           </h2>

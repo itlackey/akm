@@ -5,6 +5,7 @@
 -->
 
 <script lang="ts">
+  import { appHref } from "./client";
   import Icon from "./Icon.svelte";
   import { filterLine, type ProjectRow } from "./projects-model";
 
@@ -19,7 +20,7 @@
 
 <div class="list-head">
   <h1 id="projects-title" tabindex="-1">Projects</h1>
-  <a class="btn" href="/projects?add"><Icon name="plus" size={16} /> Add project</a>
+  <a class="btn" href={appHref("/projects?add")}><Icon name="plus" size={16} /> Add project</a>
 </div>
 <p class="muted">The places you work. In a project's directories akm reads, ranks and writes with its settings.</p>
 <p class="muted small">Config file · <span class="mono wrap">{configPath}</span></p>
@@ -35,12 +36,12 @@
 {#if !projects.length}<div class="state">
     <h2>No projects yet</h2>
     <p>A project tells akm what to read and write in the directories you work in.</p>
-    <a class="btn" href="/projects?add">Add project</a>
+    <a class="btn" href={appHref("/projects?add")}>Add project</a>
   </div>{:else}<div class="project-grid">
     {#each projects as project (project.name)}
       <article class="card project-card">
         <header class="card-head">
-          <h2><a href={`/projects/${encodeURIComponent(project.name)}`}>{project.name}</a></h2>
+          <h2><a href={appHref(`/projects/${encodeURIComponent(project.name)}`)}>{project.name}</a></h2>
           <span class="badge">{project.inherited ? "Inherited" : "Local"}</span>
         </header>
         <p class="mono wrap small">

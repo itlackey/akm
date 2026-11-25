@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { api } from "./client";
+  import { api, appHref } from "./client";
   import { libraryRead } from "./library-model";
   import Markdown from "./Markdown.svelte";
   import Properties from "./Properties.svelte";
@@ -51,9 +51,9 @@
 <header>
   <h1>{file.split("/").at(-1)}</h1>
   <div class="actions">
-    {#if folderHref}<a href={folderHref}>Back to folder</a>{/if}{#if source?.actions.edit.allowed}<a
+    {#if folderHref}<a href={appHref(folderHref)}>Back to folder</a>{/if}{#if source?.actions.edit.allowed}<a
         class="btn btn-secondary"
-        href={"/library/edit?" + new URLSearchParams({ bundle, file, returnTo })}>Edit file</a
+        href={appHref("/library/edit?" + new URLSearchParams({ bundle, file, returnTo }))}>Edit file</a
       >{:else if source}<button class="btn btn-secondary" aria-disabled="true" aria-describedby="edit-reason"
         >Edit file</button
       >{/if}

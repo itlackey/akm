@@ -5,6 +5,7 @@
 -->
 
 <script lang="ts">
+  import { appHref } from "./client";
   import { onDestroy, tick } from "svelte";
   import { workspace } from "./state/workspace.svelte";
   import {
@@ -324,7 +325,7 @@
       >{changes ? `${changes} unsaved ${changes === 1 ? "change" : "changes"}` : "No unsaved changes"}</span
     >
     <div class="btn-row">
-      <a class="btn btn-secondary" href={cancelHref}>Cancel</a><button
+      <a class="btn btn-secondary" href={appHref(cancelHref)}>Cancel</a><button
         type="submit"
         disabled={busy || (!!original && !changes)}
         >{#if busy && !removing}<span class="spinner" aria-hidden="true"></span> Saving…{:else}{original
