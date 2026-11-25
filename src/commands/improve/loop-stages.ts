@@ -5,7 +5,7 @@
 /** The improve loop (reflect + distill per ref), the post-loop checks and the maintenance passes. */
 
 import { indexFiles } from "../../core/assets/files";
-import { materialiseBundleDir } from "../../core/bundle-at-dir";
+import { bundleAt } from "../../core/bundle-at-dir";
 import { daysToMs } from "../../core/common";
 import { type AkmConfig, type ImproveProfileConfig, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -523,7 +523,7 @@ export async function runImproveMaintenancePasses(args: {
         if (dbCell.current) closeDatabase(dbCell.current);
         dbCell.current = undefined;
         try {
-          await indexFiles(materialiseBundleDir(primaryStashDir), written);
+          await indexFiles(bundleAt(primaryStashDir), written);
         } finally {
           dbCell.current = openIndexDb();
         }

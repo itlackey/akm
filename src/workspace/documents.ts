@@ -56,7 +56,7 @@ async function resolveWritableIndexedAsset(ref: string) {
   if (canonical === null) throw new UsageError(NO_INDEX_MESSAGE, "MISSING_REQUIRED_ARGUMENT", "akm index");
   if (!canonical) throw new UsageError("Only indexed documents can be edited.");
   const target = resolveBundleWriteTarget(loadConfig(), parseBundleRef(canonical).bundle!);
-  assertAdapterWrites(target.source.name);
+  assertAdapterWrites(target.source);
   return { canonical, target, path: shown.path, type: shown.type, name: shown.name };
 }
 
@@ -87,7 +87,7 @@ async function loadSource(ref: string): Promise<{
   if (!typeDir) throw new UsageError("Only indexed documents can be edited.");
   // The document is the one asset the target's adapter places under that type and name.
   const asset = findAsset(found.canonical);
-  const placed = addressOf(found.target.source.name, conceptIdFromTypeName(found.type, found.name));
+  const placed = addressOf(found.target.source, conceptIdFromTypeName(found.type, found.name));
   // The writers keep a document at the file they place it in: one held in another spelling of it cannot be saved.
   if (asset === undefined || asset.conceptId !== placed.conceptId || placed.heldElsewhere === true)
     throw new UsageError(

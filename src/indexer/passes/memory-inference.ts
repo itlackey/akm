@@ -53,7 +53,7 @@ import { type Asset, listAssets, readAsset } from "../../core/assets/read";
 import { assetTypesByContent, indexedPathOf } from "../../core/assets/type";
 import { writeAssets } from "../../core/assets/write";
 import { bestEffort } from "../../core/best-effort";
-import { materialiseBundleDir } from "../../core/bundle-at-dir";
+import { bundleAt } from "../../core/bundle-at-dir";
 import { asNonEmptyString } from "../../core/common";
 import { concurrentMap } from "../../core/concurrent";
 import { ConfigError } from "../../core/errors";
@@ -637,7 +637,7 @@ function scanMemories(stashRoot: string): { pending: MemoryRecord[]; scopeDrift:
   const out: MemoryRecord[] = [];
   const parentScopes = new Map<string, StashEntryScope>();
   const children: { filePath: string; name: string; data: Record<string, unknown> }[] = [];
-  for (const { memory, name: relName } of listMemories(materialiseBundleDir(stashRoot))) {
+  for (const { memory, name: relName } of listMemories(bundleAt(stashRoot))) {
     const filePath = indexedPathOf(memory);
     let raw: string;
     try {
@@ -758,7 +758,7 @@ export function isPendingMemory(frontmatter: Record<string, unknown>, filePath?:
  * The memories of the bundle `bundle`, each with its name: its path under the memory folder. One listing, typed by
  * content, so no index is read or written (a dry run stays read-only) and a file the walk does not reach is none.
  */
-export function listMemories(bundle: string): Array<{ memory: Asset; name: string }> {
+export function listMemories(bundle: ReturnType<typeof bundleAt>): Array<{ memory: Asset; name: string }> {
   const folder = conceptIdFromTypeName("memory", "");
   const listed = listAssets({ bundle }).flatMap((memory) =>
     memory.conceptId.startsWith(folder) && memory.conceptId.length > folder.length
@@ -790,7 +790,7 @@ interface WriteDerivedOutcome {
  * convention — used both by the pre-LLM existence check (#588) and the write path.
  */
 function derivedChildExists(parent: MemoryRecord): boolean {
-  return readAsset(materialiseBundleDir(parent.stashRoot), `${parent.ref}.derived`) !== undefined;
+  return readAsset(bundleAt(parent.stashRoot), `${parent.ref}.derived`) !== undefined;
 }
 
 async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft): Promise<WriteDerivedOutcome> {

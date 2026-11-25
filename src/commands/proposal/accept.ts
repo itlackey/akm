@@ -81,7 +81,7 @@ const PROMOTION_LINT_ISSUE_TYPES = new Set<LintIssueType>(["unquoted-colon", "mi
 export async function indexWrittenProposalAssets(target: ResolvedWriteTarget, assetPaths: string[]): Promise<void> {
   const label = assetPaths.join(", ");
   try {
-    if (!(await indexFiles(target.source.name, assetPaths))) {
+    if (!(await indexFiles(target.source, assetPaths))) {
       warn(`[proposals] ${label} was written but not indexed; run \`akm index\`.`);
     }
   } catch (error) {
@@ -346,11 +346,11 @@ export function preflightProposalPromotion(
     );
   }
   const target = resolveProposalWriteTarget(config, prepared, options.target, options.queueTarget);
-  const ref = addressOf(target.source.name, prepared.ref);
+  const ref = addressOf(target.source, prepared.ref);
   if (!ref.exists && ref.file === undefined && stashDirFor(ref.type) === undefined) {
     throw new UsageError(`Proposal ${proposal.id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
   }
-  assertAdapterWrites(target.source.name, ref.type);
+  assertAdapterWrites(target.source, ref.type);
   const assetPath = ref.file;
   if (!assetPath) {
     throw new UsageError(`Proposal ${proposal.id} targets unknown asset type "${ref.type}".`, "INVALID_FLAG_VALUE");
@@ -359,7 +359,7 @@ export function preflightProposalPromotion(
   let stampedContent = markdown
     ? stampProposalProvenance(repairedContent, prepared, options.gateDecision, ctx, nowIso(ctx))
     : repairedContent;
-  const live = markdown && ref.exists ? readAsset(target.source.name, ref.conceptId) : undefined;
+  const live = markdown && ref.exists ? readAsset(target.source, ref.conceptId) : undefined;
   if (live) {
     // Keep the live target's bookkeeping frontmatter the proposal doesn't set
     // (STALE, R20) — dropping `inferenceProcessed` would re-run inference.
@@ -395,7 +395,7 @@ export function preflightProposalPromotion(
  */
 export function readFreshProposalTarget(
   proposal: Proposal,
-  bundle: string,
+  bundle: WriteTargetSource,
   address: AssetAddress,
   stampedContent: string,
 ): Buffer | undefined {
@@ -540,8 +540,8 @@ function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Pr
   // Every file the retirement touches goes into the accept's commit.
   const journal = beginWriteProvenance();
   try {
-    const sourceRef = addressOf(mutationTarget.source.name, accepted.promotionSource);
-    const source = sourceRef.exists ? readAsset(mutationTarget.source.name, sourceRef.conceptId) : undefined;
+    const sourceRef = addressOf(mutationTarget.source, accepted.promotionSource);
+    const source = sourceRef.exists ? readAsset(mutationTarget.source, sourceRef.conceptId) : undefined;
     if (!source) return;
     if (!accepted.promotionSourceHash) {
       warn(
@@ -598,7 +598,7 @@ async function promoteProposalWithLease(
     // Accepting again is a no-op, provided the published bytes are still there.
     const recorded = requireAcceptedTarget(proposal);
     const { assetPath } = acceptedAsset(proposal, target);
-    const current = readAsset(target.source.name, parseBundleRef(recorded.ref).conceptId);
+    const current = readAsset(target.source, parseBundleRef(recorded.ref).conceptId);
     if (!current || contentHash(current.entry.bytes()) !== recorded.contentHash) {
       throw new UsageError(`Accepted proposal ${id} does not match the current asset content.`, "INVALID_FLAG_VALUE");
     }
@@ -611,8 +611,8 @@ async function promoteProposalWithLease(
   const plannedPath = address?.file;
   if (!address || !plannedPath)
     throw new UsageError(`Cannot resolve proposal target ${proposal.ref}.`, "INVALID_PROPOSAL");
-  const backup = readFreshProposalTarget(proposal, mutationTarget.source.name, address, preflight.stampedContent);
-  assertAdapterWrites(mutationTarget.source.name, address.type);
+  const backup = readFreshProposalTarget(proposal, mutationTarget.source, address, preflight.stampedContent);
+  assertAdapterWrites(mutationTarget.source, address.type);
   const refIdentity = proposalRefIdentity(preflight.proposal.ref);
   const proposalForMutation: Proposal =
     refIdentity?.bundle === undefined
@@ -813,7 +813,7 @@ async function retireProposalWithLease(
       writeAssets(target, { purpose: "proposal-accept" }, (w) => w.retired()).map((retirement) => retirement.handle),
     );
     const archivedStill = archive?.retired.every(({ handle }) => held.has(handle)) === true;
-    if (readAsset(target.source.name, parseBundleRef(accepted.ref).conceptId) || !archivedStill) {
+    if (readAsset(target.source, parseBundleRef(accepted.ref).conceptId) || !archivedStill) {
       throw new UsageError(
         `Accepted retire proposal ${proposal.id} no longer matches its archive.`,
         "INVALID_FLAG_VALUE",
@@ -831,7 +831,7 @@ async function retireProposalWithLease(
   let scheduler: Awaited<ReturnType<typeof disableRetiredTask>>;
   if (!intent) {
     // Fresh accept — no recorded intent yet, so the target must still be there.
-    const current = readAsset(target.source.name, ref.conceptId);
+    const current = readAsset(target.source, ref.conceptId);
     if (!current) {
       throw new UsageError(
         `Retire proposal ${proposal.id} target (${proposal.ref}) no longer exists — it may already have been retired, promoted away, or removed by another proposal.`,
@@ -851,7 +851,7 @@ async function retireProposalWithLease(
         "INVALID_FLAG_VALUE",
       );
     }
-    assertAdapterWrites(target.source.name, ref.type);
+    assertAdapterWrites(target.source, ref.type);
     // Phase 1: record intent BEFORE any move, and BEFORE the supersede edge:
     // `backupContent` is `currentBytes`, read
     // above, before any mutation of this file. Recording first means a crash
@@ -873,8 +873,8 @@ async function retireProposalWithLease(
       }
     }
   } else {
-    assertAdapterWrites(target.source.name, ref.type);
-    assertRetiringTaskUnchanged(target.source.name, ref, intent, proposal);
+    assertAdapterWrites(target.source, ref.type);
+    assertRetiringTaskUnchanged(target.source, ref, intent, proposal);
     // Revalidate the survivor even after a partial archive. The recorded original
     // is the judged retired side when its file has already moved.
     if (working.retirement) {
@@ -883,7 +883,7 @@ async function retireProposalWithLease(
         proposal.ref,
         working.retirement,
         target.source,
-        readAsset(target.source.name, ref.conceptId)?.entry.bytes() ?? Buffer.from(intent.backupContent),
+        readAsset(target.source, ref.conceptId)?.entry.bytes() ?? Buffer.from(intent.backupContent),
       );
     }
     scheduler = await disableRetiredTask(ref, target.source.name);
@@ -898,7 +898,7 @@ async function retireProposalWithLease(
   let accepted: Proposal;
   try {
     // Native reconciliation awaits external work; a direct file edit can happen outside AKM's mutation lease.
-    assertRetiringTaskUnchanged(target.source.name, ref, intent, proposal);
+    assertRetiringTaskUnchanged(target.source, ref, intent, proposal);
 
     // Phase 2: retire, idempotently — a resumed call skips whichever asset a
     // retirement under this proposal's own id already holds. A failure undoes this
@@ -1000,7 +1000,7 @@ async function retireProposalWithLease(
 }
 
 function assertRetiringTaskUnchanged(
-  bundle: string,
+  bundle: WriteTargetSource,
   ref: AssetAddress,
   intent: RetireAcceptIntent,
   proposal: Proposal,
@@ -1108,7 +1108,7 @@ export function diffLoadedProposal(
   const target = resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget);
   const address = resolveAddressSafe(target.source, proposal.ref);
   const targetPath = address?.file;
-  const existing = address?.exists ? (readAsset(target.source.name, address.conceptId)?.entry.content() ?? null) : null;
+  const existing = address?.exists ? (readAsset(target.source, address.conceptId)?.entry.content() ?? null) : null;
   if (isRetireProposal(proposal)) {
     // A retire proposal's primary change deletes its target rather than
     // writing content (proposalContent() has nothing to read for a delete):
@@ -1148,7 +1148,7 @@ export function matchesBeforeHash(proposal: Proposal, bytes: Buffer): boolean {
 
 export function resolveAddressSafe(source: WriteTargetSource, ref: string): AssetAddress | undefined {
   try {
-    return addressOf(source.name, ref);
+    return addressOf(source, ref);
   } catch {
     return undefined;
   }
@@ -1157,5 +1157,5 @@ export function resolveAddressSafe(source: WriteTargetSource, ref: string): Asse
 /** The asset `ref` names in `source` now; undefined when none holds it, or the ref names none. */
 function currentAsset(source: WriteTargetSource, ref: string): Asset | undefined {
   const address = resolveAddressSafe(source, ref);
-  return address?.exists ? readAsset(source.name, address.conceptId) : undefined;
+  return address?.exists ? readAsset(source, address.conceptId) : undefined;
 }

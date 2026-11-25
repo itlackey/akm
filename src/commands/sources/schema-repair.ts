@@ -21,7 +21,7 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { lookupAsset } from "../../core/assets/read";
 import { assetType } from "../../core/assets/type";
 import { authoringRulesForType } from "../../core/authoring-rules";
-import { materialiseBundleDir } from "../../core/bundle-at-dir";
+import { bundleAt } from "../../core/bundle-at-dir";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
@@ -117,7 +117,7 @@ async function classifySchemaRepairs(args: {
     }
     try {
       // The asset is read through its bundle's adapter; its type is the index's (which fields to repair, and the type's standards and rules).
-      const owned = lookupAsset(failure.ref, { bundle: materialiseBundleDir(stashDir) });
+      const owned = lookupAsset(failure.ref, { bundle: bundleAt(stashDir) });
       if (!owned) {
         repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
         continue;

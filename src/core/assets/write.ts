@@ -33,7 +33,7 @@ import {
   recordWriteTargetPath,
 } from "../write-source";
 import { type Asset, assetOf, readFrom } from "./asset";
-import { type AssetBundle, assetBundleOf, bundleFor } from "./bundle";
+import { type AssetBundle, assetBundleOf, type BundleAddress, bundleFor, bundleNameOf } from "./bundle";
 import { forgetIndexedAsset, refreshIndexedAsset } from "./index-rows";
 import { assetRevision } from "./read";
 import { assetType } from "./type";
@@ -174,7 +174,7 @@ function gatedAddressIn(held: AssetBundle, ref: string): AssetAddress {
  * refuses nothing a write would refuse (a type the bundle's adapter does not write, a name it cannot place): nothing is
  * written, so the write refuses where it is made. Only an invalid ref throws.
  */
-export function addressOf(bundle: string, ref: string): AssetAddress {
+export function addressOf(bundle: BundleAddress, ref: string): AssetAddress {
   return addressIn(bundleFor(bundle), ref);
 }
 
@@ -182,7 +182,7 @@ export function addressOf(bundle: string, ref: string): AssetAddress {
  * The file `ref` is kept in (the existing asset's, else the one a create would write) in a bundle that keeps assets as
  * files; undefined for a store, which keeps none and is not asked. For checks on where a name lands, never to find it.
  */
-export function fileOfRef(bundle: string, ref: string): string | undefined {
+export function fileOfRef(bundle: BundleAddress, ref: string): string | undefined {
   const held = bundleFor(bundle);
   return held.isStore ? undefined : addressIn(held, ref).file;
 }
@@ -191,16 +191,16 @@ export function fileOfRef(bundle: string, ref: string): string | undefined {
  * The ref of the asset an old stored record named by a bundle-relative path (`changes[].path`), for converters only
  * (§8.4). Valid when no file holds the asset any more; undefined when the path is no asset's.
  */
-export function legacyRefOf(bundle: string, relPath: string): string | undefined {
+export function legacyRefOf(bundle: BundleAddress, relPath: string): string | undefined {
   const conceptId = bundleFor(bundle).identifyKey(relPath);
-  return conceptId === null ? undefined : makeBundleRef(bundle, conceptId);
+  return conceptId === null ? undefined : makeBundleRef(bundleNameOf(bundle), conceptId);
 }
 
 /**
  * The concept id of the asset a file of the directory bundle `bundle` would hold, from the path alone (the adapter's rule);
  * undefined when the file is outside the bundle or no asset's. For a caller that holds a file it read and writes the asset.
  */
-export function conceptIdAtFile(bundle: string, file: string): string | undefined {
+export function conceptIdAtFile(bundle: BundleAddress, file: string): string | undefined {
   const held = bundleFor(bundle);
   const key = toPosix(path.relative(held.root, file));
   return key === "" || key.startsWith("..") ? undefined : (held.identifyKey(key) ?? undefined);

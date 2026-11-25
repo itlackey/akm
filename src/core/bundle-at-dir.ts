@@ -12,11 +12,11 @@
  */
 
 import path from "node:path";
+import type { BundleAddress } from "./assets/gate";
 import { detectBundleAdapter } from "./assets/gate";
 import { bundleIdForDir } from "./bundle-id";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { bundleAtDir } from "./config/config-sources";
-import { holdMaterialised, materialisedBundles, materialisedIdOf, materialisedIdTaken } from "./materialised-bundles";
 
 /** The key rows for the bundle at `dir` are filed under: its id, else (no configured bundle) the directory's own path. */
 export function bundleKeyForDir(config: AkmConfig, dir: string): string {
@@ -41,31 +41,27 @@ export function bundleSourceAt(
 }
 
 /**
- * The id of the bundle at `dir`, for the facade, which takes bundle ids (`bundleFor`). The one function that makes a
- * directory addressable by an id; a command calls it where it holds a directory it was handed, once per directory (a
- * repeat answers the same id). Config is read first and never shadowed:
+ * The bundle at `dir` as the facade takes it, which a command asks where it holds a directory it was handed. Config is
+ * read first and never shadowed:
  *  - `as.name` (a name a stored record gave the directory) naming a configured bundle is that bundle;
  *  - a configured bundle at `dir`, enabled or not, is that bundle;
- *  - any other directory (a `--dir`, the implicit working bundle, `AKM_BUNDLE_DIR`) is materialised, in memory only,
- *    under `as.name`, else `bundleIdForDir`: its basename slug, or `<slug>-<8-hex of the path>` when a configured
- *    bundle or another directory that is still there has that id. A materialised directory takes the id of the implicit
- *    working bundle (which is one too); it never takes a configured bundle's.
+ *  - any other directory (a `--dir`, the implicit working bundle, `AKM_BUNDLE_DIR`) is its source, under `as.name`, else
+ *    `bundleIdForDir`: its basename slug, or `<slug>-<8-hex of the path>` when a configured bundle has that id. The
+ *    caller keeps the source and hands it to the facade.
  */
-export function materialiseBundleDir(
+export function bundleAt(
   dir: string,
   config: AkmConfig = loadConfig(),
   as: { name?: string; adapterId?: string } = {},
-): string {
+): BundleAddress {
   const configuredNames = Object.keys(config.bundles ?? {});
   const configured = as.name !== undefined && configuredNames.includes(as.name) ? as.name : bundleAtDir(config, dir);
   if (configured !== undefined) return configured;
-  const existing = materialisedIdOf(dir, config);
-  if (existing !== undefined) return existing;
-  const taken = new Set([...configuredNames, ...materialisedBundles(config).map((held) => held.name)]);
-  let id = as.name ?? bundleIdForDir(dir, taken);
-  if (materialisedIdTaken(id, dir, config)) id = bundleIdForDir(dir, new Set([...taken, id]));
-  holdMaterialised({ name: id, path: dir, adapterId: as.adapterId ?? detectBundleAdapter(dir) }, config);
-  return id;
+  return {
+    name: as.name ?? bundleIdForDir(dir, new Set(configuredNames)),
+    path: dir,
+    adapterId: as.adapterId ?? detectBundleAdapter(dir),
+  };
 }
 
 /**

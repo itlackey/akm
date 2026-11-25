@@ -20,7 +20,7 @@ import { isBundleSlug, makeBundleRef, parseBundleRef } from "../../core/asset/as
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { currentConceptId, qualifyRef, readAsset } from "../../core/assets/read";
 import { type AssetAddress, addressOf } from "../../core/assets/write";
-import { materialiseBundleDir, stateBundleId } from "../../core/bundle-at-dir";
+import { bundleAt, stateBundleId } from "../../core/bundle-at-dir";
 import { bundleIdForDir } from "../../core/bundle-id";
 import { toErrorMessage } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
@@ -237,7 +237,7 @@ function refFilter(stashDir: string, ref: string): (proposalRef: string) => bool
   const sources = resolveSourceEntries(stashDir, loadConfig());
   // The filter's own outdated spelling is the caller's to fix (one warning); a stored ref is not, so it resolves silently.
   const wanted = parseBundleRef(
-    qualifyRef(makeBundleRef(filter.bundle, filter.conceptId), { bundle: materialiseBundleDir(stashDir) }),
+    qualifyRef(makeBundleRef(filter.bundle, filter.conceptId), { bundle: bundleAt(stashDir) }),
   ).conceptId;
   const asked = new Map<string, string>();
   const current = (identity: ProposalRefIdentity): string => {
@@ -405,7 +405,7 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
   }
 
   const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, origin);
-  const targetSource = materialiseBundleDir(proposalTarget.root, loadConfig(), { name: proposalTarget.source });
+  const targetSource = bundleAt(proposalTarget.root, loadConfig(), { name: proposalTarget.source });
   let parsedRef: AssetAddress;
   try {
     parsedRef = addressOf(targetSource, input.ref);
@@ -560,7 +560,7 @@ export function createRetireProposal(
     throw invalid(err);
   }
   const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, origin);
-  const targetSource = materialiseBundleDir(proposalTarget.root, loadConfig(), { name: proposalTarget.source });
+  const targetSource = bundleAt(proposalTarget.root, loadConfig(), { name: proposalTarget.source });
   let parsedRef: AssetAddress;
   try {
     parsedRef = addressOf(targetSource, input.ref);
@@ -612,14 +612,14 @@ export function createRetireProposal(
 }
 
 /** The bundle a proposal is bound to, to address its ref in: the bundle `proposedTarget` names, else the queue's own directory. */
-function proposalBundleId(stashDir: string, proposal: Proposal, config: AkmConfig): string {
+function proposalBundleId(stashDir: string, proposal: Proposal, config: AkmConfig) {
   const bound = proposal.proposedTarget?.source;
-  if (bound === undefined) return materialiseBundleDir(stashDir, config);
+  if (bound === undefined) return bundleAt(stashDir, config);
   try {
     resolveBundleWriteTarget(config, bound);
     return bound;
   } catch {
-    return materialiseBundleDir(stashDir, config, { name: bound });
+    return bundleAt(stashDir, config, { name: bound });
   }
 }
 
@@ -890,7 +890,7 @@ export function purgeOrphanProposals(
     if (parsed.type === "lesson" || !spec) continue;
     const exists = sourceDirs.some((root) => {
       try {
-        return addressOf(materialiseBundleDir(root), p.ref).exists;
+        return addressOf(bundleAt(root), p.ref).exists;
       } catch {
         return false;
       }

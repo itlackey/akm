@@ -232,7 +232,7 @@ function resolveEnvSecretWriteTarget(
   // The file the name is kept in (a link included) must stay in the type's folder; a store keeps no file to look up.
   const { source } = resolved.target;
   const folder = stashDirFor(type);
-  const file = fileOfRef(source.name, conceptIdFromTypeName(type, parsed.name));
+  const file = fileOfRef(source, conceptIdFromTypeName(type, parsed.name));
   if (file !== undefined && folder !== undefined && !isWithin(file, path.join(source.path, folder))) {
     throw new UsageError(
       `${type === "env" ? "Env" : "Secret"} name "${parsed.name}" escapes the ${folder === "env" ? "env" : "secrets"} directory.`,
@@ -266,7 +266,7 @@ export function resolveSecretWriteTarget(
 
 /** The env file or secret a write resolution names, as the target bundle's adapter reads it; undefined when it has none. */
 export function findWriteTargetAsset(resolution: EnvSecretWriteResolution): Asset | undefined {
-  return readAsset(resolution.target.source.name, resolution.conceptId);
+  return readAsset(resolution.target.source, resolution.conceptId);
 }
 
 /**

@@ -11,17 +11,17 @@
 import { stashDirFor, withoutTypeHead } from "../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
-import { adapterNameOf, adapterWrites, placedPrefixOf } from "../core/assets/gate";
+import { adapterNameOf, adapterWrites, type BundleAddress, bundleNameOf, placedPrefixOf } from "../core/assets/gate";
 import { type Asset, findAsset, listAssets, readAsset, requireAsset } from "../core/assets/read";
 import { assetTypes } from "../core/assets/type";
 import { addressOf } from "../core/assets/write";
-import { materialiseBundleDir } from "../core/bundle-at-dir";
+import { bundleAt } from "../core/bundle-at-dir";
 import { loadConfig } from "../core/config/config";
 import { bundleAtDir } from "../core/config/config-sources";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 
-/** Where tasks are looked up: the bundle with this id. */
-export type TaskScope = { bundle: string };
+/** Where tasks are looked up: the bundle with this id, or the source of a directory no config names. */
+export type TaskScope = { bundle: BundleAddress };
 
 /** A task bundle as the commands hold it. */
 export interface TaskBundleSource {
@@ -33,24 +33,24 @@ export interface TaskBundleSource {
 
 /**
  * The scope of one source, under the id its refs use. A source no config entry names (a directory a command was
- * handed) is recorded as an ad-hoc bundle, so the facade can take it by that id.
+ * handed) is the scope itself, which the facade takes as it is.
  */
 export function taskScopeOf(source: TaskBundleSource): TaskScope {
-  return { bundle: taskBundleId(source) };
+  return { bundle: taskBundle(source) };
 }
 
 /**
- * The id of the bundle `source` is, which the facade takes. A configured bundle held at its own directory (or a store)
- * is that bundle; the same name held elsewhere (a scratch copy) is the bundle of that directory, never the configured
- * one; an unconfigured directory is materialised under its name.
+ * The bundle `source` is, which the facade takes. A configured bundle held at its own directory (or a store) is that
+ * bundle; the same name held elsewhere (a scratch copy) is the bundle of that directory, never the configured one; an
+ * unconfigured directory is its own source under its name.
  */
-function taskBundleId(source: TaskBundleSource): string {
+function taskBundle(source: TaskBundleSource): BundleAddress {
   const config = loadConfig();
   const configured = config.bundles?.[source.name];
   const own =
     // asset-io: config a config entry with a location is held at no directory
     configured !== undefined && (configured.location !== undefined || bundleAtDir(config, source.path) === source.name);
-  return materialiseBundleDir(source.path, config, {
+  return bundleAt(source.path, config, {
     ...(configured === undefined || own ? { name: source.name } : {}),
     ...(source.adapterId !== undefined ? { adapterId: source.adapterId } : {}),
   });
@@ -65,12 +65,14 @@ export function taskFileOf(asset: Asset): string {
 /** `ref` as the facade takes it: a ref to the bundle held at `source` names it by the id the facade holds it under. */
 function heldRef(source: TaskBundleSource, ref: string): string {
   const parsed = parseBundleRef(ref);
-  return parsed.bundle === source.name ? makeBundleRef(taskBundleId(source), parsed.conceptId, parsed.fragment) : ref;
+  return parsed.bundle === source.name
+    ? makeBundleRef(bundleNameOf(taskBundle(source)), parsed.conceptId, parsed.fragment)
+    : ref;
 }
 
 /** The asset `ref` names in the bundle held at `source`; a `NotFoundError` when it holds none. */
 export function requireAssetIn(source: TaskBundleSource, ref: string): Asset {
-  return requireAsset(heldRef(source, ref));
+  return requireAsset(heldRef(source, ref), taskBundle(source));
 }
 
 /**
@@ -82,7 +84,7 @@ export function resolveOwnBundleAsset(
   { type, name }: { type: string; name: string },
 ): { file: string; bundleRoot: string } {
   const ref = makeBundleRef(source.name, conceptIdFromTypeName(type, name));
-  const asset = findAsset(heldRef(source, ref));
+  const asset = findAsset(heldRef(source, ref), taskBundle(source));
   if (!asset) throw taskAssetNotFound(ref);
   return { file: taskAssetFile(asset), bundleRoot: source.path };
 }
@@ -111,10 +113,10 @@ export function taskAssetsAmong(candidates: readonly Asset[]): Asset[] {
  * named so, when it writes tasks. Asked of the adapter, never assumed from its id.
  */
 function taskPrefixIn(source: TaskBundleSource): string {
-  return taskPrefixOf(taskBundleId(source));
+  return taskPrefixOf(taskBundle(source));
 }
 
-function taskPrefixOf(bundle: string): string {
+function taskPrefixOf(bundle: BundleAddress): string {
   // An adapter that does not write tasks places none: a task there is named by its concept id.
   return adapterWrites(bundle, "task") ? placedPrefixOf(bundle, "task") : "";
 }
@@ -169,7 +171,7 @@ export function findTask(scope: TaskScope, input: string): Asset | undefined {
  * that places tasks names one by a bare id or by `tasks/<id>`, nothing deeper.
  */
 export function taskNameOf(source: TaskBundleSource, input: string): string {
-  if (!adapterWrites(taskBundleId(source), "task")) return input;
+  if (!adapterWrites(taskBundle(source), "task")) return input;
   const prefix = taskPrefixIn(source);
   const name = prefix !== "" && input.startsWith(prefix) ? input.slice(prefix.length) : input;
   if (name.includes("/")) {
@@ -191,7 +193,7 @@ export function resolveTask(source: TaskBundleSource, input: string): { asset: A
 /** The sentence for a task a bundle does not hold, naming the id and the adapter. */
 export function taskNotFound(source: TaskBundleSource, shown: string): NotFoundError {
   return new NotFoundError(
-    `Task ${JSON.stringify(shown)} was not found in the configured ${JSON.stringify(adapterNameOf(taskBundleId(source)))} bundle.`,
+    `Task ${JSON.stringify(shown)} was not found in the configured ${JSON.stringify(adapterNameOf(taskBundle(source)))} bundle.`,
     "ASSET_NOT_FOUND",
   );
 }
@@ -216,9 +218,9 @@ export function taskRefIn(source: TaskBundleSource, input: string): string {
   const found = findTask(taskScopeOf(source), name);
   if (found) return found.ref;
   // An adapter that writes no task places none: a task there is named by its concept id.
-  const bundle = taskBundleId(source);
+  const bundle = taskBundle(source);
   return makeBundleRef(
-    bundle,
+    bundleNameOf(bundle),
     adapterWrites(bundle, "task") ? addressOf(bundle, conceptIdFromTypeName("task", name)).conceptId : name,
   );
 }

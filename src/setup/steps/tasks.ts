@@ -172,7 +172,7 @@ export async function prepareSetupTaskDefinitions(
 
   const prepared = tasks.map((plan) => {
     const filePath = path.join(taskDir, `${plan.task.id}.yml`);
-    const original = readAsset(target.source.name, `tasks/${plan.task.id}`)?.entry.content();
+    const original = readAsset(target.source, `tasks/${plan.task.id}`)?.entry.content();
     let yaml: string;
     if (original !== undefined) {
       yaml = original;
