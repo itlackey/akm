@@ -7,6 +7,7 @@
 // package in out/. Any platform; this is what proves a macOS or Windows build starts.
 import assert from "node:assert/strict";
 import { fork } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,10 +29,12 @@ const executable = mac
 const expected = JSON.parse(await readFile(path.join(root, ".core/package.json"), "utf8")).version;
 
 const fixture = await createFixture({ index: false, packageRoot: appRoot });
+const secret = randomBytes(32).toString("hex");
 const child = fork(path.join(appRoot, "server/server.mjs"), [], {
   execPath: executable,
   execArgv: [],
-  env: { ...fixture.env, ELECTRON_RUN_AS_NODE: "1" },
+  // As Electron starts it: native mode (fixed launch settings) and a per-launch secret.
+  env: { ...fixture.env, ELECTRON_RUN_AS_NODE: "1", AKM_DESKTOP_NATIVE: "1", AKM_WEB_SECRET: secret },
   stdio: ["ignore", "pipe", "pipe", "ipc"],
 });
 let logs = "";
@@ -48,14 +51,12 @@ try {
       resolve(message);
     });
   });
-  const bootstrap = await fetch(ready.url, { redirect: "manual" });
-  const cookie = bootstrap.headers.get("set-cookie")?.split(";")[0];
-  assert.ok(cookie, "The packaged server did not start a session.");
-  const desktop = await (await fetch(`${ready.origin}/api/desktop`, { headers: { cookie } })).json();
+  const headers = { authorization: `Bearer ${secret}` };
+  const desktop = await (await fetch(`${ready.origin}/api/desktop`, { headers })).json();
   assert.equal(desktop.ok, true, JSON.stringify(desktop));
   assert.equal(desktop.data.version, expected, "Desktop reports a version other than the engine it embeds.");
   assert.equal(desktop.data.akmVersion, expected);
-  const page = await fetch(ready.origin, { headers: { cookie } });
+  const page = await fetch(ready.origin, { headers });
   assert.equal(page.status, 200, "The packaged server did not serve the built UI.");
   console.log(
     `Packaged AKM Desktop ${desktop.data.version} (${process.platform}-${process.arch}) started and answered.`,

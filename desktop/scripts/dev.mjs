@@ -6,23 +6,23 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-const token = randomBytes(32).toString("hex");
+// The secret to log in with: the one in the environment, else a fresh one printed below (a loopback dev server only).
+const secret = process.env.AKM_WEB_SECRET || randomBytes(32).toString("hex");
 const origin = "http://127.0.0.1:5173";
 /** @type {NodeJS.ProcessEnv} */
 const env = {
   ...process.env,
-  AKM_DESKTOP_SESSION_TOKEN: token,
+  AKM_WEB_SECRET: secret,
   AKM_DESKTOP_ORIGIN: origin,
   AKM_LAUNCHER_NODE: process.execPath,
 };
-delete env.AKM_DESKTOP_SESSION;
 delete env.AKM_LAUNCHER_PATH;
 delete env.AKM_LAUNCHER_PID;
 const child = spawn(process.execPath, [fileURLToPath(new URL("../node_modules/vite/bin/vite.js", import.meta.url))], {
   stdio: "inherit",
   env,
 });
-console.log(`Open this launch-only URL: ${origin}/?desktop_session=${token}`);
+console.log(`Open ${origin} and log in with${process.env.AKM_WEB_SECRET ? " AKM_WEB_SECRET" : ` this secret: ${secret}`}`);
 for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM"])) process.once(signal, () => child.kill(signal));
 child.once("exit", (code) => {
   process.exitCode = code ?? 1;

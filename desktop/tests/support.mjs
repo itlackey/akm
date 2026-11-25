@@ -4,8 +4,10 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, fork } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { readFile, writeFile } from "node:fs/promises";
+import http from "node:http";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -369,7 +371,7 @@ export async function projectsAndConnections(fixture) {
 }
 
 /**
- * Open the app the way the launcher does (the one-time session URL sets the cookie), then optionally go to a route.
+ * Open the app the way a launcher does (`server.url` leaves the browser with a session), then optionally go to a route.
  * `go` navigates inside the running app, so drafts and in-memory state survive, as a click on a link would.
  */
 /** Tick or untick one of the library map's "Show" filters, opening its menu for the click. */
@@ -486,8 +488,9 @@ export async function launchFixture({
   }
   if (runViews) seedRunViews(fixture);
   if (similarity) seedSimilarity(fixture);
+  const secret = randomBytes(32).toString("hex");
   const child = fork(path.join(appRoot, "server/server.mjs"), [], {
-    env: fixture.env,
+    env: { ...fixture.env, AKM_WEB_SECRET: secret },
     execArgv,
     stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
@@ -498,7 +501,10 @@ export async function launchFixture({
   child.stdout.on("data", (chunk) => {
     logs += chunk.toString();
   });
+  /** @type {import("node:http").Server | undefined} */
+  let door;
   async function stop() {
+    door?.close();
     if (child.exitCode === null) {
       const exited = once(child, "exit");
       if (child.connected) child.send("shutdown");
@@ -527,11 +533,25 @@ export async function launchFixture({
         }
       });
     });
-    const bootstrap = await fetch(ready.url, { redirect: "manual" });
-    assert.equal(bootstrap.status, 200);
-    const setCookie = bootstrap.headers.get("set-cookie");
-    assert.ok(setCookie, `Session bootstrap must set a cookie. ${logs}`);
+    // Log in through the login form, as a person does. The session cookie is what `call` and `server.cookie` use.
+    const login = await fetch(`${ready.origin}/api/session`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { Origin: ready.origin, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ secret }),
+    });
+    assert.equal(login.status, 303);
+    const setCookie = login.headers.get("set-cookie");
+    assert.ok(setCookie, `Login must set a cookie. ${logs}`);
     const cookie = setCookie.split(";")[0];
+    // `url` is where a test's browser starts. A cookie is shared by every port of a host, so this stand-in for a
+    // launcher gives any new browser context the session above and sends it on to the app, as Desktop's window has.
+    door = http.createServer((req, res) => {
+      res.writeHead(302, { "Set-Cookie": `${cookie}; Path=/; HttpOnly; SameSite=Strict`, Location: `${ready.origin}/` });
+      res.end();
+    });
+    await new Promise((resolve) => door.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${door.address().port}/`;
     const call = async (pathname, body) => {
       const response = await fetch(`${ready.origin}${pathname}`, {
         method: body === undefined ? "GET" : "POST",
@@ -546,6 +566,9 @@ export async function launchFixture({
     return {
       ...fixture,
       ...ready,
+      url,
+      secret,
+      headers: { Authorization: `Bearer ${secret}` },
       child,
       call,
       cookie,

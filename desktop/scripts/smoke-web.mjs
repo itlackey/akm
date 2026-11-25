@@ -7,6 +7,7 @@
 // Local only: nothing is published and no registry login is used. Run after `npm run build`.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -37,9 +38,10 @@ try {
     stdio: "inherit",
   });
   const bin = path.join(prefix, "node_modules/.bin/akm-web");
-  child = spawn(process.execPath, [bin], { env: fixture.env, stdio: ["ignore", "pipe", "inherit"] });
+  const secret = randomBytes(32).toString("hex");
+  child = spawn(process.execPath, [bin], { env: { ...fixture.env, AKM_WEB_SECRET: secret }, stdio: ["ignore", "pipe", "inherit"] });
   const lines = readline.createInterface({ input: /** @type {import("node:stream").Readable} */ (child.stdout) });
-  /** @type {{ url: string, origin: string }} */
+  /** @type {{ origin: string }} */
   const ready = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("akm-web printed no ready line in 60 s.")), 60_000);
     child?.once("exit", (code) => reject(new Error(`akm-web exited (${code}) before it was ready.`)));
@@ -50,9 +52,9 @@ try {
       resolve(message);
     });
   });
-  const cookie = (await fetch(ready.url, { redirect: "manual" })).headers.get("set-cookie")?.split(";")[0];
-  assert.ok(cookie, "akm-web did not start a session from its token.");
-  const response = await fetch(`${ready.origin}/api/desktop`, { headers: { cookie } });
+  const refused = await fetch(`${ready.origin}/api/desktop`);
+  assert.equal(refused.status, 401, "akm-web answered a request that carried no secret.");
+  const response = await fetch(`${ready.origin}/api/desktop`, { headers: { authorization: `Bearer ${secret}` } });
   assert.equal(response.status, 200, `/api/desktop answered ${response.status}`);
   console.log("The packed akm-web package installed and answered /api/desktop through its bin link.");
 } finally {
