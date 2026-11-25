@@ -39,12 +39,6 @@ export interface OpenCodeCache {
 
 export type OpenCodeLatest = { version: string } | { error: string };
 
-/** The spec in a config's plugin entry (a spec string or a `[spec, options]` pair). */
-function entrySpec(entry: unknown): string | undefined {
-  const spec = Array.isArray(entry) ? entry[0] : entry;
-  return typeof spec === "string" ? spec : undefined;
-}
-
 const namesPackage = (spec: string, pkg: string) => spec === pkg || spec.startsWith(`${pkg}@`);
 
 interface OpenCodeConfigSpec {
@@ -97,7 +91,9 @@ export function openCodeConfigSpec(flavor: OpenCodeFlavor): OpenCodeConfigSpec |
       if (!Array.isArray(entries)) continue;
       setsList = true;
       for (const [index, entry] of entries.entries()) {
-        const spec = entrySpec(entry);
+        // A plugin entry is a spec string or a `[spec, options]` pair.
+        const first = Array.isArray(entry) ? entry[0] : entry;
+        const spec = typeof first === "string" ? first : undefined;
         if (spec !== undefined && namesPackage(spec, flavor.pkg))
           return { spec, key, file, jsonPath: [key, index, ...(Array.isArray(entry) ? [0] : [])] };
       }
@@ -202,11 +198,6 @@ function openCodeRunning(): boolean | undefined {
 const notFollowingNext = (flavor: OpenCodeFlavor) =>
   `next channel: OpenCode resolves a bare "${flavor.pkg}" to @latest, so it is not updated to a prerelease; ` +
   `set "${flavor.configKeys[0]}": ["${nextSpec(flavor)}"] in your OpenCode config to follow prereleases`;
-
-/** Why a run leaves alone an OpenCode whose config names a spec no run refreshes: an exact version or another tag (#1117). */
-function otherSpecNote(flavor: OpenCodeFlavor, spec: string): string {
-  return `OpenCode loads "${spec}" (your OpenCode config), so this upgrade leaves it alone; set "${flavor.configKeys[0]}": ["${flavor.pkg}"] to have \`akm upgrade\` keep it current`;
-}
 
 export function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgradeEntry {
   const { flavor, cache, latest, tag, skip } = target;
@@ -391,8 +382,11 @@ function resolveOpenCodeTarget(
   }
   const followsLatest = spec === flavor.pkg || spec === `${flavor.pkg}@latest`;
   const followNext = spec === nextSpec(flavor);
-  // Any other spec loads a cache no run refreshes.
-  if (!followsLatest && !followNext) return leftAlone(otherSpecNote(flavor, spec));
+  // Any other spec (an exact version or another tag, #1117) loads a cache no run refreshes.
+  if (!followsLatest && !followNext)
+    return leftAlone(
+      `OpenCode loads "${spec}" (your OpenCode config), so this upgrade leaves it alone; set "${flavor.configKeys[0]}": ["${flavor.pkg}"] to have \`akm upgrade\` keep it current`,
+    );
   const tag: UpgradeChannel = followNext ? "next" : "latest";
   const cache = detectOpenCodeCache(tag, flavor);
   const latest = cache ? lookupOpenCodeLatest(tag, flavor) : undefined;
@@ -407,28 +401,27 @@ function resolveOpenCodeTarget(
   };
 }
 
-/** A target for a flavor whose config could not be read: nothing about its spec, cache or channel is known. */
-function unreadableTarget(flavor: OpenCodeFlavor, error: string, next: boolean): OpenCodeTarget {
-  return {
-    flavor,
-    cache: undefined,
-    latest: undefined,
-    tag: next ? "next" : "latest",
-    spec: flavor.pkg,
-    notFollowingNext: false,
-    unreadable: error,
-  };
-}
-
 /**
  * The OpenCode plugins this host has: OpenCode 1's always, OpenCode 2's only when the global config
  * names `akm-opencode-v2` or OpenCode 2 has cached it, so a host with just OpenCode 1 sees the same
  * output as before.
  */
 export function resolveOpenCodeTargets(next: boolean, channel?: UpgradeChannel): OpenCodeTarget[] {
-  const resolve = (flavor: OpenCodeFlavor, configured: OpenCodeConfigSpec | { error: string } | undefined) =>
+  const resolve = (
+    flavor: OpenCodeFlavor,
+    configured: OpenCodeConfigSpec | { error: string } | undefined,
+  ): OpenCodeTarget =>
     configured && "error" in configured
-      ? unreadableTarget(flavor, configured.error, next)
+      ? // Config unreadable: nothing about the flavor's spec, cache or channel is known.
+        {
+          flavor,
+          cache: undefined,
+          latest: undefined,
+          tag: next ? "next" : "latest",
+          spec: flavor.pkg,
+          notFollowingNext: false,
+          unreadable: configured.error,
+        }
       : resolveOpenCodeTarget(next, flavor, configured, channel);
   const targets = [resolve(OPENCODE_V1, openCodeConfigSpec(OPENCODE_V1))];
   const v2 = openCodeConfigSpec(OPENCODE_V2);

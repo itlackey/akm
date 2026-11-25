@@ -59,8 +59,9 @@ export function withoutModelsOverlay<T>(fn: () => T): T {
   }
 }
 
-export function modelsOverlay(): unknown {
-  return modelsOverlayOverride ? modelsOverlayOverride.overlay : readModelsFile();
+function convertEngines(raw: Record<string, unknown>) {
+  const overlay = modelsOverlayOverride ? modelsOverlayOverride.overlay : readModelsFile();
+  return convertEngineConfig(raw, { modelsOverlay: overlay, env: process.env });
 }
 
 /**
@@ -74,10 +75,7 @@ export function retiredEngineTargets(): EngineTargets {
   const configPath = getConfigPath();
   const text = readConfigText(configPath);
   if (text === undefined) return {};
-  const live = convertEngineConfig(readConfigFile(text, configPath), {
-    modelsOverlay: modelsOverlay(),
-    env: process.env,
-  }).targets;
+  const live = convertEngines(readConfigFile(text, configPath)).targets;
   return Object.keys(live).length > 0 ? live : rememberedEngineTargets();
 }
 
@@ -88,10 +86,7 @@ export function retiredEngineTargets(): EngineTargets {
  * through this pipeline, before it deletes the keys the schema does not know).
  */
 function readRetiredEngines(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
-  const { config, notes, changed, keys } = convertEngineConfig(raw, {
-    modelsOverlay: modelsOverlay(),
-    env: process.env,
-  });
+  const { config, notes, changed, keys } = convertEngines(raw);
   if (!changed) return raw;
   const keyNotes = keys.map(
     ({ engine, field }) =>

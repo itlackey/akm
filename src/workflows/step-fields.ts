@@ -96,6 +96,14 @@ export interface Ctx {
   err(path: Path, message: string): void;
   errAtLine(line: number, message: string): void;
 }
+function isWorkflowRef(ref: string): boolean {
+  try {
+    return classifyTargetRef(ref).kind === "workflow";
+  } catch {
+    return false;
+  }
+}
+
 export function parseUnit(
   ctx: Ctx,
   raw: unknown,
@@ -128,8 +136,20 @@ export function parseUnit(
   }
 
   if (raw.workflow !== undefined) {
-    const workflow = parseChildWorkflowRef(ctx, raw.workflow, [...path, "workflow"], stepLabel, allowWorkflow);
-    if (workflow !== undefined) unit.workflow = workflow;
+    // `unit.workflow` (Experimental): the canonical ref of a child workflow, `workflows/<name>` or `<bundle>//workflows/<name>`.
+    if (!allowWorkflow) {
+      ctx.err(
+        [...path, "workflow"],
+        `${stepLabel} "workflow" is not supported inside "map.unit": a child workflow runs once per step.`,
+      );
+    } else if (typeof raw.workflow === "string" && isWorkflowRef(raw.workflow)) {
+      unit.workflow = raw.workflow;
+    } else {
+      ctx.err(
+        [...path, "workflow"],
+        `${stepLabel} "workflow" must be a canonical workflow ref such as "workflows/<name>".`,
+      );
+    }
     if (raw.exec !== undefined) {
       ctx.err(
         [...path, "workflow"],
@@ -206,27 +226,6 @@ export function parseUnit(
   return unit;
 }
 
-/** `unit.workflow` (Experimental): the canonical ref of a child workflow, `workflows/<name>` or `<bundle>//workflows/<name>`. */
-function parseChildWorkflowRef(
-  ctx: Ctx,
-  raw: unknown,
-  path: Path,
-  stepLabel: string,
-  allowed: boolean,
-): string | undefined {
-  if (!allowed) {
-    ctx.err(path, `${stepLabel} "workflow" is not supported inside "map.unit": a child workflow runs once per step.`);
-    return undefined;
-  }
-  try {
-    if (typeof raw === "string" && classifyTargetRef(raw).kind === "workflow") return raw;
-  } catch {
-    // falls through to the message below
-  }
-  ctx.err(path, `${stepLabel} "workflow" must be a canonical workflow ref such as "workflows/<name>".`);
-  return undefined;
-}
-
 /**
  * Parse `unit.exec` — the argv-array shell-command surface.
  *
@@ -247,8 +246,10 @@ function parseExec(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Workf
   if (command === undefined) return undefined;
 
   const exec: WorkflowExec = { command };
-  const cwd = parseExecCwd(ctx, raw.cwd, [...path, "cwd"], stepLabel);
-  if (cwd !== undefined) exec.cwd = cwd;
+  // `cwd:` is a non-empty string, relative to the bundle root or absolute, free to carry `${ref}` tokens; the unit's
+  // working directory is resolved at dispatch.
+  if (typeof raw.cwd === "string" && raw.cwd.trim() !== "") exec.cwd = raw.cwd.trim();
+  else if (raw.cwd !== undefined) ctx.err([...path, "cwd"], `${stepLabel} "exec.cwd" must be a non-empty string.`);
   const passEnv = parseExecPassEnv(ctx, raw.pass_env, [...path, "pass_env"], stepLabel);
   if (passEnv !== undefined) exec.passEnv = passEnv;
   return exec;
@@ -313,20 +314,6 @@ function parseExecCommand(ctx: Ctx, raw: unknown, path: Path, stepLabel: string)
     argv.push(entry);
   }
   return argv;
-}
-
-/**
- * The optional `cwd:`: a non-empty string, relative to the workflow's bundle root or absolute, and
- * free to carry `${ref}` tokens. Nothing else is checked here; the unit's working directory is
- * resolved at dispatch.
- */
-function parseExecCwd(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): string | undefined {
-  if (raw === undefined) return undefined;
-  if (typeof raw !== "string" || raw.trim() === "") {
-    ctx.err(path, `${stepLabel} "exec.cwd" must be a non-empty string.`);
-    return undefined;
-  }
-  return raw.trim();
 }
 
 export function parseMap(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): ProgramMap | undefined {

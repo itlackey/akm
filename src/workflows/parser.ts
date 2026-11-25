@@ -182,7 +182,11 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
     const offset = Array.isArray(problem.pos) ? problem.pos[0] : 0;
     errors.push({
       line: lineOf(offset),
-      message: yamlErrorMessage(problem.message),
+      // The yaml package's message carries a multi-line code frame: keep its first line.
+      message: problem.message
+        .split("\n", 1)[0]!
+        .replace(/ at line \d+, column \d+:?\s*$/, "")
+        .trim(),
     });
   }
   if (errors.length > 0) return { ok: false, errors };
@@ -231,7 +235,12 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
 
   const description = typeof root.description === "string" ? root.description : undefined;
   const whenToUse = typeof root.when_to_use === "string" ? root.when_to_use : undefined;
-  const tags = readTags(ctx, root.tags, frontmatterEndLine);
+  let tags: string[] | undefined;
+  if (Array.isArray(root.tags) && root.tags.every((tag) => typeof tag === "string" && tag.trim().length > 0)) {
+    tags = root.tags.map((tag) => tag.trim());
+  } else if (root.tags !== undefined) {
+    ctx.errAtLine(frontmatterEndLine, `Workflow frontmatter "tags" must be an array of non-empty strings.`);
+  }
   const params = parseParams(ctx, root.params);
   const defaults = parseDefaults(ctx, root.defaults);
   const budget = parseBudget(ctx, root.budget);
@@ -289,7 +298,7 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
     };
   });
   checkCanonicalXrefs(root.xrefs, frontmatterEndLine, errors);
-  if (errors.length > 0) return { ok: false, errors: sortErrors(errors) };
+  if (errors.length > 0) return { ok: false, errors: [...errors].sort((a, b) => a.line - b.line) };
 
   const paramNames = params ? Object.keys(params) : [];
   const plan: WorkflowPlan = {
@@ -487,7 +496,9 @@ function checkEnvelopeFields(ctx: Ctx, root: Record<string, unknown>, fmEndLine:
   };
   checkString("when_to_use");
   checkString("description");
-  checkXrefs(ctx, root.xrefs, fmEndLine);
+  if (root.xrefs !== undefined && !(Array.isArray(root.xrefs) && root.xrefs.every((ref) => typeof ref === "string"))) {
+    ctx.errAtLine(fmEndLine, `Workflow frontmatter "xrefs" must be an array of canonical asset refs.`);
+  }
   checkString("updated");
   checkString("timestamp");
   checkActorStamp(ctx, root.generated, ["generated"], `"generated"`);
@@ -521,22 +532,6 @@ function checkActorStamp(ctx: Ctx, value: unknown, path: Path, label: string): v
   }
   if (value.at !== undefined && typeof value.at !== "string") {
     ctx.err([...path, "at"], `Workflow frontmatter ${label} actor stamp "at" must be a string.`);
-  }
-}
-
-function readTags(ctx: Ctx, value: unknown, fmEndLine: number): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value) || !value.every((tag) => typeof tag === "string" && tag.trim().length > 0)) {
-    ctx.errAtLine(fmEndLine, `Workflow frontmatter "tags" must be an array of non-empty strings.`);
-    return undefined;
-  }
-  return value.map((tag) => (tag as string).trim());
-}
-
-function checkXrefs(ctx: Ctx, value: unknown, fmEndLine: number): void {
-  if (value === undefined) return;
-  if (!Array.isArray(value) || !value.every((ref) => typeof ref === "string")) {
-    ctx.errAtLine(fmEndLine, `Workflow frontmatter "xrefs" must be an array of canonical asset refs.`);
   }
 }
 
@@ -702,18 +697,4 @@ function parseSteps(ctx: Ctx, raw: unknown): ProgramStep[] {
   });
 
   return steps;
-}
-
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
-
-/** Strip the yaml package's multi-line code frame down to the first line. */
-function yamlErrorMessage(message: string): string {
-  const first = message.split("\n", 1)[0] ?? message;
-  return first.replace(/ at line \d+, column \d+:?\s*$/, "").trim();
-}
-
-function sortErrors(errors: WorkflowError[]): WorkflowError[] {
-  return [...errors].sort((a, b) => a.line - b.line);
 }

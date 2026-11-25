@@ -180,11 +180,6 @@ export function sanitizeInheritedConfig(raw: Record<string, unknown>, label: str
   return inherited;
 }
 
-/** `~` expands to the home directory. */
-function expandExtendsHomePath(p: string): string {
-  return p.startsWith("~") ? path.join(os.homedir(), p.slice(1)) : p;
-}
-
 /** True when `ref`'s segment before the first `//` is a legal bundle slug — the `bundle//<path>` shape, not a plain filesystem path. */
 function looksLikeBundleAssetRef(ref: string): boolean {
   const boundary = ref.indexOf("//");
@@ -219,7 +214,8 @@ function resolveConfigFileRefSource(
   fromConfigPath: string | undefined,
   containmentRoot?: string,
 ): { text: string; resolvedPath: string; containmentRoot?: string } {
-  const expanded = expandExtendsHomePath(ref);
+  // `~` expands to the home directory.
+  const expanded = ref.startsWith("~") ? path.join(os.homedir(), ref.slice(1)) : ref;
   let resolvedPath: string;
   if (path.isAbsolute(expanded)) {
     resolvedPath = expanded;
