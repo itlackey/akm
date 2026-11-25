@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { execFile } from "node:child_process";
+import { execFileChild } from "../core/children";
 import { resetConfigCache } from "../core/config/config";
 import { AkmError, type AkmErrorKind } from "../core/errors";
 import { resolveAkmInvocation } from "../tasks/resolve-akm-bin";
@@ -76,11 +76,10 @@ export async function runCli(args: string[], input?: string, userFeedback = fals
   const end = args.indexOf("--");
   const argv = end === -1 ? [...args, "--format=json"] : [...args.slice(0, end), "--format=json", ...args.slice(end)];
   return new Promise((resolve, reject) => {
-    const child = execFile(
+    const child = execFileChild(
       bin!,
       [...prefix, ...argv],
       {
-        encoding: "utf8",
         maxBuffer: 16 * 1024 * 1024,
         // An ambient event source (an improve or task run) wins, as for every akm child.
         ...(userFeedback ? { env: { ...process.env, AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE || "user" } } : {}),

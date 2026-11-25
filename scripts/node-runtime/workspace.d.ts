@@ -177,6 +177,31 @@ export namespace bundles {
   function setSettings(input: { bundle?: string; enabled?: boolean; writable?: boolean }): { saved: boolean };
   function update(input: { bundle: string }): Promise<unknown>;
 }
+export namespace children {
+  /** A child akm started asynchronously, kept while it or anything in the process group it leads still runs. */
+  interface StartedChild {
+    readonly pid: number;
+    /** The program's file name and its first argument, for messages. */
+    readonly name: string;
+    /** Whether it leads a process group of its own; then the group is what runs and is signalled. */
+    readonly grouped: boolean;
+    exited: boolean;
+  }
+  /** From now on every child starts in a process group of its own on POSIX, so a host can stop it with what it started. */
+  function startChildrenInOwnGroups(): void;
+  /** The recorded children that still run. */
+  function runningChildren(): StartedChild[];
+  /** Signals a recorded child: its whole process group when it leads one, otherwise the child alone. */
+  function signalChild(child: StartedChild, signal: NodeJS.Signals): void;
+  /** Calls `listener` with every child recorded from now on. Returns the function that stops it. */
+  function onChildStarted(listener: (child: StartedChild) => void): () => void;
+  /** `child_process.spawn`, recorded. */
+  function spawnChild(
+    file: string,
+    args: readonly string[],
+    options: import("node:child_process").SpawnOptions,
+  ): import("node:child_process").ChildProcess;
+}
 export namespace config {
   function change(input: { set?: Record<string, string>; unset?: string[] }): { saved: boolean };
   function changeProjects(input: { set?: Record<string, Record<string, unknown>>; unset?: string[] }): {

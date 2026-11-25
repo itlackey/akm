@@ -131,6 +131,7 @@ are ignored) and returns plain JSON-safe data without a CLI envelope; failures r
 | `activity` | `overview`, `pulse`, `health`, `retrievalTrend`, `improveImpact`, `improveRun`, `taskHistory`, `taskRunLog`, `taskRuns`, `workflowRuns`, `workflowRun`, `events`, `reportUsage`, `meta` |
 | `tasks` | `list`, `enable`, `disable` |
 | `backups` | `prune` |
+| `children` | `startChildrenInOwnGroups`, `runningChildren`, `signalChild`, `onChildStarted`, `spawnChild` (the child processes akm starts asynchronously, for a host that stops them on shutdown; `spawnChild` starts one of the host's own on the same record) |
 
 Also exported: `AkmError`, `UsageError`, `NotFoundError`, `ConfigError`, `TransientError`, the
 `AkmErrorKind` type, `CONFLICT_CODES`, `scrubUrlCredentials`, `clearAdapterCaches()` (Experimental; a host that

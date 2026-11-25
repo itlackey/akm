@@ -10,13 +10,12 @@ import { readFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
-import { drained, outliving, SHUTDOWN_GRACE_MS, terminate, track } from "./shutdown.mjs";
+import { drained, SHUTDOWN_GRACE_MS, terminate, track } from "./shutdown.mjs";
 
 let prepared = false;
 async function prepareEnvironment() {
   if (prepared) return;
   prepared = true;
-  track();
   delete process.env.AKM_LAUNCHER_PATH;
   delete process.env.AKM_LAUNCHER_PID;
   process.env.AKM_LAUNCHER_NODE = process.execPath;
@@ -37,6 +36,7 @@ async function prepareEnvironment() {
   process.env.BODY_SIZE_LIMIT = String(8 * 1024 * 1024);
   delete process.env.HOST_HEADER;
   delete process.env.PORT_HEADER;
+  track((await import("akm-cli/workspace")).children);
 }
 
 /**
@@ -198,12 +198,11 @@ function openBrowser(url, shown) {
         ? ["cmd", "/c", "start", "", url]
         : ["xdg-open", url];
   try {
-    // The browser outlives the server, so it is not one of the children shutdown terminates.
-    outliving(() => {
-      const opener = spawn(/** @type {string} */ (command), args, { detached: true, stdio: "ignore" });
-      opener.once("error", () => console.error(`Could not open a browser; open ${shown} yourself.`));
-      opener.unref();
-    });
+    // Started here, outside akm-cli's record: the browser outlives the server and is not one of the children shutdown
+    // terminates.
+    const opener = spawn(/** @type {string} */ (command), args, { detached: true, stdio: "ignore" });
+    opener.once("error", () => console.error(`Could not open a browser; open ${shown} yourself.`));
+    opener.unref();
   } catch {
     console.error(`Could not open a browser; open ${shown} yourself.`);
   }

@@ -12,9 +12,9 @@
  * a slow repository stalls only its own request, not the server.
  */
 
-import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileChild } from "../core/children";
 import { pathsSyncWouldCommit } from "../sources/providers/git-stash";
 
 const GIT_TIMEOUT_MS = 10_000;
@@ -31,11 +31,10 @@ type GitResult = { ok: true; out: string } | { ok: false; error: string; quiet: 
 
 function git(repoDir: string, args: string[]): Promise<GitResult> {
   return new Promise((resolve) => {
-    execFile(
+    execFileChild(
       "git",
       ["-C", repoDir, "-c", "core.quotepath=false", ...args],
       {
-        encoding: "utf8",
         timeout: GIT_TIMEOUT_MS,
         maxBuffer: GIT_MAX_BUFFER,
         env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },

@@ -2,11 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { execFile, spawn } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { access, lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { children } from "akm-cli/workspace";
 import { parse } from "jsonc-parser";
 
 type Env = NodeJS.ProcessEnv;
@@ -179,13 +180,13 @@ function killTree(pid: number | undefined) {
 export const runHost: Run = (file, args, { env, home, timeout = 30_000 }) =>
   new Promise((resolve, reject) => {
     // Its own process group on POSIX, so the timeout can end installer children as well as the command itself.
-    const child = spawn(file, args, {
+    const child = children.spawnChild(file, args, {
       env,
       cwd: home,
       detached: process.platform !== "win32",
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
-    });
+    }) as ChildProcessWithoutNullStreams;
     let stdout = "";
     let stderr = "";
     let stopped: "timeout" | "output" | undefined;
