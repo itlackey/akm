@@ -8,7 +8,6 @@
  */
 
 import path from "node:path";
-import { addIndexOnMissRefs } from "../../indexer/index-on-miss";
 import { openUsableIndex } from "../../indexer/index-readiness";
 import { upsertIndexRows, WRITE_PATH_INDEX_BUSY_TIMEOUT_MS } from "../../indexer/index-rows";
 import { holdsAssetMutationLease, withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
@@ -25,6 +24,7 @@ import { fileContextOfEntry } from "../adapter/directory/file-context";
 import type { IndexDocument } from "../adapter/types";
 import { loadConfig } from "../config/config";
 import { assetNotFound, isDataDirUnreadableError, TransientError } from "../errors";
+import { addIndexOnMissRefs } from "../index-on-miss";
 import { isPathAbsent } from "../path-access";
 import { getDbPath } from "../paths";
 import { warn, warnVerbose } from "../warn";

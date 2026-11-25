@@ -5,6 +5,7 @@
 import path from "node:path";
 import { safeRealpath } from "../core/common";
 import { appendEvent } from "../core/events";
+import { clearIndexOnMissRefs, readIndexOnMissRefs } from "../core/index-on-miss";
 import { warn, warnVerbose } from "../core/warn";
 import type { Database } from "../storage/database";
 import {
@@ -31,7 +32,6 @@ import {
 } from "../storage/repositories/index-meta-repository";
 import { withImmediateTransaction } from "../storage/sqlite-transaction";
 import { reclassifyIndexDbContention } from "./index-db-contention";
-import { clearIndexOnMissRefs, readIndexOnMissRefs } from "./index-on-miss";
 import type { IndexMoves } from "./indexer";
 import { deriveEntryProvenance } from "./installations";
 import { legacyRefMove, rekeyLegacyEntry } from "./legacy-refs";
