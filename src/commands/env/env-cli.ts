@@ -112,7 +112,7 @@ const envCreateCommand = defineJsonCommand({
     if (!exists || content !== undefined) {
       writeEnvSecret(resolution, { op: "create", content: content ?? "", exclusive: true });
     } else {
-      // Left as it is, but a file the write would have refused (a symbolic link) is refused still.
+      // Left as it is after the same path check a create would apply.
       if (held.file !== undefined) assertWritePathsInsideSource(source, [held.file]);
     }
     output("env-create", { ref });

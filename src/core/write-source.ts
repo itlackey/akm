@@ -44,7 +44,7 @@ import {
 import { listIgnoredExactPaths } from "../sources/providers/git-stash";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName } from "./asset/resolve-ref";
-import { assertWritableFile } from "./assets/files";
+import { assertLinksLeadInside } from "./assets/files";
 import { assertAdapterWrites, detectBundleAdapter } from "./assets/gate";
 import { materialiseBundleDir } from "./bundle-at-dir";
 import { existingFileMode, isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
@@ -495,12 +495,12 @@ export function recordWriteTargetPath(source: WriteTargetSource, filePath: strin
 }
 
 /**
- * Refuse a write path outside the source root, or one that passes through a
- * symbolic link below it (a linked directory would redirect the write out of
- * the bundle). The source root itself may be a symlink.
+ * Refuse a write path outside the source root. A symbolic link below it must
+ * lead to an existing file or folder inside the bundle; a link leaving the
+ * bundle or leading nowhere is refused. The source root itself may be a symlink.
  */
 export function assertWritePathsInsideSource(source: WriteTargetSource, filePaths: readonly string[]): void {
-  for (const filePath of filePaths) assertWritableFile(source.path, source.name, filePath);
+  for (const filePath of filePaths) assertLinksLeadInside(source.path, source.name, filePath);
 }
 
 /**

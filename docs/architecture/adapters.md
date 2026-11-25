@@ -24,10 +24,9 @@ is described in [Architecture: Connections and Harnesses](architecture.md#connec
 > `bundles` config shape are still evolving — see [STABILITY.md](../../STABILITY.md).
 
 > **Migration nearly finished.** [Principled exceptions](#principled-exceptions)
-> lists what stays outside the facade for good. Asset access still done as the
-> base release did it, where the facade would change what a user sees, carries
-> `// asset-io: base`; a later change moves each one with its own approved
-> behaviour change (see [Enforcement](#enforcement)).
+> lists what stays outside the facade for good. Seven reads still done as the
+> base release did them carry `// asset-io: base`, each with its reason; see
+> [The seven `base` exemptions](#the-seven-base-exemptions).
 
 ---
 
@@ -264,15 +263,18 @@ The template methods:
   whether something is kept there now, and the file to show), and refuses with a
   `UsageError` naming the file when the placed file would be no asset
   (`create knowledge "index"`, `create secret "x.lock"`).
-- `create`, `update` and `delete` write atomically (`writeFileAtomic`) and
-  refuse a path that leaves the bundle's root. A create or update follows a
-  symbolic link below it only when the link leads to an existing file or folder
-  inside the bundle; any other link refuses the write. A create replaces such a
-  link with a regular file, an update writes where it leads and keeps it, and a
-  hard link is a regular file. `delete` refuses any link
-  (`assertWritableFile`). `place` is checked first, and an adapter
-  whose `writes` lacks the type refuses as an invariant error a user never sees:
-  the facade checks `writes` before it calls.
+- `create` and `update` write atomically (`writeFileAtomic`) and refuse a path
+  that leaves the bundle's root. They follow a symbolic link below it only when
+  the link leads to an existing file or folder inside the bundle; any other link
+  refuses the write. A create replaces such a link with a regular file, an update
+  writes where it leads and keeps it, and a hard link is a regular file. `delete`
+  removes a symbolic link itself, never its target, whether the link stays inside
+  the bundle, leaves it or dangles. `retire` and `restore` are the documented
+  exceptions to the shared link rule (`assertWritableFile`): they refuse every
+  symbolic link because moving a relative link into the archive would leave it
+  dangling. `place` is checked first, and an adapter whose `writes` lacks the
+  type refuses as an invariant error a user never sees: the facade checks
+  `writes` before it calls.
 - `retire`, `retired`, `restore`, `forget` and `expireRetired` delegate to
   `directory-archive.ts` (see [Retire and delete](#retire-and-delete)).
 
@@ -522,7 +524,8 @@ adapter a bundle has, or whether its folders declare types
 An adapter's `writes` says what it creates, updates and deletes. Its `retires`
 says which of those types it takes out recoverably.
 
-- **Delete** removes the asset. The directory adapters remove the file.
+- **Delete** removes the asset. The directory adapters remove the file; for a
+  symbolic link they remove the link itself and never its target.
 - **Retire** keeps the asset and a record of why. `akm` retires every type it
   writes except `env` and `secret`; `akm-workflow` retires `workflow`; `dotenv`
   and the secret managers retire nothing.
@@ -610,6 +613,28 @@ These stay outside the facade for good. Each carries a reason in the lint
    indexer's private derived state for directory bundles.
 7. **Workflow code** (deprecated, removed in 0.11): keeps its own file access
    with the reason `deprecated`.
+
+### The seven `base` exemptions
+
+Each stays because the facade cannot give the read without a change the owner has
+not approved. Measured on a generated bundle of 2,400 assets in a git repository
+(Bun, this machine): stat of every row's file 7 ms, existence of every file 4.6 ms,
+one facade listing of the bundle 72 ms, one facade find per row 5.8 ms (about 14 s
+at 2,400 rows, from its `git check-ignore` process).
+
+| File | Read | Why it stays |
+| --- | --- | --- |
+| `workspace/graph.ts` | mtime of each indexed file | the facade has no mtime and may not stat (`facade-fs`); a listing is 10x the stats, a find per row far more |
+| `commands/improve/retrieval-scope.ts` | mtime of a candidate's file | same |
+| `commands/read/related.ts` | whether a neighbour's indexed file exists | no existence read for a row's file; a listing costs far more than stats of a few candidates |
+| `commands/read/show.ts` | a script file no adapter lists, shown as plain text | the facade reads through adapters, and none lists it |
+| `commands/command/execution-source-loader.ts` | the file an index row names, read as its row's adapter indexed it | rows can share a ref, so the facade's winner for the ref can be another file; the facade may not build a file context |
+| `commands/health/archive-usage.ts` | size of the folder a directory bundle keeps retirements in | health measures the folder, not the retirements `retired()` lists |
+| `commands/lint/base-linter.ts` | what a bundle keeps at a ref's spelling, a file no adapter lists included | missing-ref counts files no adapter lists |
+
+Moving the first three needs a member on the adapter contract (a stat or a batched
+existence read), which this change does not add. `indexer/path-resolver.ts`'s
+`entry.file` read moved behind `indexedPathOf`.
 
 ---
 

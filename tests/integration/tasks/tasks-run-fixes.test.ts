@@ -9,10 +9,12 @@
  * a working folder that cannot be made, and the messages of a start.
  */
 
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { type SpawnSyncReturns, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { getDataDir } from "../../../src/core/paths";
 import { harnessCalls, writeFakeHarness } from "../../_helpers/engine-stubs";
 import { makeLauncherDist } from "../../_helpers/launcher-dist";
 import {
@@ -119,11 +121,11 @@ describe.skipIf(!posix)("why a task failed", () => {
     expect(failed).not.toContain("\x1b");
     const emptied = result(akmJson(["run", "tasks/empty"])).detail.error as string;
     expect(emptied).toMatch(/^\(only\): parse_error: .*returned no answer\.$/);
-    const db = path.join(process.env.XDG_STATE_HOME as string, "akm", "state.db");
-    const stored = spawnSync("sqlite3", ["-readonly", db, "select metadata_json from task_history"], {
-      encoding: "utf8",
-    });
-    expect(stored.stdout).not.toContain("\\u001b");
+    const stateDb = new Database(path.join(getDataDir(), "state.db"), { readonly: true });
+    const stored = stateDb.query("select metadata_json from task_history").all();
+    stateDb.close();
+    expect(stored).not.toEqual([]);
+    expect(JSON.stringify(stored)).not.toContain("\\u001b");
   });
 
   test("a step that dispatched an agent records the engine, and why it failed", () => {
