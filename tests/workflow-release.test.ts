@@ -11,28 +11,50 @@ import { KNOWN_UPGRADE_ORIGINS } from "./integration/upgrade-rehearsal/previous-
 const source = fs.readFileSync(path.resolve(import.meta.dir, "../.github/workflows/release.yml"), "utf8");
 const STAGE_INPUT = "$" + "{{ inputs.stage }}";
 
-type Step = { name?: string; if?: string; run?: string };
+type Step = { name?: string; if?: string; run?: string; env?: Record<string, string> };
 type Job = {
   uses?: string;
   needs?: string | string[];
   if?: string;
   permissions?: unknown;
   steps?: Step[];
+  outputs?: Record<string, string>;
   strategy?: { matrix: Record<string, string[]> };
 };
 const workflow = YAML.parse(source) as {
   on: {
     push: { branches: string[] };
+    pull_request: { branches: string[]; types: string[] };
     workflow_dispatch: { inputs: Record<string, { type: string; default?: unknown; options?: string[] }> };
   };
   jobs: Record<string, Job>;
 };
+// The gate jobs run for a dispatch (not a dry run), for a release pull request (ready, from a release/* branch), and
+// for the push to main unless `proven` found the same tree already passed them. Nothing else runs them.
+const GATES = [
+  "integration",
+  "node-smoke",
+  "upgrade-rehearsal",
+  "desktop-tests",
+  "desktop-e2e",
+  "desktop-usability",
+  "gated",
+];
+const GATE_IF =
+  "$" +
+  "{{ !cancelled() && !inputs.dry_run && needs.proven.outputs.skip != 'true' && " +
+  "(github.event_name != 'pull_request' || (!github.event.pull_request.draft && startsWith(github.head_ref, 'release/'))) }}";
 const resolve = workflow.jobs.release?.steps?.find((step) => step.name === "Resolve version");
 
 describe("release workflow", () => {
   test("a stable release is the push that merges a release branch into main; a prerelease is a dispatch with a stage", () => {
-    expect(Object.keys(workflow.on)).toEqual(["push", "workflow_dispatch"]);
+    expect(Object.keys(workflow.on)).toEqual(["push", "pull_request", "workflow_dispatch"]);
     expect(workflow.on.push.branches).toEqual(["main"]);
+    // The release pull request runs the gates; marking a draft ready runs them once.
+    expect(workflow.on.pull_request).toEqual({
+      branches: ["main"],
+      types: ["opened", "synchronize", "reopened", "ready_for_review"],
+    });
     // No version input: the version is the one committed in package.json.
     expect(Object.keys(workflow.on.workflow_dispatch.inputs)).toEqual(["stage", "dry_run"]);
     expect(workflow.on.workflow_dispatch.inputs.stage).toMatchObject({
@@ -45,10 +67,13 @@ describe("release workflow", () => {
   test("runs the gates as its own jobs, then one release job, then Desktop and akm-web", () => {
     expect(Object.keys(workflow.jobs)).toEqual([
       "ci",
+      "proven",
       "integration",
       "node-smoke",
       "upgrade-rehearsal",
       "desktop-tests",
+      "desktop-e2e",
+      "desktop-usability",
       "gated",
       "release",
       "desktop",
@@ -63,6 +88,8 @@ describe("release workflow", () => {
       "node-smoke",
       "upgrade-rehearsal",
       "desktop-tests",
+      "desktop-e2e",
+      "desktop-usability",
       "gated",
     ]);
     expect(workflow.jobs.desktop?.needs).toBe("release");
@@ -71,8 +98,9 @@ describe("release workflow", () => {
     expect(workflow.jobs.ci?.if).toBe("$" + "{{ github.event_name == 'workflow_dispatch' && !inputs.dry_run }}");
     // The integration suite, the Node fallback smoke, the upgrade rehearsals and Gated CI run nowhere else, so they
     // gate the stable push and the prerelease alike.
-    for (const gate of ["integration", "node-smoke", "upgrade-rehearsal", "desktop-tests", "gated"]) {
-      expect(workflow.jobs[gate]?.if).toBe("$" + "{{ !inputs.dry_run }}");
+    for (const gate of GATES) {
+      expect(workflow.jobs[gate]?.if, gate).toBe(GATE_IF);
+      expect(workflow.jobs[gate]?.needs, gate).toBe("proven");
     }
     // The Node fallback on both supported Node versions; one rehearsal per KNOWN_UPGRADE_ORIGINS entry.
     expect(workflow.jobs["node-smoke"]?.strategy?.matrix["node-version"]).toEqual(["22", "24"]);
@@ -93,23 +121,68 @@ describe("release workflow", () => {
     expect(source).toContain("gh release create");
   });
 
-  test("Desktop's tests gate the release: the full sequence, on the commit that ships", () => {
-    const job = workflow.jobs["desktop-tests"];
-    expect(job?.permissions).toEqual({ contents: "read" });
-    const run = JSON.stringify(job?.steps);
-    for (const command of [
-      "npm run check",
-      "npm run build",
-      "npm test",
-      "npm run test:e2e",
-      "npm run test:usability",
-      "npm run test:server",
-      "npm run test:web-package",
-      "xvfb-run -a npm run test:electron",
-    ]) {
-      expect(run, command).toContain(command);
+  test("Desktop's tests gate the release as three parallel jobs: every command runs once, on the commit that ships", () => {
+    const commands: Record<string, string[]> = {
+      "desktop-tests": [
+        "npm run check",
+        "npm run build",
+        "npm test",
+        "npm run test:server",
+        "npm run test:web-package",
+        "xvfb-run -a npm run test:electron",
+      ],
+      "desktop-e2e": ["npm run test:e2e"],
+      "desktop-usability": ["npm run test:usability"],
+    };
+    const everything: string[] = [];
+    for (const [id, expected] of Object.entries(commands)) {
+      const job = workflow.jobs[id];
+      expect(job?.permissions, id).toEqual({ contents: "read" });
+      const run = (job?.steps ?? []).map((step) => step.run ?? "").join("\n");
+      for (const command of expected) {
+        expect(run, `${id}: ${command}`).toContain(command);
+      }
+      // The same setup in each job.
+      expect(
+        job?.steps?.some((step) => step.run === "bun run desktop:setup"),
+        id,
+      ).toBe(true);
+      expect(run, id).toContain("playwright/test/cli.js install --with-deps chromium");
+      everything.push(...(run.match(/npm (?:run [\w:-]+|test)\b/g) ?? []));
     }
-    expect(job?.steps?.some((step) => step.run === "bun run desktop:setup")).toBe(true);
+    for (const command of ["npm run test:e2e", "npm run test:usability", "npm test", "npm run test:electron"]) {
+      expect(everything.filter((found) => found === command).length, command).toBe(1);
+    }
+  });
+
+  test("the gates run on the release pull request only, and the release job never runs there", () => {
+    expect(workflow.jobs.release?.if).toContain("github.event_name != 'pull_request'");
+    // Nothing is built for publishing, tagged or published on a pull request: release, desktop and akm-web all hang
+    // off the release job.
+    expect(workflow.jobs.desktop?.needs).toBe("release");
+    expect(workflow.jobs["akm-web"]?.needs).toBe("release");
+    expect(workflow.jobs.ci?.if).toContain("github.event_name == 'workflow_dispatch'");
+  });
+
+  test("the push to main skips the gates when the merged tree already passed them on the release pull request", () => {
+    const proven = workflow.jobs.proven;
+    expect(proven?.if).toBe("$" + "{{ github.event_name == 'push' }}");
+    expect(proven?.outputs).toEqual({ skip: "$" + "{{ steps.proof.outputs.skip }}" });
+    expect(proven?.permissions).toEqual({ contents: "read", actions: "read", "pull-requests": "read" });
+    const run = proven?.steps?.find((step) => step.name === "Look for a passing run on this tree")?.run ?? "";
+    // The merged pull request's head, from a release branch into main; the trees compared through the API.
+    expect(run).toContain("commits/$GITHUB_SHA/pulls");
+    expect(run).toContain('.base.ref == "main"');
+    expect(run).toContain('startswith("release/")');
+    expect(run).toContain(".tree.sha");
+    // The pull request's own Release run on that head: nothing failed, and the integration job really ran (a draft
+    // run is all skipped).
+    expect(run).toContain("workflows/release.yml/runs?event=pull_request&head_sha=");
+    expect(run).toContain('.name == "integration" and .conclusion == "success"');
+    expect(run).toContain('.conclusion == "success" or .conclusion == "skipped"');
+    // Only a proof sets it: no proof, or a failed lookup, runs the gates as before.
+    expect(run).toContain('echo "skip=true" >> "$GITHUB_OUTPUT"');
+    expect(run).not.toContain("exit 1");
   });
 
   test("a stable publishes the version committed in package.json; a prerelease the release branch's version", () => {
