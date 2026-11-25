@@ -386,7 +386,16 @@ test("an https origin marks the session cookie Secure", async (t) => {
   assert.match(bootstrap.headers["set-cookie"][0], /; Secure$/);
 });
 
-test("host spellings are normalised, and wildcard spellings need --origin", async (t) => {
+// Without IPv6 a listen on `::` fails with EAFNOSUPPORT. Skip then, unless CI, which has it and must keep the coverage.
+const ipv6 = await new Promise((resolve) => {
+  const probe = net.createServer();
+  probe.once("error", () => resolve(false));
+  probe.listen(0, "::", () => probe.close(() => resolve(true)));
+});
+
+test("host spellings are normalised, and wildcard spellings need --origin", {
+  skip: !ipv6 && !process.env.CI && "no IPv6",
+}, async (t) => {
   const port = await freePort();
   const app = await launchWith(t, ["--host", "Localhost", "--port", String(port)]);
   const url = new URL(app.ready.origin);
