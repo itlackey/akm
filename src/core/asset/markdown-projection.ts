@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { IndexDocument } from "../../core/adapter/types";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
+import type { IndexDocument } from "../adapter/types";
+import { parseFrontmatter } from "./frontmatter";
 
 // ── Native Markdown search projection ──────────────────────────────────────
 

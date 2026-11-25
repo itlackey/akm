@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AssetEntry, BundleListing } from "../core/adapter/bundle-adapter";
 import type { Bundle, FileContext } from "../core/adapter/types";
+import { CONTENT_PROJECTION_VERSION } from "../core/asset/markdown-projection";
 import { type BundleScan, scanBundle } from "../core/assets/read";
 import { toErrorMessage } from "../core/common";
 import { isVerbose, warn } from "../core/warn";
@@ -27,7 +28,6 @@ import {
   getCachedDirState,
   getDirIndexState,
 } from "./passes/dir-staleness";
-import { CONTENT_PROJECTION_VERSION } from "./passes/markdown-projection";
 import type { IndexDocument, StashFile } from "./passes/metadata";
 import { drainDirDocuments, indexRowEntry } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";

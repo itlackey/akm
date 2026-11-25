@@ -20,12 +20,12 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { AdapterRenderedExecutionSource } from "../../execution/source";
+import { heldAssetRef } from "../asset/asset-ref";
 import {
   getMarkdownFragmentContent,
   hasMarkdownFragmentContent,
   setMarkdownFragmentContent,
-} from "../../indexer/passes/markdown-projection";
-import { heldAssetRef } from "../asset/asset-ref";
+} from "../asset/markdown-projection";
 import {
   compareCodePoints,
   existingFileMode,
