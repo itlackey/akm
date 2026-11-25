@@ -18,7 +18,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { bundleStorageExists, detectBundleAdapter } from "../../core/assets/gate";
-import { isWithin, resolveStashDir } from "../../core/common";
+import { isWithin, resolveStashDir, toErrorMessage } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
 import { getSources, loadConfig, resolveSecret } from "../../core/config/config";
 import { retiredBundleComponents } from "../../core/config/config-file-forms";
@@ -1241,7 +1241,7 @@ function sourceKindForInstall(source: InstallKind): SourceKind {
 
 function updateFailureOutcome(id: string, kind: SourceKind, error: unknown): UpdateSkippedItem {
   const code = error instanceof AkmError ? error.code : undefined;
-  const message = error instanceof Error ? error.message : String(error);
+  const message = toErrorMessage(error);
   return {
     id,
     kind,
@@ -1287,7 +1287,7 @@ function cleanupDirectoryBestEffort(target: string, context: string): void {
     fs.rmSync(target, { recursive: true, force: true });
   } catch (err) {
     warn(
-      `[akm ${context}] failed to remove directory ${target}: ${err instanceof Error ? err.message : String(err)}. ` +
+      `[akm ${context}] failed to remove directory ${target}: ${toErrorMessage(err)}. ` +
         "Remove it manually if it is no longer needed.",
     );
   }
