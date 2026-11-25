@@ -30,6 +30,7 @@ import { bundleIdForDir } from "../../core/bundle-id";
 import { isHttpUrl, isWithin, resolveStashDir, samePath, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { withAssetMutationLease } from "../../core/index-writer-lock";
 import { refToRelPath, resolveRefPathInStash } from "../../core/lint/base-linter";
 import { resolveBundleWriteTarget, resolveMutationTarget } from "../../core/mutation-target";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
@@ -42,7 +43,6 @@ import {
   resolveWriteTarget,
   writeTargetAt,
 } from "../../core/write-source";
-import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { resolveSourceEntries, type SearchSource, sourceAtPath } from "../../indexer/search/search-source";
 import { storeSecretResolver } from "../../sources/snapshot-fetchers/secret-seam";
 import {

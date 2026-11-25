@@ -38,6 +38,7 @@ import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
+import { backendNameForPlatform } from "../../core/platform";
 import { warn } from "../../core/warn";
 import {
   assertBundleNotDisabled,
@@ -52,7 +53,7 @@ import {
 import { retiredEngineSelection } from "../../integrations/agent/resolution";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
-import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
+import { selectBackend } from "../../tasks/backends";
 import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptions } from "../../tasks/backends/types";
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
@@ -995,15 +996,14 @@ export async function akmTasksDoctor(
   } catch (err) {
     warnings.push(err instanceof Error ? err.message : String(err));
   }
-  const skipNativeInspection = process.env.BUN_TEST === "1" && !deps.backend;
-  const sched = deps.backend ?? (skipNativeInspection ? undefined : selectBackend());
+  const sched = deps.backend ?? (process.env.BUN_TEST === "1" ? undefined : selectBackend());
   const backend = sched?.name ?? backendNameForPlatform();
   let installed: InstalledSchedulerBinding[] = [];
-  if (skipNativeInspection) {
+  if (!sched) {
     warnings.push("Native scheduler inspection is skipped inside the bun test harness.");
   } else {
     try {
-      installed = await sched!.list();
+      installed = await sched.list();
     } catch (error) {
       warnings.push(
         `Unable to inspect installed ${backend} definitions: ${error instanceof Error ? error.message : String(error)}`,

@@ -34,14 +34,14 @@
 
 import path from "node:path";
 import type { IndexDocument } from "../../core/adapter/types";
-import { warn } from "../../core/warn";
 import {
   getMarkdownFragmentContent,
   hasMarkdownFragmentContent,
   MARKDOWN_CONTENT_MAX_CHARS,
   setMarkdownFragmentContent,
   truncateUnicodeSafe,
-} from "../passes/markdown-projection";
+} from "../../core/asset/markdown-projection";
+import { warn } from "../../core/warn";
 import type { StashIntent } from "../passes/metadata";
 
 /**

@@ -31,6 +31,7 @@ import {
   fragmentForSelector,
   MARKDOWN_FRAGMENT_CONTEXT_DEFAULT_MAX_CHARS,
 } from "../../core/asset/markdown-fragments";
+import { projectMarkdownFragmentContent } from "../../core/asset/markdown-projection";
 import { displayDefaultBundle, displayRef, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
 import { adapterWrites } from "../../core/assets/gate";
@@ -53,7 +54,6 @@ import {
   lookupBundleRefWithResolution,
   lookupBundleRefWithResolutionReadonly,
 } from "../../indexer/indexer";
-import { projectMarkdownFragmentContent } from "../../indexer/passes/markdown-projection";
 import { applyCuratedFrontmatter, applyProvenanceFrontmatter, type IndexDocument } from "../../indexer/passes/metadata";
 import {
   buildEditHint,

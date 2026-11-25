@@ -13,7 +13,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveSourceEntries, type SearchSource, sourceAtPath } from "../../../indexer/search/search-source";
-import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../../tasks/source-v3";
 import {
   isUsableWorkflowSource,
   isWorkflowSource,
@@ -25,6 +24,9 @@ import {
   documentStashDirs,
   documentTypes,
   stashDirFor,
+  TASK_EXTENSION,
+  TASK_NEAR_MISS_EXTENSION,
+  taskExtensionDetail,
   typeForStashDir,
 } from "../../asset/asset-placement";
 import { parseFrontmatter } from "../../asset/frontmatter";
@@ -123,7 +125,6 @@ function fileOfAsset(root: string, asset: Asset): string {
  * source, so the sweep never linted it.
  */
 function documentDirOf(root: string, asset: Asset, type: string | undefined): string | undefined {
-  if (underEnvOrSecrets(asset)) return undefined;
   if (type === "workflow" && !isLintableWorkflow(root, fileOfAsset(root, asset))) return undefined;
   return type === undefined ? undefined : documentStashDirFor(type);
 }

@@ -20,6 +20,7 @@ import { bundleAt } from "../../core/bundle-at-dir";
 import { isWithin, relativeToRoot, safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { withAssetMutationLease } from "../../core/index-writer-lock";
 import { defaultBundleForTarget } from "../../core/mutation-target";
 import {
   prepareWriteTargetForMutation,
@@ -27,7 +28,6 @@ import {
   requireWriteTargetPath,
   resolveWriteTarget,
 } from "../../core/write-source";
-import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { isRemoteOrigin, resolveSourcesForLocator, resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";

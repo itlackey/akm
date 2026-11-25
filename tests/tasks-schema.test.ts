@@ -44,13 +44,13 @@ import { expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import Ajv from "ajv";
-import { EXECUTION_MAX_TIMEOUT_MS } from "../src/execution/limits";
 import {
   TASK_V3_MAX_COLLECTION_ITEMS,
   TASK_V3_MAX_REDACT_NAMES,
   TASK_V3_MAX_SCHEDULES,
   TASK_V3_MAX_STRING_BYTES,
-} from "../src/tasks/source/bounded-document";
+} from "../src/core/asset/bounded-task-document";
+import { EXECUTION_MAX_TIMEOUT_MS } from "../src/execution/limits";
 import {
   classifyTaskSourceV4Uses,
   parseTaskSourceV4,

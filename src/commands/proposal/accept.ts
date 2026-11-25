@@ -24,6 +24,7 @@ import { groupBy, toErrorMessage } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import type { MemoryPruneCandidate } from "../../core/improve-types";
+import { withAssetMutationLease } from "../../core/index-writer-lock";
 import { runBaseChecks } from "../../core/lint/base-linter";
 import type { LintIssue, LintIssueType } from "../../core/lint/types";
 import { canonicalBundleIdForTarget, resolveBundleWriteTarget } from "../../core/mutation-target";
@@ -39,7 +40,6 @@ import {
   resolveWriteTarget,
   type WriteTargetSource,
 } from "../../core/write-source";
-import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { sameScope, scopeFromFrontmatter } from "../../indexer/passes/metadata";
 import { resolveSourceEntries, sourcePaths } from "../../indexer/search/search-source";
 import { upsertProposal } from "../../storage/repositories/proposals-repository";

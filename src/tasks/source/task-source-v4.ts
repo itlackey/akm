@@ -24,7 +24,23 @@
  */
 
 import { timeoutMilliseconds } from "../../cli/parse-args";
-import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../commands/command/builtin-action";
+import {
+  asRecord,
+  type BoundedDocumentContext,
+  checkKeys,
+  cloneBoundedJson,
+  noGithubExpression,
+  own,
+  parseEnvironment,
+  parseStringArray,
+  presentJsonValue,
+  readBoundedTaskSourceYaml,
+  sourceError,
+  stringField,
+  TASK_V3_MAX_REDACT_NAMES,
+  utf8Bytes,
+} from "../../core/asset/bounded-task-document";
+import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../core/builtin-action";
 import { UsageError } from "../../core/errors";
 import {
   checkJsonSchemaDefinition,
@@ -47,22 +63,6 @@ import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { WORKFLOW_ENV_VAR_NAME_PATTERN, WORKFLOW_MAX_SCHEMA_BYTES } from "../../workflows/resource-limits";
 import { TASK_V3_HOST_SHELLS, TASK_V3_MAX_SCHEDULES, type TaskV3Environment, type TaskV3HostShell } from "../source-v3";
 import { TASK_RUN_RESERVED_FLAG_NAMES } from "../task-run-reserved-flags";
-import {
-  asRecord,
-  type BoundedDocumentContext,
-  checkKeys,
-  cloneBoundedJson,
-  noGithubExpression,
-  own,
-  parseEnvironment,
-  parseStringArray,
-  presentJsonValue,
-  readBoundedTaskSourceYaml,
-  sourceError,
-  stringField,
-  TASK_V3_MAX_REDACT_NAMES,
-  utf8Bytes,
-} from "./bounded-document";
 
 // ── Closed constants (D1, D2-N3, D2-N7) ─────────────────────────────────────
 

@@ -411,7 +411,7 @@ folder inside an `akm` bundle is ordinary `akm` files. See
 | Path | Purpose |
 |---|---|
 | `$DATA/akm.lock.lck` | Sentinel that serializes writes to `akm.lock`. |
-| `$DATA/index.db.write.lock` | Asset-mutation lease: serializes writes to authored content (`remember`, `import`, source updates, proposal apply). Reclaimed only when the holder PID is dead (`src/indexer/index-writer-lock.ts`). |
+| `$DATA/index.db.write.lock` | Asset-mutation lease: serializes writes to authored content (`remember`, `import`, source updates, proposal apply). Reclaimed only when the holder PID is dead (`src/core/index-writer-lock.ts`). |
 | `$DATA/index.rebuild.lock` | Taken by every index build (`akm index`, `setup`, `bundle add`/`update`/`remove`, `improve`'s pre-run index). Any command that finds it held skips its index build and carries on (`akm index` exits 0 with `skipped`). Reads never take it. Reclaimed only when the holder PID is dead (`src/indexer/index-rebuild-lock.ts`, `src/indexer/index-build.ts`). |
 | `$STATE/locks/<stash>/improve.lock` | One `akm improve` run per bundle. JSON `{ pid, startedAt, lockId }`. A lock is reclaimed only when its holder PID is dead; it does not expire by age (`src/commands/improve/locks.ts`, `src/core/run-lock.ts`). |
 | `$STATE/locks/scheduler.lock` | Serializes scheduler mutations (`withSchedulerLock`, `src/tasks/scheduler-lock.ts`). |

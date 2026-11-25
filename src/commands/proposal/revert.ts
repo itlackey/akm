@@ -9,6 +9,7 @@ import { writeAssets } from "../../core/assets/write";
 import { stateBundleId } from "../../core/bundle-at-dir";
 import type { AkmConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { withAssetMutationLease } from "../../core/index-writer-lock";
 import { warn } from "../../core/warn";
 import { beginWriteProvenance } from "../../core/write-provenance";
 import {
@@ -17,7 +18,6 @@ import {
   type ResolvedWriteTarget,
   requireWriteTargetPath,
 } from "../../core/write-source";
-import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
 import {
   forgetImproveLedgerDecision,

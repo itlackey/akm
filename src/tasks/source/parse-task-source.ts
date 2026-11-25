@@ -32,6 +32,7 @@
  * render with the label `task source`.
  */
 
+import { readBoundedTaskSourceYaml } from "../../core/asset/bounded-task-document";
 import { UsageError } from "../../core/errors";
 import { valueInputNames } from "../../execution/input-contract";
 import {
@@ -40,7 +41,6 @@ import {
   TASK_SOURCE_V5_VERSION_PATTERN,
   type TaskSourceV5Document,
 } from "../v5/source";
-import { readBoundedTaskSourceYaml } from "./bounded-document";
 import {
   parseTaskSourceV4Document,
   TASK_SOURCE_V4_VERSION,

@@ -17,6 +17,7 @@
 
 import path from "node:path";
 import { parseBundleRef } from "../core/asset/asset-ref";
+import { taskSourceErrorDetail } from "../core/asset/bounded-task-document";
 import { listAssets } from "../core/assets/read";
 import { compareCodePoints, toPosix } from "../core/common";
 import type { AkmConfig } from "../core/config/config-types";
@@ -39,7 +40,6 @@ import {
 import { parseTaskSource } from "./source/parse-task-source";
 import { projectTaskSourceV4 } from "./source/project-v4";
 import type { TaskSourceV4Document } from "./source/task-source-v4";
-import { taskSourceErrorDetail } from "./source-v3";
 import {
   isShadowedByYml,
   type TaskBundleSource,

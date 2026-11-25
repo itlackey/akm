@@ -10,8 +10,8 @@
  * an older akm keeps reading the index. A rebuild (`akm index`) writes the same rows in the new form on its own.
  */
 
+import { withAssetMutationLeaseSync } from "../../src/core/index-writer-lock";
 import { getDbPath } from "../../src/core/paths";
-import { withAssetMutationLeaseSync } from "../../src/indexer/index-writer-lock";
 import type { Database } from "../../src/storage/database";
 import {
   closeDatabase,

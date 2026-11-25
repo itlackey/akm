@@ -50,11 +50,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { AdapterRenderedExecutionSource } from "../../../execution/source";
-import {
-  getMarkdownFragmentContent,
-  hasMarkdownFragmentContent,
-  setMarkdownFragmentContent,
-} from "../../../indexer/passes/markdown-projection";
 import { applyPostContributorFields, applyPreContributorFields } from "../../../indexer/passes/metadata";
 import {
   assetPathCandidatesForName,
@@ -66,6 +61,11 @@ import {
   typeForStashDir,
 } from "../../asset/asset-placement";
 import { parseFrontmatter } from "../../asset/frontmatter";
+import {
+  getMarkdownFragmentContent,
+  hasMarkdownFragmentContent,
+  setMarkdownFragmentContent,
+} from "../../asset/markdown-projection";
 import type { LintFindings, LintRun } from "../../lint/types";
 import type { AssetEntry } from "../bundle-adapter";
 import { buildFileContext, type FileContext, fileContextOfEntry, type MatchResult } from "../directory/file-context";

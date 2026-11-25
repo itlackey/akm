@@ -9,7 +9,6 @@
  */
 
 import path from "node:path";
-import { withAssetMutationLeaseSync } from "../../indexer/index-writer-lock";
 import type {
   AssetChange,
   AssetPlacement,
@@ -23,6 +22,7 @@ import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import { parsePlacementRef } from "../asset/resolve-ref";
 import { toPosix } from "../common";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
+import { withAssetMutationLeaseSync } from "../index-writer-lock";
 import { warn } from "../warn";
 import { recordWrittenPath } from "../write-provenance";
 import {

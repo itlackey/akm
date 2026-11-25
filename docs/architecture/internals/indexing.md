@@ -102,7 +102,7 @@ Two refusals are not "no index" and still raise: an index file akm may not read 
 ## Locks
 
 - `$DATA/index.rebuild.lock`: see [Who builds the index](#who-builds-the-index).
-- `$DATA/index.db.write.lock` (`src/indexer/index-writer-lock.ts`) serializes writes to authored content (`remember`, `import`, source updates, proposal apply). Indexing does not take it.
+- `$DATA/index.db.write.lock` (`src/core/index-writer-lock.ts`) serializes writes to authored content (`remember`, `import`, source updates, proposal apply). Indexing does not take it.
 - `indexWrittenAssets` (the immediate upsert after `remember`, `import`, `proposal accept`, and similar) upserts whenever a usable index exists. It does not look for a build: it waits up to 5 seconds for the write lock and, if a build holds it longer, skips and fails open, reporting the write as done (the next build indexes it). It checks the files it was given against the walk's rules with one `git check-ignore` process. A write that overlaps a build can be missed by it, and the next build indexes it from the directory fingerprints it takes.
 - Only a build, which holds the rebuild lock, deletes and rebuilds a corrupt `index.db`. Any other opener raises the corruption error; readers treat it as "no usable index".
 

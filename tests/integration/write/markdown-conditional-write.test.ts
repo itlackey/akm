@@ -13,7 +13,7 @@ import {
   acquireAssetMutationLease,
   probeAssetMutationLease,
   withAssetMutationLease,
-} from "../../../src/indexer/index-writer-lock";
+} from "../../../src/core/index-writer-lock";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeLockfile } from "../../../src/integrations/lockfile";
 import { git, makeGitRepo } from "../../_helpers/git";

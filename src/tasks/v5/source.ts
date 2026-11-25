@@ -14,12 +14,6 @@
 
 import { parseTimeoutValue } from "../../cli/parse-args";
 import { bundleRefToString, parseBundleRef } from "../../core/asset/asset-ref";
-import { UsageError } from "../../core/errors";
-import { isSecretRefToken, parseSecretSpec, REF_TOKEN_RE } from "../../core/ref-token";
-import { warnOnce } from "../../core/warn";
-import type { InputContract } from "../../execution/input-contract";
-import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
-import { WORKFLOW_ENV_VAR_NAME_PATTERN } from "../../workflows/resource-limits";
 import {
   asRecord,
   type BoundedDocumentContext,
@@ -28,7 +22,13 @@ import {
   parseStringArray,
   sourceError,
   stringField,
-} from "../source/bounded-document";
+} from "../../core/asset/bounded-task-document";
+import { UsageError } from "../../core/errors";
+import { isSecretRefToken, parseSecretSpec, REF_TOKEN_RE } from "../../core/ref-token";
+import { warnOnce } from "../../core/warn";
+import type { InputContract } from "../../execution/input-contract";
+import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
+import { WORKFLOW_ENV_VAR_NAME_PATTERN } from "../../workflows/resource-limits";
 import { parseInputDeclarations, parseSchedule, type TaskSourceV4ScheduleBinding } from "../source/task-source-v4";
 
 /** The one beta this build reads. */

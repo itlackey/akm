@@ -32,14 +32,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { readBoundedTaskSourceYaml } from "../../../tasks/source/bounded-document";
 import { parseTaskSource, peekTaskSourceVersion } from "../../../tasks/source/parse-task-source";
-import {
-  TASK_EXTENSION,
-  TASK_NEAR_MISS_EXTENSION,
-  taskExtensionDetail,
-  taskSourceErrorDetail,
-} from "../../../tasks/source-v3";
+import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../asset/asset-placement";
+import { readBoundedTaskSourceYaml, taskSourceErrorDetail } from "../../asset/bounded-task-document";
 import { toPosix } from "../../common";
 import type { FileContext } from "../directory/file-context";
 import { DirectoryAdapterBase } from "../directory-adapter";
@@ -47,9 +42,6 @@ import type { FileChange } from "../file-change";
 import type { Bundle, IndexMetadata } from "../types";
 import type { FileDiagnostic, FileValidateContext } from "../validate-context";
 import { hashContent } from "./shared";
-
-/** The task YAML extension. */
-const TASK_EXT = TASK_EXTENSION;
 
 function describe(file: FileContext, conceptId: string): IndexMetadata {
   const raw = file.content();
@@ -91,7 +83,7 @@ async function validate(_c: Bundle, changes: FileChange[], ctx: FileValidateCont
     // `.yaml` is NOT a task extension — the file never indexes and never runs.
     // It is validated here purely so the near miss is REPORTED rather than
     // skipped the way every other extension is (issue #760).
-    if (ext !== TASK_EXT && ext !== TASK_NEAR_MISS_EXTENSION) continue;
+    if (ext !== TASK_EXTENSION && ext !== TASK_NEAR_MISS_EXTENSION) continue;
     const relPath = toPosix(change.path);
     if (ext === TASK_NEAR_MISS_EXTENSION) {
       diagnostics.push({
@@ -121,7 +113,9 @@ export class AkmTaskAdapter extends DirectoryAdapterBase {
   readonly version = "0.9.2";
   /** A `.yml` file is a task; its concept id is its path without the extension. */
   protected identify(relPath: string): string | null {
-    return path.posix.extname(relPath).toLowerCase() === TASK_EXT ? toPosix(relPath).replace(/\.yml$/i, "") : null;
+    return path.posix.extname(relPath).toLowerCase() === TASK_EXTENSION
+      ? toPosix(relPath).replace(/\.yml$/i, "")
+      : null;
   }
 
   protected describe(_b: Bundle, file: FileContext, conceptId: string): IndexMetadata {
@@ -157,7 +151,7 @@ export class AkmTaskAdapter extends DirectoryAdapterBase {
       return false;
     }
     for (const entry of entries) {
-      if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== TASK_EXT) continue;
+      if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== TASK_EXTENSION) continue;
       let raw: string;
       try {
         raw = fs.readFileSync(path.join(root, entry.name), "utf8");
