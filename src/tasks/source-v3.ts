@@ -31,18 +31,6 @@ import type { TaskSourceV4Step } from "./source/task-source-v4";
 // surviving `src` consumer still imports (task-source-v4.ts).
 export { TASK_V3_MAX_SCHEDULES };
 
-export const TASK_EXTENSION = ".yml";
-export const TASK_NEAR_MISS_EXTENSION = ".yaml";
-
-/** Explain why the near-miss `.yaml` spelling is not a task source. */
-export function taskExtensionDetail(relPath: string): string {
-  const base = relPath.replace(/\.yaml$/i, "");
-  return (
-    `task file uses the ${TASK_NEAR_MISS_EXTENSION} extension; akm recognizes tasks only as ` +
-    `${TASK_EXTENSION}, so this file is never indexed or scheduled — rename it to ${base}${TASK_EXTENSION}.`
-  );
-}
-
 /** Closed authoring vocabulary. Arbitrary GitHub `{0}` shell templates are not accepted. */
 export const TASK_V3_HOST_SHELLS = ["bash", "sh", "zsh", "pwsh", "powershell", "cmd"] as const;
 export type TaskV3HostShell = (typeof TASK_V3_HOST_SHELLS)[number];
@@ -112,14 +100,4 @@ export interface TaskV3SourceDocument {
   readonly akm?: Readonly<TaskV3AkmOptions>;
   readonly triggers: PreparableTaskTriggerPlan;
   readonly source: Readonly<{ path: string }>;
-}
-
-/** Preserve actionable classified hints when a parser failure becomes a diagnostic. */
-export function taskSourceErrorDetail(cause: unknown): string {
-  if (!(cause instanceof Error)) return String(cause);
-  const hint =
-    "hint" in cause && typeof (cause as { hint?: unknown }).hint === "function"
-      ? (cause as { hint: () => string | undefined }).hint()
-      : undefined;
-  return hint ? `${cause.message} ${hint}` : cause.message;
 }

@@ -111,7 +111,6 @@ const UPWARD_ALLOWED = [
   "src/indexer/scan/drain-dir",
   "src/indexer/search/search-source",
   "src/tasks/schedule-gates",
-  "src/tasks/source-v3",
   "src/tasks/source/parse-task-source",
 ];
 const FACADE_INTERNAL_MODULES = ["src/core/assets/bundle", "src/core/assets/asset", "src/core/assets/index-rows"];

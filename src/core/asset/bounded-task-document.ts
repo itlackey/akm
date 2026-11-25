@@ -303,6 +303,16 @@ export function yamlProblem(message: string): string {
   return message.split("\n")[0]?.trim() || "invalid YAML";
 }
 
+/** Preserve actionable classified hints when a parser failure becomes a diagnostic. */
+export function taskSourceErrorDetail(cause: unknown): string {
+  if (!(cause instanceof Error)) return String(cause);
+  const hint =
+    "hint" in cause && typeof (cause as { hint?: unknown }).hint === "function"
+      ? (cause as { hint: () => string | undefined }).hint()
+      : undefined;
+  return hint ? `${cause.message} ${hint}` : cause.message;
+}
+
 // ── The bounded YAML front end ──────────────────────────────────────────────
 
 export interface BoundedTaskSourceYamlInput {
