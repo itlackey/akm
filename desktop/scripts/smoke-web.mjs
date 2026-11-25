@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -27,6 +27,15 @@ try {
   ({ stage } = JSON.parse(
     execFileSync(process.execPath, [path.join(root, "scripts/package-web.mjs")], { encoding: "utf8" }).trim(),
   ));
+  // The package's README is written by package-web.mjs, not copied: it has to describe the server it ships with.
+  const readme = await readFile(path.join(/** @type {string} */ (stage), "README.md"), "utf8");
+  assert.match(readme, /AKM_WEB_SECRET/, "The package README does not say how to supply the secret.");
+  assert.match(readme, /experimental\.web\.secret/, "The package README does not name the configured secret.");
+  assert.doesNotMatch(
+    readme,
+    /desktop_session|`url`|session token/,
+    "The package README describes the old launch URL.",
+  );
   const pack = (/** @type {string} */ dir) =>
     path.join(
       work,
