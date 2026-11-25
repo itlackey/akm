@@ -30,9 +30,9 @@ import {
   codexMarketplaceEntry,
   codexPluginVersion,
   marketplaceTargetVersion,
-  openCodeConfigSpec,
   refChannel,
 } from "../sources/plugin-upgrade";
+import { openCodeConfigSpec } from "../sources/plugin-upgrade-opencode";
 import type { HealthCheckResult } from "./types";
 
 /**
