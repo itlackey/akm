@@ -311,6 +311,23 @@ describe("lint-asset-io", () => {
     ]);
   });
 
+  test("store-sniff flags the store test under another name: inDirectories, destructured", () => {
+    expect(
+      violationsOf(["store-sniff"], {
+        "src/feature/renamed.ts":
+          "export const a = [scan.inDirectories, !plan.scan?.inDirectories];\nconst { inDirectories } = scan;\nconst { isStore: store } = held;\n",
+        "src/indexer/plan.ts": "export const a = scan.inDirectories;\n",
+        "src/core/assets/x.ts": "export const a = scan.inDirectories;\nconst { inDirectories } = scan;\n",
+        "src/feature/clean.ts": "export const a = { inDirectories: true };\nconst { other } = scan;\n",
+      }).sort(),
+    ).toEqual([
+      "src/feature/renamed.ts store-sniff",
+      "src/feature/renamed.ts store-sniff",
+      "src/feature/renamed.ts store-sniff",
+      "src/feature/renamed.ts store-sniff",
+    ]);
+  });
+
   test("entries-sql flags raw SQL on entries or index_meta outside storage, the facade and the indexer", () => {
     expect(
       violationsOf(["entries-sql"], {

@@ -29,8 +29,9 @@
  *                    facade answers about assets, and an adapter's internals or file functions passed through under its
  *                    name are a caller's adapter-import the lint would not count. A caller that needs one imports it
  *                    itself, under an exemption.
- *   store-sniff      a test of whether a bundle is a store: `.isStore`, `addressedBy`, or `.location` compared
- *                    (`=== undefined` included), outside the adapter layer.
+ *   store-sniff      a test of whether a bundle is a store: `.isStore`, its `BundleScan` spelling `.inDirectories`
+ *                    (the indexer plans its scan by it), `addressedBy`, or `.location` compared (`=== undefined`
+ *                    included), as a property or a destructured name, outside the adapter layer.
  *   entries-sql      raw SQL on the `entries` table or `index_meta` (`FROM entries`, `INSERT INTO index_meta`, ...)
  *                    outside `src/storage/`, `src/core/assets/` and `src/indexer/`.
  *   entry-file-logic `entry.file` as an operand of a comparison, or as a map/set key (`get set has delete add`, `m[entry.file]`,
@@ -509,8 +510,16 @@ export function scan(root: string, adapterIds: readonly string[], exemptions: st
           report(node, "entry-file-logic", "key");
         }
         if (ts.isComputedPropertyName(node) && isEntryFile(node.expression)) report(node, "entry-file-logic", "key");
-        if (ts.isPropertyAccessExpression(node) && (node.name.text === "isStore" || node.name.text === "addressedBy")) {
+        // The same test under another name: `BundleScan.inDirectories` is `!isStore`. The indexer plans its scan by it.
+        const storeTest = (name: string) =>
+          name === "isStore" ||
+          name === "addressedBy" ||
+          (name === "inDirectories" && !file.startsWith("src/indexer/"));
+        if (ts.isPropertyAccessExpression(node) && storeTest(node.name.text))
           report(node, "store-sniff", node.name.text);
+        if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
+          const name = (node.propertyName ?? node.name).getText(source);
+          if (storeTest(name)) report(node, "store-sniff", name);
         }
         if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "addressedBy") {
           report(node, "store-sniff", "addressedBy");
