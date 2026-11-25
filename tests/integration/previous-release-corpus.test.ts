@@ -119,6 +119,7 @@ import { openStateDatabase } from "../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, resetQuiet, setQuiet } from "../../src/core/warn";
 import { persistDirRecords } from "../../src/indexer/index-persist";
 import { openUsableIndex } from "../../src/indexer/index-readiness";
+import { akmIndex } from "../../src/indexer/indexer";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embeddings";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
@@ -140,6 +141,7 @@ import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
 import { readTaskHistory } from "../../src/tasks/run/task-history";
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
+import { withFakeSecretStores } from "../_helpers/fake-secret-stores";
 import {
   type IsolatedAkmStorage,
   sandboxStashDir,
@@ -166,6 +168,65 @@ function migrateLegacyTask(filePath: string, yaml: string) {
 }
 
 describe("previous-release corpus — upgrade must not break reads", () => {
+  test("akmIndex stays incremental on a legacy keyring marker and retains the indexed row", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      writeSandboxConfig({
+        semanticSearchMode: "off",
+        defaultBundle: "keys",
+        bundles: { keys: { adapter: "secret-tool", location: "akm" } },
+      });
+      const legacyRoot = path.join(getCacheDir(), "index", "bundles", "keys");
+      const db = openIndexDatabase(getDbPath());
+      let before: unknown[];
+      try {
+        setMeta(db, "stashDir", legacyRoot);
+        setMeta(db, "stashDirs", JSON.stringify([legacyRoot]));
+        setMeta(db, "builtAt", "2026-11-24T00:00:00.000Z");
+        setMeta(db, "sourceOwners", JSON.stringify([{ bundleId: "keys", sourceRoot: legacyRoot }]));
+        upsertEntry(
+          db,
+          "",
+          { type: "secret", name: "deploy" },
+          deriveEntryProvenance({ bundleId: "keys", adapterId: "secret-tool" }, "secret", "deploy"),
+        );
+        before = db.prepare("SELECT id, item_ref FROM entries").all();
+      } finally {
+        closeDatabase(db);
+      }
+      await withFakeSecretStores(
+        {
+          keyrings: {
+            akm: [
+              {
+                path: "/org/freedesktop/secrets/collection/akm/1",
+                label: "deploy",
+                attributes: { akm: "akm/deploy" },
+                secret: "fixture",
+              },
+            ],
+          },
+        },
+        async () => {
+          expect(await akmIndex({ stashDir: { bundleId: "keys" } })).toMatchObject({
+            mode: "incremental",
+            totalEntries: 1,
+          });
+        },
+      );
+      const migrated = openIndexDatabase(getDbPath());
+      try {
+        expect(getMeta(migrated, "stashDir")).toBeUndefined();
+        expect(getMeta(migrated, "stashBundle")).toBe("keys");
+        expect(migrated.prepare("SELECT id, item_ref FROM entries").all()).toEqual(before);
+      } finally {
+        closeDatabase(migrated);
+      }
+    } finally {
+      storage.cleanup();
+    }
+  });
+
   test("legacy store markers serve the same index and persist by bundle id without dropping entries", () => {
     const storage = withIsolatedAkmStorage();
     try {
