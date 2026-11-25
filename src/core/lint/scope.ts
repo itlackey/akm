@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-import type { BundleSourceRef } from "../../core/adapter/types";
-import { stalePathRoots } from "../../core/asset/stale-path";
-import type { AkmConfig } from "../../core/config/config";
+import type { BundleSourceRef } from "../adapter/types";
+import { stalePathRoots } from "../asset/stale-path";
+import type { AkmConfig } from "../config/config";
 import { bundleLintSkip } from "./bundle-skip";
 import { type MovedRefs, type ReadMoves, readMovedRefs } from "./moved-refs";
 

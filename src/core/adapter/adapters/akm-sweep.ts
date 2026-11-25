@@ -12,19 +12,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { runBaseChecks } from "../../../commands/lint/base-linter";
-import { lintIssueDedupeKey } from "../../../commands/lint/diagnostics";
-import { type MovedRefs, type ReadMoves, readRecordedMoves } from "../../../commands/lint/moved-refs";
-import { lintScope } from "../../../commands/lint/scope";
-import {
-  type AkmLintOptions,
-  isAdvisoryLintIssue,
-  type LintBundle,
-  type LintContext,
-  type LintFindings,
-  type LintIssue,
-  type LintRun,
-} from "../../../commands/lint/types";
 import { resolveSourceEntries, type SearchSource } from "../../../indexer/search/search-source";
 import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../../tasks/source-v3";
 import {
@@ -49,6 +36,19 @@ import { compareCodePoints, isAkmRegistryCachePath, samePath } from "../../commo
 import type { AkmConfig } from "../../config/config";
 import { defaultExcludedTypes } from "../../config/schema/search";
 import { UsageError } from "../../errors";
+import { runBaseChecks } from "../../lint/base-linter";
+import { lintIssueDedupeKey } from "../../lint/diagnostics";
+import { type MovedRefs, type ReadMoves, readRecordedMoves } from "../../lint/moved-refs";
+import { lintScope } from "../../lint/scope";
+import {
+  type AkmLintOptions,
+  isAdvisoryLintIssue,
+  type LintBundle,
+  type LintContext,
+  type LintFindings,
+  type LintIssue,
+  type LintRun,
+} from "../../lint/types";
 import { warn } from "../../warn";
 import {
   assertFileWritable,

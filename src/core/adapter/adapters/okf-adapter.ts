@@ -30,11 +30,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { LintFindings, LintRun } from "../../../commands/lint/types";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { isScratchPath } from "../../asset/scratch";
 import { isRecord, toPosix } from "../../common";
+import type { LintFindings, LintRun } from "../../lint/types";
 import type { FileContext } from "../directory/file-context";
 import { DirectoryAdapterBase } from "../directory-adapter";
 import type { FileChange } from "../file-change";

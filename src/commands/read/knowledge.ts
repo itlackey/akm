@@ -30,6 +30,7 @@ import { bundleIdForDir } from "../../core/bundle-id";
 import { isHttpUrl, isWithin, resolveStashDir, safeRealpath, samePath, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { refToRelPath, resolveRefPathInStash } from "../../core/lint/base-linter";
 import { resolveBundleWriteTarget, resolveMutationTarget } from "../../core/mutation-target";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { warn } from "../../core/warn";
@@ -49,7 +50,6 @@ import {
   shouldAllowPrivateWebsiteUrlForTests,
 } from "../../sources/snapshot-fetchers/website-ingest";
 import { writeSupersededEdge } from "../improve/memory/memory-belief";
-import { refToRelPath, resolveRefPathInStash } from "../lint/base-linter";
 
 const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
 

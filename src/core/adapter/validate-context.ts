@@ -12,7 +12,7 @@
  *
  * A bare (unqualified) `conceptId` is resolved as BOTH:
  *   1. the AKM placement-derived paths (`filesForRef`
- *      + `assetPathForName` — the exact derivation `commands/lint/base-linter.ts
+ *      + `assetPathForName` — the exact derivation `core/lint/base-linter.ts
  *      #refToRelPath` already uses for the akm-native `missing-ref` check); and
  *   2. the DIRECT bundle-relative spelling (`<conceptId>.md`, and the bare
  *      `<conceptId>` for an extensionless asset) — the form every non-akm

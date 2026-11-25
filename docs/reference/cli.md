@@ -1647,7 +1647,7 @@ and workflow `env:` bindings inject what the bundle defines.
 `akm lint` still reports env keys that can hijack a process
 (`dangerous-env-key`, non-blocking), for bundle authors who want to review their
 own files. The flagged key set is 41 literal names plus 2 regex pattern families
-(`src/commands/lint/env-key-rules.ts`):
+(`src/core/lint/env-key-rules.ts`):
 `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, `LD_DEBUG`, `LD_BIND_NOW`,
 `LD_PROFILE`, `LD_ASSUME_KERNEL`, `LD_TRACE_LOADED_OBJECTS`,
 `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`, `DYLD_FRAMEWORK_PATH`, `PATH`,

@@ -10,7 +10,7 @@
  *
  * The base asset checks (unquoted-colon, missing-updated, stale-path, missing-ref,
  * redacted-content) have one implementation, `runBaseChecks`
- * (`src/commands/lint/base-linter.ts`), and one decision on whether a rule applies to a
+ * (`src/core/lint/base-linter.ts`), and one decision on whether a rule applies to a
  * file, `ruleApplies` (`core/asset/lint-text.ts`). {@link createBaseChecker} is an
  * adapter's way in: it hands `runBaseChecks` the file's text and the bundle's scope and
  * returns what it finds. `validate` never writes, so it never asks for a fix.
@@ -18,12 +18,12 @@
 
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { runBaseChecks } from "../../../commands/lint/base-linter";
-import { lintScope } from "../../../commands/lint/scope";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import type { RuleScope } from "../../asset/lint-text";
 import { toPosix } from "../../common";
 import { loadConfig } from "../../config/config";
+import { runBaseChecks } from "../../lint/base-linter";
+import { lintScope } from "../../lint/scope";
 import type { FileChange } from "../file-change";
 import { type Bundle, rootOf } from "../types";
 import type { FileDiagnostic, FileValidateContext } from "../validate-context";

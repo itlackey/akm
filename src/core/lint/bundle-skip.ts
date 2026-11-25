@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
-import { bundleAtDir } from "../../core/config/config-sources";
-import type { AkmConfig } from "../../core/config/config-types";
-import { warnOnce } from "../../core/warn";
+import { bundleAtDir } from "../config/config-sources";
+import type { AkmConfig } from "../config/config-types";
+import { warnOnce } from "../warn";
 import { LINT_RULES } from "./types";
 
 /**

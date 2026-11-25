@@ -49,7 +49,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { LintFindings, LintRun } from "../../../commands/lint/types";
 import type { AdapterRenderedExecutionSource } from "../../../execution/source";
 import {
   applyPostContributorFields,
@@ -68,6 +67,7 @@ import {
   typeForStashDir,
 } from "../../asset/asset-placement";
 import { parseFrontmatter } from "../../asset/frontmatter";
+import type { LintFindings, LintRun } from "../../lint/types";
 import type { AssetEntry } from "../bundle-adapter";
 import { buildFileContext, type FileContext, fileContextOfEntry, type MatchResult } from "../directory/file-context";
 import type { PathFileContext } from "../directory/matchers";
