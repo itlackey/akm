@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { IS_WINDOWS, parseJsonc, toErrorMessage } from "../../core/common";
+import { IS_WINDOWS, parseJsonc, toErrorMessage, tryParseJson } from "../../core/common";
 import { moveToTrash } from "../../core/trash";
 import {
   OPENCODE_V1,
@@ -23,7 +23,6 @@ import {
   channelWriteFailure,
   failed,
   PREFETCH_TIMEOUT_MS,
-  parseJson,
   READ_TIMEOUT_MS,
   runCommand,
   skipped,
@@ -140,7 +139,7 @@ export function lookupOpenCodeLatest(tag: UpgradeChannel, flavor: OpenCodeFlavor
   const spec = `${flavor.pkg}@${tag}`;
   const view = runCommand(IS_WINDOWS ? "npm.cmd" : "npm", ["view", spec, "version", "--json"], READ_TIMEOUT_MS);
   if (!view.ok) return { error: view.error };
-  const parsed = parseJson(view.stdout) as { version?: unknown } | string | undefined;
+  const parsed = tryParseJson(view.stdout) as { version?: unknown } | string | undefined;
   const version = typeof parsed === "string" ? parsed : parsed?.version;
   if (typeof version !== "string") return { error: `npm did not report a version for ${spec}` };
   return { version };
@@ -278,10 +277,7 @@ export function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): Plugin
       moveToTrash(cache.dir);
     } catch (error) {
       return {
-        ...failed(
-          harness,
-          `could not move ${cache.dir} to the trash: ${error instanceof Error ? error.message : String(error)}`,
-        ),
+        ...failed(harness, `could not move ${cache.dir} to the trash: ${toErrorMessage(error)}`),
         backups,
       };
     }

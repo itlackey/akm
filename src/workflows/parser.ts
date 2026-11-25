@@ -37,7 +37,7 @@ import { LineCounter, parseDocument } from "yaml";
 import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
 import { parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { parseMarkdownToc } from "../core/asset/markdown";
-import { isRecord } from "../core/common";
+import { isRecord, toErrorMessage } from "../core/common";
 import { warnRetiredEngineKey } from "../execution/source";
 import {
   type SourceRef,
@@ -168,19 +168,20 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
   const frontmatterEndLine = Math.max(1, fmBlock.bodyStartLine - 1);
 
   const lineCounter = new LineCounter();
+  const lineOf = (offset: number) => Math.max(1, lineCounter.linePos(offset).line + lineOffset);
   let doc: ReturnType<typeof parseDocument>;
   try {
     doc = parseDocument(fmBlock.frontmatter, { lineCounter });
   } catch (cause) {
     return {
       ok: false,
-      errors: [{ line: 2, message: `Workflow frontmatter is not valid YAML: ${describeError(cause)}` }],
+      errors: [{ line: 2, message: `Workflow frontmatter is not valid YAML: ${toErrorMessage(cause)}` }],
     };
   }
   for (const problem of doc.errors) {
     const offset = Array.isArray(problem.pos) ? problem.pos[0] : 0;
     errors.push({
-      line: Math.max(1, lineCounter.linePos(offset).line + lineOffset),
+      line: lineOf(offset),
       message: yamlErrorMessage(problem.message),
     });
   }
@@ -190,37 +191,30 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
   try {
     root = doc.toJS();
   } catch (cause) {
-    return { ok: false, errors: [{ line: 2, message: `YAML expansion failed: ${describeError(cause)}` }] };
+    return { ok: false, errors: [{ line: 2, message: `YAML expansion failed: ${toErrorMessage(cause)}` }] };
   }
 
-  const lineAt = (p: Path): number => {
+  // The nearest ancestor of `p` the YAML AST has a range for (best-effort anchoring).
+  const rangeAt = (p: Path) => {
     for (let depth = p.length; depth >= 0; depth--) {
       const node = depth === 0 ? doc.contents : doc.getIn(p.slice(0, depth), true);
       const range = (node as RangedNode | null | undefined)?.range;
-      if (range) return Math.max(1, lineCounter.linePos(range[0]).line + lineOffset);
+      if (range) return range;
     }
-    return 2;
+    return undefined;
   };
 
   const ctx: Ctx = {
-    filePath: path,
-    errors,
-    lineAt,
-    lineAtOffset: (offset) => Math.max(1, lineCounter.linePos(offset).line + lineOffset),
-    nodeAt: (p) => (p.length === 0 ? doc.contents : doc.getIn(p, true)),
     refAt: (p) => {
-      for (let depth = p.length; depth >= 0; depth--) {
-        const node = depth === 0 ? doc.contents : doc.getIn(p.slice(0, depth), true);
-        const range = (node as RangedNode | null | undefined)?.range;
-        if (range) {
-          const start = Math.max(1, lineCounter.linePos(range[0]).line + lineOffset);
-          const end = Math.max(start, lineCounter.linePos(Math.max(range[0], range[1] - 1)).line + lineOffset);
-          return { path, start, end };
-        }
-      }
-      return { path, start: frontmatterEndLine, end: frontmatterEndLine };
+      const range = rangeAt(p);
+      if (!range) return { path, start: frontmatterEndLine, end: frontmatterEndLine };
+      const start = lineOf(range[0]);
+      return { path, start, end: Math.max(start, lineOf(Math.max(range[0], range[1] - 1))) };
     },
-    err: (p, message) => errors.push({ line: lineAt(p), message }),
+    err: (p, message) => {
+      const range = rangeAt(p);
+      errors.push({ line: range ? lineOf(range[0]) : 2, message });
+    },
     errAtLine: (line, message) => errors.push({ line, message }),
   };
 
@@ -406,7 +400,7 @@ function bindStepSections(
     }
 
     const sectionEnd = findNextHeadingAtOrAboveLevel(headings, i, 2, totalLines);
-    const gate = findGateSubsection(headings, i, sectionEnd, path, h.text, errors);
+    const gate = findGateSubsection(headings, i, sectionEnd, h.text, errors);
     const instructionsEnd = gate ? gate.headingLine - 1 : sectionEnd;
     const instructionsText = sliceProseLines(lines, h.line + 1, instructionsEnd);
 
@@ -431,7 +425,6 @@ function findGateSubsection(
   headings: { level: number; text: string; line: number }[],
   stepHeadingIndex: number,
   sectionEnd: number,
-  path: string,
   stepId: string,
   errors: WorkflowError[],
 ): { headingLine: number; bodyStart: number; bodyEnd: number } | undefined {
@@ -450,7 +443,6 @@ function findGateSubsection(
     }
     found = { headingLine: h.line, bodyStart: h.line + 1, bodyEnd: sectionEnd };
   }
-  void path;
   return found;
 }
 
@@ -489,19 +481,15 @@ function checkEnvelopeFields(ctx: Ctx, root: Record<string, unknown>, fmEndLine:
   if (root.type !== undefined && root.type !== "workflow") {
     ctx.err(["type"], `Workflow frontmatter "type" must be "workflow" (got ${JSON.stringify(root.type)}).`);
   }
-  if (root.when_to_use !== undefined && typeof root.when_to_use !== "string") {
-    ctx.err(["when_to_use"], `Workflow frontmatter "when_to_use" must be a string.`);
-  }
-  if (root.description !== undefined && typeof root.description !== "string") {
-    ctx.err(["description"], `Workflow frontmatter "description" must be a string.`);
-  }
+  const checkString = (key: string) => {
+    if (root[key] !== undefined && typeof root[key] !== "string")
+      ctx.err([key], `Workflow frontmatter "${key}" must be a string.`);
+  };
+  checkString("when_to_use");
+  checkString("description");
   checkXrefs(ctx, root.xrefs, fmEndLine);
-  if (root.updated !== undefined && typeof root.updated !== "string") {
-    ctx.err(["updated"], `Workflow frontmatter "updated" must be a string.`);
-  }
-  if (root.timestamp !== undefined && typeof root.timestamp !== "string") {
-    ctx.err(["timestamp"], `Workflow frontmatter "timestamp" must be a string.`);
-  }
+  checkString("updated");
+  checkString("timestamp");
   checkActorStamp(ctx, root.generated, ["generated"], `"generated"`);
   if (root.verified !== undefined) {
     if (Array.isArray(root.verified)) {
@@ -518,9 +506,7 @@ function checkEnvelopeFields(ctx: Ctx, root: Record<string, unknown>, fmEndLine:
   if (root.status !== undefined && (typeof root.status !== "string" || !LIFECYCLE_STATUSES.has(root.status))) {
     ctx.err(["status"], `Workflow frontmatter "status" must be one of: draft, stable, deprecated.`);
   }
-  if (root.stale_after !== undefined && typeof root.stale_after !== "string") {
-    ctx.err(["stale_after"], `Workflow frontmatter "stale_after" must be a string.`);
-  }
+  checkString("stale_after");
 }
 
 function checkActorStamp(ctx: Ctx, value: unknown, path: Path, label: string): void {
@@ -626,19 +612,14 @@ function parseBudget(ctx: Ctx, raw: unknown): WorkflowBudget | undefined {
   }
   checkUnknownKeys(ctx, raw, path, BUDGET_KEYS, `"budget"`);
   const budget: WorkflowBudget = {};
-  if (raw.max_tokens !== undefined) {
-    if (typeof raw.max_tokens === "number" && Number.isInteger(raw.max_tokens) && raw.max_tokens >= 1) {
-      budget.maxTokens = raw.max_tokens;
-    } else {
-      ctx.err([...path, "max_tokens"], `"budget.max_tokens" must be an integer >= 1.`);
-    }
-  }
-  if (raw.max_units !== undefined) {
-    if (typeof raw.max_units === "number" && Number.isInteger(raw.max_units) && raw.max_units >= 1) {
-      budget.maxUnits = raw.max_units;
-    } else {
-      ctx.err([...path, "max_units"], `"budget.max_units" must be an integer >= 1.`);
-    }
+  for (const [key, field] of [
+    ["max_tokens", "maxTokens"],
+    ["max_units", "maxUnits"],
+  ] as const) {
+    const value = raw[key];
+    if (value === undefined) continue;
+    if (typeof value === "number" && Number.isInteger(value) && value >= 1) budget[field] = value;
+    else ctx.err([...path, key], `"budget.${key}" must be an integer >= 1.`);
   }
   return Object.keys(budget).length > 0 ? budget : undefined;
 }
@@ -726,10 +707,6 @@ function parseSteps(ctx: Ctx, raw: unknown): ProgramStep[] {
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
-
-function describeError(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
-}
 
 /** Strip the yaml package's multi-line code frame down to the first line. */
 function yamlErrorMessage(message: string): string {

@@ -7,7 +7,6 @@ import { warnRetiredEngineKey } from "../execution/source";
 import { classifyTargetRef } from "../execution/target-ref";
 import type {
   SourceRef,
-  WorkflowError,
   WorkflowExec,
   WorkflowOnError,
   WorkflowReducer,
@@ -93,19 +92,10 @@ const TIMEOUT_VALUE = /^(\d+)(ms|s|m)?$/;
 const TIMEOUT_HINT = `Use "<n>ms", "<n>s", "<n>m" (e.g. "10m"), or "none"`;
 export type Path = Array<string | number>;
 export interface Ctx {
-  readonly filePath: string;
-  readonly errors: WorkflowError[];
-  lineAt(path: Path): number;
-  lineAtOffset(offset: number): number;
   refAt(path: Path): SourceRef;
-  nodeAt(path: Path): unknown;
   err(path: Path, message: string): void;
   errAtLine(line: number, message: string): void;
 }
-// ---------------------------------------------------------------------------
-// Step blocks
-// ---------------------------------------------------------------------------
-
 export function parseUnit(
   ctx: Ctx,
   raw: unknown,
@@ -421,10 +411,6 @@ export function parseGate(ctx: Ctx, raw: unknown, path: Path, stepLabel: string)
   }
   return gate;
 }
-
-// ---------------------------------------------------------------------------
-// Field helpers
-// ---------------------------------------------------------------------------
 
 /**
  * Connection and harness names must already satisfy the frozen-plan grammar

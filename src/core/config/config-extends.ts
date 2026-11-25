@@ -6,17 +6,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isBundleSlug } from "../asset/asset-ref";
-import { isRecord } from "../common";
+import { isRecord, toErrorMessage } from "../common";
 import { ConfigError } from "../errors";
+import { getConfigPath } from "../paths";
+import { warnOnce } from "../warn";
 import { runConfigFilePipeline, warnUnknownConfigKeys } from "./config-file-forms";
 import { readConfigText } from "./config-io";
 import { bundleContentRoot } from "./config-sources";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
-
-export { stripJsonComments } from "./config-io";
-
-import { getConfigPath } from "../paths";
-import { warnOnce } from "../warn";
 
 // ── `extends` inheritance (#945) ────────────────────────────────────────────
 
@@ -204,9 +201,9 @@ function looksLikeBundleAssetRef(ref: string): boolean {
  * never indexed; a shared config file just lives wherever the bundle puts
  * it. No URL form and no fetch/sync — the source must already exist locally;
  * a missing file/bundle throws {@link ConfigError} naming the ref, as does an
- * empty, absolute, or content-root-escaping path after `//`.
+ * empty, absolute, or content-root-escaping path after `//`. `akm config diff` (config-cli.ts) shares the grammar.
  */
-function resolveConfigRefSource(
+export function resolveConfigRefSource(
   ref: string,
   context: Record<string, unknown>,
   fromConfigPath: string | undefined,
@@ -313,7 +310,7 @@ function assertConfigExtendsPhysicalContainment(root: string, candidate: string,
     physicalCandidate = fs.realpathSync.native(candidate);
   } catch (cause) {
     throw new ConfigError(
-      `Unable to verify physical containment for extends ${JSON.stringify(ref)}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `Unable to verify physical containment for extends ${JSON.stringify(ref)}: ${toErrorMessage(cause)}`,
       "INVALID_CONFIG_FILE",
     );
   }
@@ -357,7 +354,3 @@ export function hasRawPath(raw: unknown, segments: string[]): boolean {
   }
   return true;
 }
-
-// Exposed for `akm config diff` (config-cli.ts): the `<path|bundle//ref>`
-// argument shares the exact same resolution grammar as `extends`.
-export { resolveConfigRefSource };

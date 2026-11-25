@@ -6,14 +6,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { deriveBundleId } from "../bundle-id";
-import { isRecord, resolveStashDir } from "../common";
+import { isRecord, resolveStashDir, toErrorMessage } from "../common";
 import { ConfigError, UsageError } from "../errors";
 import { substituteRefTokens } from "../ref-token";
 import { formatRegistryLabel, hasRegistryUrlCredentials } from "../registry-url";
 import { hasRawPath, resolveExtendsChain } from "./config-extends";
 import {
   dropRetiredOutputFormat,
-  isPlainConfigObject,
   readConfigFile,
   readRetiredForms,
   runConfigFilePipeline,
@@ -149,10 +148,7 @@ export function loadUserConfig(): AkmConfig {
     stat = fs.statSync(configPath);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw new ConfigError(
-        `Unable to read config at ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
-        "INVALID_CONFIG_FILE",
-      );
+      throw new ConfigError(`Unable to read config at ${configPath}: ${toErrorMessage(err)}`, "INVALID_CONFIG_FILE");
     }
     cachedConfig = undefined;
     return { ...DEFAULT_CONFIG };
@@ -174,10 +170,7 @@ export function loadUserConfig(): AkmConfig {
   try {
     text = readConfigText(configPath);
   } catch (err) {
-    throw new ConfigError(
-      `Unable to read config at ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
-      "INVALID_CONFIG_FILE",
-    );
+    throw new ConfigError(`Unable to read config at ${configPath}: ${toErrorMessage(err)}`, "INVALID_CONFIG_FILE");
   }
   if (text === undefined) {
     cachedConfig = undefined;
@@ -186,7 +179,7 @@ export function loadUserConfig(): AkmConfig {
 
   const lifted = runConfigFilePipeline(text, configPath);
   const finalConfig = buildEffectiveConfig(lifted, configPath);
-  const written = isPlainConfigObject(lifted.connections) ? lifted.connections : {};
+  const written = isRecord(lifted.connections) ? lifted.connections : {};
   const inheritedConnections = new Set(
     Object.keys(finalConfig.connections ?? {}).filter((name) => !Object.hasOwn(written, name)),
   );
@@ -285,10 +278,10 @@ function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePat
 function deleteConfigPath(node: Record<string, unknown>, keyPath: readonly string[]): void {
   let cursor: unknown = node;
   for (const segment of keyPath.slice(0, -1)) {
-    if (!isPlainConfigObject(cursor)) return;
+    if (!isRecord(cursor)) return;
     cursor = cursor[segment];
   }
-  if (isPlainConfigObject(cursor)) delete cursor[keyPath[keyPath.length - 1] as string];
+  if (isRecord(cursor)) delete cursor[keyPath[keyPath.length - 1] as string];
 }
 
 function assertUniquePhysicalBundleRoots(config: AkmConfig, sourcePath?: string): void {
@@ -402,18 +395,13 @@ export function loadConfig(options?: { warn?: boolean }): AkmConfig {
 }
 
 export function saveConfig(config: AkmConfig): void {
-  // Every lifecycle write produces the only config version this binary can load.
-  const currentConfig = { ...config, configVersion: CURRENT_CONFIG_VERSION } as AkmConfig;
-  saveConfigReal(currentConfig);
-}
-
-function saveConfigReal(config: AkmConfig): void {
   cachedConfig = undefined;
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
   fs.mkdirSync(dir, { recursive: true });
   withConfigLock(() => {
-    const validated = validateCompleteConfig(config);
+    // Every lifecycle write produces the only config version this binary can load.
+    const validated = validateCompleteConfig({ ...config, configVersion: CURRENT_CONFIG_VERSION } as AkmConfig);
     backupExistingConfig(configPath);
     writeConfigAtomic(configPath, sanitizeConfigForWrite(validated));
   });
@@ -678,16 +666,11 @@ function configWriteBody(
   next: AkmConfig,
   persistTopLevelKeys: readonly (keyof AkmConfig)[] = [],
 ): AkmConfig {
-  // A first write keeps the established full-default scaffold. Besides being
-  // useful to a new user, the add -> rejected-install -> remove lifecycle
-  // relies on that symmetry to return a pristine install to DEFAULT_CONFIG.
+  // A first write keeps the full-default scaffold (see `editedConfigFile`).
   if (localRaw === undefined) return next;
 
   const pruned = pruneUnchangedInheritedFields(current, next, localRaw) as Record<string, unknown>;
-  // A caller may need to persist an explicit user choice even when it equals
-  // the schema default. Interactive setup uses this for semanticSearchMode:
-  // "off" means the user declined the opt-in, not an incidental default that
-  // should disappear from the saved configuration.
+  // An explicit user choice that equals the schema default is still persisted (see `editedConfigFile`).
   for (const key of persistTopLevelKeys) {
     if (Object.hasOwn(next, key)) pruned[key] = next[key];
   }
@@ -894,6 +877,16 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
   return options.apply ? withConfigLock(normalize) : normalize();
 }
 
+/** The config file as a mutation starts from it: its text, document and lifted form, and the effective config (defaults when absent). */
+function readForMutation(configPath: string) {
+  const text = readConfigText(configPath);
+  const document = text === undefined ? undefined : readConfigFile(text, configPath);
+  const localRaw = document === undefined ? undefined : readRetiredForms(document, configPath);
+  const current =
+    localRaw === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(localRaw, configPath);
+  return { text, document, localRaw, current };
+}
+
 /**
  * Mutate config under one fail-closed lock spanning read, merge, validation,
  * ordinary backup, and atomic write.
@@ -905,14 +898,8 @@ export function mutateConfig(
   cachedConfig = undefined;
   const configPath = getConfigPath();
   return withConfigLock(() => {
-    const text = readConfigText(configPath);
-    if (text === undefined && options?.absentNoop) {
-      return { config: { ...DEFAULT_CONFIG }, written: false };
-    }
-    const document = text === undefined ? undefined : readConfigFile(text, configPath);
-    const localRaw = document === undefined ? undefined : readRetiredForms(document, configPath);
-    const current =
-      localRaw === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(localRaw, configPath);
+    const { text, document, localRaw, current } = readForMutation(configPath);
+    if (text === undefined && options?.absentNoop) return { config: { ...DEFAULT_CONFIG }, written: false };
     const mutated = mutate(current);
     if (mutated === current) return { config: current, written: false };
     const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION }, current);
@@ -940,11 +927,7 @@ export async function mutateConfigWithPrecommit<T>(
   const configPath = getConfigPath();
   const release = acquireConfigLock();
   try {
-    const text = readConfigText(configPath);
-    const document = text === undefined ? undefined : readConfigFile(text, configPath);
-    const localRaw = document === undefined ? undefined : readRetiredForms(document, configPath);
-    const current =
-      localRaw === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(localRaw, configPath);
+    const { text, document, localRaw, current } = readForMutation(configPath);
     const mutated = mutate(current);
     const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION }, current);
     const unremoved: string[][] = [];

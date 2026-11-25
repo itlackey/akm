@@ -13,7 +13,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { toErrorMessage } from "../../core/common";
+import { toErrorMessage, tryParseJson } from "../../core/common";
 import { UsageError } from "../../core/errors";
 import { isExactSemver } from "../../registry/semver";
 import { semverOrder } from "../../runtime";
@@ -24,7 +24,6 @@ import {
   type CommandFailure,
   channelWriteFailure,
   failed,
-  parseJson,
   READ_TIMEOUT_MS,
   REFRESH_TIMEOUT_MS,
   refreshed,
@@ -69,7 +68,7 @@ function planEntry(
   try {
     plan = planned ?? marketplacePlan(harness, source(), installed, followed, allowDowngrade);
   } catch (error) {
-    return unknown(error instanceof Error ? error.message : String(error));
+    return unknown(toErrorMessage(error));
   }
   if (plan.target instanceof Error && !(channel && plan.keep)) return unknown(plan.target.message);
   if (plan.keep) return { entry: refreshed(harness, from, from), keep: plan.keep };
@@ -91,7 +90,7 @@ type Detected =
 function claudePlugins(): { installations: ClaudeInstallation[] } | { error: CommandFailure } {
   const listed = runCommand("claude", ["plugin", "list", "--json"], READ_TIMEOUT_MS);
   if (!listed.ok) return { error: listed };
-  const plugins = parseJson(listed.stdout);
+  const plugins = tryParseJson(listed.stdout);
   const installations = Array.isArray(plugins)
     ? plugins
         .filter((p) => p?.id === PLUGIN_ID)
@@ -107,11 +106,8 @@ function claudePlugins(): { installations: ClaudeInstallation[] } | { error: Com
 function detectClaudeCode(): Detected {
   const marketplaces = runCommand("claude", ["plugin", "marketplace", "list", "--json"], READ_TIMEOUT_MS);
   if (!marketplaces.ok) {
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-    const pluginsRoot =
-      process.env.AKM_CLAUDE_PLUGINS_DIR ?? process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
     // asset-io: install
-    const configured = fs.existsSync(path.join(pluginsRoot, "known_marketplaces.json"));
+    const configured = fs.existsSync(path.join(claudePluginsRoot(), "known_marketplaces.json"));
     return {
       entry:
         !marketplaces.missing || configured
@@ -119,7 +115,7 @@ function detectClaudeCode(): Detected {
           : skipped("claude-code", "claude is not on PATH"),
     };
   }
-  const list = parseJson(marketplaces.stdout);
+  const list = tryParseJson(marketplaces.stdout);
   const marketplace = Array.isArray(list) ? list.find((m) => m?.name === MARKETPLACE) : undefined;
   if (!marketplace) return { entry: skipped("claude-code", `the ${MARKETPLACE} marketplace is not configured`) };
   const plugin = claudePlugins();
@@ -183,15 +179,10 @@ function upgradeClaudeCode(
   let backups: string[] = [];
   if (channel && !dryRun) {
     try {
-      const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-      const pluginsRoot =
-        process.env.AKM_CLAUDE_PLUGINS_DIR ??
-        process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ??
-        path.join(configDir, "plugins");
       backups = writeChannelEdits(
         claudeChannelEdits(
-          configDir,
-          pluginsRoot,
+          claudeConfigDir(),
+          claudePluginsRoot(),
           channel,
           detected.installations.flatMap((p) => (p.projectPath ? [p.projectPath] : [])),
         ),
@@ -226,7 +217,9 @@ function refreshClaudeCode(from: string | undefined, installations?: ClaudeInsta
 export function codexPluginVersion(): { version: string | undefined } | { error: CommandFailure } {
   const listed = runCommand("codex", ["plugin", "list", "--marketplace", MARKETPLACE, "--json"], READ_TIMEOUT_MS);
   if (!listed.ok) return { error: listed };
-  const parsed = parseJson(listed.stdout) as { installed?: Array<{ pluginId?: string; version?: string }> } | undefined;
+  const parsed = tryParseJson(listed.stdout) as
+    | { installed?: Array<{ pluginId?: string; version?: string }> }
+    | undefined;
   const plugin = parsed?.installed?.find((p) => p?.pluginId === PLUGIN_ID);
   return { version: plugin ? String(plugin.version ?? "") : undefined };
 }
@@ -446,7 +439,7 @@ export function marketplaceTargetVersion(source: string, channel: UpgradeChannel
     const catalogFile = harness === "codex" ? ".agents/plugins/marketplace.json" : ".claude-plugin/marketplace.json";
     const catalogText = show(catalogFile);
     if (!catalogText.ok) throw new UsageError(`Could not read the marketplace catalog: ${catalogText.error}`);
-    const catalog = parseJson(catalogText.stdout) as
+    const catalog = tryParseJson(catalogText.stdout) as
       | {
           plugins?: Array<{
             name?: string;
@@ -473,7 +466,7 @@ export function marketplaceTargetVersion(source: string, channel: UpgradeChannel
     if (contained) {
       const manifest = show(path.posix.join(dir, manifestDir, "plugin.json"));
       const version = manifest.ok
-        ? (parseJson(manifest.stdout) as { version?: unknown } | undefined)?.version
+        ? (tryParseJson(manifest.stdout) as { version?: unknown } | undefined)?.version
         : undefined;
       manifestVersion = typeof version === "string" ? version : undefined;
     }
@@ -489,10 +482,15 @@ export function marketplaceTargetVersion(source: string, channel: UpgradeChannel
   }
 }
 
+function claudeConfigDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+}
+
 function claudePluginsRoot(): string {
-  const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
   return (
-    process.env.AKM_CLAUDE_PLUGINS_DIR ?? process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins")
+    process.env.AKM_CLAUDE_PLUGINS_DIR ??
+    process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ??
+    path.join(claudeConfigDir(), "plugins")
   );
 }
 
@@ -502,7 +500,7 @@ export function claudeMarketplace(
   marketplace = MARKETPLACE,
 ): { source: string; ref: string | undefined } {
   // asset-io: install
-  const known = parseJson(fs.readFileSync(path.join(pluginsRoot, "known_marketplaces.json"), "utf8")) as Record<
+  const known = tryParseJson(fs.readFileSync(path.join(pluginsRoot, "known_marketplaces.json"), "utf8")) as Record<
     string,
     { source: { source: string; repo?: string; url?: string; ref?: string } }
   >;
@@ -576,19 +574,18 @@ function preflightMarketplaceChannels(
   if (!("entry" in claude)) {
     const pluginsRoot = claudePluginsRoot();
     claudeChannelEdits(
-      process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"),
+      claudeConfigDir(),
       pluginsRoot,
       channel,
       claude.installations.flatMap((p) => (p.projectPath ? [p.projectPath] : [])),
     );
-    const plan = marketplacePlan(
+    plans.claude = marketplacePlan(
       "claude-code",
       claudeMarketplace(pluginsRoot).source,
       claude.installations.map((p) => p.version),
       channel,
       allowDowngrade,
     );
-    plans.claude = plan;
   }
   const codex = codexPluginVersion();
   // asset-io: install
@@ -599,14 +596,13 @@ function preflightMarketplaceChannels(
     if ("error" in registered)
       throw new UsageError(`Could not inventory Codex before switching channels: ${registered.error}`);
     codexChannelEdit(codexConfigFile(), channel);
-    const plan = marketplacePlan(
+    plans.codex = marketplacePlan(
       "codex",
       codexMarketplaceRegistration().source,
       [codex.version],
       channel,
       allowDowngrade,
     );
-    plans.codex = plan;
   }
   return plans;
 }

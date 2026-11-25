@@ -40,14 +40,6 @@ export function runCommand(command: string, args: string[], timeoutMs: number, o
   return { ok: true, stdout: result.stdout ?? "" };
 }
 
-export function parseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
 export function skipped(harness: PluginUpgradeEntry["harness"], message: string): PluginUpgradeEntry {
   return { harness, outcome: "skipped", message };
 }

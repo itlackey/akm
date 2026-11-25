@@ -4,7 +4,10 @@
 
 /** How a config file is read: its retired forms lifted to the current shape, and its unknown keys named. */
 
+import { isRecord } from "../common";
+import { getConfigPath } from "../paths";
 import { isRefToken } from "../ref-token";
+import { warnOnce } from "../warn";
 import { parseConfigText, readConfigText } from "./config-io";
 import { AkmConfigSchema, CURRENT_CONFIG_VERSION } from "./config-schema";
 import { isOpaqueSchema, resolveSchemaAt } from "./config-walker";
@@ -13,11 +16,6 @@ import { convertEngineConfig } from "./convert-engines";
 import { isPlainObject } from "./deep-merge";
 import { readModelsFile } from "./models-file";
 import { type EngineTargets, rememberedEngineTargets } from "./retired-engines";
-
-export { stripJsonComments } from "./config-io";
-
-import { getConfigPath } from "../paths";
-import { warnOnce } from "../warn";
 
 /**
  * Run the per-file config pipeline every raw config object goes through
@@ -187,7 +185,7 @@ function readRetiredSecretRefs(node: unknown, keyPath: readonly string[], source
   }
   if (Array.isArray(node))
     return node.map((child, i) => readRetiredSecretRefs(child, [...keyPath, String(i)], sourcePath));
-  if (isPlainConfigObject(node)) {
+  if (isRecord(node)) {
     return Object.fromEntries(
       Object.entries(node).map(([key, child]) => [key, readRetiredSecretRefs(child, [...keyPath, key], sourcePath)]),
     );
@@ -221,7 +219,7 @@ function readConfigVersion(raw: Record<string, unknown>, sourcePath?: string): R
  */
 export function dropRetiredOutputFormat(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
   const output = raw.output;
-  if (!isPlainConfigObject(output) || output.format !== "html") return raw;
+  if (!isRecord(output) || output.format !== "html") return raw;
   warnOnce(
     `config:output-format-html:${sourcePath ?? "inline"}`,
     `output.format "html" is no longer supported${sourcePath ? ` (${sourcePath})` : ""}: HTML reports moved to AKM Desktop. Using the default format; set output.format to json, jsonl, yaml, text or md.`,
@@ -267,7 +265,7 @@ export function unknownConfigKeyPaths(
     // A request field on a connection (`chat_template_kwargs`, ...) is the endpoint's, not akm's: its contents are not keys akm knows.
     if (isOpaqueSchema(schema)) continue;
     const value = node[key];
-    if (isPlainConfigObject(value)) found.push(...unknownConfigKeyPaths(root, value, keyPath));
+    if (isRecord(value)) found.push(...unknownConfigKeyPaths(root, value, keyPath));
   }
   return found;
 }
@@ -285,8 +283,4 @@ export function warnUnknownConfigKeys(raw: Record<string, unknown>, sourcePath?:
       `Unknown config key ${JSON.stringify(dotted)}${sourcePath ? ` at ${sourcePath}` : ""} has no defined akm behavior and is ignored. Check the spelling, or remove it from ${sourcePath ?? "the config"}.`,
     );
   }
-}
-
-export function isPlainConfigObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
