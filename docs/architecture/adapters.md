@@ -121,7 +121,7 @@ interface BundleAdapter {
   expireRetired(b: Bundle, before: Date): { changed: string[] };
 
   // Optional.
-  readonly lintsAlone?: boolean;               // its own checks are the whole `akm lint` of a primary bundle
+  lint?(run: LintRun): Promise<LintFindings>;  // `akm lint` of the bundle or of one file; absent: `validate` plus the cross-bundle `.env` sweep
   renderExecutionSource?(b: Bundle, entry: AssetEntry): AdapterRenderedExecutionSource | null;
   looksLikeRoot?(root: string): boolean;       // install-time probe only
   contentType?(b: Bundle, entry: AssetEntry): string | undefined;      // the type the bytes give, without describing
@@ -392,16 +392,15 @@ once, where the bundle is resolved (`detectBundleAdapter`,
 | `type.ts` | `assetType`, `assetTypes`, `assetTypeFresh`, `typeOfContent`, `recognizeContent`, `presentationOf`, `indexAsset`, `embedPendingWrites` |
 | `write.ts` | `writeAssets`, `addressOf`, `fileOfRef`, `legacyRefOf` |
 | `validate.ts` | `validateBundleAssets`: `akm lint`'s scan of a bundle; `storeFindings`: what the configured keyrings and vaults report (a bundle kept in files has none) |
-| `gate.ts` | what callers decide before they write or configure, asked of a bundle (its id or its source record), never of an adapter id a caller computed: `assertAdapterWrites`, `adapterWrites`, `refuseByAdapter`, `adapterNameOf` (for a message), `adapterAddressedBy`, `detectBundleAdapter`, `adapterDeclaresTypes`, `adapterLintsAlone`, `bundleStorageExists`, `clearAdapterCaches`; and `renderIndexedExecutionSource`, which renders a command or persona for `akm run` by the adapter its index row records |
+| `gate.ts` | what callers decide before they write or configure, asked of a bundle (its id or its source record), never of an adapter id a caller computed: `assertAdapterWrites`, `adapterWrites`, `refuseByAdapter`, `adapterNameOf` (for a message), `adapterAddressedBy`, `detectBundleAdapter`, `lintBundle` (`akm lint` of a bundle by its adapter), `bundleStorageExists`, `clearAdapterCaches`; and `renderIndexedExecutionSource`, which renders a command or persona for `akm run` by the adapter its index row records |
 | `files.ts` | `indexFiles`: index rows for files akm did not write through the facade (the Desktop Files view); and, re-exported under `files-view`, the path rules and the plain-file write check the Files view uses |
 | `bundle.ts`, `asset.ts`, `index-rows.ts` | internal: `AssetBundle` (holds its adapter), `Asset`, and the index rows the facade records |
 
 The facade re-exports no adapter module but the contract (`facade-reexport`).
 Code that needs an adapter module's internals imports it itself, under an
-exemption the lint counts: `akm lint` and its base checks read what a bundle
-keeps that no adapter lists (`directory/held-files`) and run the akm adapter's
-own checks (`adapters/akm-lint`) under `base`, as do `akm show`'s
-unknown-extension hint and the execution loader (`directory/file-context`) and
+exemption the lint counts: the base checks read what a bundle keeps at a ref's
+spelling (`directory/held-files`) under `base`, as do the execution loader
+(`directory/file-context`) and
 `akm health`'s archive size (`directory-archive`). `akm doctor` and `akm bundle
 add` import the adapter-skip report (`adapter-skips`), which the lint lists as
 importable.
@@ -498,6 +497,23 @@ returns.
 `validateBundleAssets(bundle, { keep?, ctx? })` asks the bundle's adapter to
 `validate` every asset it lists, each as an `update`. This is `akm lint`'s scan
 of a bundle as it stands.
+
+### Lint
+
+`akm lint` has one pipeline. It asks the bundle's adapter for `lint(run)`
+(`lintBundle` in `gate.ts`), then adds the tracked-secret and store findings and
+applies `lint.skip` and `--rule`. An adapter without a `lint` is checked by its
+`validate` plus the cross-bundle `.env` sweep (`adapters/akm-lint-run.ts`); `okf`
+returns its `validate` alone. The `akm` adapter's `lint` is the sweep of its
+document folders (`adapters/akm-sweep.ts`): each file's base and per-type checks,
+the skill folders, the task files (the `.yaml` near-miss included) and the
+workflow frontend, with what its own `validate` adds. `validate` never writes: a
+fix (`--fix`, `--fix-moved-refs`, `--prune-dangling-edges`) is an asset write the
+sweep makes through `writeAssets`, one session per change. `akm lint <file>`
+passes `run.file`, and the adapter reports that file only; a file outside every
+bundle is read as the akm document type `--type` names. Callers never ask which
+adapter a bundle has, or whether its folders declare types
+(`tests/integration/lint-parity.test.ts` pins the output).
 
 ---
 

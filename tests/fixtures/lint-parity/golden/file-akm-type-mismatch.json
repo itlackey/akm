@@ -1,0 +1,5 @@
+{
+  "code": 2,
+  "stdout": "",
+  "stderr": "{\n  \"ok\": false,\n  \"error\": \"lint: --type \\\"tasks\\\" does not match \\\"knowledge/colon.md\\\", which is a knowledge file in this bundle.\",\n  \"code\": \"INVALID_FLAG_VALUE\",\n  \"hint\": \"Run `akm <command> --help` to see accepted values.\"\n}\n"
+}

@@ -1,0 +1,46 @@
+{
+  "code": 0,
+  "stdout": {
+    "ok": true,
+    "fixed": [],
+    "flagged": [
+      {
+        "file": "knowledge/refs.md",
+        "issue": "missing-ref",
+        "detail": "missing ref: knowledge/ghost (frontmatter xrefs; resolved to knowledge/ghost.md)",
+        "fixed": false,
+        "ref": "knowledge/refs"
+      },
+      {
+        "file": "knowledge/refs.md",
+        "issue": "missing-ref",
+        "detail": "missing ref: memories/old (frontmatter xrefs; resolved to memories/old.md)",
+        "fixed": false,
+        "ref": "knowledge/refs"
+      },
+      {
+        "file": "memories/holder.md",
+        "issue": "missing-ref",
+        "detail": "missing ref: memories/gone (frontmatter contradictedBy; resolved to memories/gone.md)",
+        "fixed": false,
+        "ref": "memories/holder"
+      }
+    ],
+    "warnings": [],
+    "summary": {
+      "fixed": 0,
+      "flagged": 3,
+      "warnings": 0
+    },
+    "byRule": {
+      "missing-ref": {
+        "findings": 3,
+        "assets": 2
+      }
+    },
+    "rule": "missing-ref",
+    "shape": "lint",
+    "schemaVersion": 1
+  },
+  "stderr": ""
+}

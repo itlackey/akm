@@ -1,0 +1,35 @@
+{
+  "code": 0,
+  "stdout": {
+    "ok": true,
+    "fixed": [],
+    "flagged": [
+      {
+        "file": "untyped.md",
+        "issue": "missing-type",
+        "detail": "info: no frontmatter `type`; defaults to `knowledge` (OKF leniency, non-blocking)",
+        "fixed": false
+      }
+    ],
+    "warnings": [],
+    "summary": {
+      "fixed": 0,
+      "flagged": 1,
+      "warnings": 0
+    },
+    "byRule": {
+      "missing-type": {
+        "findings": 1,
+        "assets": 1
+      }
+    },
+    "shape": "lint",
+    "schemaVersion": 1
+  },
+  "stderr": "",
+  "files": {
+    "a.md": "---\ntitle: A\ntype: concept\ndescription: A concept\n---\n\nA.\n",
+    "index.md": "---\ntitle: Index\n---\n\n# Index\n\nSee [a](a.md) and [gone](gone.md).\n",
+    "untyped.md": "---\ntitle: Untyped\n---\n\nUntyped.\n"
+  }
+}

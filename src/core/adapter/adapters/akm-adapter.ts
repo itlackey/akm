@@ -49,6 +49,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { LintFindings, LintRun } from "../../../commands/lint/types";
 import type { AdapterRenderedExecutionSource } from "../../../execution/source";
 import {
   applyPostContributorFields,
@@ -446,6 +447,12 @@ export class AkmAdapter extends AkmFormatAdapterBase {
 
   declaredType(key: string): string | undefined {
     return placeTypeOf(key);
+  }
+
+  /** An akm bundle is linted by its sweep, with its fixes written as asset writes. */
+  async lint(run: LintRun): Promise<LintFindings> {
+    // Loaded here: the sweep reads through the asset facade, which loads the adapters.
+    return (await import("./akm-sweep")).lintAkmBundle(run);
   }
 
   /** An akm asset is matched live, on the bytes the file has now. */
