@@ -402,7 +402,7 @@ describe("akm improve — a slow prepass must not trip the first-response heartb
     try {
       configureSlowPrepassFastEngine(embedServer.port!, chatServer.port!);
 
-      await akmImprove({ scope: "memories/note-c", strategy: "reflect-only" }, heartbeatMs);
+      await akmImprove({ scope: "memories/note-c", strategy: "reflect-only", heartbeatMs });
 
       // Confirms this run actually exercised the slow path: the prepass
       // (embedding) alone took longer than the heartbeat's own window, and

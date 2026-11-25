@@ -142,6 +142,13 @@ export function renderSyncCommitMessage(
 }
 
 /**
+ * How long the loop waits for its first model response before printing one
+ * "still waiting" line (#957): a dead endpoint otherwise looks like a slow run.
+ * Armed when the loop starts, not at run start.
+ */
+export const FIRST_ENGINE_RESPONSE_HEARTBEAT_MS = 5_000;
+
+/**
  * Abort the run at the budget; force-exit (0 — budget exhaustion is a normal
  * scheduled-task outcome) only if the drain overruns the grace period, after
  * `onHardKill` has persisted what the killed run left behind.
@@ -185,7 +192,7 @@ export function armBudgetWatchdog(
   };
 }
 
-export async function akmImprove(options: AkmImproveOptions = {}, heartbeatMs = 5_000): Promise<AkmImproveResult> {
+export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmImproveResult> {
   const setup = resolveImproveRunSetup(options);
   options = setup.options;
   const { budgetMs, budgetAbortController, scope, selectedStrategy, syncRepoDir, resolvedStateDbPath } = setup;
@@ -342,7 +349,7 @@ export async function akmImprove(options: AkmImproveOptions = {}, heartbeatMs = 
     if (!firstEngineResponseSeen) {
       const firstResponseTimer = setTimeout(() => {
         info("[improve] Still waiting for the first model response...");
-      }, heartbeatMs);
+      }, options.heartbeatMs ?? FIRST_ENGINE_RESPONSE_HEARTBEAT_MS);
       firstResponseTimer.unref?.();
       clearFirstResponseHeartbeat = () => clearTimeout(firstResponseTimer);
     }

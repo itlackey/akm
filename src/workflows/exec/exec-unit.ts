@@ -68,6 +68,7 @@ export interface RunExecUnitInput {
   signal?: AbortSignal;
   /** Test seam: injected spawn (defaults to the runtime spawn inside `runManagedSubprocess`). */
   spawnFn?: SpawnFn;
+  drainGraceMs?: number;
   /** Test seam: the platform whose spawn ceilings the context check uses. Defaults to the host's. */
   platform?: string;
   /** The task runner's provenance event source; ambient and authored values still win. */
@@ -81,26 +82,23 @@ export interface RunExecUnitInput {
  * capture) are deliberately outside `retry.on`. Output overflow fails only a
  * unit that declared an `output:` schema.
  */
-export async function runExecUnit(input: RunExecUnitInput, drainGraceMs?: number): Promise<UnitDispatchResult> {
+export async function runExecUnit(input: RunExecUnitInput): Promise<UnitDispatchResult> {
   const cwd = await resolveExecCwd(input);
   if (!cwd.ok) return { ok: false, text: "", failureReason: cwd.failureReason, error: cwd.error };
   const context = checkExecContextSize(input);
   if (context) return context;
 
-  const result = await runManagedSubprocess(
-    [...input.exec.command],
-    {
-      capture: true,
-      cwd: cwd.path,
-      env: childEnv(input.env, input.context, input.eventSource),
-      timeoutMs: input.timeoutMs,
-      // stdout is the artifact; retention is bounded (discarding past the cap, never killing).
-      maxOutputBytes: WORKFLOW_MAX_EXEC_OUTPUT_BYTES,
-      ...(input.signal ? { signal: input.signal } : {}),
-      ...(input.spawnFn ? { spawnFn: input.spawnFn } : {}),
-    },
-    drainGraceMs,
-  );
+  const result = await runManagedSubprocess([...input.exec.command], {
+    capture: true,
+    cwd: cwd.path,
+    env: childEnv(input.env, input.context, input.eventSource),
+    timeoutMs: input.timeoutMs,
+    // stdout is the artifact; retention is bounded (discarding past the cap, never killing).
+    maxOutputBytes: WORKFLOW_MAX_EXEC_OUTPUT_BYTES,
+    ...(input.signal ? { signal: input.signal } : {}),
+    ...(input.spawnFn ? { spawnFn: input.spawnFn } : {}),
+    ...(input.drainGraceMs !== undefined ? { drainGraceMs: input.drainGraceMs } : {}),
+  });
 
   const display = describeCommand(input.exec.command);
   if (result.spawnError) {

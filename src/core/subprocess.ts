@@ -540,6 +540,8 @@ export interface RunManagedSubprocessOptions {
   setTimeoutFn?: typeof setTimeout;
   /** `clearTimeout` shim. Defaults to the global. */
   clearTimeoutFn?: typeof clearTimeout;
+  /** Test seam: the post-exit drain grace. Defaults to POST_EXIT_STREAM_DRAIN_GRACE_MS. */
+  drainGraceMs?: number;
   /** Invoked once, immediately after a successful spawn, with the live proc. */
   onSpawn?: (proc: SpawnedSubprocess) => void;
 }
@@ -570,6 +572,14 @@ const EMPTY_READ: StreamReadResult = {
   bytesRead: 0,
   retainedBytes: 0,
 };
+/**
+ * How long a captured pipe may stay open after the pipe's owner left, with or without a wall budget: the
+ * child exited, or (a child that survived its own kill ladder) the budget expired. Anything still holding
+ * the fd open then is a background descendant, not the command. It bounds only what a pipe does after its
+ * owner is gone, so it never caps the run itself.
+ */
+const POST_EXIT_STREAM_DRAIN_GRACE_MS = 2_000;
+
 function toError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
@@ -583,10 +593,10 @@ function toError(err: unknown): Error {
 export async function runManagedSubprocess(
   cmd: string[],
   opts: RunManagedSubprocessOptions,
-  drainGraceMs = 2_000,
 ): Promise<ManagedSubprocessResult> {
   const setTimeoutImpl = opts.setTimeoutFn ?? setTimeout;
   const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
+  const drainGraceMs = opts.drainGraceMs ?? POST_EXIT_STREAM_DRAIN_GRACE_MS;
   const spawnFn = opts.spawnFn ?? (runtimeSpawn as unknown as SpawnFn);
   const capture = opts.capture;
   const timeoutMs = opts.timeoutMs;

@@ -942,15 +942,13 @@ function killHolder(pidFile: string): void {
 describe("exec unit — an INCOMPLETE capture is never a success (finding 2)", () => {
   const dispatcher: UnitDispatcher = (request) => {
     if (request.frozenTarget.kind !== "shell") throw new Error("expected an exec unit");
-    return runExecUnit(
-      {
-        unitId: request.unitId,
-        exec: request.frozenTarget.exec,
-        baseDir: workDir,
-        timeoutMs: request.timeoutMs,
-      },
-      100,
-    );
+    return runExecUnit({
+      unitId: request.unitId,
+      exec: request.frozenTarget.exec,
+      baseDir: workDir,
+      timeoutMs: request.timeoutMs,
+      drainGraceMs: 100,
+    });
   };
 
   /**
