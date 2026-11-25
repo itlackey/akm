@@ -2338,7 +2338,11 @@ async function unretireProposalWithLease(
     primary: boolean;
     /** The archived copy was purged: nothing to move, the primary is rewritten from `backupContent`. */
     fromBackup: boolean;
+    /** The derived twin's archived copy was purged and cannot be restored. */
+    gone: boolean;
   }
+  const recordedAddress = addressOf(bundle, recorded.ref);
+  const derivedTwinId = derivedTwinOf(recordedAddress.conceptId, recordedAddress.type);
   // Every file the restores and the primary's rewrite touch goes into the revert's commit.
   const journal = beginWriteProvenance();
   let pending: PendingRestore[];
@@ -2369,7 +2373,8 @@ async function unretireProposalWithLease(
         // so the primary can still be restored from those.
         const primary = ref === recorded.ref;
         const fromBackup = !originalExists && !archivedExists && proposal.backupContent !== undefined && primary;
-        if (!originalExists && !archivedExists && !fromBackup) {
+        const gone = !originalExists && !archivedExists && retirement.conceptId === derivedTwinId;
+        if (!originalExists && !archivedExists && !fromBackup && !gone) {
           throw new UsageError(
             `Cannot revert proposal ${proposal.id}: archived copy of ${shown(ref)} (${handle}) is missing.`,
             "INVALID_FLAG_VALUE",
@@ -2403,12 +2408,14 @@ async function unretireProposalWithLease(
             );
           }
         }
-        found.push({ handle, conceptId: retirement.conceptId, primary, fromBackup });
+        found.push({ handle, conceptId: retirement.conceptId, primary, fromBackup, gone });
       }
       // The primary first: a refusal its restore makes (a retirement that does not say where its file went) leaves
       // every other retirement as it was, whatever order the accept recorded them in.
       const ordered = [...found.filter((p) => p.primary), ...found.filter((p) => !p.primary)];
-      for (const p of ordered) w.restore(p.handle, p.fromBackup ? proposal.backupContent : undefined);
+      for (const p of ordered) {
+        if (!p.gone) w.restore(p.handle, p.fromBackup ? proposal.backupContent : undefined);
+      }
       // Overwrite the primary with the EXACT pre-retire bytes recorded
       // at accept (`backupContent`) — no appended trailing newline either, so
       // YAML comments, key order, a pre-existing human `supersededBy` edge, and
@@ -2432,6 +2439,12 @@ async function unretireProposalWithLease(
     });
   } finally {
     journal.end();
+  }
+  for (const p of pending) {
+    if (p.gone)
+      warn(
+        `[proposal] ${bundle}//${p.conceptId} was purged from the archive and is gone; only ${proposal.ref} was restored.`,
+      );
   }
   commitWriteTargetBoundary(target, `Revert ${proposal.ref}`, { paths: journal.writtenPaths() });
   const restoredPath = resolveAssetFilePathSafe(target.source, recorded.ref) ?? assetPath;

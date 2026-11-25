@@ -23,7 +23,7 @@ export { isProtectedPlace, managedFolderOf, placeTypeOf, protectedTypeOf } from 
 // asset-io: files-view whether a path the Files view copies is a file
 export { isFileOrFileSymlink } from "../adapter/directory/walker";
 // asset-io: files-view the containment check of a plain-file write (`write-source.ts`)
-export { assertWritableFile } from "../adapter/directory-adapter";
+export { assertLinksLeadInside } from "../adapter/directory-adapter";
 
 /**
  * Refresh the existing index for `files` (absolute paths inside the directory bundle `bundle`) written as plain files:

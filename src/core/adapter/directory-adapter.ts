@@ -420,7 +420,9 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   delete(b: Bundle, conceptId: string): AssetChange[] {
     const entry = this.existing(b, conceptId);
     const file = entry.entry.file;
-    assertWritableFile(rootOf(b), b.id, file);
+    // Only the asset's own file may be a link (it is removed, never followed); every folder above it must lead inside.
+    const parent = path.dirname(file);
+    if (path.resolve(parent) !== path.resolve(rootOf(b))) assertLinksLeadInside(rootOf(b), b.id, parent);
     const dir = this.packageDir(buildFileContext(rootOf(b), file));
     // A package at the bundle's root is not the bundle's to remove: only its entry goes.
     if (dir === undefined || !isWithin(dir, rootOf(b)) || path.resolve(dir) === path.resolve(rootOf(b))) {
@@ -560,9 +562,9 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const assets = [...this.packageMembers(b, entry), entry];
     for (const asset of assets) {
       this.requireRetires(b, this.typeOf(asset.entry.key));
-      assertWritableFile(root, b.id, asset.entry.file);
+      assertNoSymbolicLink(root, b.id, asset.entry.file);
     }
-    assertWritableFile(root, b.id, path.join(root, MEMORY_ARCHIVE_REL, "retirement"));
+    assertNoSymbolicLink(root, b.id, path.join(root, MEMORY_ARCHIVE_REL, "retirement"));
     const archivedAt = note.archivedAt ?? new Date().toISOString();
     const changes = assets.map((asset) => {
       const written = archiveFile(root, asset.entry.file, {
@@ -609,7 +611,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const conceptId = this.retiredConceptId(tombstone);
     if (this.identify(tombstone.originalPath) !== null) this.requireRetires(b, this.typeOf(tombstone.originalPath));
     const file = path.join(rootOf(b), tombstone.originalPath);
-    assertWritableFile(rootOf(b), b.id, file);
+    assertNoSymbolicLink(rootOf(b), b.id, file);
     return { conceptId, changed: restoreArchive(rootOf(b), tombstone, fallback) };
   }
 
@@ -657,8 +659,12 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
 
   private existing(b: Bundle, conceptId: string): FileAsset {
     const found = this.read(b, conceptId);
-    if (!found?.entry.file) throw assetNotFound(`${b.id}//${conceptId}`);
-    return found as FileAsset;
+    if (found?.entry.file) return found as FileAsset;
+    // A dangling link is still a path a delete can remove and the shared write guard can refuse by name.
+    const held = this.holders(liveView(b, "file", true), conceptId);
+    const first = held?.files[0];
+    if (!held || first === undefined) throw assetNotFound(`${b.id}//${conceptId}`);
+    return { conceptId: held.conceptId, entry: buildFileContext(rootOf(b), path.join(rootOf(b), first)) };
   }
 
   /** The bytes and file mode a write gives a file. */
@@ -720,7 +726,7 @@ interface FileView {
  * may reach; `"walk"`, for a check of many assets, walks the bundle once, the first time it is asked, and answers every
  * file from that walk (one `git check-ignore` per file costs far more than one walk).
  */
-function liveView(b: Bundle, reached: "file" | "walk" = "file"): FileView {
+function liveView(b: Bundle, reached: "file" | "walk" = "file", includeDanglingLinks = false): FileView {
   const walks = new Map<boolean, Set<string>>();
   return {
     rootExists() {
@@ -743,12 +749,17 @@ function liveView(b: Bundle, reached: "file" | "walk" = "file"): FileView {
     isFile(relPath) {
       const authored = path.resolve(rootOf(b), relPath);
       if (!within(authored, rootOf(b))) return false;
+      let stat: fs.Stats;
       try {
-        const stat = fs.lstatSync(authored);
-        if (!stat.isFile() && !stat.isSymbolicLink()) return false;
-        return fs.statSync(fs.realpathSync(authored)).isFile();
+        stat = fs.lstatSync(authored);
       } catch {
         return false;
+      }
+      if (!stat.isFile() && !stat.isSymbolicLink()) return false;
+      try {
+        return fs.statSync(fs.realpathSync(authored)).isFile();
+      } catch {
+        return includeDanglingLinks && stat.isSymbolicLink();
       }
     },
     isWalked(relPath, options) {
@@ -852,12 +863,8 @@ function directoryLinksBelow(dir: string): string[] {
 
 // ── Writing helpers ─────────────────────────────────────────────────────────
 
-/**
- * Refuse a change to `file` that leaves the bundle's root, or passes through a
- * symbolic link below it. A delete, retire or restore acts on the entry it names
- * and follows no link.
- */
-export function assertWritableFile(root: string, bundle: string, file: string): void {
+/** Retire and restore follow no link: moving a relative link into the archive would leave it dangling. */
+function assertNoSymbolicLink(root: string, bundle: string, file: string): void {
   checkWritePath(root, bundle, file, false);
 }
 
@@ -867,7 +874,7 @@ export function assertWritableFile(root: string, bundle: string, file: string): 
  * bundle, or leading to nothing) refuses the write. A create then puts a regular file where the link was, and what it
  * led to is not written; an update writes where the link leads (`linkTargetInside`), and the link stays.
  */
-function assertLinksLeadInside(root: string, bundle: string, file: string): void {
+export function assertLinksLeadInside(root: string, bundle: string, file: string): void {
   checkWritePath(root, bundle, file, true);
 }
 

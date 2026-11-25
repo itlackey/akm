@@ -264,15 +264,18 @@ The template methods:
   whether something is kept there now, and the file to show), and refuses with a
   `UsageError` naming the file when the placed file would be no asset
   (`create knowledge "index"`, `create secret "x.lock"`).
-- `create`, `update` and `delete` write atomically (`writeFileAtomic`) and
-  refuse a path that leaves the bundle's root. A create or update follows a
-  symbolic link below it only when the link leads to an existing file or folder
-  inside the bundle; any other link refuses the write. A create replaces such a
-  link with a regular file, an update writes where it leads and keeps it, and a
-  hard link is a regular file. `delete` refuses any link
-  (`assertWritableFile`). `place` is checked first, and an adapter
-  whose `writes` lacks the type refuses as an invariant error a user never sees:
-  the facade checks `writes` before it calls.
+- `create` and `update` write atomically (`writeFileAtomic`) and refuse a path
+  that leaves the bundle's root. They follow a symbolic link below it only when
+  the link leads to an existing file or folder inside the bundle; any other link
+  refuses the write. A create replaces such a link with a regular file, an update
+  writes where it leads and keeps it, and a hard link is a regular file. `delete`
+  removes a symbolic link itself, never its target, whether the link stays inside
+  the bundle, leaves it or dangles. `retire` and `restore` are the documented
+  exceptions to the shared link rule (`assertNoSymbolicLink`): they refuse every
+  symbolic link because moving a relative link into the archive would leave it
+  dangling. `place` is checked first, and an adapter whose `writes` lacks the
+  type refuses as an invariant error a user never sees: the facade checks
+  `writes` before it calls.
 - `retire`, `retired`, `restore`, `forget` and `expireRetired` delegate to
   `directory-archive.ts` (see [Retire and delete](#retire-and-delete)).
 
@@ -506,7 +509,8 @@ of a bundle as it stands.
 An adapter's `writes` says what it creates, updates and deletes. Its `retires`
 says which of those types it takes out recoverably.
 
-- **Delete** removes the asset. The directory adapters remove the file.
+- **Delete** removes the asset. The directory adapters remove the file; for a
+  symbolic link they remove the link itself and never its target.
 - **Retire** keeps the asset and a record of why. `akm` retires every type it
   writes except `env` and `secret`; `akm-workflow` retires `workflow`; `dotenv`
   and the secret managers retire nothing.
