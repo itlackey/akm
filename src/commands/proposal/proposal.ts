@@ -21,27 +21,28 @@ import type { CommitOutcome, ResolvedWriteTarget } from "../../core/write-source
 import { resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import {
+  type AcceptCommitCollector,
+  commitCollectedAccepts,
+  diffProposal,
+  preflightProposalPromotion,
+  promoteProposal,
+} from "./accept";
+import {
   isRetireProposal,
   type ProposalDecider,
   proposalWaitingSince,
   type RetirementMetadata,
 } from "./proposal-types";
 import {
-  type AcceptCommitCollector,
-  commitCollectedAccepts,
-  diffProposal,
   listProposals,
   type Proposal,
   type ProposalGateDecision,
   type ProposalsContext,
-  preflightProposalPromotion,
-  promoteProposal,
   proposalContent,
   rejectProposalDurably,
-  reopenProposals,
   resolveProposalId,
-  revertProposal,
 } from "./repository";
+import { reopenProposals, revertProposal } from "./revert";
 import { validateProposal } from "./validators/proposals";
 
 // ── Shared helpers ──────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@
 
 /** Proposals: the review queue, one proposal with its capped diff, the decisions, and the recent changes. */
 
+import { diffLoadedProposal } from "../commands/proposal/accept";
 import {
   akmProposalAccept,
   akmProposalAcceptMany,
@@ -13,7 +14,7 @@ import {
   type ProposalAcceptResult,
 } from "../commands/proposal/proposal";
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../commands/proposal/proposal-types";
-import { diffLoadedProposal, resolveProposalIdIn } from "../commands/proposal/repository";
+import { resolveProposalIdIn } from "../commands/proposal/repository";
 import { validateProposal } from "../commands/proposal/validators/proposals";
 import { parsePlacementRef } from "../core/asset/resolve-ref";
 import { stateBundleId } from "../core/bundle-at-dir";

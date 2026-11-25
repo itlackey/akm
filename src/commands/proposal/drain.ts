@@ -52,18 +52,20 @@ import {
 import { resolveImproveExecution } from "../improve/execution";
 import { assetInStash } from "../improve/indexed-asset";
 import { errMessage } from "../improve/stage";
-import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
-import { isRetireProposal, PAIR_PASS_GATE, type ProposalDecider, STALE_TARGET_GATE_REASON } from "./proposal-types";
 import {
   type AcceptCommitCollector,
   commitCollectedAccepts,
+  preflightProposalPromotion,
+  readFreshProposalTarget,
+} from "./accept";
+import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
+import { isRetireProposal, PAIR_PASS_GATE, type ProposalDecider, STALE_TARGET_GATE_REASON } from "./proposal-types";
+import {
   listProposals,
   listProposalsReadOnly,
   type Proposal,
-  preflightProposalPromotion,
   proposalContent,
   proposalContentHash,
-  readFreshProposalTarget,
   recordGateDecision,
 } from "./repository";
 

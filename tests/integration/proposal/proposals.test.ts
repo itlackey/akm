@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { applyReflectPatch } from "../../../src/commands/improve/reflect";
+import { diffProposal } from "../../../src/commands/proposal/accept";
 import {
   akmProposalAccept,
   akmProposalDiff,
@@ -18,7 +19,6 @@ import {
   archiveProposal,
   createProposal as createProposalImpl,
   createRetireProposal,
-  diffProposal,
   expireStaleProposals,
   getProposal,
   isAutomatedProposalSource,
