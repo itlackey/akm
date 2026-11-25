@@ -269,6 +269,12 @@ test("a person logs in through the proxy under the prefix, by the form and by a 
   await expect(fresh.getByRole("navigation", { name: "Primary navigation" })).toBeVisible();
   await expect(fresh).toHaveURL(proxy.at("/"));
   assert.deepEqual(proxy.outside(), []);
+
+  // Log out: the API call goes under the prefix and the reload shows the form there.
+  await page.getByRole("button", { name: "Log out" }).click();
+  await expect(page.getByLabel("Secret")).toBeVisible();
+  await expect(page).toHaveURL(proxy.at("/"));
+  assert.deepEqual(proxy.outside(), []);
 });
 
 // A root-absolute address in source ignores the prefix. Links, `goto`, `fetch` and `redirect` take app paths through

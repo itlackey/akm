@@ -129,8 +129,8 @@ Desktop starts. Electron adds the secret to its window's requests as an `Authori
 sees it. `akm-web` binds elsewhere from `experimental.web` or flags (see the README section "Run it on a server").
 
 One secret grants access, in three ways: typed into a login form (a session in an HttpOnly cookie, kept in memory and
-ended after 8 hours without use, on logout or on restart), sent as the header by a program that forwards requests, or
-traded for a one-time login link (60 seconds, works once). The secret is never in a cookie, a URL or the output; the
+ended after 8 hours without use, on logout (the UI's "Log out" button, shown only for a cookie session) or on restart), sent as the header by a program that forwards requests, or
+traded for a one-time login link (60 seconds, works once; `POST /api/session/link` returns `<origin>/?login=<code>` with no path, so an app serving the UI under a path puts its path in front). The secret is never in a cookie, a URL or the output; the
 ready line carries only the origin. The server will not start without a secret of at least 32 characters, and removes
 `AKM_WEB_SECRET` from its environment after reading it. These checks are always on: `Host` must be the origin's host
 or an allowed host (checked before the framework sees the request, which is then given the configured origin), and

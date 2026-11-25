@@ -240,6 +240,7 @@ test("the login form, the session cookie and logout", async (t) => {
   assert.deepEqual((await app.request("/api/session", { headers: { Cookie: cookie } })).json(), {
     ok: true,
     active: false,
+    session: true,
   });
   assert.equal((await app.request("/", { headers: { Cookie: cookie, Accept: "text/html" } })).status, 200);
 

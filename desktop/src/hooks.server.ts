@@ -132,7 +132,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   if (path === "/api/session") {
     if (method === "GET") {
       const active = (web.inflight ?? 1) > 1 || (Boolean(hostTools.pending) && hostTools.state.phase !== "check");
-      return finish(Response.json({ ok: true, active }));
+      return finish(Response.json({ ok: true, active, session: !byHeader }));
     }
   }
   if (method === "POST" && path === "/api/session/link") {

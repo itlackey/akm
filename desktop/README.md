@@ -216,6 +216,9 @@ may change in 0.11. Flags apply to one run and override the config key of the sa
 | | `--open` | Open the UI in the default browser. Nothing opens without it. | |
 | | `--auto-login` | With `--open`: the browser arrives logged in, through a one-time login link that is not printed. Without it, the browser shows the login form. | |
 
+With `--open --auto-login` the one-time code is part of the address passed to the browser opener, so it is briefly
+visible in the process list. It works once and expires after 60 seconds.
+
 `akm-web` exits with status 2 and a message that says what to set when there is no secret, when the secret is shorter
 than 32 characters, when `--auto-login` is given without `--open`, or when the origin has a path, query or fragment.
 
@@ -234,8 +237,9 @@ docker run -p 4444:4444 -e AKM_WEB_SECRET my-image akm-web --host 0.0.0.0 --port
 
 The login form posts the secret in the request body and receives a session: a random identifier in an `HttpOnly`,
 host-only cookie. The secret is never in a cookie. Sessions are kept in memory, in a bounded table, and end after 8
-hours without use, on logout (`POST /api/session/logout`), or when the server restarts. Logout ends your own session only; there is no way to
-end someone else's short of a restart. The cookie name carries the port, so two instances on one host do not share
+hours without use, on logout (the "Log out" button in the page's top bar, which calls `POST /api/session/logout`), or when the server
+restarts. "Log out" is shown only to a person with a session cookie, not in AKM Desktop or behind a proxy that sends the
+header. Logout ends your own session only; there is no way to end someone else's short of a restart. The cookie name carries the port, so two instances on one host do not share
 sessions.
 
 ##### Checks that are always on
@@ -256,12 +260,14 @@ right secret: a wrong one is refused even when the request also has a valid sess
 **A program must send `Origin` itself on every write.** A browser does this by itself; a server does not. Set
 `Origin` to the configured origin. With no `Origin`, or another one, the write is refused with `403`.
 
-- `GET /api/session` returns `{"ok":true,"active":<boolean>}`. It tells "listening" from "ready": until the server
+- `GET /api/session` returns `{"ok":true,"active":<boolean>,"session":<boolean>}`; `session` is true when the request
+  was allowed by a session cookie rather than the header (the UI shows "Log out" only then). It tells "listening" from "ready": until the server
   answers authenticated requests, every request gets `503` with code `STARTING`. `active` is true while a request
   other than this one is being served or a host-tool operation is running, so a launcher can ask before an idle
   shutdown.
 - `POST /api/session/link`, with the header and `Origin`, returns `{"url":"<origin>/?login=<code>"}`. Opening that
-  address in a browser sets a session cookie and shows the UI. A link works once and expires after 60 seconds.
+  address in a browser sets a session cookie and shows the UI. A link works once and expires after 60 seconds. The
+  address has no path: an app that serves the UI under a path puts that path in front (`<origin>/akm/?login=<code>`).
 - `POST /api/session/logout` ends the caller's session and clears its cookie.
 
 ```sh

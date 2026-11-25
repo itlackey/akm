@@ -39,6 +39,8 @@
   let error = $state("");
   let themeError = $state("");
   let metadata = $state<Metadata | null>(null);
+  // True for a person logged in with a session cookie; not in Desktop or behind a proxy that sends the header.
+  let session = $state(false);
   let main: HTMLElement;
   let leaveDialog: HTMLDialogElement;
   let pending: { href: string; delta?: number } | null = null;
@@ -124,6 +126,9 @@
         workspace.native = value.native;
       }),
       refreshBundles(),
+      api<{ session: boolean }>("/session").then((value) => {
+        session = value.session;
+      }),
     ]);
     error = outcomes
       .filter((outcome) => outcome.status === "rejected")
@@ -131,6 +136,15 @@
       .join(" ");
     ready = true;
     void refreshPending();
+  }
+  async function logout() {
+    try {
+      await api("/session/logout", {}, {});
+      // The session is gone, so a reload shows the login form.
+      location.reload();
+    } catch (cause) {
+      error = (cause as Error).message;
+    }
   }
   async function saveTheme() {
     applyTheme();
@@ -227,7 +241,11 @@
       {/each}
     </nav>
     <span class="host"
-      >{metadata?.hostname ?? "This computer"} <span class="version">AKM {metadata?.akmVersion ?? "…"}</span></span
+      >{metadata?.hostname ?? "This computer"}
+      <span class="version">AKM {metadata?.akmVersion ?? "…"}</span>{#if session}<button
+          class="btn-secondary logout"
+          onclick={logout}>Log out</button
+        >{/if}</span
     >
   </header>
   <main id="main" tabindex="-1" bind:this={main}>
