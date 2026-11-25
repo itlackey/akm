@@ -29,7 +29,7 @@
 
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { addressOf } from "../../core/assets/write";
-import { materialiseBundleDir } from "../../core/bundle-at-dir";
+import { bundleAt } from "../../core/bundle-at-dir";
 import type { AkmConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { appendEvent, type EventsContext } from "../../core/events";
@@ -194,7 +194,7 @@ async function acceptProposal(
         ...(opts.target ? { target: opts.target } : {}),
         gateDecision,
       });
-      readFreshProposalTarget(proposal, preflight.target.source.name, preflight.ref, preflight.stampedContent);
+      readFreshProposalTarget(proposal, preflight.target.source, preflight.ref, preflight.stampedContent);
     }
     return "promoted";
   } catch (err) {
@@ -586,7 +586,7 @@ function promotionNeighbours(
 ): ReturnType<typeof nearestKnowledgeNotes> {
   if (!isPromotionProposal(proposal) || proposal.promotionSource === undefined) return [];
   try {
-    const memoryPath = addressOf(materialiseBundleDir(stashDir), proposal.promotionSource).file;
+    const memoryPath = addressOf(bundleAt(stashDir), proposal.promotionSource).file;
     if (!memoryPath) return [];
     const source = assetInStash(stashDir, proposal.promotionSource)?.entry.content();
     if (source === undefined) return [];

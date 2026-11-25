@@ -5,7 +5,7 @@
 import path from "node:path";
 import { stashDirNames } from "../../src/core/asset/asset-placement";
 import { type Asset, assetAtKey } from "../../src/core/assets/read";
-import { materialiseBundleDir } from "../../src/core/bundle-at-dir";
+import { bundleAt } from "../../src/core/bundle-at-dir";
 
 /** The asset the file `file` holds, in the stash directory above its type folder (`<stash>/memories/x.md`). */
 export function assetAtFile(file: string): Asset | undefined {
@@ -13,7 +13,7 @@ export function assetAtFile(file: string): Asset | undefined {
   let typeFolder = parts.length - 2;
   while (typeFolder > 0 && !stashDirNames().includes(parts[typeFolder] as string)) typeFolder -= 1;
   if (typeFolder < 1) return undefined;
-  return assetAtKey(materialiseBundleDir(parts.slice(0, typeFolder).join(path.sep)), parts.slice(typeFolder).join("/"));
+  return assetAtKey(bundleAt(parts.slice(0, typeFolder).join(path.sep)), parts.slice(typeFolder).join("/"));
 }
 
 /** A ref-to-asset seam (distill's `lookupFn`) from one that names the asset's file; `null`: no asset. */

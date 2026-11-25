@@ -43,7 +43,7 @@ import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName } from "./asset/resolve-ref";
 import { assertLinksLeadInside } from "./assets/files";
 import { assertAdapterWrites, detectBundleAdapter } from "./assets/gate";
-import { materialiseBundleDir } from "./bundle-at-dir";
+import { bundleIdForDir } from "./bundle-id";
 import { existingFileMode, isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
 import { bundleAtDir, loadConfig, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
@@ -220,13 +220,13 @@ export function resolveWorkingStashTarget(
  * The write target of the directory `dir` a command holds (the working stash, a `--dir`, a root a stored record names).
  * A directory a configured bundle holds is that bundle's target, as {@link resolveWriteTarget} resolves it: its
  * permission, its kind and its publication are config's, and a disabled one is refused. Any other directory is
- * materialised and takes writes as a plain filesystem bundle with the adapter its root's probe finds.
+ * a plain filesystem bundle that takes writes, with the adapter its root's probe finds.
  */
 export function writeTargetAt(dir: string, config: AkmConfig = loadConfig()): ResolvedWriteTarget {
   const configured = bundleAtDir(config, dir);
   if (configured !== undefined) return resolveWriteTarget(config, configured, { requireWritable: false });
   const adapterId = detectBundleAdapter(dir);
-  const name = materialiseBundleDir(dir, config, { adapterId });
+  const name = bundleIdForDir(dir, new Set(Object.keys(config.bundles ?? {})));
   return {
     source: { kind: "filesystem", name, path: dir, adapterId },
     config: { type: "filesystem", name, path: dir, writable: true },
@@ -337,7 +337,7 @@ function checkWriteTarget(
   target: ResolvedWriteTarget,
   kind: WriteKind = {},
 ): { target: ResolvedWriteTarget; repoPath?: string } {
-  if (!kind.plain) assertAdapterWrites(target.source.name, kind.assetType);
+  if (!kind.plain) assertAdapterWrites(target.source, kind.assetType);
   if (target.source.kind !== "git") return { target };
 
   const contentRoot = path.resolve(target.source.path);
@@ -419,7 +419,7 @@ export function prepareWriteTargetForMutation(target: ResolvedWriteTarget, kind:
 /** The gates an asset write passes: {@link assertPlainWritable}, and an adapter that writes assets of `type`. */
 export function assertWritableSource(source: WriteTargetSource, config: SourceConfigEntry, type?: string): void {
   assertPlainWritable(source, config);
-  assertAdapterWrites(source.name, type);
+  assertAdapterWrites(source, type);
 }
 
 /** The gates of a plain file write: the source takes writes and is a kind akm writes, whatever its adapter. */

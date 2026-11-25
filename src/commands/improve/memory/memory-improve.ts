@@ -10,7 +10,7 @@ import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { readAsset } from "../../../core/assets/read";
 import { indexedPathOf } from "../../../core/assets/type";
 import { type AssetWriter, conceptIdAtFile, writeAssets } from "../../../core/assets/write";
-import { materialiseBundleDir } from "../../../core/bundle-at-dir";
+import { bundleAt } from "../../../core/bundle-at-dir";
 import { asNonEmptyString, groupBy, stringArray } from "../../../core/common";
 import { assetNotFound } from "../../../core/errors";
 import type {
@@ -246,7 +246,7 @@ export function applyMemoryCleanup(stashDir: string, plan: MemoryCleanupPlan): M
     try {
       persistBeliefStateTransition(
         stashDir,
-        conceptIdAtFile(materialiseBundleDir(stashDir), filePath) ?? transition.ref,
+        conceptIdAtFile(bundleAt(stashDir), filePath) ?? transition.ref,
         transition,
       );
       appliedBeliefTransitions.push(transition);
@@ -281,10 +281,7 @@ export function applyMemoryCleanup(stashDir: string, plan: MemoryCleanupPlan): M
   for (const candidate of plan.relativeDateCandidates) {
     try {
       const target = writeTargetAt(stashDir);
-      const held = readAsset(
-        target.source.name,
-        conceptIdAtFile(target.source.name, candidate.filePath) ?? candidate.ref,
-      );
+      const held = readAsset(target.source, conceptIdAtFile(target.source, candidate.filePath) ?? candidate.ref);
       if (!held) throw assetNotFound(candidate.ref);
       const fm = parseFrontmatter(held.entry.content());
       const createdAtStr = fm.data.createdAt as string | undefined;
@@ -630,7 +627,7 @@ export function archiveCleanupCandidate(
   filePath: string,
 ): ArchivedMemoryCleanupRecord {
   const target = writeTargetAt(stashDir);
-  const conceptId = conceptIdAtFile(target.source.name, filePath);
+  const conceptId = conceptIdAtFile(target.source, filePath);
   if (conceptId === undefined) throw assetNotFound(candidate.ref);
   return writeAssets(target, { purpose: "memory-cleanup" }, (w) => retireCleanupCandidate(w, conceptId, candidate))
     .record;
@@ -816,7 +813,7 @@ function priorBeliefStateForArchive(candidate: MemoryPruneCandidate): Exclude<Me
 
 function collectDerivedMemories(stashDir: string, parentRefFilter?: string): DerivedMemoryRecord[] {
   const records: DerivedMemoryRecord[] = [];
-  for (const { memory, name } of listMemories(materialiseBundleDir(stashDir))) {
+  for (const { memory, name } of listMemories(bundleAt(stashDir))) {
     let raw: string;
     try {
       raw = memory.entry.content();

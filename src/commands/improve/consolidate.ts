@@ -31,7 +31,7 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { listAssets, requireAsset } from "../../core/assets/read";
 import { indexedPathOf } from "../../core/assets/type";
-import { bundleSourceAt, materialiseBundleDir } from "../../core/bundle-at-dir";
+import { bundleSourceAt } from "../../core/bundle-at-dir";
 import { isWithin } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -336,9 +336,8 @@ function loadRejectedPromotionBodyHashes(stashDir: string, proposalsCtx?: Propos
  */
 export function loadExistingKnowledgeBodyHashes(targetRoot: string): Set<string> {
   const hashes = new Set<string>();
-  const bundle = resolveConsolidationSourceOwner({}, targetRoot)?.bundleId;
+  const bundle = resolveConsolidationSourceOwner({}, targetRoot)?.bundle;
   if (bundle === undefined) return hashes;
-  materialiseBundleDir(targetRoot, undefined, { name: bundle });
   for (const asset of listAssets({ bundle })) {
     if (!asset.conceptId.startsWith("knowledge/")) continue;
     try {
@@ -493,6 +492,7 @@ export interface ConsolidationPoolSnapshot {
 }
 
 interface ConsolidationSourceOwner {
+  bundle: ReturnType<typeof bundleSourceAt>;
   bundleId: string;
   sourceRoot: string;
   excludedSourceRoots: ReadonlySet<string>;
@@ -508,10 +508,10 @@ function resolveConsolidationSourceOwner(
     const targetIndex = sources.findIndex((source) => path.resolve(source.path) === targetRoot);
     const target = deriveInstallations(sources)[targetIndex];
     if (!target) return undefined;
-    // The directory is a bundle the facade takes by its id, which config may not name (an override directory).
-    const bundleId = materialiseBundleDir(stashDir, opts.config, { name: target.id });
+    // The directory is a bundle the facade takes as its source, which config may not name (an override directory).
     return {
-      bundleId,
+      bundle: { ...bundleSourceAt(stashDir, opts.config), name: target.id },
+      bundleId: target.id,
       sourceRoot: targetRoot,
       excludedSourceRoots: new Set(
         sources
@@ -1183,7 +1183,7 @@ function loadMemoriesForSource(
   }
   if (memories.length > 0 || !source) return memories;
   // A memory of another bundle nested inside this one is that bundle's.
-  for (const { memory, name } of listMemories(source.bundleId)) {
+  for (const { memory, name } of listMemories(source.bundle)) {
     const filePath = indexedPathOf(memory);
     if (!isConsolidationEligibleMemoryName(name)) continue;
     if ([...source.excludedSourceRoots].some((root) => isWithin(filePath, root))) continue;

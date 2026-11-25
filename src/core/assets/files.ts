@@ -15,7 +15,7 @@ import { toPosix } from "../common";
 import { isDataDirUnreadableError } from "../errors";
 import { warn, warnVerbose } from "../warn";
 import { readFrom } from "./asset";
-import { bundleFor } from "./bundle";
+import { type BundleAddress, bundleFor } from "./bundle";
 import { embedPendingWrites, forgetIndexedAsset, refreshIndexedAsset } from "./index-rows";
 
 // asset-io: files-view the path rules the Desktop workspace types and guards a place in a bundle by
@@ -31,7 +31,7 @@ export { assertLinksLeadInside } from "../adapter/directory-adapter";
  * not list is not an asset, so it is not indexed. Fail-open: `false` when the index could not be updated, never a throw
  * for an index that is absent or busy or a bundle that is unknown.
  */
-export async function indexFiles(bundle: string, files: string[]): Promise<boolean> {
+export async function indexFiles(bundle: BundleAddress, files: string[]): Promise<boolean> {
   let held: ReturnType<typeof bundleFor>;
   try {
     held = bundleFor(bundle);

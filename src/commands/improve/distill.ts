@@ -25,7 +25,7 @@ import { type Asset, findAsset, lookupAsset, readAsset } from "../../core/assets
 import { assetType, indexedPathOf } from "../../core/assets/type";
 import { addressOf, conceptIdAtFile, writeAssets } from "../../core/assets/write";
 import { authoringRulesForType } from "../../core/authoring-rules";
-import { materialiseBundleDir } from "../../core/bundle-at-dir";
+import { bundleAt } from "../../core/bundle-at-dir";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
@@ -475,7 +475,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const config = options.config ?? loadConfig();
   const stash = options.stashDir ?? resolveStashDir();
   // An existing input is addressed where its file is; only a ref no file owns is read by placement.
-  const address = addressOf(materialiseBundleDir(stash), inputRef);
+  const address = addressOf(bundleAt(stash), inputRef);
   const profile = options.improveProfile ?? resolveImproveStrategy(undefined, config).config;
   options = { ...options, improveProfile: profile };
   const targetKind = options.proposalKind ?? "lesson";
@@ -496,7 +496,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const ledgerRef = options.itemRef ?? inputRef;
   const eligMeta = options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {};
   // The input's type is its file's; the ref's first folder names it only for a ref no file owns.
-  const owned = lookupAsset(inputRef, { bundle: materialiseBundleDir(stash) });
+  const owned = lookupAsset(inputRef, { bundle: bundleAt(stash) });
   const inputType = owned ? assetType(owned) : address.type;
   if (isDistillRefusedInputType(inputType)) {
     const secret = inputType === "env" || inputType === "secret";
@@ -657,7 +657,7 @@ function feedbackLines(feedback: BuildPromptInput["feedback"]): string[] {
 
 /** Whether the stash the proposal would be filed in holds the lesson `ref`, under any spelling of its file. */
 function lessonExists(run: DistillRun, ref: string): boolean {
-  return readAsset(materialiseBundleDir(run.stash), ref) !== undefined;
+  return readAsset(bundleAt(run.stash), ref) !== undefined;
 }
 
 /** Turn the response into validated content: structured JSON or markdown, then lesson repairs and lint. */
@@ -873,7 +873,7 @@ async function proposeLessonUpdate(
   for (const asset of related ?? (await run.related(memory.slice(0, 500), RELATED_COUNT))) {
     if (asset.type !== "lesson" || !asset.path || !isWithin(asset.path, run.stash)) continue;
     try {
-      const content = findAsset(asset.ref)?.entry.content();
+      const content = findAsset(asset.ref, bundleAt(run.stash))?.entry.content();
       if (content === undefined) continue;
       // A memory is never merged into a lesson of another scope.
       if (!sameScope(memoryScope, scopeFromFrontmatter(parseFrontmatter(content).data))) continue;
@@ -943,7 +943,7 @@ async function proposeLessonUpdate(
   // The proposal's before-hash is taken at mint: a lesson edited since it was read is not what the writer extended.
   let proposal: Proposal;
   try {
-    if (readAsset(materialiseBundleDir(run.stash), target.ref)?.entry.content() !== target.content) {
+    if (readAsset(bundleAt(run.stash), target.ref)?.entry.content() !== target.content) {
       return {
         skipReason: "update_not_written",
         detail: `An update of ${target.ref} was not proposed: the lesson changed meanwhile.`,
@@ -1146,7 +1146,7 @@ async function planPromotion(
   let existing: string | null = null;
   try {
     // The promotion is filed in run.stash, so only that bundle's doc is its destination (#1000).
-    existing = readAsset(materialiseBundleDir(run.stash), assessment.knowledgeRef)?.entry.content() ?? null;
+    existing = readAsset(bundleAt(run.stash), assessment.knowledgeRef)?.entry.content() ?? null;
   } catch {
     existing = null;
   }
@@ -1304,12 +1304,12 @@ function stampInputSalience(run: DistillRun): void {
         // The mirror is written to the asset the input names, in the bundle that holds it (the journal records it, #652).
         const stash = writeTargetAt(run.stash);
         // The asset the input names, looked for first in the stash it was loaded from, then in every other bundle.
-        const owned = lookupAsset(run.inputRef, { bundle: stash.source.name });
+        const owned = lookupAsset(run.inputRef, { bundle: stash.source });
         const target =
           owned === undefined || owned.bundle === stash.source.name
             ? stash
             : resolveWriteTarget(run.config, owned.bundle, { requireWritable: false });
-        const conceptId = owned?.conceptId ?? conceptIdAtFile(stash.source.name, filePath);
+        const conceptId = owned?.conceptId ?? conceptIdAtFile(stash.source, filePath);
         if (conceptId === undefined) throw assetNotFound(run.inputRef);
         writeAssets(target, { purpose: "distill-salience" }, (w) => w.update(conceptId, updated));
         run.asset.content = updated;

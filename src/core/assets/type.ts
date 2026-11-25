@@ -24,7 +24,7 @@ import { parseFrontmatter } from "../asset/frontmatter";
 import { toPosix } from "../common";
 import { presentationFor } from "../type-presentation";
 import { type Asset, bundleHolding } from "./asset";
-import { bundleFor } from "./bundle";
+import { type BundleAddress, bundleFor } from "./bundle";
 import { indexAsset, indexAssets } from "./index-rows";
 
 export { embedPendingWrites, indexAsset, indexedPathOf } from "./index-rows";
@@ -95,7 +95,7 @@ export function assetTypeFresh(asset: Asset): string {
  * read from the bundle or stored. Null: the adapter holds no asset there.
  */
 export function recognizeContent(
-  bundle: string,
+  bundle: BundleAddress,
   key: string,
   content: string,
 ): { type: string; dropped?: string } | null {
@@ -121,7 +121,7 @@ export function recognizeContent(
 }
 
 /** The type the adapter of `bundle` gives `content` stored under `key`, or null when it holds no asset there. */
-export function typeOfContent(bundle: string, key: string, content: string): string | null {
+export function typeOfContent(bundle: BundleAddress, key: string, content: string): string | null {
   return recognizeContent(bundle, key, content)?.type ?? null;
 }
 

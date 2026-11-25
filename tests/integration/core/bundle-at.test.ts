@@ -3,20 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * A directory no config names (`--dir`) is materialised by `materialiseBundleDir`, once, and the facade takes it by the
- * id that returns (§4.2, §4.3). Two directories with one basename never share an id, and a configured bundle is never
- * shadowed by a materialised directory.
+ * A directory no config names (`--dir`) is its own source, which `bundleAt` answers with and the facade takes as it is
+ * (§4.2, §4.3): nothing is held between calls. A configured bundle is never shadowed by such a directory.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { bundleFor, lookupBundles } from "../../../src/core/assets/bundle";
-import { findAsset, listAssets, lookupAsset, readAsset } from "../../../src/core/assets/read";
+import { bundleFor, bundleNameOf } from "../../../src/core/assets/bundle";
+import { findAsset, listAssets, readAsset } from "../../../src/core/assets/read";
 import { addressOf, writeAssets } from "../../../src/core/assets/write";
-import { materialiseBundleDir } from "../../../src/core/bundle-at-dir";
-import { loadConfig, saveConfig } from "../../../src/core/config/config";
-import { getConfigPath } from "../../../src/core/paths";
+import { bundleAt } from "../../../src/core/bundle-at-dir";
+import { saveConfig } from "../../../src/core/config/config";
 import { writeTargetAt } from "../../../src/core/write-source";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { taskScopeOf } from "../../../src/tasks/task-ref";
@@ -41,23 +39,19 @@ function stashIn(parent: string): string {
   return dir;
 }
 
-test("two unconfigured directories with one basename get distinct ids, and each id reads its own directory", () => {
+test("two unconfigured directories with one basename each read their own directory", () => {
   const a = makeSandboxDir("akm-adhoc-a-");
   const b = makeSandboxDir("akm-adhoc-b-");
   cleanups.push(a.cleanup, b.cleanup);
   const dirA = stashIn(a.dir);
   const dirB = stashIn(b.dir);
 
-  const idA = materialiseBundleDir(dirA);
-  const idB = materialiseBundleDir(dirB);
+  const bundleA = bundleAt(dirA);
+  const bundleB = bundleAt(dirB);
 
-  expect(idA).not.toBe(idB);
-  expect(addressOf(idA, "knowledge/note").file).toBe(path.join(dirA, "knowledge", "note.md"));
-  expect(addressOf(idB, "knowledge/note").file).toBe(path.join(dirB, "knowledge", "note.md"));
-  // A directory keeps its id.
-  expect(materialiseBundleDir(dirA)).toBe(idA);
-  expect(materialiseBundleDir(dirB)).toBe(idB);
-  expect(addressOf(idA, "knowledge/note").file).toBe(path.join(dirA, "knowledge", "note.md"));
+  expect(bundleNameOf(bundleA)).toBe("stash");
+  expect(addressOf(bundleA, "knowledge/note").file).toBe(path.join(dirA, "knowledge", "note.md"));
+  expect(addressOf(bundleB, "knowledge/note").file).toBe(path.join(dirB, "knowledge", "note.md"));
 });
 
 test("a scratch copy of a configured bundle is a bundle of its own directory: the configured one is never shadowed", () => {
@@ -71,12 +65,12 @@ test("a scratch copy of a configured bundle is a bundle of its own directory: th
 
   const { bundle } = taskScopeOf({ name: "docs", path: copy });
 
-  expect(bundle).not.toBe("docs");
+  expect(bundleNameOf(bundle)).not.toBe("docs");
   expect(addressOf(bundle, "knowledge/note").file).toBe(path.join(copy, "knowledge", "note.md"));
   expect(addressOf("docs", "knowledge/note").file).toBe(path.join(dir, "knowledge", "note.md"));
   expect(taskScopeOf({ name: "docs", path: dir }).bundle).toBe("docs");
-  expect(materialiseBundleDir(dir)).toBe("docs");
-  // A materialised directory is read by a lookup after the configured bundles, and a listing of every bundle omits it.
+  expect(bundleAt(dir)).toBe("docs");
+  // A listing of every bundle omits the scratch copy.
   expect(listAssets().every((asset) => asset.bundle === "docs")).toBe(true);
   expect(listAssets({ bundle }).map((asset) => asset.conceptId)).toEqual(["knowledge/note"]);
 });
@@ -88,7 +82,7 @@ test("AKM_BUNDLE_DIR keeps the id it always had (its basename slug), and is list
   const saved = process.env.AKM_BUNDLE_DIR;
   process.env.AKM_BUNDLE_DIR = dir;
   try {
-    const id = materialiseBundleDir(dir);
+    const id = bundleNameOf(bundleAt(dir));
     expect(id).toBe("stash");
     expect(bundleFor(id).root).toBe(dir);
     expect(listAssets({ bundle: id }).map((asset) => asset.ref)).toEqual(["stash//knowledge/note"]);
@@ -143,34 +137,21 @@ test("a task source naming a configured bundle never replaces it: its adapter an
   );
 });
 
-describe("config takes precedence over a materialised directory, through a config reload in one process", () => {
-  /** A directory materialised while no config names it, read through every path the facade has. */
-  const materialised = (): { dir: string; id: string } => {
+describe("config takes precedence over a directory it names", () => {
+  const loose = (): string => {
     const sandbox = makeSandboxDir("akm-mat-reload-");
     cleanups.push(sandbox.cleanup);
-    // Named apart from the working bundle (`stash`), whose id a materialised directory may otherwise share.
+    // Named apart from the working bundle (`stash`), whose id a directory may otherwise share.
     const dir = path.join(sandbox.dir, "loose");
     fs.mkdirSync(path.join(dir, "knowledge"), { recursive: true });
     fs.writeFileSync(path.join(dir, "knowledge", "note.md"), "---\ndescription: n\n---\n\n# n\n", "utf8");
-    const id = materialiseBundleDir(dir);
-    expect(id).toBe("loose");
-    expect(bundleFor(id).root).toBe(dir);
-    expect(lookupBundles().map((bundle) => bundle.name)).toContain(id);
-    expect(readAsset(id, "knowledge/note")).toBeDefined();
-    return { dir, id };
+    return dir;
   };
-  /** Edit the config file outside akm, as a user or Desktop does while the process keeps running. */
-  const reloadWith = (config: Record<string, unknown>) => {
-    fs.writeFileSync(getConfigPath(), JSON.stringify({ semanticSearchMode: "off", ...config }));
-    loadConfig();
-  };
-  const unreachable = (dir: string, id: string) => {
+  const refused = (dir: string, id: string) => {
+    expect(bundleAt(dir)).toBe(id);
     expect(() => bundleFor(id)).toThrow();
-    expect(lookupBundles().map((bundle) => bundle.root)).not.toContain(dir);
-    expect(lookupBundles().map((bundle) => bundle.name)).not.toContain(id);
-    expect(findAsset(`${id}//knowledge/note`)).toBeUndefined();
-    expect(lookupAsset("knowledge/note")).toBeUndefined();
     expect(() => readAsset(id, "knowledge/note")).toThrow();
+    expect(findAsset(`${id}//knowledge/note`)).toBeUndefined();
     expect(() =>
       writeAssets(writeTargetAt(dir), { purpose: "test" }, (w) =>
         w.create({ type: "knowledge", name: "other", content: "x" }),
@@ -180,15 +161,14 @@ describe("config takes precedence over a materialised directory, through a confi
   };
 
   test("a bundle configured disabled under the directory's id", () => {
-    const { dir, id } = materialised();
-    reloadWith({ bundles: { [id]: { path: dir, enabled: false } } });
-    unreachable(dir, id);
+    const dir = loose();
+    saveConfig({ semanticSearchMode: "off", bundles: { loose: { path: dir, enabled: false } } });
+    refused(dir, "loose");
   });
 
   test("a bundle configured disabled at the directory's path, under another id", () => {
-    const { dir, id } = materialised();
-    reloadWith({ bundles: { archived: { path: dir, enabled: false } } });
-    unreachable(dir, id);
-    expect(() => bundleFor("archived")).toThrow();
+    const dir = loose();
+    saveConfig({ semanticSearchMode: "off", bundles: { archived: { path: dir, enabled: false } } });
+    refused(dir, "archived");
   });
 });

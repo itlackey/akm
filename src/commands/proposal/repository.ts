@@ -20,7 +20,7 @@ import { isBundleSlug, makeBundleRef, parseBundleRef } from "../../core/asset/as
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { currentConceptId, qualifyRef, readAsset } from "../../core/assets/read";
 import { type AssetAddress, addressOf } from "../../core/assets/write";
-import { materialiseBundleDir, stateBundleId } from "../../core/bundle-at-dir";
+import { bundleAt, stateBundleId } from "../../core/bundle-at-dir";
 import { bundleIdForDir } from "../../core/bundle-id";
 import { toErrorMessage } from "../../core/common";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
@@ -215,7 +215,7 @@ export function proposalRefIdentity(ref: string): ProposalRefIdentity | undefine
   try {
     const parsed = parseBundleRef(ref);
     if (parsed.fragment !== undefined || isLegacyProposalRef(ref)) return undefined;
-    return { conceptId: parsed.conceptId, ...(parsed.bundle !== undefined ? { bundle: parsed.bundle } : {}) };
+    return { conceptId: parsed.conceptId, bundle: parsed.bundle };
   } catch {
     return undefined;
   }
@@ -235,9 +235,10 @@ function refFilter(stashDir: string, ref: string): (proposalRef: string) => bool
     );
   }
   const sources = resolveSourceEntries(stashDir, loadConfig());
+  const stash = bundleAt(stashDir);
   // The filter's own outdated spelling is the caller's to fix (one warning); a stored ref is not, so it resolves silently.
   const wanted = parseBundleRef(
-    qualifyRef(makeBundleRef(filter.bundle, filter.conceptId), { bundle: materialiseBundleDir(stashDir) }),
+    qualifyRef(makeBundleRef(filter.bundle, filter.conceptId), { bundle: stash }),
   ).conceptId;
   const asked = new Map<string, string>();
   const current = (identity: ProposalRefIdentity): string => {
@@ -246,7 +247,7 @@ function refFilter(stashDir: string, ref: string): (proposalRef: string) => bool
     if (known !== undefined) return known;
     // A stored ref whose bundle is not configured names its asset by concept id alone: whichever bundle holds it now.
     const held = identity.bundle === undefined || resolveSourcesForOrigin(identity.bundle, sources).length > 0;
-    const conceptId = currentConceptId(makeBundleRef(held ? identity.bundle : undefined, identity.conceptId));
+    const conceptId = currentConceptId(makeBundleRef(held ? identity.bundle : undefined, identity.conceptId), stash);
     asked.set(key, conceptId);
     return conceptId;
   };
@@ -405,7 +406,7 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
   }
 
   const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, origin);
-  const targetSource = materialiseBundleDir(proposalTarget.root, loadConfig(), { name: proposalTarget.source });
+  const targetSource = bundleAt(proposalTarget.root, loadConfig(), { name: proposalTarget.source });
   let parsedRef: AssetAddress;
   try {
     parsedRef = addressOf(targetSource, input.ref);
@@ -560,7 +561,7 @@ export function createRetireProposal(
     throw invalid(err);
   }
   const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, origin);
-  const targetSource = materialiseBundleDir(proposalTarget.root, loadConfig(), { name: proposalTarget.source });
+  const targetSource = bundleAt(proposalTarget.root, loadConfig(), { name: proposalTarget.source });
   let parsedRef: AssetAddress;
   try {
     parsedRef = addressOf(targetSource, input.ref);
@@ -612,14 +613,14 @@ export function createRetireProposal(
 }
 
 /** The bundle a proposal is bound to, to address its ref in: the bundle `proposedTarget` names, else the queue's own directory. */
-function proposalBundleId(stashDir: string, proposal: Proposal, config: AkmConfig): string {
+function proposalBundleId(stashDir: string, proposal: Proposal, config: AkmConfig) {
   const bound = proposal.proposedTarget?.source;
-  if (bound === undefined) return materialiseBundleDir(stashDir, config);
+  if (bound === undefined) return bundleAt(stashDir, config);
   try {
     resolveBundleWriteTarget(config, bound);
     return bound;
   } catch {
-    return materialiseBundleDir(stashDir, config, { name: bound });
+    return bundleAt(stashDir, config, { name: bound });
   }
 }
 
@@ -890,7 +891,7 @@ export function purgeOrphanProposals(
     if (parsed.type === "lesson" || !spec) continue;
     const exists = sourceDirs.some((root) => {
       try {
-        return addressOf(materialiseBundleDir(root), p.ref).exists;
+        return addressOf(bundleAt(root), p.ref).exists;
       } catch {
         return false;
       }

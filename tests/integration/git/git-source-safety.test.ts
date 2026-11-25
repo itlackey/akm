@@ -20,7 +20,6 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { parsePlacementRef } from "../../../src/core/asset/resolve-ref";
-import { materialiseBundleDir } from "../../../src/core/bundle-at-dir";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { commitWriteTargetBoundary, prepareWriteTargetForMutation } from "../../../src/core/write-source";
 import { saveGitStash } from "../../../src/sources/providers/git";
@@ -284,8 +283,7 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
     git(repoDir, ["commit", "-m", "seed"]);
     fs.mkdirSync(contentDir, { recursive: true });
     git(repoDir, ["checkout", "--detach"]);
-    // A real target comes from `resolveWriteTarget`, whose bundle the adapter gate can look up; materialise this one the same way.
-    const name = materialiseBundleDir(contentDir, undefined, { name: "team", adapterId: "akm" });
+    const name = "team";
     const target = {
       source: { kind: "git" as const, name, path: contentDir, repoPath: repoDir, adapterId: "akm" },
       config: { type: "git" as const, name, path: contentDir, writable: true },

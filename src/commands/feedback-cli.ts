@@ -12,7 +12,7 @@ import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "
 import { type AssetRef, displayDefaultBundle, displayRef } from "../core/asset/resolve-ref";
 import { assetRevision, findAsset, qualifyRef, readAsset, requireAsset } from "../core/assets/read";
 import { addressOf, writeAssets } from "../core/assets/write";
-import { materialiseBundleDir } from "../core/bundle-at-dir";
+import { bundleAt } from "../core/bundle-at-dir";
 import { isWithin, resolveStashDir, safeRealpath } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { assetNotFound, ConfigError, NotFoundError, TransientError, UsageError } from "../core/errors";
@@ -364,7 +364,7 @@ function assertFrontmatterStillParses(before: string, after: string, file: strin
  * not the indexed one, so accepting the proposal would leave the real one unfixed.
  */
 export function assertProposalWritesFile(itemRef: string, root: string, filePath: string): void {
-  const { type, file: writes } = addressOf(materialiseBundleDir(path.resolve(root)), itemRef);
+  const { type, file: writes } = addressOf(bundleAt(path.resolve(root)), itemRef);
   if (writes !== undefined && safeRealpath(writes) === safeRealpath(filePath)) return;
   throw new UsageError(
     `akm cannot queue a fix for ${itemRef}: its file is ${filePath}, but a proposal would write ${writes ?? `no file (akm has no directory for "${type}" assets)`}. Edit the file directly.`,

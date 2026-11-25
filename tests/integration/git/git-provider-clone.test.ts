@@ -3,7 +3,6 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { materialiseBundleDir } from "../../../src/core/bundle-at-dir";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import { prepareWriteTargetForMutation } from "../../../src/core/write-source";
 import type { ParsedGitRef } from "../../../src/registry/types";
@@ -524,8 +523,7 @@ exec ${JSON.stringify(realGit)} "$@"
       if (level === "warn") warnings.push(args.map(String).join(" "));
     });
     try {
-      // A real target comes from `resolveWriteTarget`, whose bundle the adapter gate can look up; materialise this one the same way.
-      const name = materialiseBundleDir(fixture.contentRoot, undefined, { name: "team", adapterId: "akm" });
+      const name = "team";
       const prepared = prepareWriteTargetForMutation({
         source: {
           kind: "git",

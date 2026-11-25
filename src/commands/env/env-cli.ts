@@ -71,7 +71,7 @@ const envCreateCommand = defineJsonCommand({
     const resolution = resolveEnvWriteTarget(args.name, args.bundle, { subPath: getStringArg(args, "path") });
     const { ref } = resolution;
     const { source } = resolution.target;
-    const held = addressOf(source.name, `${resolution.type}/${resolution.name}`);
+    const held = addressOf(source, `${resolution.type}/${resolution.name}`);
     const exists = held.exists;
 
     const fromFile = args["from-file"];

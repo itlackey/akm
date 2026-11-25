@@ -295,7 +295,7 @@ async function revertProposalWithLease(
     return { proposal, assetPath, ref: proposal.ref };
   }
   const target = prepareWriteTargetForMutation(boundTarget);
-  const accepted = readAsset(target.source.name, parseBundleRef(recorded.ref).conceptId);
+  const accepted = readAsset(target.source, parseBundleRef(recorded.ref).conceptId);
   if (!accepted || contentHash(accepted.entry.bytes()) !== recorded.contentHash) {
     // By-ref resolution skips retire proposals, so reverting by ref when a
     // SEPARATE retire proposal
@@ -364,11 +364,11 @@ function reopenRefusal(config: AkmConfig, proposal: Proposal, queueTarget?: Reso
   if (!address?.file) return "its target cannot be resolved.";
   if (!isRetireProposal(proposal)) {
     return staleRefusal(
-      () => void readFreshProposalTarget(proposal, target.source.name, address, proposalContent(proposal)),
+      () => void readFreshProposalTarget(proposal, target.source, address, proposalContent(proposal)),
     );
   }
   if (!proposal.retirement) return "it has no retirement metadata.";
-  const current = address.exists ? readAsset(target.source.name, address.conceptId) : undefined;
+  const current = address.exists ? readAsset(target.source, address.conceptId) : undefined;
   if (!current) {
     return "its retired file no longer exists (already retired, or removed by something else).";
   }
