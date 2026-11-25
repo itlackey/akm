@@ -310,21 +310,37 @@ async function freePort() {
   return port;
 }
 
-/** Starts the server with flags, then talks to its bind address while claiming the configured host name. */
-async function launchWith(t, args) {
+/**
+ * Starts the server with the flags `argsFor(port)` gives for a free port, then talks to its bind address while claiming
+ * the configured host name. `freePort` only finds a port that was free: a server another test file starts may take it
+ * before this one binds, and this one then exits with EADDRINUSE. It is started again on another port.
+ */
+async function launchWith(t, argsFor) {
   const secret = randomBytes(32).toString("hex");
   const fixture = await createFixture({ packageRoot: appRoot });
   t.after(() => fixture.cleanup());
-  const child = fork(path.join(appRoot, "server/server.mjs"), args, {
-    execArgv: [],
-    env: { ...fixture.env, AKM_WEB_SECRET: secret },
-    stdio: ["ignore", "pipe", "pipe", "ipc"],
-  });
-  t.after(() => child.kill());
-  const ready = await new Promise((resolve, reject) => {
-    child.once("exit", (code) => reject(new Error(`Server exit ${code}`)));
-    child.once("message", resolve);
-  });
+  let port;
+  let args;
+  let ready;
+  for (let attempt = 1; !ready; attempt++) {
+    port = await freePort();
+    args = argsFor(port);
+    const child = fork(path.join(appRoot, "server/server.mjs"), args, {
+      execArgv: [],
+      env: { ...fixture.env, AKM_WEB_SECRET: secret },
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    });
+    t.after(() => child.kill());
+    let stderr = "";
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    ready = await new Promise((resolve, reject) => {
+      child.once("exit", (code) => {
+        if (stderr.includes("EADDRINUSE") && attempt < 3) resolve(undefined);
+        else reject(new Error(`Server exit ${code}: ${stderr.trim()}`));
+      });
+      child.once("message", resolve);
+    });
+  }
   const send = (route, { host = new URL(ready.origin).host, method = "GET", headers = {}, body } = {}) =>
     new Promise((resolve, reject) => {
       const req = http.request(
@@ -354,13 +370,20 @@ async function launchWith(t, args) {
     assert.equal(response.status, 303);
     return response.headers["set-cookie"][0];
   };
-  return { ready, secret, bearer, send, login };
+  return { ready, port, secret, bearer, send, login };
 }
 
 test("a configured --origin and --host serve under that address, with every check still on", async (t) => {
-  const port = await freePort();
+  const app = await launchWith(t, (port) => [
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(port),
+    "--origin",
+    `http://akm.test:${port}`,
+  ]);
+  const { port } = app;
   const origin = `http://akm.test:${port}`;
-  const app = await launchWith(t, ["--host", "127.0.0.1", "--port", String(port), "--origin", origin]);
   assert.deepEqual(app.ready, { type: "ready", origin });
   const setCookie = await app.login();
   assert.match(setCookie, new RegExp(`^akm_desktop_session_${port}=`));
@@ -383,8 +406,7 @@ test("a configured --origin and --host serve under that address, with every chec
 });
 
 test("an https origin marks the session cookie Secure", async (t) => {
-  const port = await freePort();
-  const app = await launchWith(t, ["--port", String(port), "--origin", `https://akm.test:${port}`]);
+  const app = await launchWith(t, (port) => ["--port", String(port), "--origin", `https://akm.test:${port}`]);
   assert.match(await app.login(), /; Secure$/);
 });
 
@@ -412,10 +434,9 @@ async function exitOf(args, env = {}) {
 test("host spellings are normalised, and wildcard spellings need --origin", {
   skip: !ipv6 && !process.env.CI && "no IPv6",
 }, async (t) => {
-  const port = await freePort();
-  const app = await launchWith(t, ["--host", "Localhost", "--port", String(port)]);
+  const app = await launchWith(t, (port) => ["--host", "Localhost", "--port", String(port)]);
   const url = new URL(app.ready.origin);
-  assert.equal(url.port, String(port));
+  assert.equal(url.port, String(app.port));
   assert.ok(["127.0.0.1", "[::1]"].includes(url.hostname), url.hostname);
   assert.equal((await app.send("/api/session", { headers: app.bearer })).status, 200);
   for (const host of ["::0", "0", "0:0:0:0:0:0:0:0"]) {
@@ -437,7 +458,7 @@ test("instances on different ports use different cookie names", async (t) => {
   // Port 0: each server takes a free port itself, so no other process can take it between choosing and binding.
   const names = [];
   for (let i = 0; i < 2; i++) {
-    const app = await launchWith(t, ["--port", "0"]);
+    const app = await launchWith(t, () => ["--port", "0"]);
     names.push((await app.login()).split("=")[0]);
   }
   assert.notEqual(names[0], names[1]);
