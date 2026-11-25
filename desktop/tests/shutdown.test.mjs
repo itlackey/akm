@@ -216,6 +216,34 @@ test("the tree of a child that was not started detached is stopped", posix, asyn
   assert.equal(await written(left.ticks), false, "nor when the child exited before shutdown");
 });
 
+// An operation that is stopped moves on to its next command (Software's check runs one program after another). What it
+// starts once termination has begun is stopped too, so the server never exits with a child of its own still running.
+test("a command an operation starts while it is being terminated is stopped", posix, async (t) => {
+  const result = await probe(
+    t,
+    `async (shutdown, spawn, sleep) => {
+        const { existsSync } = await import("node:fs");
+        let started = 0;
+        const next = () => {
+          started++;
+          // Unreferenced, so a writer left running fails the assertions below instead of holding this process open.
+          const child = spawn(process.env.WRITER, [], { stdio: "ignore" });
+          child.unref();
+          child.once("exit", () => {
+            if (started < 3) next();
+          });
+        };
+        next();
+        while (!existsSync(process.env.TICKS)) await sleep(25);
+        await shutdown.terminate();
+        return { started };
+      }`,
+  );
+  assert.equal(result.started, 3, "the operation started its next commands during termination");
+  assert.equal(await written(result.ticks), false, "nothing writes after terminate() returned");
+  assert.doesNotMatch(result.stderr, /could not stop/);
+});
+
 // A process that has exited stays in its group until its parent waits for it. Where that never happens (a container
 // whose first process does not reap), such a group must not hold up every shutdown.
 test("a group holding only a process nobody waited for does not count as running", {
