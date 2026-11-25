@@ -13,6 +13,7 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import { ConfigError } from "../../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
@@ -74,9 +75,18 @@ export function deleteIndexDatabase(dbPath: string): void {
 }
 
 /** Open `index.db` for writing, creating and migrating it. Corruption raises; only the build, which holds the rebuild lock, deletes and rebuilds. */
-export function openIndexDatabase(dbPath?: string, options?: { beforeSchema?: (db: Database) => void }): Database {
+export function openIndexDatabase(
+  dbPath?: string,
+  options?: {
+    beforeSchema?: (db: Database) => void;
+    /** Test seam. Defaults to SQLITE_BUSY_TIMEOUT_MS. */
+    busyTimeoutMs?: number;
+  },
+): Database {
+  const resolvedPath = dbPath ?? getDbPath();
   return openManagedDatabase({
-    path: dbPath ?? getDbPath(),
+    path: resolvedPath,
+    pragmas: { dataDir: path.dirname(resolvedPath), busyTimeoutMs: options?.busyTimeoutMs },
     init: (db: Database) => {
       // Source update uses this narrow lifecycle seam to ATTACH state.db and
       // open its coordinator-owned outer transaction before ensureSchema or

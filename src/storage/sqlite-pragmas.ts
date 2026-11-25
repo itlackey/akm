@@ -129,6 +129,8 @@ export function applyReadonlyPragmas(db: Database): void {
 
 /** Options for {@link applyStandardPragmas}. */
 export interface StandardPragmaOptions {
+  /** Test seam for SQLite lock waits. Defaults to SQLITE_BUSY_TIMEOUT_MS. */
+  busyTimeoutMs?: number;
   /**
    * When `false`, `PRAGMA foreign_keys = ON` is NOT applied. Default `true`
    * (matching 4 of 5 openers). logs-db must pass `false` to stay byte-identical
@@ -158,7 +160,7 @@ export interface StandardPragmaOptions {
 /**
  * Apply AKM's standard opening PRAGMAs to `db`, in order:
  *   1. `journal_mode` = the configured mode (with WAL→DELETE network-FS fallback)
- *   2. `busy_timeout = 30000`
+ *   2. `busy_timeout` (30,000 ms by default)
  *   3. `foreign_keys = ON`  (unless `opts.foreignKeys === false`)
  *   4. `synchronous = FULL` (only in a rollback-journal mode — DELETE/TRUNCATE)
  *
@@ -190,7 +192,7 @@ export function applyStandardPragmas(db: Database, opts: StandardPragmaOptions =
   // lock instead of failing immediately with SQLITE_BUSY. For the WAL default
   // this is a no-op (WAL→WAL changes nothing), so byte-identical behaviour is
   // preserved.
-  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  db.exec(`PRAGMA busy_timeout = ${opts.busyTimeoutMs ?? SQLITE_BUSY_TIMEOUT_MS}`);
   db.exec(`PRAGMA journal_mode = ${mode}`);
   if (opts.foreignKeys !== false) {
     db.exec("PRAGMA foreign_keys = ON");
