@@ -352,7 +352,10 @@ describe("what to change by hand", () => {
   });
 
   test("shell: bash is dropped and reported; shell: sh is not", () => {
-    expect(convert("version: 4\nshell: bash\nrun: ls\n").notes[0]).toMatch(/shell: bash/);
+    expect(convert("version: 4\nshell: bash\nrun: ls\n").notes).toEqual([
+      expect.stringMatching(/shell: bash/),
+      expect.stringMatching(ENVIRONMENT_NOTE),
+    ]);
     expect(convert("version: 4\nshell: sh\nrun: ls\n").notes).toEqual([expect.stringMatching(ENVIRONMENT_NOTE)]);
   });
 
