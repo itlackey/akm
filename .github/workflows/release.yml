@@ -40,8 +40,9 @@ permissions:
   id-token: write
 
 concurrency:
-  # A newer push to a pull request supersedes its run; a push to main or a dispatch is never cancelled.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  # A newer push to a pull request supersedes its run; a push to main or a dispatch is never cancelled. The prefix is a
+  # literal: ci.yml, called from here, sees this workflow's name and run id, and a group it can compute deadlocks.
+  group: release-workflow-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
