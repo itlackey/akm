@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 import { createFixture } from "../scripts/fixture.mjs";
 
 const appRoot = process.env.AKM_DESKTOP_TEST_APP_ROOT ?? fileURLToPath(new URL("..", import.meta.url));
@@ -774,11 +774,12 @@ test("a frame shows the login form or follows a login link, for an allowed paren
 
   // A parent nobody listed: the browser refuses to show the server in its frame.
   const refused = await browser.newPage();
+  const answer = refused.waitForResponse((response) => response.url().startsWith(app.origin));
   await refused.goto(`http://127.0.0.1:${other}/`);
-  await sleep(1500);
+  const csp = (await answer).headers()["content-security-policy"];
+  assert.match(csp, new RegExp(`frame-ancestors http://127\\.0\\.0\\.1:${allowed}(;|$)`), "only the listed parent");
+  // The signal that the browser blocked it: the frame's document is its error page, not the server's.
+  const inner = () => refused.frames().find((frame) => frame !== refused.mainFrame());
+  await expect.poll(() => inner()?.url()).toMatch(/^chrome-error:/);
   assert.equal(await refused.frameLocator("#f").getByLabel("Secret").count(), 0, "no login form in an unlisted parent");
-  assert.ok(
-    !refused.frames().some((frame) => frame.url().startsWith(app.origin) && frame !== refused.mainFrame()),
-    "the frame did not load",
-  );
 });
