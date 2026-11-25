@@ -749,8 +749,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
   // and revision checks, the write, the demotions and the boundary commit. The
   // commit pushes inside the lease on purpose: a push from a writer that has
   // released it would race the next writer's commit on the same branch (the
-  // conflicting-commit hazard the lease exists for), and the sync write path
-  // (`withWriteTargetMutation`) draws the same boundary. Indexing is a
+  // conflicting-commit hazard the lease exists for). Indexing is a
   // regenerable cache and runs after release.
   const written = await withAssetMutationLease("markdown-write", async () => {
     // Pre-flight: existence + force semantics. The helper itself overwrites
