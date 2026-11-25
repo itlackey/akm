@@ -2336,13 +2336,12 @@ async function unretireProposalWithLease(
     handle: string;
     conceptId: string;
     primary: boolean;
-    /** The archived copy was purged: nothing to move, the primary is rewritten from `backupContent`. */
-    fromBackup: boolean;
-    /** The derived twin's archived copy was purged and cannot be restored. */
-    gone: boolean;
+    /**
+     * The archived copy was purged: nothing to move. The primary is rewritten from `backupContent`; only a derived twin
+     * is retired beside it, so any other purged copy is the twin's, which is gone.
+     */
+    purged: boolean;
   }
-  const recordedAddress = addressOf(bundle, recorded.ref);
-  const derivedTwinId = derivedTwinOf(recordedAddress.conceptId, recordedAddress.type);
   // Every file the restores and the primary's rewrite touch goes into the revert's commit.
   const journal = beginWriteProvenance();
   let pending: PendingRestore[];
@@ -2372,9 +2371,8 @@ async function unretireProposalWithLease(
         // proposal keeps the primary's exact pre-retire bytes (`backupContent`),
         // so the primary can still be restored from those.
         const primary = ref === recorded.ref;
-        const fromBackup = !originalExists && !archivedExists && proposal.backupContent !== undefined && primary;
-        const gone = !originalExists && !archivedExists && retirement.conceptId === derivedTwinId;
-        if (!originalExists && !archivedExists && !fromBackup && !gone) {
+        const purged = !originalExists && !archivedExists;
+        if (purged && primary && proposal.backupContent === undefined) {
           throw new UsageError(
             `Cannot revert proposal ${proposal.id}: archived copy of ${shown(ref)} (${handle}) is missing.`,
             "INVALID_FLAG_VALUE",
@@ -2408,13 +2406,14 @@ async function unretireProposalWithLease(
             );
           }
         }
-        found.push({ handle, conceptId: retirement.conceptId, primary, fromBackup, gone });
+        found.push({ handle, conceptId: retirement.conceptId, primary, purged });
       }
       // The primary first: a refusal its restore makes (a retirement that does not say where its file went) leaves
       // every other retirement as it was, whatever order the accept recorded them in.
       const ordered = [...found.filter((p) => p.primary), ...found.filter((p) => !p.primary)];
       for (const p of ordered) {
-        if (!p.gone) w.restore(p.handle, p.fromBackup ? proposal.backupContent : undefined);
+        if (p.purged && !p.primary) warn(`[proposal] ${p.conceptId} was purged from the archive and is gone.`);
+        else w.restore(p.handle, proposal.backupContent); // the backup is used only for a purged primary
       }
       // Overwrite the primary with the EXACT pre-retire bytes recorded
       // at accept (`backupContent`) — no appended trailing newline either, so
@@ -2428,7 +2427,7 @@ async function unretireProposalWithLease(
       // and would delete either.
       // Skipped when the restored bytes already decode to `backupContent`: that leaves a
       // non-UTF-8 asset byte-exact, since `backupContent` is only its lossy text. After the
-      // grace purge (`fromBackup`) the restore wrote `backupContent` itself; git history keeps the bytes.
+      // grace purge (`purged`) the restore wrote `backupContent` itself; git history keeps the bytes.
       const restoredPrimary = found.find((p) => p.primary);
       if (restoredPrimary && proposal.backupContent !== undefined) {
         if (w.read(restoredPrimary.conceptId)?.entry.content() !== proposal.backupContent) {
@@ -2439,12 +2438,6 @@ async function unretireProposalWithLease(
     });
   } finally {
     journal.end();
-  }
-  for (const p of pending) {
-    if (p.gone)
-      warn(
-        `[proposal] ${bundle}//${p.conceptId} was purged from the archive and is gone; only ${proposal.ref} was restored.`,
-      );
   }
   commitWriteTargetBoundary(target, `Revert ${proposal.ref}`, { paths: journal.writtenPaths() });
   const restoredPath = resolveAssetFilePathSafe(target.source, recorded.ref) ?? assetPath;

@@ -421,8 +421,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const entry = this.existing(b, conceptId);
     const file = entry.entry.file;
     // Only the asset's own file may be a link (it is removed, never followed); every folder above it must lead inside.
-    const parent = path.dirname(file);
-    if (path.resolve(parent) !== path.resolve(rootOf(b))) assertLinksLeadInside(rootOf(b), b.id, parent);
+    if (path.dirname(file) !== rootOf(b)) assertLinksLeadInside(rootOf(b), b.id, path.dirname(file));
     const dir = this.packageDir(buildFileContext(rootOf(b), file));
     // A package at the bundle's root is not the bundle's to remove: only its entry goes.
     if (dir === undefined || !isWithin(dir, rootOf(b)) || path.resolve(dir) === path.resolve(rootOf(b))) {
@@ -562,9 +561,9 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const assets = [...this.packageMembers(b, entry), entry];
     for (const asset of assets) {
       this.requireRetires(b, this.typeOf(asset.entry.key));
-      assertNoSymbolicLink(root, b.id, asset.entry.file);
+      assertWritableFile(root, b.id, asset.entry.file);
     }
-    assertNoSymbolicLink(root, b.id, path.join(root, MEMORY_ARCHIVE_REL, "retirement"));
+    assertWritableFile(root, b.id, path.join(root, MEMORY_ARCHIVE_REL, "retirement"));
     const archivedAt = note.archivedAt ?? new Date().toISOString();
     const changes = assets.map((asset) => {
       const written = archiveFile(root, asset.entry.file, {
@@ -611,7 +610,7 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
     const conceptId = this.retiredConceptId(tombstone);
     if (this.identify(tombstone.originalPath) !== null) this.requireRetires(b, this.typeOf(tombstone.originalPath));
     const file = path.join(rootOf(b), tombstone.originalPath);
-    assertNoSymbolicLink(rootOf(b), b.id, file);
+    assertWritableFile(rootOf(b), b.id, file);
     return { conceptId, changed: restoreArchive(rootOf(b), tombstone, fallback) };
   }
 
@@ -658,13 +657,10 @@ export abstract class DirectoryAdapterBase implements BundleAdapter {
   }
 
   private existing(b: Bundle, conceptId: string): FileAsset {
-    const found = this.read(b, conceptId);
-    if (found?.entry.file) return found as FileAsset;
     // A dangling link is still a path a delete can remove and the shared write guard can refuse by name.
     const held = this.holders(liveView(b, "file", true), conceptId);
-    const first = held?.files[0];
-    if (!held || first === undefined) throw assetNotFound(`${b.id}//${conceptId}`);
-    return { conceptId: held.conceptId, entry: buildFileContext(rootOf(b), path.join(rootOf(b), first)) };
+    if (!held?.files[0]) throw assetNotFound(`${b.id}//${conceptId}`);
+    return { conceptId: held.conceptId, entry: buildFileContext(rootOf(b), path.join(rootOf(b), held.files[0])) };
   }
 
   /** The bytes and file mode a write gives a file. */
@@ -749,17 +745,10 @@ function liveView(b: Bundle, reached: "file" | "walk" = "file", includeDanglingL
     isFile(relPath) {
       const authored = path.resolve(rootOf(b), relPath);
       if (!within(authored, rootOf(b))) return false;
-      let stat: fs.Stats;
       try {
-        stat = fs.lstatSync(authored);
+        return fs.statSync(authored).isFile();
       } catch {
-        return false;
-      }
-      if (!stat.isFile() && !stat.isSymbolicLink()) return false;
-      try {
-        return fs.statSync(fs.realpathSync(authored)).isFile();
-      } catch {
-        return includeDanglingLinks && stat.isSymbolicLink();
+        return includeDanglingLinks && fs.lstatSync(authored, { throwIfNoEntry: false })?.isSymbolicLink() === true;
       }
     },
     isWalked(relPath, options) {
@@ -864,7 +853,7 @@ function directoryLinksBelow(dir: string): string[] {
 // ── Writing helpers ─────────────────────────────────────────────────────────
 
 /** Retire and restore follow no link: moving a relative link into the archive would leave it dangling. */
-function assertNoSymbolicLink(root: string, bundle: string, file: string): void {
+function assertWritableFile(root: string, bundle: string, file: string): void {
   checkWritePath(root, bundle, file, false);
 }
 

@@ -271,7 +271,7 @@ The template methods:
   writes where it leads and keeps it, and a hard link is a regular file. `delete`
   removes a symbolic link itself, never its target, whether the link stays inside
   the bundle, leaves it or dangles. `retire` and `restore` are the documented
-  exceptions to the shared link rule (`assertNoSymbolicLink`): they refuse every
+  exceptions to the shared link rule (`assertWritableFile`): they refuse every
   symbolic link because moving a relative link into the archive would leave it
   dangling. `place` is checked first, and an adapter whose `writes` lacks the
   type refuses as an invariant error a user never sees: the facade checks
