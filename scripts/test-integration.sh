@@ -26,6 +26,11 @@
 # Usage:  scripts/test-integration.sh            # auto shards (min(nproc, 8))
 #         TEST_SHARDS=4 scripts/test-integration.sh
 #         TEST_INTEGRATION_LOGDIR=<dir> scripts/test-integration.sh   # logs and junit kept in <dir>
+#         TEST_SHARDS=4 TEST_SHARD_RANGE=1-2 scripts/test-integration.sh   # run only shards 1 and 2 of 4
+#
+# TEST_SHARD_RANGE=<first>-<last> runs only those shards of the TEST_SHARDS plan, so two jobs (CI's `integration`
+# matrix) can split one plan: ranges that partition 1..TEST_SHARDS run every file exactly once between them. The
+# coverage line then counts the files of the range.
 set -uo pipefail
 
 cores="$(nproc 2>/dev/null || echo 4)"
@@ -63,6 +68,22 @@ else
 fi
 echo "── integration: ${N} shards over ${total} files; live logs: ${logdir}/shard-N.log"
 
+first=1
+last="$N"
+if [ -n "${TEST_SHARD_RANGE:-}" ]; then
+  if ! [[ "$TEST_SHARD_RANGE" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+    echo "── integration: TEST_SHARD_RANGE must look like 1-2, not '${TEST_SHARD_RANGE}'" >&2
+    exit 1
+  fi
+  first="${BASH_REMATCH[1]}"
+  last="${BASH_REMATCH[2]}"
+  if [ "$first" -lt 1 ] || [ "$first" -gt "$last" ] || [ "$last" -gt "$N" ]; then
+    echo "── integration: TEST_SHARD_RANGE ${TEST_SHARD_RANGE} is outside the ${N} shards" >&2
+    exit 1
+  fi
+  echo "── integration: running shards ${first}-${last} of ${N}"
+fi
+
 if ! plan="$(bun scripts/integration-timings.ts plan "$N" "${files[@]}")"; then
   echo "── integration: could not plan the shards" >&2
   exit 1
@@ -88,9 +109,11 @@ has_setsid=false
 command -v setsid >/dev/null 2>&1 && has_setsid=true
 
 declare -a pids tmps
-for k in $(seq 0 $((N - 1))); do
+expected=0
+for k in $(seq $((first - 1)) $((last - 1))); do
   awk -v k="$((k + 1))" '$1 == k { print $2 }' <<<"$plan" >"${logdir}/shard-$((k + 1)).files"
   mapfile -t slice <"${logdir}/shard-$((k + 1)).files"
+  expected=$((expected + ${#slice[@]}))
   t="${logdir}/shard-$((k + 1)).log"
   junit=(--reporter=junit --reporter-outfile="${logdir}/shard-$((k + 1)).xml")
   tmps+=("$t")
@@ -177,8 +200,8 @@ for t in "${tmps[@]}"; do
   fi
 done
 
-echo "── integration: ${pass} pass / ${skip} skip / ${fail} fail across ${N} process-shards (${filecount}/${total} files)"
-if [ "$rc" -ne 0 ] || [ "$fail" -ne 0 ] || [ "$filecount" -ne "$total" ]; then
+echo "── integration: ${pass} pass / ${skip} skip / ${fail} fail across $((last - first + 1)) process-shards (${filecount}/${expected} files of ${total})"
+if [ "$rc" -ne 0 ] || [ "$fail" -ne 0 ] || [ "$filecount" -ne "$expected" ]; then
   echo "── integration: shard logs kept for diagnosis: ${logdir}"
   exit 1
 fi

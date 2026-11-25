@@ -35,7 +35,8 @@ describe("scripts/github-settings.ts required checks", () => {
 
   test("the release gates from release.yml are required, under the names GitHub reports", () => {
     for (const name of [
-      "integration",
+      "integration (1-2)",
+      "integration (3-4)",
       "node-smoke (22)",
       "node-smoke (24)",
       "upgrade-rehearsal (previous)",
