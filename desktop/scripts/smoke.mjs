@@ -46,7 +46,9 @@ try {
     const timer = setTimeout(() => reject(new Error(`The packaged server did not start in 60 s.\n${logs}`)), 60_000);
     child.once("error", reject);
     child.once("exit", (code) => reject(new Error(`The packaged server exited (${code}).\n${logs}`)));
-    child.once("message", (message) => {
+    // In native mode the server also asks the parent for things (`desktop-request`), sometimes before it is ready.
+    child.on("message", (message) => {
+      if (/** @type {{ type?: string }} */ (message)?.type !== "ready") return;
       clearTimeout(timer);
       resolve(message);
     });
