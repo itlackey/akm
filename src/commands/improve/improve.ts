@@ -57,9 +57,9 @@ import { withIndexDb } from "../../storage/repositories/index-db";
 import { getEntryCount } from "../../storage/repositories/index-entries-repository";
 import { SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
 import { summarizeLlmUsageRecordsCrossTab } from "../health/llm-usage";
+import { type AcceptCommitCollector, commitCollectedAccepts } from "../proposal/accept";
 import { type DrainResult, drainProposals } from "../proposal/drain";
 import type { EligibilitySource } from "../proposal/proposal-types";
-import { type AcceptCommitCollector, commitCollectedAccepts } from "../proposal/repository";
 import { type AutonomyLane, describeGatedLanes, isAutonomyLaneAllowed } from "./autonomy-gate";
 import { akmDistill } from "./distill";
 import {
