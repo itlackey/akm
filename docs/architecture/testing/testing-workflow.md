@@ -22,10 +22,11 @@ covers the automated test workflow and test-authoring guidance.
 
 `bun run check` runs lint, the typecheck and the unit target; it is what CI's `check` job runs on every pull
 request. The integration target runs only before a release: the Release workflow (`.github/workflows/release.yml`)
-runs it as a gate on the commit that ships, a prerelease and a stable alike, and so do its `node-smoke` and
-`upgrade-rehearsal` jobs, which run integration tests of their own. Desktop's tests run there too, as `desktop-tests`;
+runs it as a gate on a prerelease's commit and on the release pull request into `main` (the push that ships a stable skips it when that pull request's run already passed on the same tree), and so do its `node-smoke` and
+`upgrade-rehearsal` jobs, which run integration tests of their own. Desktop's tests run there too, as `desktop-tests`, `desktop-e2e` and `desktop-usability`;
 pull requests run only Desktop's check and build. Pull requests run only the three architecture
-checks (`bun run test:architecture`). Run the integration target yourself before pushing a change it covers.
+checks (`bun run test:architecture`) and the FTA complexity gate (`bun run report:complexity`: it fails when a file's
+score is higher than at the base branch; locally `bun run report:complexity --base origin/<release branch>`). Run the integration target yourself before pushing a change it covers.
 
 - `bun run test:unit` (`scripts/test-unit.sh`) runs every `*.test.ts` under
   `tests/` except `tests/integration/`. That includes the top-level

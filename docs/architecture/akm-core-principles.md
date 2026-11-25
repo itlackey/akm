@@ -158,7 +158,8 @@ said "normative" and nothing checked.
 Enforced by: `bun run lint` (`scripts/lint-doc-examples.ts`,
 `scripts/lint-shipped-assets.ts`, `scripts/lint-secret-resolver-boundary.ts`,
 `scripts/lint-stdio-owner.ts`, `scripts/lint-lockfile.ts`,
-`scripts/lint-asset-io.ts`),
+`scripts/lint-asset-io.ts`), the FTA complexity gate in CI (`scripts/fta-report.ts`: no
+file's score may rise compared with the branch the pull request merges into),
 `tests/contracts/`, `tests/output-shapes-unit.test.ts`.
 
 ### 6. The suite is green by default and sandboxed through the environment

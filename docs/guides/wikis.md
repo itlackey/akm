@@ -52,9 +52,10 @@ with the `llm-wiki` adapter. From there:
 - `pages/**.md` are indexed as searchable documents; each page's ref is
   `bundle//conceptId`, where the conceptId is the root-relative path
   minus `.md` (a page at `pages/attention.md` in bundle `research-wiki`
-  is `research-wiki//pages/attention`).
+  is `research-wiki//pages/attention`). A page's type is its `pageKind:`
+  frontmatter value, `note` when it has none (`akm search --type note`).
 - `raw/**.md` **are** indexed — as first-class, addressable, searchable
-  `wiki-source` documents (not `page`-type items; a ref looks like
+  `wiki-source` documents (a ref looks like
   `bundle//raw/<slug>`), so citations resolve and raw content is
   discoverable by search too.
 - `schema.md`, `index.md`, and `log.md` are structural and are never

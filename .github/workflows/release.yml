@@ -1,17 +1,23 @@
 name: Release
 
-# A stable release is the merge of a release branch into main. The push runs the integration suite (with the Node
-# fallback smoke and the upgrade rehearsals), Desktop's tests and Gated CI on the merged commit, then publishes the
-# version committed in package.json to npm `latest` and a GitHub release, and builds Desktop and akm-web from that
-# tarball. The pull request that merged it ran CI, so CI does not run again.
-# A prerelease is a dispatch on a release branch, release/<version>, with a stage: CI, the integration suite (with
-# the Node fallback smoke and the upgrade rehearsals), Desktop's tests and Gated CI run as jobs of this run on the
-# commit, then <version>-<stage>.N goes to npm `next` and a GitHub prerelease, N counting up from 1. The integration
-# suite, Desktop's tests and Gated CI run nowhere else: every release passes them here.
+# A stable release is the merge of a release branch into main. The pull request from the release branch runs the gates
+# as jobs of this run: the integration suite (with the Node fallback smoke and the upgrade rehearsals), Desktop's tests
+# and Gated CI, so a stable cannot merge red. The push to main skips them when the merged tree already passed them on
+# that pull request (`proven`), runs them otherwise, then publishes the version committed in package.json to npm
+# `latest` and a GitHub release, and builds Desktop and akm-web from that tarball. CI ran on the pull request too, so
+# it does not run again.
+# A prerelease is a dispatch on a release branch, release/<version>, with a stage: CI and the gates run as jobs of this
+# run on the commit, then <version>-<stage>.N goes to npm `next` and a GitHub prerelease, N counting up from 1. The
+# gates run nowhere else: every release passes them here.
 # docs/maintainers/release-checklist.md describes the branch model.
 on:
   push:
     branches: [main]
+  pull_request:
+    # Only the release pull request runs anything here: a draft or a pull request from any other branch skips every job,
+    # and marking a draft ready runs the gates once.
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       stage:
@@ -33,18 +39,66 @@ permissions:
   contents: write
   id-token: write
 
+concurrency:
+  # A newer push to a pull request supersedes its run; a push to main or a dispatch is never cancelled.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  # The gates. A dry run proves nothing about the packaging by running them. CI runs for a prerelease only: the merge
-  # that makes a stable passed it on its pull request. The integration suite (node-smoke and upgrade-rehearsal
-  # included), Desktop's tests and Gated CI run for both.
+  # The gates. A dry run proves nothing about the packaging by running them. CI runs for a prerelease only: a stable's
+  # pull request ran it as its own workflow. The integration suite (node-smoke and upgrade-rehearsal included),
+  # Desktop's tests and Gated CI run on a dispatch, on the release pull request (ready, from a release/* branch) and on
+  # the push to main unless `proven` says the tree already passed them.
   ci:
     if: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run }}
     uses: ./.github/workflows/ci.yml
 
+  # The push to main is the merge commit of the release pull request, and the ruleset requires that branch to be up to
+  # date, so its tree is the pull request head's. When that head's own run of this workflow passed the gates (the
+  # integration job ran and nothing failed), the push skips them. Any miss, or a failed lookup, leaves `skip` unset and
+  # the gates run: this job never fails the run.
+  proven:
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    timeout-minutes: 5
+    outputs:
+      skip: ${{ steps.proof.outputs.skip }}
+    steps:
+      - name: Look for a passing run on this tree
+        id: proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          api() { gh api "repos/$GITHUB_REPOSITORY/$1" --jq "$2"; }
+          head=$(api "commits/$GITHUB_SHA/pulls" '[.[] | select(.base.ref == "main" and (.head.ref | startswith("release/")))][0].head.sha // empty') || head=
+          if [ -z "$head" ]; then
+            echo "No release pull request found for $GITHUB_SHA: the gates run."
+            exit 0
+          fi
+          if [ "$(api "git/commits/$head" .tree.sha)" != "$(api "git/commits/$GITHUB_SHA" .tree.sha)" ]; then
+            echo "$GITHUB_SHA is not the tree of $head: the gates run."
+            exit 0
+          fi
+          runs=$(api "actions/workflows/release.yml/runs?event=pull_request&head_sha=$head" '.workflow_runs[].id') || runs=
+          for id in $runs; do
+            passed=$(api "actions/runs/$id/jobs?per_page=100" '(all(.jobs[]; .conclusion == "success" or .conclusion == "skipped")) and any(.jobs[]; .name == "integration" and .conclusion == "success")') || passed=false
+            if [ "$passed" = "true" ]; then
+              echo "Run $id passed the gates on the tree of $head: skipping them."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "No passing run of the gates on $head: the gates run."
+
   # The integration suite (scripts/test-integration.sh: duration-balanced shards, each killed at 900s), set up the
   # way CI's `check` job is.
   integration:
-    if: ${{ !inputs.dry_run }}
+    needs: proven
+    if: ${{ !cancelled() && !inputs.dry_run && needs.proven.outputs.skip != 'true' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && startsWith(github.head_ref, 'release/'))) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -79,7 +133,8 @@ jobs:
   # The Node fallback on both supported Node versions: the smoke drives the built CLI under Node, then the node-compat
   # and workspace-package integration tests.
   node-smoke:
-    if: ${{ !inputs.dry_run }}
+    needs: proven
+    if: ${{ !cancelled() && !inputs.dry_run && needs.proven.outputs.skip != 'true' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && startsWith(github.head_ref, 'release/'))) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -120,7 +175,8 @@ jobs:
   # The candidate installed over a home that an origin release built (tests/integration/upgrade-rehearsal/), two
   # origin-release installs per job.
   upgrade-rehearsal:
-    if: ${{ !inputs.dry_run }}
+    needs: proven
+    if: ${{ !cancelled() && !inputs.dry_run && needs.proven.outputs.skip != 'true' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && startsWith(github.head_ref, 'release/'))) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -145,10 +201,12 @@ jobs:
       - run: bun run build
       - run: AKM_UPGRADE_REHEARSAL=1 AKM_UPGRADE_REHEARSAL_ORIGIN="${{ matrix.origin }}" TMPDIR=/tmp bun test --timeout=900000 tests/integration/upgrade-rehearsal/
 
-  # Desktop's tests (type check, unit, browser, usability, server, package and Electron), on Linux. Pull requests run
-  # only Desktop's check and build. `test:workspace-package` stays in node-smoke.
+  # Desktop's tests (type check, unit, server, package and Electron), on Linux, in three parallel jobs that set up the same
+  # way: this one, `desktop-e2e` (browser) and `desktop-usability`. Pull requests into a release branch run only
+  # Desktop's check and build. `test:workspace-package` stays in node-smoke.
   desktop-tests:
-    if: ${{ !inputs.dry_run }}
+    needs: proven
+    if: ${{ !cancelled() && !inputs.dry_run && needs.proven.outputs.skip != 'true' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && startsWith(github.head_ref, 'release/'))) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -174,16 +232,17 @@ jobs:
           key: desktop-downloads-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
       - name: Build repository-backed Desktop
         run: bun run desktop:setup
-      - name: Verify Desktop workflows
+      - name: Install Electron and Playwright
         working-directory: desktop
         run: |
           node node_modules/electron/install.js
           node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Verify Desktop workflows
+        working-directory: desktop
+        run: |
           npm run check
           npm run build
           npm test
-          npm run test:e2e
-          npm run test:usability
       - name: Verify the web process runs without Electron
         working-directory: desktop
         run: npm run test:server
@@ -197,15 +256,97 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           xvfb-run -a npm run test:electron
 
+  # Desktop's browser tests.
+  desktop-e2e:
+    needs: proven
+    if: ${{ !cancelled() && !inputs.dry_run && needs.proven.outputs.skip != 'true' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && startsWith(github.head_ref, 'release/'))) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
+        with:
+          # Latest 22.x: Desktop needs 22.18 or later (its tests load TypeScript through Node's type stripping).
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - name: Cache the Electron and Playwright downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/ms-playwright
+          key: desktop-downloads-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
+      - name: Build repository-backed Desktop
+        run: bun run desktop:setup
+      - name: Install Electron and Playwright
+        working-directory: desktop
+        run: |
+          node node_modules/electron/install.js
+          node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Verify Desktop's browser workflows
+        working-directory: desktop
+        run: |
+          npm run build
+          npm run test:e2e
+
+  # Desktop's usability tests.
+  desktop-usability:
+    needs: proven
+    if: ${{ !cancelled() && !inputs.dry_run && needs.proven.outputs.skip != 'true' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && startsWith(github.head_ref, 'release/'))) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
+        with:
+          # Latest 22.x: Desktop needs 22.18 or later (its tests load TypeScript through Node's type stripping).
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - name: Cache the Electron and Playwright downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/ms-playwright
+          key: desktop-downloads-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
+      - name: Build repository-backed Desktop
+        run: bun run desktop:setup
+      - name: Install Electron and Playwright
+        working-directory: desktop
+        run: |
+          node node_modules/electron/install.js
+          node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Verify Desktop's usability workflows
+        working-directory: desktop
+        run: |
+          npm run build
+          npm run test:usability
+
   gated:
-    if: ${{ !inputs.dry_run }}
+    needs: proven
+    if: ${{ !cancelled() && !inputs.dry_run && needs.proven.outputs.skip != 'true' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && startsWith(github.head_ref, 'release/'))) }}
     uses: ./.github/workflows/gated-ci.yml
 
   release:
-    needs: [ci, integration, node-smoke, upgrade-rehearsal, desktop-tests, gated]
-    # The gates passed, or did not run (CI for a stable; every gate for a dry run). A failed or cancelled gate stops
+    needs: [ci, integration, node-smoke, upgrade-rehearsal, desktop-tests, desktop-e2e, desktop-usability, gated]
+    # Never on a pull request: nothing is built for publishing there. The gates passed, or did not run (CI for a
+    # stable; every gate for a dry run, or for a push whose tree already passed them). A failed or cancelled gate stops
     # here.
-    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
