@@ -540,6 +540,8 @@ export interface RunManagedSubprocessOptions {
   setTimeoutFn?: typeof setTimeout;
   /** `clearTimeout` shim. Defaults to the global. */
   clearTimeoutFn?: typeof clearTimeout;
+  /** Test seam: the post-exit drain grace. Defaults to POST_EXIT_STREAM_DRAIN_GRACE_MS. */
+  drainGraceMs?: number;
   /** Invoked once, immediately after a successful spawn, with the live proc. */
   onSpawn?: (proc: SpawnedSubprocess) => void;
 }
@@ -594,6 +596,7 @@ export async function runManagedSubprocess(
 ): Promise<ManagedSubprocessResult> {
   const setTimeoutImpl = opts.setTimeoutFn ?? setTimeout;
   const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
+  const drainGraceMs = opts.drainGraceMs ?? POST_EXIT_STREAM_DRAIN_GRACE_MS;
   const spawnFn = opts.spawnFn ?? (runtimeSpawn as unknown as SpawnFn);
   const capture = opts.capture;
   const timeoutMs = opts.timeoutMs;
@@ -707,7 +710,7 @@ export async function runManagedSubprocess(
     await Promise.race([
       bothDrained,
       new Promise<void>((resolve) => {
-        graceTimer = setTimeoutImpl(resolve, POST_EXIT_STREAM_DRAIN_GRACE_MS);
+        graceTimer = setTimeoutImpl(resolve, drainGraceMs);
         if (typeof graceTimer !== "number") graceTimer.unref?.();
       }),
     ]);
@@ -717,7 +720,7 @@ export async function runManagedSubprocess(
   const pipeOwnerGone =
     leftoversStopped && budgetExpired ? Promise.race([leftoversStopped, budgetExpired]) : leftoversStopped;
   const readOpts = {
-    timeoutMs: POST_EXIT_STREAM_DRAIN_GRACE_MS,
+    timeoutMs: drainGraceMs,
     setTimeoutFn: setTimeoutImpl,
     clearTimeoutFn: clearTimeoutImpl,
     ...(pipeOwnerGone ? { armTimeoutAfter: pipeOwnerGone } : {}),

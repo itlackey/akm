@@ -67,6 +67,7 @@ export interface AkmImproveOptions {
   /** Called once before the budget watchdog force-exits a run that did not drain (the CLI records the terminated run). */
   onBudgetHardKill?: () => void;
   // Test seams.
+  heartbeatMs?: number;
   collectEligibleRefsFn?: typeof collectEligibleRefs;
   runImprovePreparationStageFn?: typeof import("./preparation").runImprovePreparationStage;
   runImproveLoopStageFn?: typeof import("./loop-stages").runImproveLoopStage;

@@ -68,6 +68,8 @@ export interface RunExecUnitInput {
   signal?: AbortSignal;
   /** Test seam: injected spawn (defaults to the runtime spawn inside `runManagedSubprocess`). */
   spawnFn?: SpawnFn;
+  /** Test seam: the post-exit drain grace, passed to runManagedSubprocess. */
+  drainGraceMs?: number;
   /** Test seam: the platform whose spawn ceilings the context check uses. Defaults to the host's. */
   platform?: string;
   /** The task runner's provenance event source; ambient and authored values still win. */
@@ -96,6 +98,7 @@ export async function runExecUnit(input: RunExecUnitInput): Promise<UnitDispatch
     maxOutputBytes: WORKFLOW_MAX_EXEC_OUTPUT_BYTES,
     ...(input.signal ? { signal: input.signal } : {}),
     ...(input.spawnFn ? { spawnFn: input.spawnFn } : {}),
+    ...(input.drainGraceMs !== undefined ? { drainGraceMs: input.drainGraceMs } : {}),
   });
 
   const display = describeCommand(input.exec.command);

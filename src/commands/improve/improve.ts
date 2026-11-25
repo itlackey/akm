@@ -349,7 +349,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     if (!firstEngineResponseSeen) {
       const firstResponseTimer = setTimeout(() => {
         info("[improve] Still waiting for the first model response...");
-      }, FIRST_ENGINE_RESPONSE_HEARTBEAT_MS);
+      }, options.heartbeatMs ?? FIRST_ENGINE_RESPONSE_HEARTBEAT_MS);
       firstResponseTimer.unref?.();
       clearFirstResponseHeartbeat = () => clearTimeout(firstResponseTimer);
     }
