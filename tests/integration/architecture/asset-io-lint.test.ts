@@ -311,6 +311,39 @@ describe("lint-asset-io", () => {
     ]);
   });
 
+  test("store-sniff flags the store test under another name: inDirectories, destructured", () => {
+    expect(
+      violationsOf(["store-sniff"], {
+        "src/feature/renamed.ts":
+          "export const a = [scan.inDirectories, !plan.scan?.inDirectories];\nconst { inDirectories } = scan;\nconst { isStore: store } = held;\n",
+        "src/indexer/plan.ts": "export const a = scan.inDirectories;\n",
+        "src/core/assets/x.ts": "export const a = scan.inDirectories;\nconst { inDirectories } = scan;\n",
+        "src/feature/clean.ts": "export const a = { inDirectories: true };\nconst { other } = scan;\n",
+      }).sort(),
+    ).toEqual([
+      "src/feature/renamed.ts store-sniff",
+      "src/feature/renamed.ts store-sniff",
+      "src/feature/renamed.ts store-sniff",
+      "src/feature/renamed.ts store-sniff",
+    ]);
+  });
+
+  test("upward-import flags an adapter-layer import of commands, tasks or the indexer that is not listed", () => {
+    expect(
+      violationsOf(["upward-import"], {
+        "src/core/adapter/a.ts":
+          'import { a } from "../../commands/lint/index";\nimport { b } from "../../tasks/x";\nexport const c = import("../../indexer/y");\nimport { d } from "./local";\nimport { e } from "../common";\nimport { f } from "../../indexer/index-readiness";\n',
+        "src/core/assets/b.ts": 'import { a } from "../../indexer/z";\n',
+        "src/feature/ok.ts": 'import { a } from "../indexer/z";\n',
+      }).sort(),
+    ).toEqual([
+      "src/core/adapter/a.ts upward-import",
+      "src/core/adapter/a.ts upward-import",
+      "src/core/adapter/a.ts upward-import",
+      "src/core/assets/b.ts upward-import",
+    ]);
+  });
+
   test("entries-sql flags raw SQL on entries or index_meta outside storage, the facade and the indexer", () => {
     expect(
       violationsOf(["entries-sql"], {

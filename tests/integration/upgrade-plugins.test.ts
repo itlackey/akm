@@ -7,16 +7,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { collectPluginStalenessAdvisories } from "../../src/commands/health/plugin-staleness";
-import {
-  openCodeConfigSpec,
-  runUpgrade,
-  type UpgradeRunDependencies,
-  usesHostCache,
-} from "../../src/commands/sources/plugin-upgrade";
+import { runUpgrade, type UpgradeRunDependencies } from "../../src/commands/sources/plugin-upgrade";
+import { openCodeConfigSpec, usesHostCache } from "../../src/commands/sources/plugin-upgrade-opencode";
 import { moveToTrash } from "../../src/core/trash";
 import { OPENCODE_V1 } from "../../src/integrations/harnesses/opencode/plugin-layout";
 import { shapeForCommand } from "../../src/output/shapes";
-import { formatUpgradePlain } from "../../src/output/text/command-format";
+import { formatUpgradePlain } from "../../src/output/text/lifecycle-format";
 import type { UpgradeCheckResponse, UpgradeResponse } from "../../src/sources/types";
 import { makeSandboxDir, withEnv } from "../_helpers/sandbox";
 

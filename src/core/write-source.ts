@@ -20,9 +20,7 @@
  *
  * Nothing commits per asset (issue #507). Callers write assets through
  * `writeAssets` (`src/core/assets/write.ts`) and plain files through
- * {@link writeSourceFile}, then fire {@link commitWriteTargetBoundary} once — or
- * wrap a custom mutation in {@link withWriteTargetMutation}, which does both
- * under the asset lease. An
+ * {@link writeSourceFile}, then fire {@link commitWriteTargetBoundary} once. An
  * accepted proposal commits its own paths ({@link commitAcceptedPaths}), on a
  * filesystem stash that is a git repository too. A process that accepts many
  * proposals collects them and commits once at its boundary (#1185).
@@ -30,7 +28,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { withAssetMutationLeaseSync } from "../indexer/index-writer-lock";
 import { lockContentRootFor } from "../integrations/lockfile";
 import {
   GitStashPushError,
@@ -501,25 +498,6 @@ export function recordWriteTargetPath(source: WriteTargetSource, filePath: strin
  */
 export function assertWritePathsInsideSource(source: WriteTargetSource, filePaths: readonly string[]): void {
   for (const filePath of filePaths) assertLinksLeadInside(source.path, source.name, filePath);
-}
-
-/**
- * Run `mutate` under the shared asset-mutation lease, then commit exactly
- * `paths` on a git target (a no-op on filesystem targets). Every path must
- * stay inside the source root.
- */
-export function withWriteTargetMutation<T>(
-  target: ResolvedWriteTarget,
-  paths: string[],
-  options: { purpose: string; message: string },
-  mutate: () => T,
-): T {
-  return withAssetMutationLeaseSync(options.purpose, () => {
-    assertWritePathsInsideSource(target.source, paths);
-    const result = mutate();
-    commitWriteTargetBoundary(target, options.message, { paths });
-    return result;
-  });
 }
 
 /**

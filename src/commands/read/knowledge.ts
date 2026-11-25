@@ -30,6 +30,7 @@ import { bundleIdForDir } from "../../core/bundle-id";
 import { isHttpUrl, isWithin, resolveStashDir, safeRealpath, samePath, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { refToRelPath, resolveRefPathInStash } from "../../core/lint/base-linter";
 import { resolveBundleWriteTarget, resolveMutationTarget } from "../../core/mutation-target";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { warn } from "../../core/warn";
@@ -49,7 +50,6 @@ import {
   shouldAllowPrivateWebsiteUrlForTests,
 } from "../../sources/snapshot-fetchers/website-ingest";
 import { writeSupersededEdge } from "../improve/memory/memory-belief";
-import { refToRelPath, resolveRefPathInStash } from "../lint/base-linter";
 
 const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
 
@@ -749,8 +749,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
   // and revision checks, the write, the demotions and the boundary commit. The
   // commit pushes inside the lease on purpose: a push from a writer that has
   // released it would race the next writer's commit on the same branch (the
-  // conflicting-commit hazard the lease exists for), and the sync write path
-  // (`withWriteTargetMutation`) draws the same boundary. Indexing is a
+  // conflicting-commit hazard the lease exists for). Indexing is a
   // regenerable cache and runs after release.
   const written = await withAssetMutationLease("markdown-write", async () => {
     // Pre-flight: existence + force semantics. The helper itself overwrites

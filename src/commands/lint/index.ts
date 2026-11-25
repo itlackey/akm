@@ -15,12 +15,9 @@ import type { AkmConfig } from "../../core/config/config";
 import { loadConfig, primaryBundlePath } from "../../core/config/config";
 import { bundleAtDir } from "../../core/config/config-sources";
 import { UsageError } from "../../core/errors";
-import { warn } from "../../core/warn";
-import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { bundleLintSkip } from "./bundle-skip";
-import { diagnosticToLintIssue } from "./diagnostics";
-import { type ReadMoves, readRecordedMoves } from "./moved-refs";
-import { trackedSecretIssues } from "./tracked-secrets";
+import { bundleLintSkip } from "../../core/lint/bundle-skip";
+import { diagnosticToLintIssue } from "../../core/lint/diagnostics";
+import { type ReadMoves, readRecordedMoves } from "../../core/lint/moved-refs";
 import {
   type AkmLintOptions,
   isAdvisoryLintIssue,
@@ -28,11 +25,14 @@ import {
   type LintBundle,
   type LintFindings,
   type LintIssue,
-} from "./types";
+} from "../../core/lint/types";
+import { warn } from "../../core/warn";
+import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import { trackedSecretIssues } from "./tracked-secrets";
 
 // ── Public API types (re-exported for consumers) ──────────────────────────────
 
-export type { AkmLintOptions, LintIssue, LintIssueType } from "./types";
+export type { AkmLintOptions, LintIssue, LintIssueType } from "../../core/lint/types";
 
 export interface AkmLintResult {
   ok: boolean;

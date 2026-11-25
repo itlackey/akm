@@ -20,13 +20,12 @@ import { isRecord } from "../core/common";
 import {
   type AkmConfig,
   DEFAULT_CONFIG,
-  getConfigValueSource,
   loadConfig,
   mutateConfig,
   parseAndValidateConfigText,
-  resolveConfigRefSource,
   unusableEntryAt,
 } from "../core/config/config";
+import { getConfigValueSource, resolveConfigRefSource } from "../core/config/config-extends";
 import { resolveConfiguredSources } from "../core/config/config-sources";
 import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config/config-walker";
 import { isEnvReference } from "../core/config/schema/primitives";

@@ -7,7 +7,8 @@
 import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { resolveStashDir } from "../core/common";
-import { type AkmConfig, getConfigValueSource, loadConfig, sanitizeConfigForWrite } from "../core/config/config";
+import { type AkmConfig, loadConfig, sanitizeConfigForWrite } from "../core/config/config";
+import { getConfigValueSource } from "../core/config/config-extends";
 import { bundleAtDir } from "../core/config/config-sources";
 import { UsageError } from "../core/errors";
 import { getStateDbPath } from "../core/state-db";

@@ -9,7 +9,7 @@
 // text formatter reading a field that the actual result shape never carries.
 
 import { describe, expect, it } from "bun:test";
-import { formatAddPlain, formatUpdatePlain } from "../src/output/text/command-format";
+import { formatAddPlain, formatUpdatePlain } from "../src/output/text/lifecycle-format";
 
 describe("formatAddPlain", () => {
   it("renders an AddResponse (eager install) shape as before", () => {

@@ -35,29 +35,25 @@
 
 import path from "node:path";
 import { isScalar, parseDocument } from "yaml";
+import { DECLARED_REF_FRONTMATTER_KEYS, declaredLinkTarget } from "../../indexer/links/declared-links";
 // asset-io: base missing-ref counts what a bundle keeps at a ref's spelling, a file no adapter lists included
-import { holdsFile, isRetired } from "../../core/adapter/directory/held-files";
+import { holdsFile, isRetired } from "../adapter/directory/held-files";
 import {
   assetPathCandidatesForName,
   assetPathForName,
   filesForRef,
   stashDirFor,
   stashDirNames,
-} from "../../core/asset/asset-placement";
-import { BUNDLE_REF_RE } from "../../core/asset/asset-ref";
-import {
-  removeFrontmatterListValues,
-  rewriteFrontmatterListValue,
-  spliceFrontmatterLine,
-} from "../../core/asset/frontmatter";
-import { checkUnquotedDescriptionColon } from "../../core/asset/frontmatter-lint";
-import { ruleApplies } from "../../core/asset/lint-text";
-import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
-import { findStalePaths } from "../../core/asset/stale-path";
-import { localDateStamp } from "../../core/common";
-import { containsRedactedContent, REDACTED_CONTENT_MARKER } from "../../core/content-safety";
-import { DERIVED_SUFFIX } from "../../core/recognition-util";
-import { DECLARED_REF_FRONTMATTER_KEYS, declaredLinkTarget } from "../../indexer/links/declared-links";
+} from "../asset/asset-placement";
+import { BUNDLE_REF_RE } from "../asset/asset-ref";
+import { removeFrontmatterListValues, rewriteFrontmatterListValue, spliceFrontmatterLine } from "../asset/frontmatter";
+import { checkUnquotedDescriptionColon } from "../asset/frontmatter-lint";
+import { ruleApplies } from "../asset/lint-text";
+import { conceptIdFromTypeName } from "../asset/resolve-ref";
+import { findStalePaths } from "../asset/stale-path";
+import { localDateStamp } from "../common";
+import { containsRedactedContent, REDACTED_CONTENT_MARKER } from "../content-safety";
+import { DERIVED_SUFFIX } from "../recognition-util";
 import { findFenceRegions } from "./markdown-insertion";
 import { rewriteMovedLinks } from "./moved-refs";
 import type { LintContext, LintIssue } from "./types";

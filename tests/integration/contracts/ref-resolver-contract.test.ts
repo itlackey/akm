@@ -1,7 +1,7 @@
 // CONTRACT TEST: ref-resolver
 // ----------------------------------------------------------------------------
 // This test pins the behavior of the asset-ref resolver in
-// `src/commands/lint/base-linter.ts` (functions `refToRelPath` +
+// `src/core/lint/base-linter.ts` (functions `refToRelPath` +
 // `refExistsInAnyStash`).
 //
 // A SISTER COPY of this fixture lives in the akm-plugins repo at
@@ -23,7 +23,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { refExistsInAnyStash, refToRelPath } from "../../../src/commands/lint/base-linter";
+import { refExistsInAnyStash, refToRelPath } from "../../../src/core/lint/base-linter";
 
 // ── Fixture builder ──────────────────────────────────────────────────────────
 //

@@ -12,7 +12,7 @@
  *  - `ValidateContext` — the read-only context `validate` receives.
  *
  *  - `Diagnostic` — `validate`'s `Promise<Diagnostic[]>` return type, modeled
- *    on the existing `LintIssue` (`src/commands/lint/types.ts`:
+ *    on the existing `LintIssue` (`src/core/lint/types.ts`:
  *    `{ file, issue, detail, fixed }`), with one deliberate generalization:
  *    `issue` is an open `string` here rather than `LintIssueType` (a closed
  *    union of 12 lint-command-specific codes) — `Diagnostic` is produced by
@@ -468,7 +468,7 @@ export interface AssetEdit {
 // ── Diagnostic ──────────────────────────────────────────────────────────────
 
 /**
- * What `validate` reports. Modeled on `LintIssue` (`src/commands/lint/types.ts`) with `issue` generalized to an open
+ * What `validate` reports. Modeled on `LintIssue` (`src/core/lint/types.ts`) with `issue` generalized to an open
  * string (see the file header for the rationale). `ref` names the asset; `file` is the display file, absent for an
  * asset that has none.
  */

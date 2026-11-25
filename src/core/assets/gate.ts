@@ -4,7 +4,6 @@
 
 /** What a bundle's adapter writes, for callers that decide before they write. `bundle.ts` itself stays inside the facade. */
 
-import type { AkmLintOptions, LintFindings, LintRun } from "../../commands/lint/types";
 import type { AdapterRenderedExecutionSource } from "../../execution/source";
 import { akmAdapter } from "../adapter/adapters/akm-adapter";
 import { lintByValidateAndEnvSweep } from "../adapter/adapters/akm-lint-run";
@@ -21,6 +20,7 @@ import {
 import type { Bundle } from "../adapter/types";
 import type { AkmConfig } from "../config/config";
 import { ConfigError, UsageError, type UsageErrorCode } from "../errors";
+import type { AkmLintOptions, LintFindings, LintRun } from "../lint/types";
 import { assetBundleOf, bundleFor } from "./bundle";
 
 export { activeSources } from "./bundle";

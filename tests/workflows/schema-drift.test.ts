@@ -7,18 +7,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { EXTRA_PARAMS_CREDENTIAL_KEYS, EXTRA_PARAMS_PROTECTED_TOP_LEVEL_KEYS } from "../../src/core/extra-params";
 import {
-  PROGRAM_ON_ERROR,
-  PROGRAM_PARAM_NAME_PATTERN,
-  PROGRAM_REDUCERS,
-  PROGRAM_RETRY_REASONS,
-  PROGRAM_STEP_ID_PATTERN,
-} from "../../src/workflows/parser";
-import {
   WORKFLOW_ENGINE_NAME_PATTERN,
   WORKFLOW_MAX_CONCURRENCY,
   WORKFLOW_MAX_ENGINE_NAME_LENGTH,
   WORKFLOW_MAX_TIMEOUT_MS,
 } from "../../src/workflows/resource-limits";
+import {
+  PROGRAM_ON_ERROR,
+  PROGRAM_PARAM_NAME_PATTERN,
+  PROGRAM_REDUCERS,
+  PROGRAM_RETRY_REASONS,
+  PROGRAM_STEP_ID_PATTERN,
+} from "../../src/workflows/step-fields";
 
 /**
  * `schemas/akm-workflow.json` stays in sync with the TypeScript vocabulary

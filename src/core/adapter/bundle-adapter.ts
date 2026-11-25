@@ -25,8 +25,8 @@
  * storage key, and `content()` reads it once, when asked.
  */
 
-import type { LintFindings, LintRun } from "../../commands/lint/types";
 import type { AdapterRenderedExecutionSource } from "../../execution/source";
+import type { LintFindings, LintRun } from "../lint/types";
 import type { AssetEdit, Bundle, Diagnostic, IndexDocument, ValidateContext } from "./types";
 
 /** One entry of a bundle: an asset as its adapter holds it. */

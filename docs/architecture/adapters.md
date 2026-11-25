@@ -35,8 +35,8 @@ is described in [Architecture: Connections and Harnesses](architecture.md#connec
 ```mermaid
 flowchart TD
   CMD["Commands and the workspace API<br/>index, search, show, run, secret, env, proposal, workflow create, lint, ..."]
-  FAC["Asset facade: src/core/assets/<br/>read (find, list) · type · write · validate · gate"]
-  ADP["BundleAdapter<br/>exists · list · read · recognize · validate · place<br/>create · update · delete · packageFiles · mirrorPackage<br/>retire · retired · restore · forget · expireRetired"]
+  FAC["Asset facade: src/core/assets/<br/>read (find, list) · type · write · validate · gate · files"]
+  ADP["BundleAdapter<br/>exists · list · read · recognize · validate · rendererFor · place<br/>create · update · delete · packageFiles · mirrorPackage<br/>retire · retired · restore · forget · expireRetired<br/>optional: lint · contentType · declaredType · prefixOf<br/>identifyKey · looksLikeRoot · renderExecutionSource"]
   subgraph BASES["Two bases"]
     DIR["DirectoryAdapterBase<br/>12 adapters, with directory-archive.ts for retire"]
     SEC["SecretManagerAdapterBase<br/>secret-tool, azure-key-vault"]
@@ -826,7 +826,7 @@ they actually work:
   item, not candidate packages, and are never considered.
 - **The base checks have one implementation.** `unquoted-colon`,
   `missing-updated`, `stale-path`, `missing-ref` and `redacted-content` are
-  `runBaseChecks` (`src/commands/lint/base-linter.ts`), and `ruleApplies`
+  `runBaseChecks` (`src/core/lint/base-linter.ts`), and `ruleApplies`
   (`src/core/asset/lint-text.ts`) decides whether a rule applies to a file
   (the skill and LLM Wiki exemptions, the bundle's `lint.skip`, an adapter's
   own exclusions). The `akm lint` sweep and every adapter's `validate` call

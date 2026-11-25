@@ -8,7 +8,7 @@ import {
   isInsideHtmlTable,
   isInsideIndentedCode,
   isInsideTable,
-} from "../src/commands/lint/markdown-insertion";
+} from "../src/core/lint/markdown-insertion";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

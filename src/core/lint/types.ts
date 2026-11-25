@@ -2,9 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { StalePathFields } from "../../core/asset/stale-path";
-import type { AkmConfig } from "../../core/config/config";
 import type { SearchSource } from "../../indexer/search/search-source";
+import type { StalePathFields } from "../asset/stale-path";
+import type { AkmConfig } from "../config/config";
 import type { MovedRefs, ReadMoves } from "./moved-refs";
 
 /** Every rule `akm lint` reports; a rule name in `lint.skip` or `--rule` is one of these. */
@@ -62,7 +62,7 @@ export const LINT_RULES = [
    * `string` — any current or future `BundleAdapter.validate()` may emit a
    * code this closed lint-command union has never heard of. Rather than
    * silently dropping that finding (or throwing at the CLI boundary), the
-   * lint→adapter mapping (`commands/lint/diagnostics.ts#diagnosticToLintIssue`)
+   * lint→adapter mapping (`core/lint/diagnostics.ts#diagnosticToLintIssue`)
    * folds an unrecognized code onto this member and preserves the ORIGINAL
    * code in `detail` (prefixed `[<issue>] `) so nothing an adapter reports is
    * ever lost, even though the closed union can't type it precisely.

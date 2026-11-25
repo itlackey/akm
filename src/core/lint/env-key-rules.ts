@@ -27,7 +27,7 @@
  *   advisory, so ignore it after review.
  */
 
-import { scanEnvKeyNames } from "../../core/common";
+import { scanEnvKeyNames } from "../common";
 import type { LintIssue } from "./types";
 
 // ── Dangerous key set ─────────────────────────────────────────────────────────
