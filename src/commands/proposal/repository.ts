@@ -235,9 +235,10 @@ function refFilter(stashDir: string, ref: string): (proposalRef: string) => bool
     );
   }
   const sources = resolveSourceEntries(stashDir, loadConfig());
+  const stash = bundleAt(stashDir);
   // The filter's own outdated spelling is the caller's to fix (one warning); a stored ref is not, so it resolves silently.
   const wanted = parseBundleRef(
-    qualifyRef(makeBundleRef(filter.bundle, filter.conceptId), { bundle: bundleAt(stashDir) }),
+    qualifyRef(makeBundleRef(filter.bundle, filter.conceptId), { bundle: stash }),
   ).conceptId;
   const asked = new Map<string, string>();
   const current = (identity: ProposalRefIdentity): string => {
@@ -246,7 +247,7 @@ function refFilter(stashDir: string, ref: string): (proposalRef: string) => bool
     if (known !== undefined) return known;
     // A stored ref whose bundle is not configured names its asset by concept id alone: whichever bundle holds it now.
     const held = identity.bundle === undefined || resolveSourcesForOrigin(identity.bundle, sources).length > 0;
-    const conceptId = currentConceptId(makeBundleRef(held ? identity.bundle : undefined, identity.conceptId));
+    const conceptId = currentConceptId(makeBundleRef(held ? identity.bundle : undefined, identity.conceptId), stash);
     asked.set(key, conceptId);
     return conceptId;
   };
