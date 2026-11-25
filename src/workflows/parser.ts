@@ -79,14 +79,6 @@ import {
   UNIT_KEYS,
 } from "./step-fields";
 
-export {
-  PROGRAM_ON_ERROR,
-  PROGRAM_PARAM_NAME_PATTERN,
-  PROGRAM_REDUCERS,
-  PROGRAM_RETRY_REASONS,
-  PROGRAM_STEP_ID_PATTERN,
-} from "./step-fields";
-
 /** A byte-exact slice of the markdown body, plus where it came from. */
 interface WorkflowInstructionBlock {
   text: string;

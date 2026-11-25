@@ -60,13 +60,6 @@ import { rememberEngineTargets } from "./retired-engines";
 import { dropUnusableProjects } from "./schema/projects";
 import { dropUnusableEntries, findUnusableEntries, type UnusableEntry } from "./unusable-entries";
 
-export { getConfigValueSource, resolveConfigRefSource } from "./config-extends";
-export {
-  liftRetiredSecretRef,
-  retiredBundleComponents,
-  retiredEngineTargets,
-  unknownConfigKeyPaths,
-} from "./config-file-forms";
 export { stripJsonComments } from "./config-io";
 
 import { getConfigPath } from "../paths";

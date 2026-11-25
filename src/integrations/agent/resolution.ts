@@ -31,9 +31,9 @@ import {
   defaultConnection,
   defaultHarness,
   inheritedConnectionsOf,
-  retiredEngineTargets,
   unusableEntryAt,
 } from "../../core/config/config";
+import { retiredEngineTargets } from "../../core/config/config-file-forms";
 import type { ConnectionConfig, HarnessConfig } from "../../core/config/config-types";
 import { apiKeyReference } from "../../core/config/credentials";
 import { deepMergeConfig } from "../../core/config/deep-merge";

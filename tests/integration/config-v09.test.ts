@@ -14,9 +14,9 @@ import {
   resetConfigCache,
   resolveConfiguredSources,
   saveConfig,
-  unknownConfigKeyPaths,
   updateConfig,
 } from "../../src/core/config/config";
+import { unknownConfigKeyPaths } from "../../src/core/config/config-file-forms";
 import { validateConfigShape } from "../../src/core/config/config-schema";
 import { configSet } from "../../src/core/config/config-walker";
 import { getConfigPath } from "../../src/core/paths";

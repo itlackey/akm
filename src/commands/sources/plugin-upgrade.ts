@@ -34,8 +34,6 @@ import {
 import { type OpenCodeTarget, resolveOpenCodeTargets, upgradeOpenCode } from "./plugin-upgrade-opencode";
 import { installedChannel } from "./self-update";
 
-export { openCodeConfigSpec, usesHostCache } from "./plugin-upgrade-opencode";
-
 const MARKETPLACE = "akm-plugins";
 const PLUGIN_NAME = "akm";
 const PLUGIN_ID = `${PLUGIN_NAME}@${MARKETPLACE}`;
