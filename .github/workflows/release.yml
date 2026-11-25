@@ -115,6 +115,11 @@ jobs:
         with:
           node-version: 22
       - run: bun install --frozen-lockfile
+      - name: Cache the OpenCode binary
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: node_modules/.cache/akm-test-opencode
+          key: opencode-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/integrations/harnesses/opencode/runtime/binary.ts') }}
       - run: bun run test:integration
         env:
           # Keeps the shards' logs and junit reports, uploaded below.
@@ -155,6 +160,11 @@ jobs:
           node-version: ${{ matrix.node-version }}
       - run: bun install --frozen-lockfile
       - run: bun run build
+      - name: Cache the OpenCode binary
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: node_modules/.cache/akm-test-opencode
+          key: opencode-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/integrations/harnesses/opencode/runtime/binary.ts') }}
       # Installs the SPEC THE PACKAGE DECLARES, read back out of package.json so
       # the two cannot drift — this job exists to prove the binding npm users
       # actually get works. Why it is pinned: package.json → pinNotes
@@ -224,19 +234,24 @@ jobs:
           node-version: 22
       - run: bun install --frozen-lockfile
       - name: Cache the Electron and Playwright downloads
+        id: desktop-downloads
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
         with:
           path: |
             ~/.cache/electron
             ~/.cache/ms-playwright
-          key: desktop-downloads-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
+          key: desktop-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/bun.lock') }}
       - name: Build repository-backed Desktop
         run: bun run desktop:setup
-      - name: Install Electron and Playwright
+      - name: Install Electron and Chromium system dependencies
         working-directory: desktop
         run: |
           node node_modules/electron/install.js
-          node node_modules/@playwright/test/cli.js install --with-deps chromium
+          node node_modules/@playwright/test/cli.js install-deps chromium
+      - name: Download Playwright Chromium
+        if: steps.desktop-downloads.outputs.cache-hit != 'true'
+        working-directory: desktop
+        run: node node_modules/@playwright/test/cli.js install chromium
       - name: Verify Desktop workflows
         working-directory: desktop
         run: |
@@ -277,19 +292,24 @@ jobs:
           node-version: 22
       - run: bun install --frozen-lockfile
       - name: Cache the Electron and Playwright downloads
+        id: desktop-downloads
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
         with:
           path: |
             ~/.cache/electron
             ~/.cache/ms-playwright
-          key: desktop-downloads-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
+          key: desktop-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/bun.lock') }}
       - name: Build repository-backed Desktop
         run: bun run desktop:setup
-      - name: Install Electron and Playwright
+      - name: Install Electron and Chromium system dependencies
         working-directory: desktop
         run: |
           node node_modules/electron/install.js
-          node node_modules/@playwright/test/cli.js install --with-deps chromium
+          node node_modules/@playwright/test/cli.js install-deps chromium
+      - name: Download Playwright Chromium
+        if: steps.desktop-downloads.outputs.cache-hit != 'true'
+        working-directory: desktop
+        run: node node_modules/@playwright/test/cli.js install chromium
       - name: Verify Desktop's browser workflows
         working-directory: desktop
         run: |
@@ -317,19 +337,24 @@ jobs:
           node-version: 22
       - run: bun install --frozen-lockfile
       - name: Cache the Electron and Playwright downloads
+        id: desktop-downloads
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
         with:
           path: |
             ~/.cache/electron
             ~/.cache/ms-playwright
-          key: desktop-downloads-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
+          key: desktop-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/bun.lock') }}
       - name: Build repository-backed Desktop
         run: bun run desktop:setup
-      - name: Install Electron and Playwright
+      - name: Install Electron and Chromium system dependencies
         working-directory: desktop
         run: |
           node node_modules/electron/install.js
-          node node_modules/@playwright/test/cli.js install --with-deps chromium
+          node node_modules/@playwright/test/cli.js install-deps chromium
+      - name: Download Playwright Chromium
+        if: steps.desktop-downloads.outputs.cache-hit != 'true'
+        working-directory: desktop
+        run: node node_modules/@playwright/test/cli.js install chromium
       - name: Verify Desktop's usability workflows
         working-directory: desktop
         run: |
