@@ -18,11 +18,7 @@
  * `src/commands/consolidate.ts`.
  */
 import { describe, expect, it } from "bun:test";
-import {
-  normalizeUpdatedField,
-  sanitizeMergedContent,
-  stripOuterCodeFence,
-} from "../../../src/commands/improve/consolidate/sanitize";
+import { sanitizeMergedContent, stripOuterCodeFence } from "../../../src/commands/improve/consolidate/sanitize";
 import {
   hasSupersededStatus,
   validateProposalFrontmatter,
@@ -245,115 +241,6 @@ describe("validateProposalFrontmatter — required-field gate", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason.startsWith("TRUNCATED_DESCRIPTION")).toBe(true);
-  });
-});
-
-// ── normalizeUpdatedField — `updated: today` placeholder defuse ─────────────
-
-describe("normalizeUpdatedField — drains placeholder leaks from `updated:`", () => {
-  const todayIso = new Date().toISOString().slice(0, 10);
-
-  it("rewrites a literal `today` string to today's ISO date", () => {
-    const fm: Record<string, unknown> = { updated: "today" };
-    normalizeUpdatedField(fm);
-    expect(fm.updated).toBe(todayIso);
-  });
-
-  it("rewrites case-insensitive variants (TODAY, Now, etc.)", () => {
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: array contains literal placeholder strings under test, not template interpolations
-    for (const variant of ["TODAY", "Today", "now", "Now", "{today}", "${today}", "{{today}}", "  today  "]) {
-      const fm: Record<string, unknown> = { updated: variant };
-      normalizeUpdatedField(fm);
-      expect(fm.updated).toBe(todayIso);
-    }
-  });
-
-  it("rewrites a map-shaped leak `{today: null}` to today's ISO date", () => {
-    // This is the literal shape observed on proposal 4136246b (2026-05-20):
-    // `updated:\n  today: null` — the LLM treated `today` as a YAML key.
-    const fm: Record<string, unknown> = { updated: { today: null } };
-    normalizeUpdatedField(fm);
-    expect(fm.updated).toBe(todayIso);
-  });
-
-  it("rewrites other map-shaped leaks", () => {
-    const fm: Record<string, unknown> = { updated: { now: null, generated: false } };
-    normalizeUpdatedField(fm);
-    expect(fm.updated).toBe(todayIso);
-  });
-
-  it("leaves a real ISO date string alone", () => {
-    const fm: Record<string, unknown> = { updated: "2026-05-19" };
-    normalizeUpdatedField(fm);
-    expect(fm.updated).toBe("2026-05-19");
-  });
-
-  it("leaves a real ISO datetime string alone", () => {
-    const fm: Record<string, unknown> = { updated: "2026-05-19T10:30:00Z" };
-    normalizeUpdatedField(fm);
-    expect(fm.updated).toBe("2026-05-19T10:30:00Z");
-  });
-
-  it("converts a Date object to its yyyy-mm-dd ISO form", () => {
-    const fm: Record<string, unknown> = { updated: new Date("2026-05-19T10:30:00Z") };
-    normalizeUpdatedField(fm);
-    expect(fm.updated).toBe("2026-05-19");
-  });
-
-  it("leaves `updated` untouched when the field is absent", () => {
-    const fm: Record<string, unknown> = { description: "doc" };
-    normalizeUpdatedField(fm);
-    expect("updated" in fm).toBe(false);
-  });
-
-  it("leaves null/empty-string untouched (we don't invent metadata)", () => {
-    const a: Record<string, unknown> = { updated: null };
-    normalizeUpdatedField(a);
-    expect(a.updated).toBeNull();
-    const b: Record<string, unknown> = { updated: "" };
-    normalizeUpdatedField(b);
-    expect(b.updated).toBe("");
-  });
-
-  it("leaves unknown string formats untouched (visible in diff)", () => {
-    const fm: Record<string, unknown> = { updated: "last week sometime" };
-    normalizeUpdatedField(fm);
-    expect(fm.updated).toBe("last week sometime");
-  });
-});
-
-// ── sanitizeMergedContent integration with normalizeUpdatedField ────────────
-
-describe("sanitizeMergedContent — wires normalizeUpdatedField into the pipeline", () => {
-  const todayIso = new Date().toISOString().slice(0, 10);
-
-  it("normalises a `today: null` map leak in the output frontmatter", () => {
-    // Mirrors the exact pattern observed on proposal 4136246b (2026-05-20).
-    const raw = "---\ndescription: print-md disciplined workflow\nupdated:\n  today: null\n---\n\nBody.";
-    const result = sanitizeMergedContent(raw);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.result.frontmatter.updated).toBe(todayIso);
-    // The serialised content carries the normalised value too.
-    expect(result.result.content).toContain(`updated: ${todayIso}`);
-    expect(result.result.content).not.toContain("today: null");
-  });
-
-  it("normalises a literal `updated: today` string in the output frontmatter", () => {
-    const raw = "---\ndescription: doc\nupdated: today\n---\nBody.";
-    const result = sanitizeMergedContent(raw);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.result.frontmatter.updated).toBe(todayIso);
-  });
-
-  it("preserves a real ISO date in `updated:` through the pipeline", () => {
-    const raw = "---\ndescription: doc\nupdated: 2026-05-19\n---\nBody.";
-    const result = sanitizeMergedContent(raw);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.result.frontmatter.updated).toBe("2026-05-19");
-    expect(result.result.content).toContain("updated: 2026-05-19");
   });
 });
 

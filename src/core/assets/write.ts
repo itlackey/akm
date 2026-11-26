@@ -19,8 +19,14 @@ import type {
 } from "../adapter/bundle-adapter";
 import { stashDirFor } from "../asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
+import {
+  parseFrontmatter,
+  readFrontmatterDate,
+  replaceFrontmatterBlocks,
+  spliceFrontmatterLine,
+} from "../asset/frontmatter";
 import { parsePlacementRef } from "../asset/resolve-ref";
-import { toPosix } from "../common";
+import { localDateStamp, toPosix } from "../common";
 import { assetNotFound, ConfigError, UsageError } from "../errors";
 import { withAssetMutationLeaseSync } from "../index-writer-lock";
 import { warn } from "../warn";
@@ -207,6 +213,20 @@ export function conceptIdAtFile(bundle: BundleAddress, file: string): string | u
   return key === "" || key.startsWith("..") ? undefined : (held.identifyKey(key) ?? undefined);
 }
 
+/**
+ * Markdown with its `updated` set to today by akm, whatever date the content carried (a model's, an older one); a new
+ * memory with no `observed` also gets today's. Content without a frontmatter block, and anything not Markdown (an env
+ * file, a script), is returned as it is.
+ */
+function stampDates(content: string | Buffer, file: string | undefined, newMemory = false): string | Buffer {
+  if (typeof content !== "string" || !file?.toLowerCase().endsWith(".md")) return content;
+  const today = localDateStamp(new Date());
+  const stamped = replaceFrontmatterBlocks(content, ["updated"], [`updated: ${today}`]);
+  if (stamped === null) return content;
+  if (!newMemory || readFrontmatterDate(parseFrontmatter(stamped).data, "observed") !== undefined) return stamped;
+  return spliceFrontmatterLine(stamped, `observed: ${today}`) ?? stamped;
+}
+
 function writerFor(target: ResolvedWriteTarget): AssetWriter {
   const { source, config } = target;
   const held = assetBundleOf(source);
@@ -271,15 +291,19 @@ function writerFor(target: ResolvedWriteTarget): AssetWriter {
         }
       }
       // Without `exclusive` a create replaces the asset, with the bytes a create writes.
+      const stamped = options?.verbatim
+        ? asset
+        : { ...asset, content: stampDates(asset.content, held.place(asset).file, asset.type === "memory") };
       return result(
-        held.create(asset, {
+        held.create(stamped, {
           replace: !options?.exclusive,
           verbatim: options?.verbatim,
         }),
       );
     },
     update(conceptId, content, options) {
-      return result(held.update(existing(conceptId, options).conceptId, content));
+      const asset = existing(conceptId, options);
+      return result(held.update(asset.conceptId, stampDates(content, asset.entry.file)));
     },
     delete(conceptId, options) {
       // A package's delete is one change per asset it held, the entry's first: every row of them leaves the index.

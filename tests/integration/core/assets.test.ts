@@ -23,12 +23,14 @@ import path from "node:path";
 import { akmSearch } from "../../../src/commands/read/search";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
 import { buildFileContext, type FileContext } from "../../../src/core/adapter/directory/file-context";
+import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import type { Asset } from "../../../src/core/assets/asset";
 import * as facade from "../../../src/core/assets/read";
 import { assetRevision } from "../../../src/core/assets/read";
 import { assetType, assetTypeFresh } from "../../../src/core/assets/type";
 import * as facadeWrite from "../../../src/core/assets/write";
 import { writeAssets } from "../../../src/core/assets/write";
+import { localDateStamp } from "../../../src/core/common";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { NotFoundError, UsageError } from "../../../src/core/errors";
 import { getDbPath } from "../../../src/core/paths";
@@ -641,7 +643,7 @@ describe("writeAssets", () => {
     );
     expect(created).toEqual({
       ref: "stash//knowledge/note",
-      content: "---\ndescription: n\n---\nBody\n",
+      content: `---\ndescription: n\nupdated: ${localDateStamp(new Date())}\n---\nBody\n`,
     });
     expect(fs.existsSync(path.join(stash.path, "knowledge", "note.md"))).toBe(true);
 
@@ -670,6 +672,64 @@ describe("writeAssets", () => {
     expect(bytes("again")).toBe(bytes("fresh"));
     expect(bytes("again")).toContain("Second body");
     expect(bytes("again")).not.toContain("first");
+  });
+
+  test("a create and an update set `updated` to today, whatever date the content carried", () => {
+    const stash = bundleOf("stash", {});
+    const target = targetOf(stash);
+    const today = localDateStamp(new Date());
+    const file = path.join(stash.path, "knowledge", "dated.md");
+    const dated = (date: string) => `---\ndescription: A note\nupdated: ${date}\n---\n\nBody\n`;
+
+    writeAssets(target, { purpose: "test" }, (w) =>
+      w.create({ type: "knowledge", name: "dated", content: dated("1999-01-01") }),
+    );
+    expect(parseFrontmatter(fs.readFileSync(file, "utf8")).data.updated).toBe(today);
+
+    writeAssets(target, { purpose: "test" }, (w) => w.update("knowledge/dated", dated("1999-01-01")));
+    const written = fs.readFileSync(file, "utf8");
+    expect(parseFrontmatter(written).data).toEqual({ description: "A note", updated: today });
+    expect(written).not.toContain("1999");
+  });
+
+  test("a new memory without `observed` gets today's; one with it keeps it; an update changes neither", () => {
+    const stash = bundleOf("stash", {});
+    const target = targetOf(stash);
+    const today = localDateStamp(new Date());
+    const read = (name: string) =>
+      parseFrontmatter(fs.readFileSync(path.join(stash.path, "memories", `${name}.md`), "utf8")).data;
+    const memory = (extra = "") => `---\ndescription: A memory\n${extra}---\n\nBody\n`;
+
+    writeAssets(target, { purpose: "test" }, (w) => {
+      w.create({ type: "memory", name: "plain", content: memory() });
+      w.create({ type: "memory", name: "told", content: memory("observed: 2026-02-14\nupdated: 1999-01-01\n") });
+    });
+    expect(read("plain").observed).toBe(today);
+    expect(read("told").observed).toBe("2026-02-14");
+    expect(read("told").updated).toBe(today);
+
+    writeAssets(target, { purpose: "test" }, (w) => {
+      w.update("memories/told", memory("observed: 2026-02-14\nupdated: 1999-01-01\n").replace("Body", "Changed"));
+      w.update("memories/plain", memory("updated: 1999-01-01\n"));
+    });
+    expect(read("told")).toMatchObject({ observed: "2026-02-14", updated: today });
+    expect(read("plain").updated).toBe(today);
+    expect(read("plain")).not.toHaveProperty("observed");
+  });
+
+  test("a verbatim create and an env write keep their content, dates included", () => {
+    const stash = bundleOf("stash", {});
+    const target = targetOf(stash);
+    const note = "---\ndescription: A note\nupdated: 1999-01-01\n---\n\nBody\n";
+    const env = "UPDATED=1999-01-01\n";
+
+    writeAssets(target, { purpose: "test" }, (w) => {
+      w.create({ type: "knowledge", name: "kept", content: note }, { verbatim: true });
+      w.create({ type: "env", name: "prod", content: env });
+    });
+
+    expect(fs.readFileSync(path.join(stash.path, "knowledge", "kept.md"), "utf8")).toBe(note);
+    expect(fs.readFileSync(path.join(stash.path, "env", "prod.env"), "utf8")).toBe(env);
   });
 
   test("a verbatim create keeps the content exactly, and an exclusive one still refuses an existing asset", () => {

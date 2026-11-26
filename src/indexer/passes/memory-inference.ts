@@ -819,7 +819,6 @@ function renderDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft):
     title: derived.title,
     derivedFrom: parent.name,
     generated: { by: `akm/${pkgVersion}`, at: generatedAt },
-    updated: generatedAt.slice(0, 10),
   };
   // The source's own explicit observation date and evidence are carried as
   // written. A missing one stays missing: `updated` and mtime are not dates of

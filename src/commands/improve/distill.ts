@@ -1153,11 +1153,11 @@ async function planPromotion(
   return { knowledgeRef: assessment.knowledgeRef, content: assessment.content, existing };
 }
 
-/** The content with the frontmatter keys the existing doc has and it lacks (`team`, `project`, ...) put back; scope is stamped later and `updated` is akm's. */
+/** The content with the frontmatter keys the existing doc has and it lacks (`team`, `project`, ...) put back; scope is stamped later. */
 function withMissingKeysOf(existing: string, content: string): string {
   const kept = parseFrontmatter(content);
   const missing = Object.entries(parseFrontmatter(existing).data).filter(
-    ([key]) => !Object.hasOwn(kept.data, key) && key !== "updated" && !SCOPE_FRONTMATTER_KEYS.includes(key),
+    ([key]) => !Object.hasOwn(kept.data, key) && !SCOPE_FRONTMATTER_KEYS.includes(key),
   );
   return missing.length === 0 ? content : assembleAsset({ ...kept.data, ...Object.fromEntries(missing) }, kept.content);
 }
