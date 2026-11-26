@@ -122,14 +122,9 @@ function upsertRuleset(repo: string, ruleset: { name: string } & Record<string, 
   }
 }
 
-function main(): void {
-  const remote = execFileSync("git", ["remote", "get-url", "origin"], { encoding: "utf8" }).trim();
-  const repo = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/.exec(remote)?.[1];
-  if (!repo) throw new Error(`origin is not a GitHub repository: ${remote}`);
-  const checks = requiredChecks();
-  console.log(`${repo}: ${checks.length} required checks on main:\n  ${checks.join("\n  ")}`);
-
-  upsertRuleset(repo, {
+/** The `main` ruleset: every field GitHub keeps on it, so an update resets none (a field left out is set to its default). */
+export function mainRuleset(checks: string[]): { name: string } & Record<string, unknown> {
+  return {
     name: "main",
     target: "branch",
     enforcement: "active",
@@ -145,6 +140,7 @@ function main(): void {
           dismiss_stale_reviews_on_push: false,
           require_code_owner_review: false,
           require_last_push_approval: false,
+          require_extra_approval_for_unattributed_changes: true,
           required_review_thread_resolution: false,
           allowed_merge_methods: ["merge"],
         },
@@ -158,7 +154,17 @@ function main(): void {
         },
       },
     ],
-  });
+  };
+}
+
+function main(): void {
+  const remote = execFileSync("git", ["remote", "get-url", "origin"], { encoding: "utf8" }).trim();
+  const repo = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/.exec(remote)?.[1];
+  if (!repo) throw new Error(`origin is not a GitHub repository: ${remote}`);
+  const checks = requiredChecks();
+  console.log(`${repo}: ${checks.length} required checks on main:\n  ${checks.join("\n  ")}`);
+
+  upsertRuleset(repo, mainRuleset(checks));
 
   upsertRuleset(repo, {
     name: "release branches",
