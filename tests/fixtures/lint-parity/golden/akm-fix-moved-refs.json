@@ -132,7 +132,7 @@
     "env/dev.env": "NODE_OPTIONS=--require ./x.js\nSAFE=1\n",
     "knowledge/colon.md": "---\ndescription: Note: with an unquoted colon\n---\n\nNo updated field either.\n",
     "knowledge/ok.md": "---\ndescription: A fine note\nupdated: 2026-11-01\n---\n\nFine.\n",
-    "knowledge/refs.md": "---\ndescription: Refs\nupdated: 2026-11-01\nxrefs:\n  - knowledge/ghost\n  - memories/new\n---\n\nSee [the ghost](knowledge/ghost.md) and [ok](knowledge/ok.md).\n",
+    "knowledge/refs.md": "---\ndescription: Refs\nupdated: <TODAY>\nxrefs:\n  - knowledge/ghost\n  - memories/new\n---\n\nSee [the ghost](knowledge/ghost.md) and [ok](knowledge/ok.md).\n",
     "memories/holder.md": "---\ndescription: Holds an edge\nupdated: 2026-11-01\ncontradictedBy:\n  - memories/gone\n---\n\nBody.\n",
     "memories/lost.derived.md": "---\ndescription: Derived with no parent\nupdated: 2026-11-01\ninferred: true\nsource: memories/nowhere\n---\n\nDerived body.\n",
     "memories/new.md": "---\ndescription: Moved here\nupdated: 2026-11-01\n---\n\nTarget.\n",

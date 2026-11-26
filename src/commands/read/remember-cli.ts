@@ -293,7 +293,6 @@ export const rememberCommand = defineJsonCommand({
         if (!tags.includes(t)) tags.push(t);
       }
       if (!description && enriched.description) description = enriched.description;
-      if (!observed_at && enriched.observed_at) observed_at = enriched.observed_at;
       executionNotices = enriched.notices;
     }
 

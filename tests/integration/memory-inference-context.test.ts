@@ -11,6 +11,7 @@ import { assembleAsset } from "../../src/core/asset/asset-serialize";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 // Integration: real inference writes/cache, index database, show and filtered search.
 import { slugForPath } from "../../src/core/bundle-id";
+import { localDateStamp } from "../../src/core/common";
 import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
 import {
@@ -196,7 +197,7 @@ for (const fm of [
     expect(child.content).toContain(body);
     const after = parseFrontmatter(fs.readFileSync(parent, "utf8"));
     expect(after.content).toBe(before.content);
-    expect(after.data).toEqual({ ...before.data, inferenceProcessed: true });
+    expect(after.data).toEqual({ ...before.data, inferenceProcessed: true, updated: localDateStamp(new Date()) });
     saveConfig({ ...config(), index: { memory: { enabled: false } } });
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const shown = await akmShowUnified({ ref: "memories/tunnel.derived", skipLogging: true });

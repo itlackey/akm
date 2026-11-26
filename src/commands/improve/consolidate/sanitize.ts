@@ -100,7 +100,6 @@ export function sanitizeMergedContent(
     return { ok: false, reason: "FRONTMATTER_NOT_OBJECT" };
   }
   const fm = parsedFm as Record<string, unknown>;
-  normalizeUpdatedField(fm);
   let serialized: string;
   try {
     serialized = serializeFrontmatter(fm);
@@ -108,34 +107,4 @@ export function sanitizeMergedContent(
     return { ok: false, reason: `YAML_STRINGIFY_FAILED: ${e instanceof Error ? e.message : String(e)}` };
   }
   return { ok: true, result: { content: assembleAssetFromString(serialized, match[2]!), frontmatter: fm } };
-}
-
-/**
- * Normalize a leaked `updated` placeholder in place: a Date becomes
- * `YYYY-MM-DD`; `today`/`now`/`{today}`-style templates and maps like
- * `{today: null}` become today's date; real dates, unknown strings and empty
- * values are left alone (visible in the diff, never invented).
- */
-export function normalizeUpdatedField(fm: Record<string, unknown>): void {
-  const v = fm.updated;
-  if (v === null || v === undefined || v === "") return;
-  const todayIso = new Date().toISOString().slice(0, 10);
-  if (v instanceof Date) {
-    fm.updated = v.toISOString().slice(0, 10);
-  } else if (typeof v === "string") {
-    const trimmed = v.trim().toLowerCase();
-    if (/^\d{4}-\d{2}-\d{2}/.test(v.trim())) return;
-    if (
-      trimmed === "today" ||
-      trimmed === "now" ||
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal "${today}" placeholder a model emits
-      trimmed === "${today}" ||
-      trimmed === "{{today}}" ||
-      /^\{?\s*today\s*\}?$/.test(trimmed)
-    ) {
-      fm.updated = todayIso;
-    }
-  } else if (typeof v === "object") {
-    fm.updated = todayIso;
-  }
 }

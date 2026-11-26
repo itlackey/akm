@@ -9,11 +9,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - `akm doctor` warns when a workflow run is blocked: its `workflow-files` advisory names each blocked run and the `akm workflow resume <id>` and `akm workflow abandon <id>` commands that finish or give it up before 0.11, where workflows are removed. An active run is not a warning. `evidence.blockedRuns` lists them.
+- `experimental.memoryEnrichment` (off by default) lets `akm improve` propose tags for a memory that has none and plans untagged memories first. It replaces `akm remember --enrich` and `--auto`, whose deprecation notice now names it.
 
 ### Changed
 
 - From 0.11, releases use plain semantic versions (`0.11.0-beta.1`, `0.11.0`, `0.11.1`, `0.12.0`). 0.10 releases keep their monthly numbers (`0.10.YYMMNN`).
 - `akm migrate apply` of a version 4 task writes `cwd: .` when the task names no working directory, so its steps still run in the bundle root, and every conversion lists a note that steps no longer inherit akm's environment (pass variables on with `inherit:`).
+- akm sets frontmatter dates itself when it writes an asset. Every create and update sets `updated` to today's date, and a new memory without `observed` gets today's date. An existing `observed` is kept. A model's reply no longer supplies a date: `akm remember --enrich` stops taking `observed` from it, and improve's merges and promotions stop carrying a model's `updated`.
 
 ### Fixed
 

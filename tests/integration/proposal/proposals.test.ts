@@ -46,6 +46,7 @@ import { makeConfig } from "../../_helpers/factories";
 import { indexWrittenAssets } from "../../_helpers/index-written-files";
 import { spawnLiveHolder } from "../../_helpers/live-holder";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
+import { expectSameExceptUpdated } from "../../_helpers/updated-today";
 
 // ── Test setup ──────────────────────────────────────────────────────────────
 
@@ -1272,7 +1273,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     expect(fs.readFileSync(assetPath, "utf8")).toContain("Prefer rg over grep");
     fs.rmSync(lockPath, { force: true });
     await reverting;
-    expect(fs.readFileSync(assetPath, "utf8")).toBe(original);
+    expectSameExceptUpdated(fs.readFileSync(assetPath, "utf8"), original);
   });
 
   test("accept indexes the promoted asset immediately", async () => {

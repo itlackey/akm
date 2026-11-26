@@ -92,6 +92,9 @@ export const APPROVED_ROWS: ReadonlySet<string> = new Set([
   // R1 (#1774, 0.10.261132): `env create` without content follows the create rule for a symbolic link, so an in-bundle
   // link to an existing env file is left as it is (exit 0) where it was refused: owner ruling on #1774.
   "R1",
+  // R2: the asset writer sets `updated` to the write date on every create and update of a Markdown asset (owner ruling,
+  // 2026-11-26), so a written asset gains an `updated` line, or has its value replaced.
+  "R2",
 ]);
 
 /** True when `row` names only approved §0.2 rows (`A3`, or `A3+A5`). */

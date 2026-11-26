@@ -11,6 +11,7 @@ import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 // Integration: opens a real index database (akmIndex + filtered akmSearch) to
 // prove a synced child's scope reaches scoped retrieval.
 import { slugForPath } from "../../src/core/bundle-id";
+import { localDateStamp } from "../../src/core/common";
 import { saveConfig } from "../../src/core/config/config";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { akmIndex } from "../../src/indexer/indexer";
@@ -20,6 +21,7 @@ import type { SearchSource } from "../../src/indexer/search/search-source";
 import { _setChatCompletionForTests } from "../../src/llm/client";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { overrideSeam, withSeam } from "../_helpers/seams";
+import { expectSameExceptUpdated } from "../_helpers/updated-today";
 
 let storage: IsolatedAkmStorage;
 let requests: number;
@@ -125,7 +127,7 @@ test("an existing unscoped child of a scoped parent gets the parent's scope and 
   expect((await run()).scopeSynced).toBe(0);
 });
 
-test("syncing the scope of a child with generation provenance keeps its generated, observed and updated", async () => {
+test("syncing the scope of a child with generation provenance keeps its generated and observed, and stamps updated", async () => {
   writeParent({ scope_user: "alice" });
   const provenance = {
     generated: { by: "akm/0.10.0", at: "2026-10-21T09:30:00.000Z" },
@@ -137,7 +139,9 @@ test("syncing the scope of a child with generation provenance keeps its generate
   const child = writeChild(provenance);
   expect((await run()).scopeSynced).toBe(1);
   const data = parseFrontmatter(fs.readFileSync(child, "utf8")).data;
-  expect(data).toMatchObject(provenance);
+  const { updated: _written, ...kept } = provenance;
+  expect(data).toMatchObject(kept);
+  expect(data.updated).toBe(localDateStamp(new Date()));
   expect(childScope(child)).toEqual({ user: "alice" });
 });
 
@@ -187,7 +191,8 @@ test("only the scope lines change: body and other frontmatter are preserved byte
   const body = '\n\nBody line one\n  indented "quoted" line\n---\nnot frontmatter';
   fs.writeFileSync(child, [...head, "scope_user: alice", "scope_agent: stale", "---", body].join("\n"));
   expect((await run()).scopeSynced).toBe(1);
-  expect(fs.readFileSync(child, "utf8")).toBe(
+  expectSameExceptUpdated(
+    fs.readFileSync(child, "utf8"),
     [...head, "scope_user: bob", "scope_channel: lab", "---", body].join("\n"),
   );
 });
@@ -274,7 +279,7 @@ test("the scope sync writes what it wrote before: only the scope lines change, a
     () => run(),
   );
   expect(result.scopeSynced).toBe(1);
-  expect(fs.readFileSync(child, "utf8")).toBe([...head, "scope_user: alice", "---", body].join("\n"));
+  expectSameExceptUpdated(fs.readFileSync(child, "utf8"), [...head, "scope_user: alice", "---", body].join("\n"));
   expect(fs.statSync(child).mode & 0o777).toBe(0o640);
   expect(warnings).toEqual([]);
 });

@@ -31,17 +31,18 @@ afterEach(() => {
 });
 
 describe("runLlmEnrich", () => {
-  test("the call carries its 10 s timeout, and the reply becomes tags and a description", async () => {
+  test("the call carries its 10 s timeout, and the reply becomes tags and a description, never a date", async () => {
     let timeoutMs: number | null | undefined;
     overrideSeam(_setChatCompletionForTests, async (_config, _messages, options) => {
       timeoutMs = options?.timeoutMs;
-      return '{"tags":["ops"],"description":"Deploys need the VPN.","observed":"2026-04-24"}';
+      return '{"tags":["ops"],"description":"Deploys need the VPN.","observed":"1999-01-01","observed_at":"1999-01-01"}';
     });
 
     const result = await runLlmEnrich("Deploys need the VPN.");
 
     expect(timeoutMs).toBe(10_000);
-    expect(result).toMatchObject({ tags: ["ops"], description: "Deploys need the VPN.", observed_at: "2026-04-24" });
+    expect(result).toMatchObject({ tags: ["ops"], description: "Deploys need the VPN." });
+    expect(result).not.toHaveProperty("observed_at");
     expect(warnings).toEqual([]);
   });
 

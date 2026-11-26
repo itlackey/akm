@@ -82,7 +82,14 @@ describe("remember stdin", () => {
     // #834: the zero-flag hot path now also synthesizes `description` from
     // the body — previously this memory would index only on filename words.
     expect(parsed.data.description).toBe("VPN needed for staging deploys");
-    expect(Object.keys(parsed.data).sort()).toEqual(["beliefState", "captureMode", "description", "type", "updated"]);
+    expect(Object.keys(parsed.data).sort()).toEqual([
+      "beliefState",
+      "captureMode",
+      "description",
+      "observed",
+      "type",
+      "updated",
+    ]);
   });
 
   test("reads stdin when --format json is present", () => {

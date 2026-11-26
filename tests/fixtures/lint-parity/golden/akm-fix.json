@@ -124,7 +124,7 @@
   "stderr": "",
   "files": {
     "env/dev.env": "NODE_OPTIONS=--require ./x.js\nSAFE=1\n",
-    "knowledge/colon.md": "---\ndescription: \"Note: with an unquoted colon\"\nupdated: 2026-11-02\n---\n\nNo updated field either.\n",
+    "knowledge/colon.md": "---\ndescription: \"Note: with an unquoted colon\"\nupdated: <TODAY>\n---\n\nNo updated field either.\n",
     "knowledge/ok.md": "---\ndescription: A fine note\nupdated: 2026-11-01\n---\n\nFine.\n",
     "knowledge/refs.md": "---\ndescription: Refs\nupdated: 2026-11-01\nxrefs:\n  - knowledge/ghost\n  - memories/old\n---\n\nSee [the ghost](knowledge/ghost.md) and [ok](knowledge/ok.md).\n",
     "memories/holder.md": "---\ndescription: Holds an edge\nupdated: 2026-11-01\ncontradictedBy:\n  - memories/gone\n---\n\nBody.\n",

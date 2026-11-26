@@ -14,6 +14,7 @@ import { analyzeMemoryCleanup, applyMemoryCleanup } from "../../../../src/comman
 import { _setWarnSinkForTests } from "../../../../src/core/warn";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 import { withSeam } from "../../../_helpers/seams";
+import { expectSameExceptUpdated } from "../../../_helpers/updated-today";
 
 let storage: IsolatedAkmStorage;
 
@@ -53,7 +54,8 @@ test("relative dates resolve in place: the same bytes as before, a home path kep
   expect(result.relativeDatesResolved).toBe(1);
   expect(result.warnings).toBeUndefined();
   expect(warnings).toEqual([]);
-  expect(fs.readFileSync(child, "utf8")).toBe(
+  expectSameExceptUpdated(
+    fs.readFileSync(child, "utf8"),
     [
       "---",
       "inferred: true",

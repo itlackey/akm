@@ -9,7 +9,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { buildSessionAssetContent } from "../src/commands/improve/session-asset";
-import { buildMemoryFrontmatter, parseEnrichObserved } from "../src/commands/remember";
+import { buildMemoryFrontmatter } from "../src/commands/remember";
 import { parseFrontmatter, readFrontmatterDate } from "../src/core/asset/frontmatter";
 import type { SessionData } from "../src/integrations/session-logs/types";
 
@@ -56,19 +56,5 @@ describe("writers emit only the new name", () => {
     expect(written).not.toHaveProperty("started_at");
     expect(written).not.toHaveProperty("ended_at");
     expect(written.started).toBe(frontmatter.started);
-  });
-});
-
-describe("remember --enrich parser", () => {
-  test("accepts `observed` and the older `observed_at`, the new name first", () => {
-    expect(parseEnrichObserved({ observed: "2026-04-24" })).toBe("2026-04-24");
-    expect(parseEnrichObserved({ observed_at: "2026-04-24" })).toBe("2026-04-24");
-    expect(parseEnrichObserved({ observed: "2026-05-01", observed_at: "2026-04-24" })).toBe("2026-05-01");
-  });
-
-  test("ignores anything that is not a plain YYYY-MM-DD", () => {
-    expect(parseEnrichObserved({ observed: "yesterday", observed_at: "2026-04-24" })).toBe("2026-04-24");
-    expect(parseEnrichObserved({ observed: "yesterday" })).toBeUndefined();
-    expect(parseEnrichObserved({})).toBeUndefined();
   });
 });

@@ -119,6 +119,10 @@ describe("consolidate-system.md — promote-only prompt (R12a)", () => {
     expect(consolidateSystemPrompt).toContain("KEEP");
   });
 
+  test("does not ask the model for any frontmatter date", () => {
+    expect(consolidateSystemPrompt).not.toMatch(/updated|\bdate\b/i);
+  });
+
   test("the JSON example carries no top-level warnings array", () => {
     expect(consolidateSystemPrompt).not.toContain('"warnings"');
   });

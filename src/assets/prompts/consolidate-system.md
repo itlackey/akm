@@ -12,5 +12,3 @@ Return ONLY JSON (no prose, no code fences):
 }
 
 For every operation, emit a `confidence` field in [0, 1] expressing your certainty that the operation is correct and safe. Use 0.95+ only when evidence is unambiguous. Use `null` rather than guessing if you are uncertain.
-
-When the merged content includes an `updated` frontmatter field, the value MUST be a real ISO date string (e.g. `updated: 2026-05-20`). NEVER emit `updated: today`, `updated: {today}`, `updated: {today: null}`, `updated: now`, or any other literal placeholder/template-variable. If you do not have a real source-of-truth date, OMIT the `updated` field entirely — the post-processor will not invent one for you.

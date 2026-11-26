@@ -303,26 +303,17 @@ function detectObservedAt(body: string): string | undefined {
 /**
  * Result of an `--enrich` LLM call.
  *
- * `tags` is always an array (possibly empty). `description` and
- * `observed_at` (the memory's `observed` date) are optional — only populated when
- * the model returns them in the expected shape. No connection or harness, a provider failure, a timeout, or
+ * `tags` is always an array (possibly empty). `description` is optional — only
+ * populated when the model returns it in the expected shape. The model never
+ * supplies a date. No connection or harness, a provider failure, a timeout, or
  * invalid JSON yields `{ tags: [] }` with a warning. Invalid configuration is
  * a hard pre-write error.
  */
 export interface EnrichmentResult {
   tags: string[];
   description?: string;
-  observed_at?: string;
   /** Stable, secret-free execution-lowering diagnostics. */
   notices?: readonly Readonly<LoweringNotice>[];
-}
-
-/** The model's observation date: `observed`, or the older `observed_at`; only a plain `YYYY-MM-DD` counts. */
-export function parseEnrichObserved(parsed: Record<string, unknown>): string | undefined {
-  for (const raw of [parsed.observed, parsed.observed_at]) {
-    if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) return raw.trim();
-  }
-  return undefined;
 }
 
 /** The model's tags: the non-empty strings of an array; anything else is no tags. */
@@ -354,7 +345,6 @@ export async function runLlmEnrich(body: string): Promise<EnrichmentResult> {
 Given the memory text below, return ONLY a JSON object with these fields:
 - "tags": array of 1-5 short lowercase keyword tags
 - "description": one-sentence summary (optional)
-- "observed": ISO date (YYYY-MM-DD) if the text references a specific date (optional)
 
 Memory text:
 ${body.slice(0, 2000)}
@@ -390,7 +380,7 @@ Return ONLY the JSON object, no prose, no markdown fences.`;
     const description =
       typeof parsed.description === "string" && parsed.description.trim() ? parsed.description.trim() : undefined;
 
-    return { tags, description, observed_at: parseEnrichObserved(parsed), ...notices.fields() };
+    return { tags, description, ...notices.fields() };
   } catch (err) {
     if (err instanceof ConfigError) throw err;
     warn(`Warning: --enrich failed (${toErrorMessage(err)}). Writing memory without enrichment.`);
