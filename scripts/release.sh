@@ -2,7 +2,7 @@
 #
 # The release steps of docs/maintainers/release-checklist.md, one subcommand each:
 #
-#   start [0.<minor>]       cut release/<version> from main with the next free number of the line
+#   start [0.<minor>]       cut release/<version> from main: the next monthly number of a 0.10 line, else the next semver version
 #   prerelease [stage]      dispatch the Release workflow on the current release branch (alpha, beta or rc; beta)
 #   stable                  set the version, cut the changelog, commit `release: <version>`, push, open the PR into main
 #

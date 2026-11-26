@@ -899,9 +899,11 @@ after a newer line's gets that line's tag instead, `next-0.10`. Versions sort
 by month and then `NN`, so semver ranges and `akm upgrade`
 order them correctly across months and years. The patch number no longer says
 how big a change is: read the CHANGELOG, which still marks breaking changes. The
-0.9 line keeps `0.9.N`; the planned 0.11 line returns to plain semver
-(`0.11.0`, `0.11.1`), as described in the
-[draft migration guide](docs/migration/v0.10-to-v0.11.md).
+0.9 line keeps `0.9.N`. From 0.11 releases are plain semver: prereleases
+`0.11.0-beta.1`, the stable release `0.11.0`, then `0.11.1`; the next minor
+starts at `0.12.0`. Prereleases (`-alpha.N`, `-beta.N`, `-rc.N`) publish to
+`next` and stable versions to `latest`, and every 0.10 number sorts below every
+0.11 version (see the [draft migration guide](docs/migration/v0.10-to-v0.11.md)).
 
 The 0.10 daily alphas (`0.10.26101001-alpha` through `0.10.26101202-alpha`) used
 an 8-digit patch, `YYMMDDNN`. Semver compares the patch numerically, so every
