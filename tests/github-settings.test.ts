@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
-import { RELEASE_GATES, requiredChecks } from "../scripts/github-settings";
+import { mainRuleset, RELEASE_GATES, requiredChecks } from "../scripts/github-settings";
 
 const releaseJobs = Object.keys(
   (
@@ -65,5 +65,20 @@ describe("scripts/github-settings.ts required checks", () => {
   test("every release.yml job is either a pull request gate or one of the jobs that never run on a pull request", () => {
     const notGates = ["ci", "proven", "release", "desktop", "akm-web"];
     expect([...RELEASE_GATES].sort()).toEqual(releaseJobs.filter((job) => !notGates.includes(job)).sort());
+  });
+});
+
+describe("mainRuleset", () => {
+  test("sets every pull-request field the main ruleset has, so running the script resets none", () => {
+    const rules = mainRuleset(["check"]).rules as Array<{ type: string; parameters?: Record<string, unknown> }>;
+    expect(rules.find((rule) => rule.type === "pull_request")?.parameters).toEqual({
+      required_approving_review_count: 0,
+      dismiss_stale_reviews_on_push: false,
+      require_code_owner_review: false,
+      require_last_push_approval: false,
+      require_extra_approval_for_unattributed_changes: true,
+      required_review_thread_resolution: false,
+      allowed_merge_methods: ["merge"],
+    });
   });
 });
