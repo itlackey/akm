@@ -125,6 +125,8 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   /** A secret is deleted, never retired: nothing recoverable should keep its value. */
   readonly retires: readonly string[] = [];
 
+  /** Whether the adapter unlocks its store with the bundle's `credential` (a keyring's password); one that does not refuses it. */
+  protected readonly takesCredential: boolean = false;
   /** What `location` names, for the error of a bundle without one: "a keyring", "an Azure Key Vault". */
   protected abstract readonly what: string;
   /** Whether the store at `location` is there. It reads no secret and never prompts. */
@@ -158,9 +160,18 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
   /** The stores read so far this command, by location: a listing is one request, and a write drops it. */
   private readonly stores = new Map<string, Store>();
 
+  /** The password of each store whose bundle has a `credential`, by location, as the bundle last gave it. */
+  private readonly credentials = new Map<string, () => string>();
+
   /** Forget what was read: the next request reads the store again. The CLI calls it per command, a server per request. */
   clearCache(): void {
     this.stores.clear();
+    this.credentials.clear();
+  }
+
+  /** The password that unlocks the store at `location`, when its bundle has a `credential`: read only when called. */
+  protected credentialOf(location: string): (() => string) | undefined {
+    return this.credentials.get(location);
   }
 
   private store(location: string): Store {
@@ -174,7 +185,17 @@ export abstract class SecretManagerAdapterBase implements BundleAdapter {
 
   /** Where the adapter finds the bundle: its configured `location`. */
   private locationOf(b: Bundle): string {
-    if (b.location) return b.location;
+    if (b.location) {
+      if (b.credential && !this.takesCredential) {
+        throw new ConfigError(
+          `Bundle "${b.id}" has a \`credential\`, which the ${this.id} adapter does not take: remove it.`,
+          "INVALID_CONFIG_FILE",
+        );
+      }
+      if (b.credential) this.credentials.set(b.location, b.credential);
+      else this.credentials.delete(b.location);
+      return b.location;
+    }
     throw new ConfigError(
       `Bundle "${b.id}" uses the ${this.id} adapter, which reads ${this.what}: set the bundle's \`location\` to its name.`,
       "INVALID_CONFIG_FILE",

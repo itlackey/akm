@@ -54,3 +54,36 @@ export async function withFakeSecretStores<T>(
     bin.cleanup();
   }
 }
+
+/**
+ * Run `run` with a fake session bus whose Secret Service is GNOME Keyring's, for a password unlock
+ * (`fake-secret-stores/secret-bus.ts`), as `DBUS_SESSION_BUS_ADDRESS`. Call it inside {@link withFakeSecretStores}:
+ * it reads and writes the same state.
+ */
+export async function withFakeSecretBus<T>(run: () => Promise<T>): Promise<T> {
+  const dir = makeSandboxDir("akm-fake-bus");
+  const socket = path.join(dir.dir, "bus");
+  const server = Bun.spawn(
+    [process.execPath, path.join(import.meta.dir, "fake-secret-stores", "secret-bus.ts"), socket],
+    {
+      env: process.env,
+      stdout: "pipe",
+      stderr: "inherit",
+    },
+  );
+  try {
+    const reader = server.stdout.getReader();
+    let said = "";
+    while (!said.includes("ready")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("the fake session bus exited before it listened");
+      said += new TextDecoder().decode(value);
+    }
+    reader.releaseLock();
+    return await withEnv({ DBUS_SESSION_BUS_ADDRESS: `unix:path=${socket},guid=0` }, run);
+  } finally {
+    server.kill();
+    await server.exited;
+    dir.cleanup();
+  }
+}

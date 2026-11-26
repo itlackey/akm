@@ -325,7 +325,29 @@ such a bundle after the bundles before it in priority.
   (`ksecretd`), a removal can be undone when the wallet is next loaded: the
   Secret Service stops listing the entry, but the wallet file may keep it, so
   check KWalletManager after a removal. An unanswered KWallet password dialog
-  blocks every request to KWallet until it is answered or dismissed. The keyring must exist, and `secret-tool` cannot create it: create the wallet or
+  blocks every request to KWallet until it is answered or dismissed.
+  A GNOME keyring that your login does not unlock, read where nobody is there to
+  answer its prompt, can be unlocked by akm instead: give the bundle entry a
+  `credential` that references the keyring's password, never the password
+  itself (a `$VAR`, `${VAR}` or `${secrets/<name>}` in another bundle):
+
+  ```json
+  "keyring": { "adapter": "secret-tool", "location": "deploy", "credential": "${stash//secrets/deploy-keyring-password}" }
+  ```
+
+  When akm reads, stores or deletes in that keyring while it is locked, it reads
+  the credential and unlocks the keyring with it first, so no prompt is shown and
+  nothing waits. An unlocked keyring is used as it is, and the credential is not
+  read. A wrong password fails the command once with `BUNDLE_UNREACHABLE`, and
+  akm neither tries again nor falls back to a prompt. Only GNOME Keyring takes a
+  password this way (through its own D-Bus interface, outside the Secret Service
+  standard); on KWallet or another Secret Service the command fails saying so.
+  The password travels to the keyring over your session bus unencrypted, as any
+  Secret Service client's plain secrets do, and akm never prints or records it.
+  This is a narrow exception, not the way to use a keyring: a password akm can
+  read sits outside the keyring and undoes part of what the keyring protects.
+  For interactive use, let your login unlock the keyring (PAM); for unattended
+  work, prefer a file-based secret or Azure Key Vault. The keyring must exist, and `secret-tool` cannot create it: create the wallet or
   keyring named in `location` in your keyring manager (KWalletManager,
   Seahorse). A missing one is refused naming the keyrings the service has. A
   process with no session bus (a scheduled task, a container) cannot reach the
