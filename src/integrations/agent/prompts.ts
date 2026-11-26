@@ -211,7 +211,7 @@ export type ReflectOutputMode = "json_schema" | "framed_markdown";
 
 /** What the contract adds when reflect also fills the `tags` of a memory that has none. */
 const ENRICH_RULE =
-  " `tags` is an array of 1-5 short lowercase keyword tags for this memory, which has none; never `null`.";
+  " `tags` is an array of 1-5 short lowercase tags for this memory, which has none; never `null`. Make each tag a specific term someone would search for: a name, identifier, tool, component, locale or error the memory is about, spelled as the memory spells it (`postgres-16`, not `database`). Leave out generic words such as `note`, `info`, `bug`, `fix` or `update`.";
 
 export function reflectResponseContract(mode: ReflectOutputMode, targetScoped: boolean, enrichMemory = false): string {
   const fill = (template: string): string =>

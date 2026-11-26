@@ -76,6 +76,7 @@ describe("reflect with experimental.memoryEnrichment", () => {
       tags: ["deploy", " schedule "],
     });
     expect(prompt).toContain("`description`, `when_to_use`, `title` and `tags`");
+    expect(prompt).toContain("a specific term someone would search for");
     expect(prompt).not.toContain("observed");
     // The revision changed nothing; the tags stand apart from it.
     expect(result.ok).toBe(false);
