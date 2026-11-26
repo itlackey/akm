@@ -58,7 +58,7 @@ import { CHARS_PER_TOKEN, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/ch
 import { contentHash } from "./content-hash";
 import { resolveImproveExecution } from "./execution";
 import { recordLedgerAttempt, stateKey } from "./ledger";
-import { enrichesMemory, withEnrichedPatch } from "./memory-enrichment";
+import { enrichesMemory, proposeMemoryTags, withEnrichedPatch } from "./memory-enrichment";
 import {
   bodyHasH1,
   classifyReflectChange,
@@ -805,7 +805,7 @@ function buildReflectPromptText(args: {
     ...(standardsContext.trim() ? { standardsContext } : {}),
     ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
     ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
-    ...(options.enrichMemory ? { enrichMemory: true } : {}),
+    enrichMemory: options.enrichMemory,
     outputMode,
   };
   const contentBudgetChars = computeReflectContentBudgetChars(input, runnerSpec);
@@ -840,7 +840,7 @@ async function dispatchReflect(args: {
       ? { responseSchema: options.enrichMemory ? withEnrichedPatch(schema) : schema }
       : {}),
     outputMode,
-    ...(options.enrichMemory ? { enrichMemory: true } : {}),
+    enrichMemory: options.enrichMemory,
     ...(options.ref ? { targetRef: options.ref } : {}),
     ...(options.chat ? { chat: options.chat } : {}),
     // Only a harness (or the internal runtime) runs a child process, which has an environment.
@@ -1108,13 +1108,22 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     ? { assetContent, parsedRef }
     : await resolveReflectSource({ ...options, ref: payload.ref }, stash, emitFailed);
   if ("failure" in target) return target.failure;
-  return finalizeReflectProposal({
+  const { tags, ...patch } = payload.patch;
+  const judge = { enabled: judgeWanted && !skippedNoJudge, skippedNoJudge, runner: judgeRunner };
+  const memory = target.assetContent ?? "";
+  const revision = await finalizeReflectProposal({
     run,
-    payload,
-    assetContent: target.assetContent ?? "",
+    payload: { ...payload, patch },
+    assetContent: memory,
     dispatch: iteration,
-    judge: { enabled: judgeWanted && !skippedNoJudge, skippedNoJudge, runner: judgeRunner },
+    judge,
     feedback: sources.feedback,
     type: target.parsedRef?.type ?? "",
   });
+  if (!tags) return revision;
+  const { confidence, ref } = payload;
+  return {
+    ...revision,
+    tags: await proposeMemoryTags({ run, ref, memory, tags, confidence, durationMs: iteration.durationMs, judge }),
+  };
 }

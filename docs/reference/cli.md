@@ -4104,6 +4104,7 @@ nothing.
 | Judge | Judges | Input |
 | --- | --- | --- |
 | `reflect.quality` | a revision of an asset's frontmatter (reflect's quality gate) | `source`, `candidate`, `feedback?` (lines), `ref?` |
+| `memory.tags` | the tags proposed for a memory that has none (`experimental.memoryEnrichment`), on their own | `memory`, `tags` |
 | `distill.lesson` | a new lesson, or with `extending` an update of one (distill's quality gate and its lesson updates) | `lesson`, `source` (the memory; its frontmatter is stripped before judging), `feedback?`, `related?` (`{ref, content}`), `extending?` |
 | `consolidate.pair` | what each of two notes states that the other does not | `a` (the older note), `b`; each `{ref, type, created, updated, content}`; a call whose `a` has a later `created` than `b` is refused (exit 2), equal dates are allowed and the prompt says neither is newer |
 | `proposal.judgment` | accept, reject or defer one pending proposal (the drain's judgment tier) | `proposal` (`{ref, source, content}`), `reason`, `liveAsset?`, `siblings`, `neighbours?` |
@@ -4115,7 +4116,7 @@ may also read the asset at `ref` with `akm show`.
 
 | Flag | Description |
 | --- | --- |
-| `--connection <name>` / `--harness <name>` | Run on this connection or harness (mutually exclusive). Without either, the judge runs on the runner akm gives it in the pipeline: the quality gate's judge for `reflect.quality` and `distill.lesson`, consolidate's for `consolidate.pair`, triage's judgment for `proposal.judgment`. |
+| `--connection <name>` / `--harness <name>` | Run on this connection or harness (mutually exclusive). Without either, the judge runs on the runner akm gives it in the pipeline: the quality gate's judge for `reflect.quality`, `memory.tags` and `distill.lesson`, consolidate's for `consolidate.pair`, triage's judgment for `proposal.judgment`. |
 | `--model <alias-or-name>` | Model to run, by alias or exact name |
 | `--list` | List the judges with their descriptions and schema versions |
 | `--schema` | Print the judge's input schema, output schema, schema version and what it may read on a harness |

@@ -1109,12 +1109,13 @@ section, an absent key, and an explicit `false` all read identically as off.
   the `exec:` and `prompt:` steps of a [version 5 task](tasks.md#task-source-v5-experimental).
 - **`experimental.memoryEnrichment`** — the replacement for the Deprecated
   `akm remember --enrich` and `--auto`. When on, `akm improve`'s reflect process
-  adds 1-5 `tags` to a memory that has none, in the same proposal as its
-  `description`, `when_to_use` and `title`; a tag list the memory already has is
-  never replaced. The proposal goes
-  through reflect's quality judge and the proposal queue like any other. In
-  proactive maintenance, memories with no tags are planned first. Reflect makes
-  the same one model call per memory as before. Off by default, with the prompt
+  asks for 1-5 `tags` for a memory that has none, in the same reply as its
+  `description`, `when_to_use` and `title`, and proposes them on their own; a tag
+  list the memory already has is never replaced. The tags proposal is judged by
+  the tags judge (`memory.tags`), not reflect's revision judge, and goes through
+  the proposal queue like any other. In proactive maintenance, memories with no
+  tags are planned first. Reflect makes the same one model call per memory as
+  before; with the quality gate on, the tags add one judge call. Off by default, with the prompt
   and the reply schema unchanged. It does not need `experimental.improveAutonomy`.
 - **`experimental.improveAutonomy`** — gates only the autonomous
   `memoryInference`, `triagePromote` (a promote with triage judgment on; a
