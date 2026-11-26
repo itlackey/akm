@@ -1,5 +1,5 @@
 /**
- * `experimental.memoryEnrichment`: reflect may also set a memory's `tags` in its usual
+ * `experimental.memoryEnrichment`: reflect also sets the `tags` of a memory that has none in its usual
  * patch. Off (the default) the prompt, the reply schema and the patch contract are exactly as before.
  */
 
@@ -34,7 +34,7 @@ const ENRICHED_NULL_PATCH = { ...NULL_PATCH, tags: null };
 const UNTAGGED = "---\ndescription: Deploy window\n---\n\nThe deploy window moved on 2026-03-04 to Thursdays.\n";
 
 /** Run reflect against `source`, answering with `patch`; returns the prompt it sent and the result. */
-async function reflect(ref: string, source: string, cfg: AkmConfig, patch: Record<string, unknown>) {
+async function reflect(ref: string, source: string, cfg: AkmConfig, ...patches: Record<string, unknown>[]) {
   const prompts: string[] = [];
   const result = await akmReflect({
     ref,
@@ -43,10 +43,11 @@ async function reflect(ref: string, source: string, cfg: AkmConfig, patch: Recor
     assetContent: source,
     chat: async (_connection, messages) => {
       prompts.push(messages.map((m) => m.content).join("\n"));
+      const patch = patches[Math.min(prompts.length - 1, patches.length - 1)];
       return JSON.stringify({ confidence: 0.9, frontmatterPatch: patch });
     },
   });
-  return { prompt: prompts[0] ?? "", result };
+  return { prompt: prompts[0] ?? "", calls: prompts.length, result };
 }
 
 describe("reflect with experimental.memoryEnrichment", () => {
@@ -65,13 +66,23 @@ describe("reflect with experimental.memoryEnrichment", () => {
     expect(fm.description).toBe("Deploy window");
   });
 
-  test("on: tags the memory already has are kept", async () => {
-    const source = "---\ndescription: Deploy window\ntags: [ops]\nobserved: 2026-01-01\n---\n\nBody.\n";
-    const { result } = await reflect("memories/has-tags", source, config(true), {
+  test("on: an untagged memory must get tags: a reply with none is sent back for repair", async () => {
+    const { calls, result } = await reflect("memories/deploy-window", UNTAGGED, config(true), ENRICHED_NULL_PATCH, {
       ...ENRICHED_NULL_PATCH,
-      description: "When the deploy window opens",
-      tags: ["other"],
+      tags: ["deploy"],
     });
+    expect(calls).toBe(2);
+    if (!result.ok) throw new Error(result.error);
+    expect(parseFrontmatter(result.proposal.payload.content).data.tags).toEqual(["deploy"]);
+  });
+
+  test("on: a memory that has tags is asked for the same three fields as before, and keeps its tags", async () => {
+    const source = "---\ndescription: Deploy window\ntags: [ops]\nobserved: 2026-01-01\n---\n\nBody.\n";
+    const { prompt, result } = await reflect("memories/has-tags", source, config(true), {
+      ...NULL_PATCH,
+      description: "When the deploy window opens",
+    });
+    expect(prompt).not.toContain("`tags`");
     if (!result.ok) throw new Error(result.error);
     const fm = parseFrontmatter(result.proposal.payload.content).data;
     expect(fm.tags).toEqual(["ops"]);

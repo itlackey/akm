@@ -8,6 +8,7 @@
  * This module holds the rest of what reflect and the proactive lane need.
  */
 
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { AssetRef } from "../../core/asset/resolve-ref";
 import { lookupAsset } from "../../core/assets/read";
 import type { AkmConfig } from "../../core/config/config";
@@ -18,9 +19,22 @@ import { parseEnrichTags } from "../remember";
 /** The patch fields of a memory under enrichment, after the three every asset has. */
 export const ENRICHED_PATCH_FIELDS = ["tags"] as const;
 
-/** Reflect also fills this asset's tags: a memory, with the setting on. */
-export function enrichesMemory(config: AkmConfig, parsedRef: AssetRef | undefined): boolean {
-  return isMemoryEnrichmentEnabled(config) && parsedRef?.type === "memory";
+/** A memory's tags are missing: none, or an empty list. */
+function untagged(tags: unknown): boolean {
+  return Array.isArray(tags) ? tags.length === 0 : !tags;
+}
+
+/** Reflect also fills this asset's tags: a memory that has none, with the setting on. */
+export function enrichesMemory(
+  config: AkmConfig,
+  parsedRef: AssetRef | undefined,
+  assetContent: string | undefined,
+): boolean {
+  return (
+    isMemoryEnrichmentEnabled(config) &&
+    parsedRef?.type === "memory" &&
+    untagged(parseFrontmatter(assetContent ?? "").data.tags)
+  );
 }
 
 /** The reply schema with `tags` added to its `frontmatterPatch`. */
@@ -37,29 +51,26 @@ export function withEnrichedPatch(schema: Record<string, unknown>): Record<strin
         required: [...patch.required, ...ENRICHED_PATCH_FIELDS],
         properties: {
           ...patch.properties,
-          tags: { type: ["array", "null"], items: { type: "string" } },
+          tags: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, maxItems: 5 },
         },
       },
     },
   };
 }
 
-/** The tags a reply's patch carries; an empty list is none. */
-export function enrichedPatchFields(fields: Record<string, unknown>): { tags?: string[] } {
+/** The tags a reply's patch carries: 1-5 of them, as the memory has none. */
+export function enrichedPatchFields(fields: Record<string, unknown>): { tags: string[] } {
   const tags = parseEnrichTags(fields.tags).map((t) => t.trim());
-  return tags.length > 0 ? { tags } : {};
-}
-
-/** Tags the memory already has are the author's: only missing ones are filled. */
-export function dropKnownEnrichment(changes: Record<string, unknown>, sourceFm: Record<string, unknown>): void {
-  if (Array.isArray(sourceFm.tags) ? sourceFm.tags.length > 0 : sourceFm.tags) delete changes.tags;
+  if (tags.length === 0 || tags.length > 5) {
+    throw new Error("direct reflect frontmatterPatch.tags must be an array of 1-5 tags: the memory has none");
+  }
+  return { tags };
 }
 
 function isUntaggedMemory(ref: ImproveEligibleRef): boolean {
   const asset = ref.type === "memory" ? lookupAsset(ref.ref) : undefined;
   if (!asset) return false;
-  const tags = asset.entry.frontmatter()?.tags;
-  return Array.isArray(tags) ? tags.length === 0 : !tags;
+  return untagged(asset.entry.frontmatter()?.tags);
 }
 
 /** The proactive lane's first-in-line test: untagged memories, with the setting on; otherwise none. */

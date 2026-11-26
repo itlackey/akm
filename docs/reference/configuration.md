@@ -1109,7 +1109,7 @@ section, an absent key, and an explicit `false` all read identically as off.
   the `exec:` and `prompt:` steps of a [version 5 task](tasks.md#task-source-v5-experimental).
 - **`experimental.memoryEnrichment`** — the replacement for the Deprecated
   `akm remember --enrich` and `--auto`. When on, `akm improve`'s reflect process
-  may add `tags` to a memory that has none, in the same proposal as its
+  adds 1-5 `tags` to a memory that has none, in the same proposal as its
   `description`, `when_to_use` and `title`; a tag list the memory already has is
   never replaced. The proposal goes
   through reflect's quality judge and the proposal queue like any other. In

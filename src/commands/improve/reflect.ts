@@ -58,7 +58,7 @@ import { CHARS_PER_TOKEN, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/ch
 import { contentHash } from "./content-hash";
 import { resolveImproveExecution } from "./execution";
 import { recordLedgerAttempt, stateKey } from "./ledger";
-import { dropKnownEnrichment, enrichesMemory, withEnrichedPatch } from "./memory-enrichment";
+import { enrichesMemory, withEnrichedPatch } from "./memory-enrichment";
 import {
   bodyHasH1,
   classifyReflectChange,
@@ -264,7 +264,6 @@ export function applyReflectPatch(
     const derived = deriveDescriptionFromAsset(sourceFm.title, body, targetRef);
     if (derived) changes.description = derived;
   }
-  dropKnownEnrichment(changes, sourceFm);
   for (const key of Object.keys(changes)) if (changes[key] === sourceFm[key]) delete changes[key];
   if (!addTitle && Object.keys(changes).length === 0) return undefined;
 
@@ -1029,7 +1028,7 @@ export async function renderReflectPromptPreview(
   const { config, runnerSpec, engineName } = resolveReflectRunner(options);
   const sources = gatherReflectPromptSources(options, stash, source.parsedRef, source.assetContent);
   const { prompt } = buildReflectPromptText({
-    options: { ...options, enrichMemory: enrichesMemory(config, source.parsedRef) },
+    options: { ...options, enrichMemory: enrichesMemory(config, source.parsedRef, source.assetContent) },
     parsedRef: source.parsedRef,
     assetContent: source.assetContent,
     sources,
@@ -1049,7 +1048,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   const notices = noticeSet();
   notices.add(resolutionNotices);
   const run: ReflectRun = {
-    options: { ...options, enrichMemory: enrichesMemory(config, parsedRef) },
+    options: { ...options, enrichMemory: enrichesMemory(config, parsedRef, assetContent) },
     stash,
     config,
     runnerSpec,
