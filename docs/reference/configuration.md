@@ -1111,8 +1111,7 @@ section, an absent key, and an explicit `false` all read identically as off.
   `akm remember --enrich` and `--auto`. When on, `akm improve`'s reflect process
   may add `tags` to a memory that has none, in the same proposal as its
   `description`, `when_to_use` and `title`; a tag list the memory already has is
-  never replaced. It does not set the `observed` date: a model never supplies a
-  date akm writes, and akm records no capture date to compute one from. The proposal goes
+  never replaced. The proposal goes
   through reflect's quality judge and the proposal queue like any other. In
   proactive maintenance, memories with no tags are planned first. Reflect makes
   the same one model call per memory as before. Off by default, with the prompt

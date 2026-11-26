@@ -4,8 +4,7 @@
 
 /**
  * `experimental.memoryEnrichment`: reflect also proposes a memory's `tags`, the replacement for `akm remember --enrich`.
- * The model's reply is read by the function `--enrich` uses (`parseEnrichTags`). The observed date is not asked of the
- * model: akm records no capture date to compute it from, so it stays unset.
+ * The model's reply is read by the function `--enrich` uses (`parseEnrichTags`).
  * This module holds the rest of what reflect and the proactive lane need.
  */
 
