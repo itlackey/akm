@@ -37,8 +37,9 @@ that the indexer records:
 
 Supply frontmatter fields explicitly with `--tag`/`--expires`/`--source`,
 or use `--auto` (derive them from the body heuristically) or `--enrich`
-(have the configured LLM propose them); both are Deprecated and removed in 0.11
-with no replacement flag. See
+(have the configured LLM propose them); both are Deprecated and removed in 0.11.
+Set [`experimental.memoryEnrichment`](configuration.md#experimental-opt-ins) instead and
+`akm improve` proposes tags for memories that lack them (it does not set `observed`; see the migration guide). See
 [`akm remember`](cli.md#remember) for the full flag list.
 
 ### Belief states

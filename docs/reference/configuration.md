@@ -1097,7 +1097,8 @@ section, an absent key, and an explicit `false` all read identically as off.
 {
   "experimental": {
     "improveAutonomy": false,
-    "exec": false
+    "exec": false,
+    "memoryEnrichment": false
   }
 }
 ```
@@ -1106,6 +1107,16 @@ section, an absent key, and an explicit `false` all read identically as off.
   command with env assets and secrets injected. Off by default: `akm exec`
   refuses and runs nothing. `akm run --env` and `--secret` are not gated, nor are
   the `exec:` and `prompt:` steps of a [version 5 task](tasks.md#task-source-v5-experimental).
+- **`experimental.memoryEnrichment`** — the replacement for the Deprecated
+  `akm remember --enrich` and `--auto`. When on, `akm improve`'s reflect process
+  may add `tags` to a memory that has none, in the same proposal as its
+  `description`, `when_to_use` and `title`; a tag list the memory already has is
+  never replaced. It does not set the `observed` date: a model never supplies a
+  date akm writes, and akm records no capture date to compute one from. The proposal goes
+  through reflect's quality judge and the proposal queue like any other. In
+  proactive maintenance, memories with no tags are planned first. Reflect makes
+  the same one model call per memory as before. Off by default, with the prompt
+  and the reply schema unchanged. It does not need `experimental.improveAutonomy`.
 - **`experimental.improveAutonomy`** — gates only the autonomous
   `memoryInference`, `triagePromote` (a promote with triage judgment on; a
   deterministic-only promote runs without it), and `memoryCleanup` lanes. `akm improve`
@@ -1168,7 +1179,7 @@ Classification of each learning control:
 | Control | Decision |
 | --- | --- |
 | `improve --require-feedback-signal` | Deprecated, no new key. Use a strategy with `processes.proactiveMaintenance.enabled: false`, selected with `--strategy`. |
-| `remember --auto`, `--enrich` | No replacement and no key. Removed in 0.11. |
+| `remember --auto`, `--enrich` | Deprecated. Replaced by `experimental.memoryEnrichment`. Removed in 0.11. |
 | Bulk proposal controls (`accept`/`reject` `--generator`, `--older-than`, `--max-diff-lines`; `proposal drain` `--max-accepts`, `--older-than`, `--judgment`; `triage.maxAcceptsPerRun`) | Unchanged. Both the filtered accept/reject and drain stay. |
 | `distill.requirePlannedRefs`, `consolidate.maxChunkSize`, `proactiveMaintenance.dueDays` | Research: kept under `experimental`. |
 | `improve.qualityGate` | Research: under `experimental`. Per-process runner overrides and `--connection`, `--harness`, `--model` stay supported. |

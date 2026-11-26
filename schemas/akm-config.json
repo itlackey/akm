@@ -1611,6 +1611,9 @@
         "exec": {
           "type": "boolean"
         },
+        "memoryEnrichment": {
+          "type": "boolean"
+        },
         "learning": {
           "type": "object",
           "properties": {
@@ -3627,6 +3630,9 @@
               "type": "boolean"
             },
             "exec": {
+              "type": "boolean"
+            },
+            "memoryEnrichment": {
               "type": "boolean"
             },
             "learning": {
