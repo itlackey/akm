@@ -156,25 +156,26 @@ test("a legacy observed_at on the parent reaches the model and survives on the c
   expect(indexed.searchHints).not.toContain(`observed:${TODAY}`);
 });
 
-test("a source with no observation date gets none: not from updated, mtime or the generation clock", async () => {
+test("a source with no observation date gives the child the date it is written: not its created, updated or mtime", async () => {
   writeParent({ description: "Lab VPN note", created: "2026-03-01", updated: "2026-03-02" });
   const { child } = await infer();
-  expect(child.data.observed).toBeUndefined();
+  // The writer sets `observed` (today) on a new memory that has none; `created` and the source's `updated` are not copied.
+  expect(child.data.observed).toBe(TODAY);
   expect(child.data.observed_at).toBeUndefined();
   expect(child.data.created).toBeUndefined();
-  // `updated` is the child's own write date, never the source's, and is not an event date.
+  // `updated` is the child's own write date, never the source's.
   expect(child.data.updated).toBe(TODAY);
-  // Nor does the index invent one from the child's mtime, which is its generation time.
   const indexed = await indexedChild();
-  expect((indexed.searchHints ?? []).filter((hint) => hint.startsWith("observed"))).toEqual([]);
+  expect((indexed.searchHints ?? []).filter((hint) => hint.startsWith("observed"))).toEqual([`observed:${TODAY}`]);
   expect(child.data.generated).toEqual({ by: `akm/${pkgVersion}`, at: NOW });
 });
 
 test("a source with no evidence or references leaves the child without invented ones", async () => {
   writeParent({ description: "Lab VPN note" });
   const { child } = await infer();
-  for (const key of ["evidence", "evidenceSources", "provenance", "verified", "observed", "observed_at"])
+  for (const key of ["evidence", "evidenceSources", "provenance", "verified", "observed_at"])
     expect(child.data[key]).toBeUndefined();
+  expect(child.data.observed).toBe(TODAY);
   // Generation alone is enough for `show` to project provenance, without evidence.
   await indexedChild();
   const shown = await akmShowUnified({ ref: "memories/tunnel.derived", skipLogging: true });

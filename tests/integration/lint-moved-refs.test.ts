@@ -16,6 +16,7 @@ import { resetConfigCache } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
 import { assets } from "../../src/workspace";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import { expectSameExceptUpdated } from "../_helpers/updated-today";
 
 let storage: IsolatedAkmStorage;
 let other: string;
@@ -124,7 +125,8 @@ describe("lint on a link to a moved asset", () => {
 
     expect(fixed.fixed.filter((issue) => issue.issue === "missing-ref")).toHaveLength(2);
     // A bare link stays bare; the fenced example is as written.
-    expect(fs.readFileSync(file, "utf8")).toBe(
+    expectSameExceptUpdated(
+      fs.readFileSync(file, "utf8"),
       linker("knowledge/archive/target", "stash//knowledge/archive/target", "stash//knowledge/target"),
     );
     const again = await akmLint({ dir: storage.stashDir, fix: true });
@@ -226,7 +228,8 @@ describe("the workspace lists and rewrites the links to moved assets", () => {
 
     const result = await assets.updateMovedLinks({ bundle: "stash" });
     expect(result).toMatchObject({ bundle: "stash", rewritten: 1 });
-    expect(fs.readFileSync(own, "utf8")).toBe(
+    expectSameExceptUpdated(
+      fs.readFileSync(own, "utf8"),
       "---\ndescription: Linker\nxrefs:\n  - knowledge/archive/target\n---\n\nBody.\n",
     );
     await assets.updateMovedLinks({ bundle: "other" });

@@ -821,8 +821,8 @@ function renderDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft):
     generated: { by: `akm/${pkgVersion}`, at: generatedAt },
   };
   // The source's own explicit observation date and evidence are carried as
-  // written. A missing one stays missing: `updated` and mtime are not dates of
-  // the facts.
+  // written. Without a date the writer sets `observed` to the day the child is
+  // written, as it does for any new memory; `updated` and mtime are not copied.
   const observed = readFrontmatterDate(parent.data, "observed");
   if (observed) fm.observed = observed;
   const evidence = asNonEmptyString(parent.data.evidence);

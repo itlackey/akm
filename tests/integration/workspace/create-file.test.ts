@@ -70,7 +70,7 @@ describe("the folder's type decides the file", () => {
 
     expect(made).toMatchObject({ bundle: "stash", file: "lessons/careful-restores.md", type: "lesson" });
     expect(read("lessons/careful-restores.md")).toMatch(
-      /^---\ndescription: ""\nwhen_to_use: ""\ntype: lesson\nupdated: \d{4}-\d{2}-\d{2}\n---\n\n# Careful Restores\n$/,
+      /^---\ndescription: ""\nwhen_to_use: ""\nupdated: \d{4}-\d{2}-\d{2}\ntype: lesson\n---\n\n# Careful Restores\n$/,
     );
     expect(made.ref).toBe("stash//lessons/careful-restores");
   });

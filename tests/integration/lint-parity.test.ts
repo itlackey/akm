@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmLint } from "../../src/commands/lint";
+import { localDateStamp } from "../../src/core/common";
 import { resetConfigCache } from "../../src/core/config/config";
 import type { EventEnvelope } from "../../src/core/events-types";
 import { runCliCapture } from "../_helpers/cli";
@@ -85,7 +86,11 @@ function tree(dir: string): Record<string, string> {
 
 function check(name: string, actual: unknown): void {
   const file = path.join(GOLDEN, `${name}.json`);
-  const text = `${JSON.stringify(actual, null, 2)}\n`;
+  // The writer stamps today's `updated` on every write, so the goldens name that date, not the calendar's.
+  const text = `${JSON.stringify(actual, null, 2)}\n`.replaceAll(
+    `updated: ${localDateStamp(new Date())}`,
+    "updated: <TODAY>",
+  );
   if (RECORD) {
     fs.mkdirSync(GOLDEN, { recursive: true });
     fs.writeFileSync(file, text);

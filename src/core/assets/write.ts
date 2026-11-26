@@ -22,7 +22,7 @@ import { makeBundleRef, parseBundleRef } from "../asset/asset-ref";
 import {
   parseFrontmatter,
   readFrontmatterDate,
-  replaceFrontmatterBlocks,
+  replaceFrontmatterLine,
   spliceFrontmatterLine,
 } from "../asset/frontmatter";
 import { parsePlacementRef } from "../asset/resolve-ref";
@@ -221,7 +221,9 @@ export function conceptIdAtFile(bundle: BundleAddress, file: string): string | u
 function stampDates(content: string | Buffer, file: string | undefined, newMemory = false): string | Buffer {
   if (typeof content !== "string" || !file?.toLowerCase().endsWith(".md")) return content;
   const today = localDateStamp(new Date());
-  const stamped = replaceFrontmatterBlocks(content, ["updated"], [`updated: ${today}`]);
+  const line = `updated: ${today}`;
+  // Replaced where it sits, so key order and comments are kept; added last when absent.
+  const stamped = replaceFrontmatterLine(content, "updated", line) ?? spliceFrontmatterLine(content, line);
   if (stamped === null) return content;
   if (!newMemory || readFrontmatterDate(parseFrontmatter(stamped).data, "observed") !== undefined) return stamped;
   return spliceFrontmatterLine(stamped, `observed: ${today}`) ?? stamped;

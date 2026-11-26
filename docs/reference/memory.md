@@ -27,7 +27,7 @@ that the indexer records:
 | --- | --- |
 | `tags` | Free-form categorization |
 | `source` | Where the memory came from (also used as the derived-memory parent backref — see below) |
-| `observed` | When the observation happened. Older memories may carry `observed_at`; it is still read, and `observed` wins when both are present. `akm` writes only `observed`. |
+| `observed` | When the observation happened. Older memories may carry `observed_at`; it is still read, and `observed` wins when both are present. `akm` writes only `observed`: a new memory without one gets the day it is written, and an update never changes it. A date is never taken from a model. |
 | `expires` | When the memory should stop being considered current |
 | `subjective` | Marks the memory as opinion/preference rather than fact |
 | `description` | Short human-readable summary |

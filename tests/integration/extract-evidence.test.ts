@@ -10,6 +10,7 @@ import { akmSearch } from "../../src/commands/read/search";
 import { akmShowUnified } from "../../src/commands/read/show";
 import { assembleAsset } from "../../src/core/asset/asset-serialize";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+import { localDateStamp } from "../../src/core/common";
 import type { AkmConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
@@ -245,7 +246,10 @@ test("repeated acceptance preserves evidence, then revert restores earlier evide
   await akmProposalAccept({ stashDir: stash, config, id: proposal.id });
   expect(fs.readFileSync(assetPath, "utf8")).toBe(published);
   await akmProposalRevert({ stashDir: stash, config, id: proposal.id });
-  expect(fs.readFileSync(assetPath, "utf8")).toBe(priorContent);
+  // The revert is a write like any other: the earlier content comes back, stamped with today's `updated`.
+  expect(fs.readFileSync(assetPath, "utf8")).toBe(
+    priorContent.replace("---\n\nPrevious", `updated: ${localDateStamp(new Date())}\n---\n\nPrevious`),
+  );
   expect((await akmShowUnified({ ref: proposal.ref })).evidence).toBe("Prior operator evidence");
   expect(getProposal(stash, proposal.id).payload.frontmatter?.evidence).toBe(evidence);
 });

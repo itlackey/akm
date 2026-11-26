@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmLint } from "../../src/commands/lint";
 import { resetArchiveCache } from "../../src/core/adapter/directory-archive";
+import { localDateStamp } from "../../src/core/common";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -117,7 +118,7 @@ describe("akm lint --fix: legacy type:slug xref migration", () => {
     expect(after).toContain("# a comment");
     expect(after).toContain("tags:");
     expect(after).toContain("  - one");
-    expect(after).toContain("updated: 2026-01-01");
+    expect(after).toContain(`updated: ${localDateStamp(new Date())}`);
     expect(after).toContain("xrefs:\n  - memories/live");
   });
 });

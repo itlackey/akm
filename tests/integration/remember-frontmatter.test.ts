@@ -93,7 +93,14 @@ describe("zero-flag remember", () => {
     // #834: the zero-flag hot path now also synthesizes `description` from
     // the body — previously this memory would index only on filename words.
     expect(parsed.data.description).toBe("Deployment needs VPN access");
-    expect(Object.keys(parsed.data).sort()).toEqual(["beliefState", "captureMode", "description", "type", "updated"]);
+    expect(Object.keys(parsed.data).sort()).toEqual([
+      "beliefState",
+      "captureMode",
+      "description",
+      "observed",
+      "type",
+      "updated",
+    ]);
     expect(parsed.content).toContain("Deployment needs VPN access");
     expect(stashDir).toBeTruthy();
   });

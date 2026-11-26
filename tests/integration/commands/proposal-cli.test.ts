@@ -12,6 +12,7 @@ import { slugForPath } from "../../../src/indexer/installations";
 import { runCliCapture } from "../../_helpers/cli";
 import { durableItemRef } from "../../_helpers/durable-ref";
 import { makeSandboxDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
+import { expectSameExceptUpdated } from "../../_helpers/updated-today";
 
 // Migrated from per-test spawnSync("bun", [cliPath, ...]) to the in-process
 // harness (tests/_helpers/cli.ts). Proposals are seeded in-process via
@@ -983,7 +984,7 @@ describe("akm proposal multi-bundle queues", () => {
       { stashDir: primary },
     );
     expect(reverted.status).toBe(0);
-    expect(fs.readFileSync(assetPath, "utf8")).toBe(original);
+    expectSameExceptUpdated(fs.readFileSync(assetPath, "utf8"), original);
 
     const rejectedProposal = seedProposal(secondary, "secondary//lessons/reject-me");
     const rejected = await runCli(
