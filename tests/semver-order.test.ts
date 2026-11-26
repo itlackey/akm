@@ -67,4 +67,20 @@ describe("semverOrder with monthly release numbers", () => {
     expectOrder("0.10.261001-beta", "0.10.26101001-alpha");
     expectOrder("0.10.271201", "0.10.26101001-alpha");
   });
+
+  test("0.11 semver releases sort above every 0.10 monthly number, in order among themselves", () => {
+    expectOrder("0.10.261133", "0.11.0-alpha.1");
+    expectOrder("0.10.261299", "0.11.0-beta.1");
+    expectOrder("0.11.0-alpha.2", "0.11.0-beta.1");
+    expectOrder("0.11.0-beta.2", "0.11.0-beta.10");
+    expectOrder("0.11.0-rc.1", "0.11.0");
+    expectOrder("0.11.9", "0.11.10");
+    expectOrder("0.11.1", "0.12.0-beta.1");
+  });
+
+  test("a next prerelease of 0.11 is the upgrade target only when it is newer than latest", () => {
+    expect(semverOrder("0.11.1", "0.11.2-beta.1")).toBe(-1);
+    expect(semverOrder("0.11.1", "0.11.1-rc.1")).toBe(1);
+    expect(semverOrder("0.10.261133", "0.11.0-beta.1")).toBe(-1);
+  });
 });

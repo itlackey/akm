@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import semver from "semver";
-import { deriveVersion, resolveVersion, STAGES, validateVersion } from "../scripts/release-version";
+import { deriveVersion, nextVersion, resolveVersion, STAGES, validateVersion } from "../scripts/release-version";
 
 const at = (iso: string) => new Date(iso);
 
@@ -142,5 +142,63 @@ describe("resolveVersion", () => {
     expect(() => resolveVersion("0.10.26101001", "")).toThrow(/retired/);
     expect(() => resolveVersion("0.10.5", "")).toThrow();
     expect(() => resolveVersion("", "")).toThrow();
+  });
+});
+
+// Plain semver from 0.11, beside the monthly numbers of 0.10 (the tests above).
+describe("semver releases (0.11+)", () => {
+  test.each([
+    "0.11.0",
+    "0.11.1",
+    "0.12.0",
+    "0.11.0-alpha.1",
+    "0.11.0-beta.2",
+    "0.12.0-rc.10",
+    "0.11.270101",
+  ])("accepts %s", (v) => {
+    expect(validateVersion(v)).toBeUndefined();
+    expect(semver.valid(v)).toBe(v);
+  });
+
+  test.each([
+    "0.11.0-beta",
+    "0.11.0-beta.0",
+    "0.11.0-beta.01",
+    "0.11.0-gamma.1",
+    "0.11.00",
+    "0.11.0+build",
+    "0.11",
+  ])("rejects %s", (v) => {
+    expect(validateVersion(v)).toBeString();
+  });
+
+  test("the next release is one patch above the line's latest stable, or its .0", () => {
+    expect(nextVersion("0.11", [])).toBe("0.11.0");
+    expect(nextVersion("0.11", ["0.11.0-beta.1", "0.11.0-rc.2"])).toBe("0.11.0");
+    expect(nextVersion("0.11", ["0.11.0", "0.11.1", "0.11.0-beta.1"])).toBe("0.11.2");
+    expect(nextVersion("0.11", ["0.11.9", "0.11.10"])).toBe("0.11.11");
+    expect(nextVersion("0.12", ["0.11.3", "0.10.261133", "0.9.31"])).toBe("0.12.0");
+  });
+
+  test("a release is published as itself, or as a stage with the next counter", () => {
+    expect(resolveVersion("0.11.0", "")).toBe("0.11.0");
+    for (const stage of STAGES) expect(resolveVersion("0.11.0", stage, [])).toBe(`0.11.0-${stage}.1`);
+    const published = ["0.11.0-beta.1", "0.11.0-beta.2", "0.11.0-alpha.5", "0.11.1-beta.7", "0.10.261133-beta.9"];
+    expect(resolveVersion("0.11.0", "beta", published)).toBe("0.11.0-beta.3");
+    expect(resolveVersion("0.11.0", "alpha", published)).toBe("0.11.0-alpha.6");
+    expect(resolveVersion("0.11.0", "rc", published)).toBe("0.11.0-rc.1");
+    expect(resolveVersion("0.11.0", "", published)).toBe("0.11.0");
+  });
+
+  test("rejects what the format forbids", () => {
+    expect(() => resolveVersion("0.11.0-beta.1", "beta")).toThrow(/already has a stage/);
+    expect(() => resolveVersion("0.11.0", "gamma")).toThrow(/stage/);
+    expect(() => resolveVersion("0.11.0-beta", "")).toThrow();
+  });
+
+  test("0.10 monthly numbers sort below every 0.11 version", () => {
+    const monthly = deriveVersion("0.10", at("2026-12-31T12:00:00Z"), []);
+    expect(semver.lt(monthly, resolveVersion("0.11.0", "alpha", []))).toBe(true);
+    expect(semver.lt(resolveVersion("0.10.261133", "rc", []), "0.11.0-alpha.1")).toBe(true);
   });
 });
