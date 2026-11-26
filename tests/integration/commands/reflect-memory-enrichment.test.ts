@@ -1,12 +1,13 @@
 /**
- * `experimental.memoryEnrichment`: reflect also sets the `tags` of a memory that has none in its usual
- * patch. Off (the default) the prompt, the reply schema and the patch contract are exactly as before.
+ * `experimental.memoryEnrichment`: reflect also asks for the `tags` of a memory that has none, and proposes them on their
+ * own, judged by the tags judge, apart from its revision. Off (the default) the prompt, the reply schema and the patch contract are exactly as before.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { akmReflect } from "../../../src/commands/improve/reflect";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../../src/core/config/config";
+import type { AkmReflectResult } from "../../../src/core/improve-types";
 import { quietQualityGateConfig } from "../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -50,20 +51,52 @@ async function reflect(ref: string, source: string, cfg: AkmConfig, ...patches: 
   return { prompt: prompts[0] ?? "", calls: prompts.length, result };
 }
 
+/** The frontmatter of the tags proposal a reflect result carries. */
+function tagsOf(result: AkmReflectResult): Record<string, unknown> {
+  if (!result.tags?.ok) throw new Error(`no tags proposal: ${JSON.stringify(result.tags ?? result)}`);
+  return parseFrontmatter(result.tags.proposal.payload.content).data;
+}
+
+/** The test config with reflect's quality gate on, judged through the same connection. */
+function gated(): AkmConfig {
+  const cfg = config(true);
+  return {
+    ...cfg,
+    improve: {
+      ...cfg.improve,
+      strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
+    },
+  } as AkmConfig;
+}
+
 describe("reflect with experimental.memoryEnrichment", () => {
-  test("on: asks for tags, never a date, and proposes them for an untagged memory", async () => {
+  test("on: asks for tags, never a date, and proposes them on their own for an untagged memory", async () => {
     const { prompt, result } = await reflect("memories/deploy-window", UNTAGGED, config(true), {
       ...ENRICHED_NULL_PATCH,
       tags: ["deploy", " schedule "],
     });
     expect(prompt).toContain("`description`, `when_to_use`, `title` and `tags`");
     expect(prompt).not.toContain("observed");
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error(result.error);
-    const fm = parseFrontmatter(result.proposal.payload.content).data;
+    // The revision changed nothing; the tags stand apart from it.
+    expect(result.ok).toBe(false);
+    const fm = tagsOf(result);
     expect(fm.tags).toEqual(["deploy", "schedule"]);
     expect(fm.observed).toBeUndefined();
     expect(fm.description).toBe("Deploy window");
+  });
+
+  test("on: a revision and the tags are two proposals, neither carrying the other's change", async () => {
+    const { result } = await reflect("memories/deploy-window", UNTAGGED, config(true), {
+      ...ENRICHED_NULL_PATCH,
+      description: "When the deploy window opens",
+      tags: ["deploy"],
+    });
+    if (!result.ok) throw new Error(result.error);
+    const revision = parseFrontmatter(result.proposal.payload.content).data;
+    expect(revision.description).toBe("When the deploy window opens");
+    expect(revision.tags).toBeUndefined();
+    expect(tagsOf(result)).toMatchObject({ description: "Deploy window", tags: ["deploy"] });
+    expect(result.tags?.ok && result.tags.proposal.id).not.toBe(result.proposal.id);
   });
 
   test("on: an untagged memory must get tags: a reply with none is sent back for repair", async () => {
@@ -72,8 +105,40 @@ describe("reflect with experimental.memoryEnrichment", () => {
       tags: ["deploy"],
     });
     expect(calls).toBe(2);
-    if (!result.ok) throw new Error(result.error);
-    expect(parseFrontmatter(result.proposal.payload.content).data.tags).toEqual(["deploy"]);
+    expect(tagsOf(result).tags).toEqual(["deploy"]);
+  });
+
+  test("on, with the quality gate: the tags have their own judge, so a refused revision keeps them", async () => {
+    const prompts: string[] = [];
+    const result = await akmReflect({
+      ref: "memories/deploy-window",
+      stashDir: storage.stashDir,
+      config: gated(),
+      assetContent: UNTAGGED,
+      chat: async (_connection, messages) => {
+        const prompt = messages.map((m) => m.content).join("\n");
+        prompts.push(prompt);
+        if (prompt.includes("Score this revision"))
+          return JSON.stringify({
+            scores: { need: 1, preservation: 2, quality: 3 },
+            reason: "rewrites a sound description",
+          });
+        if (prompt.includes("Proposed tags:"))
+          return JSON.stringify({ scores: { relevance: 5, usefulness: 4 }, reason: "the tags name the topic" });
+        return JSON.stringify({
+          confidence: 0.9,
+          frontmatterPatch: { ...ENRICHED_NULL_PATCH, description: "Deploy days", tags: ["deploy"] },
+        });
+      },
+    });
+    const tagsPrompt = prompts.find((p) => p.includes("Proposed tags:")) ?? "";
+    expect(tagsPrompt).toContain("akm asked for them");
+    expect(tagsPrompt).not.toContain("PRESERVATION");
+    expect(prompts.find((p) => p.includes("Score this revision"))).not.toContain("deploy\n");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("the revision should be refused");
+    expect(result.reason).toBe("quality_rejected");
+    expect(tagsOf(result).tags).toEqual(["deploy"]);
   });
 
   test("on: a memory that has tags is asked for the same three fields as before, and keeps its tags", async () => {

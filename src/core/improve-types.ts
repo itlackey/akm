@@ -264,6 +264,14 @@ export type ImproveActionMode =
   | "memory-inference"
   | "error";
 
+/** The action mode of a reflect result: a proposal, a verdict on its content, a skip, or a failure. */
+export function reflectMode(result: AkmReflectResult): ImproveActionMode {
+  if (result.ok) return "reflect";
+  if (result.reason === "content_policy_reject" || result.reason === "quality_rejected")
+    return "reflect-guard-rejected";
+  return result.reason === "unsupported_type" || result.reason === "no_change" ? "reflect-skipped" : "reflect-failed";
+}
+
 /** Coarse audit bucket an {@link ImproveActionMode} contributes to. */
 export type ImproveActionClass = "accepted" | "rejected" | "skipped" | "error" | "noop";
 
@@ -767,6 +775,8 @@ export interface AkmReflectFailure {
   ok: false;
   reason: AgentFailureReason;
   error: string;
+  /** As on a success: the tags proposal stands whatever became of the revision. */
+  tags?: AkmReflectResult;
   ref?: string;
   engine?: string;
   exitCode: number | null;
@@ -785,6 +795,8 @@ export interface AkmReflectSuccess {
   durationMs: number;
   /** Stable, secret-free execution-lowering diagnostics. */
   notices?: readonly Readonly<LoweringNotice>[];
+  /** The tags of a memory that has none, proposed on their own (`experimental.memoryEnrichment`). */
+  tags?: AkmReflectResult;
 }
 
 export type AkmReflectResult = AkmReflectSuccess | AkmReflectFailure;
