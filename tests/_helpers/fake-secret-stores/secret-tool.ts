@@ -28,6 +28,7 @@ function unlock(keyring: string): void {
   if (!(state.locked ?? []).includes(keyring)) return;
   if ((state.unlockDenied ?? []).includes(keyring)) fail("secret-tool: Cannot get secret of a locked object");
   state.locked = (state.locked ?? []).filter((name) => name !== keyring);
+  state.prompted = [...(state.prompted ?? []), keyring];
   saveState(state);
 }
 

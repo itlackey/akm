@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - `akm doctor` warns when a workflow run is blocked: its `workflow-files` advisory names each blocked run and the `akm workflow resume <id>` and `akm workflow abandon <id>` commands that finish or give it up before 0.11, where workflows are removed. An active run is not a warning. `evidence.blockedRuns` lists them.
+- A `secret-tool` bundle takes a `credential`, a reference to its GNOME keyring's password. akm then unlocks the keyring with it when the keyring is locked, with no prompt, so a keyring your login does not unlock can be read with nobody there. A wrong password fails once, and another Secret Service (KWallet) fails saying this works only with GNOME Keyring. See [Environment & Secrets](docs/reference/env-and-secrets.md#secrets-kept-by-a-secret-manager).
 - `experimental.memoryEnrichment` (off by default) lets `akm improve` propose tags for a memory that has none, as a proposal of their own judged by the new tags judge `memory.tags` (also runnable with `akm doctor judge memory.tags`), and plans untagged memories first. It replaces `akm remember --enrich` and `--auto`, whose deprecation notice now names it.
 
 ### Changed

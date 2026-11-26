@@ -20,7 +20,9 @@
  * object path, because `secret-tool clear` deletes every match in every keyring
  * (and KWallet's keeps the entry). A read, store or delete into a locked
  * collection unlocks it through `secret-tool`: the keyring manager shows its
- * prompt to that process, which waits for the answer.
+ * prompt to that process, which waits for the answer. A bundle with a
+ * `credential` instead has akm unlock the collection with that password first,
+ * which only GNOME Keyring allows (`gnome-keyring-unlock.ts`), and never prompts.
  */
 
 import { ConfigError, UsageError } from "../../errors";
@@ -34,6 +36,7 @@ import {
   type SecretItem,
   SecretManagerAdapterBase,
 } from "../secret-manager-adapter";
+import { unlockWithPassword } from "./gnome-keyring-unlock";
 
 const ID = "secret-tool";
 const SECRET_TOOL: Client = { command: "secret-tool", install: "the libsecret-tools package" };
@@ -56,6 +59,8 @@ interface KeyringItem extends SecretItem {
   attributes: Record<string, string>;
   /** The bundle's `location`, for messages. */
   keyring: string;
+  /** The password that unlocks its collection, when the bundle has a `credential`. */
+  credential?: () => string;
 }
 
 /** One `busctl --json=short` reply: a method's results, or a property's value. */
@@ -146,10 +151,20 @@ function runSecretTool(
   return runClient(SECRET_TOOL, args, input, locked ? UNLOCK_WAIT_MS : undefined);
 }
 
+/**
+ * Whether the collection is still locked when `secret-tool` is run: a locked collection of a bundle with a `credential`
+ * is unlocked with it first, so `secret-tool` shows no prompt; without one, `secret-tool` prompts.
+ */
+function unlock(keyring: string, collection: string, locked: boolean, credential?: () => string): boolean {
+  if (!locked || !credential) return locked;
+  unlockWithPassword(keyring, collection, credential());
+  return false;
+}
+
 /** The collection an item's object path belongs to. */
 const collectionOf = (item: Pick<KeyringItem, "path">): string => item.path.slice(0, item.path.lastIndexOf("/"));
 
-function itemAt(path: string, reading: string, keyring: string): KeyringItem {
+function itemAt(path: string, reading: string, keyring: string, credential?: () => string): KeyringItem {
   const [properties] = bus<[{ Label: BusReply<string>; Attributes: BusReply<Record<string, string>> }]>(reading, [
     "call",
     SERVICE,
@@ -159,15 +174,22 @@ function itemAt(path: string, reading: string, keyring: string): KeyringItem {
     "s",
     "org.freedesktop.Secret.Item",
   ]);
-  return keyringItem(keyring, path, properties.Label.data, properties.Attributes.data);
+  return keyringItem(keyring, path, properties.Label.data, properties.Attributes.data, credential);
 }
 
-function keyringItem(keyring: string, path: string, name: string, attributes: Record<string, string>): KeyringItem {
+function keyringItem(
+  keyring: string,
+  path: string,
+  name: string,
+  attributes: Record<string, string>,
+  credential?: () => string,
+): KeyringItem {
   const item: KeyringItem = {
     path,
     attributes,
     name,
     keyring,
+    ...(credential ? { credential } : {}),
     id: path,
     locator: { item: path, attributes } satisfies KeyringLocator,
     read: () => lookup(item),
@@ -226,7 +248,7 @@ function requireOnlyMatch(item: KeyringItem): boolean {
 }
 
 function lookup(item: KeyringItem): string {
-  const locked = requireOnlyMatch(item);
+  const locked = unlock(item.keyring, collectionOf(item), requireOnlyMatch(item), item.credential);
   const result = runSecretTool(item.keyring, locked, `read "${item.name}"`, ["lookup", ...attributePairs(item)]);
   if (result.status === 1 && result.stderr.trim() === "") throw movedError(item);
   if (result.status !== 0) throw clientFailure(SECRET_TOOL, `read "${item.name}"`, result);
@@ -234,8 +256,13 @@ function lookup(item: KeyringItem): string {
 }
 
 /** The entry `name` of `keyring` as the index recorded it (`locator`, from the facade). */
-function recorded(keyring: string, name: string, locator: KeyringLocator | undefined): KeyringItem | undefined {
-  return locator ? keyringItem(keyring, locator.item, name, locator.attributes) : undefined;
+function recorded(
+  keyring: string,
+  name: string,
+  locator: KeyringLocator | undefined,
+  credential?: () => string,
+): KeyringItem | undefined {
+  return locator ? keyringItem(keyring, locator.item, name, locator.attributes, credential) : undefined;
 }
 
 export class SecretToolAdapter extends SecretManagerAdapterBase {
@@ -243,6 +270,7 @@ export class SecretToolAdapter extends SecretManagerAdapterBase {
   // 0.10.1: the index row records the entry's `locator`, so `akm index` rewrites rows that recorded it under another name.
   readonly version = "0.10.1";
   protected readonly what = "a keyring";
+  protected override readonly takesCredential = true;
 
   /** Forget the collections and entries read so far: the next request reads them again. */
   override clearCache(): void {
@@ -258,28 +286,39 @@ export class SecretToolAdapter extends SecretManagerAdapterBase {
   protected listSecrets(keyring: string): SecretItem[] {
     const collection = requireCollection(keyring);
     const reading = `read keyring "${keyring}"`;
-    const paths = bus<string[]>(reading, ["get-property", SERVICE, collection, COLLECTION, "Items"]);
+    const credential = this.credentialOf(keyring);
+    const items = () => bus<string[]>(reading, ["get-property", SERVICE, collection, COLLECTION, "Items"]);
+    let paths = items();
     // A closed KWallet lists no entries while it is locked, which is not an empty wallet.
     if (paths.length === 0 && bus<boolean>(reading, ["get-property", SERVICE, collection, COLLECTION, "Locked"])) {
-      throw new ConfigError(
-        `Keyring "${keyring}" is locked and lists no entries until it is unlocked: unlock it in your keyring manager (KWalletManager, Seahorse), then run akm index again.`,
-        "BUNDLE_UNREACHABLE",
-      );
+      if (!credential) {
+        throw new ConfigError(
+          `Keyring "${keyring}" is locked and lists no entries until it is unlocked: unlock it in your keyring manager (KWalletManager, Seahorse), then run akm index again.`,
+          "BUNDLE_UNREACHABLE",
+        );
+      }
+      unlock(keyring, collection, true, credential);
+      paths = items();
     }
-    return paths.map((path) => itemAt(path, reading, keyring));
+    return paths.map((path) => itemAt(path, reading, keyring, credential));
   }
 
   protected override findSecret(keyring: string, name: string, locator?: unknown): SecretItem | undefined {
-    return recorded(keyring, name, locator as KeyringLocator | undefined);
+    return recorded(keyring, name, locator as KeyringLocator | undefined, this.credentialOf(keyring));
   }
 
   /** Store `value` as the secret `name`: into its existing entry, or a new one akm can find again. */
   protected storeSecret(keyring: string, name: string, value: Buffer, existing?: SecretItem): SecretItem | undefined {
     const entry = existing as KeyringItem | undefined;
     const collection = entry ? collectionOf(entry) : requireCollection(keyring);
-    const locked = entry
-      ? requireOnlyMatch(entry)
-      : bus<boolean>(`store "${name}"`, ["get-property", SERVICE, collection, COLLECTION, "Locked"]);
+    const locked = unlock(
+      keyring,
+      collection,
+      entry
+        ? requireOnlyMatch(entry)
+        : bus<boolean>(`store "${name}"`, ["get-property", SERVICE, collection, COLLECTION, "Locked"]),
+      this.credentialOf(keyring),
+    );
     const attributes = entry?.attributes ?? { [CREATED_ATTRIBUTE]: `${keyring}/${name}` };
     const pairs = attributePairs({ name, attributes });
     const action = `store "${name}"`;
@@ -303,7 +342,7 @@ export class SecretToolAdapter extends SecretManagerAdapterBase {
       ...pairs,
     ]);
     const path = [...unlocked, ...lockedPaths].find((found) => found.startsWith(`${collection}/`));
-    return path ? itemAt(path, action, keyring) : undefined;
+    return path ? itemAt(path, action, keyring, this.credentialOf(keyring)) : undefined;
   }
 
   protected deleteSecret(keyring: string, item: SecretItem): void {

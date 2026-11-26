@@ -948,6 +948,7 @@ full bundle model (`path`, `git`, `website`, `npm`, `location`, `writable`,
 | `root` | The content root inside the bundle. Only with `path` or `git`. |
 | `writable` | The one writability key. Default: `true` for a local `path` and for `location`, `false` for the rest. |
 | `location` | Where the adapter finds a bundle that is not a directory: a keyring's or a Key Vault's name. It needs `adapter`. |
+| `credential` | A reference to a secret (`$VAR`, `${VAR}` or `${secrets/<name>}`), never a literal. On a `git` bundle, the HTTPS bearer credential. On a `secret-tool` bundle, the password akm unlocks the locked GNOME keyring with (see [Environment & Secrets](env-and-secrets.md#secrets-kept-by-a-secret-manager)). No other bundle takes one. |
 
 `location` names a keyring (`secret-tool`) or an Azure Key Vault
 (`azure-key-vault`); see

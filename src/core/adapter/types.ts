@@ -122,6 +122,8 @@ export interface Bundle {
    * a vault's name): the bundle's configured `location`. It has no `root`.
    */
   location?: string;
+  /** The password that unlocks a store bundle, read only when its adapter must unlock it: a `secret-tool` bundle's `credential`. */
+  credential?: () => string;
 }
 
 /** The directory a directory bundle is kept in. A directory adapter is only handed a bundle that has one. */

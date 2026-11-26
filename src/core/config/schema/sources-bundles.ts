@@ -126,7 +126,10 @@ export const BundleConfigEntrySchema = z
     adapter: nonEmptyString.optional(),
     /** The content root inside a `path` or `git` bundle, relative to it. */
     root: z.string().min(1).optional(),
-    /** Symbolic HTTPS bearer credential; resolved only at the Git subprocess boundary. */
+    /**
+     * A reference to a secret: a `git` bundle's HTTPS bearer credential, resolved only at the Git subprocess boundary,
+     * or the password a location bundle's adapter unlocks its store with, when it takes one (`secret-tool`).
+     */
     credential: z.string().min(1).optional(),
     writable: z.boolean().optional(),
     // Opt a bundle out of indexing, search, refresh, and write targeting
@@ -169,18 +172,20 @@ export const BundleConfigEntrySchema = z
         message: "writable: true is only supported on path, git and location bundle sources",
       });
     }
-    if (entry.credential !== undefined && entry.git === undefined) {
+    // A location bundle's adapter refuses a credential it does not take: only it knows.
+    // asset-io: config the config entry, validated
+    if (entry.credential !== undefined && entry.git === undefined && entry.location === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["credential"],
-        message: "credential is only supported on git bundle sources",
+        message: "credential is only supported on git and location bundle sources",
       });
     }
     if (entry.credential !== undefined && !isApiKeyReference(entry.credential)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["credential"],
-        message: "git credential must be a $VAR, ${VAR} or ${secrets/<name>} reference",
+        message: `${entry.git !== undefined ? "git" : "a bundle's"} credential must be a $VAR, \${VAR} or \${secrets/<name>} reference`,
       });
     }
     // asset-io: config the config entry, validated

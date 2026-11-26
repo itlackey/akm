@@ -26,6 +26,12 @@ export interface FakeStoreState {
   locked?: string[];
   /** Keyrings whose unlock prompt the user dismisses: they stay locked. */
   unlockDenied?: string[];
+  /** Keyrings `secret-tool` unlocked in-process, as its prompt does: the person answered one, in order. */
+  prompted?: string[];
+  /** The password of a keyring, by name, that GNOME Keyring's `UnlockWithMasterPassword` takes (`secret-bus.ts`). */
+  passwords?: Record<string, string>;
+  /** The Secret Service is not GNOME Keyring: it has no `UnlockWithMasterPassword`, as KWallet's has not. */
+  noPasswordUnlock?: boolean;
   /** Locked keyrings whose `Items` read empty, as a closed KWallet's does. */
   hidesLocked?: string[];
   /** Keyrings whose `Item.Delete` answers "/" and keeps the entry, as KWallet's does. */
