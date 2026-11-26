@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- From 0.11, releases use plain semantic versions (`0.11.0-beta.1`, `0.11.0`, `0.11.1`, `0.12.0`). 0.10 releases keep their monthly numbers (`0.10.YYMMNN`).
 - `akm migrate apply` of a version 4 task writes `cwd: .` when the task names no working directory, so its steps still run in the bundle root, and every conversion lists a note that steps no longer inherit akm's environment (pass variables on with `inherit:`).
 
 ### Fixed

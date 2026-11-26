@@ -80,7 +80,7 @@ and named once, round-trips through ordinary writes, and is dropped by
 ### CLI usage store (since 0.10.261119)
 
 The CLI usage tables live in `metrics.db` in `getDataDir()`, the file 0.11 also
-uses for its rollup history (`src/core/metrics-db.ts` on `release/0.11.0`). They
+uses for its rollup history (`src/core/metrics-db.ts` at the tag `archive/release-0.11.0`). They
 are additive local diagnostic state, independent of learning state, and share
 nothing else with 0.11's tables:
 
@@ -96,7 +96,7 @@ nothing else with 0.11's tables:
   "inconsistent"). 0.11 opening a file 0.10 wrote finds no ledger, runs its
   baseline migration beside the usage tables, and the usage rows are kept.
   **Known gap, to be fixed in 0.11:** until 0.11's first fold migrates the
-  file, a `release/0.11.0` build's `akm health` fails its `metrics-db` check
+  file, a build of the archived 0.11 branch (`archive/release-0.11.0`) fails `akm health`'s `metrics-db` check
   ("no such table: folded_day", exit 1) and `withMetricsHistory` warns on
   stderr, because the file has no `schema_migrations` ledger and no
   `folded_day`. 0.10 cannot pre-create `folded_day`: that would break 0.11's
@@ -142,4 +142,4 @@ candidate's newest task run (same `startedAt`) and `show` with no "Skipping
 unparseable" warning, and leaves the `cli_usage_*` row count unchanged. Not
 tested: that the previous release reads the `agent` metadata or the usage
 tables (it has no command that shows them), and a real
-0.11 build opening this file: by hand, `release/0.11.0` fails its health check on it until the 0.11 fix above lands, and that check belongs to 0.11's rehearsal.
+0.11 build opening this file: by hand, a build of `archive/release-0.11.0` fails its health check on it until the 0.11 fix above lands, and that check belongs to 0.11's rehearsal.
