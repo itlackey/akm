@@ -10,8 +10,9 @@
    version of its line ([Versions](#versions)). Pull requests name it as their
    base (`gh pr create --base release/<version>`); `main` stays the default
    branch, and a pull request into `main` from anything but a release branch
-   cannot merge. The 0.11 branch, `release/0.11.0`, is frozen and is not
-   merged with `main`: 0.11 restarts from `main` and reapplies its removals.
+   cannot merge. The first 0.11 branch was never merged with `main` and was
+   deleted; its commits are kept as the tag `archive/release-0.11.0`. 0.11
+   restarts from `main` and reapplies its removals.
 3. All work lands on the release branch by pull request. A feature that needs
    several pull requests lands in slices that are each shippable but inert
    until the last one (internals first, the command or flag wired up last, or
@@ -231,8 +232,9 @@ committed. A version that never published (an abandoned branch) stays unused.
 A stable of an older line published after a newer line's does not take GitHub's
 Latest release.
 
-The first 0.11 branch is `release/0.11.0`, the name of the frozen 0.11 branch:
-see the frozen-branch note in [Branch model](#branch-model) before starting it.
+`bun run release:start 0.11` cuts `release/0.11.0`. The earlier 0.11 branch of
+that name is archived as the tag `archive/release-0.11.0`
+([Branch model](#branch-model)).
 
 ## Repository settings
 
