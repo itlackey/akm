@@ -316,6 +316,11 @@ export interface EnrichmentResult {
   notices?: readonly Readonly<LoweringNotice>[];
 }
 
+/** The model's tags: the non-empty strings of an array; anything else is no tags. */
+export function parseEnrichTags(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((t): t is string => typeof t === "string" && t.trim().length > 0) : [];
+}
+
 /** Timeout for the `--enrich` LLM call, in place of the connection's own. */
 const LLM_ENRICH_TIMEOUT_MS = 10_000;
 
@@ -370,9 +375,7 @@ Return ONLY the JSON object, no prose, no markdown fences.`;
       return { tags: [], ...notices.fields() };
     }
 
-    const tags = Array.isArray(parsed.tags)
-      ? parsed.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0)
-      : [];
+    const tags = parseEnrichTags(parsed.tags);
 
     const description =
       typeof parsed.description === "string" && parsed.description.trim() ? parsed.description.trim() : undefined;

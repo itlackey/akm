@@ -160,7 +160,7 @@ test("extract: --sessions matches --type; --type prints a notice naming --sessio
   expect(both.stderr + both.stdout).toContain("--sessions and --type");
 });
 
-test("improve --require-feedback-signal names the strategy setting; remember --auto, --enrich and --show-similar say there is no replacement", () => {
+test("improve --require-feedback-signal names the strategy setting; remember --auto and --enrich name memoryEnrichment; --show-similar says there is no replacement", () => {
   const messages: string[] = [];
   const argsFor = (userArgs: string[]) => {
     _resetWarnOnceForTests();
@@ -176,12 +176,15 @@ test("improve --require-feedback-signal names the strategy setting; remember --a
       "processes.proactiveMaintenance.enabled: false",
     );
     expect(argsFor(["improve"])).toBe("");
-    for (const flag of ["--auto", "--enrich", "--show-similar"]) {
+    for (const flag of ["--auto", "--enrich"]) {
       const text = argsFor(["remember", "note", flag]);
       expect(text).toContain(flag);
       expect(text).toContain("removed in 0.11");
-      expect(text).toContain("no replacement flag");
+      expect(text).toContain("experimental.memoryEnrichment");
     }
+    const similar = argsFor(["remember", "note", "--show-similar"]);
+    expect(similar).toContain("removed in 0.11");
+    expect(similar).toContain("no replacement flag");
     expect(argsFor(["remember", "note"])).toBe("");
   } finally {
     _setWarnSinkForTests(undefined);

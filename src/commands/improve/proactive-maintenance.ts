@@ -13,7 +13,9 @@
  * each comes up at most once per `dueDays`; reflect's `limit` bounds the run.
  */
 
+import type { AkmConfig } from "../../core/config/config";
 import type { ImproveEligibleRef } from "../../core/improve-types";
+import { untaggedMemoriesFirst } from "./memory-enrichment";
 import { computeSalience } from "./salience";
 
 const DAY_MS = 86_400_000;
@@ -38,6 +40,8 @@ export interface ProactiveSelectorParams {
   /** Most recent retrieval (ms) per ref; absent means long ago. */
   lastUseMs?: Map<string, number>;
   sizeBytesOf?: (ref: ImproveEligibleRef) => number | undefined;
+  /** With `experimental.memoryEnrichment` on, untagged memories are planned before every other due ref. */
+  config?: AkmConfig;
   dueDays?: number;
   maxPerRun?: number;
   now?: number;
@@ -115,7 +119,10 @@ export function selectProactiveMaintenanceRefs(params: ProactiveSelectorParams):
   });
 
   const dueScored = scored.filter((s) => s.due);
+  const isFirst = params.config && untaggedMemoriesFirst(params.config);
+  const first = (s: ProactiveScoredRef): number => (isFirst?.(s.ref) ? 1 : 0);
   const ranked = dueScored.slice().sort((a, b) => {
+    if (first(a) !== first(b)) return first(b) - first(a);
     if (b.priority !== a.priority) return b.priority - a.priority;
     if (b.staleDays !== a.staleDays) return b.staleDays - a.staleDays;
     return a.ref.ref < b.ref.ref ? -1 : a.ref.ref > b.ref.ref ? 1 : 0;
