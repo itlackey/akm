@@ -32,7 +32,6 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { AkmReflectFailure, AkmReflectResult } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
-import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import type { Parsed } from "../../core/structured";
 import { warnOnce } from "../../core/warn";
@@ -59,6 +58,7 @@ import { CHARS_PER_TOKEN, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/ch
 import { contentHash } from "./content-hash";
 import { resolveImproveExecution } from "./execution";
 import { recordLedgerAttempt, stateKey } from "./ledger";
+import { dropKnownEnrichment, enrichesMemory, withEnrichedPatch } from "./memory-enrichment";
 import {
   bodyHasH1,
   classifyReflectChange,
@@ -66,6 +66,12 @@ import {
   type ReflectDefectFilter,
   splitFrontmatter,
 } from "./reflect-noise";
+import {
+  parseFramedReflectOutput,
+  parseSchemaReflectOutput,
+  type ReflectPatch,
+  type ReflectPayload,
+} from "./reflect-output";
 import {
   callStageOnce,
   errMessage,
@@ -112,6 +118,8 @@ export interface AkmReflectOptions {
   eligibilitySource?: EligibilitySource;
   /** The asset's durable `item_ref`; direct invocations key by the conceptId. */
   itemRef?: string;
+  /** Set by reflect itself: this memory is also asked for `tags` (`experimental.memoryEnrichment`). */
+  enrichMemory?: boolean;
 }
 
 const MAX_FEEDBACK_LINES = 10;
@@ -209,14 +217,6 @@ function firstProseSentence(body: string): string {
   return "";
 }
 
-/** What a reflect reply changes; a field it leaves out stays as the source has it. */
-interface ReflectPatch {
-  description?: string;
-  when_to_use?: string;
-  /** The text of a level-1 heading, added only to a body that has none. */
-  title?: string;
-}
-
 /** The body with `# title` and one blank line inserted at its first non-blank line; the rest is untouched. */
 function withH1(body: string, title: string): string {
   const eol = body.match(/\r?\n/)?.[0] ?? "\n";
@@ -264,6 +264,7 @@ export function applyReflectPatch(
     const derived = deriveDescriptionFromAsset(sourceFm.title, body, targetRef);
     if (derived) changes.description = derived;
   }
+  dropKnownEnrichment(changes, sourceFm);
   for (const key of Object.keys(changes)) if (changes[key] === sourceFm[key]) delete changes[key];
   if (!addTitle && Object.keys(changes).length === 0) return undefined;
 
@@ -365,6 +366,8 @@ export interface RunReflectIterationOptions {
   chat?: typeof chatCompletion;
   maxTokens?: number;
   outputMode: ReflectOutputMode;
+  /** The reply also carries a memory's `tags`. */
+  enrichMemory?: boolean;
   /** Known target identity; target-scoped output never echoes it. */
   targetRef?: string;
   onNotices?: (notices: readonly Notice[]) => void;
@@ -390,90 +393,6 @@ interface ReflectFailureFields {
 export type ReflectIteration =
   | { ok: true; payload: ReflectPayload; durationMs: number; telemetry: ReflectTelemetry }
   | ({ ok: false; durationMs: number; telemetry: ReflectTelemetry } & ReflectFailureFields);
-
-function parseReflectConfidence(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
-    throw new Error('direct reflect response missing required number field "confidence" in [0, 1]');
-  }
-  return value;
-}
-
-const REFLECT_PATCH_FIELDS = ["description", "when_to_use", "title"] as const;
-
-/** A parsed reflect reply: the asset it names, its confidence, and the fields it changes. */
-export interface ReflectPayload {
-  ref: string;
-  confidence: number;
-  patch: ReflectPatch;
-}
-
-function parseReflectFrontmatterPatch(value: unknown): ReflectPatch {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error('direct reflect response missing required object field "frontmatterPatch"');
-  }
-  const fields = value as Record<string, unknown>;
-  if (Object.keys(fields).length !== REFLECT_PATCH_FIELDS.length || REFLECT_PATCH_FIELDS.some((f) => !(f in fields))) {
-    throw new Error(`direct reflect frontmatterPatch fields must be exactly: ${REFLECT_PATCH_FIELDS.join(", ")}`);
-  }
-  const patch: ReflectPatch = {};
-  for (const field of REFLECT_PATCH_FIELDS) {
-    const fieldValue = fields[field];
-    if (fieldValue === null || (typeof fieldValue === "string" && fieldValue.trim().toLowerCase() === "null")) continue;
-    if (typeof fieldValue !== "string" || !fieldValue.trim() || /[\r\n]/.test(fieldValue)) {
-      throw new Error(`direct reflect frontmatterPatch.${field} must be a non-empty single-line string or null`);
-    }
-    patch[field] = fieldValue.trim();
-  }
-  return patch;
-}
-
-function parseSchemaReflectOutput(raw: string, targetRef: string | undefined): ReflectPayload {
-  const parsed = parseEmbeddedJsonResponse<Record<string, unknown>>(raw);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("direct reflect response was not valid JSON");
-  }
-  const expectedKeys = targetRef ? ["confidence", "frontmatterPatch"] : ["confidence", "frontmatterPatch", "ref"];
-  const actualKeys = Object.keys(parsed).sort();
-  if (actualKeys.length !== expectedKeys.length || actualKeys.some((key, index) => key !== expectedKeys[index])) {
-    throw new Error(`direct reflect response fields must be exactly: ${expectedKeys.join(", ")}`);
-  }
-  const ref = targetRef ?? (typeof parsed.ref === "string" ? parsed.ref.trim() : "");
-  if (!ref) throw new Error('direct reflect response missing required string field "ref"');
-  return {
-    ref,
-    confidence: parseReflectConfidence(parsed.confidence),
-    patch: parseReflectFrontmatterPatch(parsed.frontmatterPatch),
-  };
-}
-
-function parseFramedReflectOutput(raw: string, targetRef: string | undefined): ReflectPayload {
-  const headerLines = raw.replaceAll("\r\n", "\n").trim().split("\n").filter(Boolean);
-  const header = (prefix: string) => headerLines.find((line) => line.startsWith(prefix));
-  const confidenceLine = header("AKM_REFLECT_CONFIDENCE:");
-  const refLine = header("AKM_REFLECT_REF:");
-  const patchLine = header("AKM_REFLECT_FRONTMATTER_PATCH:");
-  const invalidRefLine = targetRef ? refLine !== undefined : refLine === undefined;
-  if (headerLines.length !== (targetRef ? 2 : 3) || !confidenceLine || !patchLine || invalidRefLine) {
-    throw new Error("direct reflect response contained invalid frame metadata");
-  }
-  const confidenceText = confidenceLine.slice("AKM_REFLECT_CONFIDENCE:".length).trim();
-  if (!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(confidenceText)) {
-    throw new Error("direct reflect frame confidence must be a decimal number in [0, 1]");
-  }
-  const ref = targetRef ?? refLine?.slice("AKM_REFLECT_REF:".length).trim() ?? "";
-  if (!ref) throw new Error("direct reflect response contained an empty AKM_REFLECT_REF value");
-  let parsedPatch: unknown;
-  try {
-    parsedPatch = JSON.parse(patchLine.slice("AKM_REFLECT_FRONTMATTER_PATCH:".length).trim());
-  } catch {
-    throw new Error("direct reflect response contained invalid frontmatter patch JSON");
-  }
-  return {
-    ref,
-    confidence: parseReflectConfidence(Number(confidenceText)),
-    patch: parseReflectFrontmatterPatch(parsedPatch),
-  };
-}
 
 /** A failure only a message describes, as a process that printed it and exited would have: what a connection reports. */
 function messageFailure(error: string, reason: AgentFailureReason, stdout = "", exitCode = 1): ReflectFailureFields {
@@ -521,14 +440,15 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
   const configuredTimeout = Object.hasOwn(opts, "timeoutMs") ? (opts.timeoutMs ?? null) : opts.runner.timeoutMs;
   const deadline = typeof configuredTimeout === "number" ? start + configuredTimeout : undefined;
   const messages: ChatMessage[] = [{ role: "user", content: opts.prompt ?? "" }];
+  const enrichMemory = opts.enrichMemory === true;
   const parse = (raw: string): Parsed<ReflectPayload> => {
     try {
       return {
         ok: true,
         value:
           opts.outputMode === "json_schema"
-            ? parseSchemaReflectOutput(raw, opts.targetRef)
-            : parseFramedReflectOutput(raw, opts.targetRef),
+            ? parseSchemaReflectOutput(raw, opts.targetRef, enrichMemory)
+            : parseFramedReflectOutput(raw, opts.targetRef, enrichMemory),
       };
     } catch (err) {
       return { ok: false, errors: [errMessage(err)] };
@@ -575,7 +495,7 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
           return { ok: false, reason: "timeout", error: "Reflect request timed out before output repair" };
         }
         repairAttempts = 1;
-        const repair = `${buildReflectOutputRepairPrompt(opts.outputMode, opts.targetRef !== undefined)}\n\nWhat was wrong with it: ${correction.text}`;
+        const repair = `${buildReflectOutputRepairPrompt(opts.outputMode, opts.targetRef !== undefined, enrichMemory)}\n\nWhat was wrong with it: ${correction.text}`;
         return call(
           [...messages, { role: "assistant", content: correction.reply }, { role: "user", content: repair }],
           remaining,
@@ -886,6 +806,7 @@ function buildReflectPromptText(args: {
     ...(standardsContext.trim() ? { standardsContext } : {}),
     ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
     ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
+    ...(options.enrichMemory ? { enrichMemory: true } : {}),
     outputMode,
   };
   const contentBudgetChars = computeReflectContentBudgetChars(input, runnerSpec);
@@ -910,15 +831,17 @@ async function dispatchReflect(args: {
   const { run, parsedRef, assetContent, sources, agentEnv } = args;
   const { options, runnerSpec } = run;
   const { prompt, outputMode } = buildReflectPromptText({ options, parsedRef, assetContent, sources, runnerSpec });
+  const schema = options.ref ? REFLECT_JSON_SCHEMA : REFLECT_UNSCOPED_JSON_SCHEMA;
   return runReflectIteration({
     prompt,
     runner: runnerSpec,
     ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
     ...(outputMode === "json_schema"
-      ? { responseSchema: options.ref ? REFLECT_JSON_SCHEMA : REFLECT_UNSCOPED_JSON_SCHEMA }
+      ? { responseSchema: options.enrichMemory ? withEnrichedPatch(schema) : schema }
       : {}),
     outputMode,
+    ...(options.enrichMemory ? { enrichMemory: true } : {}),
     ...(options.ref ? { targetRef: options.ref } : {}),
     ...(options.chat ? { chat: options.chat } : {}),
     // Only a harness (or the internal runtime) runs a child process, which has an environment.
@@ -1103,10 +1026,10 @@ export async function renderReflectPromptPreview(
       "INVALID_FLAG_VALUE",
     );
   }
-  const { runnerSpec, engineName } = resolveReflectRunner(options);
+  const { config, runnerSpec, engineName } = resolveReflectRunner(options);
   const sources = gatherReflectPromptSources(options, stash, source.parsedRef, source.assetContent);
   const { prompt } = buildReflectPromptText({
-    options,
+    options: { ...options, enrichMemory: enrichesMemory(config, source.parsedRef) },
     parsedRef: source.parsedRef,
     assetContent: source.assetContent,
     sources,
@@ -1125,7 +1048,16 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   const { config, activeStrategy, runnerSpec, engineName, notices: resolutionNotices } = resolveReflectRunner(options);
   const notices = noticeSet();
   notices.add(resolutionNotices);
-  const run: ReflectRun = { options, stash, config, runnerSpec, engineName, notices, emitInvoked, emitFailed };
+  const run: ReflectRun = {
+    options: { ...options, enrichMemory: enrichesMemory(config, parsedRef) },
+    stash,
+    config,
+    runnerSpec,
+    engineName,
+    notices,
+    emitInvoked,
+    emitFailed,
+  };
 
   // Judge selection is frozen before dispatch so a missing judge credential fails first.
   const judgeWanted = activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? true;

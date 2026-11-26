@@ -36,6 +36,9 @@ interface Deprecation {
 /** Workflows are removed in 0.11 with nothing to switch to in 0.10 (akm#1096). */
 const WORKFLOWS_NOTE = "workflows go in 0.11, and tasks take over their ordered steps";
 
+/** What replaces `remember --auto` and `--enrich`. */
+const MEMORY_ENRICHMENT_USE = "`experimental.memoryEnrichment`, which has `akm improve` propose tags for memories";
+
 /** A flag that is accepted so old scripts keep running, and does nothing. */
 const NO_EFFECT = "the flag has no effect and can be dropped";
 
@@ -117,8 +120,8 @@ const DEPRECATIONS: readonly Deprecation[] = [
     use: "a strategy with `processes.proactiveMaintenance.enabled: false`, selected with `--strategy`",
   },
   { path: ["proposal", "extract"], flag: "--type", use: "`--sessions`" },
-  { path: ["remember"], flag: "--auto" },
-  { path: ["remember"], flag: "--enrich" },
+  { path: ["remember"], flag: "--auto", use: MEMORY_ENRICHMENT_USE },
+  { path: ["remember"], flag: "--enrich", use: MEMORY_ENRICHMENT_USE },
   { path: ["remember"], flag: "--show-similar" },
   { path: ["upgrade"], flag: "--next", use: "`--channel`" },
   { path: ["proposal", "reject"], flag: "--yes", note: "reject no longer asks for confirmation" },
