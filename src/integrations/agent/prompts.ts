@@ -209,9 +209,9 @@ export interface ReflectPromptInput {
 
 export type ReflectOutputMode = "json_schema" | "framed_markdown";
 
-/** What the contract adds when reflect may also fill a memory's `tags`. */
+/** What the contract adds when reflect also fills the `tags` of a memory that has none. */
 const ENRICH_RULE =
-  " `tags` is an array of 1-5 short lowercase keyword tags; set it only when the memory has no tags, otherwise `null`.";
+  " `tags` is an array of 1-5 short lowercase keyword tags for this memory, which has none; never `null`.";
 
 export function reflectResponseContract(mode: ReflectOutputMode, targetScoped: boolean, enrichMemory = false): string {
   const fill = (template: string): string =>
@@ -223,7 +223,7 @@ export function reflectResponseContract(mode: ReflectOutputMode, targetScoped: b
       .replace(
         "{{PATCH_EXAMPLE}}",
         enrichMemory
-          ? '{"description": null, "when_to_use": null, "title": null, "tags": null}'
+          ? '{"description": null, "when_to_use": null, "title": null, "tags": ["keyword"]}'
           : '{"description": null, "when_to_use": null, "title": null}',
       )
       .replace("{{ENRICH_RULE}}", enrichMemory ? ENRICH_RULE : "");
@@ -334,7 +334,7 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     sections.push(`Target ref: ${input.ref}`);
     sections.push(`Asset-type guidance: ${hintForType(input.type)}`);
     if (input.enrichMemory) {
-      sections.push("This memory may also need `tags`, which the response contract describes.");
+      sections.push("This memory has no `tags`: give it 1-5, as the response contract describes.");
     }
   } else {
     sections.push("You are reviewing recent akm feedback and proposing a single improved asset revision.");
