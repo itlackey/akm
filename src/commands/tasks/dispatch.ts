@@ -31,7 +31,7 @@ import { isWriteCapableSourceKind } from "../../core/write-source";
 import { schedulerEnabledRefs } from "../../tasks/activation-config";
 import { resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
 import { activeTaskSources } from "../../tasks/run/load-task";
-import { parseSchedule, scheduleMatchesMinute } from "../../tasks/schedule";
+import { parseSchedule, type ScheduleField, type ScheduleFields } from "../../tasks/schedule";
 import { type SchedulerBinding, schedulerBindingNativeId } from "../../tasks/scheduler-binding";
 import { compileSchedulerSources, type SchedulerSourceFailure } from "../../tasks/scheduler-sync";
 import { resolveTaskReadBundle } from "./tasks";
@@ -60,6 +60,36 @@ export interface DispatchDeps {
   launcher?: readonly string[];
   statePath?: string;
   logDir?: string;
+}
+
+/**
+ * Whether `fields` fire at the local minute `at`. `parseSchedule` refuses day-of-month with day-of-week, so one of
+ * them is always `*` and both must match.
+ */
+export function scheduleMatchesMinute(fields: ScheduleFields, at: Date): boolean {
+  return (
+    fieldMatches(fields.minute, at.getMinutes(), 0) &&
+    fieldMatches(fields.hour, at.getHours(), 0) &&
+    fieldMatches(fields.dom, at.getDate(), 1) &&
+    fieldMatches(fields.month, at.getMonth() + 1, 1) &&
+    fieldMatches(fields.dow, at.getDay(), 0)
+  );
+}
+
+/** One field at `value`; `min` is the field's lowest value, where a `*\/N` step starts. */
+function fieldMatches(field: ScheduleField, value: number, min: number): boolean {
+  switch (field.kind) {
+    case "star":
+      return true;
+    case "value":
+      return field.value === value;
+    case "step":
+      return (value - min) % field.step === 0;
+    case "rangeStep":
+      return value >= field.start && value <= field.end && (value - field.start) % field.step === 0;
+    case "list":
+      return field.values.includes(value);
+  }
 }
 
 /** The epoch minutes to evaluate: those since the last dispatched one, at most the window, never one already done. */

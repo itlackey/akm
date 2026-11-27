@@ -55,6 +55,7 @@ import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { selectBackend } from "../../tasks/backends";
 import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptions } from "../../tasks/backends/types";
+import { applySchedulerOperations, planDispatchMode, planRowMode, schedulerModeOf } from "../../tasks/dispatch-mode";
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
 import { isCheckoutInvocation, type ResolvedAkmInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
@@ -67,8 +68,6 @@ import { exitCodeForStatus, type RunTaskOptions, type TaskRunResult } from "../.
 import { parseSchedule, SCHEDULE_SUPPORTED_SUBSET_HINT } from "../../tasks/schedule";
 import {
   compileTaskSchedulerBindings,
-  DISPATCH_BINDING,
-  isDispatchRow,
   type SchedulerBinding,
   schedulerBindingNativeId,
 } from "../../tasks/scheduler-binding";
@@ -605,38 +604,8 @@ export async function akmTasksSync(
 ): Promise<TasksSyncResult> {
   return withSchedulerLock(async () => {
     const { sched, plan, warnings, guarded } = await buildSchedulerSyncPlan(deps, bundleTarget, options);
-    const failed = new Set<string>();
-    const failures = [...plan.failures];
-    let removalFailed = false;
-    for (const operation of plan.operations) {
-      // Around the dispatch row, a write after a failed removal would leave both kinds of row: every task twice.
-      if (guarded && removalFailed && operation.kind !== "remove") {
-        failed.add(operation.binding.id);
-        failures.push({
-          path: operation.binding.source,
-          ref: operation.binding.logicalSource.ref,
-          reason: "Not written: a removal before it failed, and with both rows installed tasks would run twice.",
-        });
-        continue;
-      }
-      try {
-        if (operation.kind === "remove") await sched.uninstall(operation.nativeId);
-        else await sched.install(operation.binding, operation.options);
-      } catch (cause) {
-        if (operation.kind === "remove") {
-          removalFailed = true;
-          failed.add(operation.id);
-          failures.push({ path: operation.nativeId, reason: errorMessage(cause) });
-        } else {
-          failed.add(operation.binding.id);
-          failures.push({
-            path: operation.binding.source,
-            ref: operation.binding.logicalSource.ref,
-            reason: errorMessage(cause),
-          });
-        }
-      }
-    }
+    const { failed, failures: applyFailures } = await applySchedulerOperations(sched, plan.operations, guarded);
+    const failures = [...plan.failures, ...applyFailures];
     const applied = (ids: readonly string[]) => ids.filter((id) => !failed.has(id));
     return {
       installed: applied(plan.installed),
@@ -683,19 +652,9 @@ async function buildSchedulerSyncPlan(
   const everyRow = await listInstalledRows(sched);
   const runtime = prepareSchedulerRuntime(deps);
 
-  // Every row a sync writes names this installation's working stash, the dispatch row too; the host is in dispatch
-  // mode when this installation's dispatch row is installed. Another installation's is never touched.
   const ownBundleDir = runtime.options.environment?.AKM_BUNDLE_DIR;
-  const dispatchRow = everyRow.find(isDispatchRow);
-  const ownDispatchRow = dispatchRow?.ownerBundlePath === ownBundleDir ? dispatchRow : undefined;
-  const dispatchMode = options.dispatch ?? ownDispatchRow !== undefined;
-  if (dispatchMode && dispatchRow !== undefined && ownDispatchRow === undefined) {
-    throw new UsageError(
-      `Scheduler id "dispatch" is already scheduled from ${installedRowOwner(dispatchRow)}; one installation per user can use dispatch mode. Run this installation without \`--dispatch\`.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  const installed = everyRow.filter((row) => !isDispatchRow(row));
+  const mode = schedulerModeOf(everyRow, ownBundleDir, options.dispatch);
+  const installed = mode.taskRows;
 
   // A config that predates `scheduler.enabled` means "keep what is
   // installed": the akm-written rows become the host's choice (written
@@ -779,56 +738,32 @@ async function buildSchedulerSyncPlan(
         return bundle !== undefined && inactive.has(bundle);
       });
 
-  const warnings: string[] = [];
-  let plan: SchedulerSyncPlan;
-  if (dispatchMode) {
-    for (const binding of desired) {
-      if (binding.cron.trim().toLowerCase() === "@reboot") {
-        failures.push({
-          path: binding.source,
-          ref: binding.logicalSource.ref,
-          reason:
-            "`@reboot` runs once at startup, which `akm task dispatch` has no minute for: in dispatch mode this entry never starts.",
-        });
-      }
-    }
-    plan = planDispatchMode(sched, installed, ownDispatchRow, ownBundleDir, runtime.options, options.rebind === true);
-    // A row this installation cannot prove is its own is left; if dispatch also starts its task, it runs twice.
-    const enabled = new Set(enabledRefs);
-    for (const row of installed) {
-      const ref = row.invocation?.[2];
-      if (row.ownerBundlePath !== ownBundleDir && ref?.includes("//") && enabled.has(ref)) {
-        warnings.push(
-          `Row ${JSON.stringify(installedRowNativeId(row))} runs ${ref} from ${installedRowOwner(row)} and was left; \`akm task dispatch\` starts ${ref} too. Remove the row if it is this installation's.`,
-        );
-      }
-    }
-  } else {
-    plan = planSchedulerSync({
-      desired,
-      installed,
-      scopes,
-      ...(sched.expectedSignature ? { expectedSignature: sched.expectedSignature.bind(sched) } : {}),
-      installOptions: runtime.options,
-      rebind: options.rebind === true,
-      extraRemovals,
-      keepRefs,
-    });
-    if (plan.operations.some((operation) => operation.kind !== "remove")) {
-      warnings.push(
-        "Per-task scheduler rows are deprecated and removed in 0.11. `akm doctor scheduler sync --dispatch` switches this host to one row that runs `akm task dispatch` every minute.",
+  const planned = mode.dispatch
+    ? planDispatchMode({
+        sched,
+        mode,
+        desired,
+        enabledRefs,
+        ownBundleDir,
+        installOptions: runtime.options,
+        rebind: options.rebind === true,
+      })
+    : planRowMode(
+        planSchedulerSync({
+          desired,
+          installed,
+          scopes,
+          ...(sched.expectedSignature ? { expectedSignature: sched.expectedSignature.bind(sched) } : {}),
+          installOptions: runtime.options,
+          rebind: options.rebind === true,
+          extraRemovals,
+          keepRefs,
+        }),
+        mode,
       );
-    }
-    // Back from dispatch mode: the dispatch row goes before any task row is written.
-    if (ownDispatchRow !== undefined) {
-      const removal = Object.freeze({
-        kind: "remove" as const,
-        id: ownDispatchRow.id,
-        nativeId: installedRowNativeId(ownDispatchRow),
-      });
-      plan = { ...plan, removed: [removal.id, ...plan.removed], operations: [removal, ...plan.operations] };
-    }
-  }
+  const { plan } = planned;
+  failures.push(...planned.failures);
+  const warnings = [...planned.warnings];
   const writesLauncher =
     options.rebind === true
       ? plan.operations.some((operation) => operation.kind !== "remove")
@@ -842,56 +777,8 @@ async function buildSchedulerSyncPlan(
     sched,
     plan: { ...plan, failures: [...failures, ...plan.failures] },
     warnings,
-    guarded: dispatchMode || ownDispatchRow !== undefined,
+    guarded: mode.dispatch || mode.ownDispatchRow !== undefined,
   };
-}
-
-/**
- * Dispatch mode's plan: remove every row this installation wrote (each names its working stash), then install or
- * update the dispatch row. A row keeps its launcher unless `rebind`, as a task row does.
- */
-function planDispatchMode(
-  sched: SchedulerBackend,
-  installed: readonly InstalledSchedulerBinding[],
-  ownDispatchRow: InstalledSchedulerBinding | undefined,
-  ownBundleDir: string | undefined,
-  installOptions: SchedulerInstallOptions,
-  rebind: boolean,
-): SchedulerSyncPlan {
-  const own = installed.filter((row) => row.ownerBundlePath === ownBundleDir);
-  const removals: SchedulerSyncOperation[] = own.map((row) =>
-    Object.freeze({ kind: "remove" as const, id: row.id, nativeId: installedRowNativeId(row) }),
-  );
-  const options: SchedulerInstallOptions =
-    ownDispatchRow !== undefined && !rebind
-      ? {
-          binding: [...ownDispatchRow.binding],
-          ...(installOptions.environment !== undefined ? { environment: installOptions.environment } : {}),
-        }
-      : installOptions;
-  const expected = sched.expectedSignature?.(DISPATCH_BINDING, options);
-  const id = DISPATCH_BINDING.id;
-  const base = { desired: [DISPATCH_BINDING], removed: own.map((row) => row.id), failures: [] };
-  if (ownDispatchRow === undefined) {
-    const write = Object.freeze({
-      kind: "install" as const,
-      binding: DISPATCH_BINDING,
-      options,
-      ...(expected !== undefined ? { expectedSignature: expected } : {}),
-    });
-    return { ...base, installed: [id], updated: [], unchanged: [], operations: [...removals, write] };
-  }
-  if (expected === undefined || ownDispatchRow.signature === expected) {
-    return { ...base, installed: [], updated: [], unchanged: [id], operations: removals };
-  }
-  const write = Object.freeze({
-    kind: "update" as const,
-    binding: DISPATCH_BINDING,
-    options,
-    ...(ownDispatchRow.signature !== undefined ? { installedSignature: ownDispatchRow.signature } : {}),
-    expectedSignature: expected,
-  });
-  return { ...base, installed: [], updated: [id], unchanged: [], operations: [...removals, write] };
 }
 
 /**

@@ -1,12 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { UsageError } from "../src/core/errors";
-import {
-  parseSchedule,
-  scheduleMatchesMinute,
-  translateToCron,
-  translateToLaunchd,
-  translateToSchtasks,
-} from "../src/tasks/schedule";
+import { parseSchedule, translateToCron, translateToLaunchd, translateToSchtasks } from "../src/tasks/schedule";
 
 describe("parseSchedule", () => {
   test("expands aliases", () => {
@@ -103,25 +97,6 @@ describe("parseSchedule", () => {
   test("@reboot has no launchd or schtasks equivalent this release expresses", () => {
     expect(() => parseSchedule("@reboot", "launchd")).toThrow(UsageError);
     expect(() => parseSchedule("@reboot", "schtasks")).toThrow(UsageError);
-  });
-});
-
-describe("scheduleMatchesMinute", () => {
-  const matches = (schedule: string, at: string) =>
-    scheduleMatchesMinute(parseSchedule(schedule, "cron").fields, new Date(at));
-
-  test("each field kind, read in local time", () => {
-    // 2026-11-26 is a Thursday (day of week 4).
-    expect(matches("*/15 * * * *", "2026-11-26T10:30:00")).toBe(true);
-    expect(matches("*/15 * * * *", "2026-11-26T10:31:00")).toBe(false);
-    expect(matches("7,37 * * * *", "2026-11-26T10:37:00")).toBe(true);
-    expect(matches("0 9-17/4 * * *", "2026-11-26T13:00:00")).toBe(true);
-    expect(matches("0 9-17/4 * * *", "2026-11-26T15:00:00")).toBe(false);
-    expect(matches("0 3 * * MON-FRI", "2026-11-26T03:00:00")).toBe(true);
-    expect(matches("0 3 * * SAT", "2026-11-26T03:00:00")).toBe(false);
-    expect(matches("@monthly", "2026-12-01T00:00:00")).toBe(true);
-    expect(matches("@monthly", "2026-11-26T00:00:00")).toBe(false);
-    expect(matches("30 2 26 NOV *", "2026-11-26T02:30:00")).toBe(true);
   });
 });
 

@@ -12,9 +12,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmTaskDispatch, minutesToEvaluate } from "../../src/commands/tasks/dispatch";
+import { akmTaskDispatch, minutesToEvaluate, scheduleMatchesMinute } from "../../src/commands/tasks/dispatch";
 import { akmTasksEnable, akmTasksSync } from "../../src/commands/tasks/tasks";
 import type { InstalledSchedulerBinding, SchedulerBackend } from "../../src/tasks/backends/types";
+import { parseSchedule } from "../../src/tasks/schedule";
 import { type SchedulerBinding, schedulerBindingNativeId } from "../../src/tasks/scheduler-binding";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
@@ -225,5 +226,26 @@ describe("minutesToEvaluate", () => {
     expect(minutesToEvaluate(100, 102)).toEqual([]);
     // A last minute far ahead means the clock was set back: start over at this one.
     expect(minutesToEvaluate(100, 200)).toEqual([100]);
+  });
+});
+
+describe("scheduleMatchesMinute", () => {
+  const matches = (schedule: string, at: string) =>
+    scheduleMatchesMinute(parseSchedule(schedule, "cron").fields, new Date(at));
+
+  test("each field kind, read in local time", () => {
+    // 2026-11-26 is a Thursday (day of week 4).
+    expect(matches("*/15 * * * *", "2026-11-26T10:30:00")).toBe(true);
+    expect(matches("*/15 * * * *", "2026-11-26T10:31:00")).toBe(false);
+    expect(matches("7,37 * * * *", "2026-11-26T10:37:00")).toBe(true);
+    expect(matches("0 9-17/4 * * *", "2026-11-26T13:00:00")).toBe(true);
+    expect(matches("0 9-17/4 * * *", "2026-11-26T15:00:00")).toBe(false);
+    expect(matches("0 3 * * MON-FRI", "2026-11-26T03:00:00")).toBe(true);
+    expect(matches("0 3 * * SAT", "2026-11-26T03:00:00")).toBe(false);
+    expect(matches("@monthly", "2026-12-01T00:00:00")).toBe(true);
+    expect(matches("@monthly", "2026-11-26T00:00:00")).toBe(false);
+    expect(matches("30 2 26 NOV *", "2026-11-26T02:30:00")).toBe(true);
+    expect(matches("0 0 */2 * *", "2026-11-03T00:00:00")).toBe(true);
+    expect(matches("0 0 */2 * *", "2026-11-02T00:00:00")).toBe(false);
   });
 });
