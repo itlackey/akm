@@ -115,6 +115,27 @@ export interface SchedulerBackend {
   expectedSignature?(binding: SchedulerBinding, opts?: SchedulerInstallOptions): string;
 }
 
+/**
+ * The one row of a host in dispatch mode (`akm doctor scheduler sync --dispatch`): `akm task dispatch` every minute,
+ * which starts each enabled task that is due. A task whose id is `dispatch` has the same native id: switching mode
+ * removes the one row before it writes the other.
+ */
+export const DISPATCH_BINDING: SchedulerBinding = freezeBinding({
+  id: "dispatch",
+  nativeId: "dispatch",
+  logicalSource: { kind: "task", ref: "dispatch" },
+  cron: "*/1 * * * *",
+  source: "akm task dispatch",
+  ordinal: 0,
+  enabled: true,
+  invocation: ["task", "dispatch"],
+});
+
+/** Whether an installed row is the dispatch row. */
+export function isDispatchRow(row: InstalledSchedulerBinding): boolean {
+  return row.invocation?.length === 2 && row.invocation[0] === "task" && row.invocation[1] === "dispatch";
+}
+
 export function compileTaskSchedulerBindings(input: CompileTaskSchedulerBindingsInput): readonly SchedulerBinding[] {
   const id = normaliseTaskConceptId(input.id);
   const ref = assertQualifiedRef(input.qualifiedRef, "task");

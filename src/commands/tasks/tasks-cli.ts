@@ -35,6 +35,7 @@ import type { InputFlag } from "../../execution/input-contract";
 import type { RunTaskOptions } from "../../tasks/run/task-result";
 import { TASK_RUN_BOOLEAN_FLAGS, TASK_RUN_VALUE_FLAGS } from "../../tasks/task-run-reserved-flags";
 import { parseStartFlags, type TaskV5Start, taskIdInStart } from "../../tasks/v5/flags";
+import { akmTaskDispatch } from "./dispatch";
 import { akmTaskExplain } from "./explain";
 import {
   akmTasksAdd,
@@ -433,15 +434,23 @@ export const taskSyncArgs = {
   },
 } as const;
 
-export async function runTaskSync(args: { bundle?: string; rebind?: boolean; "dry-run"?: boolean }): Promise<void> {
+export async function runTaskSync(args: {
+  bundle?: string;
+  rebind?: boolean;
+  "dry-run"?: boolean;
+  dispatch?: boolean;
+}): Promise<void> {
   {
-    const rebind = args.rebind === true;
+    const options = {
+      rebind: args.rebind === true,
+      ...(args.dispatch !== undefined ? { dispatch: args.dispatch } : {}),
+    };
     if (args["dry-run"] === true) {
-      const preview = await akmTasksSyncPlan({}, args.bundle, { rebind });
+      const preview = await akmTasksSyncPlan({}, args.bundle, options);
       outputWithExitCode("task-sync-dry-run", preview, taskSyncDryRunExitCode(preview));
       return;
     }
-    const result = await akmTasksSync({}, args.bundle, { rebind });
+    const result = await akmTasksSync({}, args.bundle, options);
     // #867: sync degrades — sources that failed to parse/prepare are
     // excluded from reconciliation and reported in `result.failures` rather
     // than poisoning the whole sync, but their presence must still fail
@@ -460,6 +469,19 @@ const tasksSyncCommand = defineJsonCommand({
   args: taskSyncArgs,
   async run({ args }) {
     await runTaskSync(args);
+  },
+});
+
+const tasksDispatchCommand = defineJsonCommand({
+  meta: {
+    name: "dispatch",
+    description:
+      "Start every enabled task due this minute, then exit: what the OS scheduler runs every minute on a host in dispatch mode (`akm doctor scheduler sync --dispatch`)",
+  },
+  args: {},
+  async run() {
+    const result = await akmTaskDispatch();
+    outputWithExitCode("task-dispatch", result, result.failures.length > 0 ? EXIT_CODES.GENERAL : undefined);
   },
 });
 
@@ -582,6 +604,7 @@ export const taskCommand = defineGroupCommand({
     explain: tasksExplainCommand,
     history: tasksHistoryCommand,
     sync: tasksSyncCommand,
+    dispatch: tasksDispatchCommand,
     prune: tasksPruneCommand,
     doctor: tasksDoctorCommand,
   },

@@ -55,6 +55,7 @@ import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { selectBackend } from "../../tasks/backends";
 import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptions } from "../../tasks/backends/types";
+import { applySchedulerOperations, planDispatchMode, planRowMode, schedulerModeOf } from "../../tasks/dispatch-mode";
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
 import { isCheckoutInvocation, type ResolvedAkmInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
@@ -599,30 +600,12 @@ export interface TasksSyncResult {
 export async function akmTasksSync(
   deps: SchedulerDeps = {},
   bundleTarget?: string,
-  options: { rebind?: boolean } = {},
+  options: SchedulerSyncOptions = {},
 ): Promise<TasksSyncResult> {
   return withSchedulerLock(async () => {
-    const { sched, plan, warnings } = await buildSchedulerSyncPlan(deps, bundleTarget, options);
-    const failed = new Set<string>();
-    const failures = [...plan.failures];
-    for (const operation of plan.operations) {
-      try {
-        if (operation.kind === "remove") await sched.uninstall(operation.nativeId);
-        else await sched.install(operation.binding, operation.options);
-      } catch (cause) {
-        if (operation.kind === "remove") {
-          failed.add(operation.id);
-          failures.push({ path: operation.nativeId, reason: errorMessage(cause) });
-        } else {
-          failed.add(operation.binding.id);
-          failures.push({
-            path: operation.binding.source,
-            ref: operation.binding.logicalSource.ref,
-            reason: errorMessage(cause),
-          });
-        }
-      }
-    }
+    const { sched, plan, warnings, guarded } = await buildSchedulerSyncPlan(deps, bundleTarget, options);
+    const { failed, failures: applyFailures } = await applySchedulerOperations(sched, plan.operations, guarded);
+    const failures = [...plan.failures, ...applyFailures];
     const applied = (ids: readonly string[]) => ids.filter((id) => !failed.has(id));
     return {
       installed: applied(plan.installed),
@@ -644,20 +627,34 @@ export async function akmTasksSync(
 export async function akmTasksSyncPlan(
   deps: SchedulerDeps = {},
   bundleTarget?: string,
-  options: { rebind?: boolean } = {},
+  options: SchedulerSyncOptions = {},
 ): Promise<SchedulerPlanPreview> {
   const { sched, plan } = await buildSchedulerSyncPlan(deps, bundleTarget, { ...options, dryRun: true });
   return renderSchedulerPlanPreview(sched.name, plan.operations, plan.unchanged, plan.failures);
 }
 
+export interface SchedulerSyncOptions {
+  rebind?: boolean;
+  /**
+   * `true` switches the host to dispatch mode: one row runs `akm task dispatch` every minute and this installation's
+   * per-task rows are removed. `false` switches it back. Absent keeps the mode the installed rows show.
+   */
+  dispatch?: boolean;
+}
+
 async function buildSchedulerSyncPlan(
   deps: SchedulerDeps,
   bundleTarget: string | undefined,
-  options: { rebind?: boolean; dryRun?: boolean },
-): Promise<{ sched: SchedulerBackend; plan: SchedulerSyncPlan; warnings: string[] }> {
+  options: SchedulerSyncOptions & { dryRun?: boolean },
+): Promise<{ sched: SchedulerBackend; plan: SchedulerSyncPlan; warnings: string[]; guarded: boolean }> {
   let config = loadConfig();
   const sched = deps.backend ?? selectBackend();
-  const installed = await listInstalledRows(sched);
+  const everyRow = await listInstalledRows(sched);
+  const runtime = prepareSchedulerRuntime(deps);
+
+  const ownBundleDir = runtime.options.environment?.AKM_BUNDLE_DIR;
+  const mode = schedulerModeOf(everyRow, ownBundleDir, options.dispatch);
+  const installed = mode.taskRows;
 
   // A config that predates `scheduler.enabled` means "keep what is
   // installed": the akm-written rows become the host's choice (written
@@ -741,18 +738,32 @@ async function buildSchedulerSyncPlan(
         return bundle !== undefined && inactive.has(bundle);
       });
 
-  const runtime = prepareSchedulerRuntime(deps);
-  const plan = planSchedulerSync({
-    desired,
-    installed,
-    scopes,
-    ...(sched.expectedSignature ? { expectedSignature: sched.expectedSignature.bind(sched) } : {}),
-    installOptions: runtime.options,
-    rebind: options.rebind === true,
-    extraRemovals,
-    keepRefs,
-  });
-  const warnings: string[] = [];
+  const planned = mode.dispatch
+    ? planDispatchMode({
+        sched,
+        mode,
+        desired,
+        enabledRefs,
+        ownBundleDir,
+        installOptions: runtime.options,
+        rebind: options.rebind === true,
+      })
+    : planRowMode(
+        planSchedulerSync({
+          desired,
+          installed,
+          scopes,
+          ...(sched.expectedSignature ? { expectedSignature: sched.expectedSignature.bind(sched) } : {}),
+          installOptions: runtime.options,
+          rebind: options.rebind === true,
+          extraRemovals,
+          keepRefs,
+        }),
+        mode,
+      );
+  const { plan } = planned;
+  failures.push(...planned.failures);
+  const warnings = [...planned.warnings];
   const writesLauncher =
     options.rebind === true
       ? plan.operations.some((operation) => operation.kind !== "remove")
@@ -762,7 +773,12 @@ async function buildSchedulerSyncPlan(
       `Scheduled tasks now run akm from a source checkout (${runtime.options.binding?.join(" ")}); they run whatever the checkout holds when they fire. Install akm with \`npm install --global akm-cli\` or a standalone release, then run \`akm doctor scheduler sync --rebind\`.`,
     );
   }
-  return { sched, plan: { ...plan, failures: [...failures, ...plan.failures] }, warnings };
+  return {
+    sched,
+    plan: { ...plan, failures: [...failures, ...plan.failures] },
+    warnings,
+    guarded: mode.dispatch || mode.ownDispatchRow !== undefined,
+  };
 }
 
 /**

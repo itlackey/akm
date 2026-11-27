@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Experimental dispatch mode for the scheduler, opt in per host. `akm doctor scheduler sync --dispatch` replaces this installation's per-task rows in cron, launchd or Task Scheduler with one row that runs `akm task dispatch` every minute; `--no-dispatch` switches back. `akm task dispatch` reads `scheduler.enabled` and the task files, and starts each entry due since the last dispatch, catching up at most 5 missed minutes, with the same invocation and log file its row had. Enabling a task or editing its schedule then takes effect the next minute, with no sync. A host never holds both kinds of row: when a removal fails, sync writes nothing after it. An `@reboot` entry never starts in dispatch mode, and sync reports it. See [`akm task dispatch`](docs/reference/cli.md#task-dispatch).
+
+### Deprecated
+
+- Per-task OS scheduler rows. They stay the default through 0.10; in 0.11 the dispatch row is the only scheduler entry and `akm migrate apply` removes the per-task rows. A sync that writes per-task rows says so in its `warnings`.
+
 ## [0.10.261134] - 2026-11-27
 
 ### Added

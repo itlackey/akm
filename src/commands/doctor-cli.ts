@@ -22,6 +22,11 @@ const schedulerSyncCommand = defineJsonCommand({
   },
   args: {
     ...taskSyncArgs,
+    dispatch: {
+      type: "boolean",
+      description:
+        "Switch this host to one row that runs `akm task dispatch` every minute, removing its per-task rows; --no-dispatch switches back. Without either, sync keeps the host's mode",
+    },
     prune: {
       type: "boolean",
       description: "Clean up scheduler entries sync can never reclaim; takes --yes and --id",
