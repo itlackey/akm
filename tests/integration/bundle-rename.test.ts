@@ -778,7 +778,7 @@ describe("akm bundle rename — native scheduler sync", () => {
     // Install the native row under the OLD name first, exactly as a real
     // prior `akm task sync` would have.
     await akmTasksSync({ backend }, "original");
-    expect(exec.current()).toContain("task run original//tasks/foo --scheduled");
+    expect(exec.current()).toContain("akm run original//tasks/foo --scheduled");
 
     // --dry-run reports the stale row and leaves the crontab untouched.
     const plan = await renameBundle("original", "renamed", { dryRun: true }, renameDeps(backend));
@@ -788,7 +788,7 @@ describe("akm bundle rename — native scheduler sync", () => {
     const result = await renameBundle("original", "renamed", {}, renameDeps(backend));
     expect(result.applied).toBe(true);
     expect(result.taskSync?.ok).toBe(true);
-    expect(exec.current()).toContain("task run renamed//tasks/foo --scheduled");
+    expect(exec.current()).toContain("akm run renamed//tasks/foo --scheduled");
     expect(exec.current()).not.toContain("original//");
   });
 
@@ -812,7 +812,7 @@ describe("akm bundle rename — native scheduler sync", () => {
     // Install the native row under the OLD name first, exactly as a real
     // prior `akm task sync` would have.
     await akmTasksSync({ backend }, "original");
-    expect(exec.current()).toContain("task run original//tasks/foo --scheduled");
+    expect(exec.current()).toContain("akm run original//tasks/foo --scheduled");
 
     // An invalid schedule written before the rename — the same #867 shape
     // `akmTasksSync` reports as a failure rather than installing.

@@ -19,7 +19,7 @@ import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
 import { UsageError } from "../core/errors";
 import { canonicalInputJson, type InputFlag } from "../execution/input-contract";
 import type { ScheduleBackend } from "./schedule";
-import type { ScheduledRowEnvironment } from "./scheduler-invocation";
+import { type ScheduledRowEnvironment, scheduledTaskSubject } from "./scheduler-invocation";
 import { normaliseTaskConceptId } from "./task-id";
 
 export type SchedulerLogicalSource = Readonly<{
@@ -151,7 +151,6 @@ export function compileTaskSchedulerBindings(input: CompileTaskSchedulerBindings
         ordinal: schedule.ordinal,
         enabled: true,
         invocation: [
-          "task",
           "run",
           ref,
           "--scheduled",
@@ -228,7 +227,7 @@ export function schedulerBindingNativeId(binding: SchedulerBinding): string {
  * nested one behind a digest spelling); every other row is its native id.
  */
 export function schedulerLogicalBindingId(nativeId: string, invocation: readonly string[]): string {
-  const subject = invocation[0] === "task" && invocation[1] === "run" ? invocation[2] : undefined;
+  const subject = scheduledTaskSubject(invocation)?.subject;
   if (subject === undefined) return nativeId;
   // A row names its task by ref (`<bundle>//<concept id>`); a row written before 0.11 by its id.
   const conceptId = subject.includes("//") ? parseBundleRef(subject).conceptId : subject;

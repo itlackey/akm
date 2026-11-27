@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Scheduler rows run `akm run <bundle//concept-id> --scheduled`, and dispatch mode starts each due entry the same way; they ran `akm task run <ref> --scheduled`, which is Deprecated, so every scheduled run counted as Deprecated use. A row in the old form still fires until 0.11, and the next `akm doctor scheduler sync` reports it as `updated` and rewrites it, keeping its launcher and schedule. A scheduled `akm run` whose config cannot load or whose task is gone is recorded as the run's failure, as `akm task run --scheduled` is. An older akm runs the new form too, and its sync rewrites the row back in place.
 - The first daily usage report counts from the day collection started, so the install day's usage is sent; it used to send `period_days: 0`.
 - Help for `akm health`, `akm metrics`, `akm info` and `akm log` now says they are Deprecated and names their `akm doctor` replacement, and help for `akm doctor judge` and `akm doctor metrics improve` no longer says they are Deprecated (the Deprecated `akm judge` and `akm improve report` still do).
 

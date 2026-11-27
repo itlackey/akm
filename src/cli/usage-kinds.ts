@@ -32,12 +32,13 @@ export function isFailureCategory(category: string): boolean {
   return !NOT_FAILURES.has(category);
 }
 
-/** A run the scheduler started: `akm task dispatch`, or `akm task run --scheduled`. */
+/** A run the scheduler started: `akm task dispatch`, or `akm run --scheduled` (an earlier row's `akm task run --scheduled`). */
 function scheduledRun(usage: InvocationUsage): boolean {
   const command = usage.command.join(" ");
   if (command === "task dispatch") return true;
   return (
-    command === "task run" && usage.arguments.some((a) => a.name === "scheduled" && a.explicit && a.value === true)
+    (command === "run" || command === "task run") &&
+    usage.arguments.some((a) => a.name === "scheduled" && a.explicit && a.value === true)
   );
 }
 

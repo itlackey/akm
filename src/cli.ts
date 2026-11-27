@@ -150,7 +150,14 @@ import { rememberCommand } from "./commands/read/remember-cli";
 import { rulesCommand } from "./commands/read/rules";
 import { curateCommand, searchCommand, showCommand } from "./commands/read/search-cli";
 import { registryCommand } from "./commands/registry-cli";
-import { resolveRunTarget, runAssetCommand, runPassthroughFrom, runRefIndex, setRunTarget } from "./commands/run-cli";
+import {
+  isUnresolvedScheduledRun,
+  resolveRunTarget,
+  runAssetCommand,
+  runPassthroughFrom,
+  runRefIndex,
+  setRunTarget,
+} from "./commands/run-cli";
 import { bundleCommand } from "./commands/sources/bundle-cli";
 import { renderMigrationHelp } from "./commands/sources/migration-help";
 import { cloneCommand, syncCommand, upgradeCommand } from "./commands/sources/sources-cli";
@@ -881,6 +888,7 @@ export function shouldBypassConfigStartup(invocation: ParsedInvocation): boolean
   // unreachable.
   if (command === "help" || command === "hints") return true;
   if (isTaskRunWithId(invocation.argv)) return true;
+  if (command === "run" && isUnresolvedScheduledRun()) return true;
   if (command !== "config") return false;
   const configIndex = args.indexOf("config");
   const subcommand = args.slice(configIndex + 1).find((arg) => !arg.startsWith("-"));
