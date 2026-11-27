@@ -16,7 +16,7 @@
  * shares one `--bundle <bundle>` axis.
  */
 
-import { defineCommand } from "citty";
+import { type ArgsDef, defineCommand, parseArgs } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
 import { parsePositiveIntFlag, parseTimeoutFlags } from "../../cli/parse-args";
 import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
@@ -345,6 +345,20 @@ export const tasksRunCommand = defineCommand({
     });
   },
 });
+
+/**
+ * Whether the tokens after `task` are `run <id> …`. Such a run reads the config itself, so that a scheduled one records
+ * its failure to start; undeclared input flags (`--scope all`) do not change the answer.
+ */
+export function namesTaskToRun(taskArgs: readonly string[]): boolean {
+  if (taskArgs[0] !== "run") return false;
+  try {
+    const parsed = parseArgs(taskArgs.slice(1), tasksRunCommand.args as ArgsDef) as Record<string, unknown>;
+    return typeof parsed.id === "string" && parsed.id.length > 0;
+  } catch {
+    return false;
+  }
+}
 
 const tasksEnableCommand = defineJsonCommand({
   meta: { name: "enable", description: "Enable a task in this host's scheduler configuration and sync it" },

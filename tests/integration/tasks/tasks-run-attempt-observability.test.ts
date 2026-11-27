@@ -141,23 +141,42 @@ describe("tasks run attempt observability", () => {
     expect(shouldBypassConfigStartup(createParsedInvocation(["bun", "cli.ts", "task", "list"]))).toBe(false);
   });
 
-  for (const [label, config, code] of [
-    ["malformed", '{"configVersion":', "INVALID_CONFIG_FILE"],
-    ["schema-invalid", '{"configVersion":"0.9.0","bundles":{"primary":{"path":42}}}', "INVALID_CONFIG_FILE"],
+  for (const [label, config, code, start, historyId] of [
+    ["malformed", '{"configVersion":', "INVALID_CONFIG_FILE", ["task", "run", "config-preflight"], "config-preflight"],
+    [
+      "schema-invalid",
+      '{"configVersion":"0.9.0","bundles":{"primary":{"path":42}}}',
+      "INVALID_CONFIG_FILE",
+      ["task", "run", "config-preflight"],
+      "config-preflight",
+    ],
+    // The row a scheduler writes from 0.10.261135, and the ref row before it. Unread, a ref is kept by its concept id.
+    [
+      "malformed",
+      '{"configVersion":',
+      "INVALID_CONFIG_FILE",
+      ["run", "stash//tasks/config-preflight"],
+      "tasks/config-preflight",
+    ],
+    [
+      "malformed",
+      '{"configVersion":',
+      "INVALID_CONFIG_FILE",
+      ["task", "run", "stash//tasks/config-preflight"],
+      "tasks/config-preflight",
+    ],
   ] as const) {
-    test(`${label} config records a scheduled activation failure`, async () => {
+    test(`${label} config records a scheduled activation failure (${start.join(" ")})`, async () => {
       writeRawConfig(config);
       writeTask("config-preflight", "version: 4\nrun: echo safe\n");
 
-      const result = await withEnv(capturedSchedulerContext(), () =>
-        runCliCapture(["task", "run", "config-preflight", "--scheduled"]),
-      );
+      const result = await withEnv(capturedSchedulerContext(), () => runCliCapture([...start, "--scheduled"]));
 
       expect(result.code).toBe(78);
       expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code });
-      expect(readTaskHistory({ id: "config-preflight" })).toMatchObject([
+      expect(readTaskHistory({ id: historyId })).toMatchObject([
         {
-          id: "config-preflight",
+          id: historyId,
           status: "failed",
           trigger: "schedule",
           target: { kind: "unknown" },
@@ -166,6 +185,29 @@ describe("tasks run attempt observability", () => {
       ]);
     });
   }
+
+  test("a start of the scheduler's `run <ref> --scheduled` row is a scheduled task run", async () => {
+    writeTask("scheduled-ok", "version: 4\nrun: echo ok\n");
+
+    const result = await withEnv(capturedSchedulerContext(), () =>
+      runCliCapture(["run", "stash//tasks/scheduled-ok", "--scheduled"]),
+    );
+
+    expect(result.code).toBe(0);
+    expect(readTaskHistory({ id: "scheduled-ok" })).toMatchObject([
+      { id: "scheduled-ok", status: "completed", trigger: "schedule" },
+    ]);
+  });
+
+  test("a scheduler's `run <ref> --scheduled` row whose task is gone records the failure", async () => {
+    const result = await withEnv(capturedSchedulerContext(), () =>
+      runCliCapture(["run", "stash//tasks/gone", "--scheduled"]),
+    );
+
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code: "ASSET_NOT_FOUND" });
+    expect(readTaskHistory({ limit: 5 })).toMatchObject([{ status: "failed", trigger: "schedule" }]);
+  });
 
   test("v2, malformed, future, unresolved, and missing sources create no attempts", async () => {
     writeTask("legacy", "version: 2\nschedule: '@daily'\ncommand: echo legacy\n");

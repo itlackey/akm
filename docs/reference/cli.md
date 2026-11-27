@@ -62,7 +62,7 @@ Deprecated and its replacement exists in the same build, akm prints one line to
 stderr, once per process, naming the replacement:
 `[deprecated] akm health is deprecated and is removed in 0.11: use `akm doctor`.`
 Stdout, JSON and exit codes are unchanged, and `--quiet` silences the line. It
-is not printed for `--help`, for the scheduler's `task run --scheduled`, or for
+is not printed for `--help`, for a scheduler row's run (`--scheduled`), or for
 commands run by a task, `improve` or an audit (`AKM_EVENT_SOURCE` of `task`,
 `improve` or `audit`). The forms covered are `health`, `metrics`, `info`, `log`,
 `judge`, `improve judge`, every `workflow` command (`run`, `plan`, `status`,
@@ -4725,17 +4725,19 @@ it never spawns anything, writes history, or touches the scheduler. A
 secret-shaped value prints as `<redacted>`. See
 [`akm doctor explain`](tasks.md#akm-task-explain).
 
-Through 0.10 the OS scheduler invokes `akm task run <id> --scheduled` at the
-scheduled time (that invocation prints no deprecation notice), from the task's
-own row or, in dispatch mode, from `akm task dispatch`; run a task by hand
-with `akm run <ref>`.
+The OS scheduler runs `akm run <bundle//concept-id> --scheduled` at the
+scheduled time, from the task's own row or, in dispatch mode, from
+`akm task dispatch`. A row written before 0.10.261135 runs
+`akm task run <ref> --scheduled` (that invocation prints no deprecation
+notice) until the next `akm doctor scheduler sync` rewrites it. Run a task by
+hand with `akm run <ref>`.
 
 #### task dispatch
 
 `akm task dispatch` (Experimental, first in 0.10.261135) is what the OS
 scheduler runs every minute on a host in dispatch mode (`akm doctor scheduler
 sync --dispatch`). It reads `scheduler.enabled` and those task files, starts
-each schedule entry due since the last dispatch with the `task run … --scheduled`
+each schedule entry due since the last dispatch with the `run … --scheduled`
 invocation and the log file (`<cache>/tasks/logs/<id>.log`) the entry's own row
 would have had, and exits. It does not wait for the runs. A task's own run lock
 applies as it does to a row's run: an earlier run still going keeps a v4 run
@@ -4931,7 +4933,7 @@ exports of different installs cannot be told apart or combined by key.
 Collection is enabled at CLI entry, before the full configuration is read (only `usage.capture` is read, from the selected config file, and a missing or broken file leaves capture on), with no network
 transmission of its own and no sampling (the separate [daily usage report](data-and-telemetry.md#daily-usage-report) sends counts). `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies
 known provenance and wins. Without it the source is `task` for a run the scheduler
-started (`akm task dispatch`, `akm task run --scheduled`), `agent` when an agent harness
+started (`akm task dispatch`, `akm run --scheduled`, `akm task run --scheduled`), `agent` when an agent harness
 is detected from the environment (the way usage events detect it), `user` when
 there is none and a terminal is attached to stdin or stdout, else `unknown`. When a
 harness is detected, rows and aggregates also carry its name as an optional `harness`

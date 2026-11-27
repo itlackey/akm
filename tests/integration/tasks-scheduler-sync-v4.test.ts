@@ -298,15 +298,8 @@ describe("whole-set task source v4 scheduler sync planning — B-45/F-B2 (schedu
     // sorted `--<name> <value>` tail after `--scheduled`.
     expect(plan.desired).toHaveLength(2);
     const byOrdinal = [...plan.desired].sort((left, right) => left.ordinal - right.ordinal);
-    expect(byOrdinal[0]?.invocation).toEqual(["task", "run", "team//tasks/ticketed", "--scheduled", "--scope", "all"]);
-    expect(byOrdinal[1]?.invocation).toEqual([
-      "task",
-      "run",
-      "team//tasks/ticketed",
-      "--scheduled",
-      "--scope",
-      "changed",
-    ]);
+    expect(byOrdinal[0]?.invocation).toEqual(["run", "team//tasks/ticketed", "--scheduled", "--scope", "all"]);
+    expect(byOrdinal[1]?.invocation).toEqual(["run", "team//tasks/ticketed", "--scheduled", "--scope", "changed"]);
   });
 
   test("schedule[i].inputs violating the declared input's schema still fails at PARSE time (TASK_SOURCE_INVALID), not silently at sync time", async () => {
@@ -514,7 +507,7 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
 
     expect(plan.desired).toHaveLength(1);
     expect(plan.desired[0]?.logicalSource).toEqual({ kind: "task", ref: "team//nightly" });
-    expect(plan.desired[0]?.invocation).toEqual(["task", "run", "team//nightly", "--scheduled"]);
+    expect(plan.desired[0]?.invocation).toEqual(["run", "team//nightly", "--scheduled"]);
   });
 
   test("preserves an arbitrary-depth standalone task concept id through the whole plan", async () => {
@@ -536,7 +529,7 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     expect(plan.desired[0]).toMatchObject({
       id: "sub/deep/nightly",
       logicalSource: { kind: "task", ref: "team//sub/deep/nightly" },
-      invocation: ["task", "run", "team//sub/deep/nightly", "--scheduled"],
+      invocation: ["run", "team//sub/deep/nightly", "--scheduled"],
     });
   });
 

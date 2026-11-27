@@ -37,6 +37,7 @@ import {
   schedulerInputFlags,
   schedulerNativeBindingId,
 } from "./scheduler-binding";
+import { scheduledTaskSubject } from "./scheduler-invocation";
 import { parseTaskSource } from "./source/parse-task-source";
 import { projectTaskSourceV4 } from "./source/project-v4";
 import type { TaskSourceV4Document } from "./source/task-source-v4";
@@ -303,9 +304,11 @@ export function scheduledInvocationBundle(invocation: readonly string[] | undefi
   if (!invocation) return undefined;
   const bundleIndex = invocation.indexOf("--bundle");
   if (bundleIndex >= 0) return invocation[bundleIndex + 1];
-  if ((invocation[0] === "workflow" || invocation[0] === "task") && invocation[1] === "run" && invocation[2]) {
+  const subject =
+    invocation[0] === "workflow" && invocation[1] === "run" ? invocation[2] : scheduledTaskSubject(invocation)?.subject;
+  if (subject) {
     try {
-      return parseBundleRef(invocation[2]).bundle;
+      return parseBundleRef(subject).bundle;
     } catch {
       return undefined;
     }
@@ -471,10 +474,10 @@ function installOptionsFor(
 
 /** The source ref an installed row runs, read from its own invocation. */
 export function installedRowRef(row: InstalledSchedulerBinding, scope: SchedulerBundleScope): string | undefined {
-  const [verb, action, subject] = row.invocation ?? [];
-  if (action !== "run" || !subject) return undefined;
-  if (verb === "workflow") return subject;
-  if (verb !== "task") return undefined;
+  const invocation = row.invocation ?? [];
+  if (invocation[0] === "workflow" && invocation[1] === "run" && invocation[2]) return invocation[2];
+  const subject = scheduledTaskSubject(invocation)?.subject;
+  if (!subject) return undefined;
   // A row names its task by ref; one written before 0.11 by its id, in the bundle it names.
   if (subject.includes("//")) return subject;
   return scope.source ? taskRefIn(scope.source, subject) : undefined;

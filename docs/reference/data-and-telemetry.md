@@ -215,7 +215,7 @@ outside learning, feedback and ranking; the only thing sent from them is the
   whether each flag was typed or a default, the akm version, the event source
   (`agent` inside a detected agent harness, `user` at a terminal with none,
   `task`, `improve` or `audit` for akm's own runs, including the scheduler's
-  `akm task dispatch` and `akm task run --scheduled`, else `unknown`), the agent
+  `akm task dispatch`, `akm run --scheduled` and `akm task run --scheduled`, else `unknown`), the agent
   harness when one is detected, the type of the asset `akm show` or `akm run`
   resolved (when it is one of akm's own types), the outcome, exit code and
   duration, the `code` of the error a failed command reported (when it is one

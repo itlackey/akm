@@ -749,9 +749,10 @@ test("a healthy or absent usage store adds no doctor advisory", () => {
   expect(quiet()).toBe(false);
 });
 
-test("a run the scheduler started is source task: task dispatch, and task run --scheduled", () => {
+test("a run the scheduler started is source task: task dispatch, run --scheduled and task run --scheduled", () => {
   const usage = (...own: string[]) => describeUsage(main as UsageCommand, own);
   expect(resolveCliUsageSource({}, false, usage("task", "dispatch"))).toBe("task");
+  expect(resolveCliUsageSource({}, false, usage("run", "stash//tasks/nightly", "--scheduled"))).toBe("task");
   expect(resolveCliUsageSource({}, false, usage("task", "run", "nightly", "--scheduled"))).toBe("task");
   expect(resolveCliUsageSource({}, true, usage("task", "run", "nightly", "--scheduled"))).toBe("task");
   // Not scheduled: as before.
@@ -790,11 +791,12 @@ test("the error's closed code is kept on the invocation and its outcome; any oth
   invoke(["search", "q"], 1, () => setUsageErrorCode("ACME_CHILD_CODE")); // a child's code akm does not define
   invoke(["search", "q"], 0, () => setUsageErrorCode("INVALID_FLAG_VALUE")); // recovered: a success keeps none
   const usage = readUsage();
-  expect(usage.details.map((row) => row.errorCode)).toEqual([
-    "INVALID_FLAG_VALUE",
-    "RESOURCE_ALREADY_EXISTS",
-    undefined,
-    undefined,
+  // Invocations in the same millisecond come back in id order, which is random: compare them as a set.
+  expect(usage.details.map((row) => `${row.exitCode}:${row.errorCode}`).sort()).toEqual([
+    "0:undefined",
+    "1:undefined",
+    "2:INVALID_FLAG_VALUE",
+    "2:RESOURCE_ALREADY_EXISTS",
   ]);
   expect(usage.aggregates[0]?.outcomes).toEqual({
     "usage:2:unresolved:INVALID_FLAG_VALUE": 1,

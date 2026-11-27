@@ -94,10 +94,7 @@ describe("sync --dispatch", () => {
   });
 
   test("replaces this installation's per-task rows with the one dispatch row", async () => {
-    expect(invocations()).toEqual([
-      "task run stash//tasks/hourly --scheduled",
-      "task run stash//tasks/quarter --scheduled",
-    ]);
+    expect(invocations()).toEqual(["run stash//tasks/hourly --scheduled", "run stash//tasks/quarter --scheduled"]);
     const result = await akmTasksSync({ backend }, undefined, { dispatch: true });
     expect(result.failures).toEqual([]);
     expect(result.removed.sort()).toEqual(["hourly", "quarter"]);
@@ -156,10 +153,7 @@ describe("sync --dispatch", () => {
     const result = await akmTasksSync({ backend }, undefined, { dispatch: false });
     expect(result.failures).toEqual([]);
     expect(result.removed).toEqual(["dispatch"]);
-    expect(invocations()).toEqual([
-      "task run stash//tasks/hourly --scheduled",
-      "task run stash//tasks/quarter --scheduled",
-    ]);
+    expect(invocations()).toEqual(["run stash//tasks/hourly --scheduled", "run stash//tasks/quarter --scheduled"]);
   });
 
   test("a per-task row that cannot be removed keeps the dispatch row from being written", async () => {
@@ -170,7 +164,7 @@ describe("sync --dispatch", () => {
       "injected failure removing quarter",
       "Not written: a removal before it failed, and with both rows installed tasks would run twice.",
     ]);
-    expect(invocations()).toEqual(["task run stash//tasks/quarter --scheduled"]);
+    expect(invocations()).toEqual(["run stash//tasks/quarter --scheduled"]);
   });
 
   test("a dispatch row that cannot be removed keeps the per-task rows from being written", async () => {
@@ -188,7 +182,7 @@ describe("sync --dispatch", () => {
     };
     rows.set("hourly", other);
     const result = await akmTasksSync({ backend }, undefined, { dispatch: true });
-    expect(invocations()).toEqual(["task dispatch", "task run stash//tasks/hourly --scheduled"]);
+    expect(invocations()).toEqual(["run stash//tasks/hourly --scheduled", "task dispatch"]);
     expect(result.warnings?.join("\n")).toMatch(/"hourly" runs stash\/\/tasks\/hourly .*\/elsewhere\/stash/);
   });
 
@@ -204,7 +198,7 @@ describe("sync --dispatch", () => {
     );
     await akmTasksSync({ backend });
     expect(rows.get("dispatch")?.environment).toEqual({ AKM_CONFIG_DIR: "/elsewhere/config" });
-    expect(invocations()).toContain("task run stash//tasks/hourly --scheduled");
+    expect(invocations()).toContain("run stash//tasks/hourly --scheduled");
   });
 
   test("an @reboot entry is reported: dispatch has no minute for it", async () => {
@@ -239,7 +233,7 @@ describe("akm task dispatch", () => {
     expect(result).toMatchObject({ minute: "2026-11-26T10:15", window: 1, started: ["stash//tasks/quarter"] });
     expect(result.failures).toEqual([]);
     expect(started).toEqual([
-      { argv: ["/test/akm", "task", "run", "stash//tasks/quarter", "--scheduled"], log: "/logs/quarter.log" },
+      { argv: ["/test/akm", "run", "stash//tasks/quarter", "--scheduled"], log: "/logs/quarter.log" },
     ]);
   });
 

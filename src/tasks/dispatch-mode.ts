@@ -24,7 +24,7 @@ import {
   type SchedulerBinding,
   type SchedulerInstallOptions,
 } from "./scheduler-binding";
-import type { ScheduledRowEnvironment } from "./scheduler-invocation";
+import { type ScheduledRowEnvironment, scheduledTaskSubject } from "./scheduler-invocation";
 import {
   installedRowNativeId,
   installedRowOwner,
@@ -133,10 +133,12 @@ export function planDispatchMode(input: DispatchModeInput): ModePlan {
     }));
   const enabled = new Set(input.enabledRefs);
   const warnings = mode.taskRows
-    .filter((row) => row.ownerBundlePath !== ownBundleDir && enabled.has(row.invocation?.[2] ?? ""))
+    .filter(
+      (row) => row.ownerBundlePath !== ownBundleDir && enabled.has(scheduledTaskSubject(row.invocation)?.subject ?? ""),
+    )
     .map(
       (row) =>
-        `Row ${JSON.stringify(installedRowNativeId(row))} runs ${row.invocation?.[2]} from ${installedRowOwner(row)} and was left; \`akm task dispatch\` starts it too. Remove the row if it is this installation's.`,
+        `Row ${JSON.stringify(installedRowNativeId(row))} runs ${scheduledTaskSubject(row.invocation)?.subject} from ${installedRowOwner(row)} and was left; \`akm task dispatch\` starts it too. Remove the row if it is this installation's.`,
     );
 
   const own = mode.taskRows.filter((row) => row.ownerBundlePath === ownBundleDir);

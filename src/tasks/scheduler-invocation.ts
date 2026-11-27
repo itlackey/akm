@@ -5,7 +5,7 @@
 /**
  * How a native scheduler row invokes akm.
  *
- * A row is `<launcher…> task run <bundle//concept-id> --scheduled
+ * A row is `<launcher…> run <bundle//concept-id> --scheduled
  * [--<input> <value>…]`, or `<launcher…> workflow run <qualified-ref>`, and it
  * carries its own context: the environment the scheduled process needs,
  * set inline by the row itself (a cron `VAR=value` prefix, a launchd
@@ -27,8 +27,9 @@
  * `PATH` is the scheduler's own: the crontab's `# akm:env` block, the plist's
  * `EnvironmentVariables`.
  *
- * A row written before 0.11 names its task by id, `task run <id> --bundle <bundle> --scheduled`; it is read until 0.11,
- * and the next sync rewrites it.
+ * A row written before 0.10.261135 runs `task run <bundle//concept-id> --scheduled …` (Deprecated), and one written
+ * before that names its task by id, `task run <id> --bundle <bundle> --scheduled`; both are read until 0.11, and the
+ * next sync rewrites them.
  *
  * Rows written by 0.9.0 through 0.9.17-alpha.6 name a
  * `--scheduler-context <descriptor>` file instead. The CLI still accepts that
@@ -147,10 +148,23 @@ export function scheduledRowEnvironmentFrom(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/**
+ * The task a row's tail runs and where the tail's flags start: `run <ref> --scheduled …`, or the `task run <ref|id> …`
+ * an earlier row holds. Undefined for any other tail.
+ */
+export function scheduledTaskSubject(
+  invocation: readonly string[] | undefined,
+): { subject: string; flagsFrom: number } | undefined {
+  if (invocation?.[0] === "run" && invocation[1]) return { subject: invocation[1], flagsFrom: 2 };
+  if (invocation?.[0] === "task" && invocation[1] === "run" && invocation[2])
+    return { subject: invocation[2], flagsFrom: 3 };
+  return undefined;
+}
+
 export interface ParsedScheduledInvocation {
   /** Launcher argv: everything before the public tail (and before a legacy `--scheduler-context`). */
   binding: string[];
-  /** The public `task run …` / `workflow run …` tail. */
+  /** The public `run …` / `workflow run …` / `task dispatch` tail (or an earlier row's `task run …`). */
   invocation: string[];
   /** Bundle the tail names: a task or workflow ref's bundle, or a legacy row's `--bundle <x>`. */
   target?: string;
@@ -197,6 +211,11 @@ export function parseScheduledInvocationArgv(argv: readonly string[]): ParsedSch
     ) {
       const publicInvocation = parsePublicSchedulerInvocation(argv.slice(index));
       return publicInvocation ? { binding: argv.slice(0, index), ...publicInvocation } : undefined;
+    }
+    // `run <ref> --scheduled …`: a launcher may hold a `run` of its own (`bun run …`), so only a whole tail counts.
+    if (argv[index] === "run") {
+      const publicInvocation = parsePublicSchedulerInvocation(argv.slice(index));
+      if (publicInvocation) return { binding: argv.slice(0, index), ...publicInvocation };
     }
   }
   return undefined;
@@ -250,8 +269,8 @@ export function consumeSchedulerContextArg(
 }
 
 /**
- * Parse just the public `task run …` / `workflow run …` / `task dispatch` tail,
- * the part of a row that names what it runs.
+ * Parse just the public `run …` / `workflow run …` / `task dispatch` tail (or an
+ * earlier row's `task run …`), the part of a row that names what it runs.
  */
 function parsePublicSchedulerInvocation(
   invocation: readonly string[],
@@ -259,9 +278,10 @@ function parsePublicSchedulerInvocation(
   // The one row of a host in dispatch mode: it names no task and no bundle.
   if (invocation.length === 2 && invocation[0] === "task" && invocation[1] === "dispatch")
     return { invocation: [...invocation] };
-  if (invocation[0] === "task" && invocation[1] === "run" && invocation[2]) {
-    const subject = invocation[2];
-    let index = 3;
+  const task = scheduledTaskSubject(invocation);
+  if (task) {
+    const { subject } = task;
+    let index = task.flagsFrom;
     let target: string | undefined;
     if (subject.includes("//")) {
       // The current form: the task's own ref.
@@ -274,7 +294,8 @@ function parsePublicSchedulerInvocation(
         return undefined;
       }
     } else {
-      // Before 0.11: the task's id, with the bundle it is in after it.
+      // Before 0.11: the task's id, with the bundle it is in after it. Only a `task run` row names one.
+      if (invocation[0] !== "task") return undefined;
       try {
         if (normaliseTaskConceptId(subject) !== subject) return undefined;
       } catch {
