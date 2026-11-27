@@ -18,6 +18,7 @@ import { openStateDatabase } from "../../../src/core/state-db";
 import { proposals } from "../../../src/workspace";
 import { git } from "../../_helpers/git";
 import { prerequisiteGap } from "../../_helpers/prerequisites";
+import { expectSameExceptUpdated } from "../../_helpers/updated-today";
 import {
   commitCount,
   ctx,
@@ -193,7 +194,7 @@ describe("proposal writes", () => {
     expect(recent).toMatchObject({ status: "accepted", revertable: true });
     const reverted = await out(proposals.revert({ id: edit }));
     expect(reverted.proposal.status).toBe("reverted");
-    expect(fs.readFileSync(notes, "utf8")).toBe(original);
+    expectSameExceptUpdated(fs.readFileSync(notes, "utf8"), original);
 
     const other = propose("lessons/rg");
     await proposals.reject({ id: other, reason: "later" });

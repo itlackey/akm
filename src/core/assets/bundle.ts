@@ -27,6 +27,7 @@ import { bundleAdapterId } from "../adapter/detect-adapter";
 import { bundleOf, requireAdapter } from "../adapter/registry";
 import type { AssetEdit, Bundle, Diagnostic, IndexDocument, ValidateContext } from "../adapter/types";
 import { type AkmConfig, loadConfig } from "../config/config";
+import { readCredential } from "../env-secret-ref";
 import { ConfigError, UsageError, type UsageErrorCode } from "../errors";
 
 export type BundleSource = { name: string; path?: string; location?: string; adapterId?: string };
@@ -40,6 +41,12 @@ export type BundleAddress = string | BundleSource;
 /** The id refs use for `bundle`. */
 export function bundleNameOf(bundle: BundleAddress): string {
   return typeof bundle === "string" ? bundle : bundle.name;
+}
+
+/** A store bundle as its adapter is given it: with its `credential`, which is read only when the adapter calls it. */
+function withCredential(bundle: Bundle): Bundle {
+  const reference = bundle.location !== undefined ? loadConfig().bundles?.[bundle.id]?.credential : undefined;
+  return reference === undefined ? bundle : { ...bundle, credential: () => readCredential(bundle.id, reference) };
 }
 
 export class AssetBundle {
@@ -59,7 +66,7 @@ export class AssetBundle {
     if (source.location !== undefined) this.location = source.location;
     this.adapterId = bundleAdapterId(source);
     this.#adapter = requireAdapter(source.name, this.adapterId, { location: source.location !== undefined });
-    this.#bundle = bundleOf(source);
+    this.#bundle = withCredential(bundleOf(source));
     this.root = this.#bundle.root;
   }
 

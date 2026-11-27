@@ -73,7 +73,8 @@ and a task that runs a workflow (workflows go in 0.11), `agent <ref>`,
 `improve --show-prompt`, `improve --require-feedback-signal`, `curate --pack`,
 `search --by-usage`, `search --include-proposed` and `--include-sessions`,
 `show --detail brief` and `--context lead`, `proposal extract --type`,
-`remember --auto`, `--enrich` and `--show-similar` (no replacement flag),
+`remember --auto` and `--enrich` (use `experimental.memoryEnrichment`),
+`remember --show-similar` (no replacement flag),
 `proposal reject --yes` (no longer needed), `upgrade --next` and `--timeout-ms`.
 Since 0.10.261122 these also print the line: `show --max-chars` (use `--max-tokens`),
 `lint --auto-fix` (use `--fix`), `migrate apply --dry-run` (use `akm migrate
@@ -2434,8 +2435,8 @@ akm remember "Deployment needs VPN access" --bundle team-bundle
 | `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string. No tags required. |
 | `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge/auth-flow --xref memories/vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. |
 | `--supersedes <ref>` | Ref of an existing asset this memory corrects. Repeatable. Writes the correction with the old ref folded into its `xrefs:` (correction provenance) AND demotes the old asset — `beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit that preserves every other key and the body — then reindexes it so `--belief current` hides the stale version immediately. An unresolvable ref fails with exit 2 before anything is written or demoted; so does a ref naming the asset being written itself (a correction cannot supersede itself, e.g. `--force` overwriting the same name). A ref that resolves only outside the write target and the working bundle still writes the correction but skips the demotion: stderr warns and the JSON output reports `superseded: [{ref, applied: false, reason}]` — the reason names the `--bundle` remedy when the old asset lives in a configured writable source. An old asset whose existing frontmatter is not parseable YAML is skipped the same way (`applied: false`) instead of being rewritten lossily. Re-running the same correction is idempotent. On a git write target the correction and the demoted old asset land in the same single boundary commit. |
-| `--auto` | Deprecated in 0.10.261120; removed in 0.11 with no replacement flag. Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
-| `--enrich` | Deprecated in 0.10.261120; removed in 0.11 with no replacement flag (enrichment moves to improve). Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
+| `--auto` | Deprecated in 0.10.261120; removed in 0.11. Use [`experimental.memoryEnrichment`](configuration.md#experimental-opt-ins) instead. Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
+| `--enrich` | Deprecated in 0.10.261120; removed in 0.11. Use [`experimental.memoryEnrichment`](configuration.md#experimental-opt-ins), which has `akm improve` propose a memory's tags. Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
 | `--user <id>` | Scope this memory to a user id. Persisted as the canonical `scope_user` frontmatter key. |
 | `--agent <id>` | Scope this memory to an agent id. Persisted as `scope_agent`. |
 | `--run <id>` | Scope this memory to a run id. Persisted as `scope_run`. |
@@ -3470,7 +3471,7 @@ text through `--prompt` or `--prompt-stdin`.
 ### exec
 
 Experimental, and off by default. Turn it on with
-[`experimental.exec`](configuration.md#experimental):
+[`experimental.exec`](configuration.md#experimental-opt-ins):
 
 ```sh
 akm config set experimental.exec true
@@ -4103,6 +4104,7 @@ nothing.
 | Judge | Judges | Input |
 | --- | --- | --- |
 | `reflect.quality` | a revision of an asset's frontmatter (reflect's quality gate) | `source`, `candidate`, `feedback?` (lines), `ref?` |
+| `memory.tags` | the tags proposed for a memory that has none (`experimental.memoryEnrichment`), on their own | `memory`, `tags` |
 | `distill.lesson` | a new lesson, or with `extending` an update of one (distill's quality gate and its lesson updates) | `lesson`, `source` (the memory; its frontmatter is stripped before judging), `feedback?`, `related?` (`{ref, content}`), `extending?` |
 | `consolidate.pair` | what each of two notes states that the other does not | `a` (the older note), `b`; each `{ref, type, created, updated, content}`; a call whose `a` has a later `created` than `b` is refused (exit 2), equal dates are allowed and the prompt says neither is newer |
 | `proposal.judgment` | accept, reject or defer one pending proposal (the drain's judgment tier) | `proposal` (`{ref, source, content}`), `reason`, `liveAsset?`, `siblings`, `neighbours?` |
@@ -4114,7 +4116,7 @@ may also read the asset at `ref` with `akm show`.
 
 | Flag | Description |
 | --- | --- |
-| `--connection <name>` / `--harness <name>` | Run on this connection or harness (mutually exclusive). Without either, the judge runs on the runner akm gives it in the pipeline: the quality gate's judge for `reflect.quality` and `distill.lesson`, consolidate's for `consolidate.pair`, triage's judgment for `proposal.judgment`. |
+| `--connection <name>` / `--harness <name>` | Run on this connection or harness (mutually exclusive). Without either, the judge runs on the runner akm gives it in the pipeline: the quality gate's judge for `reflect.quality`, `memory.tags` and `distill.lesson`, consolidate's for `consolidate.pair`, triage's judgment for `proposal.judgment`. |
 | `--model <alias-or-name>` | Model to run, by alias or exact name |
 | `--list` | List the judges with their descriptions and schema versions |
 | `--schema` | Print the judge's input schema, output schema, schema version and what it may read on a harness |

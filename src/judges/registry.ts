@@ -11,6 +11,7 @@
  */
 
 import { pairJudge } from "../commands/improve/consolidate/pair-pass";
+import { memoryTagsJudge } from "../commands/improve/memory-enrichment";
 import { lessonQualityJudge, reflectQualityJudge } from "../commands/improve/stage";
 import { judgmentJudge } from "../commands/proposal/drain";
 import type { AkmConfig } from "../core/config/config";
@@ -134,4 +135,5 @@ export async function runJudge(
   };
 }
 
-for (const judge of [reflectQualityJudge, lessonQualityJudge, pairJudge, judgmentJudge]) registerJudge(judge);
+for (const judge of [reflectQualityJudge, lessonQualityJudge, memoryTagsJudge, pairJudge, judgmentJudge])
+  registerJudge(judge);

@@ -17,7 +17,10 @@ import { main } from "../../../scripts/akm-migrate/main";
 import { applyTaskFilesV5Migration, inspectTaskFilesV5Migration } from "../../../scripts/akm-migrate/task-migrate";
 import { collectWorkflowFilesAdvisory } from "../../../src/commands/health/workflow-files";
 import { resetConfigCache } from "../../../src/core/config/config";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git-provider";
+import type { Database } from "../../../src/storage/database";
+import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { checkTaskV5 } from "../../../src/tasks/v5/check";
 import { harnessCalls, promptOf, writeFakeHarness } from "../../_helpers/engine-stubs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
@@ -414,7 +417,11 @@ describe("akm doctor", () => {
     expect(advisory?.message).toContain("removed in 0.11");
     expect(advisory?.message).toContain("akm migrate apply <path>");
     expect(advisory?.message).toContain("delete it once the task works");
-    expect(advisory?.evidence).toEqual({ bundles: [{ bundle: storage.stashDir, files: [file] }], files: [file] });
+    expect(advisory?.evidence).toEqual({
+      bundles: [{ bundle: storage.stashDir, files: [file] }],
+      files: [file],
+      blockedRuns: [],
+    });
   });
 
   test("`akm-migrate status` reports the same files and stays current, since apply converts only a named file", async () => {
@@ -442,6 +449,50 @@ describe("akm doctor", () => {
   test("says nothing when no workflow file is left", () => {
     put("workflows/README.md", "About workflows.\n");
     expect(collectWorkflowFilesAdvisory()).toBeUndefined();
+  });
+
+  async function run(id: string, status: "active" | "blocked"): Promise<void> {
+    await withWorkflowRunsRepo((repo) => {
+      const at = "2026-11-25T00:00:00.000Z";
+      repo.insertRun({
+        id,
+        workflowRef: `workflows/${id}`,
+        workflowTitle: id,
+        paramsJson: "{}",
+        currentStepId: "collect",
+        createdAt: at,
+        updatedAt: at,
+        agentHarness: null,
+        agentSessionId: null,
+      });
+      repo.updateRunState({ status, currentStepId: "collect", updatedAt: at, completedAt: null, runId: id });
+    });
+  }
+
+  function withStateDb<T>(fn: (db: Database) => T): T {
+    const db = openStateDatabase();
+    try {
+      return fn(db);
+    } finally {
+      db.close();
+    }
+  }
+
+  test("a blocked workflow run warns, names the run and says how to finish or abandon it before 0.11", async () => {
+    await run("run-stuck", "blocked");
+    const advisory = withStateDb((db) => collectWorkflowFilesAdvisory(db));
+    expect(advisory).toMatchObject({ name: "workflow-files", status: "warn" });
+    expect(advisory?.message).toContain("run-stuck (workflows/run-stuck)");
+    expect(advisory?.message).toContain("akm workflow resume <id>");
+    expect(advisory?.message).toContain("akm workflow abandon <id>");
+    expect(advisory?.evidence).toMatchObject({
+      blockedRuns: [{ id: "run-stuck", workflowRef: "workflows/run-stuck" }],
+    });
+  });
+
+  test("an active workflow run is not a warning", async () => {
+    await run("run-going", "active");
+    expect(withStateDb((db) => collectWorkflowFilesAdvisory(db))).toBeUndefined();
   });
 
   test("a bundle that cannot be read is unknown, not empty", () => {

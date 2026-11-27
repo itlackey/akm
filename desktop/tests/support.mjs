@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { readFile, writeFile } from "node:fs/promises";
 import http from "node:http";
+import net from "node:net";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -467,6 +468,29 @@ export async function tabStops(page, within, limit = 80) {
     stops.push(stop);
   }
   return stops;
+}
+
+async function freePort() {
+  const probe = net.createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const { port } = /** @type {net.AddressInfo} */ (probe.address());
+  await new Promise((resolve) => probe.close(resolve));
+  return port;
+}
+
+/**
+ * Runs `launch(port)` with a port that was free. Another test file's server may take it before this one binds, and the
+ * server then exits with EADDRINUSE: `launch` runs again on a fresh port, at most 3 times. Any other failure, and the
+ * last one, is thrown as it is, so `launch` must put the server's stderr in the error it throws.
+ */
+export async function withFreePort(launch) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await launch(await freePort());
+    } catch (error) {
+      if (attempt >= 3 || !String(error?.message).includes("EADDRINUSE")) throw error;
+    }
+  }
 }
 
 export async function launchFixture({

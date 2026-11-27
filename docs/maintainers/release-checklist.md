@@ -6,14 +6,13 @@
    release branch, by pull request. Every commit on `main` is a release: tagged
    `v<version>`, on npm `latest`, with a GitHub release that carries the
    binaries, the installers and AKM Desktop.
-2. A release branch, `release/<version>`, is cut from `main` with the next free
-   number of its line ([Versions](#versions)). Pull requests name it as their
+2. A release branch, `release/<version>`, is cut from `main` with the next
+   version of its line ([Versions](#versions)). Pull requests name it as their
    base (`gh pr create --base release/<version>`); `main` stays the default
    branch, and a pull request into `main` from anything but a release branch
-   cannot merge. A branch for the next minor can be open at the same time,
-   `release/0.11.261101` beside `release/0.10.261121`. The patch ships first,
-   and the 0.11 branch merges `main` before it can ship (the ruleset requires
-   it), so the patch is in 0.11 too.
+   cannot merge. The first 0.11 branch was never merged with `main` and was
+   deleted; its commits are kept as the tag `archive/release-0.11.0`. 0.11
+   restarts from `main` and reapplies its removals.
 3. All work lands on the release branch by pull request. A feature that needs
    several pull requests lands in slices that are each shippable but inert
    until the last one (internals first, the command or flag wired up last, or
@@ -47,11 +46,11 @@ branch.
 From a clean tree on any branch:
 
 ```sh
-bun run release:start          # the next number of main's line
-bun run release:start 0.11     # the first number of the next minor
+bun run release:start          # the next version of main's line
+bun run release:start 0.11     # the first version of the next minor
 ```
 
-It creates `release/<version>` from `origin/main` with the next free number of
+It creates `release/<version>` from `origin/main` with the next version of
 the line (`bun scripts/release-version.ts next [0.<minor>]`) and pushes it.
 GitHub deletes the branch when its pull request into `main` merges (see
 [Repository settings](#repository-settings)).
@@ -218,14 +217,24 @@ caches, so they are saved only when that push runs Gated CI.
 
 ## Versions
 
-The scheme is in [`STABILITY.md`](../../STABILITY.md): `0.<minor>.YYMMNN`, a
-release's number taken when its branch is cut, its prereleases that number with
-the stage and a counter appended. `bun scripts/release-version.ts next
-[0.<minor>]` prints the next free number of a line from the versions on npm
-(the retired 8-digit daily builds are not counted), `validate <version>`
-checks one by hand, and the Release workflow appends the stage and the next
-counter at publish time; the stage is never committed. A number that never
-published (an abandoned branch) stays unused.
+The scheme depends on the line's minor ([`STABILITY.md`](../../STABILITY.md)).
+A 0.10 release is `0.10.YYMMNN`, its number taken when its branch is cut. From
+0.11 releases are plain semver: the stable release is `0.11.0`, then patches
+`0.11.1`, `0.11.2`; the next minor starts at `0.12.0`. In both, the branch is
+`release/<version>` and prereleases are that version with `-alpha.N`, `-beta.N`
+or `-rc.N` appended (`0.11.0-beta.1`). `bun scripts/release-version.ts next
+[0.<minor>]` prints the next version of a line from the versions on npm: the
+next free monthly number for 0.10 (the retired 8-digit daily builds are not
+counted), one patch above the line's latest stable, or `0.<minor>.0`, from
+0.11. `validate <version>` checks one by hand, and the Release workflow
+appends the stage and the next counter at publish time; the stage is never
+committed. A version that never published (an abandoned branch) stays unused.
+A stable of an older line published after a newer line's does not take GitHub's
+Latest release.
+
+`bun run release:start 0.11` cuts `release/0.11.0`. The earlier 0.11 branch of
+that name is archived as the tag `archive/release-0.11.0`
+([Branch model](#branch-model)).
 
 ## Repository settings
 

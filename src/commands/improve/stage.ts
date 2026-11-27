@@ -280,7 +280,7 @@ export interface QualityJudgeResult {
   criteria?: Record<string, number>;
 }
 
-type QualityJudgeChat = (
+export type QualityJudgeChat = (
   connection: ChatCompletionConfig,
   messages: ChatMessage[],
   options?: ChatCompletionOptions,
@@ -414,7 +414,7 @@ export function buildJudgePrompt(
   return lines.join("\n");
 }
 
-function boundedDocument(content: string, maxChars = 6000): string {
+export function boundedDocument(content: string, maxChars = 6000): string {
   if (content.length <= maxChars) return content;
   const half = Math.floor((maxChars - 80) / 2);
   return `${content.slice(0, half)}\n\n[... middle omitted for bounded judge context ...]\n\n${content.slice(-half)}`;
@@ -605,7 +605,7 @@ export function judgeResponseSchema(keys: readonly string[]): Record<string, unk
  * remove it: on some servers (llama.cpp batching, for one) the same request can
  * score a point apart, so the routing rules are chosen with that margin in mind.
  */
-async function judgeQuality(
+export async function judgeQuality(
   prompt: string,
   keys: readonly string[],
   call: JudgeCall,
@@ -648,7 +648,7 @@ async function judgeQuality(
   return { outcome: "verdict", verdict: { ...verdict, score, reason, ...(criteria ? { criteria } : {}) } };
 }
 
-const QUALITY_VERDICT_SHAPE = {
+export const QUALITY_VERDICT_SHAPE = {
   type: "object",
   required: ["pass", "score", "reason"],
   additionalProperties: false,
@@ -776,7 +776,7 @@ export const lessonQualityJudge: Judge<LessonJudgeInput, QualityJudgeResult> = {
  * failure or an unreadable reply never passes content: each comes back as review
  * with score -1 (no verdict), for a person.
  */
-async function runQualityJudge<I>(
+export async function runQualityJudge<I>(
   judge: Judge<I, QualityJudgeResult>,
   feature: "lesson_quality_gate" | "proposal_quality_gate",
   config: AkmConfig,

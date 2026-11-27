@@ -68,6 +68,12 @@ export const ExperimentalConfigSchema = z
      */
     exec: z.boolean().optional(),
     /**
+     * Let `akm improve`'s reflect propose `tags` for a memory, as part of its usual
+     * proposal (the replacement for `akm remember --enrich`), and plan untagged memories first in proactive
+     * maintenance. OFF by default; the proposal still goes through the quality judge and the queue.
+     */
+    memoryEnrichment: z.boolean().optional(),
+    /**
      * The research learning controls, under the paths `improve.*` has for them. `strategies` is
      * `improve.strategies` (custom strategies, process `enabled`, `allowedTypes`, quality-gate toggles, reflect
      * `defectFilter`, extract triage and session indexing, triage `applyMode` and `judgment`, the CLS knobs and the

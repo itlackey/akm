@@ -5,7 +5,11 @@
 /** Shared by the per-harness plugin upgraders: running an external command with a timeout, and the entry shapes they return. */
 
 import * as childProcess from "node:child_process";
-import type { PluginUpgradeEntry } from "../../sources/types";
+import fs from "node:fs";
+import path from "node:path";
+import { toErrorMessage } from "../../core/common";
+import { UsageError } from "../../core/errors";
+import type { PluginUpgradeEntry, UpgradeChannel } from "../../sources/types";
 import { ChannelWriteError } from "./plugin-channels";
 
 export const READ_TIMEOUT_MS = 30_000;
@@ -38,6 +42,33 @@ export function runCommand(command: string, args: string[], timeoutMs: number, o
     return { ok: false, missing: false, error: `\`${label}\` failed: ${detail}` };
   }
   return { ok: true, stdout: result.stdout ?? "" };
+}
+
+/**
+ * Reads one file of the marketplace's channel: in place from a plain local directory (a baked-in image: no clone, no
+ * network), else from a blobless clone at `checkout` with nothing checked out.
+ */
+export function marketplaceReader(
+  source: string,
+  channel: UpgradeChannel,
+  checkout: string,
+): (file: string) => CommandResult {
+  // asset-io: install
+  if (fs.statSync(source, { throwIfNoEntry: false })?.isDirectory() && !fs.existsSync(path.join(source, ".git"))) {
+    return (file) => {
+      try {
+        // asset-io: install
+        return { ok: true, stdout: fs.readFileSync(path.join(source, file), "utf8") };
+      } catch (error) {
+        return { ok: false, missing: false, error: toErrorMessage(error) };
+      }
+    };
+  }
+  const branch = channel === "next" ? ["--branch", "next"] : [];
+  const cloneArgs = ["clone", "--depth", "1", "--single-branch", "--filter=blob:none", "--no-checkout", ...branch];
+  const cloned = runCommand("git", [...cloneArgs, "--", source, checkout], REFRESH_TIMEOUT_MS);
+  if (!cloned.ok) throw new UsageError(`Could not check the target plugin version: ${cloned.error}`);
+  return (file) => runCommand("git", ["-C", checkout, "show", `HEAD:${file}`], REFRESH_TIMEOUT_MS);
 }
 
 export function skipped(harness: PluginUpgradeEntry["harness"], message: string): PluginUpgradeEntry {

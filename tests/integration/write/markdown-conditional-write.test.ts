@@ -18,6 +18,7 @@ import { akmIndex } from "../../../src/indexer/indexer";
 import { writeLockfile } from "../../../src/integrations/lockfile";
 import { git, makeGitRepo } from "../../_helpers/git";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
+import { expectSameExceptUpdated } from "../../_helpers/updated-today";
 
 let storage: IsolatedAkmStorage;
 const RAW =
@@ -114,7 +115,7 @@ test("stale or removed source rejects before write/commit, while a matching edit
   expect(git(storage.stashDir, ["rev-parse", "HEAD"])).toBe(before);
   const saved = await writeMarkdownAsset({ ...options(changed), expectedContentHash: hash(RAW) });
   expect(saved.unchanged).toBeUndefined();
-  expect(fs.readFileSync(file(), "utf8")).toBe(changed);
+  expectSameExceptUpdated(fs.readFileSync(file(), "utf8"), changed);
   expect(git(storage.stashDir, ["status", "--porcelain"])).toBe("");
   expect((await akmSearch({ query: "quasarprocedure", type: "knowledge", readOnly: true })).hits).toHaveLength(1);
   fs.unlinkSync(file());

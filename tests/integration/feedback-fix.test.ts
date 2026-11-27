@@ -7,6 +7,7 @@ import { buildSnapshotManifest } from "../../src/commands/improve/preparation";
 import { getProposal, listProposals } from "../../src/commands/proposal/repository";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { writeAssets } from "../../src/core/assets/write";
+import { localDateStamp } from "../../src/core/common";
 import { saveConfig } from "../../src/core/config/config";
 import { UsageError } from "../../src/core/errors";
 import { readEvents } from "../../src/core/events";
@@ -16,6 +17,7 @@ import { akmIndex } from "../../src/indexer/indexer";
 import { runCliCapture } from "../_helpers/cli";
 import { git, makeGitRepo } from "../_helpers/git";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { expectSameExceptUpdated } from "../_helpers/updated-today";
 
 // `akm feedback --negative ... --replace/--with/--source`: an exact fix for a
 // wrong fact in an asset's text, checked before anything is recorded, filed as
@@ -127,7 +129,7 @@ describe("akm feedback --replace/--with/--source", () => {
 
     const reverted = await runCliCapture(["proposal", "revert", id, "--format=json"]);
     expect(reverted.code).toBe(0);
-    expect(fs.readFileSync(file, "utf8")).toBe(NOTE);
+    expectSameExceptUpdated(fs.readFileSync(file, "utf8"), NOTE);
   });
 
   test("the negative that carried the fix does not plan reflect, as before", async () => {
@@ -445,7 +447,7 @@ describe("a fix for an asset outside its type's folder", () => {
 
     const reverted = await runCliCapture(["proposal", "revert", id, "--format=json"]);
     expect(reverted.code).toBe(0);
-    expect(fs.readFileSync(file, "utf8")).toBe(original);
+    expectSameExceptUpdated(fs.readFileSync(file, "utf8"), original);
   });
 
   test("plain negative feedback on such an asset is still recorded", async () => {
@@ -651,7 +653,8 @@ describe("applyHistoryMark", () => {
         ...data,
         supersededBy: [...(data.supersededBy as string[])].sort(),
       });
-      const expected = parseFrontmatter(fs.readFileSync(file, "utf8")).data;
+      // A write stamps today's `updated`; the pure edit does not.
+      const { updated: _stamped, ...expected } = parseFrontmatter(fs.readFileSync(file, "utf8")).data;
       expect(sorted(parseFrontmatter(mark(raw)).data)).toEqual(sorted(expected));
     }
   });

@@ -10,7 +10,12 @@ import { daysToMs } from "../../core/common";
 import { type AkmConfig, type ImproveProfileConfig, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
-import type { AkmDistillResult, ImproveActionResult, ImproveEligibleRef } from "../../core/improve-types";
+import {
+  type AkmDistillResult,
+  type ImproveActionResult,
+  type ImproveEligibleRef,
+  reflectMode,
+} from "../../core/improve-types";
 import { openLogsDatabase, purgeOldTaskLogs } from "../../core/logs-db";
 import { getDbPath, getTaskLogDir } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
@@ -235,18 +240,11 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
   // A refused type or an unchanged asset is a deterministic skip, not an LLM
   // fault; a guard or quality-judge rejection is a verdict on produced content,
   // not an execution failure, and gets its own bucket for health.
-  const skipped = reason === "unsupported_type" || reason === "no_change";
-  tally.actions.push({
-    ref: planned.ref,
-    mode: result.ok
-      ? "reflect"
-      : reason === "content_policy_reject" || reason === "quality_rejected"
-        ? "reflect-guard-rejected"
-        : skipped
-          ? "reflect-skipped"
-          : "reflect-failed",
-    result,
-  });
+  const mode = reflectMode(result);
+  const skipped = mode === "reflect-skipped";
+  tally.actions.push({ ref: planned.ref, mode, result });
+  // A memory's tags are their own proposal (experimental.memoryEnrichment): their own action.
+  if (result.tags) tally.actions.push({ ref: planned.ref, mode: reflectMode(result.tags), result: result.tags });
   // A quality rejection recorded itself for that input, not the shared recent
   // errors sent to other refs; skips revisit on the `unchanged` cadence. A transient
   // failure (transport, parse, timeout, budget abort, crash) is not a verdict

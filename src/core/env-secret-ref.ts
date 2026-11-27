@@ -21,7 +21,8 @@ import { assetType } from "./assets/type";
 import { fileOfRef, type WriteResult, writeAssets } from "./assets/write";
 import { isWithin, scanEnvKeyNames } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
-import { NotFoundError, UsageError } from "./errors";
+import { envReferenceName } from "./config/schema/primitives";
+import { ConfigError, NotFoundError, UsageError } from "./errors";
 import { resolveMutationTarget } from "./mutation-target";
 import { formatRefForMessage, type ResolvedWriteTarget, requireWriteTargetPath } from "./write-source";
 
@@ -197,6 +198,34 @@ export function resolveSecretPath(ref: string): { written: string; asset: Asset 
 export function readSecret(ref: string): { ref: string; value: string } {
   const { asset } = ownerOfType(ref, "secret", "secrets/<name>");
   return { ref: makeSecretRef(asset.conceptId, asset.bundle), value: secretValueOf(asset) };
+}
+
+/** The bundles whose `credential` is being read, so one that names a secret of the store it unlocks fails, not recurses. */
+const readingCredential = new Set<string>();
+
+/**
+ * The password a store bundle's `credential` gives: the variable a `$VAR` / `${VAR}` names, or the value of the secret
+ * a `${secrets/<name>}` names. Callers MUST NOT write the value to stdout or any log.
+ */
+export function readCredential(bundle: string, reference: string): string {
+  if (readingCredential.has(bundle)) {
+    throw new ConfigError(
+      `Bundle "${bundle}" has a credential that names a secret of "${bundle}" itself, which the credential is needed to unlock.`,
+      "INVALID_CONFIG_FILE",
+      "Keep the keyring's password in another bundle, or in an environment variable.",
+    );
+  }
+  readingCredential.add(bundle);
+  try {
+    const variable = envReferenceName(reference);
+    const value = variable !== undefined ? process.env[variable] : readSecret(reference.slice(2, -1)).value;
+    if (!value) {
+      throw new ConfigError(`The credential of bundle "${bundle}", ${reference}, is empty.`, "INVALID_CONFIG_FILE");
+    }
+    return value;
+  } finally {
+    readingCredential.delete(bundle);
+  }
 }
 
 // ── Write-target resolution (env/secret mutations) ───────────────────────────

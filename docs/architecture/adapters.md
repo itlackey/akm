@@ -341,7 +341,12 @@ Rules the base applies:
   call `clearAdapterCaches()`.
 - Listing needs no unlock. A read, store or delete in a locked keyring unlocks
   it through the keyring manager's own prompt, which `secret-tool` shows, in
-  every command and host.
+  every command and host. A bundle with a `credential` is unlocked by akm first,
+  with no prompt: the facade gives the adapter the bundle's `credential` as a
+  function (`Bundle.credential`) it calls only when the keyring is locked, and
+  `gnome-keyring-unlock.ts` sends the password to GNOME Keyring's
+  `UnlockWithMasterPassword` from a child of akm's own runtime, which holds the
+  one D-Bus connection that call and its `OpenSession` must share.
 - Values reach a client on its standard input or in a file only the user can
   read, never in an argument.
 

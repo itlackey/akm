@@ -1085,8 +1085,7 @@ function selectProactiveMaintenanceLane(
     return { proactiveRefs: [] };
   }
   const pmCfg = args.improveProfile.processes?.proactiveMaintenance;
-  const dueDays = pmCfg?.dueDays ?? DEFAULT_DUE_DAYS;
-  const maxPerRun = pmCfg?.maxPerRun ?? DEFAULT_MAX_PER_RUN;
+  const { dueDays = DEFAULT_DUE_DAYS, maxPerRun = DEFAULT_MAX_PER_RUN } = pmCfg ?? {};
   const selection = selectProactiveMaintenanceRefs({
     candidates,
     lastReflectTs: snapshot.lastReflectAttemptAt,
@@ -1094,6 +1093,7 @@ function selectProactiveMaintenanceLane(
     retrievalCounts: retrieval.retrievalCounts,
     lastUseMs: retrieval.lastUseMs,
     sizeBytesOf: (r) => fileSize(r.filePath),
+    config: args.options.config ?? loadConfig(),
     dueDays,
     maxPerRun,
   });

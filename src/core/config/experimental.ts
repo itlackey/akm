@@ -19,7 +19,9 @@
  * caller holding a partial config (tests, the strategy resolver) to supply it.
  */
 export interface ExperimentalConfigHolder {
-  experimental?: { improveAutonomy?: boolean | undefined; exec?: boolean | undefined } | undefined;
+  experimental?:
+    | { improveAutonomy?: boolean | undefined; exec?: boolean | undefined; memoryEnrichment?: boolean | undefined }
+    | undefined;
 }
 
 /**
@@ -41,6 +43,11 @@ export function isImproveAutonomyEnabled(config: ExperimentalConfigHolder | unde
  * health advisory, and those three must name the same key as the schema.
  */
 export const IMPROVE_AUTONOMY_CONFIG_KEY = "experimental.improveAutonomy";
+
+/** True only when the user has explicitly let improve's reflect propose tags for memories. */
+export function isMemoryEnrichmentEnabled(config: ExperimentalConfigHolder | undefined): boolean {
+  return config?.experimental?.memoryEnrichment === true;
+}
 
 /** True only when the user has explicitly turned `akm exec` on. */
 export function isExecEnabled(config: ExperimentalConfigHolder | undefined): boolean {

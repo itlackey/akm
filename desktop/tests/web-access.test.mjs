@@ -10,27 +10,19 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium, expect } from "@playwright/test";
 import { createFixture } from "../scripts/fixture.mjs";
+import { withFreePort } from "./support.mjs";
 
 const appRoot = process.env.AKM_DESKTOP_TEST_APP_ROOT ?? fileURLToPath(new URL("..", import.meta.url));
 const server = path.join(appRoot, "server/server.mjs");
 const form = (fields) => new URLSearchParams(fields).toString();
 const FORM = "application/x-www-form-urlencoded";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function freePort() {
-  const probe = net.createServer();
-  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
-  const { port } = probe.address();
-  await new Promise((resolve) => probe.close(resolve));
-  return port;
-}
 
 /** One HTTP request to `port` on loopback, claiming `host`. Resolves with the whole response. */
 function send(port, route, { host, method = "GET", headers = {}, body } = {}) {
@@ -266,9 +258,9 @@ test("a restart ends sessions; two instances do not share them", async (t) => {
   assert.equal((await second.request("/api/session", { headers: { Cookie: one } })).status, 401);
   assert.equal((await second.request("/api/session", { headers: { Cookie: two } })).status, 200);
   // The same secret and port after a restart: the cookie is not accepted by a server that never issued it.
-  const port = await freePort();
   const secret = randomBytes(32).toString("hex");
-  const before = await start(t, { args: ["--port", String(port)], secret });
+  const before = await start(t, { args: ["--port", "0"], secret });
+  const { port } = before;
   const cookie = cookieOf(await before.login());
   assert.equal((await before.request("/api/session", { headers: { Cookie: cookie } })).status, 200);
   before.child.kill("SIGTERM");
@@ -632,10 +624,12 @@ async function proxy(t, { port, internal, secret }) {
 test("different internal and public hosts: the public origin is what the framework sees", async (t) => {
   // The public origin is the proxy's address as the browser sees it; no name needs to resolve for these requests.
   const origin = "http://public.example:4242";
-  const app = await start(t, {
-    args: ["--port", String(await freePort()), "--origin", origin],
-    web: { allowedHosts: ["akm-internal"] },
-  });
+  const app = await withFreePort((port) =>
+    start(t, {
+      args: ["--port", String(port), "--origin", origin],
+      web: { allowedHosts: ["akm-internal"] },
+    }),
+  );
   assert.equal(app.origin, origin);
   const throughHeader = await proxy(t, { port: app.port, internal: `akm-internal:${app.port}`, secret: app.secret });
   const throughNothing = await proxy(t, { port: app.port, internal: "akm-internal", secret: undefined });
@@ -710,10 +704,12 @@ test("framing: denied by default; allowed for exactly the configured parents", a
   );
 
   // An https origin with parents: the cookie a browser needs to keep inside a frame on another site.
-  const secure = await start(t, {
-    args: ["--port", String(await freePort()), "--origin", "https://akm.example:8443"],
-    web: { frameParents: ["https://parent.example"] },
-  });
+  const secure = await withFreePort((port) =>
+    start(t, {
+      args: ["--port", String(port), "--origin", "https://akm.example:8443"],
+      web: { frameParents: ["https://parent.example"] },
+    }),
+  );
   const cookie = (
     await secure.request("/api/session", {
       host: "akm.example:8443",
@@ -724,7 +720,9 @@ test("framing: denied by default; allowed for exactly the configured parents", a
   ).headers["set-cookie"][0];
   assert.match(cookie, /; HttpOnly; SameSite=None; Secure; Partitioned$/);
   // An https origin without parents is Strict and Secure.
-  const strict = await start(t, { args: ["--port", String(await freePort()), "--origin", "https://akm.example:8443"] });
+  const strict = await withFreePort((port) =>
+    start(t, { args: ["--port", String(port), "--origin", "https://akm.example:8443"] }),
+  );
   const strictCookie = (
     await strict.request("/api/session", {
       host: "akm.example:8443",
@@ -739,22 +737,22 @@ test("framing: denied by default; allowed for exactly the configured parents", a
 test("a frame shows the login form or follows a login link, for an allowed parent only", {
   timeout: 120000,
 }, async (t) => {
-  // A page that frames `target`, on a port of its own. The allowed parent's origin is in the server's config.
-  const parentOn = async (port, target) => {
+  // A page that frames `target()`, on a port of its own (listened first, so the config can name it). The allowed parent's origin is in the server's config.
+  const parentOn = async (target) => {
     const listener = http.createServer((_req, res) => {
       res
         .writeHead(200, { "Content-Type": "text/html" })
         .end(`<!doctype html><iframe id="f" src="${target()}" width="900" height="600"></iframe>`);
     });
-    await new Promise((resolve) => listener.listen(port, "127.0.0.1", resolve));
+    await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
     t.after(() => listener.close());
+    return listener.address().port;
   };
-  const allowed = await freePort();
-  const other = await freePort();
+  let target;
+  const allowed = await parentOn(() => target);
+  const other = await parentOn(() => app.origin);
   const app = await start(t, { web: { frameParents: [`http://127.0.0.1:${allowed}`] } });
-  let target = app.origin;
-  await parentOn(allowed, () => target);
-  await parentOn(other, () => app.origin);
+  target = app.origin;
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const ui = (page) => page.frameLocator("#f").getByRole("navigation", { name: "Primary navigation" });

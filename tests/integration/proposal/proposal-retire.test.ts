@@ -62,6 +62,7 @@ import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-l
 import { upsertProposal } from "../../../src/storage/repositories/proposals-repository";
 import { makeConfig } from "../../_helpers/factories";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { expectSameExceptUpdated } from "../../_helpers/updated-today";
 
 let storage: IsolatedAkmStorage;
 
@@ -822,7 +823,7 @@ describe("akm proposal revert on a retire proposal", () => {
     await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
     await akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config });
     const after = fs.readFileSync(filePath, "utf8");
-    expect(after).toBe(original);
+    expectSameExceptUpdated(after, original);
     // The human-written edge to a DIFFERENT note survives untouched.
     const fm = parseFrontmatter(after).data;
     expect(fm.supersededBy).toEqual(["memories/someone-elses-note"]);

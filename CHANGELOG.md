@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261134] - 2026-11-27
+
+### Added
+
+- `akm doctor` warns when a workflow run is blocked: its `workflow-files` advisory names each blocked run and the `akm workflow resume <id>` and `akm workflow abandon <id>` commands that finish or give it up before 0.11, where workflows are removed. An active run is not a warning. `evidence.blockedRuns` lists them.
+- A `secret-tool` bundle takes a `credential`, a reference to its GNOME keyring's password. akm then unlocks the keyring with it when the keyring is locked, with no prompt, so a keyring your login does not unlock can be read with nobody there. A wrong password fails once, and another Secret Service (KWallet) fails saying this works only with GNOME Keyring. See [Environment & Secrets](docs/reference/env-and-secrets.md#secrets-kept-by-a-secret-manager).
+- `experimental.memoryEnrichment` (off by default) lets `akm improve` propose tags for a memory that has none, as a proposal of their own judged by the new tags judge `memory.tags` (also runnable with `akm doctor judge memory.tags`), and plans untagged memories first. It replaces `akm remember --enrich` and `--auto`, whose deprecation notice now names it.
+
+### Changed
+
+- From 0.11, releases use plain semantic versions (`0.11.0-beta.1`, `0.11.0`, `0.11.1`, `0.12.0`). 0.10 releases keep their monthly numbers (`0.10.YYMMNN`).
+- `akm migrate apply` of a version 4 task writes `cwd: .` when the task names no working directory, so its steps still run in the bundle root, and every conversion lists a note that steps no longer inherit akm's environment (pass variables on with `inherit:`).
+- akm sets frontmatter dates itself when it writes an asset. Every create and update sets `updated` to today's date, and a new memory without `observed` gets today's date. An existing `observed` is kept. A model's reply no longer supplies a date: `akm remember --enrich` stops taking `observed` from it, and improve's merges and promotions stop carrying a model's `updated`.
+
+### Fixed
+
+- `akm doctor` no longer reports the Claude and Codex plugin version checks as `unknown` when the akm-plugins marketplace is registered from a local directory: it reads the version from the directory, with no clone, and reports `pass` or `warn`.
+
 ## [0.10.261133] - 2026-11-25
 
 ### Added

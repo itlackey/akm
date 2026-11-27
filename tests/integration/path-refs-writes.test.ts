@@ -23,6 +23,7 @@ import { akmIndex } from "../../src/indexer/indexer";
 import { configureBundles } from "../_helpers/bundle-config";
 import { makeConfig } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { expectSameExceptUpdated } from "../_helpers/updated-today";
 
 let storage: IsolatedAkmStorage;
 let stash = "";
@@ -128,7 +129,7 @@ describe("a proposal for a loose asset", () => {
     expect(assetFiles()).toEqual(before);
 
     await akmProposalRevert({ stashDir: stash, id: proposal.id, config });
-    expect(fs.readFileSync(file, "utf8")).toBe(NOTE);
+    expectSameExceptUpdated(fs.readFileSync(file, "utf8"), NOTE);
   });
 
   test("retire archives the loose file, and revert brings it back", async () => {

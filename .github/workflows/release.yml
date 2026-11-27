@@ -86,7 +86,7 @@ jobs:
           fi
           runs=$(api "actions/workflows/release.yml/runs?event=pull_request&head_sha=$head" '.workflow_runs[].id') || runs=
           for id in $runs; do
-            passed=$(api "actions/runs/$id/jobs?per_page=100" '(all(.jobs[]; .conclusion == "success" or .conclusion == "skipped")) and any(.jobs[]; .name == "integration" and .conclusion == "success")') || passed=false
+            passed=$(api "actions/runs/$id/jobs?per_page=100" '(all(.jobs[]; .conclusion == "success" or .conclusion == "skipped")) and any(.jobs[]; (.name | startswith("integration (")) and .conclusion == "success")') || passed=false
             if [ "$passed" = "true" ]; then
               echo "Run $id passed the gates on the tree of $head: skipping them."
               echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -96,8 +96,14 @@ jobs:
           echo "No passing run of the gates on $head: the gates run."
 
   # The integration suite (scripts/test-integration.sh: duration-balanced shards, each killed at 900s), set up the
-  # way CI's `check` job is.
+  # way CI's `check` job is. One plan of four shards, run as two jobs of two: `shards` is the range each job runs, and
+  # the ranges partition 1-4, so every test file runs exactly once (the script checks each job ran every file of its
+  # range; tests/workflow-release.test.ts checks the ranges).
   integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        shards: ["1-2", "3-4"]
     needs: proven
     if: ${{ !cancelled() && !inputs.dry_run && needs.proven.outputs.skip != 'true' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && startsWith(github.head_ref, 'release/'))) }}
     runs-on: ubuntu-latest
@@ -123,6 +129,8 @@ jobs:
           key: opencode-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/integrations/harnesses/opencode/runtime/binary.ts') }}
       - run: bun run test:integration
         env:
+          TEST_SHARDS: 4
+          TEST_SHARD_RANGE: ${{ matrix.shards }}
           # Keeps the shards' logs and junit reports, uploaded below.
           TEST_INTEGRATION_LOGDIR: ${{ runner.temp }}/akm-integration-shards
       # Every run, green or not: the per-file times regenerate tests/integration/.timings.json
@@ -130,7 +138,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         if: always()
         with:
-          name: integration-shards
+          name: integration-shards-${{ matrix.shards }}
           path: ${{ runner.temp }}/akm-integration-shards/shard-*
           retention-days: 14
           if-no-files-found: ignore
@@ -403,8 +411,8 @@ jobs:
       # committed in package.json, which the pull request's release-branch-only check matched to the branch; a
       # prerelease (a dispatch on the release branch) publishes the branch's version with the stage and the next
       # counter appended (one above the highest on npm for that release and stage), stamped into this run's
-      # package.json only. scripts/release-version.ts validates the format (0.10+: 0.<minor>.YYMMNN; older lines:
-      # X.Y.Z[-prerelease]) and appends the stage (#1089).
+      # package.json only. scripts/release-version.ts validates the format (0.10: 0.<minor>.YYMMNN; 0.11+: plain
+      # semver; older lines: X.Y.Z[-prerelease]) and appends the stage (#1089).
       - name: Resolve version
         id: version
         run: |

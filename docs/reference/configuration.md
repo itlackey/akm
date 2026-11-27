@@ -948,6 +948,7 @@ full bundle model (`path`, `git`, `website`, `npm`, `location`, `writable`,
 | `root` | The content root inside the bundle. Only with `path` or `git`. |
 | `writable` | The one writability key. Default: `true` for a local `path` and for `location`, `false` for the rest. |
 | `location` | Where the adapter finds a bundle that is not a directory: a keyring's or a Key Vault's name. It needs `adapter`. |
+| `credential` | A reference to a secret (`$VAR`, `${VAR}` or `${secrets/<name>}`), never a literal. On a `git` bundle, the HTTPS bearer credential. On a `secret-tool` bundle, the password akm unlocks the locked GNOME keyring with (see [Environment & Secrets](env-and-secrets.md#secrets-kept-by-a-secret-manager)). No other bundle takes one. |
 
 `location` names a keyring (`secret-tool`) or an Azure Key Vault
 (`azure-key-vault`); see
@@ -1097,7 +1098,8 @@ section, an absent key, and an explicit `false` all read identically as off.
 {
   "experimental": {
     "improveAutonomy": false,
-    "exec": false
+    "exec": false,
+    "memoryEnrichment": false
   }
 }
 ```
@@ -1106,6 +1108,16 @@ section, an absent key, and an explicit `false` all read identically as off.
   command with env assets and secrets injected. Off by default: `akm exec`
   refuses and runs nothing. `akm run --env` and `--secret` are not gated, nor are
   the `exec:` and `prompt:` steps of a [version 5 task](tasks.md#task-source-v5-experimental).
+- **`experimental.memoryEnrichment`** — the replacement for the Deprecated
+  `akm remember --enrich` and `--auto`. When on, `akm improve`'s reflect process
+  asks for 1-5 `tags` for a memory that has none, in the same reply as its
+  `description`, `when_to_use` and `title`, and proposes them on their own; a tag
+  list the memory already has is never replaced. The tags proposal is judged by
+  the tags judge (`memory.tags`), not reflect's revision judge, and goes through
+  the proposal queue like any other. In proactive maintenance, memories with no
+  tags are planned first. Reflect makes the same one model call per memory as
+  before; with the quality gate on, the tags add one judge call. Off by default, with the prompt
+  and the reply schema unchanged. It does not need `experimental.improveAutonomy`.
 - **`experimental.improveAutonomy`** — gates only the autonomous
   `memoryInference`, `triagePromote` (a promote with triage judgment on; a
   deterministic-only promote runs without it), and `memoryCleanup` lanes. `akm improve`
@@ -1168,7 +1180,7 @@ Classification of each learning control:
 | Control | Decision |
 | --- | --- |
 | `improve --require-feedback-signal` | Deprecated, no new key. Use a strategy with `processes.proactiveMaintenance.enabled: false`, selected with `--strategy`. |
-| `remember --auto`, `--enrich` | No replacement and no key. Removed in 0.11. |
+| `remember --auto`, `--enrich` | Deprecated. Replaced by `experimental.memoryEnrichment`. Removed in 0.11. |
 | Bulk proposal controls (`accept`/`reject` `--generator`, `--older-than`, `--max-diff-lines`; `proposal drain` `--max-accepts`, `--older-than`, `--judgment`; `triage.maxAcceptsPerRun`) | Unchanged. Both the filtered accept/reject and drain stay. |
 | `distill.requirePlannedRefs`, `consolidate.maxChunkSize`, `proactiveMaintenance.dueDays` | Research: kept under `experimental`. |
 | `improve.qualityGate` | Research: under `experimental`. Per-process runner overrides and `--connection`, `--harness`, `--model` stay supported. |

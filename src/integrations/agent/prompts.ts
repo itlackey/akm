@@ -195,6 +195,8 @@ export interface ReflectPromptInput {
   rejectedProposals?: RejectedProposalContext[];
   /** The response contract, for a connection or a harness. Defaults to the JSON Schema contract. */
   outputMode?: ReflectOutputMode;
+  /** Also ask for a memory's `tags` (`experimental.memoryEnrichment`). */
+  enrichMemory?: boolean;
   /**
    * Override for the asset-content character cap (#952). Undefined keeps
    * the flat {@link REFLECT_CONTENT_CAP} (12 000 chars): the safe default for
@@ -207,9 +209,26 @@ export interface ReflectPromptInput {
 
 export type ReflectOutputMode = "json_schema" | "framed_markdown";
 
-export function reflectResponseContract(mode: ReflectOutputMode, targetScoped: boolean): string {
+/** What the contract adds when reflect also fills the `tags` of a memory that has none. */
+const ENRICH_RULE =
+  " `tags` is an array of 1-5 short lowercase tags for this memory, which has none; never `null`. Make each tag a specific term someone would search for: a name, identifier, tool, component, locale or error the memory is about, spelled as the memory spells it (`postgres-16`, not `database`). Leave out generic words such as `note`, `info`, `bug`, `fix` or `update`.";
+
+export function reflectResponseContract(mode: ReflectOutputMode, targetScoped: boolean, enrichMemory = false): string {
+  const fill = (template: string): string =>
+    template
+      .replace(
+        "{{PATCH_FIELDS}}",
+        enrichMemory ? "`description`, `when_to_use`, `title` and `tags`" : "`description`, `when_to_use` and `title`",
+      )
+      .replace(
+        "{{PATCH_EXAMPLE}}",
+        enrichMemory
+          ? '{"description": null, "when_to_use": null, "title": null, "tags": ["keyword"]}'
+          : '{"description": null, "when_to_use": null, "title": null}',
+      )
+      .replace("{{ENRICH_RULE}}", enrichMemory ? ENRICH_RULE : "");
   if (mode === "json_schema") {
-    return reflectLlmSchemaContract
+    return fill(reflectLlmSchemaContract)
       .replace(
         "{{FIELD_RULE}}",
         targetScoped
@@ -219,11 +238,17 @@ export function reflectResponseContract(mode: ReflectOutputMode, targetScoped: b
       .trim();
   }
   const refLine = targetScoped ? "" : "AKM_REFLECT_REF: <selected asset ref>\n";
-  return reflectLlmFramedContract.replace("{{REF_LINE}}", refLine).trim();
+  return fill(reflectLlmFramedContract).replace("{{REF_LINE}}", refLine).trim();
 }
 
-export function buildReflectOutputRepairPrompt(mode: ReflectOutputMode, targetScoped: boolean): string {
-  return reflectOutputRepair.replace("{{OUTPUT_CONTRACT}}", reflectResponseContract(mode, targetScoped)).trim();
+export function buildReflectOutputRepairPrompt(
+  mode: ReflectOutputMode,
+  targetScoped: boolean,
+  enrichMemory = false,
+): string {
+  return reflectOutputRepair
+    .replace("{{OUTPUT_CONTRACT}}", reflectResponseContract(mode, targetScoped, enrichMemory))
+    .trim();
 }
 
 /**
@@ -308,6 +333,9 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     );
     sections.push(`Target ref: ${input.ref}`);
     sections.push(`Asset-type guidance: ${hintForType(input.type)}`);
+    if (input.enrichMemory) {
+      sections.push("This memory has no `tags`: give it 1-5, as the response contract describes.");
+    }
   } else {
     sections.push("You are reviewing recent akm feedback and proposing a single improved asset revision.");
     sections.push("No target ref was supplied. Choose the best target from the feedback below and return it in `ref`.");
@@ -433,7 +461,9 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     );
   }
 
-  sections.push(reflectResponseContract(input.outputMode ?? "json_schema", input.ref !== undefined));
+  sections.push(
+    reflectResponseContract(input.outputMode ?? "json_schema", input.ref !== undefined, input.enrichMemory),
+  );
   return { prompt: sections.join("\n\n") };
 }
 
