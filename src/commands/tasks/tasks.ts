@@ -653,7 +653,7 @@ async function buildSchedulerSyncPlan(
   const runtime = prepareSchedulerRuntime(deps);
 
   const ownBundleDir = runtime.options.environment?.AKM_BUNDLE_DIR;
-  const mode = schedulerModeOf(everyRow, ownBundleDir, options.dispatch);
+  const mode = schedulerModeOf(everyRow, runtime.options.environment, options.dispatch);
   const installed = mode.taskRows;
 
   // A config that predates `scheduler.enabled` means "keep what is

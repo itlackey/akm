@@ -563,9 +563,13 @@ that runs [`akm task dispatch`](#task-dispatch) every minute. Later syncs, and
 `task enable` and `task disable`, keep the mode, and an enable or a schedule
 edit needs no sync to take effect. `--no-dispatch` switches back: the dispatch row is
 removed, then the per-task rows are written. A host never holds both: when a
-removal fails, sync writes nothing after it, reports it, and exits 1. Only one
-installation per user can use dispatch mode; `--dispatch` is a usage error
-while another installation's dispatch row is installed. In dispatch mode an
+removal fails, sync writes nothing after it, reports it, and exits 1. The
+dispatch row sets no `AKM_BUNDLE_DIR` (Deprecated) unless the syncing process
+was given one: `akm task dispatch` finds the stash through the config. An
+installation's dispatch row is the one naming its config directory or file,
+none for the default. Only one installation per user can use dispatch mode;
+`--dispatch` is a usage error while another installation's dispatch row is
+installed. In dispatch mode an
 `@reboot` entry never starts, and sync reports it. Per-task rows are
 Deprecated and removed in 0.11, where the dispatch row is the only entry;
 a sync that writes them says so in `warnings`.
