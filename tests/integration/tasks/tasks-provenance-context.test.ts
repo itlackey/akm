@@ -127,6 +127,16 @@ describe("native (shell/script) arm reads provenance.eventSource, not a hardcode
     expect(fs.readFileSync(result.log, "utf8")).toContain("AKM_EVENT_SOURCE=user");
   });
 
+  test("the child env carries AKM_TASK_REF, the ref of the task it runs for", async () => {
+    writeTask(
+      "native-task-ref",
+      shellTask([process.execPath, "-e", "console.log('AKM_TASK_REF=' + (process.env.AKM_TASK_REF ?? '<unset>'))"]),
+    );
+    const result = await runTask("native-task-ref", { bundleDir: storage.stashDir, bundleName: "fixture" } as never);
+    expect(result.status).toBe("completed");
+    expect(fs.readFileSync(result.log, "utf8")).toMatch(/AKM_TASK_REF=\S*tasks\/native-task-ref/);
+  });
+
   test("a pre-set ambient AKM_EVENT_SOURCE still wins over an explicit non-default provenance.eventSource", async () => {
     // Precedence rule (spec §5.2, binding): an explicit context value is only
     // a FALLBACK. This is the native arm's instance of D5 clause (d). The

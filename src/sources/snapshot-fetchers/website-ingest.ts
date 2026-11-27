@@ -5,14 +5,7 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  fetchWithRetry,
-  isWithin,
-  ResponseTooLargeError,
-  readBodyWithByteCap,
-  resolveStashDir,
-  todayIso,
-} from "../../core/common";
+import { isWithin, ResponseTooLargeError, readBodyWithByteCap, resolveStashDir, todayIso } from "../../core/common";
 import type { SourceConfigEntry } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { warn, warnOnce, warnVerbose } from "../../core/warn";
@@ -27,7 +20,14 @@ import {
 } from "../website-url";
 import { htmlToMarkdownAndLinks } from "./content-extract";
 import { escapeMarkdownStructure } from "./fetcher-util";
-import { assertResolvedHostAllowed, assertWebsiteRequestUrl, type HostnameResolver } from "./host-guard";
+import {
+  assertResolvedHostAllowed,
+  assertWebsiteRequestUrl,
+  fetchWebsiteWithRetry,
+  type HostnameResolver,
+  redirectTarget,
+  websiteStatusError,
+} from "./host-guard";
 import { loadWikiSnapshotFetchers } from "./registry";
 import {
   createAllowAllRobotsPolicy,
@@ -996,7 +996,7 @@ async function websitePageFromResponse(
   if (!response.ok) {
     await response.body?.cancel().catch(() => undefined);
     if (response.status === 404) return null;
-    throw new Error(`Failed to fetch website content (${response.status}) from ${pageUrl}`);
+    throw websiteStatusError(response.status, pageUrl);
   }
 
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
@@ -1065,7 +1065,7 @@ async function fetchWebsiteResponse(
   // resolves into a private range would otherwise slip through. This runs on
   // every hop because the redirect path re-enters this function recursively.
   await assertResolvedHostAllowed(new URL(pageUrl).hostname, options);
-  const response = await fetchWithRetry(
+  const response = await fetchWebsiteWithRetry(
     pageUrl,
     {
       headers: {
@@ -1079,17 +1079,7 @@ async function fetchWebsiteResponse(
   );
 
   if (response.status >= 300 && response.status < 400) {
-    if (redirectCount >= WEBSITE_MAX_REDIRECTS) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error(`Too many redirects while fetching ${pageUrl}`);
-    }
-    const location = response.headers.get("location");
-    if (!location) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error(`Redirect response from ${pageUrl} did not include a Location header`);
-    }
-    await response.body?.cancel().catch(() => undefined);
-    const nextUrl = new URL(location, pageUrl).toString();
+    const nextUrl = await redirectTarget(response, pageUrl, redirectCount >= WEBSITE_MAX_REDIRECTS);
     try {
       assertWebsiteRequestUrl(nextUrl, Error, options);
     } catch (error) {

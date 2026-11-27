@@ -6,12 +6,34 @@ import { type ArgsDef, defineCommand } from "citty";
 import { findCittyTopLevelCommandIndex } from "../../cli/invocation";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, output } from "../../cli/shared";
 import { assertKnownFlags, type FlagScanCommand } from "../../cli/unknown-flags";
-import { CLI_USAGE_SOURCES, readUsage } from "../../cli/usage";
+import { readUsage } from "../../cli/usage";
+import { CLI_USAGE_SOURCES } from "../../cli/usage-kinds";
 import { UsageError } from "../../core/errors";
 import { parseHealthSince } from "../health";
 import { improveReportCommand } from "../improve/improve-cli";
 import { doctorMetricsAssetsCommand } from "../read/search-cli";
-import { metricsCommand } from "./metrics-cli";
+import { METRICS_DESCRIPTION, metricsCommand } from "./metrics-cli";
+
+/**
+ * The retained invocations (30 days) that used a Deprecated command or flag, by the task they ran inside (`[none]`
+ * outside a task): how many, and which command or flag, as typed.
+ */
+function deprecatedByTask(details: readonly Record<string, unknown>[]) {
+  const tasks: Record<string, { calls: number; commands: Record<string, number>; flags: Record<string, number> }> = {};
+  for (const detail of details) {
+    const deprecated = detail.deprecated as { command: boolean; flags: string[] } | undefined;
+    if (!deprecated) continue;
+    const command = ((detail.invokedCommand ?? detail.command) as string[]).join(" ");
+    const task = typeof detail.task === "string" ? detail.task : "[none]";
+    tasks[task] ??= { calls: 0, commands: {}, flags: {} };
+    const entry = tasks[task];
+    entry.calls += 1;
+    if (deprecated.command) entry.commands[command] = (entry.commands[command] ?? 0) + 1;
+    for (const flag of deprecated.flags)
+      entry.flags[`${command} --${flag}`] = (entry.flags[`${command} --${flag}`] ?? 0) + 1;
+  }
+  return tasks;
+}
 
 const usageCommand = defineJsonCommand({
   meta: {
@@ -76,6 +98,7 @@ const usageCommand = defineJsonCommand({
     output("doctor metrics usage", {
       ...report,
       details: args.export ? report.details : undefined,
+      deprecatedByTask: deprecatedByTask(report.details),
       commands: Object.entries(commands).map(([command, row]) => ({
         command,
         ...row,
@@ -94,6 +117,7 @@ const METRICS_SUBCOMMANDS = { usage: 1, improve: 1, assets: 1 };
 // running this handler, so existing bare doctor metrics output stays intact.
 export const doctorMetricsCommand = defineCommand({
   ...metricsCommand,
+  meta: { name: "metrics", description: METRICS_DESCRIPTION },
   subCommands: {
     usage: usageCommand,
     improve: improveReportCommand as never,

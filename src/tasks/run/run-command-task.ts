@@ -57,6 +57,7 @@ export async function runPreparedCommandTask(input: {
     // Threads the resolved event source into the dispatched harness's child env
     // and the recorded usage events.
     eventSource: provenance.eventSource,
+    env: { AKM_TASK_REF: task.taskRef },
   };
   const invocation = withUnattendedTimeout(task.invocation);
   const result = await dispatchPreparedCommandInvocation(invocation, dispatchOptions);

@@ -214,18 +214,27 @@ outside learning, feedback and ranking; the only thing sent from them is the
   for a few enumerated flags such as `--format` or `--detail`, a safe value),
   whether each flag was typed or a default, the akm version, the event source
   (`agent` inside a detected agent harness, `user` at a terminal with none,
-  `task`, `improve` or `audit` for akm's own runs, else `unknown`), the agent
+  `task`, `improve` or `audit` for akm's own runs, including the scheduler's
+  `akm task dispatch` and `akm task run --scheduled`, else `unknown`), the agent
   harness when one is detected, the type of the asset `akm show` or `akm run`
   resolved (when it is one of akm's own types), the outcome, exit code and
-  duration, a UTC day, and a random instance UUID created on first use, which
-  no command prints.
-- **What is not recorded:** queries, notes, URLs, refs, paths, filter values,
-  secret values, and the arguments passed to a child program. Boolean flags are
-  stored as true or false; every other flag value is stored as `[redacted]`.
+  duration, the `code` of the error a failed command reported (when it is one
+  of akm's own codes, such as `INVALID_FLAG_VALUE`), a UTC day, and a random
+  instance UUID created on first use, which no command prints.
+- **Only on each invocation's detail, never in the daily counts:** which of
+  the command and its flags are marked Deprecated, and, for a command a task
+  ran, the ref of that task (`AKM_TASK_REF`, set by akm for the programs a task
+  runs). The daily usage report never reads either.
+- **What is not recorded:** queries, notes, URLs, refs other than that task's,
+  paths, filter values, secret values, and the arguments passed to a child
+  program. Boolean flags are stored as true or false; every other flag value is
+  stored as `[redacted]`.
 - **How long:** per-invocation detail for 30 days; daily aggregate counters
   are kept indefinitely.
-- **Reading it:** `akm doctor metrics usage` reports it; `--export` writes the
-  same data as JSON.
+- **Reading it:** `akm doctor metrics usage` reports it, with the Deprecated
+  calls of the last 30 days grouped by the task they ran in
+  (`deprecatedByTask`; `[none]` outside a task); `--export` writes the same data
+  as JSON.
 - **Turning it off:** set `usage.capture` to `false` in the config file
   (`akm config set usage.capture false`). `--read-only` also records nothing for
   that invocation.
@@ -242,7 +251,8 @@ dropped.
 **What can be in it.** Apart from the system fields below, every value in a
 report is a number. Every name in it (an event's name, a count's name) is built
 from akm's own definitions: its commands, the flags it declares and their fixed
-lists of choices, the agent harnesses it knows, its asset types. Anything you
+lists of choices, which of them it marks Deprecated, the agent harnesses it
+knows, its asset types, its error codes. Anything you
 or a bundle named is counted as `other` or `[unknown]`, or left out: a custom
 asset type, a task's own input flag, a harness akm does not know, a command that
 does not exist. Nothing is read from an argument's value, a ref, a path, a
@@ -253,6 +263,8 @@ bundle's name or a file.
   Nothing is ever printed or changed in a command's result. A fresh data
   directory sends nothing until its next UTC day. A failed send is not retried
   that day; the next day's CLI report counts the days a failed one missed.
+  The first CLI report counts from the day collection started, so the install
+  day is counted.
 - **Install id:** the random instance UUID of `metrics.db` (see
   [CLI usage counts](#cli-usage-counts)), sent as the session id of every event,
   so that the reports of one install count as one install. It is derived from
@@ -269,9 +281,11 @@ bundle's name or a file.
     other type. They are left out when there is no readable index; the report
     never builds or changes the index.
   - From the CLI only, totals for the period: `period_days` (the complete UTC
-    days after the last one the server accepted, up to yesterday; `0` for the
-    first report), `commands`, `failures`, `src_<source>` for each event source
-    and `h_<harness>` for each agent harness that ran akm.
+    days after the last one the server accepted, up to yesterday; for the first
+    report, from the day collection started), `commands`, `failures` (the runs
+    that ended in an error category: a health warning or a cancellation is not
+    a failure), `src_<source>` for each event source and `h_<harness>` for each
+    agent harness that ran akm.
 - **Command events (CLI only):** one for each command that ran in the period,
   named as it was typed: `akm search`, `akm task run`, `akm health`. A command
   that does not exist is `akm [unknown]`. Each carries `period_days`, `count`,
@@ -283,6 +297,12 @@ bundle's name or a file.
   - `out_<category>`: the runs that did not succeed, by akm's outcome category
     (`usage`, `config`, `general`, `internal`, `transient`, `health-warning`,
     `failure`, `cancelled`).
+  - `err_<CODE>`: the runs that failed with one of akm's own error codes, such
+    as `err_INVALID_FLAG_VALUE` or `err_RESOURCE_ALREADY_EXISTS`. Only the code
+    is sent, never the message, and a code akm does not define is not named.
+  - `deprecated`: the runs of a command typed in a form akm marks Deprecated
+    (`akm health`, `akm task run`), and `dflag_<name>`: the runs that typed a
+    flag akm marks Deprecated.
   - `type_<asset type>`: the runs of `akm show` and `akm run` by the type of
     asset they resolved (`type_other` for a type that is not akm's own).
 - **System fields, on every event:** `osName` (Linux, macOS or Windows),

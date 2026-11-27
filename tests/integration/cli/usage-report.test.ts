@@ -141,9 +141,9 @@ test("the first report is due once, claims the day, and the same day sends nothi
   expect(await reportUsageIfDue(report, { ...NOW, fetch: fn })).toBe(false);
   expect(sent).toHaveLength(1);
   expect(lastDay("cli")).toBe("2026-11-20");
-  // Nothing is counted before the first accepted report: the daily event goes alone.
+  // The first report counts from the day collection started (2026-11-01) up to yesterday.
   expect(events(sent).map((each) => each.eventName)).toEqual(["cli_daily"]);
-  expect(event(sent, "cli_daily")?.props).toMatchObject({ period_days: 0, commands: 0 });
+  expect(event(sent, "cli_daily")?.props).toMatchObject({ period_days: 19, commands: 0 });
   expect(readUsage().report.cli).toMatchObject({ through: "2026-11-19", last_outcome: "sent", last_detail: "" });
   expect(sent[0]?.url).toBe("https://reporting.fwdslsh.dev/api/v0/events");
   expect(sent[0]?.init.method).toBe("POST");
@@ -286,7 +286,7 @@ test("the cli report counts the complete UTC days after the last accepted one: t
   expect(event(sent, "cli_daily")?.props).toMatchObject({
     period_days: 4,
     commands: 18,
-    failures: 1,
+    failures: 2, // search's usage error and show's general one
     src_user: 5,
     src_agent: 7,
     src_task: 5,
@@ -314,7 +314,7 @@ test("the cli report counts the complete UTC days after the last accepted one: t
   expect(event(sent, "akm show")?.props).toEqual({
     period_days: 4,
     count: 2,
-    failures: 0,
+    failures: 1,
     duration_ms: 0,
     src_agent: 2,
     h_codex: 2,
@@ -413,7 +413,7 @@ test("nothing a person or their library named is sent: only akm's own names, and
   expect(event(sent, "akm search")?.props).toEqual({
     period_days: 1,
     count: 2,
-    failures: 0,
+    failures: 1, // an exit code akm does not name is a failure
     duration_ms: 0,
     src_unknown: 2,
     h_other: 2,
@@ -647,4 +647,163 @@ test("a spawned CLI in a due store claims nothing under CI or the test environme
     expect(result.stderr).toBe("");
     expect(lastDay("cli")).toBeUndefined();
   }
+});
+
+test("the first report counts from the day collection started, the install day included", async () => {
+  sandbox();
+  seed("2026-11-18", [
+    { day: "2026-11-18", command: ["search"], source: "user", attempts: 2 }, // the install day
+    { day: "2026-11-19", command: ["show"], source: "user", attempts: 1 },
+    { day: "2026-11-20", command: ["search"], source: "user", attempts: 99 }, // today: not complete
+  ]);
+  const { fn, sent } = fakeFetch();
+  expect(await reportUsageIfDue({ surface: "cli", commands: TREE }, { ...NOW, fetch: fn })).toBe(true);
+  expect(event(sent, "cli_daily")?.props).toMatchObject({ period_days: 2, commands: 3 });
+  expect(event(sent, "akm search")?.props).toMatchObject({ period_days: 2, count: 2 });
+  expect(event(sent, "akm show")?.props).toMatchObject({ period_days: 2, count: 1 });
+  expect(readUsage().report.cli).toMatchObject({ through: "2026-11-19", last_outcome: "sent" });
+});
+
+test("warnings and cancellations are not failures; every error category, and an unnamed exit code, is", async () => {
+  sandbox();
+  seed("2026-11-01", [
+    {
+      day: "2026-11-19",
+      command: ["doctor", "metrics"],
+      source: "task",
+      attempts: 9,
+      failures: 7, // what an earlier release stored: every non-zero exit
+      outcomes: {
+        "success:0:unresolved": 2,
+        "health-warning:4:unresolved": 3,
+        "cancelled:130:unresolved": 1,
+        "internal:70:unresolved": 1,
+        "transient:75:unresolved": 1,
+        "failure:9:unresolved": 1,
+      },
+      arguments: [],
+    },
+  ]);
+  setRow("report.cli.through", "2026-11-18");
+  const { fn, sent } = fakeFetch();
+  expect(await reportUsageIfDue({ surface: "cli", commands: TREE }, { ...NOW, fetch: fn })).toBe(true);
+  expect(event(sent, "cli_daily")?.props).toMatchObject({ commands: 9, failures: 3 });
+  expect(event(sent, "akm doctor metrics")?.props).toMatchObject({
+    count: 9,
+    failures: 3,
+    "out_health-warning": 3,
+    out_cancelled: 1,
+    out_internal: 1,
+    out_transient: 1,
+    out_failure: 1,
+  });
+});
+
+test("error codes are counted as err_<CODE>, only from akm's own closed list", async () => {
+  sandbox();
+  seed("2026-11-01", [
+    {
+      day: "2026-11-19",
+      command: ["search"],
+      source: "user",
+      attempts: 5,
+      outcomes: {
+        "usage:2:unresolved:INVALID_FLAG_VALUE": 2,
+        "usage:2:unresolved:RESOURCE_ALREADY_EXISTS": 1,
+        "general:1:skill:ASSET_NOT_FOUND": 1,
+        "general:1:unresolved:ACME_PRIVATE_CODE": 1, // not one of akm's codes: counted as a failure, never named
+      },
+    },
+  ]);
+  setRow("report.cli.through", "2026-11-18");
+  const { fn, sent } = fakeFetch();
+  expect(await reportUsageIfDue({ surface: "cli", commands: TREE }, { ...NOW, fetch: fn })).toBe(true);
+  expect(event(sent, "akm search")?.props).toMatchObject({
+    failures: 5,
+    out_usage: 3,
+    out_general: 2,
+    type_skill: 1,
+    err_INVALID_FLAG_VALUE: 2,
+    err_RESOURCE_ALREADY_EXISTS: 1,
+    err_ASSET_NOT_FOUND: 1,
+  });
+  expect(JSON.stringify(events(sent))).not.toContain("ACME");
+});
+
+test("Deprecated commands and flags are counted from the definitions, as typed", async () => {
+  sandbox();
+  const tree: UsageCommand = {
+    subCommands: {
+      // Typed `akm health` is Deprecated; `akm doctor`, where the store files it, is not.
+      health: { meta: { description: "Deprecated, removed in 0.11: use `akm doctor`. Check health" } },
+      doctor: { meta: { description: "Check health" } },
+      legacy: { meta: { description: "Deprecated: gone in 0.11" }, subCommands: { sub: {} } },
+      search: {
+        args: {
+          query: { type: "positional" },
+          pack: { type: "string", description: "Deprecated: use `--max-tokens`. Pack hits" },
+          limit: { type: "string", description: "How many" },
+        },
+      },
+    },
+  };
+  seed("2026-11-01", [
+    { day: "2026-11-19", command: ["doctor"], invokedCommand: ["health"], source: "user", attempts: 2, arguments: [] },
+    { day: "2026-11-19", command: ["doctor"], source: "user", attempts: 3, arguments: [] },
+    { day: "2026-11-19", command: ["legacy", "sub"], source: "user", attempts: 1, arguments: [] },
+    {
+      day: "2026-11-19",
+      command: ["search"],
+      source: "user",
+      attempts: 4,
+      arguments: [
+        { name: "pack", explicit: true, value: "[redacted]" },
+        { name: "limit", explicit: true, value: "[redacted]" },
+      ],
+    },
+    // A Deprecated flag's default is not a use of it.
+    {
+      day: "2026-11-19",
+      command: ["search"],
+      source: "user",
+      attempts: 5,
+      arguments: [{ name: "pack", explicit: false, value: "[redacted]" }],
+    },
+  ]);
+  setRow("report.cli.through", "2026-11-18");
+  const { fn, sent } = fakeFetch();
+  expect(await reportUsageIfDue({ surface: "cli", commands: tree }, { ...NOW, fetch: fn })).toBe(true);
+  expect(event(sent, "akm health")?.props).toMatchObject({ count: 2, deprecated: 2 });
+  expect(event(sent, "akm doctor")?.props.deprecated).toBeUndefined();
+  expect(event(sent, "akm legacy sub")?.props).toMatchObject({ count: 1, deprecated: 1 });
+  const search = event(sent, "akm search")?.props as Record<string, number>;
+  expect(search).toMatchObject({ count: 9, flag_pack: 4, dflag_pack: 4, flag_limit: 4 });
+  expect(search.deprecated).toBeUndefined();
+  expect(search.dflag_limit).toBeUndefined();
+});
+
+test("the report reads no invocation detail: the task an invocation ran in is never sent", async () => {
+  sandbox();
+  seed("2026-11-01", [{ day: "2026-11-19", command: ["search"], source: "task", attempts: 1 }]);
+  const db = openUsage();
+  try {
+    db.prepare("INSERT INTO cli_usage_invocations(id,ts,aggregate_key,data) VALUES (?,?,?,?)").run(
+      "a",
+      "2026-11-19T10:00:00.000Z",
+      "0",
+      JSON.stringify({
+        command: ["search"],
+        task: "acme//tasks/nightly-customer-sync",
+        deprecated: { command: true, flags: [] },
+      }),
+    );
+  } finally {
+    db.close();
+  }
+  setRow("report.cli.through", "2026-11-18");
+  const { fn, sent } = fakeFetch();
+  expect(await reportUsageIfDue({ surface: "cli", commands: TREE }, { ...NOW, fetch: fn })).toBe(true);
+  const text = JSON.stringify(events(sent));
+  for (const theirs of ["acme", "nightly", "tasks/"]) expect(text).not.toContain(theirs);
+  expect(event(sent, "akm search")?.props).toMatchObject({ count: 1, src_task: 1 });
 });

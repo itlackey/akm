@@ -634,14 +634,15 @@ async function doStep(
 ): Promise<Done> {
   if (step.kind === "tasks") return runTaskStep(context, record, document, step, until, sink);
   const { env } = environmentOf(context, record.flags, document, step);
+  // The task's ref, as taskProcessEnv sets it for the other runners: the cached env is this task's, so it never changes.
+  env.AKM_TASK_REF = qualifiedRef(record.bundle, record.ref);
   const cwd =
     step.options.cwd === undefined
       ? record.dir
       : ensureWorkingFolder(path.resolve(record.bundle.dir, step.options.cwd));
-  if (step.kind === "exec" || step.kind === "scripts") {
-    return runProcessStep(context, record, step, { env, cwd, timeoutMs }, sink);
-  }
-  return runAgentStep(context, record, document, step, { env, cwd, timeoutMs }, sink);
+  const run = { env, cwd, timeoutMs };
+  if (step.kind === "exec" || step.kind === "scripts") return runProcessStep(context, record, step, run, sink);
+  return runAgentStep(context, record, document, step, run, sink);
 }
 
 /** `${name}` becomes that entry of the state, once: text as it is, anything else as JSON. */

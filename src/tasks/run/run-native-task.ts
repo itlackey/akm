@@ -30,7 +30,7 @@ import type { PreparedTaskV3Script, PreparedTaskV3Shell } from "../prepare/prepa
 import { type ScriptOrigin, scriptOrigin } from "../prepare/script-capture";
 import { resolveAkmInvocation } from "../resolve-akm-bin";
 import { finishAttempt } from "./attempt-lifecycle";
-import { taskEventSource } from "./provenance";
+import { taskProcessEnv } from "./provenance";
 import { DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } from "./run-workflow-task";
 import { appendHistory, taskBundle } from "./task-history";
 import { appendStreamLines, type ProcessFailure, persistRunLog, processFailure, scrubTaskOutput } from "./task-log";
@@ -222,7 +222,7 @@ export async function runNativeTask(input: {
       env: {
         ...childProcessEnv(),
         ...task.environment,
-        AKM_EVENT_SOURCE: taskEventSource(process.env, provenance),
+        ...taskProcessEnv(process.env, provenance, task.taskRef),
       },
       // cmd.exe's `/S /C` reads its tail as one hand-quoted command line, not
       // standard argv — shellCommand() already built and quoted it for that.

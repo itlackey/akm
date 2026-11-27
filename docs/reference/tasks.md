@@ -166,12 +166,12 @@ A script step or an `exec:` step starts with the environment `--clean` gives
 (`PATH`, `HOME`, the user, shell, temporary folder, locale, time zone and
 terminal, and what Windows needs), akm's own location variables
 (`AKM_CONFIG_DIR`, `AKM_CONFIG_FILE`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`,
-`AKM_STATE_DIR`) and `AKM_EVENT_SOURCE`. Nothing else reaches such a step unless
+`AKM_STATE_DIR`), `AKM_EVENT_SOURCE` and `AKM_TASK_REF`. Nothing else reaches such a step unless
 it is given by name, and where it is given decides which steps have it.
 
 An agent step (`prompt:`, or `run:` of an agent or command) runs your harness as
 you would run it yourself: it starts with akm's environment as it is, with the
-directories this akm resolved and `AKM_EVENT_SOURCE` set over it, and the `env:`
+directories this akm resolved, `AKM_EVENT_SOURCE` and `AKM_TASK_REF` set over it, and the `env:`
 and `secret:` below are set over that. `inherit:` has nothing to add to an agent
 step.
 
