@@ -59,7 +59,7 @@ import { applySchedulerOperations, planDispatchMode, planRowMode, schedulerModeO
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
 import { isCheckoutInvocation, type ResolvedAkmInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
-import { recordTaskAttemptFailure } from "../../tasks/run/attempt-lifecycle";
+import { recordUnreadTaskFailure } from "../../tasks/run/attempt-lifecycle";
 import { activeTaskSources, loadPreparedTask, resolveBundleAsset } from "../../tasks/run/load-task";
 import { createExecutionProvenanceContext } from "../../tasks/run/provenance";
 import { runTask } from "../../tasks/run/run-task";
@@ -326,7 +326,7 @@ export async function akmTasksRun(
 ): Promise<TasksRunResultEnvelope> {
   const scheduled = options.scheduled === true;
   const startedAt = new Date();
-  let parsed: ReturnType<typeof parseTaskRef> | undefined;
+  let parsed: ReturnType<typeof parseTaskRef>;
   let bundle: ReturnType<typeof resolveTaskReadBundle>;
   let resolvedId: string;
   try {
@@ -334,9 +334,7 @@ export async function akmTasksRun(
     bundle = resolveTaskReadBundle(parsed.bundle, options.target);
     resolvedId = resolveTask(bundle.source, parsed.id)?.id ?? taskNameOf(bundle.source, parsed.id);
   } catch (failure) {
-    if (scheduled) {
-      recordTaskAttemptFailure({ taskId: parsed?.id ?? id, reason: "task_load_failed", failure, startedAt, scheduled });
-    }
+    if (scheduled) recordUnreadTaskFailure(id, failure, startedAt);
     throw failure;
   }
   // Built ONCE at this invocation boundary. eventSource is "task" whether or

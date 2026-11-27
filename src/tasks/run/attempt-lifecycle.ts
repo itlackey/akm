@@ -21,6 +21,8 @@
 
 import os from "node:os";
 import path from "node:path";
+import { stashDirFor } from "../../core/asset/asset-placement";
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { AkmError, rethrowIfTestIsolationError, TransientError } from "../../core/errors";
 import { type LockOwnership, processIdentity } from "../../core/file-lock";
 import { getStateDir } from "../../core/paths";
@@ -249,4 +251,21 @@ export function recordTaskAttemptFailure(input: {
     dbLines: [{ level: "error", line }],
   });
   appendHistory(result, attempt.historyReserved, input.scheduled);
+}
+
+/**
+ * Record a scheduled start whose task could not be read (a config that cannot load, a ref that does not parse). With no
+ * adapter to ask, a bare id under the task type's own folder (`bundle//tasks/<id>`) is recorded as `<id>`, as a run of
+ * it would be; any other ref by its concept id, or as written when it does not parse.
+ */
+export function recordUnreadTaskFailure(ref: string, failure: unknown, startedAt: Date): void {
+  let taskId = ref;
+  try {
+    const conceptId = parseBundleRef(ref.trim()).conceptId;
+    const name = conceptId.replace(new RegExp(`^${stashDirFor("task")}/`), "");
+    taskId = name.includes("/") ? conceptId : name;
+  } catch {
+    // Recorded as written: recordTaskAttemptFailure keeps an invalid id under its placeholder.
+  }
+  recordTaskAttemptFailure({ taskId, reason: "task_load_failed", failure, startedAt, scheduled: true });
 }
