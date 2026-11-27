@@ -25,115 +25,119 @@
  */
 
 /** Stable, machine-readable codes for ConfigError. */
-export type ConfigErrorCode =
-  | "CONFIG_DIR_UNRESOLVABLE"
-  | "STASH_DIR_NOT_FOUND"
-  | "STASH_DIR_NOT_A_DIRECTORY"
-  | "STASH_DIR_UNREADABLE"
+export const CONFIG_ERROR_CODES = [
+  "CONFIG_DIR_UNRESOLVABLE",
+  "STASH_DIR_NOT_FOUND",
+  "STASH_DIR_NOT_A_DIRECTORY",
+  "STASH_DIR_UNREADABLE",
   // The index/state database exists (or may exist) but this process cannot read
   // it — a permission or ownership mismatch, not a missing index. Distinct from
   // "not built yet" precisely so a read can fail loudly instead of returning an
   // empty-but-successful result for an index that is sitting right there (#791).
-  | "DATA_DIR_UNREADABLE"
+  "DATA_DIR_UNREADABLE",
   // A write the command exists to make (e.g. `akm feedback`'s record) could not
   // be stored because the data directory is read-only to this process, such as
   // an agent sandbox that only allows writes inside the workspace.
-  | "DATA_DIR_NOT_WRITABLE"
-  | "INDEX_SCHEMA_INCOMPATIBLE"
-  | "LLM_NOT_CONFIGURED"
-  | "AGENT_NOT_CONFIGURED"
+  "DATA_DIR_NOT_WRITABLE",
+  "INDEX_SCHEMA_INCOMPATIBLE",
+  "LLM_NOT_CONFIGURED",
+  "AGENT_NOT_CONFIGURED",
   // A connection or harness was named (a flag, an asset, a config key) that is not configured: never replaced by a default.
-  | "SELECTION_NOT_CONFIGURED"
-  | "INVALID_CONFIG_FILE"
+  "SELECTION_NOT_CONFIGURED",
+  "INVALID_CONFIG_FILE",
   // A git bundle's checkout holds uncommitted paths or commits that are not on its upstream, and the
   // command would replace or delete the checkout. The work is the person's: akm names it and stops.
-  | "SOURCE_HAS_LOCAL_WORK"
-  | "UNKNOWN_IMPROVE_STRATEGY"
+  "SOURCE_HAS_LOCAL_WORK",
+  "UNKNOWN_IMPROVE_STRATEGY",
   // Refused stashDir that would clobber a sensitive system path or the user's
   // home directory Triggered by `akm bundle create`/`akm setup` when the
   // explicit `--dir` argument resolves to e.g. `/`, `$HOME`, `~/.config`,
   // `/etc`, etc.
-  | "UNSAFE_STASH_DIR"
+  "UNSAFE_STASH_DIR",
   // Defense-in-depth sentinel raised under `bun test` / NODE_ENV=test
   // when a test sets AKM_BUNDLE_DIR but forgets to also point
   // XDG_DATA_HOME / AKM_DATA_DIR (and XDG_STATE_HOME / AKM_STATE_DIR)
   // at temp directories. See src/core/paths.ts.
-  | "TEST_ISOLATION_MISSING"
+  "TEST_ISOLATION_MISSING",
   // The host platform/architecture has no supported build for a requested
   // binary operation (e.g. `akm upgrade` on an unreleased platform target).
-  | "UNSUPPORTED_PLATFORM"
+  "UNSUPPORTED_PLATFORM",
   // `akm upgrade` refused: the environment blocks the upgrade (version
   // contract, filesystem permissions, or leftover upgrade state). The error
   // message carries the specific remediation.
-  | "UPGRADE_BLOCKED"
+  "UPGRADE_BLOCKED",
   // A `${ref}` apiKey reference did not resolve to a stored value —
   // the named secret does not exist, or no store-backed resolver was wired at
   // the call site.
-  | "SECRET_REFERENCE_UNRESOLVED"
+  "SECRET_REFERENCE_UNRESOLVED",
   // A bundle that is not a directory (an OS keyring, a cloud vault) could not be reached: the client
   // program its adapter runs is not installed, or it refused or failed the request.
-  | "BUNDLE_UNREACHABLE"
+  "BUNDLE_UNREACHABLE",
   // A registry URL akm was asked to fetch is unusable before any request is
   // made: not http(s), carries userinfo, or `AKM_NPM_REGISTRY` does not parse.
-  | "REGISTRY_URL_INVALID";
+  "REGISTRY_URL_INVALID",
+] as const;
+export type ConfigErrorCode = (typeof CONFIG_ERROR_CODES)[number];
 
 /** Stable, machine-readable codes for UsageError. */
-export type UsageErrorCode =
-  | "INVALID_FLAG_VALUE"
-  | "INVALID_SOURCE_VALUE"
-  | "INVALID_FORMAT_VALUE"
-  | "INVALID_DETAIL_VALUE"
-  | "INVALID_JSON_CONFIG_VALUE"
-  | "INVALID_JSON_ARGUMENT"
-  | "MISSING_REQUIRED_ARGUMENT"
-  | "MISSING_OR_AMBIGUOUS_TARGET"
-  | "TARGET_NOT_UPDATABLE"
-  | "PATH_ESCAPE_VIOLATION"
-  | "RESOURCE_ALREADY_EXISTS"
+export const USAGE_ERROR_CODES = [
+  "INVALID_FLAG_VALUE",
+  "INVALID_SOURCE_VALUE",
+  "INVALID_FORMAT_VALUE",
+  "INVALID_DETAIL_VALUE",
+  "INVALID_JSON_CONFIG_VALUE",
+  "INVALID_JSON_ARGUMENT",
+  "MISSING_REQUIRED_ARGUMENT",
+  "MISSING_OR_AMBIGUOUS_TARGET",
+  "TARGET_NOT_UPDATABLE",
+  "PATH_ESCAPE_VIOLATION",
+  "RESOURCE_ALREADY_EXISTS",
   /** A conditional Markdown write was based on an older or removed source. */
-  | "ASSET_CONTENT_CHANGED"
+  "ASSET_CONTENT_CHANGED",
   /** A proposal's target changed (or is gone) since the proposal was made. */
-  | "PROPOSAL_STALE"
+  "PROPOSAL_STALE",
   /** A decision was asked of a proposal that is no longer pending. */
-  | "PROPOSAL_NOT_PENDING"
-  | "TASK_SCHEMA_VERSION_UNSUPPORTED"
-  | "INVALID_PROPOSAL"
-  | "NON_INTERACTIVE_REQUIRES_YES"
+  "PROPOSAL_NOT_PENDING",
+  "TASK_SCHEMA_VERSION_UNSUPPORTED",
+  "INVALID_PROPOSAL",
+  "NON_INTERACTIVE_REQUIRES_YES",
   // citty's own CLIError (unknown top-level command or subcommand), reclassified
   // by src/cli.ts so it flows through the same JSON envelope as every other
   // usage error instead of citty's raw usage-banner + console.error path.
-  | "UNKNOWN_COMMAND"
+  "UNKNOWN_COMMAND",
   // A flag the resolved command does not declare. citty (node:util parseArgs,
   // strict: false) silently ignores these, so without this error a typo
   // parses "successfully" and exits 0 — a `--fail-on-flaged`
   // in CI would mean the gate never fires.
-  | "UNKNOWN_FLAG"
+  "UNKNOWN_FLAG",
   // A workflow step authors with: on a target that cannot bind it: a
   // tasks/<ref> target that declares no inputs: at all, or a commands/<ref> or
   // scripts/<ref> target, which are never binding surfaces. The authored mapping
   // is rejected rather than silently dropped at freeze (fail-closed). Thrown from
   // src/workflows/freeze/targets/task.ts's
   // taskDispatch and src/workflows/freeze/freeze.ts's resolveStep.
-  | "COMPOSITION_INVALID"
+  "COMPOSITION_INVALID",
   // P1a: the sourceError funnel in src/tasks/source-v3.ts, re-coded from
   // INVALID_FLAG_VALUE. Message text, field-path rendering (`$` for the
   // empty path), and the file:line location string are unchanged.
-  | "TASK_SOURCE_INVALID"
+  "TASK_SOURCE_INVALID",
   // P1a: src/execution/target-ref.ts's classifyTargetRef rejects any value
   // that is not a canonical commands/, scripts/, tasks/, or workflows/ asset
   // ref (fragments, malformed shapes, non-canonical spellings, other asset
   // families, GitHub locators, etc).
-  | "TARGET_REF_INVALID"
+  "TARGET_REF_INVALID",
   // P1a: declared only in this phase — wired to workflow source validation
   // (e.g. `akm workflow validate`) in a later phase.
-  | "WORKFLOW_SOURCE_INVALID"
+  "WORKFLOW_SOURCE_INVALID",
   // P1a: declared only in this phase — wired in P2b when with: bindings are
   // validated against a target's declared inputs.
-  | "INPUT_BINDING_INVALID"
+  "INPUT_BINDING_INVALID",
   // A recognized construct the target model does not model — distinct from
   // INVALID_FLAG_VALUE, where the input is malformed. Thrown by
   // `prepare/script-capture.ts`'s interpreter rejections.
-  | "TASK_TARGET_UNSUPPORTED";
+  "TASK_TARGET_UNSUPPORTED",
+] as const;
+export type UsageErrorCode = (typeof USAGE_ERROR_CODES)[number];
 
 /**
  * Stable, machine-readable codes for TransientError — a retryable-shortly
@@ -141,18 +145,18 @@ export type UsageErrorCode =
  * but these two conditions mean "try again in a few seconds", a different
  * contract a cron wrapper or scheduler can branch on.
  */
-export type TransientErrorCode =
+export const TRANSIENT_ERROR_CODES = [
   // Another live akm process holds this workflow run's lock file (`akm
   // workflow run` racing an in-flight one). Not a bad command line: ordinary
   // contention a caller can retry once that process finishes.
-  | "RUN_LEASE_HELD"
+  "RUN_LEASE_HELD",
   // #948: `withImmediateTransaction`/`beginImmediateTransaction`
   // (src/core/state-db.ts) exhausted every BEGIN IMMEDIATE retry attempt and
   // the failure is still contention-shaped (`isSqliteContentionError`) —
   // another akm process is writing state.db right now, not a genuine
   // corruption/unrelated failure. The original driver error survives as
   // `cause`.
-  | "STATE_DB_CONTENDED"
+  "STATE_DB_CONTENDED",
   // A
   // concurrent `akm index` (or any other writer touching index.db — source
   // add/update) can make a
@@ -165,7 +169,7 @@ export type TransientErrorCode =
   // function every caller goes through, for a contention-shaped error
   // escaping the walk, index, or embedding phase. The original driver error
   // survives as `cause`.
-  | "INDEX_DB_CONTENDED"
+  "INDEX_DB_CONTENDED",
   // The
   // `akm improve` whole-run lock (`commands/improve/locks.ts`) is ordinary
   // contention between two legitimate `improve` invocations — the same
@@ -174,41 +178,62 @@ export type TransientErrorCode =
   // error would exit 78 and tell a supervisor to stop retrying a normal lock
   // collision. Thrown from `tryAcquireImproveLockUnlocked` when the lock is
   // held by a live PID and `--skip-if-locked` was not passed.
-  | "IMPROVE_LOCK_HELD"
+  "IMPROVE_LOCK_HELD",
   // Another live akm process held `akm.lock`'s write sentinel for the whole
   // 30 s acquisition window (`src/integrations/lockfile.ts`). Previously a
   // ConfigError (exit 78) for what is a timing collision, not a bad config.
-  | "LOCKFILE_CONTENDED"
+  "LOCKFILE_CONTENDED",
   // The asset-mutation lease (`src/core/index-writer-lock.ts`) stayed held
   // by a live process for the whole wait window. Previously a bare Error
   // (exit 70) for the same ordinary contention.
-  | "ASSET_MUTATION_LEASE_HELD"
+  "ASSET_MUTATION_LEASE_HELD",
   // The one lock around native scheduler writes (`src/tasks/scheduler-lock.ts`)
   // is held by another live akm process running `task sync|add|enable|
   // disable|prune`. Ordinary contention: retry once it finishes.
-  | "SCHEDULER_LOCK_HELD"
+  "SCHEDULER_LOCK_HELD",
   // A registry request failed for a reason a retry can fix: the connection,
   // DNS lookup or TLS handshake failed, the request timed out, or the server
   // answered 429/5xx after the boundary's own retries (`src/registry/network.ts`).
-  | "REGISTRY_UNREACHABLE";
+  "REGISTRY_UNREACHABLE",
+  // A website bundle's page could not be fetched for a reason a retry can fix: the connection, DNS lookup or TLS
+  // handshake failed, the request timed out, or the server answered 429/5xx (`src/sources/snapshot-fetchers/`).
+  "WEBSITE_UNREACHABLE",
+] as const;
+export type TransientErrorCode = (typeof TRANSIENT_ERROR_CODES)[number];
 
 /** Stable, machine-readable codes for NotFoundError. */
-export type NotFoundErrorCode =
-  | "ASSET_NOT_FOUND"
-  | "SOURCE_NOT_FOUND"
-  | "WORKFLOW_NOT_FOUND"
-  | "PROPOSAL_NOT_FOUND"
-  | "FILE_NOT_FOUND"
-  | "COMMAND_NOT_EXECUTABLE"
-  | "IMPROVE_RUN_NOT_FOUND"
+export const NOT_FOUND_ERROR_CODES = [
+  "ASSET_NOT_FOUND",
+  "SOURCE_NOT_FOUND",
+  "WORKFLOW_NOT_FOUND",
+  "PROPOSAL_NOT_FOUND",
+  "FILE_NOT_FOUND",
+  "COMMAND_NOT_EXECUTABLE",
+  "IMPROVE_RUN_NOT_FOUND",
   // The registry answered, but not with the thing asked for: HTTP 404/410, or
   // metadata that names no such version, dist-tag, or default branch.
-  | "REGISTRY_NOT_FOUND"
+  "REGISTRY_NOT_FOUND",
   // The registry answered with something akm cannot use: a non-OK status that
   // is neither not-found nor transient, a body that is not JSON or exceeds the
   // byte cap, an index without a `stashes` array, or npm metadata whose
   // tarball is missing or sits on a different origin than the registry.
-  | "REGISTRY_RESPONSE_INVALID";
+  "REGISTRY_RESPONSE_INVALID",
+  // A website answered, but not with a page: HTTP 4xx other than 404 and 429 (a 403 refusal, say), too many
+  // redirects, or a redirect with no Location (`src/sources/snapshot-fetchers/`).
+  "WEBSITE_REFUSED",
+  // A website answered, but akm found no page it could take: a 404, a page over the size cap, or a crawl that kept
+  // nothing (`src/sources/snapshot-fetchers/website-ingest.ts`).
+  "WEBSITE_NO_CONTENT",
+] as const;
+export type NotFoundErrorCode = (typeof NOT_FOUND_ERROR_CODES)[number];
+
+/** Every code an akm error class can carry: akm's own closed list, for a consumer that must not pass on any other string. */
+export const AKM_ERROR_CODES: ReadonlySet<string> = new Set([
+  ...CONFIG_ERROR_CODES,
+  ...USAGE_ERROR_CODES,
+  ...TRANSIENT_ERROR_CODES,
+  ...NOT_FOUND_ERROR_CODES,
+]);
 
 /**
  * Default hint for each ConfigError code. Keep these short, actionable, and
@@ -314,6 +339,8 @@ const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
     "Another `akm doctor scheduler sync`, `akm import --type task`, `akm task enable` or `akm task disable` is writing the scheduler right now. Wait for it to finish and retry.",
   REGISTRY_UNREACHABLE:
     "The registry did not answer in time. Check the network and the registry URL (`akm registry list`), then retry.",
+  WEBSITE_UNREACHABLE:
+    "The website could not be reached or answered with a server error. Check the network, then retry.",
 };
 
 /** Default hint for each NotFoundError code. */
@@ -331,6 +358,9 @@ const NOT_FOUND_HINTS: Partial<Record<NotFoundErrorCode, string>> = {
     "Run `akm improve` first, or `akm doctor metrics improve --since 30d` to see recent run ids in `runIds`.",
   REGISTRY_NOT_FOUND:
     "Check the ref's spelling and version; `akm search <query> --from registry` lists installable refs.",
+  WEBSITE_REFUSED:
+    "The website refused the request. Check the bundle's URL (`akm bundle list`) and that the site allows it.",
+  WEBSITE_NO_CONTENT: "The website had no page akm could import. Check the URL opens a page in a browser.",
 };
 
 /**

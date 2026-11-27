@@ -267,11 +267,14 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
   return buildMetricsResult(input);
 }
 
+/** What `akm doctor metrics` (and the Deprecated `akm metrics`) reports. */
+export const METRICS_DESCRIPTION =
+  "Experimental: report asset usage, feedback, utility, LLM usage, tasks, proposals and workflow spend from local records. Read-only.";
+
 export const metricsCommand = defineJsonCommand({
   meta: {
     name: "metrics",
-    description:
-      "Experimental: report asset usage, feedback, utility, LLM usage, tasks, proposals and workflow spend from local records. Read-only.",
+    description: `Deprecated, removed in 0.11: use \`akm doctor metrics\`. ${METRICS_DESCRIPTION}`,
   },
   args: {
     since: {

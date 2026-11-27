@@ -21,6 +21,7 @@ import { deliverRendered } from "../output/stdout";
 import { formatPlain, outputJsonl } from "../output/text";
 import { parseAllFlagValues } from "./invocation";
 import { hasSubcommand } from "./parse-args";
+import { setUsageErrorCode } from "./usage-kinds";
 
 export { parseAllFlagValues };
 
@@ -117,6 +118,7 @@ export function emitJsonError(error: unknown): void {
   const code = error instanceof AkmError ? error.code : undefined;
   console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
   process.exitCode = exitCode;
+  setUsageErrorCode(code);
 }
 
 /**
@@ -125,6 +127,18 @@ export function emitJsonError(error: unknown): void {
  */
 export function reportChildExit(code: number): void {
   if (!process.exitCode) process.exitCode = code;
+}
+
+/**
+ * A Deprecated mount of a command whose replacement mounts the same definition: help for this one says it is
+ * Deprecated and names `use`, and the usage report counts it as Deprecated (src/cli/usage.ts `deprecatedUse`).
+ */
+export function deprecatedMount<T extends { meta?: unknown }>(command: T, use: string): T {
+  const meta = command.meta as { description?: string } | undefined;
+  return {
+    ...command,
+    meta: { ...meta, description: `Deprecated, removed in 0.11: use ${use}. ${meta?.description ?? ""}` },
+  };
 }
 
 /**

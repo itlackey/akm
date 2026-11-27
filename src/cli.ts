@@ -136,15 +136,15 @@ import { closestMatch } from "./core/closest-match";
 import { explainedByReaderGone, isTerminal, stdout } from "./core/stdio";
 import "./commands/health/renderers";
 import "./commands/metrics/md-report";
+import { DOCTOR_ALIASES } from "./commands/doctor-aliases";
 import { execCommand } from "./commands/exec-cli";
 import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
 import { doctorPromptCommand, improveCommand } from "./commands/improve/improve-cli";
 import { judgeCommand } from "./commands/judge-cli";
-import { metricsCommand } from "./commands/metrics/metrics-cli";
 import { migrateCommand } from "./commands/migrate-cli";
 import { modelsCommand } from "./commands/models-cli";
-import { doctorLogCommand, logCommand } from "./commands/observability-cli";
+import { doctorLogCommand } from "./commands/observability-cli";
 import { proposalCommand } from "./commands/proposal/proposal-cli";
 import { rememberCommand } from "./commands/read/remember-cli";
 import { rulesCommand } from "./commands/read/rules";
@@ -429,7 +429,8 @@ const healthArgs = {
 const healthCommand = defineCommand({
   meta: {
     name: "health",
-    description: "Check akm runtime health, artifacts, and improve metrics",
+    description:
+      "Deprecated, removed in 0.11: use `akm doctor`. Check akm runtime health, artifacts, and improve metrics",
   },
   args: healthArgs,
   async run(context) {
@@ -685,8 +686,7 @@ const commands = {
   index: indexCommand,
   doctor: doctorCommand,
   health: healthCommand,
-  metrics: metricsCommand,
-  info: infoCommand,
+  ...DOCTOR_ALIASES,
   bundle: bundleCommand,
   backups: backupsCommand,
   upgrade: upgradeCommand,
@@ -706,12 +706,10 @@ const commands = {
   config: configCommand,
   models: modelsCommand,
   feedback: feedbackCommand,
-  log: logCommand,
   agent: agentCommand,
   command: commandCommand,
   lint: lintCommand,
   improve: improveCommand,
-  judge: judgeCommand,
   proposal: proposalCommand,
   completions: completionsCommand,
   env: envCommand,

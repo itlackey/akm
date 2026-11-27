@@ -2,7 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { fetchWithRetry, readBodyWithByteCap } from "../../core/common";
+import { fetchWithRetry, readBodyWithByteCap, shouldRetry } from "../../core/common";
+import { NotFoundError, TransientError } from "../../core/errors";
 import {
   bareHostname,
   classifyNetworkAddress,
@@ -19,6 +20,43 @@ import {
  * fetchers can share it: a fetcher importing `website-ingest` directly would
  * cycle, because `website-ingest` imports the fetcher registry.
  */
+
+/** A status that is not a page: a 429 or 5xx a retry can fix (exit 75), any other a refusal (exit 1). */
+export function websiteStatusError(status: number, url: string): TransientError | NotFoundError {
+  const message = `Failed to fetch website content (${status}) from ${url}`;
+  return shouldRetry(status)
+    ? new TransientError(message, "WEBSITE_UNREACHABLE")
+    : new NotFoundError(message, "WEBSITE_REFUSED");
+}
+
+/**
+ * Where a 3xx `response` from `url` redirects, its body cancelled. Past the hop limit (`tooMany`), or with no
+ * Location, it is a redirect akm will not follow: `WEBSITE_REFUSED`.
+ */
+export async function redirectTarget(response: Response, url: string, tooMany: boolean): Promise<string> {
+  await response.body?.cancel().catch(() => undefined);
+  const location = response.headers.get("location");
+  if (tooMany) throw new NotFoundError(`Too many redirects while fetching ${url}`, "WEBSITE_REFUSED");
+  if (!location) {
+    throw new NotFoundError(`Redirect response from ${url} did not include a Location header`, "WEBSITE_REFUSED");
+  }
+  return new URL(location, url).toString();
+}
+
+/** `fetchWithRetry`, with a failed connection or a timeout as `WEBSITE_UNREACHABLE`; the caller's own abort passes through. */
+export async function fetchWebsiteWithRetry(
+  url: string,
+  init: RequestInit,
+  options: Parameters<typeof fetchWithRetry>[2],
+): Promise<Response> {
+  try {
+    return await fetchWithRetry(url, init, options);
+  } catch (error) {
+    if (init.signal?.aborted) throw error;
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new TransientError(`Could not reach ${url}: ${reason}`, "WEBSITE_UNREACHABLE");
+  }
+}
 
 /** Options accepted by the host guards. */
 export interface HostGuardOptions {
@@ -92,10 +130,10 @@ export async function assertResolvedHostAllowed(hostname: string, options?: Host
   try {
     addresses = await resolveHostnameAddresses(bare, options?.resolveHostname);
   } catch {
-    throw new Error(`Refusing to fetch ${hostname}: DNS resolution failed`);
+    throw new TransientError(`Refusing to fetch ${hostname}: DNS resolution failed`, "WEBSITE_UNREACHABLE");
   }
   if (addresses.length === 0) {
-    throw new Error(`Refusing to fetch ${hostname}: hostname resolved to no addresses`);
+    throw new TransientError(`Refusing to fetch ${hostname}: hostname resolved to no addresses`, "WEBSITE_UNREACHABLE");
   }
   for (const address of addresses) {
     if (classifyNetworkAddress(address) !== "public") {
@@ -139,7 +177,7 @@ export async function fetchGuardedResponse(
   assertWebsiteRequestUrl(url, Error, opts);
   await assertResolvedHostAllowed(new URL(url).hostname, opts);
 
-  const response = await fetchWithRetry(
+  const response = await fetchWebsiteWithRetry(
     url,
     { ...init, redirect: "manual" },
     {
@@ -149,17 +187,7 @@ export async function fetchGuardedResponse(
   );
 
   if (response.status >= 300 && response.status < 400) {
-    if (redirectCount >= MAX_GUARDED_REDIRECTS) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error(`Too many redirects while fetching ${url}`);
-    }
-    const location = response.headers.get("location");
-    if (!location) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error(`Redirect response from ${url} did not include a Location header`);
-    }
-    await response.body?.cancel().catch(() => undefined);
-    const nextUrl = new URL(location, url).toString();
+    const nextUrl = await redirectTarget(response, url, redirectCount >= MAX_GUARDED_REDIRECTS);
     return fetchGuardedResponse(nextUrl, redirectInit(init, url, nextUrl), opts, redirectCount + 1);
   }
 

@@ -10,6 +10,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Experimental dispatch mode for the scheduler, opt in per host. `akm doctor scheduler sync --dispatch` replaces this installation's per-task rows in cron, launchd or Task Scheduler with one row that runs `akm task dispatch` every minute; `--no-dispatch` switches back. `akm task dispatch` reads `scheduler.enabled` and the task files, and starts each entry due since the last dispatch, catching up at most 5 missed minutes, with the same invocation and log file its row had. Enabling a task or editing its schedule then takes effect the next minute, with no sync. A host never holds both kinds of row: when a removal fails, sync writes nothing after it. An `@reboot` entry never starts in dispatch mode, and sync reports it. The dispatch row sets no `AKM_BUNDLE_DIR` unless the syncing process had one, so `akm task dispatch` prints no deprecation notice each minute. See [`akm task dispatch`](docs/reference/cli.md#task-dispatch).
 
+- The daily usage report counts each command's error codes: `err_<CODE>` for a run that failed with one of akm's own codes (`err_INVALID_FLAG_VALUE`, `err_RESOURCE_ALREADY_EXISTS`), never a message or a code akm does not define. The local CLI usage record keeps the code on the invocation. See [Daily usage report](docs/reference/data-and-telemetry.md#daily-usage-report).
+- The daily usage report counts Deprecated use: `deprecated` on a command's event for the runs typed in a form akm marks Deprecated, and `dflag_<name>` for each Deprecated flag typed, both read from the command definitions.
+- `akm doctor metrics usage` groups the Deprecated calls of the last 30 days by the task they ran in (`deprecatedByTask`). akm sets `AKM_TASK_REF`, the task's ref, for the programs a task runs, and keeps it on the local invocation record only; the daily usage report never reads it.
+
+### Changed
+
+- The first daily usage report counts from the day collection started, so the install day's usage is sent; it used to send `period_days: 0`.
+- Help for `akm health`, `akm metrics`, `akm info` and `akm log` now says they are Deprecated and names their `akm doctor` replacement, and help for `akm doctor judge` and `akm doctor metrics improve` no longer says they are Deprecated (the Deprecated `akm judge` and `akm improve report` still do).
+
+### Fixed
+
+- The usage report's `failures` counts only runs that ended in an error. A health warning (exit 4, `out_health-warning`) or a cancellation (`out_cancelled`) is still counted as its outcome but is no longer a failure; 148 of `akm doctor`'s 149 reported failures were warnings. Days not yet reported are counted from their outcomes, so they are corrected too.
+- A scheduled run is recorded as source `task`: `akm task dispatch`, and `akm task run --scheduled` from a scheduler row without `AKM_EVENT_SOURCE`, were `unknown`.
+- A website bundle's fetch failure no longer exits 70 (internal), which counted a site's refusal as an akm bug. An HTTP 429 or 5xx, a timeout, a failed connection or a failed DNS lookup is `WEBSITE_UNREACHABLE` (exit 75, retry); an HTTP 403 or other 4xx, a redirect loop or a redirect with no Location is `WEBSITE_REFUSED` (exit 1). A site with no page akm can take (a 404, a page over the size cap, or a crawl that kept nothing) is `WEBSITE_NO_CONTENT` (exit 1): `akm import <url>` reported it as `INVALID_FLAG_VALUE` (exit 2) with a hint to check the flags, and a website bundle's empty crawl exited 70.
+
 ### Deprecated
 
 - Per-task OS scheduler rows. They stay the default through 0.10; in 0.11 the dispatch row is the only scheduler entry and `akm migrate apply` removes the per-task rows. A sync that writes per-task rows says so in its `warnings`.

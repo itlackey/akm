@@ -8,8 +8,8 @@
  * the CLI one event per command that ran (`akm task run`) with its counts.
  *
  * What may be sent is decided here and nowhere else. Every prop value is a number. Every event name and prop key is
- * built from akm's own definitions: its command tree, its declared flags and their closed value lists, its harness
- * ids, sources, outcome categories and asset types. A name akm did not define (an asset's input, a custom type or
+ * built from akm's own definitions: its command tree, its declared flags and their closed value lists, which of
+ * them it marks Deprecated, its harness ids, sources, outcome categories, error codes and asset types. A name akm did not define (an asset's input, a custom type or
  * harness) is counted as `other` or `[unknown]`, or left out; it is never spelled. Nothing is read from an argument
  * value, a ref, a path or a bundle. The one identifier is the usage store's random instance id, sent as the
  * session id. The fields are listed in docs/reference/data-and-telemetry.md. Every failure is swallowed; the report
@@ -18,6 +18,7 @@
 
 import os from "node:os";
 import { loadConfig } from "../core/config/config";
+import { AKM_ERROR_CODES } from "../core/errors";
 import { getDbPath } from "../core/paths";
 import { isKnownType, KNOWN_TYPES } from "../core/recognition-util";
 import { HARNESS_REGISTRY } from "../integrations/harnesses";
@@ -25,7 +26,8 @@ import { DETAIL_VALUES, OUTPUT_FORMATS } from "../output/context";
 import { openDatabase } from "../storage/database";
 import { getEntryCountByType } from "../storage/repositories/index-entries-repository";
 import { pkgVersion } from "../version";
-import { CLI_USAGE_SOURCES, EXIT_CATEGORIES, openUsage, readUsage, type UsageCommand } from "./usage";
+import { EXIT_CATEGORIES, openUsage, readUsage, type UsageCommand } from "./usage";
+import { CLI_USAGE_SOURCES, deprecatedUse, isFailureCategory } from "./usage-kinds";
 
 // The app key is write-only and public by design. The host is fixed: no environment variable or config key can
 // redirect it.
@@ -95,10 +97,13 @@ const SET_LATER =
  * Take today's attempt for `surface` (`report.<surface>.last_day`): true for exactly one caller per UTC day, across
  * concurrent processes (one atomic upsert). A store created today claims nothing, so a fresh install or sandbox
  * reports from its next UTC day. Returns the last day whose counts the server accepted (`report.<surface>.through`;
- * undefined before the first accepted report) and the install id: the store's `instance`, a random UUID made with
- * the store and derived from nothing on the machine.
+ * undefined before the first accepted report), the day collection started, and the install id: the store's
+ * `instance`, a random UUID made with the store and derived from nothing on the machine.
  */
-function claimDay(surface: ReportSurface, today: string): { through: string | undefined; install: string } | undefined {
+function claimDay(
+  surface: ReportSurface,
+  today: string,
+): { through: string | undefined; started: string; install: string } | undefined {
   const db = openUsage();
   try {
     const meta = (key: string) =>
@@ -110,7 +115,11 @@ function claimDay(surface: ReportSurface, today: string): { through: string | un
     // Already tried today (every command after the first): a read only, no write lock on the shared store.
     if (last !== undefined && last >= today) return undefined;
     if (!db.prepare(SET_LATER).run(key, today).changes) return undefined;
-    return { through: meta(`report.${surface}.through`), install: meta("instance") as string };
+    return {
+      through: meta(`report.${surface}.through`),
+      started: started.slice(0, 10),
+      install: meta("instance") as string,
+    };
   } finally {
     db.close();
   }
@@ -161,13 +170,13 @@ function definedCommand(root: UsageCommand, path: readonly string[]) {
 }
 
 /**
- * The CLI's counts for the complete UTC days after `through` (the last day the server accepted) up to yesterday,
- * from the durable aggregates: the totals for the daily event, and the counts of each command as it was typed.
- * Before the first accepted report there is nothing to count: `period_days` is 0. Without the command tree
- * (`root`) no command can be checked against it, so only the totals are counted.
+ * The CLI's counts for the UTC days after `through` (the last day the server accepted) up to yesterday, from the
+ * durable aggregates: the totals for the daily event, and the counts of each command as it was typed. Before the
+ * first accepted report they start on the day collection started (`started`), so the install day is counted.
+ * Without the command tree (`root`) no command can be checked against it, so only the totals are counted.
  */
-function cliCounts(root: UsageCommand | undefined, through: string | undefined, today: string) {
-  const since = through === undefined ? today : addDays(through, 1);
+function cliCounts(root: UsageCommand | undefined, through: string | undefined, started: string, today: string) {
+  const since = through === undefined ? started : addDays(through, 1);
   const until = addDays(today, -1);
   const totals: Counts = { period_days: 0, commands: 0, failures: 0 };
   for (const source of CLI_USAGE_SOURCES) totals[`src_${source}`] = 0;
@@ -183,7 +192,14 @@ function cliCounts(root: UsageCommand | undefined, through: string | undefined, 
       arguments?: Array<{ name: string; explicit: boolean; value: string | boolean }>;
     };
     const attempts = Number(row.attempts);
-    const failures = Number(row.failures);
+    const outcomes = Object.entries(row.outcomes as Record<string, number>).map(([outcome, n]) => {
+      // An outcome is `<category>:<exit code>:<asset type, or "unresolved">`, then `:<error code>` when there was one.
+      const [category = "", , type = "unresolved", code] = outcome.split(":");
+      return { category, type, code, n };
+    });
+    // From the outcomes, not the stored `failures` column: rows written by earlier releases counted warnings and
+    // cancellations there.
+    const failures = outcomes.reduce((sum, o) => sum + (isFailureCategory(o.category) ? o.n : 0), 0);
     const counted: Counts = {};
     add(counted, `src_${CLI_USAGE_SOURCES.has(dimensions.source ?? "") ? dimensions.source : "unknown"}`, attempts);
     if (dimensions.harness)
@@ -193,7 +209,8 @@ function cliCounts(root: UsageCommand | undefined, through: string | undefined, 
     for (const [key, n] of Object.entries(counted)) add(totals, key, n);
     if (!root) continue;
 
-    const { name, flags } = definedCommand(root, dimensions.invokedCommand ?? dimensions.command ?? []);
+    const typed = dimensions.invokedCommand ?? dimensions.command ?? [];
+    const { name, flags } = definedCommand(root, typed);
     // A flag given twice in one run is one use of it.
     const used = new Set<string>();
     for (const argument of dimensions.arguments ?? []) {
@@ -205,11 +222,13 @@ function cliCounts(root: UsageCommand | undefined, through: string | undefined, 
         used.add(`flag_${argument.name}_${argument.value}`);
     }
     for (const key of used) add(counted, key, attempts);
-    // An outcome is `<category>:<exit code>:<asset type the command resolved, or "unresolved">`.
-    for (const [outcome, n] of Object.entries(row.outcomes as Record<string, number>)) {
-      const [category = "", , type = "unresolved"] = outcome.split(":");
+    const deprecated = deprecatedUse(root, typed, dimensions.arguments ?? []);
+    if (deprecated.command) add(counted, "deprecated", attempts);
+    for (const flag of deprecated.flags) add(counted, `dflag_${flag}`, attempts);
+    for (const { category, type, code, n } of outcomes) {
       if (category !== "success") add(counted, `out_${FAILURE_CATEGORIES.has(category) ? category : "failure"}`, n);
       if (type !== "unresolved") add(counted, `type_${isKnownType(type) ? type : "other"}`, n);
+      if (code !== undefined && AKM_ERROR_CODES.has(code)) add(counted, `err_${code}`, n);
     }
     const props = commands.get(name) ?? { period_days: totals.period_days, count: 0, failures: 0, duration_ms: 0 };
     commands.set(name, props);
@@ -343,7 +362,7 @@ export async function reportUsageIfDue(
     const today = day(now);
     const claim = claimDay(surface, today);
     if (!claim) return false;
-    const cli = surface === "cli" ? cliCounts(commands, claim.through, today) : undefined;
+    const cli = surface === "cli" ? cliCounts(commands, claim.through, claim.started, today) : undefined;
     const system = systemProps(version);
     const event = (eventName: string, props: Counts) => ({
       timestamp: now.toISOString(),

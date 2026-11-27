@@ -177,7 +177,7 @@ Every command exits with one of the following codes:
 | 2 | Usage / bad input | `UsageError` |
 | 4 | Health warning (`akm doctor`, or the Deprecated `akm health`) | — |
 | 70 | Internal / unclassified error | unexpected throw |
-| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now (the asset mutation lease, held by another writer, gives up after 10 minutes), not a bad command line. `search`, `curate` and `show` do not exit 75 because the index is cold or being built: they never build and never wait | `TransientError` |
+| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now (the asset mutation lease, held by another writer, gives up after 10 minutes), or a registry or website did not answer, not a bad command line. `search`, `curate` and `show` do not exit 75 because the index is cold or being built: they never build and never wait | `TransientError` |
 | 78 | Configuration error | `ConfigError` |
 
 Failures classified by akm emit a JSON error envelope on **stderr** before
@@ -4930,7 +4930,8 @@ exports of different installs cannot be told apart or combined by key.
 
 Collection is enabled at CLI entry, before the full configuration is read (only `usage.capture` is read, from the selected config file, and a missing or broken file leaves capture on), with no network
 transmission of its own and no sampling (the separate [daily usage report](data-and-telemetry.md#daily-usage-report) sends counts). `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies
-known provenance and wins. Without it the source is `agent` when an agent harness
+known provenance and wins. Without it the source is `task` for a run the scheduler
+started (`akm task dispatch`, `akm task run --scheduled`), `agent` when an agent harness
 is detected from the environment (the way usage events detect it), `user` when
 there is none and a terminal is attached to stdin or stdout, else `unknown`. When a
 harness is detected, rows and aggregates also carry its name as an optional `harness`
@@ -4943,7 +4944,13 @@ finite allowlisted `format`, `detail` and asset `type` choices. Default values a
 marked separately from explicit input. Arguments after `--` retain only their count.
 No raw argv is stored. The resolved `run` asset type is recorded through a narrow
 hook when resolution reaches dispatch, and `show` records the type of the asset it
-showed the same way.
+showed the same way. A command that fails with a classified error keeps its `code`
+on the invocation (`errorCode`) and as a fourth part of its aggregate outcome
+(`usage:2:unresolved:INVALID_FLAG_VALUE`); only akm's own codes are kept. An
+invocation's detail, never its aggregate, also carries `deprecated` (`command`,
+and the Deprecated `flags` typed) when it used a form marked Deprecated, and `task`,
+the ref of the task it ran in (`AKM_TASK_REF`). The report groups those Deprecated
+calls by task under `deprecatedByTask`.
 
 The usage tables (`cli_usage_meta`, `cli_usage_invocations`,
 `cli_usage_aggregates`) live in `metrics.db` in the existing AKM data directory,

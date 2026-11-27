@@ -12,7 +12,7 @@ import {
   parseTimeoutFlags,
 } from "../../cli/parse-args";
 import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
-import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
+import { defineJsonCommand, deprecatedMount, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { type AssetRef, isFullRefInput, parsePlacementRef } from "../../core/asset/resolve-ref";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -87,8 +87,7 @@ async function runShowPromptCli(
 export const improveReportCommand = defineJsonCommand({
   meta: {
     name: "report",
-    description:
-      "Deprecated, removed in 0.11: use `akm doctor metrics improve`. Show the LLM usage/routing report for the most recent improve run, one run, or a window of runs.",
+    description: "Show the LLM usage/routing report for the most recent improve run, one run, or a window of runs.",
   },
   args: {
     run: {
@@ -142,7 +141,10 @@ const improveJudgeCommand = defineJsonCommand({
 /** The subcommands `setup` withheld for this run, restored by `cleanup` (one command runs per process; in-process tests run many). */
 let subCommandsWithheld = false;
 
-const IMPROVE_SUBCOMMANDS = { report: improveReportCommand, judge: improveJudgeCommand };
+const IMPROVE_SUBCOMMANDS = {
+  report: deprecatedMount(improveReportCommand, "`akm doctor metrics improve`"),
+  judge: improveJudgeCommand,
+};
 
 export const improveCommand = defineCommand({
   meta: {

@@ -16,18 +16,21 @@ import { type Database, openDatabase } from "../storage/database";
 import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 import { resolveAgentIdentity } from "../workflows/runtime/agent-identity";
 import { cittyComparableName, findCittyTopLevelCommandIndex, toAliasArray } from "./invocation";
+import { detailOnly, isFailureCategory, resolveCliUsageSource, takeUsageErrorCode } from "./usage-kinds";
 
-interface ArgDefinition {
+export interface ArgDefinition {
   type?: string;
   alias?: string | readonly string[];
   default?: unknown;
   options?: readonly string[];
+  description?: string;
 }
 export interface UsageCommand {
+  meta?: unknown;
   args?: Record<string, ArgDefinition>;
   subCommands?: Record<string, UsageCommand>;
 }
-interface ArgumentUsage {
+export interface ArgumentUsage {
   name: string;
   spelling: string;
   kind: string;
@@ -213,19 +216,6 @@ export const EXIT_CATEGORIES: Readonly<Record<number, string>> = {
   78: "config",
 };
 
-export const CLI_USAGE_SOURCES: ReadonlySet<string> = new Set(["user", "agent", "task", "improve", "audit", "unknown"]);
-
-/**
- * An explicit `AKM_EVENT_SOURCE` wins; otherwise a detected agent harness is "agent", a terminal with no harness
- * (`terminal`) is "user", and anything else (a pipe, a script, a harness akm does not know) is "unknown".
- */
-export function resolveCliUsageSource(env: NodeJS.ProcessEnv, terminal = false): string {
-  const explicit = env.AKM_EVENT_SOURCE ?? "";
-  if (CLI_USAGE_SOURCES.has(explicit)) return explicit;
-  if (resolveAgentIdentity(env).harness) return "agent";
-  return terminal ? "user" : "unknown";
-}
-
 const RETENTION_MS = 30 * 86400_000;
 function usagePath(): string {
   return path.join(getDataDir(), "metrics.db");
@@ -301,11 +291,11 @@ export function startUsage(
   let selectedExecutor: UsageCommand | undefined;
   let dimensions: Record<string, unknown> = {};
   let data: Record<string, unknown> = {};
-  const source = resolveCliUsageSource(process.env, Boolean(isTerminal(0) || isTerminal(1)));
   const harness = resolveAgentIdentity(process.env).harness;
   const harnessField = harness ? { harness } : {};
   try {
     const usage = describeUsage(root, own, childArgumentCount);
+    const source = resolveCliUsageSource(process.env, Boolean(isTerminal(0) || isTerminal(1)), usage);
     // `--read-only` promises no writes, and the config key turns capture off.
     // Either way nothing is opened, written or finalized.
     if (readOnlyRequested(usage)) return () => {};
@@ -318,7 +308,8 @@ export function startUsage(
       const ts = new Date(started).toISOString();
 
       dimensions = { day: ts.slice(0, 10), version, source, ...harnessField, instance, ...usage };
-      data = { schemaVersion: 1, id, ts, version, source, ...harnessField, instance, ...usage };
+      const detail = detailOnly(root, usage, process.env);
+      data = { schemaVersion: 1, id, ts, version, source, ...harnessField, instance, ...usage, ...detail };
       key = JSON.stringify(dimensions);
       db.transaction(() => {
         db.prepare("INSERT INTO cli_usage_invocations(id,ts,aggregate_key,data) VALUES (?,?,?,?)").run(
@@ -380,6 +371,7 @@ export function startUsage(
     }
   };
   activeResolution = resolve;
+  takeUsageErrorCode(); // one an earlier command in this process left
   const finish = () => {
     if (done) return;
     done = true;
@@ -391,6 +383,11 @@ export function startUsage(
     const duration = Math.max(0, Date.now() - started);
     const exitCode = signal ? (signal === "SIGINT" ? 130 : 143) : Number(process.exitCode ?? 0);
     const category = signal ? "cancelled" : (EXIT_CATEGORIES[exitCode] ?? "failure");
+    const failedWith = takeUsageErrorCode();
+    // A success never keeps the code of an error the command recovered from.
+    const code = category === "success" ? undefined : failedWith;
+    const failed = isFailureCategory(category) ? 1 : 0;
+    const errorPatch = JSON.stringify({ errorCode: code });
     try {
       const db = openUsage(filename!);
       try {
@@ -398,19 +395,19 @@ export function startUsage(
           const resolvedKey = checkpoint(db);
           const updated = db
             .prepare(
-              "UPDATE cli_usage_invocations SET duration_ms=?,exit_code=?,category=?,asset_type=?,signal=? WHERE id=? AND category IS NULL",
+              "UPDATE cli_usage_invocations SET duration_ms=?,exit_code=?,category=?,asset_type=?,signal=?,data=json_patch(data,?) WHERE id=? AND category IS NULL",
             )
-            .run(duration, exitCode, category, resolvedAssetType ?? null, signal ?? null, id);
+            .run(duration, exitCode, category, resolvedAssetType ?? null, signal ?? null, errorPatch, id);
           if (!updated.changes) return resolvedKey;
           const row = db.prepare("SELECT outcomes FROM cli_usage_aggregates WHERE key=?").get(resolvedKey) as {
             outcomes: string;
           };
           const outcomes = JSON.parse(row.outcomes) as Record<string, number>;
-          const outcome = `${category}:${exitCode}:${resolvedAssetType ?? "unresolved"}`;
+          const outcome = `${category}:${exitCode}:${resolvedAssetType ?? "unresolved"}${code ? `:${code}` : ""}`;
           outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
           db.prepare(
             "UPDATE cli_usage_aggregates SET completed=completed+1, failures=failures+?,cancelled=cancelled+?,duration_ms=duration_ms+?,max_duration_ms=MAX(max_duration_ms,?),outcomes=? WHERE key=?",
-          ).run(exitCode === 0 ? 0 : 1, signal ? 1 : 0, duration, duration, JSON.stringify(outcomes), resolvedKey);
+          ).run(failed, signal ? 1 : 0, duration, duration, JSON.stringify(outcomes), resolvedKey);
           return resolvedKey;
         })();
         key = nextKey;

@@ -45,3 +45,16 @@ export function resolveProvenanceContext(
 export function taskEventSource(host: NodeJS.ProcessEnv, provenance: ExecutionProvenanceContext): string {
   return host.AKM_EVENT_SOURCE ?? provenance.eventSource;
 }
+
+/**
+ * The provenance a task's process gets: its `AKM_EVENT_SOURCE` and `AKM_TASK_REF`, the ref of the task it runs in
+ * (the innermost task's, unlike the event source). akm's usage capture keeps the ref on its local per-invocation
+ * record only (src/cli/usage.ts); the usage report never reads it.
+ */
+export function taskProcessEnv(
+  host: NodeJS.ProcessEnv,
+  provenance: ExecutionProvenanceContext,
+  taskRef: string,
+): { AKM_EVENT_SOURCE: string; AKM_TASK_REF: string } {
+  return { AKM_EVENT_SOURCE: taskEventSource(host, provenance), AKM_TASK_REF: taskRef };
+}

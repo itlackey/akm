@@ -29,7 +29,7 @@ import type { TaskHistoryStep } from "../../storage/repositories/task-history-re
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskStep, PreparedTaskV3Steps } from "../prepare/prepared-execution";
 import { abortOnTermination, finishAttempt } from "./attempt-lifecycle";
-import { taskEventSource } from "./provenance";
+import { taskProcessEnv } from "./provenance";
 import { withUnattendedTimeout } from "./run-command-task";
 import { shellCommand } from "./run-native-task";
 import { DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } from "./run-workflow-task";
@@ -299,7 +299,7 @@ async function runShellStep(step: Extract<PreparedTaskStep, { kind: "shell" }>, 
   const env: Record<string, string> = {
     ...childProcessEnv(),
     ...step.environment,
-    AKM_EVENT_SOURCE: taskEventSource(process.env, provenance),
+    ...taskProcessEnv(process.env, provenance, ctx.task.taskRef),
     AKM_PARAMS: ctx.paramsJson,
     AKM_STEPS: ctx.stepsJson,
   };
@@ -364,6 +364,7 @@ async function runPromptStep(step: Extract<PreparedTaskStep, { kind: "command" }
     const result = await dispatchPreparedCommandInvocation(rebuilt, {
       ...(ctx.options.runAgentImpl ? { runAgent: ctx.options.runAgentImpl } : {}),
       eventSource: ctx.provenance.eventSource,
+      env: { AKM_TASK_REF: ctx.task.taskRef },
       signal: ctx.abort.signal,
     });
     out.lines.push(`engine=${result.engine} ok=${result.ok} exit_code=${result.exitCode ?? "null"}`);

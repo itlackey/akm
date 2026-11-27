@@ -1364,6 +1364,7 @@ akm config diff fleet//config/shared.json
 | `AKM_DEBUG` | Deprecated: use `--verbose`. `1` prints a stack trace on unexpected internal errors |
 | `AKM_UPGRADE_SKIP_CHECKSUM` | Deprecated, removed in 0.11: use `akm upgrade --skip-checksum` |
 | `AKM_EVENT_SOURCE` | `user`, `agent`, `task`, `improve` or `audit` marks the provenance of the commands a process runs (usage events and CLI usage counts); akm sets it for the programs it runs for a task. Anything else means `unknown` |
+| `AKM_TASK_REF` | Set by akm for the programs it runs for a task: the ref of that task. akm records it on its local per-invocation CLI usage record only ([CLI usage counts](data-and-telemetry.md#cli-usage-counts)); it is never sent |
 | `AKM_TASK_STATE` | Experimental. Path of the JSON state file of a version 5 task run; akm sets it for a step it runs as a process and does not read it |
 
 `AKM_SQLITE_JOURNAL_MODE` is Deprecated, has no replacement and is removed in

@@ -33,7 +33,11 @@ import { akmTasksHistory } from "./tasks/tasks";
 // its own envelope and never stamps a `shape` field.
 
 export const logCommand = defineJsonCommand({
-  meta: { name: "log", description: "List events from the append-only state.db events stream" },
+  meta: {
+    name: "log",
+    description:
+      "Deprecated, removed in 0.11: use `akm doctor log`. List events from the append-only state.db events stream",
+  },
   args: {
     since: {
       type: "string",
