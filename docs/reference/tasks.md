@@ -2,7 +2,9 @@
 
 Task assets are strict, local automation sources. They live at
 `<bundle>/tasks/<id>.yml` and can be run directly or reconciled to cron,
-launchd, or Windows Task Scheduler with `akm doctor scheduler sync`. The task file is
+launchd, or Windows Task Scheduler with `akm doctor scheduler sync`, one row per
+schedule entry or, in the Experimental dispatch mode, one row that runs
+[`akm task dispatch`](cli.md#task-dispatch) every minute. The task file is
 authored source; scheduler entries are derived OS state. Import a task file
 with `akm import <file> --type task`, run a task with `akm run
 <bundle>//tasks/<id>`, and diagnose with `akm doctor`, `akm doctor explain

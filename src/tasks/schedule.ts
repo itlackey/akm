@@ -293,6 +293,37 @@ function parseField(
   );
 }
 
+// ── Minute matching (`akm task dispatch`) ───────────────────────────────────
+
+/**
+ * Whether `fields` fire at the local minute `at`. `parseSchedule` refuses day-of-month with day-of-week, so one of
+ * them is always `*` and both must match.
+ */
+export function scheduleMatchesMinute(fields: ScheduleFields, at: Date): boolean {
+  return (
+    fieldMatches(fields.minute, at.getMinutes(), FIELD_LIMITS.minute.min) &&
+    fieldMatches(fields.hour, at.getHours(), FIELD_LIMITS.hour.min) &&
+    fieldMatches(fields.dom, at.getDate(), FIELD_LIMITS.dom.min) &&
+    fieldMatches(fields.month, at.getMonth() + 1, FIELD_LIMITS.month.min) &&
+    fieldMatches(fields.dow, at.getDay(), FIELD_LIMITS.dow.min)
+  );
+}
+
+function fieldMatches(field: ScheduleField, value: number, min: number): boolean {
+  switch (field.kind) {
+    case "star":
+      return true;
+    case "value":
+      return field.value === value;
+    case "step":
+      return (value - min) % field.step === 0;
+    case "rangeStep":
+      return value >= field.start && value <= field.end && (value - field.start) % field.step === 0;
+    case "list":
+      return field.values.includes(value);
+  }
+}
+
 // ── Backend translators ─────────────────────────────────────────────────────
 
 /** Verbatim cron line, alias-expanded. */

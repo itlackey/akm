@@ -190,7 +190,11 @@ export function parseScheduledInvocationArgv(argv: readonly string[]): ParsedSch
     return { binding: argv.slice(0, contextIndex), contextPath, ...publicInvocation };
   }
   for (let index = 1; index < argv.length - 1; index += 1) {
-    if ((argv[index] === "task" || argv[index] === "workflow") && argv[index + 1] === "run") {
+    const verb = argv[index + 1];
+    if (
+      (argv[index] === "task" && (verb === "run" || verb === "dispatch")) ||
+      (argv[index] === "workflow" && verb === "run")
+    ) {
       const publicInvocation = parsePublicSchedulerInvocation(argv.slice(index));
       return publicInvocation ? { binding: argv.slice(0, index), ...publicInvocation } : undefined;
     }
@@ -246,12 +250,15 @@ export function consumeSchedulerContextArg(
 }
 
 /**
- * Parse just the public `task run …` / `workflow run …` tail, the part of a
- * row that names what it runs.
+ * Parse just the public `task run …` / `workflow run …` / `task dispatch` tail,
+ * the part of a row that names what it runs.
  */
 function parsePublicSchedulerInvocation(
   invocation: readonly string[],
 ): { invocation: string[]; target?: string } | undefined {
+  // The one row of a host in dispatch mode: it names no task and no bundle.
+  if (invocation.length === 2 && invocation[0] === "task" && invocation[1] === "dispatch")
+    return { invocation: [...invocation] };
   if (invocation[0] === "task" && invocation[1] === "run" && invocation[2]) {
     const subject = invocation[2];
     let index = 3;
@@ -350,7 +357,7 @@ function isValidSchedulerInputFlagTail(tail: readonly string[]): boolean {
 function invalidSchedulerInvocation(): ConfigError {
   return new ConfigError(
     "Invalid scheduler invocation; expected public " +
-      "`task run <bundle//concept-id> --scheduled [--<input> <value>…]` or `workflow run <qualified-ref>` argv.",
+      "`task run <bundle//concept-id> --scheduled [--<input> <value>…]`, `workflow run <qualified-ref>` or `task dispatch` argv.",
     "INVALID_CONFIG_FILE",
   );
 }

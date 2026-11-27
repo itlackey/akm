@@ -446,6 +446,8 @@ process's working bundle, plus any `AKM_CONFIG_DIR`, `AKM_DATA_DIR`,
 - **Linux (cron):** no files. The user's crontab is edited through `crontab -l` and `crontab -`. Each task sits between `# akm:task <id> BEGIN` and `# akm:task <id> END` lines, under one `# akm:env BEGIN` / `# akm:env END` block that holds `PATH`. A disabled task's line is prefixed `# akm:disabled `. A command line over 1,000 bytes runs a wrapper script, `$CACHE/tasks/logs/.akm-cron-wrapper-<id>-<hash>.sh`.
 - **Windows (Task Scheduler):** `schtasks /Create /TN \akm\<id> /XML <file>` with a temporary `akm-task-<id>-<ts>.xml` in the OS temp directory.
 
+In dispatch mode (`akm doctor scheduler sync --dispatch`) the only row is the one whose id is `dispatch`, which runs `akm task dispatch` every minute. Dispatch keeps the last minute it dispatched in `$STATE/scheduler/dispatch-minute`, a decimal count of minutes since the epoch; a missing or unreadable file means "this minute only".
+
 ## Read-only inputs
 
 Session extraction (`akm proposal extract` and improve's extract stage) reads

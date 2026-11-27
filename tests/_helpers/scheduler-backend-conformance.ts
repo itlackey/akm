@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   compileTaskSchedulerBindings,
+  DISPATCH_BINDING,
+  isDispatchRow,
   type SchedulerBackend,
   type SchedulerBinding,
   schedulerNativeBindingId,
@@ -60,6 +62,21 @@ const nativeIdOf = (binding: SchedulerBinding) => binding.nativeId ?? schedulerN
 /** Register the native-scheduler behaviour that is identical on every backend. */
 export function schedulerBackendConformance(adapter: SchedulerBackendContractAdapter): void {
   describe(`${adapter.name} shared scheduler backend contract`, () => {
+    test("the dispatch row runs `task dispatch` every minute and lists back as the dispatch row", async () => {
+      const { backend, rowText } = adapter.create();
+
+      await backend.install(DISPATCH_BINDING);
+
+      expect(rowText("dispatch")).toContain("dispatch");
+      const rows = await backend.list();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ id: "dispatch", nativeId: "dispatch", invocation: ["task", "dispatch"] });
+      expect(isDispatchRow(rows[0] as (typeof rows)[number])).toBe(true);
+      expect(rows[0]?.signature).toBe(backend.expectedSignature?.(DISPATCH_BINDING));
+      await backend.uninstall("dispatch");
+      expect(await backend.list()).toEqual([]);
+    });
+
     test("install renders the row the binding describes and lists it back", async () => {
       const { backend, rowText } = adapter.create();
       const binding = qualifiedSchedulerTask("0 9 * * *");

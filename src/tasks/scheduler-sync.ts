@@ -73,6 +73,11 @@ export interface CompileSchedulerSourcesInput {
   readonly resolveAsset?: PrepareTaskV3ExecutionContext["resolveAsset"];
   /** Refs this host schedules (`scheduler.enabled`); every other source is skipped without being read. */
   readonly enabledRefs?: ReadonlySet<string>;
+  /**
+   * `false` skips the check of each task's target (a v4 projection, the v5 start check): `akm task dispatch` reads
+   * the schedules every minute, and a target that cannot start fails its run instead. Default `true`.
+   */
+  readonly checkTargets?: boolean;
 }
 
 export interface CompiledSchedulerSources {
@@ -154,14 +159,16 @@ async function compileV4Schedules(
   // unconfigured engine) is reported here rather than at fire time.
   // Bindings compile from the original document: the projection drops
   // `schedule[i].inputs`, which are delivered through the invocation tail.
-  await prepareTaskV3Execution(projectTaskSourceV4(parsed), {
-    taskId: input.id,
-    taskRef: input.ref,
-    bundleName: input.bundleName,
-    bundleRoot: input.sourceRoot,
-    config: input.config ?? SCHEDULER_PROJECTION_CONFIG,
-    ...(input.resolveAsset ? { resolveAsset: input.resolveAsset } : {}),
-  });
+  if (input.checkTargets !== false) {
+    await prepareTaskV3Execution(projectTaskSourceV4(parsed), {
+      taskId: input.id,
+      taskRef: input.ref,
+      bundleName: input.bundleName,
+      bundleRoot: input.sourceRoot,
+      config: input.config ?? SCHEDULER_PROJECTION_CONFIG,
+      ...(input.resolveAsset ? { resolveAsset: input.resolveAsset } : {}),
+    });
+  }
   return parsed.schedule.map((schedule) => ({
     cron: schedule.cron,
     ordinal: schedule.ordinal,
@@ -184,7 +191,7 @@ async function compileV5Schedules(
   for (const entry of document.schedule) {
     const start = scheduleStartFlags(entry);
     try {
-      await checkScheduleEntryV5(entry, input.conceptId, bundle);
+      if (input.checkTargets !== false) await checkScheduleEntryV5(entry, input.conceptId, bundle);
     } catch (cause) {
       throw new UsageError(`schedule[${entry.ordinal}]: ${errorMessage(cause)}`, "TASK_SOURCE_INVALID");
     }
