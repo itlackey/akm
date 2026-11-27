@@ -150,20 +150,28 @@ describe("tasks run attempt observability", () => {
       ["task", "run", "config-preflight"],
       "config-preflight",
     ],
-    // The row a scheduler writes from 0.10.261135, and the ref row before it. Unread, a ref is kept by its concept id.
+    // The row a scheduler writes from 0.10.261135, and the ref row before it: kept under the task's own id.
     [
       "malformed",
       '{"configVersion":',
       "INVALID_CONFIG_FILE",
       ["run", "stash//tasks/config-preflight"],
-      "tasks/config-preflight",
+      "config-preflight",
     ],
     [
       "malformed",
       '{"configVersion":',
       "INVALID_CONFIG_FILE",
       ["task", "run", "stash//tasks/config-preflight"],
-      "tasks/config-preflight",
+      "config-preflight",
+    ],
+    // A nested id is no working-stash task name: it keeps its concept id.
+    [
+      "malformed",
+      '{"configVersion":',
+      "INVALID_CONFIG_FILE",
+      ["run", "stash//sub/deep/config-preflight"],
+      "sub/deep/config-preflight",
     ],
   ] as const) {
     test(`${label} config records a scheduled activation failure (${start.join(" ")})`, async () => {
