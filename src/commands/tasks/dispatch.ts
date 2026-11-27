@@ -19,10 +19,10 @@
  * starts once.
  */
 
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { parseBundleRef } from "../../core/asset/asset-ref";
+import { spawnChild } from "../../core/children";
 import { loadConfig } from "../../core/config/config";
 import type { AkmConfig } from "../../core/config/config-types";
 import { getStateDir, getTaskLogDir, withoutLauncherVars } from "../../core/paths";
@@ -134,7 +134,7 @@ async function startDetached(argv: readonly string[], logPath: string): Promise<
   // asset-io: state the run's log, as its row writes it
   const fd = fs.openSync(logPath, "w");
   try {
-    const child = spawn(command as string, args, {
+    const child = spawnChild(command as string, args, {
       detached: true,
       stdio: ["ignore", fd, fd],
       // A started `akm` gets its `AKM_LAUNCHER_*` variables from its own launcher.
